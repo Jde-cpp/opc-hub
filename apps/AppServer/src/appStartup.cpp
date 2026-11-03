@@ -95,9 +95,7 @@ namespace Jde{
 		}
 	}
 	α App::ReloadHosts( SL sl )ε->DB::CacheAwait<flat_map<uint,string>>{
-		let& hosts = _appSchema->GetTable( "hosts" );
-		DB::EnumCache::Clear( hosts );//SelectEnum answers from the cache when it can - clear first so the select actually runs.
-		return ds().SelectEnum( hosts, DB::EnumCache::Forever, sl );//no expiry, as LoadEnum caches it.
+		return ds().ReloadEnum( _appSchema->GetTable("hosts"), {}, sl );
 	}
 	α App::EndConnection( ConnectionPK connectionId, SL sl )ι->DB::ExecuteAwait::Task{
 		try{

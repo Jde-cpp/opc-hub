@@ -173,11 +173,11 @@ namespace Jde::QL{
 		Value y;
 		let values = GetEnumValues( qlCol.Table() );
 		if( v.is_string() ){
-			let enum_ = FindKey( values, string{v.get_string()} ); THROW_IF( !enum_, "Could not find '{}' for {}", string{v.get_string()}, qlCol.MemberName() );
+			let enum_ = FindKey( *values, string{v.get_string()} ); THROW_IF( !enum_, "Could not find '{}' for {}", string{v.get_string()}, qlCol.MemberName() );
 			y = *enum_;
 		}
 		else
-			y = Value{ c.Type, ToFlags(values, v.get_array(), qlCol.MemberName()) };
+			y = Value{ c.Type, ToFlags(*values, v.get_array(), qlCol.MemberName()) };
 		return y;
 	}
 }

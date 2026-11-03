@@ -16,8 +16,7 @@
 namespace Jde{
 	α QL::LoadEnum( const DB::Table& table, SL sl )ι->bool{
 		try{
-			DB::EnumCache::Clear( table );
-			table.Schema->DS()->SelectEnumSync( table, DB::EnumCache::Forever, sl );
+			table.Schema->DS()->ReloadEnumSync( table, {}, sl );
 			return true;
 		}
 		catch( runtime_error& e ){

@@ -51,7 +51,7 @@ namespace Jde::QL{
 		auto p = enums.find( enumTable.Name );
 		if( p==enums.end() ){
 			WARNT( ELogTags::QL, "[{}]enum values were not prefetched - falling back to a blocking lookup.", enumTable.Name );
-			p = enums.emplace( enumTable.Name, GetEnumValues(enumTable) ).first;
+			p = enums.emplace( enumTable.Name, *GetEnumValues(enumTable) ).first;
 		}
 		return p->second;
 	}

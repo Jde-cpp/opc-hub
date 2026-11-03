@@ -39,13 +39,20 @@ namespace Jde::DB{
 		α Select( Sql&& s, SRCE )ε->vector<Row>;
 		α Select( Sql&& s, RowΛ f, SRCE )ε->uint;
 		α SelectAsync( Sql&& sql, SRCE )ι->SelectAwait{ return SelectAwait{ shared_from_this(), move(sql), sl }; }
-		//An enum table's pk->name map, from EnumCache when it is there.  ttl unset is the cache's default, EnumCache::Forever never expires.
-		α SelectEnum( const Table& table, optional<steady_clock::duration> ttl={}, SRCE )ε->CacheAwait<EnumMap>{ return SelectMap<uint,string>( {Ƒ("select {}, name from {}", table.GetPK()->Name, table.SqlName())}, EnumCache::Instance(), table.Name, ttl, sl ); }
+		//An enum table's pk->name map, from EnumCache when it is there.  ttl unset is EnumCache's default, Forever.
+		α SelectEnum( const Table& table, optional<steady_clock::duration> ttl={}, SRCE )ε->CacheAwait<EnumMap>{ return SelectMap<uint,string>( EnumSql(table), EnumCache::Instance(), table.Name, ttl, false, sl ); }
 		α SelectEnumSync( const Table& table, optional<steady_clock::duration> ttl={}, SRCE )ε->EnumMap{
 			return BlockAwait<CacheAwait<EnumMap>,EnumMap>( SelectEnum(table, ttl, sl) );
 		}
+		//Re-reads an enum table into EnumCache, cached or not.  The map it replaces keeps answering SelectEnum until the read
+		//is in, where a Clear first would hand every render meanwhile the blocking miss.
+		α ReloadEnum( const Table& table, optional<steady_clock::duration> ttl={}, SRCE )ε->CacheAwait<EnumMap>{ return SelectMap<uint,string>( EnumSql(table), EnumCache::Instance(), table.Name, ttl, true, sl ); }
+		α ReloadEnumSync( const Table& table, optional<steady_clock::duration> ttl={}, SRCE )ε->EnumMap{
+			return BlockAwait<CacheAwait<EnumMap>,EnumMap>( ReloadEnum(table, ttl, sl) );
+		}
 
-		ẗ SelectMap( Sql&& sql, Cache<string,flat_map<K,V>>& cache, string key, optional<steady_clock::duration> ttl={}, SRCE )ι->CacheAwait<flat_map<K,V>>;
+		//reload: the select runs even when `key` is cached, and replaces the entry.
+		ẗ SelectMap( Sql&& sql, Cache<string,flat_map<K,V>>& cache, string key, optional<steady_clock::duration> ttl={}, bool reload=false, SRCE )ι->CacheAwait<flat_map<K,V>>;
 
 		[[nodiscard]] α Execute( Sql&& sql, SRCE )ε->ExecuteAwait{ return ExecuteAwait{shared_from_this(), move(sql), sl}; }
 		α ExecuteSync( Sql&& sql, SRCE )ε->uint;
@@ -72,6 +79,7 @@ namespace Jde::DB{
 		};
 		β Execute( Sql&& sql, SL sl, Params exeParams )ε->uint =0;
 		β InsertSeqSyncUInt( DB::InsertClause&& insert, SL sl )ε->uint=0;
+		Ω EnumSql( const Table& table )ε->Sql{ return {Ƒ("select {}, name from {}", table.GetPK()->Name, table.SqlName())}; }
 		optional<string> _catalog; //db catalog name ie jde
 		string _schema;  //db schema name ie dbo
 	};
@@ -91,8 +99,8 @@ namespace Jde::DB{
 		ẗ ProcessMapRow( flat_map<K,V>& y, Row&& row )ε{ y.emplace( row.Get<K>(0), row.Get<V>(1) ); }
 	}
 
-	ẗ IDataSource::SelectMap( Sql&& sql, Cache<string,flat_map<K,V>>& cache, string key, optional<steady_clock::duration> ttl, SL sl )ι->CacheAwait<flat_map<K,V>>{
-		return CacheAwait<flat_map<K,V>>( shared_from_this(), move(sql), zInternal::ProcessMapRow<K,V>, cache, move(key), ttl, sl );
+	ẗ IDataSource::SelectMap( Sql&& sql, Cache<string,flat_map<K,V>>& cache, string key, optional<steady_clock::duration> ttl, bool reload, SL sl )ι->CacheAwait<flat_map<K,V>>{
+		return CacheAwait<flat_map<K,V>>( shared_from_this(), move(sql), zInternal::ProcessMapRow<K,V>, cache, move(key), ttl, reload, sl );
 	}
 }
 #undef let

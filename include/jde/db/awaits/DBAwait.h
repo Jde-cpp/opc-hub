@@ -34,13 +34,15 @@ namespace Jde::DB{
 		CoRowΛ<T> _fold;
 	};
 
-	//A TSelectAwait answered from `cache` when `key` is there, and stored under it when the select has to run.
+	//A TSelectAwait answered from `cache` when `key` is there, and stored under it when the select has to run.  `reload`
+	//skips the lookup, so the select always runs, and the entry it replaces keeps answering everyone else until then.
 	Τ struct CacheAwait final: TSelectAwait<T>{
-		CacheAwait( sp<IDataSource> ds, Sql&& sql, CoRowΛ<T> fold, Cache<string,T>& cache, string key, optional<steady_clock::duration> ttl, SL sl ):
+		CacheAwait( sp<IDataSource> ds, Sql&& sql, CoRowΛ<T> fold, Cache<string,T>& cache, string key, optional<steady_clock::duration> ttl, bool reload, SL sl ):
 			TSelectAwait<T>{ move(ds), move(sql), move(fold), sl },
 			_cache{ cache },
 			_key{ move(key) },
-			_ttl{ ttl }
+			_ttl{ ttl },
+			_reload{ reload }
 		{}
 		α await_ready()ι->bool override;
 		α await_resume()ε->T override;
@@ -49,10 +51,15 @@ namespace Jde::DB{
 		sp<const T> _cached;
 		string _key;
 		optional<steady_clock::duration> _ttl;
+		bool _reload;
+		uint _ticket{};
 	};
 
 	Ŧ CacheAwait<T>::await_ready()ι->bool{
-		_cached = _cache.Get( _key );
+		if( !_reload )
+			_cached = _cache.Get( _key );
+		if( !_cached )
+			_ticket = _cache.Ticket();//before the select reads, so a slower read that started earlier can't replace this one.
 		return _cached!=nullptr;
 	}
 
@@ -60,7 +67,7 @@ namespace Jde::DB{
 		if( _cached )
 			return *_cached;
 		auto y = TSelectAwait<T>::await_resume();
-		return *_cache.Set( move(_key), move(y), _ttl );//move into the cache, copy out once - `Set(key, y); return y;` copies twice.
+		return *_cache.Set( move(_key), move(y), _ttl, _ticket );//move into the cache, copy out once - `Set(key, y); return y;` copies twice.
 	}
 }
 #undef let

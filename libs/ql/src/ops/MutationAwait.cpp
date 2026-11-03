@@ -1,7 +1,7 @@
 #include <jde/ql/ops/MutationAwait.h>
-#include <jde/ql/IQL.h>
 #include <jde/db/EnumCache.h>
 #include <jde/db/meta/Table.h>
+#include <jde/ql/IQL.h>
 #include "AddRemoveAwait.h"
 #include "InsertAwait.h"
 #include "PurgeAwait.h"

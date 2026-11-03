@@ -5,9 +5,9 @@ namespace Jde::QL{
 	struct ColumnQL; struct TableQL;
 	//The library's cross-file helpers, declared once.  Each used to be re-declared by hand at every caller (ql-refactor B3).
 
-	//ops/SelectAwait.cpp - the id->name map an enum/flags column renders through.  SelectEnumSync: cached, but a miss blocks -
-	//LoadEnum (ql.h) fills the cache at startup so no request path takes that miss.
-	α GetEnumValues( const DB::Table& table, SRCE )ε->flat_map<uint,string>;
+	//ops/SelectAwait.cpp - the id->name map an enum/flags column renders through, EnumCache's own instance.  A miss falls back
+	//to SelectEnumSync, which blocks - LoadEnum (ql.h) fills the cache at startup so no request path takes that miss.
+	α GetEnumValues( const DB::Table& table, SRCE )ε->sp<const flat_map<uint,string>>;
 	//ops/SelectAwait.cpp - #48: the one flags-array parser, shared by the insert and update paths so they cannot drift again.
 	α ToFlags( const flat_map<uint,string>& values, const jarray& flags, sv memberName, SRCE )ε->uint;
 	//ops/SelectAwait.cpp - a db value as json, rendered through the column's enum/flags/DateTime/Bit type when a column is given.

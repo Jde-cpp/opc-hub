@@ -1,7 +1,6 @@
+#include <thread>
 #include <jde/fwk/io/Cache.h>
 #include <jde/fwk/chrono.h>
-#include <string>
-#include <thread>
 
 #define let const auto
 namespace Jde::Tests{
@@ -53,6 +52,45 @@ namespace Jde::Tests{
 		EXPECT_EQ( got.get(), p.get() ) << "the cache shares the instance rather than copying it";
 	}
 
+	//Two reads of one key that finish out of order:  the read ticketed later stays cached, not the slower one.
+	TEST_F( CacheTests, AnEarlierTicketKeepsALaterEntry ){
+		StringCache cache{ 1h };
+		let value = [&]( str key ){ let p = cache.Get( key ); return p ? *p : string{ "<miss>" }; };
+		let earlier = cache.Ticket();
+		let later = cache.Ticket();
+		cache.Set( "key", "later", {}, later );
+		cache.Set( "key", "earlier", {}, earlier );
+		EXPECT_EQ( value("key"), "later" ) << "the slower read replaced the newer one";
+
+		cache.Set( "key", "plain" );
+		EXPECT_EQ( value("key"), "plain" ) << "a plain Set counts as a read taken at the Set";
+		cache.Set( "key", "late", {}, later );
+		EXPECT_EQ( value("key"), "plain" ) << "a read ticketed before the plain Set replaced it";
+
+		cache.Set( "expired", "later", 0s, later );
+		cache.Set( "expired", "earlier", {}, earlier );
+		EXPECT_EQ( value("expired"), "earlier" ) << "an expired entry held off a live value";
+	}
+
+	//A read ticketed before a Clear that finishes after it:  the key stays a miss.
+	TEST_F( CacheTests, AClearKeepsOutAnEarlierRead ){
+		StringCache cache{ 1h };
+		cache.Set( "key", "old" );
+		let beforeClear = cache.Ticket();
+		EXPECT_TRUE( cache.Clear("key") );
+		cache.Set( "key", "stale", {}, beforeClear );
+		EXPECT_EQ( cache.Get("key"), nullptr ) << "the read that started before the Clear landed after it";
+		EXPECT_FALSE( cache.Clear("key") ) << "a cleared key holds no value";
+
+		let missBeforeClear = cache.Ticket();
+		EXPECT_FALSE( cache.Clear("never-set") );
+		cache.Set( "never-set", "stale", {}, missBeforeClear );
+		EXPECT_EQ( cache.Get("never-set"), nullptr ) << "a Clear of a key with no entry let an earlier read in";
+
+		cache.Set( "key", "fresh", {}, cache.Ticket() );
+		EXPECT_NE( cache.Get("key"), nullptr ) << "a read ticketed after the Clear was kept out";
+	}
+
 	//only the fallback half of the default constructor:  the suite config has no /cache section, and adding one to assert
 	//the configured path would be a config change rather than a test.
 	TEST_F( CacheTests, DefaultTtlFallsBackToAnHour ){
@@ -62,17 +100,21 @@ namespace Jde::Tests{
 	//Set drops the expired entries once the map reaches 16, then twice what the drop left - never a Get, which only reads.
 	TEST_F( CacheTests, SetDropsExpiredEntries ){
 		StringCache cache{ 1h };
-		for( uint i=0; i<16; ++i )
+		cache.Set( "kept", "v" );
+		for( uint i=0; i<15; ++i )
 			cache.Set( Ƒ("expired-{}", i), "v", 0s );//past its deadline at once.
 		EXPECT_EQ( cache.Get("expired-0"), nullptr );
 		EXPECT_EQ( cache.Size(), 16u ) << "a Get dropped entries, or a Set below the threshold did";
 		cache.Set( "live", "v" );
-		EXPECT_EQ( cache.Size(), 1u ) << "the Set that reached the threshold kept the expired entries";
+		EXPECT_EQ( cache.Size(), 2u ) << "the Set that reached the threshold kept the expired entries";
+		EXPECT_NE( cache.Get("kept"), nullptr ) << "the drop took a live entry";
 		EXPECT_NE( cache.Get("live"), nullptr );
 	}
 
-	//Get, Set and Clear from every core against five keys, then every entry gone once its 10ms is up.  A quarter second is
-	//~18k sets on a 32-core box:  fewer interleavings a run than a second's, for a suite every build runs.
+	//Get, Set and Clear from every core against five keys, beside a churn of keys each set once for 1ms.  Only a drop removes
+	//those, so the map keeps reaching the drop threshold and Set drops while the other threads read and write.  Then every
+	//entry is gone once its 10ms is up, and the drops kept the map near what was live.  A quarter second keeps the
+	//interleavings to fewer than a second's would, for a suite every build runs.
 	TEST_F( CacheTests, Stress ){
 		StringCache cache{ 1h };
 		let threadCount = std::max( 2u, std::thread::hardware_concurrency() );
@@ -80,12 +122,12 @@ namespace Jde::Tests{
 		vector<string> keys;
 		for( uint i=0; i<5; ++i )
 			keys.push_back( Ƒ("{}", i) );
-		std::atomic<uint> retrieved{}, missed{}, sets{};
+		std::atomic<uint> retrieved{}, missed{}, sets{}, churned{};
 		{
 			vector<std::jthread> workers;
 			for( uint t=0; t<threadCount; ++t ){
 				workers.emplace_back( [&, t]()ι->void {
-					uint localRetrieved{}, localMissed{}, localSets{};
+					uint localRetrieved{}, localMissed{}, localSets{}, localChurned{};
 					for( uint i=t; steady_clock::now()<end; ++i ){
 						let& key = keys[i%keys.size()];
 						if( cache.Get(key) )
@@ -98,13 +140,18 @@ namespace Jde::Tests{
 							cache.Set( key, ToIsoString(steady_clock::now()), i%3==0 ? 1ms : 10ms );
 							++localSets;
 						}
+						if( i%2==0 ){
+							cache.Set( Ƒ("{}-{}", t, i), "churn", 1ms );
+							++localChurned;
+						}
 					}
-					retrieved += localRetrieved; missed += localMissed; sets += localSets;
+					retrieved += localRetrieved; missed += localMissed; sets += localSets; churned += localChurned;
 				} );
 			}
 		}//jthreads join here.
-		INFOT( ELogTags::Test, "threads: {}, retrieved: {}, missed: {}, sets: {}", threadCount, retrieved.load(), missed.load(), sets.load() );
+		INFOT( ELogTags::Test, "threads: {}, retrieved: {}, missed: {}, sets: {}, churned: {}, size: {}", threadCount, retrieved.load(), missed.load(), sets.load(), churned.load(), cache.Size() );
 		std::this_thread::sleep_for( 11ms );
 		EXPECT_TRUE( std::ranges::all_of(keys, [&]( let& key ){ return !cache.Get(key); }) ) << "an entry outlived its 10ms";
+		EXPECT_LT( cache.Size(), churned.load()/2 ) << "Set stopped dropping the expired entries";
 	}
 }
