@@ -10,6 +10,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorMessage } from 'jde-framework';
 import { DiscoveredEndpoint, DiscoveredServer, discoverEndpointsMutation, discoverServersMutation, EndpointPick, endpointPick, endpointUrl, serverUrl, supportedEndpoint } from '../../../model/discovery';
 import { modeName, policyName } from '../../../model/gateway-endpoint';
+import { SecurityMode, securityModes } from '../../../model/server-cnnctn';
 import { Gateway } from '../../../services/gateway-service';
 
 export type DiscoverDialogData = {
@@ -102,8 +103,12 @@ export class DiscoverDialog{
 	//the url a pick fills:  the endpoint's, with the host that answered where it advertises another
 	pickUrl( ep:DiscoveredEndpoint ):string{ return endpointUrl( ep.url, this.endpointsAt() ); }
 	pickUrlTitle( ep:DiscoveredEndpoint ):string{ const url = this.pickUrl( ep ); return url==ep.url ? url : `${url}\nAdvertised as ${ep.url}`; }
-	//the server's own ranking first, strongest on top, then by url - what a UA client's connection dialog does
-	static order( a:DiscoveredEndpoint, b:DiscoveredEndpoint ):number{ return b.securityLevel-a.securityLevel || a.url.localeCompare( b.url ); }
+	//the server's own ranking first, strongest on top, then the mode - open62541 ranks a policy, so its Sign and Sign & Encrypt
+	//endpoints tie - then by url:  what a UA client's connection dialog does
+	static order( a:DiscoveredEndpoint, b:DiscoveredEndpoint ):number{
+		const mode = ( ep:DiscoveredEndpoint )=>securityModes.indexOf( ep.mode as SecurityMode );
+		return b.securityLevel-a.securityLevel || mode( b )-mode( a ) || a.url.localeCompare( b.url );
+	}
 	policyName( ep:DiscoveredEndpoint ):string{ return policyName( ep.policy ); }
 	modeName( ep:DiscoveredEndpoint ):string{ return modeName( ep.mode ); }
 	tokens( ep:DiscoveredEndpoint ):string{ return [...new Set( ep.tokenPolicies.map( p=>p.type ) )].join( ', ' ); }

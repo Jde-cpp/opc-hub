@@ -1,7 +1,7 @@
 #include "Discovery.h"
 #include <jde/fwk/io/crc.h>
-#include <jde/opc/UAException.h>
 #include "async/ConnectionManager.h"
+#include "types/UAClientException.h"
 
 #define let const auto
 
@@ -85,7 +85,7 @@ namespace Jde::Opc::Gateway{
 		auto client = discoveryClient( url, timeout, logger, sl );
 		UAArray<UA_ApplicationDescription> found{ UA_TYPES[UA_TYPES_APPLICATIONDESCRIPTION] };
 		if( let sc = UA_Client_findServers(client.get(), url.c_str(), 0, nullptr, 0, nullptr, &found.Size, &found.Data); sc )
-			throw UAException{ sc, Ƒ("'{}' did not answer FindServers", url), {.HttpStatus=EHttpStatus::BadGateway}, sl };
+			throw UAClientException{ sc, h, Ƒ("'{}' did not answer FindServers.", url), sl };//its ClientDetail carries the reason, which an http caller's body otherwise loses.
 		vector<Server> y;
 		for( let& desc : found.Span() ){
 			Server server{ ToString(desc.applicationUri), ToString(desc.productUri), ToString(desc.applicationName.text), desc.applicationType, ToString(desc.gatewayServerUri), ToString(desc.discoveryProfileUri), {} };
@@ -102,7 +102,7 @@ namespace Jde::Opc::Gateway{
 		auto client = discoveryClient( url, timeout, logger, sl );
 		UAArray<UA_EndpointDescription> found{ UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION] };
 		if( let sc = UA_Client_getEndpoints(client.get(), url.c_str(), &found.Size, &found.Data); sc )
-			throw UAException{ sc, Ƒ("'{}' did not answer GetEndpoints", url), {.HttpStatus=EHttpStatus::BadGateway}, sl };
+			throw UAClientException{ sc, h, Ƒ("'{}' did not answer GetEndpoints.", url), sl };
 		vector<Endpoint> y;
 		for( let& ep : found.Span() ){
 			Endpoint endpoint{ ToString(ep.endpointUrl), ToString(ep.server.applicationUri), ToString(ep.securityPolicyUri), ep.securityMode, ep.securityLevel, {}, {} };

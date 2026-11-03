@@ -59,16 +59,22 @@ mat-cell span{
 }
 .endpoints{
 	.mat-column-url{
-		flex: 3 1 220px;
+		flex: 3 1 160px;
 		min-width: 0;
 	}
-	.mat-column-policy, .mat-column-tokens, .mat-column-certificate{
-		flex: 2 1 140px;
-		min-width: 0;
+	/* the policy and mode whole:  Aes128_Sha256_RsaOaep (169px) and Sign & Encrypt (94px) are the longest, past 16px padding a side,
+	   and they are what a pick sets */
+	.mat-column-policy{
+		flex: 0 0 208px;
 		color: var(--mat-sys-on-surface-variant);
 	}
 	.mat-column-mode{
-		flex: 0 0 120px;
+		flex: 0 0 136px;
+	}
+	.mat-column-tokens, .mat-column-certificate{
+		flex: 2 1 120px;
+		min-width: 0;
+		color: var(--mat-sys-on-surface-variant);
 	}
 	.mat-column-choose{
 		flex: 0 0 48px;

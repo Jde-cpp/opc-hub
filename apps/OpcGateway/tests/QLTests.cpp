@@ -655,6 +655,18 @@ namespace Jde::Opc::Gateway::Tests{
 			TRACE( "discover refused: {}.", e.what() );
 			EXPECT_TRUE( sv{e.what()}.contains("did not answer GetEndpoints") ) << e.what();
 		}
+		try{//over http, as the dialog sends it:  the body carried "Query failed." and the status alone, the reason dropped with what().
+			jobject body{ {"query", "mutation discover( url: $url, servers: true ){ applicationUri }"}, {"variables", jobject{{"url", "opc.tcp://127.0.0.1:1"}}} };
+			Post( GatewayPort(), "/graphql", serialize(body), Ƒ("{:x}", AppClient()->SessionId()) );
+			ADD_FAILURE() << "a discover at a closed port succeeded over http";
+		}
+		catch( const ClientHttpResException& e ){
+			TRACE( "discover refused over http: {}.", e.Res().Body() );
+			let& body = e.Res().Body();
+			let reason = body.find( " - 'opc.tcp://127.0.0.1:1' did not answer FindServers." );
+			EXPECT_NE( reason, string::npos ) << "the reason: " << body;
+			EXPECT_LT( body.find(")Bad"), reason ) << "the status before it: " << body;
+		}
 		EXPECT_THROW( Socket().QuerySync("discover( url: $url ){ url }", {{"url", " "}}), GatewayErrorResponse ) << "a url is required";
 		EXPECT_THROW( Socket().QuerySync("discover( url: $url, requestTimeout: 0 ){ url }", {{"url", url}}), GatewayErrorResponse ) << "a positive timeout";
 		try{//no longer than MaxTimeout:  a caller's deadline holds a discovery thread, and DiscoveryPool::Stop's join waits on it.

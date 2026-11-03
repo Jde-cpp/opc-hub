@@ -138,9 +138,17 @@ describe( 'DiscoverDialog', ()=>{
 		expect( d.closed().length ).toBe( 1 );
 	} );
 
+	//open62541 ranks a policy, not a mode:  of a tie, Sign & Encrypt first, None last
+	it( 'ranks by the server\'s securityLevel, then by the mode', ()=>{
+		const sign:DiscoveredEndpoint = { ...secured, mode: 'Sign' };
+		const aesSign:DiscoveredEndpoint = { ...secured, mode: 'Sign', policy: 'http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss', securityLevel: 30 };
+		const aesEncrypt:DiscoveredEndpoint = { ...aesSign, mode: 'SignAndEncrypt' };
+		expect( [none, sign, aesSign, secured, aesEncrypt].sort( DiscoverDialog.order ).map( e=>`${e.securityLevel}/${e.mode}` ) ).toEqual( ['30/SignAndEncrypt', '30/Sign', '3/SignAndEncrypt', '3/Sign', '0/None'] );
+	} );
+
 	it( 'shows the gateway\'s refusal and tries another url', async ()=>{
 		let fail = true;
-		const d = open( 'opc.tcp://nowhere:4840', {servers: ()=>{ if( fail ) throw new Error( "(502)'opc.tcp://nowhere:4840' did not answer FindServers" ); return [plc()]; }} );
+		const d = open( 'opc.tcp://nowhere:4840', {servers: ()=>{ if( fail ) throw new Error( "(502)Query failed.  (80ac0000)BadConnectionRejected - 'opc.tcp://nowhere:4840' did not answer FindServers." ); return [plc()]; }} );
 		await d.settle();
 		expect( d.dialog.error() ).toContain( 'did not answer FindServers' );
 		expect( d.texts( '.refused' ).length ).toBe( 1 );
