@@ -38,6 +38,23 @@ namespace Jde{
 			}
 		}
 
+		Ω asn1Time( const ASN1_TIME* time, sv what, SL sl )ε->TimePoint{
+			tm t{};
+			THROW_IFX( ::ASN1_TIME_to_tm(time, &t)!=1, OpenSslException(Ƒ("ASN1_TIME_to_tm failed for {}", what), sl) );
+			using namespace std::chrono;
+			return sys_days{ year{t.tm_year+1900}/month{(unsigned)t.tm_mon+1}/day{(unsigned)t.tm_mday} } + hours{ t.tm_hour } + minutes{ t.tm_min } + seconds{ t.tm_sec };
+		}
+		//`md` over the DER, upper hex, `separator` between the bytes.
+		Ω digest( const X509* cert, const EVP_MD* md, sv separator, SL sl )ε->string{
+			unsigned char bytes[EVP_MAX_MD_SIZE]; unsigned length{};
+			THROW_IFX( ::X509_digest(cert, md, bytes, &length)!=1, OpenSslException("X509_digest failed", sl) );
+			string y;
+			y.reserve( length*(2+separator.size()) );
+			for( unsigned i = 0; i<length; ++i )
+				y += Ƒ( "{}{:02X}", i ? separator : sv{}, bytes[i] );
+			return y;
+		}
+
 		Certificate::Certificate( std::span<const byte> der, SL sl )ε{
 			let cert = ParseDer( der, sl );
 			Issuer = Internal::ToString( ::X509_get_issuer_name(cert.get()), sl );
@@ -60,16 +77,11 @@ namespace Jde{
 					sanEntries.push_back( move(entry) );
 			}
 			SubjectAltName = Str::Join( sanEntries );
-			tm t{};
-			THROW_IFX( ::ASN1_TIME_to_tm(::X509_get0_notAfter(cert.get()), &t)!=1, OpenSslException("ASN1_TIME_to_tm failed", sl) );
-			using namespace std::chrono;
-			Expiration = sys_days{ year{t.tm_year+1900}/month{(unsigned)t.tm_mon+1}/day{(unsigned)t.tm_mday} } + hours{ t.tm_hour } + minutes{ t.tm_min } + seconds{ t.tm_sec };
+			NotBefore = asn1Time( ::X509_get0_notBefore(cert.get()), "notBefore", sl );
+			Expiration = asn1Time( ::X509_get0_notAfter(cert.get()), "notAfter", sl );
 			//the whole DER, not the key:  what openssl and every browser's certificate viewer print, so an operator can match it by eye.
-			unsigned char md[EVP_MAX_MD_SIZE]; unsigned mdLength{};
-			THROW_IFX( ::X509_digest(cert.get(), ::EVP_sha256(), md, &mdLength)!=1, OpenSslException("X509_digest failed", sl) );
-			Fingerprint.reserve( mdLength*3 );
-			for( unsigned i = 0; i<mdLength; ++i )
-				Fingerprint += Ƒ( "{}{:02X}", i ? ":" : "", md[i] );
+			Fingerprint = digest( cert.get(), ::EVP_sha256(), ":", sl );
+			Thumbprint = digest( cert.get(), ::EVP_sha1(), "", sl );//what a UA client prints - no separators, as a rejected file is named.
 		}
 
 		α Certificate::Log( string prefix, SL sl )Ι->void{
@@ -77,8 +89,8 @@ namespace Jde{
 		}
 		α Certificate::ToString()Ι->string{
 			return Ƒ(
-				"issuer: {}, subject: {}, SubjectAltName: {}, CommonName: {}, UPN: {}, Email: {}, Expiration: {}, Fingerprint: {}",
-				Issuer, DistinguishedName, SubjectAltName, CommonName, Upn, Email, ToIsoString<std::chrono::days>( Expiration ), Fingerprint
+				"issuer: {}, subject: {}, SubjectAltName: {}, CommonName: {}, UPN: {}, Email: {}, NotBefore: {}, Expiration: {}, Fingerprint: {}, Thumbprint: {}",
+				Issuer, DistinguishedName, SubjectAltName, CommonName, Upn, Email, ToIsoString<std::chrono::days>( NotBefore ), ToIsoString<std::chrono::days>( Expiration ), Fingerprint, Thumbprint
 			);
 		}
 	}

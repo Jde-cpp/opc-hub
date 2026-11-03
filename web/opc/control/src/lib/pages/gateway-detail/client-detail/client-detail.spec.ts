@@ -8,6 +8,7 @@ import { OpcStore } from '../../../services/opc-store';
 import { ServerCnnctn } from '../../../model/server-cnnctn';
 import { namespaceColumns, serverDescColumns } from '../../../model/server';
 import { ClientDetail } from './client-detail';
+import { DiscoverDialog } from './discover-dialog';
 import { configureDetailPage, dialogStub } from 'jde-framework/testing';
 
 //angular-review3 L2: only group-detail clamped the stored tab index.  The Connection tab used to be gated on the row being
@@ -339,5 +340,62 @@ describe( 'ClientDetail test connection', ()=>{
 		await page.onTestClick();
 		expect( sentTo.mock.calls ).toEqual( [["g1"], ["g2"]] );
 		expect( page.ql.slug ).toBe( "g2" );//Save and Delete go through it too
+	} );
+} );
+
+//#414 (docs/clients/spec.md *Discovery*):  Discover opens the dialog on the form's url, and the endpoint picked fills the url, the
+//Certificate URI with the server's applicationUri, and the mode and policy - on Properties, unsaved, for Test Connection or Save.
+describe( 'ClientDetail discover', ()=>{
+	const pick = { url: 'opc.tcp://plc:4840', certificateUri: 'urn:plc', securityMode: 'SignAndEncrypt', securityPolicy: 'http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256' };
+	const create = async ( row:any, answer:unknown )=>{
+		const dialog = dialogStub( answer );
+		const announce = vi.fn( async ( _m:string )=>{} );
+		configureDetailPage( row, {gateway: {slug: "g"}, providers: [
+			{ provide: MatDialog, useValue: dialog },
+			{ provide: LiveAnnouncer, useValue: {announce} },
+			{ provide: OpcStore, useValue: {forget: ()=>{}} }
+		]} );
+		const page = TestBed.createComponent( ClientDetail ).componentInstance;
+		await page.ngOnInit();
+		return { page, dialog, announced: ()=>announce.mock.calls.map( ([m])=>m ) };
+	};
+	const edit = ( page:ClientDetail, fields:Record<string,unknown> )=>page.properties.set( Properties.edited(ServerCnnctn, page.properties(), fields) );
+
+	it( 'needs a url, and nothing else', async ()=>{
+		const { page, dialog } = await create( {}, pick );
+		expect( page.canDiscover() ).toBe( false );
+		await page.onDiscoverClick();
+		expect( dialog.open ).not.toHaveBeenCalled();
+		edit( page, {url: " opc.tcp://host:4840 "} );
+		expect( page.canDiscover() ).toBe( true );//no slug yet:  discovery presents no certificate
+	} );
+
+	it( 'opens the dialog on the form\'s url and fills the form from the pick', async ()=>{
+		const { page, dialog, announced } = await create( {}, pick );
+		edit( page, {url: " opc.tcp://host:4840 ", securityMode: "None"} );
+		page.tabIndex.set( 1 );
+		await page.onDiscoverClick();
+		expect( dialog.open.mock.calls.map( ([component, config])=>[component, (config as any).data] ) ).toEqual( [[DiscoverDialog, {gateway: page.gateway, url: "opc.tcp://host:4840"}]] );
+		const p = page.properties() as ServerCnnctn;
+		expect( [p.url, p.certificateUri, p.securityMode, p.securityPolicy] ).toEqual( [pick.url, pick.certificateUri, pick.securityMode, pick.securityPolicy] );
+		expect( page.tabIndex() ).toBe( 0 );
+		expect( announced() ).toEqual( ["URL, Certificate URI, Security Mode and Security Policy set from opc.tcp://plc:4840."] );
+		expect( page.canTest() ).toBe( false );//still no slug
+		edit( page, {slug: "plc1"} );
+		expect( page.canTest() ).toBe( true );
+	} );
+
+	it( 'leaves the form alone on a cancel', async ()=>{
+		const { page, announced } = await create( {id: 7, slug: "plc1", name: "PLC 1", url: "opc.tcp://old:4840", certificateUri: "urn:old"}, undefined );
+		await page.onDiscoverClick();
+		const p = page.properties() as ServerCnnctn;
+		expect( [p.url, p.certificateUri] ).toEqual( ["opc.tcp://old:4840", "urn:old"] );
+		expect( announced() ).toEqual( [] );
+	} );
+
+	it( 'marks a saved row\'s result stale once a pick changed the form', async ()=>{
+		const { page } = await create( {id: 7, slug: "plc1", name: "PLC 1", url: "opc.tcp://old:4840", certificateUri: "", server: {applicationName: "PLC 1"}}, pick );
+		await page.onDiscoverClick();
+		expect( page.staleFor() ).toBe( "URL opc.tcp://old:4840, an empty Certificate URI, an unset Security Mode, an unset Security Policy" );
 	} );
 } );

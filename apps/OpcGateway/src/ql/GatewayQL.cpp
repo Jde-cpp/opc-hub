@@ -1,4 +1,5 @@
 #include "GatewayQL.h"
+#include "DiscoverQLAwait.h"
 #include "GatewayQLAwait.h"
 #include "HistGroupEditQLAwait.h"
 #include "HistGroupQLAwait.h"
@@ -42,6 +43,8 @@ namespace Jde::Opc{
 		if( auto await = HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits.
 			return await;
 		if( auto await = TestConnectionQLAwait::Test(m, creds, sl); await )
+			return await;
+		if( auto await = DiscoverQLAwait::Test(m, creds, sl); await )//the connection page's Discover:  FindServers or GetEndpoints at a url.
 			return await;
 		if( auto await = ServerCnnctnMAwait::Test(m, creds, sl); await )//a connection row's rules, provider row and live side.
 			return await;

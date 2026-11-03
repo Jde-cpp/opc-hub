@@ -15,6 +15,7 @@
 #include "UAClient.h"
 #include "WebServer.h"
 #include "async/BlockingPool.h"
+#include "ql/DiscoverQLAwait.h"
 #include "ql/GatewayQL.h"
 #include "ql/GatewayQLAwait.h"
 #include "ql/HistGroupInfoQLAwait.h"
@@ -58,7 +59,7 @@ namespace Jde::Opc{
 				tables.emplace( table );
 		}
 		QL::SetSystemTables( move(tables) );
-		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command} };//resolveHistory, testConnection:  resolve and test are no verbs either.
+		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command}, string{DiscoverQLAwait::Command} };//resolveHistory, testConnection, discover:  resolve, test and discover are no verbs either.
 		for( let command : HistQL::EditCommands )
 			mutations.emplace( command );
 		QL::SetSystemMutations( move(mutations) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.
@@ -86,6 +87,7 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
+		Process::AddShutdownFunction( [](bool, SL){ DiscoveryPool::Stop(); } );//last:  its clients are no registered client, so nothing above waits on its join.
 		THROW_IF( !_processSsl, "Connect before Configure." );
 		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.

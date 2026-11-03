@@ -18,4 +18,6 @@
 	<!--beside the two safe actions, outlined like Cancel:  it saves nothing - at most it issues the slug's certificate, as the saved connection's first connect would.
 		disabledInteractive, so pressing it keeps the focus there (WCAG 2.4.3) instead of dropping it to the body;  onTestClick checks canTest itself-->
 	<button matButton="outlined" (click)="onTestClick()" [disabled]="!canTest()" disabledInteractive>{{ testing() ? "Testing…" : "Test Connection" }}</button>
+	<!--the servers at the form's url and the endpoints of the one picked, a pick filling the form (DiscoverDialog);  saves nothing, issues nothing-->
+	<button matButton="outlined" (click)="onDiscoverClick()" [disabled]="!canDiscover()" disabledInteractive>Discover</button>
 </detail-actions>

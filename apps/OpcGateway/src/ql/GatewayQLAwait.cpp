@@ -3,6 +3,7 @@
 #include <jde/ql/QLAwait.h>
 #include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/Variant.h>
+#include "../Discovery.h"
 #include "../GatewayAppClient.h"
 #include "../async/DataTypesAwait.h"
 #include "../async/NamespacesAwait.h"
@@ -195,27 +196,8 @@ namespace Jde::Opc::Gateway{
 			j["productUri"] = ToString( desc->productUri );
 		if( q.FindColumn("applicationName") )
 			j["applicationName"] = ToString( desc->applicationName.text );
-		if( q.FindColumn("applicationType") ){
-			sv applicationType;
-			switch( desc->applicationType ){
-			case UA_ApplicationType::UA_APPLICATIONTYPE_SERVER:
-				applicationType = "Server";
-				break;
-			case UA_ApplicationType::UA_APPLICATIONTYPE_CLIENT:
-				applicationType = "Client";
-				break;
-			case UA_ApplicationType::UA_APPLICATIONTYPE_CLIENTANDSERVER:
-				applicationType = "ClientAndServer";
-				break;
-			case UA_ApplicationType::UA_APPLICATIONTYPE_DISCOVERYSERVER:
-				applicationType = "DiscoveryServer";
-				break;
-			case UA_ApplicationType::__UA_APPLICATIONTYPE_FORCE32BIT:
-				ASSERT( false );
-				break;
-			}
-			j["applicationType"] = applicationType;
-		}
+		if( q.FindColumn("applicationType") )
+			j["applicationType"] = Discovery::ApplicationTypeName( desc->applicationType );
 		if( q.FindColumn("gatewayServerUri") )
 			j["gatewayServerUri"] = ToString( desc->gatewayServerUri );
 		if( q.FindColumn("discoveryProfileUri") )

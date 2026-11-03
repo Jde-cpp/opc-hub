@@ -69,6 +69,8 @@ Under [Applications](/apps), a gateway instance's page has the seven tabs [Appli
 
 A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, with the [connection settings](#connection-settings) under them, saved with **Save**. **Test Connection** has the gateway connect with the values on the form, saved or not, and the **Connection** tab shows the answer: the server's details, or *Not connected* and why - a wrong URL, a certificate the gateway does not trust, a server that does not trust the gateway's. On a saved connection it also retries one the page opened *Not connected*. The test saves nothing and opens no lasting session; a connection that passes still has to be saved. It does issue the certificate the gateway presents for the connection, if there is none yet - the one the saved connection then uses.
 
+**Discover** asks the URL on the form what it offers, with no certificate and nothing saved: the servers found there - a Local Discovery Server at `opc.tcp://host:4840` lists the servers registered with it, and a server answers with itself - then the endpoints of the one picked, each with its policy, mode, the kinds of token it takes and the certificate the server presents on it. Choosing an endpoint fills the URL, the Certificate URI with the server's application URI, and the Security Mode and Security Policy, ready for **Test Connection** or **Save**. An endpoint whose policy the gateway does not carry is listed, but cannot be chosen. A server advertises the URLs it was configured with, which the gateway may not reach: where reading the endpoints at the advertised URL fails, the dialog offers the typed one in its place, and the URL an endpoint fills takes the host that answered. The gateway reads the endpoints over an unsecured channel, as every UA client does, so a server that offers only secured endpoints still lists them.
+
 An OPC server instance's page is under [Applications help](/help/apps#opc-servers).
 
 ### Endpoint
@@ -99,7 +101,7 @@ The user's credential is still encrypted. The gateway encrypts it to the server'
 
 The URI is the *Application URI* on the connection's **Connection** tab, or whatever the server's own configuration calls its URI. That tab shows the server's details, with the policy and mode the session negotiated, while the gateway holds a session with it or after a **Test Connection** that reached it; otherwise it says *Not connected* and why. So on a new connection:
 
-1. Enter the slug and URL, leave the Certificate URI empty, and press **Test Connection**.
+1. Enter the slug and URL, leave the Certificate URI empty, and press **Test Connection** - or press **Discover** and choose an endpoint, which fills the URI and the mode and policy at once.
 2. Read the *Application URI* on the **Connection** tab - or, from a server with no unsecured endpoint, in the error the tab shows, which names it.
 3. Set the Certificate URI to it, test again, and save.
 
