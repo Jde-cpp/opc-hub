@@ -7,6 +7,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { OpcStore } from '../../../services/opc-store';
 import { ServerCnnctn } from '../../../model/server-cnnctn';
 import { namespaceColumns, serverDescColumns } from '../../../model/server';
+import { flush } from 'jde-spa/testing';
 import { ClientDetail } from './client-detail';
 import { DiscoverDialog } from './discover-dialog';
 import { configureDetailPage, dialogStub } from 'jde-framework/testing';
@@ -397,5 +398,60 @@ describe( 'ClientDetail discover', ()=>{
 		const { page } = await create( {id: 7, slug: "plc1", name: "PLC 1", url: "opc.tcp://old:4840", certificateUri: "", server: {applicationName: "PLC 1"}}, pick );
 		await page.onDiscoverClick();
 		expect( page.staleFor() ).toBe( "URL opc.tcp://old:4840, an empty Certificate URI, an unset Security Mode, an unset Security Policy" );
+	} );
+} );
+//#415:  the certificate panel's data and Trust.  onRow loads the rejected server certificate and the gateway's own from the row
+//(no connect);  Trust POSTs trustServer by thumbprint, and a refusal is a toast, as Test Connection's is.
+describe( 'ClientDetail trust', ()=>{
+	//open on the Connection tab (server-properties), where the panel lives:  a cert load resolving triggers a tick, and the
+	//Properties tab's form would render against the test's stub schema.  As the tab-index describe does.
+	beforeEach( ()=>localStorage.setItem('client-detail/tabIndex', '1') );
+	afterEach( ()=>localStorage.removeItem('client-detail/tabIndex') );
+	const rejected = { subject: "CN=plc", issuer: "CN=plc", notBefore: "2026-01-01T00:00:00Z", notAfter: "2027-01-01T00:00:00Z", uri: "urn:plc", thumbprint: "AB12CD34" };
+	//the fixture is destroyed at the end:  this gateway's query resolves, so onRow's certificate load is real async, and change
+	//detection would otherwise run against the torn-down row after the test.
+	const make = ( row:any, opts:{ trust?:( vars:any )=>Promise<void> }={} )=>{
+		const posts:{ ql:string; vars:any }[] = [];
+		const gateway = {
+			slug: "g",
+			query: async ( _ql:string, _vars:any )=>({ serverConnection: { rejectedCertificate: rejected, clientCertificate: null } }),
+			postQL: async ( ql:string, vars:any )=>{ posts.push( {ql, vars} ); if( opts.trust ) await opts.trust( vars ); return { trustServer: true }; }
+		};
+		const { snackbar } = configureDetailPage( row, {gateway, providers: [
+			{ provide: OpcStore, useValue: {forget: ()=>{}, getConnection: async ()=>undefined} },
+			{ provide: LiveAnnouncer, useValue: {announce: async ()=>{}} }
+		]} );
+		const fixture = TestBed.createComponent( ClientDetail );
+		return { fixture, page: fixture.componentInstance, posts, snackbar };
+	};
+	//detectChanges runs ngOnInit once (the route subscription) and renders the Connection tab;  destroy unsubscribes it.
+	const open = async ( fixture:any )=>{ fixture.detectChanges(); await flush( 2 ); };
+
+	it( 'loads the row\'s certificates on open', async ()=>{
+		const { fixture, page } = make( {id: 7, slug: "plc", name: "plc"} );
+		await open( fixture );
+		expect( page.certificates()?.rejectedCertificate?.thumbprint ).toBe( "AB12CD34" );
+		fixture.destroy();
+	} );
+
+	it( 'posts trustServer by thumbprint and reloads', async ()=>{
+		const { fixture, page, posts } = make( {id: 7, slug: "plc", name: "plc"} );
+		await open( fixture );
+		await page.onTrust( "AB12CD34" );
+		await flush( 2 );
+		expect( posts[0] ).toEqual( {ql: ClientDetail.trustMutation, vars: {opc: "plc", thumbprint: "AB12CD34"}} );
+		expect( page.trusting() ).toBe( false );
+		fixture.destroy();
+	} );
+
+	it( 'toasts a refused trust and keeps the panel', async ()=>{
+		const refusal = new HttpErrorResponse( {status: 403, error: {message: "Administer required"}} );
+		const { fixture, page, snackbar } = make( {id: 7, slug: "plc", name: "plc"}, {trust: async ()=>{ throw refusal; }} );
+		await open( fixture );
+		await page.onTrust( "AB12CD34" );
+		await flush( 2 );
+		expect( snackbar.exception ).toHaveBeenCalled();
+		expect( page.trusting() ).toBe( false );
+		fixture.destroy();
 	} );
 } );

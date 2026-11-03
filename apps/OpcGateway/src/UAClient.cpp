@@ -66,6 +66,10 @@ namespace Jde::Opc::Gateway{
 	//The endpoint's _Connection/LastError, the spec's "status name and text of the last failure":  "<status> - <detail>", kept through
 	//a recovery, which clears _connectErrors.  Under _connectErrorMutex.
 	flat_map<ServerCnnctnNK,string> _lastFailures;
+	//The SHA-1 of the certificate our verifier last rejected for the slug - the <thumbprint>.der written under the rejected
+	//directory (ServerTrust).  The verifier knows the url alone, so the thumbprint is kept here per slug, as the connect errors
+	//are, for rejectedCertificate{} to read the file and trustServer to move it.  Under _connectErrorMutex.
+	flat_map<ServerCnnctnNK,string> _rejectedThumbprints;
 
 	//Subscriptions that outlived their client.  A connection failure destroys the UAClient (ProcessingLoop's deregister
 	//path) and takes every websocket session's monitored nodes with it, so a later write silently builds a fresh client
@@ -145,6 +149,18 @@ namespace Jde::Opc::Gateway{
 		lg _{ _connectErrorMutex };
 		return _lastFailures;
 	}
+	α UAClient::RejectedThumbprint( const ServerCnnctnNK& slug )ι->string{
+		lg _{ _connectErrorMutex };
+		let p = _rejectedThumbprints.find( slug );
+		return p==_rejectedThumbprints.end() ? string{} : p->second;
+	}
+	α UAClient::SetRejectedThumbprint( const ServerCnnctnNK& slug, string thumbprint )ι->void{
+		lg _{ _connectErrorMutex };
+		if( thumbprint.empty() )
+			_rejectedThumbprints.erase( slug );
+		else
+			_rejectedThumbprints.insert_or_assign( slug, move(thumbprint) );
+	}
 	//The endpoint's listener (ConnectionChange).  Its own lock, held for the copy alone:  the listener runs off every lock here.
 	static function<void(const ConnectionChange&)> _connectionListener; static mutex _connectionListenerMutex;
 	α UAClient::SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void{
@@ -167,6 +183,7 @@ namespace Jde::Opc::Gateway{
 	α UAClient::ClearConnectError( const ServerCnnctnNK& slug )ι->void{
 		lg _{ _connectErrorMutex };
 		_connectErrors.erase( slug );
+		_rejectedThumbprints.erase( slug );//a reachable slug has no standing rejection - whatever we last rejected no longer applies.
 	}
 	//The two ways a client goes.  RemoveClient forgets it:  what it was monitoring ends with it, which is what teardown, the tests and an
 	//idle client's shutdown mean.  ConnectionLost parks that first and reconnects it (soak-findings #10), and is only for a client whose
@@ -579,6 +596,7 @@ namespace Jde::Opc::Gateway{
 				string detail;//the reason handed to the waiting requests, not just the log - empty falls back to "Connection Failed".
 				if( auto rejection = connectStatus ? ServerTrust::Rejection(*UA_Client_getConfig(ua)) : string{}; rejection.size() ){
 					detail = move( rejection );//we rejected the server's certificate - already logged by the verifier.  Checked first: the status is BadCertificateUntrusted, the same code the server answers when it rejects ours.
+					SetRejectedThumbprint( client->Slug(), ServerTrust::RejectedThumbprint(*UA_Client_getConfig(ua)) );//the <thumbprint>.der the verifier wrote, for rejectedCertificate{} and trustServer.
 				}
 				else if( connectStatus == UA_STATUSCODE_BADIDENTITYTOKENREJECTED ){
 					//GetEndpoints on a discovery client of its own - a lookup, a connect and a round trip, up to the request timeout - on the

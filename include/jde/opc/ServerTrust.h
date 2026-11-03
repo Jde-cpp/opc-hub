@@ -28,11 +28,19 @@ namespace Jde::Opc::ServerTrust{
 	//At startup:  creates the <root>/trustedCertDirs entries that lie under this process's own data folder - its ssl/servers,
 	//where an operator drops a third-party server's certificate - so the place exists before anyone needs it.  Another
 	//product's directory (the bundled OpcServer's ssl/certs) is that product's to create:  absent means not installed.
+	//Creates <root>/rejectedCertDir too (the same own-data-folder rule), where the verifier writes a server certificate it
+	//rejects, so an admin can see it and trustServer can move it.
 	α EnsureDirs( sv settingsRoot )ι->void;
+	//<root>/rejectedCertDir, the directory a rejected server certificate is written to as <thumbprint>.der, default
+	//<AppDataFolder>/ssl/servers/rejected (beside the ssl/servers trusted dir, whose sibling trustServer moves it into).
+	α RejectedDir( sv settingsRoot )ι->fs::path;
 	//Before UA_ClientConfig_setDefault, which only fills a null verifyCertificate.  `url` names the server in the log and
 	//the rejection; `settingsRoot` - "/gateway", "/emulator" - is where both settings are read and what the rejection names.
-	α Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, SRCE )ε->void;
-	α Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& trustedCertDirs, Jde::Handle h, str url, sv settingsRoot="/gateway", SRCE )ε->void;//explicit, for tests.
+	//`expectedUri` is the applicationUri the chosen endpoint carries - the connection's certificateUri, open62541's endpoint
+	//filter - against which the verifier holds a trusted certificate's SAN URI, warning (never refusing) on a mismatch (spec
+	//*Trust*, *Open questions* #14);  empty where the connection pins no url (a None channel), so the check is skipped.
+	α Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri={}, SRCE )ε->void;
+	α Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& trustedCertDirs, Jde::Handle h, str url, sv settingsRoot="/gateway", sv expectedUri={}, SRCE )ε->void;//explicit, for tests.
 	//Test seam:  the directories the settings-driven Install uses instead of <root>/trustedCertDirs, for every client
 	//created until nullopt restores the setting - the live rejection is provoked here, mid-run, without rewriting a
 	//setting other clients in the process are reading.  An empty list is an override too:  no directories, nothing trusted.
@@ -41,5 +49,9 @@ namespace Jde::Opc::ServerTrust{
 	//StateCallback hands the waiting requests, since the status alone (BadCertificateUntrusted) reads the same as the server
 	//rejecting OUR certificate.
 	α Rejection( const UA_ClientConfig& config )ι->string;
+	//The SHA-1 thumbprint of the certificate this client's verifier last rejected, "" if it never did - the name of the
+	//<thumbprint>.der the verifier wrote to RejectedDir, which the client records per slug (UAClient) for rejectedCertificate{}
+	//to read and trustServer to move.
+	α RejectedThumbprint( const UA_ClientConfig& config )ι->string;
 	α AnchorCount( const UA_ClientConfig& config )ι->uint;//0 when verification is off.
 }

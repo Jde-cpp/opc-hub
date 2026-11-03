@@ -7,7 +7,9 @@ local serverConnection = {
 	fields: [
 		{ name: "connectionStatus", type: { kind: "OBJECT", name: "ConnectionStatus" } },
 		{ name: "opcSessions", type: { kind: "OBJECT", name: "OpcSessions" } },
-		{ name: "opcConnections", type: { kind: "OBJECT", name: "OpcConnections" } }
+		{ name: "opcConnections", type: { kind: "OBJECT", name: "OpcConnections" } },
+		{ name: "rejectedCertificate", type: { kind: "OBJECT", name: "RejectedCertificate" } },
+		{ name: "clientCertificate", type: { kind: "OBJECT", name: "ClientCertificate" } }
 	]
 };
 {
@@ -27,6 +29,26 @@ local serverConnection = {
 		fields: [
 			{ name: "name", type: NonNull(String) },
 			{ name: "error", type: String }
+		]
+	},
+	RejectedCertificate: { //the server certificate our verifier rejected for this slug (ServerTrust), null when there is none;  trustServer moves its file into a trusted dir
+		fields: [
+			{ name: "subject", type: NonNull(String) },
+			{ name: "issuer", type: NonNull(String) },
+			{ name: "notBefore", type: NonNull(String) },
+			{ name: "notAfter", type: NonNull(String) },
+			{ name: "uri", type: NonNull(String) },
+			{ name: "thumbprint", type: NonNull(String) } //the SHA-1, the name of the .der and the argument trustServer takes
+		]
+	},
+	ClientCertificate: { //the gateway's own issued certificate for this connection, the one it presents, null when its file does not exist;  `pem` is the file for the page to download
+		fields: [
+			{ name: "path", type: NonNull(String) },
+			{ name: "subject", type: NonNull(String) },
+			{ name: "notBefore", type: NonNull(String) },
+			{ name: "notAfter", type: NonNull(String) },
+			{ name: "uri", type: NonNull(String) },
+			{ name: "pem", type: NonNull(String) }
 		]
 	}
 }

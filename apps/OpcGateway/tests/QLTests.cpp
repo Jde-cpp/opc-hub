@@ -397,6 +397,12 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NE( connectionStatus, fields.end() ) << serialize( fields );
 			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/kind"), "OBJECT" );
 			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/name"), "ConnectionStatus" );
+			auto rejectedCertificate = FindRow( fields, "name", "rejectedCertificate" );//#415
+			ASSERT_NE( rejectedCertificate, fields.end() ) << serialize( fields );
+			EXPECT_EQ( Json::AsSVPath(rejectedCertificate->as_object(), "type/name"), "RejectedCertificate" );
+			auto clientCertificate = FindRow( fields, "name", "clientCertificate" );
+			ASSERT_NE( clientCertificate, fields.end() ) << serialize( fields );
+			EXPECT_EQ( Json::AsSVPath(clientCertificate->as_object(), "type/name"), "ClientCertificate" );
 		}
 		{ //the status type carries a name and the reason the last connect failed - the SPA's list selects only the name.
 			let fields = Fields( "ConnectionStatus" );
@@ -413,6 +419,14 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::AsSV(count, "name"), "count" );
 			EXPECT_EQ( Json::AsSVPath(count, "type/kind"), "NON_NULL" );
 			EXPECT_EQ( Json::AsSVPath(count, "type/ofType/name"), "UInt" );
+		}
+		{ //#415:  the two certificate types the trust panel reads - the rejected server certificate and the gateway's own.
+			let rejected = Fields( "RejectedCertificate" );
+			EXPECT_EQ( rejected.size(), 6u ) << serialize( rejected );//subject issuer notBefore notAfter uri thumbprint
+			EXPECT_NE( FindRow(rejected, "name", "thumbprint"), rejected.end() ) << serialize( rejected );
+			let client = Fields( "ClientCertificate" );
+			EXPECT_EQ( client.size(), 6u ) << serialize( client );//path subject notBefore notAfter uri pem
+			EXPECT_NE( FindRow(client, "name", "pem"), client.end() ) << serialize( client );
 		}
 	}
 

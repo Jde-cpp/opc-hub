@@ -1,8 +1,12 @@
 #include "OpcSessionsQLAwait.h"
 #include <jde/ql/QLAwait.h>
+#include <jde/fwk/io/file.h>
+#include <jde/fwk/crypto/Certificate.h>
+#include <jde/opc/ServerTrust.h>
 #include "../auth/OpcServerSession.h"
 #include "../GatewayAppClient.h"
 #include "../server/GatewayServer.h"
+#include "../UAClient.h"
 #include "GatewayQL.h"
 #define let const auto
 
@@ -52,6 +56,67 @@ namespace Jde::Opc::Gateway{
 		return user;
 	}
 
+	//rejectedCertificate{ subject issuer notBefore notAfter uri thumbprint }:  the <thumbprint>.der our verifier wrote for the slug
+	//(ServerTrust, UAClient::RejectedThumbprint), decoded;  null for a slug with no standing rejection, or whose file has since gone.
+	Ω rejectedCertificateJson( const QL::TableQL& q, const ServerCnnctnNK& slug )ι->jvalue{
+		let thumbprint = UAClient::RejectedThumbprint( slug );
+		if( thumbprint.empty() )
+			return jvalue{};
+		try{
+			let der = Crypto::ReadCertificate( ServerTrust::RejectedDir("/gateway")/Ƒ("{}.der", thumbprint) );
+			const Crypto::Certificate cert{ der };
+			jobject y;
+			if( q.FindColumn("subject") )
+				y["subject"] = cert.DistinguishedName;
+			if( q.FindColumn("issuer") )
+				y["issuer"] = cert.Issuer;
+			if( q.FindColumn("notBefore") )
+				y["notBefore"] = ToIsoString<std::chrono::seconds>( cert.NotBefore );
+			if( q.FindColumn("notAfter") )
+				y["notAfter"] = ToIsoString<std::chrono::seconds>( cert.Expiration );
+			if( q.FindColumn("uri") )
+				y["uri"] = cert.SanUri();
+			if( q.FindColumn("thumbprint") )
+				y["thumbprint"] = cert.Thumbprint;
+			return y;
+		}
+		catch( const std::exception& ){
+			return jvalue{};//the file went between the rejection and the read - nothing to show.
+		}
+	}
+	//clientCertificate{ path subject notBefore notAfter uri pem }:  the gateway's own issued certificate for the slug, the one it
+	//presents (UAClient::CryptoSettings), read from its file;  null when the file does not exist - a connection never connected.
+	Ω clientCertificateJson( const QL::TableQL& q, const ServerCnnctnNK& slug )ι->jvalue{
+		let settings = UAClient::CryptoSettings( slug );
+		let& path = settings.Certificate.Path;
+		std::error_code ec;
+		if( !fs::exists(path, ec) )
+			return jvalue{};
+		try{
+			let der = Crypto::ReadCertificate( path );
+			const Crypto::Certificate cert{ der };
+			jobject y;
+			if( q.FindColumn("path") )
+				y["path"] = path.string();
+			if( q.FindColumn("subject") )
+				y["subject"] = cert.DistinguishedName;
+			if( q.FindColumn("notBefore") )
+				y["notBefore"] = ToIsoString<std::chrono::seconds>( cert.NotBefore );
+			if( q.FindColumn("notAfter") )
+				y["notAfter"] = ToIsoString<std::chrono::seconds>( cert.Expiration );
+			if( q.FindColumn("uri") )
+				y["uri"] = cert.SanUri();
+			if( q.FindColumn("pem") ){
+				let bytes = IO::LoadBinary( path );//the PEM on disk, as the help's copy-by-path hands an operator today.
+				y["pem"] = string{ bytes.begin(), bytes.end() };
+			}
+			return y;
+		}
+		catch( const std::exception& ){
+			return jvalue{};
+		}
+	}
+
 	α OpcSessionsQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl ); //gateway/sessions - declared in opcGateway-meta.jsonnet's `resources`, shipped unenforced;  enforced once an admin says so.
@@ -97,6 +162,8 @@ namespace Jde::Opc::Gateway{
 			auto sessionsQL = _query.ExtractTable( "opcSessions" ); //before the select: SelectAwait derefs every child's DBTable(), and these have none.
 			auto connectionsQL = _query.ExtractTable( "opcConnections" );
 			auto statusQL = _query.ExtractTable( "connectionStatus" );
+			auto rejectedQL = _query.ExtractTable( "rejectedCertificate" );//the <thumbprint>.der our verifier wrote for the slug.
+			auto clientCertQL = _query.ExtractTable( "clientCertificate" );//the gateway's own issued certificate for the slug.
 			let addedSlug = _query.AddColumn( "slug" ); //the join key - both totals are per slug.
 			_query.ReturnRaw = true;
 			auto rows = co_await QL::QLAwait{ move(_query), UserPK(), _sl }; //UserPK ctor: no IQL, so CustomQuery is not re-entered; SelectAwait still authorizes the read.
@@ -140,6 +207,10 @@ namespace Jde::Opc::Gateway{
 					o["opcConnections"] = graft( connectionTotals, *connectionsQL, slug );
 				if( statusQL )
 					o["connectionStatus"] = graftStatus( *statusQL, slug );
+				if( rejectedQL )
+					o["rejectedCertificate"] = rejectedCertificateJson( *rejectedQL, slug );
+				if( clientCertQL )
+					o["clientCertificate"] = clientCertificateJson( *clientCertQL, slug );
 			} );
 			Resume( move(rows) );
 		}

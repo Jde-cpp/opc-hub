@@ -56,6 +56,12 @@ function( sync=false )
 		//anchors - every certificate under it may create a user - and a server the gateway talks to has no business among them
 		//(reviews/security-matrix.md #3).
 		trustedCertDirs: [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator"), args.serversDir("$(PRODUCT_NAME)") ],
+		//Where the verifier writes a server certificate it rejects, <thumbprint>.der (libs/opc ServerTrust.cpp), so the Connection
+		//tab shows it and Trust (trustServer) can move it.  A `::` key is its default, shown hidden:  ssl/servers/rejected, beside
+		//the ssl/servers trusted dir above - the sibling trustServer moves a trusted certificate into, which must stay among
+		//trustedCertDirs for the move to mean anything.  Not /gateway/server/rejectedCertDir, which is the gateway's own endpoint's
+		//for the clients IT refuses (the other direction of trust).
+		rejectedCertDir:: args.serversDir("$(PRODUCT_NAME)") + "/rejected",
 		//The gateway's historian (libs/historian/docs/spec.md, *Placement*):  the groups defined on it.  No `hist` block, or another
 		//process holding the lock under `path`, runs the gateway without its historian.  A `::` key is its default, shown hidden:
 		//un-hide it to change it.
