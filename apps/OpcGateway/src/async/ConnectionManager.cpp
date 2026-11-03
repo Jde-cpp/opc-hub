@@ -52,6 +52,39 @@ namespace Jde::Opc::Gateway{
 		std::jthread Worker;
 	};
 
+	α AsioConnectionManager::Resolve( str host, uint16 port, steady_clock::duration timeout )ι->vector<tcp::endpoint>{
+		struct Lookup final{ std::mutex Mutex; std::condition_variable Answered; optional<vector<tcp::endpoint>> Endpoints; };
+		try{
+			auto lookup = ms<Lookup>();
+			auto net = NetThread::Acquire();
+			//All on the net thread, which the handler holds - with the resolver - until getaddrinfo returns:  the last sp<NetThread> let
+			//go here would join it.
+			asio::post( *net->Ctx, [net, lookup, host=string{host}, port]{
+				auto resolver = ms<tcp::resolver>( *net->Ctx );
+				resolver->async_resolve( host, std::to_string(port), [net, lookup, resolver]( const error_code& ec, tcp::resolver::results_type results ){
+					vector<tcp::endpoint> endpoints;
+					if( !ec ){
+						for( let& entry : results )
+							endpoints.push_back( entry.endpoint() );
+					}
+					{
+						lg _{ lookup->Mutex };
+						lookup->Endpoints = move( endpoints );
+					}
+					lookup->Answered.notify_all();
+				});
+			});
+			std::unique_lock l{ lookup->Mutex };
+			if( lookup->Answered.wait_for(l, timeout, [&lookup]{ return lookup->Endpoints.has_value(); }) )
+				return move( *lookup->Endpoints );
+			DBG( "'{}' did not resolve within {} ms.", host, std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count() );
+		}
+		catch( const runtime_error& e ){//the net thread's resolver threads or reactor could not start.
+			DBG( "'{}' could not be looked up:  {}", host, e.what() );
+		}
+		return {};
+	}
+
 	//One tcp connection.  Its socket, state and queues belong to the net thread;  the loop thread sees it through Deliver, which
 	//takes the one pending event under Handoff, and through the manager's map.  `Context` is the client's - it writes its channel
 	//into it during the synchronous OPENING - and only Deliver passes it on.

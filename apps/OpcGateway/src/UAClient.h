@@ -50,6 +50,9 @@ namespace Jde::Opc::Gateway{
 
 		operator UA_Client* ()ι{ return _ptr; }
 		Ω Shutdown( bool terminate=false, SRCE )ι->VoidAwait::Task;
+		//Shutdown's:  every client still waiting for its session - in no registry yet, so Shutdown's snapshot would miss it and its
+		//activation register it after - stopped, and its waiters failed BadShutdown;  a test connect answered so.  The count.
+		Ω AbandonConnects()ι->uint;
 		Ω SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void;//one at a time;  null clears it.
 		Ω ShutdownIdle( sp<UAClient> client )ι->VoidAwait::Task;//TTL expiry - tears down only this client (per-client _lastRequest).
 		Ω GetClient( string id, Credential cred, SRCE )ι{ return ConnectAwait{move(id), move(cred), sl}; }
@@ -94,7 +97,7 @@ namespace Jde::Opc::Gateway{
 		}
 		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;//a submission was refused with sc (UACε):  ConnectionLost when that means the connection went.  Strand-only.
 		Ω LiveClients()ι->vector<sp<UAClient>>;//snapshot of the live clients - the `search` fan-out, which must never connect.
-		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed.  Returns how many.  ServerCnnctnMAwait.
+		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed;  a connect still in flight starts over (ConnectAgain).  Returns how many.  ServerCnnctnMAwait.
 		//A ping_interval or ttl edit alone (ServerCnnctnMAwait):  the two the gateway reads live (PingInterval, Ttl), so every client built from
 		//the row takes them on its strand, from its next ping and idle check, without the reconnect ConnectionEdited makes.  An unset
 		//outer optional leaves that one as it is;  an empty inner one clears it.  Returns how many.
@@ -157,7 +160,9 @@ namespace Jde::Opc::Gateway{
 		//first on windows, against a server bound to 127.0.0.1 (reviews/security-matrix.md #10; HostNameTests).  The asio manager
 		//(#526) tries each address in turn, so a refused first address costs it only the refusal, but one that drops the SYN holds the
 		//connect for the kernel's retries, about 127 s on Linux:  this races them all for three seconds and counts one still silent
-		//then as dead.  LogServerEndpoints' discovery client is open62541's own, which needs the substitute for a refused one too.
+		//then as dead.  The lookup before it gets three seconds too, on the asio manager's resolver threads (AsioConnectionManager::
+		//Resolve), and a name that outlasts them is connected to as given:  a nameserver that never answers held the caller ~10 s.
+		//LogServerEndpoints' discovery client is open62541's own, which needs the substitute for a refused one too.
 		//An address, a name with one address, and a name whose first address answers all come back exactly as given, so nothing
 		//changes where a connect already works;  the substitution is made only where the first address fails or stays silent.
 		Ω ReachableUrl( str url, Jde::Handle h )ι->string;
@@ -190,6 +195,9 @@ namespace Jde::Opc::Gateway{
 		α IsConnected()Ι->bool{ return _connected; }
 		α IsDiscarded()Ι->bool{ return _discarded; }//set by RemoveClient just before it clears connected:  a rebuild on this client drops what it has not restored instead of parking it.
 	private:
+		Ω Edits()ι->uint;//connection edits so far - ConnectAwait's, before it reads a row.
+		Ω EditedSince( const ServerCnnctn& row, uint edits )ι->bool;//row edited after Edits() answered `edits`.
+		Ω ConnectAgain( sp<UAClient> client )ι->void;//AnswerConnect's, for a client built from a row edited since:  stopped, and its waiters' connect run again.
 		Ω BuiltFrom( const DB::Key& connection )ι->vector<sp<UAClient>>;//the registered clients of that server_connections row:  by its id when that is the key, else by slug.
 		Ω StashPending( const sp<UAClient>& client )ι->void;//ConnectionLost's:  parks what the client monitored, then clears connected - defined beside the rebuild it feeds.
 		Ω Deregister( sp<UAClient>&& client )ι->bool;//the stop-and-erase RemoveClient and ConnectionLost share.
@@ -211,8 +219,10 @@ namespace Jde::Opc::Gateway{
 			bool NoneEndpoint{};
 			α Tokens()Ι->ETokenType{ ETokenType y{}; for( const auto& p : Policies ) y |= p.Type; return y; }//every type offered, on any endpoint.
 		};
-		Ω LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary;
+		Ω LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary;//a discovery client's synchronous GetEndpoints:  the blocking pool's.
 		α LogClientEndpoints()ι->void;
+		Ω IdentityRejectedDetail( const sp<UAClient>& client, const EndpointSummary& endpoints, bool allowPlain, str clientUri )ι->string;
+		Ω AnswerConnect( sp<UAClient> client, UA_SessionState sessionState, StatusCode connectStatus, string detail )ι->void;
 		//The certificate this client shows a server:  the app client's own for certificate authentication, else the connection's
 		//issued one, which goes on the channel when there is a certificateUri.  nullopt when it shows none.
 		α PresentedCertificate()Ι->optional<Crypto::CryptoSettings>;
@@ -234,6 +244,8 @@ namespace Jde::Opc::Gateway{
 		ServerCnnctn _opcServer;
 		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.
 		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  strand-only after it - see TakeTestResult.
+		uint _editsAtRead{};//Edits() when ConnectAwait read the row, set before Connect.
+		bool _testConnect{};//set by ConnectForTest, before Connect puts the client in _awaitingActivation;  read once it is taken out (AbandonConnects, AnswerConnect).
 		TimerCancel _testDeadline;//strand-confined.
 
 		//The authentication token of the session last seen activated - see RecordSession.  Written from StateCallback (the loop

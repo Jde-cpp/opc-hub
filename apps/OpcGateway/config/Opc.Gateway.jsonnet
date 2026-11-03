@@ -198,6 +198,7 @@ function( sync=false )
 		}
 	},
 	workers:{
+		blocking:: { threads: 2 },//the connects' pool (src/async/BlockingPool.h):  a client's build and connect - the certificate issue, the trust scan, the host probe - run here, never on the executor.
 		drive:{ threads:  2 },
 		executor:{ threads:  3 }
 	}

@@ -3,29 +3,39 @@
 #include <jde/fwk/process/execution.h>
 
 namespace Jde::Opc::Gateway{
-	//Runs `f` on the executor and resumes the awaiter with what it returns or throws - UAStrandAwait's twin for synchronous work
-	//that isn't the client's, whose locks or files the awaiting strand isn't to wait on.  The Any family, so any coroutine may
-	//co_await it.
-	Τ struct ExecutorAwait final : AnyAwaitFor<T>{
+	//`work` handed to `Run`, which runs it somewhere and passes what it throws to its second argument on the executor;  the awaiter
+	//is resumed on the executor with what `work` returned or threw.  The Any family, so any coroutine may co_await it.  `this` lives
+	//in the awaiting frame, which holds until the resume.
+	template<class T, auto Run>
+	struct RunAwait final : AnyAwaitFor<T>{
 		using base = AnyAwaitFor<T>;
-		ExecutorAwait( function<T()> f, SRCE )ι:base{ sl }, _f{ move(f) }{}
+		RunAwait( absl::AnyInvocable<T()> work, SRCE )ι:base{ sl }, _work{ std::move(work) }{}
 	protected:
 		α Suspend()ι->void override{
-			Post( [this]{
-				try{
-					if constexpr( std::is_void_v<T> ){
-						_f();
-						this->Resume();
-					}
-					else
-						this->Resume( _f() );
+			Run( [this]{
+				if constexpr( std::is_void_v<T> ){
+					_work();
+					Jde::Post( [this]{ base::Resume(); } );
 				}
-				catch( runtime_error& e ){
-					this->ResumeExp( std::move(e) );
-				}
-			} );
+				else
+					Jde::Post( [this, result=_work()]()mutable{ base::Resume( std::move(result) ); } );
+			}, [this]( up<Exception> e ){ base::ResumeExp( std::move(e) ); }, base::_sl );
 		}
 	private:
-		function<T()> _f;
+		absl::AnyInvocable<T()> _work;
 	};
+
+	Ξ RunOnExecutor( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL )ι->void{
+		Post( [work=std::move(work), onError=std::move(onError)]()mutable{
+			try{
+				work();
+			}
+			catch( std::runtime_error& e ){
+				onError( Exception::From(std::move(e)) );
+			}
+		} );
+	}
+	//Runs `work` on the executor - UAStrandAwait's twin for synchronous work that isn't the client's, whose locks or files the
+	//awaiting strand isn't to wait on.
+	Τ using ExecutorAwait = RunAwait<T, RunOnExecutor>;
 }

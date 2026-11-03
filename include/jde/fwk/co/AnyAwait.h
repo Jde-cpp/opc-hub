@@ -21,6 +21,7 @@ namespace Jde{
 		α await_suspend( coroutine_handle<> h )ι->void{ _h=h; Suspend(); }	//any promise's handle converts.
 		//Resume/ResumeExp may run the awaiting coroutine to completion inline, destroying this awaitable - they must be the caller's last use of `this`.
 		α ResumeExp( Exception&& e )ι->void{ _error=e.Move(); ResumeHandle(); }	//virtual Move keeps the subclass - await_resume rethrows the dynamic type.
+		α ResumeExp( up<Exception>&& e )ι->void{ _error=move(e); ResumeHandle(); }	//already on the heap, as Exception::From leaves it:  stored as it is.
 		α ResumeExp( runtime_error&& e )ι->void{
 			if( auto p = dynamic_cast<Exception*>(&e); p )
 				ResumeExp( move(*p) );

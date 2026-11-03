@@ -1,7 +1,6 @@
 //Servers phase 3a (#383, docs/servers/plan.md):  the endpoint's served address space - a group's members under Objects/<slug>/…
 //at their paths on the source, in a namespace per connection and remote URI, with the attributes their rows hold, Historizing and
 //an HA Configuration from their thresholds;  membership through HistHost's hooks;  and the group's rights on its nodes.
-#include <jde/fwk/process/execution.h>
 #include <jde/opc/server/HAConfiguration.h>
 #include "../src/hist/HistRows.h"
 #include "utils/EndpointFixture.h"
@@ -216,13 +215,8 @@ namespace Jde::Opc::Gateway::Tests{
 		optional<UA_UInt16> ns;
 		let served = [&]{ UA_NodeClass c; return ns && !UA_Server_readNodeClass( &ua, NodeId{*ns, Rpm3}, &c ); };
 		ASSERT_TRUE( WaitUntil([&]{ ns = Mapped( PumpsUri ); return served(); }) );
-		struct Hold final{ std::atomic<uint> Holding; std::atomic_flag Release; };
-		auto hold = ms<Hold>();//the posted waits' own:  one still queued when this returns has it.
-		let threads = Settings::FindNumber<uint>( "/workers/executor/threads" ).value_or( std::thread::hardware_concurrency() );
-		for( uint i=0; i<threads; ++i )
-			boost::asio::post( *Executor(), [hold]{ ++hold->Holding; hold->Release.wait( false ); } );
-		absl::Cleanup release = [hold]{ hold->Release.test_and_set(); hold->Release.notify_all(); };
-		EXPECT_TRUE( WaitUntil([&]{ return hold->Holding==threads; }, 2s) ) << "every executor thread held";
+		ExecutorHold hold;
+		EXPECT_TRUE( hold.Held() ) << "every executor thread held:  " << hold.Holding() << " of " << hold.Threads();
 		GatewayServer::Instance()->NodeLeft( group.Id, group.Index );
 		EXPECT_TRUE( WaitUntil([&]{ return !served(); }, 5s) ) << "the removal ran with no executor thread free";
 	}

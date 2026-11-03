@@ -37,6 +37,13 @@ namespace Jde::Logging{
 		mutable optional<StringMd5> _id;
 	};
 
+#ifndef __cpp_lib_stacktrace
+	//A frame's file, line and function, as boost's source_file, source_line and name give them, from one symbolizer for the process.
+	//Boost's libbacktrace state is per thread, and a thread's first use parses the binary's DWARF under glibc's loader lock - 1.5 s
+	//in a debug build, one thread at a time - so an executor thread's first open62541 log line waited out every other thread's.
+	struct FrameLocation final{ string File; uint32_t Line{}; string Function; };
+	Φ Locate( const boost::stacktrace::frame& frame )ι->FrameLocation;
+#endif
 	struct Γ Entry final{
 		template<class... Args> Entry( SL sl, ELogLevel l, ELogTags tags, string&& m, ARGS... args )ι;
 		template<class... Args> Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, string&& m, ARGS... args )ι;
@@ -117,12 +124,13 @@ namespace Jde::Logging{
 		Text{ m.get().data(), m.get().size() },
 		Level{ l },
 		Tags{ tags },
-		Line{ (uint32_t)sl.source_line() },
 		Time{ Clock::now() },
 		UserPK{ userPK },
-		_file{ sl.source_file() },
-		_function{ sl.name() },
 		_message{ fmt::vformat(m, fmt::make_format_args(FWD(args)...)) }{
+		auto at = Locate( sl );
+		Line = at.Line;
+		_file = SourceName{ move(at.File) };
+		_function = SourceName{ move(at.Function) };
 		ParamPack::Append( Arguments, FWD(args)... );
 	}
 #endif

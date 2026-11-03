@@ -77,6 +77,7 @@ function( sync=false )
 		}
 	},
 	workers:{
+		blocking:: { threads: 2 },//the gateway's connect pool (apps/OpcGateway/src/async/BlockingPool.h) - the build and the connect, never on the executor.
 		drive:{ threads: 2 },
 		executor:{ threads: 4 }
 	}

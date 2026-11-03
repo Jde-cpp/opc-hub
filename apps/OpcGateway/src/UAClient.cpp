@@ -2,13 +2,13 @@
 #include <stdexcept>
 #include <absl/synchronization/mutex.h>
 #include <jde/fwk/io/crc.h>
-#include <jde/fwk/process/execution.h>
 #include <jde/fwk/utils/collections.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/opc/ClientSecurity.h>
 #include <jde/opc/ServerTrust.h>
 #include <jde/historian/Group.h>
 #include "GatewayAppClient.h"
+#include "async/BlockingPool.h"
 #include "async/ConnectionManager.h"
 #include "async/Subscriptions.h"
 
@@ -18,6 +18,25 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	absl::Mutex _clientsMutex;
 	flat_map<ServerCnnctnNK,flat_map<Credential,sp<UAClient>>> _clients ABSL_GUARDED_BY(_clientsMutex);
+	//An edit reaches only registered clients, and a connect is in no registry until its session activates (#353 review #5).  So each
+	//edit is numbered, and each row keeps its last one under the key the edit came with;  a connect takes the count before it reads
+	//its row, and what it builds is stale once that row's number is past it.  Under _clientsMutex, which AnswerConnect registers in.
+	uint _edits ABSL_GUARDED_BY(_clientsMutex) = 0;
+	flat_map<uint,uint> _idEdits ABSL_GUARDED_BY(_clientsMutex);
+	flat_map<ServerCnnctnNK,uint> _slugEdits ABSL_GUARDED_BY(_clientsMutex);
+	Ω recordEdit( const DB::Key& connection )ι->void{
+		ul _{ _clientsMutex };
+		++_edits;
+		if( connection.IsPK() )
+			_idEdits.insert_or_assign( connection.PK(), _edits );
+		else
+			_slugEdits.insert_or_assign( connection.NK(), _edits );
+	}
+	ABSL_SHARED_LOCKS_REQUIRED(_clientsMutex) Ω editedSince( const ServerCnnctn& row, uint edits )ι->bool{
+		let id = _idEdits.find( row.Id );
+		let slug = _slugEdits.find( row.Slug );
+		return ( id!=_idEdits.end() && id->second>edits ) || ( slug!=_slugEdits.end() && slug->second>edits );
+	}
 	//Walks the registered clients under _clientsMutex until `f` answers false.  What the walk finds is the caller's to work on
 	//once it returns, outside the lock.
 	Ω walkClients( auto f )ι->void{
@@ -225,6 +244,7 @@ namespace Jde::Opc::Gateway{
 		return registered( [&]( const UAClient& client ){ return connection.IsPK() ? client._opcServer.Id==connection.PK() : client.Slug()==connection.NK(); } );
 	}
 	α UAClient::ConnectionEdited( const DB::Key& connection, bool removed )ι->uint{
+		recordEdit( connection );//before BuiltFrom:  a connect registers first, for it to find, or sees the edit.
 		auto clients = BuiltFrom( connection );
 		for( auto& client : clients ){
 			INFO( "[{}]Connection '{}' was {} - {}.", hex(client->Handle()), client->Slug(), removed ? "removed" : "edited", removed ? "closing its client" : "reconnecting on its new settings" );
@@ -236,6 +256,7 @@ namespace Jde::Opc::Gateway{
 		return clients.size();
 	}
 	α UAClient::KeepAliveEdited( const DB::Key& connection, optional<optional<uint32>> pingInterval, optional<optional<uint32>> ttl )ι->uint{
+		recordEdit( connection );
 		let clients = BuiltFrom( connection );
 		for( let& client : clients ){
 			INFO( "[{}]Connection '{}' was edited - its keep-alive and idle TTL take the new settings.", hex(client->Handle()), client->Slug() );
@@ -247,6 +268,14 @@ namespace Jde::Opc::Gateway{
 			} );
 		}
 		return clients.size();
+	}
+	α UAClient::Edits()ι->uint{
+		rl _{ _clientsMutex };
+		return _edits;
+	}
+	α UAClient::EditedSince( const ServerCnnctn& row, uint edits )ι->bool{
+		rl _{ _clientsMutex };
+		return editedSince( row, edits );
 	}
 	α UAClient::ConnectionCounts()ι->flat_map<ServerCnnctnNK,uint32>{
 		flat_map<ServerCnnctnNK,uint32> y;
@@ -292,7 +321,6 @@ namespace Jde::Opc::Gateway{
 	}
 
 	concurrent_flat_set<sp<UAClient>> _awaitingActivation;
-	concurrent_flat_set<sp<UAClient>> _testConnects;//armed and unanswered:  in no registry Shutdown reads, so it reads this one.
 
 	UAClient::UAClient( str address, Gateway::Credential cred )ε:
 		UAClient{ ServerCnnctn{address}, move(cred) }
@@ -320,10 +348,7 @@ namespace Jde::Opc::Gateway{
 		//Before the first co_await:  this runs fire-and-forget from Process::Shutdown, so everything after that suspends runs late,
 		//and a chain waking in the gap built a client after the snapshot below that nothing ever stopped (subscription-disconnect #3).
 		StopReconnects();
-		vector<sp<UAClient>> tests;
-		_testConnects.visit_all( [&tests](let& client){ tests.push_back(client); } );
-		for( let& client : tests )
-			client->PostUA( [p=client.get()]{ p->ExpireTest(UA_STATUSCODE_BADSHUTDOWN); } );
+		AbandonConnects();//then the snapshot:  a session that activates first is registered by now, and none that hasn't ever will be.
 		auto clients = registered( all );
 		//Must not hold _clientsMutex across co_await: the awaitable resumes on another pool thread (UB to unlock a shared_mutex off-thread) and the resume path (RemoveClient, StateCallback insertion) needs the unique lock.
 		for( auto& client : clients ){
@@ -335,6 +360,26 @@ namespace Jde::Opc::Gateway{
 		}
 		ul _{ _clientsMutex };
 		_clients.clear();
+	}
+
+	α UAClient::AbandonConnects()ι->uint{
+		//StateCallback registers only a client it takes out of _awaitingActivation, and does so inside the erase:  each client here is
+		//either taken first, or registered before this reaches it.  One it takes out with BadIdentityTokenRejected answers itself
+		//once the blocking pool has read the detail - BlockingPool::Stop runs that read first.
+		vector<sp<UAClient>> pending;
+		_awaitingActivation.erase_if( [&pending](let& client){ pending.push_back(client); return true; } );
+		for( let& client : pending ){
+			if( client->_testConnect ){//answered once, with whatever reaches TakeTestResult first.
+				client->PostUA( [p=client.get()]{ p->ExpireTest(UA_STATUSCODE_BADSHUTDOWN); } );
+				continue;
+			}
+			client->ClearRequest( ConnectRequestId );
+			client->StopProcessing();
+			Post( [client]()ι->void {
+				ConnectAwait::Resume( client->Slug(), client->Credential(), UAClientException{UA_STATUSCODE_BADSHUTDOWN, client->Handle(), "The gateway is shutting down."} );
+			});
+		}
+		return pending.size();
 	}
 
 	α UAClient::CryptoSettings( const ServerCnnctnNK& slug )ι->Crypto::CryptoSettings{
@@ -472,10 +517,31 @@ namespace Jde::Opc::Gateway{
 		//rejects every endpoint - and clientDescription's is what we advertise:  the gateway's own, from the SAN of the certificate it presents (Configuration()).
 		INFO( "[{}]Client Security Policies: {}, applicationUri filter: '{}', advertised applicationUri: '{}'", hex(Handle()), Str::Join(policyUris), ToString(config->applicationUri), ToString(config->clientDescription.applicationUri) );
 	}
+	//An opc.tcp url's host name, port and path - nullopt for an address, which has nothing to look up.
+	struct UrlName final{ string Host; uint16 Port; string Path; };
+	Ω urlName( str url )ι->optional<UrlName>{
+		if( !url.starts_with("opc.tcp://") )
+			return nullopt;
+		UA_String host{}, path{}; UA_UInt16 port{ 4840 };
+		const UA_String uaUrl{ url.size(), (UA_Byte*)url.data() };//views into `url` - nothing is allocated.
+		if( UA_parseEndpointUrl(&uaUrl, &host, &port, &path) || !host.length )
+			return nullopt;
+		string name{ (const char*)host.data, host.length };
+		boost::system::error_code ec;
+		if( name.front()=='[' || (boost::asio::ip::make_address(name, ec), !ec) )
+			return nullopt;
+		return UrlName{ move(name), port, string{(const char*)path.data, path.length} };
+	}
 	//What GetEndpoints on `url` answers - logged one line per endpoint, its policy and mode and every token policy with the policy
 	//that encrypts the token (`Username@Basic256Sha256`; `@None` is a token sent in the clear) - and summarized for the caller.
 	α UAClient::LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary{
 		EndpointSummary endpoints;
+		//GetEndpoints looks the name up with open62541's own getaddrinfo, which has no deadline:  a dead nameserver held this pool
+		//thread, and BlockingPool::Stop behind it (#353 review #8).  So a name that doesn't resolve within 3 s isn't read.
+		if( let name = urlName(url); name && AsioConnectionManager::Resolve(name->Host, name->Port, 3s).empty() ){
+			WARN( "[{}]'{}' did not resolve within 3 s - its endpoints aren't read.", hex(h), name->Host );
+			return endpoints;
+		}
 		Logger logger{ h };
 		UA_ClientConfig config{};
 		config.logging = &logger;
@@ -560,89 +626,16 @@ namespace Jde::Opc::Gateway{
 					detail = move( rejection );//we rejected the server's certificate - already logged by the verifier.  Checked first: the status is BadCertificateUntrusted, the same code the server answers when it rejects ours.
 				}
 				else if( connectStatus == UA_STATUSCODE_BADIDENTITYTOKENREJECTED ){
-					let endpoints = LogServerEndpoints( client->ConnectUrl(), client->Handle() );//the url that reached the server - a name's first address may not (ReachableUrl).
+					//GetEndpoints on a discovery client of its own - a lookup, a connect and a round trip, up to the request timeout - on the
+					//blocking pool (#353 review #4):  here it held this strand's executor thread, inside this erase.  Answered on the strand.
 					client->LogClientEndpoints();
-					//open62541 reports "No suitable endpoint found" as BadIdentityTokenRejected, so its usual causes read as a credential
-					//problem.  A token type the server never offers (install-issues #24: anonymous, to a server that takes certificates
-					//and issued tokens).  A credential the server takes only in the clear, which open62541 will not send unless
-					///gateway/allowPlaintextPassword says so (security-matrix #6).  A connection with no certificateUri - SecurityPolicy
-					//None, its tokens still encrypted (Configuration) - at a url with no unsecured endpoint (External publishes none under
-					//127.0.0.1), or whose unsecured endpoint takes the token only under a policy the gateway does not carry.  A server
-					//that offers the credential only under policies the gateway does not carry at all - a deprecated one, an ECC one
-					//(security-matrix #4; SecurityPolicyTests).  And with a certificateUri, our configured applicationUri filtering out every endpoint (matchEndpoint):  name
-					//both uris - the fix is the slug's certificateUri, which is what Configuration() puts in the filter.  NoSecurityTests,
-					//PlaintextPasswordTests, ExternalServerTests; reviews/security-matrix.md.
-					let type = client->Credential().Type();
-					let& row = client->_opcServer;
-					let noUri = row.CertificateUri.empty();
-					//The channel the row asks for (spec *Connection settings*):  secured - Sign or Sign & Encrypt, pinned or the floor a
-					//certificateUri sets - and then the one mode it takes, as open62541's matchEndpoint takes only the configured mode;  and
-					//the policy it pins, which filters the endpoints to its own.
-					let secured = row.Secured();
-					let pinnedMode = row.SecurityMode.size();
-					let mode = row.EffectiveMode()==ServerCnnctn::ModeSign ? UA_MESSAGESECURITYMODE_SIGN : UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-					let& pinnedPolicy = row.SecurityPolicy;
-					let allowPlain = UA_Client_getConfig( ua )->allowNonePolicyPassword;
-					let secretType = type==ETokenType::Username || type==ETokenType::IssuedToken;
-					let noneUri = ToString( UA_SECURITY_POLICY_NONE_URI );
-					//What this client could have presented:  on an endpoint it can reach (None on an unsecured channel;  on a secured one,
-					//an endpoint of the row's mode under a secured policy it carries, the pinned one where there is one), a token under a
-					//secured policy it carries - or under None where that puts no secret on the wire unencrypted:  an anonymous token, a
-					//Sign & Encrypt channel, or the operator's allowPlaintextPassword.
-					bool offered{}, presentable{}, refusedPlain{}, securedOffer{}, otherPolicy{};
-					flat_set<string> foreign;//policies the server asks for and the gateway does not carry - Basic256, an ECC one.
-					flat_set<string> otherModes;//the modes of the endpoints out of reach for theirs.
-					for( let& p : endpoints.Policies ){
-						if( p.Type!=type )
-							continue;
-						offered = true;
-						if( secured && p.Mode!=mode ){//not the row's mode (Configuration) - out of reach, whatever securityLevel it claims (m2-closing #1).
-							otherModes.emplace( modeWords(SecurityModeName(p.Mode)) );
-							continue;
-						}
-						let inClear = secretType && p.Policy==noneUri && p.Mode!=UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-						let encryptable = type==ETokenType::Anonymous || ClientSecurity::Carries( p.Policy ) || ( p.Policy==noneUri && type!=ETokenType::Certificate );
-						if( !encryptable && p.Policy!=noneUri )
-							foreign.emplace( ClientSecurity::PolicyName(p.Policy) );
-						if( ClientSecurity::Carries(p.ChannelPolicy) && !secured ){//out of reach on an unsecured channel - but the way out, if it takes the credential encrypted.
-							securedOffer = securedOffer || ( encryptable && !inClear );
-							continue;
-						}
-						if( !ClientSecurity::Carries(p.ChannelPolicy) && p.ChannelPolicy!=noneUri ){//a channel policy the gateway does not carry.
-							foreign.emplace( ClientSecurity::PolicyName(p.ChannelPolicy) );
-							continue;
-						}
-						if( pinnedPolicy.size() && p.ChannelPolicy!=pinnedPolicy ){//filtered out by the pin (open62541 matchEndpoint).
-							otherPolicy = true;
-							continue;
-						}
-						if( encryptable && (!inClear || allowPlain) )
-							presentable = true;
-						else if( inClear )
-							refusedPlain = true;
-					}
-					let foreignNames = Str::Join( vector<string>{foreign.begin(), foreign.end()} );
-					let unsecuredWhy = noUri ? Ƒ( "'{}' has no certificateUri, so the gateway connects with SecurityPolicy None", client->Slug() ) : Ƒ( "'{}' pins security mode None", client->Slug() );
-					let secureFix = noUri ? Ƒ( "set the connection's certificateUri to the server's applicationUri '{}'", endpoints.ServerUri ) : string{ "clear the connection's security mode" };
-					if( endpoints.ServerUri.empty() || presentable ){}//the endpoints could not be read, or something fits: the filter, below, or a genuine rejection.
-					else if( !offered )
-						detail = Ƒ( "'{}' does not offer {} authentication (offered: [{}])", client->Url(), TokenTypeName(type), TokenTypeName(endpoints.Tokens()) );
-					else if( refusedPlain )
-						detail = Ƒ( "'{}' takes {} authentication only under a token policy of None on a channel that is not encrypted, which would put the credential on the wire in the clear - refused.  {}/gateway/allowPlaintextPassword=true sends it as it is", client->Url(), TokenTypeName(type), securedOffer ? Ƒ("{}{} to sign in encrypted, or ", (char)std::toupper(secureFix.front()), sv{secureFix}.substr(1)) : string{"Setting "} );
-					else if( !secured && !endpoints.NoneEndpoint )
-						detail = Ƒ( "{}, and '{}' has no unsecured endpoint - {} to connect secured", unsecuredWhy, client->Url(), secureFix );
-					else if( !secured )
-						detail = Ƒ( "{}, and the unsecured endpoint of '{}' takes {} authentication only under a security policy the gateway does not carry ([{}]; it carries {}) - try the connection again after you {}", unsecuredWhy, client->Url(), TokenTypeName(type), foreignNames, securedPolicyNames(), secureFix );
-					else if( foreign.size() )
-						detail = Ƒ( "'{}' offers {} authentication only under security policies the gateway does not carry ([{}]) - it carries {}", client->Url(), TokenTypeName(type), foreignNames, securedPolicyNames() );
-					else if( otherPolicy )
-						detail = Ƒ( "'{}' pins security policy {}, under which '{}' offers {} authentication on no {} endpoint - pick a policy it offers, or clear the policy to take the strongest the two share", client->Slug(), ClientSecurity::PolicyName(pinnedPolicy), client->Url(), TokenTypeName(type), modeWords(row.EffectiveMode()) );
-					else if( otherModes.size() )
-						detail = Ƒ( "'{}' {}, and '{}' offers {} authentication only on endpoints of another mode ({}) - refused rather than {}.  Enable a {} endpoint on the server, or {}", client->Slug(), pinnedMode ? Ƒ("pins security mode {}", modeWords(row.SecurityMode)) : string{"has a certificateUri, which means Sign & Encrypt"}, client->Url(), TokenTypeName(type), Str::Join(otherModes, " or "), mode==UA_MESSAGESECURITYMODE_SIGNANDENCRYPT ? "downgraded" : "changed", modeWords(row.EffectiveMode()), pinnedMode ? "set the connection's security mode to one it offers" : "clear the connection's certificateUri to connect unsecured" );
-					if( let clientUri = client->ApplicationUri(); detail.empty() && clientUri.size() && !endpoints.ServerUri.empty() && clientUri!=endpoints.ServerUri )
-						detail = Ƒ( "the connection's certificateUri '{}' is not the applicationUri of the server at '{}', which is '{}' - every endpoint is filtered out; correct the certificateUri", clientUri, client->Url(), endpoints.ServerUri );
-					if( detail.size() )
-						ERR( "[{}]{}", hex(client->Handle()), detail );
+					BlockingPool::Post( [client, sessionState, connectStatus, allowPlain=UA_Client_getConfig(ua)->allowNonePolicyPassword, clientUri=client->ApplicationUri()]{
+						auto detail = Process::ShuttingDown()
+							? string{}
+							: IdentityRejectedDetail( client, LogServerEndpoints(client->ConnectUrl(), client->Handle()), allowPlain, clientUri );//the url that reached the server - a name's first address may not (ReachableUrl).
+						client->PostUA( [client, sessionState, connectStatus, detail=move(detail)]()mutable{ AnswerConnect( move(client), sessionState, connectStatus, move(detail) ); } );
+					});
+					return true;
 				}
 				else if( auto presented = RefusesCertificate(connectStatus) ? client->PresentedCertificate() : optional<Crypto::CryptoSettings>{}; presented ){//a BadCertificateUntrusted of ours is answered above - ServerTrust::Rejection - so this one is the server's.
 					//The other direction:  the server turned OUR certificate down.  It says so with a status and nothing a client can show
@@ -662,62 +655,173 @@ namespace Jde::Opc::Gateway{
 						certificate->Log( Ƒ("[{}]Presented certificate '{}'", hex(client->Handle()), presented->Certificate.Path.string()) );
 				}
 
-				client->ClearRequest( ConnectRequestId );//previous clear didn't have client
-				if( auto onResult = client->TakeTestResult(); onResult ){//a test connect reports to its caller alone - see ConnectForTest:  no registry entry, no ConnectErrors, no waiter drained.
-					client->_connected = sessionState == UA_SESSIONSTATE_ACTIVATED;
-					up<UAClientException> error;
-					if( !client->IsConnected() ){
-						error = mu<UAClientException>( connectStatus, client->Handle(), detail.size() ? move(detail) : string{"Connection Failed"} );
-						client->StopProcessing();//as the failure branch below:  the client never enters _clients, so nothing else would Stop() it.
-					}
-					Post( [client, onResult=std::move(onResult), error=move(error)]()mutable ι->void {
-						onResult( client, move(error) );
-					});
-				}
-				else if( sessionState == UA_SESSIONSTATE_ACTIVATED ){
-					client->RecordSession();//the baseline the re-activation branch above compares against; nothing to rebuild on a first activation.
-					ClearConnectError( client->Slug() );//a reachable slug - whatever the previous attempt failed on no longer applies.
-					client->_asyncRequest.RequestDrain();//open62541 fires its namespace-array read right after this callback returns; ProcessingLoop must keep pumping until the reply is serviced (OnServiceBegin).
-					{
-						ul _{ _clientsMutex };
-						client->_connected = true;
-						client->_sessionUp = true;
-						auto& opcCreds = _clients.try_emplace( client->Slug() ).first->second;
-						let inserted = opcCreds.try_emplace( client->Credential(), client ).second;
-						ASSERT( inserted );//ConnectAwait::Start creates one client per slug and credential:  the first waiter, re-checked under its _requestMutex.
-					}
-					notifyChange( client->Slug(), ConnectionChange::EKind::Activated );
-					Post( [client]()ι->void {
-						ConnectAwait::Resume( move(client) );
-					});
-				}
-				else{
-					//Remembered for serverConnections{connectionStatus}: the waiting requests get the reason once, the list has no other
-					//way to learn the slug is broken.  Named by status where there is no richer detail - the caller's exception
-					//carries the code separately, but a stored "Connection Failed" would say nothing about what went wrong.
-					SetConnectError( client->Slug(), detail.size() ? detail : string{UAException::Message(connectStatus)} );
-					auto failure = Ƒ( "{} - {}", UAException::Message(connectStatus), detail.size() ? detail : string{"Connection Failed"} );
-					{
-						lg _{ _connectErrorMutex };
-						_lastFailures.insert_or_assign( client->Slug(), failure );
-					}
-					notifyChange( client->Slug(), ConnectionChange::EKind::Failed, move(failure) );
-					string message{ detail.size() ? move(detail) : string{"Connection Failed"} };
-					client->StopProcessing();// Break the UAClient<->_asyncRequest._client self-reference; on the failure path the client never enters _clients, so Shutdown would never Stop() it and the UAClient (and its UA_Client) would leak.
-					Post(
-						[client,connectStatus,message=move(message)]()ι->void {
-							ConnectAwait::Resume(
-								client->Slug(),
-								client->Credential(),
-								UAClientException{connectStatus, client->Handle(), message}
-							);
-						}
-					);
-				}
+				AnswerConnect( client, sessionState, connectStatus, move(detail) );
 
 				return true;
 			});
 		}
+	}
+	//Why a connect failed BadIdentityTokenRejected, from what GetEndpoints answered (LogServerEndpoints) - empty where nothing
+	//explains it - and logged.  On the blocking pool:  `allowPlain` and `clientUri` were read from the client's config on its strand.
+	α UAClient::IdentityRejectedDetail( const sp<UAClient>& client, const EndpointSummary& endpoints, bool allowPlain, str clientUri )ι->string{
+		string detail;
+		//open62541 reports "No suitable endpoint found" as BadIdentityTokenRejected, so its usual causes read as a credential
+		//problem.  A token type the server never offers (install-issues #24: anonymous, to a server that takes certificates
+		//and issued tokens).  A credential the server takes only in the clear, which open62541 will not send unless
+		///gateway/allowPlaintextPassword says so (security-matrix #6).  A connection with no certificateUri - SecurityPolicy
+		//None, its tokens still encrypted (Configuration) - at a url with no unsecured endpoint (External publishes none under
+		//127.0.0.1), or whose unsecured endpoint takes the token only under a policy the gateway does not carry.  A server
+		//that offers the credential only under policies the gateway does not carry at all - a deprecated one, an ECC one
+		//(security-matrix #4; SecurityPolicyTests).  And with a certificateUri, our configured applicationUri filtering out every endpoint (matchEndpoint):  name
+		//both uris - the fix is the slug's certificateUri, which is what Configuration() puts in the filter.  NoSecurityTests,
+		//PlaintextPasswordTests, ExternalServerTests; reviews/security-matrix.md.
+		let type = client->Credential().Type();
+		let& row = client->_opcServer;
+		let noUri = row.CertificateUri.empty();
+		//The channel the row asks for (spec *Connection settings*):  secured - Sign or Sign & Encrypt, pinned or the floor a
+		//certificateUri sets - and then the one mode it takes, as open62541's matchEndpoint takes only the configured mode;  and
+		//the policy it pins, which filters the endpoints to its own.
+		let secured = row.Secured();
+		let pinnedMode = row.SecurityMode.size();
+		let mode = row.EffectiveMode()==ServerCnnctn::ModeSign ? UA_MESSAGESECURITYMODE_SIGN : UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+		let& pinnedPolicy = row.SecurityPolicy;
+		let secretType = type==ETokenType::Username || type==ETokenType::IssuedToken;
+		let noneUri = ToString( UA_SECURITY_POLICY_NONE_URI );
+		//What this client could have presented:  on an endpoint it can reach (None on an unsecured channel;  on a secured one,
+		//an endpoint of the row's mode under a secured policy it carries, the pinned one where there is one), a token under a
+		//secured policy it carries - or under None where that puts no secret on the wire unencrypted:  an anonymous token, a
+		//Sign & Encrypt channel, or the operator's allowPlaintextPassword.
+		bool offered{}, presentable{}, refusedPlain{}, securedOffer{}, otherPolicy{};
+		flat_set<string> foreign;//policies the server asks for and the gateway does not carry - Basic256, an ECC one.
+		flat_set<string> otherModes;//the modes of the endpoints out of reach for theirs.
+		for( let& p : endpoints.Policies ){
+			if( p.Type!=type )
+				continue;
+			offered = true;
+			if( secured && p.Mode!=mode ){//not the row's mode (Configuration) - out of reach, whatever securityLevel it claims (m2-closing #1).
+				otherModes.emplace( modeWords(SecurityModeName(p.Mode)) );
+				continue;
+			}
+			let inClear = secretType && p.Policy==noneUri && p.Mode!=UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+			let encryptable = type==ETokenType::Anonymous || ClientSecurity::Carries( p.Policy ) || ( p.Policy==noneUri && type!=ETokenType::Certificate );
+			if( !encryptable && p.Policy!=noneUri )
+				foreign.emplace( ClientSecurity::PolicyName(p.Policy) );
+			if( ClientSecurity::Carries(p.ChannelPolicy) && !secured ){//out of reach on an unsecured channel - but the way out, if it takes the credential encrypted.
+				securedOffer = securedOffer || ( encryptable && !inClear );
+				continue;
+			}
+			if( !ClientSecurity::Carries(p.ChannelPolicy) && p.ChannelPolicy!=noneUri ){//a channel policy the gateway does not carry.
+				foreign.emplace( ClientSecurity::PolicyName(p.ChannelPolicy) );
+				continue;
+			}
+			if( pinnedPolicy.size() && p.ChannelPolicy!=pinnedPolicy ){//filtered out by the pin (open62541 matchEndpoint).
+				otherPolicy = true;
+				continue;
+			}
+			if( encryptable && (!inClear || allowPlain) )
+				presentable = true;
+			else if( inClear )
+				refusedPlain = true;
+		}
+		let foreignNames = Str::Join( vector<string>{foreign.begin(), foreign.end()} );
+		let unsecuredWhy = noUri ? Ƒ( "'{}' has no certificateUri, so the gateway connects with SecurityPolicy None", client->Slug() ) : Ƒ( "'{}' pins security mode None", client->Slug() );
+		let secureFix = noUri ? Ƒ( "set the connection's certificateUri to the server's applicationUri '{}'", endpoints.ServerUri ) : string{ "clear the connection's security mode" };
+		if( endpoints.ServerUri.empty() || presentable ){}//the endpoints could not be read, or something fits: the filter, below, or a genuine rejection.
+		else if( !offered )
+			detail = Ƒ( "'{}' does not offer {} authentication (offered: [{}])", client->Url(), TokenTypeName(type), TokenTypeName(endpoints.Tokens()) );
+		else if( refusedPlain )
+			detail = Ƒ( "'{}' takes {} authentication only under a token policy of None on a channel that is not encrypted, which would put the credential on the wire in the clear - refused.  {}/gateway/allowPlaintextPassword=true sends it as it is", client->Url(), TokenTypeName(type), securedOffer ? Ƒ("{}{} to sign in encrypted, or ", (char)std::toupper(secureFix.front()), sv{secureFix}.substr(1)) : string{"Setting "} );
+		else if( !secured && !endpoints.NoneEndpoint )
+			detail = Ƒ( "{}, and '{}' has no unsecured endpoint - {} to connect secured", unsecuredWhy, client->Url(), secureFix );
+		else if( !secured )
+			detail = Ƒ( "{}, and the unsecured endpoint of '{}' takes {} authentication only under a security policy the gateway does not carry ([{}]; it carries {}) - try the connection again after you {}", unsecuredWhy, client->Url(), TokenTypeName(type), foreignNames, securedPolicyNames(), secureFix );
+		else if( foreign.size() )
+			detail = Ƒ( "'{}' offers {} authentication only under security policies the gateway does not carry ([{}]) - it carries {}", client->Url(), TokenTypeName(type), foreignNames, securedPolicyNames() );
+		else if( otherPolicy )
+			detail = Ƒ( "'{}' pins security policy {}, under which '{}' offers {} authentication on no {} endpoint - pick a policy it offers, or clear the policy to take the strongest the two share", client->Slug(), ClientSecurity::PolicyName(pinnedPolicy), client->Url(), TokenTypeName(type), modeWords(row.EffectiveMode()) );
+		else if( otherModes.size() )
+			detail = Ƒ( "'{}' {}, and '{}' offers {} authentication only on endpoints of another mode ({}) - refused rather than {}.  Enable a {} endpoint on the server, or {}", client->Slug(), pinnedMode ? Ƒ("pins security mode {}", modeWords(row.SecurityMode)) : string{"has a certificateUri, which means Sign & Encrypt"}, client->Url(), TokenTypeName(type), Str::Join(otherModes, " or "), mode==UA_MESSAGESECURITYMODE_SIGNANDENCRYPT ? "downgraded" : "changed", modeWords(row.EffectiveMode()), pinnedMode ? "set the connection's security mode to one it offers" : "clear the connection's certificateUri to connect unsecured" );
+		if( detail.empty() && clientUri.size() && !endpoints.ServerUri.empty() && clientUri!=endpoints.ServerUri )
+			detail = Ƒ( "the connection's certificateUri '{}' is not the applicationUri of the server at '{}', which is '{}' - every endpoint is filtered out; correct the certificateUri", clientUri, client->Url(), endpoints.ServerUri );
+		if( detail.size() )
+			ERR( "[{}]{}", hex(client->Handle()), detail );
+		return detail;
+	}
+	//The connect's answer, on its strand:  registered and the waiters resumed, or failed with `detail`;  a test connect reports to its
+	//caller alone.  Inside StateCallback's erase, but for a BadIdentityTokenRejected, whose detail is read on the blocking pool first.
+	α UAClient::AnswerConnect( sp<UAClient> client, UA_SessionState sessionState, StatusCode connectStatus, string detail )ι->void{
+		client->ClearRequest( ConnectRequestId );//previous clear didn't have client
+		if( client->_testConnect ){//a test connect reports to its caller alone - see ConnectForTest:  no registry entry, no ConnectErrors, no waiter drained.
+			if( auto onResult = client->TakeTestResult(); onResult ){//once:  its deadline can answer it while a BadIdentityTokenRejected's detail is read.
+				client->_connected = sessionState == UA_SESSIONSTATE_ACTIVATED;
+				up<UAClientException> error;
+				if( !client->IsConnected() ){
+					error = mu<UAClientException>( connectStatus, client->Handle(), detail.size() ? move(detail) : string{"Connection Failed"} );
+					client->StopProcessing();//as the failure branch below:  the client never enters _clients, so nothing else would Stop() it.
+				}
+				Post( [client, onResult=std::move(onResult), error=move(error)]()mutable ι->void {
+					onResult( client, move(error) );
+				});
+			}
+		}
+		else if( sessionState == UA_SESSIONSTATE_ACTIVATED ){
+			client->RecordSession();//the baseline the re-activation branch above compares against; nothing to rebuild on a first activation.
+			client->_asyncRequest.RequestDrain();//open62541 fires its namespace-array read right after this callback returns; ProcessingLoop must keep pumping until the reply is serviced (OnServiceBegin).
+			bool stale;
+			{
+				ul _{ _clientsMutex };
+				if( !(stale = editedSince(client->_opcServer, client->_editsAtRead)) ){//in the lock recordEdit takes:  an edit is seen here, or finds the client registered.
+					client->_connected = true;
+					client->_sessionUp = true;
+					auto& opcCreds = _clients.try_emplace( client->Slug() ).first->second;
+					let inserted = opcCreds.try_emplace( client->Credential(), client ).second;
+					ASSERT( inserted );//ConnectAwait::Start creates one client per slug and credential:  the first waiter, re-checked under its _requestMutex.
+				}
+			}
+			if( stale ){
+				ConnectAgain( move(client) );
+				return;
+			}
+			ClearConnectError( client->Slug() );//a reachable slug - whatever the previous attempt failed on no longer applies.
+			notifyChange( client->Slug(), ConnectionChange::EKind::Activated );
+			Post( [client]()ι->void {
+				ConnectAwait::Resume( move(client) );
+			});
+		}
+		else if( EditedSince(client->_opcServer, client->_editsAtRead) )
+			ConnectAgain( move(client) );//failed on the row as it was:  the slug's error is the new row's to give.
+		else{
+			//Remembered for serverConnections{connectionStatus}: the waiting requests get the reason once, the list has no other
+			//way to learn the slug is broken.  Named by status where there is no richer detail - the caller's exception
+			//carries the code separately, but a stored "Connection Failed" would say nothing about what went wrong.
+			SetConnectError( client->Slug(), detail.size() ? detail : string{UAException::Message(connectStatus)} );
+			auto failure = Ƒ( "{} - {}", UAException::Message(connectStatus), detail.size() ? detail : string{"Connection Failed"} );
+			{
+				lg _{ _connectErrorMutex };
+				_lastFailures.insert_or_assign( client->Slug(), failure );
+			}
+			notifyChange( client->Slug(), ConnectionChange::EKind::Failed, move(failure) );
+			string message{ detail.size() ? move(detail) : string{"Connection Failed"} };
+			client->StopProcessing();// Break the UAClient<->_asyncRequest._client self-reference; on the failure path the client never enters _clients, so Shutdown would never Stop() it and the UAClient (and its UA_Client) would leak.
+			Post(
+				[client,connectStatus,message=move(message)]()ι->void {
+					ConnectAwait::Resume(
+						client->Slug(),
+						client->Credential(),
+						UAClientException{connectStatus, client->Handle(), message}
+					);
+				}
+			);
+		}
+	}
+	//A connect whose row was edited or deleted after ConnectAwait read it:  the edit found no client to act on, so this one is stopped
+	//unregistered, and its waiters' connect starts over on the row as it now is - or fails "Could not find connection".
+	α UAClient::ConnectAgain( sp<UAClient> client )ι->void{
+		INFO( "[{}]Connection '{}' was edited while it connected - connecting again on the row as it now is.", hex(client->Handle()), client->Slug() );
+		client->StopProcessing();
+		Post( [slug=client->Slug(), cred=client->Credential()]()mutable ι->void {
+			ConnectAwait::Create( move(slug), move(cred) );
+		});
 	}
 	//Fires inside run_iterate (client mutex held, on the strand) as each service response is processed.  SERVICE_BEGIN
 	//arrives while a request of ours is still tracked in _requests (its completion callback, which untracks it, runs
@@ -853,31 +957,20 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAClient::ReachableUrl( str url, Jde::Handle h )ι->string{
 		try{
-			constexpr sv scheme{ "opc.tcp://" };
-			if( !url.starts_with(scheme) )
+			let name = urlName( url );
+			if( !name )//an address already - there is no second one to fall back to.
 				return url;
-			UA_String host{}, path{}; UA_UInt16 port{ 4840 };
-			const UA_String uaUrl{ url.size(), (UA_Byte*)url.data() };//views into `url` - nothing is allocated.
-			if( UA_parseEndpointUrl(&uaUrl, &host, &port, &path) || !host.length )
-				return url;
-			const string name{ (const char*)host.data, host.length };
-			boost::system::error_code ec;
-			if( name.front()=='[' || (boost::asio::ip::make_address(name, ec), !ec) )//an address already - there is no second one to fall back to.
-				return url;
-			boost::asio::io_context ctx;
-			vector<tcp::endpoint> endpoints;
-			for( let& entry : tcp::resolver{ctx}.resolve(name, std::to_string(port), ec) )
-				endpoints.push_back( entry.endpoint() );
-			if( ec || endpoints.size()<2 )
+			let endpoints = AsioConnectionManager::Resolve( name->Host, name->Port, 3s );//no longer than the probe:  a dead nameserver held a pool thread ~10 s (#353 review #3).
+			if( endpoints.size()<2 )
 				return url;
 			let first = firstAccepting( endpoints, 3s );//windows takes about two seconds to refuse a link-local or loopback IPv6 address.
 			if( !first || *first==0 )
 				return url;//the address open62541 will pick answers - the name stays - or none does, which open62541 reports as it always has.
 			let address = endpoints[*first].address();
-			auto reachable = Ƒ( "{}{}:{}", scheme, address.is_v6() ? Ƒ("[{}]", address.to_string()) : address.to_string(), port );
-			if( path.length )
-				reachable += Ƒ( "/{}", sv{(const char*)path.data, path.length} );
-			INFO( "[{}]'{}' resolves to {} addresses and the first, {}, takes no connection, where open62541 would stop - connecting to '{}' instead.", hex(h), name, endpoints.size(), endpoints.front().address().to_string(), reachable );
+			auto reachable = Ƒ( "opc.tcp://{}:{}", address.is_v6() ? Ƒ("[{}]", address.to_string()) : address.to_string(), name->Port );
+			if( name->Path.size() )
+				reachable += Ƒ( "/{}", name->Path );
+			INFO( "[{}]'{}' resolves to {} addresses and the first, {}, takes no connection, where open62541 would stop - connecting to '{}' instead.", hex(h), name->Host, endpoints.size(), endpoints.front().address().to_string(), reachable );
 			return reachable;
 		}
 		catch( const std::exception& ){
@@ -901,17 +994,13 @@ namespace Jde::Opc::Gateway{
 	α UAClient::ConnectForTest( ConnectCallback onResult )ε->void{
 		ASSERT( onResult );
 		_onTestResult = std::move( onResult );//std::, as PostUA:  absl::AnyInvocable makes the unqualified call ambiguous
+		_testConnect = true;
 		Connect();
 		PostUA( [this]{ TestDeadline(shared_from_this()); } );
 	}
-	α UAClient::TestDeadline( sp<UAClient> self )ι->VoidTask{
+	α UAClient::TestDeadline( sp<UAClient> /*self:  the frame's copy holds the client across the deadline's wait*/ )ι->VoidTask{
 		if( !_onTestResult )
-			co_return;//answered before the deadline was armed.
-		_testConnects.emplace( self );//then the ShuttingDown check:  a Shutdown either finds it there or is found here.
-		if( Process::ShuttingDown() ){
-			ExpireTest( UA_STATUSCODE_BADSHUTDOWN );
-			co_return;
-		}
+			co_return;//answered before the deadline was armed - by Shutdown's AbandonConnects too.
 		DurationTimer deadline{ std::chrono::milliseconds{UA_Client_getConfig(UAPointer())->timeout}, _asyncRequest.Strand(), SRCE_CUR };
 		_testDeadline = deadline.Canceller();
 		(void)co_await deadline;//resumes on the strand.  Cancelled by TakeTestResult, which leaves ExpireTest nothing to report.
@@ -923,7 +1012,6 @@ namespace Jde::Opc::Gateway{
 			return {};
 		if( _testDeadline )
 			_testDeadline.Cancel();
-		_testConnects.erase( shared_from_this() );
 		auto onResult = std::move( _onTestResult );
 		_onTestResult = nullptr;//a moved-from AnyInvocable need not be empty.
 		return onResult;

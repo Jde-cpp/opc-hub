@@ -9,6 +9,7 @@ namespace boost::asio{ class io_context; class cancellation_signal; }
 namespace Jde{
 	Φ Executor()ι->sp<boost::asio::io_context>;
 	Φ ExecutorIoc()ι->sp<boost::asio::io_context>;//current io_context without creating one; lets shutdown keep it alive and destroy it last.
+	Φ ThreadCount()ι->unsigned;//the executor's threads:  /workers/executor/threads, else the hardware's, at least one.
 	Φ Post( absl::AnyInvocable<void()> f )ι->void;
 	Ŧ Post( T&& value, typename TAwait<T>::Handle h )ι->void;
 	Φ PostIO( absl::AnyInvocable<void()> f )ι->void;

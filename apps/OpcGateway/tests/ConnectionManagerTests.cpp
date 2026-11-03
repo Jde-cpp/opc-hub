@@ -97,6 +97,20 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 
+	//#353 review #3:  ReachableUrl looked a name up with a synchronous getaddrinfo on its blocking-pool thread, which a nameserver that
+	//never answers holds ~10 s.  Resolve runs it on the net thread's resolver threads and gives up at the deadline.  No nameserver
+	//here can be made to stall, so a deadline of now stands in:  the answer is two thread hops away when it is read, so nearly every
+	//one is given up on, and those lookups finish on the net thread with nobody waiting - which a real lookup after them outlives.
+	TEST_F( ConnectionManagerTests, AResolveGivesUpAtItsDeadline ){
+		uint abandoned{};
+		let start = steady_clock::now();
+		for( uint i=0; i<20; ++i )
+			abandoned += AsioConnectionManager::Resolve( "localhost", underlying(Port), 0s ).empty();
+		EXPECT_LT( steady_clock::now()-start, 2s ) << "a deadline of now waits for no lookup";
+		EXPECT_GT( abandoned, 0u ) << "every lookup was answered before its deadline of now was read";
+		EXPECT_FALSE( AsioConnectionManager::Resolve("localhost", underlying(Port), 5s).empty() ) << "the net thread outlived the lookups given up on";
+	}
+
 	//A server that accepts and says nothing holds the synchronous connect inside el->run, blocked in its wait with no socket of the
 	//loop's own to watch;  the manager's cancel is what gets the close to it when the server drops the connection.  The connect
 	//status stays good past a close of an established connection, so open62541 reconnects from inside it, and the listener gone
