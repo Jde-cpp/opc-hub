@@ -1,77 +1,80 @@
-#include "jde/fwk/io/Cache.h"
-#include "jde/fwk/chrono.h"
-#include <jde/tests/WaitUntil.h>
+#include <jde/fwk/io/Cache.h>
+#include <jde/fwk/chrono.h>
 #include <string>
 #include <thread>
 
 #define let const auto
 namespace Jde::Tests{
+	using StringCache = Cache<string,string>;//aliased: the comma in the template args would split the EXPECT_ macros' arguments.
 	struct CacheTests : public ::testing::Test
 	{};
 
-	TEST_F( CacheTests, NegativeDuration ){
-		Cache::Set<string>( "negative", "prior" );//negative-duration Set must also drop an existing entry, not just skip caching.
-		auto p = Cache::Set<string>( "negative", "value", -1s );
-		ASSERT_EQ( Cache::Get<string>("negative"), nullptr );
-		ASSERT_TRUE( p );
-		ASSERT_EQ( *p, "value" );
-	}
-	//the hour-long entry gives the sweep a pending timer to cancel, so the 1ms Set has to re-arm it earlier - alone or
-	//shuffled first there is no timer yet, and only the start path runs.
+	//Expiry is checked by Get, so an entry reads as a miss once its ttl is up with nothing having run in between.
 	TEST_F( CacheTests, Expires ){
-		Cache::Set<string>( "expires-long", "v", 1h );
-		auto p = Cache::Set<string>( "expired", "value", 1ms );
-		std::this_thread::sleep_for( 50ms );//expiry is sweep-driven; windows timers tick at ~15.6ms, so leave slack past the deadline.
-		ASSERT_EQ( Cache::Get<string>("expired"), nullptr );
-		EXPECT_TRUE( Cache::Clear("expires-long") );
+		StringCache cache{ 1h };
+		cache.Set( "expired", "value", 1ms );
+		cache.Set( "live", "value" );
+		std::this_thread::sleep_for( 2ms );
+		EXPECT_EQ( cache.Get("expired"), nullptr );
+		EXPECT_NE( cache.Get("live"), nullptr ) << "a Set without a ttl takes the cache's default";
+		EXPECT_TRUE( cache.Clear("expired") ) << "an expired entry stays until a Set drops it";
 	}
-	// Internal::Set has to drop the old deadline before emplacing the new one, or the sweep evicts the freshly
-	// assigned value at the *previous* entry's due time.  Nothing re-Set a live key with a longer duration, so
-	// deleting that eraseTimeout left every existing test green.
+
+	//a re-Set takes the new ttl:  the old deadline must not outlive it.
 	TEST_F( CacheTests, ReSetExtendsDeadline ){
-		Cache::Set<string>( "reset", "a", 5ms );
-		Cache::Set<string>( "reset", "b", 1h );
-		std::this_thread::sleep_for( 60ms );//past the first deadline and a windows timer tick.
-		let p = Cache::Get<string>( "reset" );
-		ASSERT_NE( p, nullptr ) << "the stale 5ms deadline evicted the re-set value";
+		StringCache cache{ 1h };
+		cache.Set( "reset", "a", 1ms );
+		cache.Set( "reset", "b", 1h );
+		std::this_thread::sleep_for( 2ms );
+		let p = cache.Get( "reset" );
+		ASSERT_NE( p, nullptr ) << "the stale 1ms deadline expired the re-set value";
 		EXPECT_EQ( *p, "b" );
-		EXPECT_TRUE( Cache::Clear("reset") );
 	}
 
-	//no duration at all means no timeout row, so the sweep never sees the entry.  Clear's bool return - discarded
-	//at every call site - is the only way to tell a hit from a miss.
-	TEST_F( CacheTests, NoDurationNeverExpires ){
-		Cache::Set<string>( "forever", "value", nullopt );
-		std::this_thread::sleep_for( 60ms );
-		let p = Cache::Get<string>( "forever" );
-		ASSERT_NE( p, nullptr ) << "an entry with no duration must not be swept";
+	TEST_F( CacheTests, ForeverNeverExpires ){
+		StringCache cache{ 1ms };//a default shorter than the test, so only Forever keeps the entry.
+		cache.Set( "forever", "value", StringCache::Forever );
+		std::this_thread::sleep_for( 2ms );
+		let p = cache.Get( "forever" );
+		ASSERT_NE( p, nullptr ) << "an entry set Forever expired";
 		EXPECT_EQ( *p, "value" );
-		EXPECT_TRUE( Cache::Clear("forever") );
-		EXPECT_FALSE( Cache::Clear("forever") ) << "the second clear erased nothing";
-		EXPECT_EQ( Cache::Get<string>("forever"), nullptr );
+		EXPECT_TRUE( cache.Clear("forever") );
+		EXPECT_FALSE( cache.Clear("forever") ) << "the second clear erased nothing";
+		EXPECT_EQ( cache.Get("forever"), nullptr );
 	}
 
-	//the zero-copy overload has no caller in the library either - FileAwait passes a string by value.
 	TEST_F( CacheTests, SharedPointerOverload ){
+		StringCache cache{ 1h };
 		auto p = ms<const string>( "shared" );
-		let cached = Cache::Set<string>( "sharedPtr", p );
+		let cached = cache.Set( "sharedPtr", p );
 		EXPECT_EQ( cached.get(), p.get() ) << "Set returns the caller's instance";
-		let got = Cache::Get<string>( "sharedPtr" );
+		let got = cache.Get( "sharedPtr" );
 		ASSERT_NE( got, nullptr );
 		EXPECT_EQ( got.get(), p.get() ) << "the cache shares the instance rather than copying it";
-		EXPECT_TRUE( Cache::Clear("sharedPtr") );
 	}
 
-	//only the fallback half of Init: the suite config has no /cache section, and adding one to assert the
-	//configured path would be a config change rather than a test.
-	TEST_F( CacheTests, DefaultDurationFallsBackToAnHour ){
-		EXPECT_EQ( Cache::DefaultDuration(), 1h );
+	//only the fallback half of the default constructor:  the suite config has no /cache section, and adding one to assert
+	//the configured path would be a config change rather than a test.
+	TEST_F( CacheTests, DefaultTtlFallsBackToAnHour ){
+		EXPECT_EQ( StringCache{}.DefaultTtl(), 1h );
 	}
 
-	//Get, Set and Clear from every core against five keys and the sweep, then every entry gone once its 10ms is up.  A
-	//quarter second is ~18k sets and hundreds of sweep re-arms on a 32-core box:  fewer interleavings a run than a second's,
-	//for a suite every build runs.
+	//Set drops the expired entries once the map reaches 16, then twice what the drop left - never a Get, which only reads.
+	TEST_F( CacheTests, SetDropsExpiredEntries ){
+		StringCache cache{ 1h };
+		for( uint i=0; i<16; ++i )
+			cache.Set( Ƒ("expired-{}", i), "v", 0s );//past its deadline at once.
+		EXPECT_EQ( cache.Get("expired-0"), nullptr );
+		EXPECT_EQ( cache.Size(), 16u ) << "a Get dropped entries, or a Set below the threshold did";
+		cache.Set( "live", "v" );
+		EXPECT_EQ( cache.Size(), 1u ) << "the Set that reached the threshold kept the expired entries";
+		EXPECT_NE( cache.Get("live"), nullptr );
+	}
+
+	//Get, Set and Clear from every core against five keys, then every entry gone once its 10ms is up.  A quarter second is
+	//~18k sets on a 32-core box:  fewer interleavings a run than a second's, for a suite every build runs.
 	TEST_F( CacheTests, Stress ){
+		StringCache cache{ 1h };
 		let threadCount = std::max( 2u, std::thread::hardware_concurrency() );
 		let end = steady_clock::now()+250ms;
 		vector<string> keys;
@@ -85,14 +88,14 @@ namespace Jde::Tests{
 					uint localRetrieved{}, localMissed{}, localSets{};
 					for( uint i=t; steady_clock::now()<end; ++i ){
 						let& key = keys[i%keys.size()];
-						if( Cache::Get<string>(key) )
+						if( cache.Get(key) )
 							++localRetrieved;
 						else
 							++localMissed;
 						if( i%7==0 )
-							Cache::Clear( key );
+							cache.Clear( key );
 						else{
-							Cache::Set<string>( key, ToIsoString(steady_clock::now()), i%3==0 ? 1ms : 10ms );
+							cache.Set( key, ToIsoString(steady_clock::now()), i%3==0 ? 1ms : 10ms );
 							++localSets;
 						}
 					}
@@ -101,7 +104,7 @@ namespace Jde::Tests{
 			}
 		}//jthreads join here.
 		INFOT( ELogTags::Test, "threads: {}, retrieved: {}, missed: {}, sets: {}", threadCount, retrieved.load(), missed.load(), sets.load() );
-		let swept = [&keys]{ return std::ranges::all_of( keys, []( let& key ){ return !Cache::Get<string>(key); } ); };
-		EXPECT_TRUE( WaitUntil(swept, 1s, 1ms) ) << "an entry outlived its 10ms - the sweep stopped re-arming";
+		std::this_thread::sleep_for( 11ms );
+		EXPECT_TRUE( std::ranges::all_of(keys, [&]( let& key ){ return !cache.Get(key); }) ) << "an entry outlived its 10ms";
 	}
 }

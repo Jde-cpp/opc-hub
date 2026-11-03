@@ -35,7 +35,6 @@ namespace Jde::IO{
 	struct ReadOptions{
 		uint Offset{};
 		optional<uint> Size;//at most this many bytes - fewer, or none, when the file ends first.
-		bool Cache{};//whole-file reads only - the cache is keyed by path.
 		ELogTags Tags{ ELogTags::IO };
 	};
 
@@ -135,18 +134,12 @@ namespace Jde::IO{
 		sp<FileIOArg> _arg;
 	};
 	struct Γ ReadAwait final : IFileAwait, StringAwait, noncopyable{
-		ReadAwait( fs::path path, bool cache=false, SRCE )ι:ReadAwait{ move(path), ReadOptions{.Cache=cache}, sl }{}
-		template<class T> requires( std::is_arithmetic_v<T> && !std::is_same_v<T,bool> )
-		ReadAwait( fs::path, T, SL=SRCE_CUR )=delete;//a size or an offset would convert to cache - ReadOptions takes those.
-		ReadAwait( fs::path path, ReadOptions options, SRCE )ι:IFileAwait{ move(path), options, false, sl }, StringAwait{ sl }, _cache{ options.Cache && !options.Offset && !options.Size }{}
-		//Over an open file:  its bytes at Offset, whatever is at its path now.  Cache is ignored, the cache being keyed by path.
-		ReadAwait( sp<OpenFile> file, ReadOptions options={}, SRCE )ι:IFileAwait{ move(file), options, sl }, StringAwait{ sl }, _cache{}{}
+		ReadAwait( fs::path path, ReadOptions options={}, SRCE )ι:IFileAwait{ move(path), options, false, sl }, StringAwait{ sl }{}
+		//Over an open file:  its bytes at Offset, whatever is at its path now.
+		ReadAwait( sp<OpenFile> file, ReadOptions options={}, SRCE )ι:IFileAwait{ move(file), options, sl }, StringAwait{ sl }{}
 		α Suspend()ι->void override;
 		α await_ready()ι->bool override;
 		α await_resume()ε->string override;
-	private:
-		bool _cache;
-		bool _fromCache{};//ready path taken - the buffer is the result, even when empty; there is no promise to fall back on.
 	};
 	struct Γ WriteAwait final : IFileAwait, VoidAwait, noncopyable{
 		WriteAwait( fs::path path, variant<string,vector<byte>> data, bool create=false, EWriteMode mode=EWriteMode::Append, ELogTags tags=ELogTags::IO, SRCE )ι:

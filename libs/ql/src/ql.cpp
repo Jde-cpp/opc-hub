@@ -10,15 +10,14 @@
 #include <jde/ql/LocalQL.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/Table.h>
-#include <jde/fwk/io/Cache.h>
 
 #define let const auto
 
 namespace Jde{
 	α QL::LoadEnum( const DB::Table& table, SL sl )ι->bool{
 		try{
-			Cache::Clear( table.Name );
-			table.Schema->DS()->SelectEnumSync<uint,string>( table, nullopt, sl );
+			DB::EnumCache::Clear( table );
+			table.Schema->DS()->SelectEnumSync( table, DB::EnumCache::Forever, sl );
 			return true;
 		}
 		catch( runtime_error& e ){

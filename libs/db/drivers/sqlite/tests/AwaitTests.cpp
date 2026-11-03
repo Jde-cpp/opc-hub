@@ -98,13 +98,13 @@ namespace Jde::DB::Sqlite::Tests{
 		auto table = schema->GetTablePtr( "provider_types" ); //Names::FromJson converts the meta key, so it is not "providerTypes" here.
 		ASSERT_TRUE( table );
 
-		let load = [&]{ return BlockAwait<CacheAwait<flat_map<uint,string>>,flat_map<uint,string>>( _ds->SelectEnum<uint,string>(*table) ); };
+		let load = [&]{ return BlockAwait<CacheAwait<flat_map<uint,string>>,flat_map<uint,string>>( _ds->SelectEnum(*table) ); };
 		let first = load();                       //miss: reads the table and caches it.
 		EXPECT_GT( first.size(), 0u );            //access.mutation seeds seven provider types.
 		EXPECT_EQ( load().size(), first.size() ); //hit: the same answer from cache.
 
 		//a table that does not exist must surface as an exception at the BlockAwait, not end the process.
 		EXPECT_THROW( (BlockAwait<CacheAwait<flat_map<uint,string>>,flat_map<uint,string>>(
-			_ds->SelectMap<uint,string>(DB::Sql{"select id, name from zz_62_no_such_table"}, "zz_62_no_such_table") )), Exception );
+			_ds->SelectMap<uint,string>(DB::Sql{"select id, name from zz_62_no_such_table"}, DB::EnumCache::Instance(), "zz_62_no_such_table") )), Exception );
 	}
 }

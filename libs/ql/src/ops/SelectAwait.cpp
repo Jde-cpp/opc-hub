@@ -1,5 +1,6 @@
 #include "SelectAwait.h"
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/utils/collections.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
@@ -24,7 +25,7 @@ namespace Jde::QL{
 		return y;
 	}
 	α GetEnumValues( const DB::Table& table, SL sl )ε->flat_map<uint,string>{
-		return table.Schema->DS()->SelectEnumSync<uint,string>( table, Cache::DefaultDuration(), sl );
+		return table.Schema->DS()->SelectEnumSync( table, {}, sl );
 	}
 	α numberToJson( const DB::Value& dbValue, const DB::Column& c )ι->jvalue{
 		jvalue y;

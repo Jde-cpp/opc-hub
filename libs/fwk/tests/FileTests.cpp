@@ -1,6 +1,5 @@
 ﻿#include <fstream>
 #include <latch>
-#include <jde/fwk/io/Cache.h>
 #include <jde/fwk/io/durable.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/log/MemoryLog.h>
@@ -65,7 +64,7 @@ namespace Jde::IO::Tests{
 	}
 
 	Ω read( fs::path file, sp<Vector<uuid>> readValues, SRCE )ι->TAwait<string>::Task{
-		let content = co_await IO::ReadAwait{ file, false, sl };
+		let content = co_await IO::ReadAwait{ file, {}, sl };
 		let guidStrings = Str::Split( content, '\n' );
 		ul _{ readValues->Mutex };
 		for( auto&& guid : guidStrings ){
@@ -252,62 +251,6 @@ namespace Jde::IO::Tests{
 		let readFailure = waitError( readDone, readError );
 		ASSERT_TRUE( readFailure.empty() ) << "empty read: " << readFailure;
 		ASSERT_TRUE( content->empty() ) << "expected empty content, got: " << *content;
-	}
-
-	TEST_F( FileTests, CachedEmptyString ){
-		let file = Tests::file( 300 );//never created on disk - a cache hit must not open the file.
-		Cache::Set<string>( file.string(), "" );//explicit - `{}` is ambiguous between the T and sp<const T> overloads.
-		auto content = ms<string>( "sentinel" );
-		auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
-		readRaw( file, content, done, error, {.Cache=true} );
-		let failure = waitError( done, error );
-		ASSERT_TRUE( failure.empty() ) << "cached empty read: " << failure;
-		EXPECT_TRUE( content->empty() ) << "expected empty content, got: " << *content;
-		Cache::Clear( file.string() );
-	}
-
-	// CachedEmptyString above only ever takes the hit branch - it pre-seeds the entry and the file never exists.
-	// The other half, a cache=true read that *misses*, goes through io_uring and then Cache::Sets what it read, was
-	// never driven: the populate line sits just past the `_fromCache || r.size()` guard that fwk-max #17 lived on, so
-	// a regression that returned early would silently stop populating and nothing would notice.  Deleting the file
-	// between the two reads is what proves the second one came from the cache rather than the disk again.
-	TEST_F( FileTests, CachedReadPopulates ){
-		let file = Tests::file( 900 );
-		Cache::Clear( file.string() );
-		if( fs::exists(file) )
-			fs::remove( file );
-		let content = string( IO::ChunkByteSize()*3+IO::ChunkByteSize()/2, 'c' );//several chunks, so the populate happens after a real multi-chunk completion.
-		auto written = ms<std::atomic<bool>>(); auto writeError = ms<up<Exception>>();
-		writeRaw( file, content, written, writeError );
-		let writeFailure = waitError( written, writeError );
-		ASSERT_TRUE( writeFailure.empty() ) << "write: " << writeFailure;
-
-		ASSERT_FALSE( Cache::Get<string>(file.string()) ) << "the entry exists before any read - the test proves nothing";
-		auto first = ms<string>();
-		auto firstDone = ms<std::atomic<bool>>(); auto firstError = ms<up<Exception>>();
-		readRaw( file, first, firstDone, firstError, {.Cache=true} );
-		let firstFailure = waitError( firstDone, firstError );
-		ASSERT_TRUE( firstFailure.empty() ) << "populating read: " << firstFailure;
-		ASSERT_EQ( *first, content );
-		let cached = Cache::Get<string>( file.string() );
-		ASSERT_TRUE( cached ) << "the read completed but never populated the cache";
-		EXPECT_EQ( *cached, content );
-
-		fs::remove( file );//...so a second read that still succeeds can only have been served from the entry above.
-		auto second = ms<string>( "sentinel" );
-		auto secondDone = ms<std::atomic<bool>>(); auto secondError = ms<up<Exception>>();
-		readRaw( file, second, secondDone, secondError, {.Cache=true} );
-		let secondFailure = waitError( secondDone, secondError );
-		ASSERT_TRUE( secondFailure.empty() ) << "cached read after the file was deleted: " << secondFailure;
-		EXPECT_EQ( *second, content );
-
-		//and cache=false must still go to disk, which is now gone.
-		auto uncached = ms<string>( "sentinel" );
-		auto uncachedDone = ms<std::atomic<bool>>(); auto uncachedError = ms<up<Exception>>();
-		readRaw( file, uncached, uncachedDone, uncachedError );
-		ASSERT_TRUE( waitDone(*uncachedDone) );
-		EXPECT_TRUE( *uncachedError ) << "a cache=false read was served from the cache";
-		Cache::Clear( file.string() );
 	}
 
 	Ω writeWith( fs::path file, variant<string,vector<byte>> content, IO::WriteOptions options, sp<std::atomic<bool>> done, sp<up<Exception>> error, SRCE )->VoidAwait::Task{
@@ -636,10 +579,9 @@ namespace Jde::IO::Tests{
 	}
 
 	// An Offset on an Append is an At that lost its Mode.  Appending anyway would grow the file on every write, so the
-	// write fails and leaves the file alone.  The bool overloads refuse a number outright, where it would have converted
-	// to cache or create.
+	// write fails and leaves the file alone.  The bool overload refuses a number outright, where it would have converted
+	// to create.
 	TEST_F( FileTests, AppendWithOffsetThrows ){
-		static_assert( std::is_constructible_v<IO::ReadAwait, fs::path, bool> && !std::is_constructible_v<IO::ReadAwait, fs::path, int> && !std::is_constructible_v<IO::ReadAwait, fs::path, uint> );
 		static_assert( std::is_constructible_v<IO::WriteAwait, fs::path, string, bool> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, int> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, uint> );
 
 		let file = Tests::file( 1011 );
@@ -1023,14 +965,6 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( read({.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
 		EXPECT_EQ( read({.Offset=content.size()+7}), "" ) << "a range that starts past the end";
 		EXPECT_EQ( read({}), content ) << "no range is the whole file";
-
-		//a ranged read is uncached:  the entry is the whole file, so a range must neither take nor replace it.
-		Cache::Set<string>( file.string(), "stale" );
-		EXPECT_EQ( read({.Offset=1, .Cache=true}), content.substr(1) ) << "a ranged read took the path's cache entry";
-		let entry = Cache::Get<string>( file.string() );
-		ASSERT_TRUE( entry ) << "a ranged read cleared the path's cache entry";
-		EXPECT_EQ( *entry, "stale" ) << "a ranged read populated the path's cache entry";
-		Cache::Clear( file.string() );
 	}
 
 	//A read over an open file:  readRaw's shape, the handle in place of the path.
@@ -1068,13 +1002,6 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( readNow(open, {.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
 		EXPECT_EQ( readNow(open, {.Offset=content.size()+7}), "" ) << "a range that starts past the end";
 		EXPECT_EQ( readNow(open, {}), content ) << "no range is the whole file";
-		//the cache is keyed by path, so a read over the handle must neither take nor replace the path's entry.
-		Cache::Set<string>( file.string(), "stale" );
-		EXPECT_EQ( readNow(open, {.Cache=true}), content ) << "an OpenFile read took the path's cache entry";
-		let entry = Cache::Get<string>( file.string() );
-		ASSERT_TRUE( entry ) << "an OpenFile read cleared the path's cache entry";
-		EXPECT_EQ( *entry, "stale" ) << "an OpenFile read populated the path's cache entry";
-		Cache::Clear( file.string() );
 	}
 	//The handle reads the file it opened after a rename over its path, where a read by path finds the new file.
 	TEST_F( FileTests, OpenFileOutlivesARename ){

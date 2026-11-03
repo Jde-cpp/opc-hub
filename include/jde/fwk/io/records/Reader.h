@@ -3,12 +3,12 @@
 #include <functional>
 #include "Traits.h"
 
-namespace Jde::IO{
+namespace Jde::IO::Records{
 	//r from raw, or why it isn't a record:  a field this build doesn't know, a frame that doesn't parse, or one whose length
 	//isn't its record's.  A length garbled to claim the frames after it parses, as a record with fields repeated, and gives
 	//itself away re-measured:  what the layer writes is the record's own serialization.  The layer's two frames are measured
 	//by their own decoders.
-	template<Record T> α Records::Parse( const Raw& raw, T& r )ι->optional<EStop>{
+	template<Record T> α Parse( const Raw& raw, T& r )ι->optional<EStop>{
 		if( !Traits<T>::Known(raw.Field) )
 			return EStop::Unknown;
 		if( !r.ParseFromArray(raw.Frame.data(), (int)raw.Frame.size()) )
@@ -17,7 +17,7 @@ namespace Jde::IO{
 			return EStop::Body;
 		return nullopt;
 	}
-namespace Records{
+
 	//A run's records, each whole and with its times absolute, from bytes the caller fetches a window at a time:  Next is
 	//More while Wants() names the window to Feed.  A frame longer than a window is read whole, the window grown to it.
 	template<Record T> struct Reader final : noncopyable{
@@ -135,4 +135,4 @@ namespace Records{
 		_stop = stop;
 		return ENext::End;
 	}
-}}
+}

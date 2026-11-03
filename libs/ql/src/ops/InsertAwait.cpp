@@ -1,5 +1,6 @@
 #include "InsertAwait.h"
 #include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/utils/collections.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/generators/Functions.h>
 #include <jde/db/meta/AppSchema.h>

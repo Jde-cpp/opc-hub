@@ -1,7 +1,6 @@
 #include <liburing.h>
 #include <sys/eventfd.h>
 #include <boost/asio.hpp>
-#include <jde/fwk/io/Cache.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/process/execution.h>
