@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
-import { DiscoveredEndpoint, DiscoveredServer, discoverEndpointsMutation, discoverServersMutation, endpointPick, serverUrl } from '../../../model/discovery';
+import { DiscoveredEndpoint, DiscoveredServer, discoverEndpointsMutation, discoverServersMutation, endpointPick, endpointUrl, serverUrl } from '../../../model/discovery';
 import { DiscoverDialog, DiscoverDialogData } from './discover-dialog';
 import { flush } from 'jde-spa/testing';
 
@@ -70,9 +70,10 @@ describe( 'DiscoverDialog', ()=>{
 		expect( endpointPick( none ).securityPolicy ).toBe( 'http://opcfoundation.org/UA/SecurityPolicy#None' );
 	} );
 
-	//a server advertises the urls it was configured with, which the gateway may not reach:  the typed one is offered in their place
-	it( 'offers the typed url where the server advertises another', async ()=>{
-		const d = open( 'opc.tcp://10.0.0.5:4840', {servers: ()=>[plc( {discoveryUrls: ['opc.tcp://plc.internal:4840']} )], endpoints: url=>{ if( url!='opc.tcp://10.0.0.5:4840' ) throw new Error( `'${url}' did not resolve within 3 s.` ); return [none]; }} );
+	//a server advertises the urls it was configured with, which the gateway may not reach:  where reading there fails, the typed one is
+	//offered in its place, and a pick takes the host that answered (414-clients-discovery review #2)
+	it( 'offers the typed url where the server advertises another, and a pick connects to the host that answered', async ()=>{
+		const d = open( 'opc.tcp://10.0.0.5:4840', {servers: ()=>[plc( {discoveryUrls: ['opc.tcp://plc.internal:4840']} )], endpoints: url=>{ if( url!='opc.tcp://10.0.0.5:4840' ) throw new Error( `'plc.internal' did not resolve.` ); return [{...none, url: 'opc.tcp://plc.internal:4840/ua'}]; }} );
 		await d.settle();
 		expect( d.dialog.endpointsAt() ).toBe( 'opc.tcp://plc.internal:4840' );
 		expect( d.dialog.error() ).toContain( 'did not resolve' );
@@ -82,8 +83,59 @@ describe( 'DiscoverDialog', ()=>{
 		expect( d.dialog.error() ).toBeUndefined();
 		expect( d.dialog.endpoints().length ).toBe( 1 );
 		expect( d.dialog.typedInstead() ).toBeUndefined();
+		expect( d.texts( 'mat-table.endpoints mat-row .mat-column-url' ) ).toEqual( ['opc.tcp://10.0.0.5:4840/ua'] );//what a pick fills
+		d.dialog.choose( d.dialog.endpoints()[0] );
+		expect( d.closed().map( p=>(p as {url:string}).url ) ).toEqual( ['opc.tcp://10.0.0.5:4840/ua'] );//the endpoint's port and path, the host that answered
 		expect( serverUrl( plc( {discoveryUrls: ['https://plc/', 'opc.tcp://plc:4840']} ), 'typed' ) ).toBe( 'opc.tcp://plc:4840' );//the first opc.tcp one
 		expect( serverUrl( plc( {discoveryUrls: []} ), 'typed' ) ).toBe( 'typed' );
+	} );
+
+	it( 'puts the host that answered in an endpoint url that names another', ()=>{
+		expect( endpointUrl( 'opc.tcp://plc.internal:4841/ua', 'opc.tcp://10.0.0.5:4840' ) ).toBe( 'opc.tcp://10.0.0.5:4841/ua' );
+		expect( endpointUrl( 'opc.tcp://PLC:4840', 'opc.tcp://plc:4840/' ) ).toBe( 'opc.tcp://PLC:4840' );//the same host, any case:  as advertised
+		expect( endpointUrl( 'opc.tcp://plc:4840', 'opc.tcp://[fe80::1]:4840' ) ).toBe( 'opc.tcp://[fe80::1]:4840' );
+		expect( endpointUrl( 'opc.tcp://plc:4840', undefined ) ).toBe( 'opc.tcp://plc:4840' );
+		expect( endpointUrl( 'opc.https://plc/', 'opc.tcp://10.0.0.5:4840' ) ).toBe( 'opc.https://plc/' );//not opc.tcp:  left alone
+		expect( endpointPick( none, 'opc.tcp://10.0.0.5:4840' ).url ).toBe( 'opc.tcp://10.0.0.5:4840' );
+	} );
+
+	//through a Local Discovery Server the typed url is the LDS's:  reading there lists the LDS's endpoints, not the server's (review #3)
+	it( 'offers no typed url after a list, and keeps only the picked server\'s endpoints', async ()=>{
+		const ldsEndpoint:DiscoveredEndpoint = { ...none, url: 'opc.tcp://host:4840', applicationUri: 'urn:lds' };
+		const d = open( 'opc.tcp://host:4840', {servers: ()=>[lds, plc( {discoveryUrls: ['opc.tcp://plc:4841']} )], endpoints: url=>{ if( url=='opc.tcp://plc:4841' ) throw new Error( `'plc' did not resolve.` ); return [ldsEndpoint]; }} );
+		await d.settle();
+		await d.dialog.pick( d.dialog.servers()[1] );
+		await d.settle();
+		expect( d.dialog.endpointsAt() ).toBe( 'opc.tcp://plc:4841' );
+		expect( d.dialog.error() ).toContain( 'did not resolve' );
+		expect( d.dialog.typedInstead() ).toBeUndefined();
+		await d.dialog.getEndpoints( 'opc.tcp://host:4840' );//an answer from another server, whatever the route
+		await d.settle();
+		expect( d.dialog.endpoints() ).toEqual( [] );
+		expect( d.dialog.error() ).toBe( "The endpoints at opc.tcp://host:4840 are urn:lds's, not PLC 1's." );
+	} );
+
+	it( 'offers no typed url where the advertised one answered', async ()=>{
+		const d = open( 'opc.tcp://10.0.0.5:4840', {servers: ()=>[plc( {discoveryUrls: ['opc.tcp://plc:4840']} )]} );
+		await d.settle();
+		expect( d.dialog.endpointsAt() ).toBe( 'opc.tcp://plc:4840' );
+		expect( d.dialog.endpoints().length ).toBe( 2 );
+		expect( d.dialog.typedInstead() ).toBeUndefined();
+	} );
+
+	//a policy the gateway does not carry is listed, but a pick of it is one the save refuses (review #4)
+	it( 'lists an endpoint the gateway cannot connect with, and does not choose it', async ()=>{
+		const basic256:DiscoveredEndpoint = { ...secured, policy: 'http://opcfoundation.org/UA/SecurityPolicy#Basic256', securityLevel: 9 };
+		const d = open( 'opc.tcp://plc:4840', {endpoints: ()=>[basic256, secured, none]} );
+		await d.settle();
+		expect( d.dialog.endpoints().map( e=>d.dialog.supported( e ) ) ).toEqual( [false, true, true] );
+		expect( d.dialog.chooseTip( basic256 ) ).toBe( 'The gateway does not connect with Basic256 / Sign & Encrypt' );
+		const choose = (d.fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>( 'mat-table.endpoints .mat-column-choose button' );
+		expect( Array.from( choose ).map( b=>b.getAttribute( 'aria-disabled' ) ) ).toEqual( ['true', null, null] );
+		d.dialog.choose( basic256 );
+		expect( d.closed() ).toEqual( [] );
+		d.dialog.choose( secured );
+		expect( d.closed().length ).toBe( 1 );
 	} );
 
 	it( 'shows the gateway\'s refusal and tries another url', async ()=>{

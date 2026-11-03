@@ -6,9 +6,9 @@ namespace Jde::Opc::Gateway{
 	//Crypto::EnsureKeyCertificate's lock, trustedCertDirs scanned, the host resolved and probed for up to three seconds
 	//(UAClient::ReachableUrl) - which used to run on the executor thread that awaited the connect, the same threads that run every
 	//client strand and every HTTP and WebSocket handler, so a few connects to a host with slow DNS or no route stalled them all.
-	//ConnectAwait and TestConnectAwait run here;  discovery (docs/clients/spec.md *Discovery*) joins them.  /workers/blocking/threads
-	//of them, two by default, started on the first job.  A job answers its awaiter by posting to the executor, so the thread is free
-	//for the next job the moment the blocking work is through.
+	//ConnectAwait and TestConnectAwait run here, and a failed connect's endpoint diagnostics;  discovery has a pool of its own
+	//(DiscoveryPool, below).  /workers/blocking/threads of them, two by default, started on the first job.  A job answers its awaiter
+	//by posting to the executor, so the thread is free for the next job the moment the blocking work is through.
 	namespace BlockingPool{
 		α Post( absl::AnyInvocable<void()> work )ι->void;//runs `work` on a pool thread - inline, on the caller's, once Stop has run.
 		//`work` on a pool thread, refused once the process is shutting down:  a client built then would outlive UAClient::Shutdown's
@@ -16,11 +16,22 @@ namespace Jde::Opc::Gateway{
 		//it throws, the refusal included, goes to `onError` on the executor.
 		α Run( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL sl )ι->void;
 		//Shutdown's, before UAClient::Shutdown:  what is queued runs and the threads are joined, so no client is built after the registry's
-		//snapshot - on terminate too.  The join is bounded:  each lookup a job makes has a 3 s deadline (#353 review #3, #8).
+		//snapshot - on terminate too.  The join is bounded:  each lookup a job makes has a 3 s deadline (#353 review #3, #8), and the
+		//diagnostics' GetEndpoints 5 s.
+		α Stop()ι->void;
+	}
+	//The discovery pool (docs/clients/spec.md *Discovery*):  the `discover` mutation's FindServers and GetEndpoints, synchronous for
+	//as long as the caller's deadline, on threads of their own - on the blocking pool, two discovers at a url that never answers held
+	//both its threads, and every login and reconnect queued behind them (414-clients-discovery review #1).  /workers/discovery/threads
+	//of them, two by default, started on the first job.  Run and Stop as BlockingPool's;  Stop runs after UAClient::Shutdown, since
+	//a discovery client is no registered client, and its join is bounded by DiscoverQLAwait::MaxTimeout and the 3 s lookup.
+	namespace DiscoveryPool{
+		α Run( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL sl )ι->void;
 		α Stop()ι->void;
 	}
 
 	//`work` on the blocking pool, and the awaiter resumed on the executor with what it returned, or threw - as after any other
 	//await, so nothing downstream runs on a pool thread.
 	template<class T=void> using BlockingAwait = RunAwait<T, BlockingPool::Run>;
+	template<class T=void> using DiscoveryAwait = RunAwait<T, DiscoveryPool::Run>;//BlockingAwait's twin on the discovery pool.
 }

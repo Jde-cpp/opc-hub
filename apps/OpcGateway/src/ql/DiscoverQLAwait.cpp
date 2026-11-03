@@ -5,19 +5,18 @@
 #include <jde/opc/ClientSecurity.h>
 #include "../async/AsyncRequest.h"
 #include "../async/BlockingPool.h"
-#include "../types/ServerCnnctn.h"
 #include "GatewayQL.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway{
-	//The request's deadline:  its requestTimeout, held to a row's rule (ServerCnnctn::SettingsError - positive, at most MaxDurationMs),
-	//else the gateway's.
+	//The request's deadline:  its requestTimeout, positive and at most MaxTimeout, else the gateway's held to MaxTimeout.
 	Ω requestTimeout( const QL::MutationQL& m, SL sl )ε->Duration{
 		let v = m.FindPtr<jvalue>( "requestTimeout" );
 		if( !v || v->is_null() )
-			return _requestTimeout;
+			return std::min<Duration>( _requestTimeout, DiscoverQLAwait::MaxTimeout );
 		let ms = v->try_to_number<uint32>();
-		THROW_IFX( !ms || *ms==0 || *ms>ServerCnnctn::MaxDurationMs, Exception(sl, {EHttpStatus::BadRequest}, "requestTimeout must be a whole number of milliseconds from 1 to {}.", ServerCnnctn::MaxDurationMs) );
+		let maxMs = DiscoverQLAwait::MaxTimeout.count();
+		THROW_IFX( !ms || *ms==0 || *ms>maxMs, Exception(sl, {EHttpStatus::BadRequest}, "requestTimeout must be a whole number of milliseconds from 1 to {}.", maxMs) );
 		return Duration{ std::chrono::milliseconds{*ms} };
 	}
 
@@ -29,9 +28,9 @@ namespace Jde::Opc::Gateway{
 			let servers = _query.Find<bool>( "servers" ).value_or( false );
 			let timeout = requestTimeout( _query, _sl );
 			let h = Discovery::UrlHandle( url );
-			//On the pool, rows and all:  the frame holds `url` and the request until the resume.  Run with no selection too, so a
-			//caller that selects nothing still hears a url that isn't reached.
-			jvalue y = co_await BlockingAwait<jvalue>{ [&, this]()->jvalue{
+			//On the discovery pool, rows and all:  the frame holds `url` and the request until the resume.  Run with no selection too,
+			//so a caller that selects nothing still hears a url that isn't reached.
+			jvalue y = co_await DiscoveryAwait<jvalue>{ [&, this]()->jvalue{
 				if( servers ){
 					let found = Discovery::FindServers( url, timeout, h, _sl );
 					return _query.ResultRequest ? ServerRows( *_query.ResultRequest, found ) : jarray{};

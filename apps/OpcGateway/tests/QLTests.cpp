@@ -14,6 +14,7 @@
 #include "../src/ql/DiscoverQLAwait.h"
 #include "../src/ql/OpcSessionsQLAwait.h"
 #include "../src/ql/SearchQLAwait.h"
+#include "../src/async/BlockingPool.h"
 #include "../src/UAClient.h"
 
 #define let const auto
@@ -602,24 +603,49 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_TRUE( notBefore.ends_with('Z') && notAfter.ends_with('Z') ) << "ISO-8601, UTC:  " << notBefore << " " << notAfter;
 		}
 		{//A url that isn't reached - a listener that never answers the HEL, open62541 giving the handshake no deadline of its own - answers its
-			//error after the requestTimeout, from the pool, and a query on a connected slug answers the executor meanwhile.
+			//error after the requestTimeout, from the discovery pool:  a query on a connected slug answers the executor meanwhile, and with
+			//both discovery threads held (/workers/discovery/threads' default 2) a connect's job still runs on the blocking pool at once
+			//(414-clients-discovery review #1:  on the blocking pool, two discovers held every connect).
 			boost::asio::io_context ctx;
 			boost::asio::ip::tcp::acceptor silent{ ctx, {boost::asio::ip::make_address("127.0.0.1"), 0} };
 			let start = steady_clock::now();
-			auto discovering = ms<Awaited<jvalue>>();
-			querying( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"requestTimeout", 2000}}, discovering );
+			array<sp<Awaited<jvalue>>,2> discovering{ ms<Awaited<jvalue>>(), ms<Awaited<jvalue>>() };
+			for( auto& d : discovering )
+				querying( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"requestTimeout", 2000}}, d );
 			let node = Socket().QuerySync( "node( opc: $opc, id: $id ){ id name }", {{"opc", OpcServerSlug}, {"id", Intensity.ToJson()}} );
 			let nodeAnswered = steady_clock::now()-start;
-			EXPECT_FALSE( discovering->Done.test() ) << "the discover is still waiting on the listener";
+			auto ran = ms<std::atomic_flag>();
+			let posted = steady_clock::now();
+			BlockingPool::Post( [ran]{ ran->test_and_set(); } );
+			ASSERT_TRUE( WaitUntil([&]{ return ran->test(); }, 5s, 10ms) ) << "the blocking pool ran the job";
+			let jobRan = steady_clock::now()-posted;
+			EXPECT_FALSE( discovering[0]->Done.test() || discovering[1]->Done.test() ) << "the discovers are still waiting on the listener";
 			EXPECT_FALSE( Json::AsSV(node.as_object(), "name").empty() ) << serialize( node );
-			EXPECT_LT( nodeAnswered, 2s ) << "the node query did not wait on the discover";
-			ASSERT_TRUE( discovering->Wait(10s) ) << "the discover answered";
+			EXPECT_LT( nodeAnswered, 2s ) << "the node query did not wait on the discovers";
+			EXPECT_LT( jobRan, 1s ) << "a connect's job did not queue behind the discovers";
+			for( let& d : discovering ){
+				ASSERT_TRUE( d->Wait(10s) ) << "the discover answered";
+				ASSERT_TRUE( d->Error ) << "a listener that never answers is the mutation's error: " << serialize( d->Result );
+				TRACE( "discover unanswered: {}.", d->Error->what() );
+				EXPECT_TRUE( sv{d->Error->what()}.contains("did not answer GetEndpoints") ) << d->Error->what();
+			}
 			let elapsed = steady_clock::now()-start;
-			ASSERT_TRUE( discovering->Error ) << "a listener that never answers is the mutation's error: " << serialize( discovering->Result );
-			TRACE( "discover unanswered: {}.", discovering->Error->what() );
-			EXPECT_TRUE( sv{discovering->Error->what()}.contains("did not answer GetEndpoints") ) << discovering->Error->what();
 			EXPECT_GE( elapsed, 2s ) << "the requestTimeout is the deadline";
-			EXPECT_LT( elapsed, 8s ) << "the request's 2 s, not the gateway's 10 s";
+			EXPECT_LT( elapsed, 8s ) << "the request's 2 s, not the gateway's 10 s, and the two at once";
+		}
+		{//A name that doesn't exist (.invalid, RFC 6761) is said so;  a lookup past its deadline - a nameserver that doesn't answer - names
+			//the deadline, which is the request's where that is shorter than 3 s (review #5).
+			try{
+				Socket().QuerySync( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", "opc.tcp://jde-discover-test.invalid:4840"}, {"requestTimeout", 1000}} );
+				ADD_FAILURE() << "a discover at a name that doesn't exist succeeded";
+			}
+			catch( const GatewayErrorResponse& e ){
+				const sv what{ e.what() };
+				TRACE( "discover unresolved: {}.", what );
+				EXPECT_TRUE( what.contains("'jde-discover-test.invalid' did not resolve") ) << what;
+				if( what.contains("within") )
+					EXPECT_TRUE( what.contains("within 1000 ms") ) << "the request's deadline, not 3 s: " << what;
+			}
 		}
 		try{
 			Socket().QuerySync( "discover( url: $url ){ url }", {{"url", "opc.tcp://127.0.0.1:1"}} );
@@ -630,7 +656,14 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_TRUE( sv{e.what()}.contains("did not answer GetEndpoints") ) << e.what();
 		}
 		EXPECT_THROW( Socket().QuerySync("discover( url: $url ){ url }", {{"url", " "}}), GatewayErrorResponse ) << "a url is required";
-		EXPECT_THROW( Socket().QuerySync("discover( url: $url, requestTimeout: 0 ){ url }", {{"url", url}}), GatewayErrorResponse ) << "a row's rule on the timeout";
+		EXPECT_THROW( Socket().QuerySync("discover( url: $url, requestTimeout: 0 ){ url }", {{"url", url}}), GatewayErrorResponse ) << "a positive timeout";
+		try{//no longer than MaxTimeout:  a caller's deadline holds a discovery thread, and DiscoveryPool::Stop's join waits on it.
+			Socket().QuerySync( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", url}, {"requestTimeout", DiscoverQLAwait::MaxTimeout.count()+1}} );
+			ADD_FAILURE() << "a discover took a requestTimeout past MaxTimeout";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_TRUE( sv{e.what()}.contains(Ƒ("from 1 to {}", DiscoverQLAwait::MaxTimeout.count())) ) << e.what();
+		}
 		{//Under serverConnections' Update:  enforced, a user no grant names is refused, as an ungranted viewer is Test Connection.
 			constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };
 			EnforceResource( "gateway", "serverConnections", true );

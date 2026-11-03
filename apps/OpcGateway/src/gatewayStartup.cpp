@@ -87,6 +87,7 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
+		Process::AddShutdownFunction( [](bool, SL){ DiscoveryPool::Stop(); } );//last:  its clients are no registered client, so nothing above waits on its join.
 		THROW_IF( !_processSsl, "Connect before Configure." );
 		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.

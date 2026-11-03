@@ -25,7 +25,7 @@
 		<mat-table [dataSource]="endpoints()" class="mat-elevation-z2 jde-dense endpoints">
 			<ng-container matColumnDef="url">
 				<mat-header-cell *matHeaderCellDef>Endpoint</mat-header-cell>
-				<mat-cell *matCellDef="let ep"><span [title]="ep.url">{{ ep.url }}</span></mat-cell>
+				<mat-cell *matCellDef="let ep"><span [title]="pickUrlTitle(ep)">{{ pickUrl(ep) }}</span></mat-cell>
 			</ng-container>
 			<ng-container matColumnDef="policy">
 				<mat-header-cell *matHeaderCellDef>Policy</mat-header-cell>
@@ -46,7 +46,7 @@
 			<ng-container matColumnDef="choose">
 				<mat-header-cell *matHeaderCellDef></mat-header-cell>
 				<mat-cell *matCellDef="let ep">
-					<button matIconButton type="button" (click)="choose(ep)" [disabled]="loading()" aria-label="Choose this endpoint" matTooltip="Fill the form with this endpoint"><mat-icon>check_circle</mat-icon></button>
+					<button matIconButton type="button" (click)="choose(ep)" [disabled]="loading() || !supported(ep)" disabledInteractive [attr.aria-label]="supported(ep) ? 'Choose this endpoint' : chooseTip(ep)" [matTooltip]="chooseTip(ep)"><mat-icon>check_circle</mat-icon></button>
 				</mat-cell>
 			</ng-container>
 			<mat-header-row *matHeaderRowDef="endpointColumns"></mat-header-row>

@@ -8,7 +8,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorMessage } from 'jde-framework';
-import { DiscoveredEndpoint, DiscoveredServer, discoverEndpointsMutation, discoverServersMutation, EndpointPick, endpointPick, serverUrl } from '../../../model/discovery';
+import { DiscoveredEndpoint, DiscoveredServer, discoverEndpointsMutation, discoverServersMutation, EndpointPick, endpointPick, endpointUrl, serverUrl, supportedEndpoint } from '../../../model/discovery';
 import { modeName, policyName } from '../../../model/gateway-endpoint';
 import { Gateway } from '../../../services/gateway-service';
 
@@ -40,8 +40,13 @@ export class DiscoverDialog{
 	readonly serverColumns = ['name', 'uri', 'type', 'urls'];
 	readonly endpointColumns = ['url', 'policy', 'mode', 'tokens', 'certificate', 'choose'];
 	readonly canFind = computed( ()=>!this.loading() && !!this.url().trim() );
-	//the endpoints a server advertises under a url the gateway did not reach, or the typed url's own:  the typed one offered in its place
-	readonly typedInstead = computed( ()=>{ const at = this.endpointsAt(), typed = this.url().trim(); return at && typed && at!=typed ? typed : undefined; } );
+	//The typed url, offered in place of the url a server advertises when reading the endpoints there failed - a host name the gateway
+	//does not reach.  Not after a list:  the typed url is then a discovery server's, whose own endpoints it would read
+	//(414-clients-discovery review #3).
+	readonly typedInstead = computed( ()=>{
+		const at = this.endpointsAt(), typed = this.url().trim();
+		return at && typed && at!=typed && this.error() && this.servers().length<=1 ? typed : undefined;
+	} );
 
 	//FindServers at the url:  the list, or straight to the endpoints of the one server found
 	async findServers():Promise<void>{
@@ -68,8 +73,14 @@ export class DiscoverDialog{
 		this.endpoints.set( [] );
 		this.endpointsAt.set( url );
 		const endpoints = await this.#load( ()=>this.data.gateway.postQL<{discover:DiscoveredEndpoint[]}>( discoverEndpointsMutation, {url} ) );
-		if( endpoints )
-			this.endpoints.set( (endpoints.discover ?? []).slice().sort( DiscoverDialog.order ) );
+		if( !endpoints )
+			return;
+		//the picked server's endpoints only:  another server's at this url - a discovery server's - would fill the form with its uri
+		const found = endpoints.discover ?? [], server = this.server(), uri = server?.applicationUri;
+		const own = uri ? found.filter( ep=>!ep.applicationUri || ep.applicationUri==uri ) : found;
+		if( server && found.length && !own.length )
+			this.error.set( `The endpoints at ${url} are ${found[0].applicationUri}'s, not ${this.serverName( server )}'s.` );
+		this.endpoints.set( own.slice().sort( DiscoverDialog.order ) );
 	}
 	async tryTyped():Promise<void>{
 		const typed = this.typedInstead();
@@ -82,7 +93,15 @@ export class DiscoverDialog{
 		this.endpointsAt.set( undefined );
 		this.error.set( undefined );
 	}
-	choose( ep:DiscoveredEndpoint ):void{ this.dialogRef.close( endpointPick( ep ) ); }
+	choose( ep:DiscoveredEndpoint ):void{
+		if( !this.loading() && supportedEndpoint( ep ) )//disabledInteractive:  the disabled button still takes clicks.
+			this.dialogRef.close( endpointPick( ep, this.endpointsAt() ) );
+	}
+	supported( ep:DiscoveredEndpoint ):boolean{ return supportedEndpoint( ep ); }
+	chooseTip( ep:DiscoveredEndpoint ):string{ return supportedEndpoint( ep ) ? 'Fill the form with this endpoint' : `The gateway does not connect with ${this.policyName( ep )} / ${this.modeName( ep )}`; }
+	//the url a pick fills:  the endpoint's, with the host that answered where it advertises another
+	pickUrl( ep:DiscoveredEndpoint ):string{ return endpointUrl( ep.url, this.endpointsAt() ); }
+	pickUrlTitle( ep:DiscoveredEndpoint ):string{ const url = this.pickUrl( ep ); return url==ep.url ? url : `${url}\nAdvertised as ${ep.url}`; }
 	//the server's own ranking first, strongest on top, then by url - what a UA client's connection dialog does
 	static order( a:DiscoveredEndpoint, b:DiscoveredEndpoint ):number{ return b.securityLevel-a.securityLevel || a.url.localeCompare( b.url ); }
 	policyName( ep:DiscoveredEndpoint ):string{ return policyName( ep.policy ); }

@@ -41,9 +41,17 @@ namespace Jde::Opc::Gateway{
 	//endpoint skips the selection (connectIterate: "an exact endpoint was configured"), and the discovery services are what every
 	//server answers on a None channel.  `logger` outlives the client:  the config keeps a pointer to it.
 	Ω discoveryClient( str url, Duration timeout, Logger& logger, SL sl )ε->ClientPtr{
-		//The name looked up with a deadline first:  open62541's own getaddrinfo has none (#353 review #8).
-		if( let name = Discovery::ParseUrl(url); name && AsioConnectionManager::Resolve(name->Host, name->Port, 3s).empty() )
-			throw Exception{ sl, {EHttpStatus::BadGateway}, "'{}' did not resolve within 3 s.", name->Host };
+		//The name looked up with a deadline first:  open62541's own getaddrinfo has none (#353 review #8).  An answer before the
+		//deadline is a name that doesn't exist, which the message doesn't blame on a deadline.
+		if( let name = Discovery::ParseUrl(url); name ){
+			let deadline = std::min<Duration>( timeout, 3s );
+			let start = steady_clock::now();
+			if( AsioConnectionManager::Resolve(name->Host, name->Port, deadline).empty() ){
+				if( steady_clock::now()-start<deadline )
+					throw Exception{ sl, {EHttpStatus::BadGateway}, "'{}' did not resolve.", name->Host };
+				throw Exception{ sl, {EHttpStatus::BadGateway}, "'{}' did not resolve within {} ms.", name->Host, duration_cast<milliseconds>(deadline).count() };
+			}
+		}
 		UA_ClientConfig config{};
 		config.logging = &logger;
 		if( let sc = UA_ClientConfig_setDefault(&config); sc ){

@@ -5,8 +5,8 @@
 //The discovery services (docs/clients/spec.md *Discovery*):  FindServers at a discovery url and GetEndpoints at a server url, each
 //on a throwaway client of open62541's own, SecurityPolicy None, built as the connect diagnostics build theirs
 //(UAClient::LogServerEndpoints, which reads its endpoints through here).  Every server answers both on a None channel.  Synchronous
-//and blocking - the name lookup, the connect, the service - so a caller runs them on the blocking pool (BlockingPool.h), never on
-//the executor:  the `discover` mutation (ql/DiscoverQLAwait.h) and the connect diagnostics do.
+//and blocking - the name lookup, the connect, the service - so a caller runs them off the executor:  the `discover` mutation
+//(ql/DiscoverQLAwait.h) on the discovery pool, the connect diagnostics on the blocking pool (BlockingPool.h).
 namespace Jde::Opc::Gateway::Discovery{
 	//A server FindServers lists - its UA_ApplicationDescription, as serverDescription answers a connected server's.
 	struct Server final{
@@ -37,8 +37,9 @@ namespace Jde::Opc::Gateway::Discovery{
 	α ParseUrl( str url )ι->optional<UrlName>;
 	//FindServers at `url`:  a Local Discovery Server's, or any server's, which answers with itself.  `timeout` bounds the connect
 	//and the call, as a client's requestTimeout does (UA_ClientConfig::timeout);  `h` names the client in the log.  What failed
-	//is a UAException with the service's status, an Exception for a url that isn't reached - a name that doesn't resolve within 3 s
-	//(the lookup open62541 makes has no deadline, and a dead nameserver held a pool thread, #353 review #8).
+	//is a UAException with the service's status, an Exception for a name that doesn't resolve - looked up first, within 3 s or
+	//`timeout` when that is shorter, since the lookup open62541 makes has no deadline and a dead nameserver held a pool thread
+	//(#353 review #8).
 	α FindServers( str url, Duration timeout, Jde::Handle h, SRCE )ε->vector<Server>;
 	//GetEndpoints at `url`, a server's, on the same terms.
 	α GetEndpoints( str url, Duration timeout, Jde::Handle h, SRCE )ε->vector<Endpoint>;
