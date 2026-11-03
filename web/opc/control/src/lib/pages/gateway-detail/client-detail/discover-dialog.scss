@@ -1,0 +1,90 @@
+/* after hist-admin-shared.scss in styleUrls, which has the refresh bar, the table and the empty and refused states */
+:host{
+	display: block;
+}
+.where{
+	display: flex;
+	.url{
+		flex: 1 1 320px;
+	}
+}
+.trail{
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 2px .5rem;
+	margin-bottom: .25rem;
+	.crumb{
+		min-width: 0;
+		padding-inline: 8px;
+	}
+	.sep{
+		color: var(--mat-sys-on-surface-variant);
+	}
+	.current{
+		color: var(--mat-sys-on-surface);
+		font-weight: 500;
+	}
+	.at{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+		overflow-wrap: anywhere;
+	}
+	.spacer{
+		flex: 1 1 auto;
+	}
+}
+mat-cell span{
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.servers{
+	.mat-column-name{
+		flex: 2 1 200px;
+		min-width: 0;
+		.open{
+			min-width: 0;
+			padding-inline: 8px;
+		}
+	}
+	.mat-column-uri, .mat-column-urls{
+		flex: 2 1 200px;
+		min-width: 0;
+		color: var(--mat-sys-on-surface-variant);
+	}
+	.mat-column-type{
+		flex: 0 0 120px;
+	}
+}
+.endpoints{
+	.mat-column-url{
+		flex: 3 1 220px;
+		min-width: 0;
+	}
+	.mat-column-policy, .mat-column-tokens, .mat-column-certificate{
+		flex: 2 1 140px;
+		min-width: 0;
+		color: var(--mat-sys-on-surface-variant);
+	}
+	.mat-column-mode{
+		flex: 0 0 120px;
+	}
+	.mat-column-choose{
+		flex: 0 0 48px;
+		padding-inline: 0;
+	}
+	.empty{
+		margin: 0;
+		font-style: italic;
+	}
+}
+mat-dialog-actions{
+	justify-content: flex-end;
+	gap: 8px;
+	.hint-line{
+		flex: 1 1 auto;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+}

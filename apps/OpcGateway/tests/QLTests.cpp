@@ -1,3 +1,4 @@
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <absl/cleanup/cleanup.h>
@@ -10,6 +11,7 @@
 #include "../src/auth/OpcServerSession.h"
 #include <jde/web/server/Sessions.h>
 #include "../src/ql/GatewayQL.h"//after Sessions.h:  IQLAwaitExe.h names Web::Server::SessionInfo.
+#include "../src/ql/DiscoverQLAwait.h"
 #include "../src/ql/OpcSessionsQLAwait.h"
 #include "../src/ql/SearchQLAwait.h"
 #include "../src/UAClient.h"
@@ -510,6 +512,144 @@ namespace Jde::Opc::Gateway::Tests{
 		try{//a mutation:  a GET - a cross-site <img> - must not connect the gateway anywhere or issue a certificate.
 			Get( GatewayPort(), "/graphql?query=testConnection(opc:%22qlTestsTestConnection%22,url:%22opc.tcp://127.0.0.1:1%22)%7BapplicationUri%7D" );
 			ADD_FAILURE() << "testConnection ran over GET";
+		}
+		catch( const ClientHttpResException& e ){
+			EXPECT_EQ( e.Status(), boost::beast::http::status::bad_request ) << e.Res().Body();
+			EXPECT_TRUE( e.Res().Body().contains("Mutations must use post.") ) << e.Res().Body();
+		}
+	}
+
+	//The detached form of a socket query, for one that is meant to take a while:  what it answered, into `state`.
+	Ω querying( string query, jobject vars, sp<Awaited<jvalue>> state )ι->VoidTask{
+		try{
+			state->Result = co_await Any( Socket().Query(move(query), move(vars), true) );
+		}
+		catch( Exception& e ){
+			state->Error = e.Move();
+		}
+		state->Done.test_and_set();
+	}
+	//discover( url, servers, requestTimeout ) - the connection page's Discover (docs/clients/spec.md *Discovery*):  FindServers at a
+	//discovery url lists the servers it knows, GetEndpoints at a server url its endpoints with their token policies and its certificate
+	//decoded, both on a throwaway None-policy client on the blocking pool, so a url that isn't reached answers its error while the
+	//executor answers other requests;  under serverConnections' Update, so an ungranted user is refused;  a mutation, so not over GET.
+	TEST_F( QLTests, discover ){
+		let url = OpcUrl();
+		let urn = OpcUrn();
+		{//servers:  the embedded OpcServer answers FindServers with itself.
+			let value = Socket().QuerySync( "discover( url: $url, servers: true ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls }", {{"url", url}} );
+			TRACE( "discover servers: {}.", serialize(value) );
+			ASSERT_TRUE( value.is_array() ) << serialize( value );
+			let& servers = value.get_array();
+			let server = FindRow( servers, "applicationUri", urn );
+			ASSERT_NE( server, servers.end() ) << serialize( value );
+			let& o = server->as_object();
+			EXPECT_EQ( Json::AsSV(o, "applicationType"), "Server" ) << serialize( value );
+			EXPECT_FALSE( Json::AsSV(o, "applicationName").empty() ) << serialize( value );
+			EXPECT_FALSE( Json::AsArray(o, "discoveryUrls").empty() ) << serialize( value );
+			for( sv field : {"productUri", "gatewayServerUri", "discoveryProfileUri"} )
+				EXPECT_TRUE( o.contains(field) ) << field << ": " << serialize( value );
+		}
+		{//endpoints:  each with its token policies - the username policy among them, which the suite's config gives the server (Opc.Tests.jsonnet opc.users) - and the certificate it presents, decoded.
+			let value = Socket().QuerySync( "discover( url: $url ){ url applicationUri policy mode securityLevel tokenPolicies{ type policy policyId } certificate{ subject issuer notBefore notAfter uri thumbprint fingerprint } }", {{"url", url}} );
+			TRACE( "discover endpoints: {}.", serialize(value) );
+			ASSERT_TRUE( value.is_array() ) << serialize( value );
+			let& endpoints = value.get_array();
+			ASSERT_FALSE( endpoints.empty() ) << serialize( value );
+			ETokenType offered{};
+			const jobject* secured{};
+			optional<uint32> noneLevel;
+			for( let& row : endpoints ){
+				let& ep = row.as_object();
+				EXPECT_EQ( Json::AsSV(ep, "applicationUri"), urn ) << serialize( row );
+				EXPECT_TRUE( Json::AsSV(ep, "url").starts_with("opc.tcp://") ) << serialize( row );
+				EXPECT_TRUE( Json::AsSV(ep, "policy").starts_with("http://opcfoundation.org/UA/SecurityPolicy#") ) << serialize( row );
+				let mode = Json::AsSV( ep, "mode" );
+				EXPECT_TRUE( mode==ServerCnnctn::ModeNone || mode==ServerCnnctn::ModeSign || mode==ServerCnnctn::ModeSignAndEncrypt ) << serialize( row );
+				let level = Json::AsNumber<uint32>( ep, "securityLevel" );
+				if( mode==ServerCnnctn::ModeNone )
+					noneLevel = level;
+				else if( mode==ServerCnnctn::ModeSignAndEncrypt && !secured )
+					secured = &ep;
+				let& policies = Json::AsArray( ep, "tokenPolicies" );
+				EXPECT_FALSE( policies.empty() ) << serialize( row );
+				for( let& p : policies ){
+					let& policy = p.as_object();
+					let type = Json::AsSV( policy, "type" );
+					let i = std::ranges::find( TokenTypeNames, type );
+					ASSERT_TRUE( i!=TokenTypeNames.end() && i!=TokenTypeNames.begin() ) << serialize( p );
+					offered |= (ETokenType)( 1 << (std::distance(TokenTypeNames.begin(), i)-1) );//bit-indexed, as TokenTypeNames is.
+					EXPECT_TRUE( Json::AsSV(policy, "policy").starts_with("http://opcfoundation.org/UA/SecurityPolicy#") ) << "the token's own policy, or the channel's: " << serialize( p );
+					EXPECT_TRUE( policy.contains("policyId") ) << serialize( p );
+				}
+			}
+			let available = AvailableUserTokens( url );//what the suite's own GetEndpoints reads.
+			EXPECT_EQ( (uint)offered, (uint)available ) << serialize( value );
+			EXPECT_TRUE( (uint)offered & (uint)ETokenType::Username ) << "the config's users give the server a username policy: " << serialize( value );
+			ASSERT_TRUE( secured ) << "a Sign & Encrypt endpoint, which carries the server's certificate: " << serialize( value );
+			if( noneLevel )
+				EXPECT_GT( Json::AsNumber<uint32>(*secured, "securityLevel"), *noneLevel ) << "the server ranks its secured endpoint over None";
+			let& cert = Json::AsObject( *secured, "certificate" );
+			EXPECT_EQ( Json::AsSV(cert, "uri"), urn ) << "the SAN URI, the applicationUri a connection's certificateUri names: " << serialize( cert );
+			EXPECT_FALSE( Json::AsSV(cert, "subject").empty() ) << serialize( cert );
+			EXPECT_FALSE( Json::AsSV(cert, "issuer").empty() ) << serialize( cert );
+			let thumbprint = Json::AsSV( cert, "thumbprint" );
+			EXPECT_EQ( thumbprint.size(), 40u ) << "sha-1, upper hex, no separators: " << thumbprint;
+			EXPECT_TRUE( std::ranges::all_of(thumbprint, []( char c ){ return std::isxdigit((unsigned char)c) && !std::islower((unsigned char)c); }) ) << thumbprint;
+			EXPECT_EQ( std::ranges::count(Json::AsSV(cert, "fingerprint"), ':'), 31 ) << "sha-256 with colons: " << Json::AsSV( cert, "fingerprint" );
+			let notBefore = Json::AsSV( cert, "notBefore" ), notAfter = Json::AsSV( cert, "notAfter" );
+			EXPECT_LT( notBefore, notAfter ) << notBefore << " " << notAfter;
+			EXPECT_TRUE( notBefore.ends_with('Z') && notAfter.ends_with('Z') ) << "ISO-8601, UTC:  " << notBefore << " " << notAfter;
+		}
+		{//A url that isn't reached - a listener that never answers the HEL, open62541 giving the handshake no deadline of its own - answers its
+			//error after the requestTimeout, from the pool, and a query on a connected slug answers the executor meanwhile.
+			boost::asio::io_context ctx;
+			boost::asio::ip::tcp::acceptor silent{ ctx, {boost::asio::ip::make_address("127.0.0.1"), 0} };
+			let start = steady_clock::now();
+			auto discovering = ms<Awaited<jvalue>>();
+			querying( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"requestTimeout", 2000}}, discovering );
+			let node = Socket().QuerySync( "node( opc: $opc, id: $id ){ id name }", {{"opc", OpcServerSlug}, {"id", Intensity.ToJson()}} );
+			let nodeAnswered = steady_clock::now()-start;
+			EXPECT_FALSE( discovering->Done.test() ) << "the discover is still waiting on the listener";
+			EXPECT_FALSE( Json::AsSV(node.as_object(), "name").empty() ) << serialize( node );
+			EXPECT_LT( nodeAnswered, 2s ) << "the node query did not wait on the discover";
+			ASSERT_TRUE( discovering->Wait(10s) ) << "the discover answered";
+			let elapsed = steady_clock::now()-start;
+			ASSERT_TRUE( discovering->Error ) << "a listener that never answers is the mutation's error: " << serialize( discovering->Result );
+			TRACE( "discover unanswered: {}.", discovering->Error->what() );
+			EXPECT_TRUE( sv{discovering->Error->what()}.contains("did not answer GetEndpoints") ) << discovering->Error->what();
+			EXPECT_GE( elapsed, 2s ) << "the requestTimeout is the deadline";
+			EXPECT_LT( elapsed, 8s ) << "the request's 2 s, not the gateway's 10 s";
+		}
+		try{
+			Socket().QuerySync( "discover( url: $url ){ url }", {{"url", "opc.tcp://127.0.0.1:1"}} );
+			ADD_FAILURE() << "a discover at a closed port succeeded";
+		}
+		catch( const GatewayErrorResponse& e ){
+			TRACE( "discover refused: {}.", e.what() );
+			EXPECT_TRUE( sv{e.what()}.contains("did not answer GetEndpoints") ) << e.what();
+		}
+		EXPECT_THROW( Socket().QuerySync("discover( url: $url ){ url }", {{"url", " "}}), GatewayErrorResponse ) << "a url is required";
+		EXPECT_THROW( Socket().QuerySync("discover( url: $url, requestTimeout: 0 ){ url }", {{"url", url}}), GatewayErrorResponse ) << "a row's rule on the timeout";
+		{//Under serverConnections' Update:  enforced, a user no grant names is refused, as an ungranted viewer is Test Connection.
+			constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };
+			EnforceResource( "gateway", "serverConnections", true );
+			absl::Cleanup _ = []{ try{ EnforceResource("gateway", "serverConnections", false); }catch( const std::exception& ){} };
+			let refused = WaitUntil( [&]{
+				try{
+					auto ql = QL::Parse( Ƒ("discover( url: \"{}\" ){{ url }}", url), {}, Schemas(), true );
+					BlockAwait<DiscoverQLAwait,jvalue>( DiscoverQLAwait{move(ql.Mutations().front()), QL::Creds{ungranted}} );
+				}
+				catch( const Exception& e ){
+					return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+				}
+				return false;
+			}, 5s, 50ms );
+			EXPECT_TRUE( refused ) << "gateway/serverConnections is enforced and an ungranted user still runs discover";
+		}
+		try{//a mutation:  a GET - a cross-site <img> - must not connect the gateway anywhere.
+			Get( GatewayPort(), "/graphql?query=discover(url:%22opc.tcp://127.0.0.1:1%22)%7Burl%7D" );
+			ADD_FAILURE() << "discover ran over GET";
 		}
 		catch( const ClientHttpResException& e ){
 			EXPECT_EQ( e.Status(), boost::beast::http::status::bad_request ) << e.Res().Body();

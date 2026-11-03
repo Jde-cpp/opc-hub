@@ -7,6 +7,7 @@
 #include <jde/opc/ClientSecurity.h>
 #include <jde/opc/ServerTrust.h>
 #include <jde/historian/Group.h>
+#include "Discovery.h"
 #include "GatewayAppClient.h"
 #include "async/BlockingPool.h"
 #include "async/ConnectionManager.h"
@@ -517,77 +518,31 @@ namespace Jde::Opc::Gateway{
 		//rejects every endpoint - and clientDescription's is what we advertise:  the gateway's own, from the SAN of the certificate it presents (Configuration()).
 		INFO( "[{}]Client Security Policies: {}, applicationUri filter: '{}', advertised applicationUri: '{}'", hex(Handle()), Str::Join(policyUris), ToString(config->applicationUri), ToString(config->clientDescription.applicationUri) );
 	}
-	//An opc.tcp url's host name, port and path - nullopt for an address, which has nothing to look up.
-	struct UrlName final{ string Host; uint16 Port; string Path; };
-	Ω urlName( str url )ι->optional<UrlName>{
-		if( !url.starts_with("opc.tcp://") )
-			return nullopt;
-		UA_String host{}, path{}; UA_UInt16 port{ 4840 };
-		const UA_String uaUrl{ url.size(), (UA_Byte*)url.data() };//views into `url` - nothing is allocated.
-		if( UA_parseEndpointUrl(&uaUrl, &host, &port, &path) || !host.length )
-			return nullopt;
-		string name{ (const char*)host.data, host.length };
-		boost::system::error_code ec;
-		if( name.front()=='[' || (boost::asio::ip::make_address(name, ec), !ec) )
-			return nullopt;
-		return UrlName{ move(name), port, string{(const char*)path.data, path.length} };
-	}
-	//What GetEndpoints on `url` answers - logged one line per endpoint, its policy and mode and every token policy with the policy
-	//that encrypts the token (`Username@Basic256Sha256`; `@None` is a token sent in the clear) - and summarized for the caller.
+	//What GetEndpoints on `url` answers (Discovery::GetEndpoints) - logged one line per endpoint, its policy and mode and every
+	//token policy with the policy that encrypts the token (`Username@Basic256Sha256`; `@None` is a token sent in the clear) - and
+	//summarized for the caller.  A url that doesn't answer is logged and summarized as empty:  these are the diagnostics of a
+	//connect that already failed.
 	α UAClient::LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary{
 		EndpointSummary endpoints;
-		//GetEndpoints looks the name up with open62541's own getaddrinfo, which has no deadline:  a dead nameserver held this pool
-		//thread, and BlockingPool::Stop behind it (#353 review #8).  So a name that doesn't resolve within 3 s isn't read.
-		if( let name = urlName(url); name && AsioConnectionManager::Resolve(name->Host, name->Port, 3s).empty() ){
-			WARN( "[{}]'{}' did not resolve within 3 s - its endpoints aren't read.", hex(h), name->Host );
+		vector<Discovery::Endpoint> found;
+		try{
+			found = Discovery::GetEndpoints( url, 5s, h );//open62541's own default deadline, as the diagnostics always had:  the server just answered a connect.
+		}
+		catch( const Exception& e ){
+			WARN( "[{}]Could not get endpoints for url='{}': '{}'", hex(h), url, e.what() );
 			return endpoints;
 		}
-		Logger logger{ h };
-		UA_ClientConfig config{};
-		config.logging = &logger;
-		if( let sc = UA_ClientConfig_setDefault(&config); sc ){
-			WARN( "[{}]Could not configure an endpoint client for url='{}': '({}){}'", hex(h), url, hex(sc), UAException::Message(sc) );
-			UA_ClientConfig_clear( &config );
-			return endpoints;
-		}
-		//The discovery channel, preset:  with config.endpoint empty, UA_Client_getEndpoints' connect fetches the endpoints and then
-		//SELECTS one for its own channel (ua_client_connect.c endpointUnconfigured), and a None-only client finds none at a url whose
-		//endpoints are all secured - External publishes its None endpoint under the hostname url alone - so the very listing that
-		//would explain the failure fails the same way.  A configured endpoint skips the selection (connectIterate: "an exact
-		//endpoint was configured"), and GetEndpoints is a discovery service every server answers on a None channel.
-		config.endpoint.endpointUrl = UA_STRING_ALLOC( url.c_str() );
-		config.endpoint.securityMode = UA_MESSAGESECURITYMODE_NONE;
-		UA_String_copy( &UA_SECURITY_POLICY_NONE_URI, &config.endpoint.securityPolicyUri );
-		UA_Client *client = UA_Client_newWithConfig( &config );//takes a copy - from here the client owns the config, and UA_Client_delete clears it.
-		if( !client ){
-			WARN( "[{}]Could not create an endpoint client for url='{}'", hex(h), url );
-			UA_ClientConfig_clear( &config );
-			return endpoints;
-		}
-		UA_EndpointDescription* endpointArray{}; uint endpointArraySize{};
-		if( let sc = UA_Client_getEndpoints(client, url.c_str(), &endpointArraySize, &endpointArray); sc ){
-			WARN( "[{}]Could not get endpoints for url='{}': '({}){}'", hex(h), url, hex(sc), UAException::Message(sc) );
-		}
-		else{
-			for( auto&& ep : Iterable<UA_EndpointDescription>(endpointArray, endpointArraySize) ){
-				endpoints.NoneEndpoint = endpoints.NoneEndpoint || ep.securityMode==UA_MESSAGESECURITYMODE_NONE;
-				let securityMode = SecurityModeName( ep.securityMode );
-				let policyUri = ToString( ep.securityPolicyUri );
-				vector<string> tokenPolicies;
-				for( let& utp : Iterable<UA_UserTokenPolicy>(ep.userIdentityTokens, ep.userIdentityTokensSize) ){
-					let type = ToTokenType( utp.tokenType );
-					let tokenPolicyUri = utp.securityPolicyUri.length ? ToString( utp.securityPolicyUri ) : policyUri;//unset means the channel's own (open62541 matchUserTokenPolicy).
-					tokenPolicies.emplace_back( Ƒ("{}@{}", TokenTypeName(type), ClientSecurity::PolicyName(tokenPolicyUri)) );
-					endpoints.Policies.push_back( EndpointSummary::TokenPolicy{ep.securityMode, policyUri, type, tokenPolicyUri} );
-				}
-				let applicationUri = ToString( ep.server.applicationUri );
-				INFO( "[{}]ServerEndpoint {}/{}=[{}], applicationUri: '{}'", hex(h), ClientSecurity::PolicyName(policyUri), securityMode, Str::Join(tokenPolicies), applicationUri );
-				if( endpoints.ServerUri.empty() )
-					endpoints.ServerUri = applicationUri;//every endpoint of one server carries the same uri; keep the first non-empty.
+		for( let& ep : found ){
+			endpoints.NoneEndpoint = endpoints.NoneEndpoint || ep.Mode==UA_MESSAGESECURITYMODE_NONE;
+			vector<string> tokenPolicies;
+			for( let& utp : ep.TokenPolicies ){
+				tokenPolicies.emplace_back( Ƒ("{}@{}", TokenTypeName(utp.Type), ClientSecurity::PolicyName(utp.Policy)) );
+				endpoints.Policies.push_back( EndpointSummary::TokenPolicy{ep.Mode, ep.PolicyUri, utp.Type, utp.Policy} );
 			}
-			UA_Array_delete( endpointArray, endpointArraySize, &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION] );
+			INFO( "[{}]ServerEndpoint {}/{}=[{}], applicationUri: '{}'", hex(h), ClientSecurity::PolicyName(ep.PolicyUri), SecurityModeName(ep.Mode), Str::Join(tokenPolicies), ep.ApplicationUri );
+			if( endpoints.ServerUri.empty() )
+				endpoints.ServerUri = ep.ApplicationUri;//every endpoint of one server carries the same uri; keep the first non-empty.
 		}
-		UA_Client_delete( client );
 		return endpoints;
 	}
 
@@ -957,7 +912,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAClient::ReachableUrl( str url, Jde::Handle h )ι->string{
 		try{
-			let name = urlName( url );
+			let name = Discovery::ParseUrl( url );
 			if( !name )//an address already - there is no second one to fall back to.
 				return url;
 			let endpoints = AsioConnectionManager::Resolve( name->Host, name->Port, 3s );//no longer than the probe:  a dead nameserver held a pool thread ~10 s (#353 review #3).

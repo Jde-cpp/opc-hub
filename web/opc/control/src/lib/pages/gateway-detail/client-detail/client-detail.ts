@@ -6,8 +6,10 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { DetailActions, DetailPage, errorMessage, isRefusal, PickOption, Properties} from 'jde-framework';
 import { Latest } from 'jde-spa';
 
+import { DiscoverDialog } from './discover-dialog';
 import { ServerProperties } from './server-properties/server-properties';
 import { ConnectionSettingName, connectionSettingNames, securedPolicies, securityModes, securityPolicyNone, ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
+import { EndpointPick } from '../../../model/discovery';
 import { modeName, policyName } from '../../../model/gateway-endpoint';
 import { Gateway } from '../../../services/gateway-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
@@ -118,6 +120,26 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		this.serverError.set( error );
 		this.#resultFor.set( settings );
 		this.#announcer.announce( server ? `Connected to ${server.applicationName || settings.url}.` : `Not connected:  ${error}` );
+	}
+	//Discover (docs/clients/spec.md *Discovery*):  the servers the gateway finds at the form's url and the endpoints of the one
+	//picked, in a dialog, and the endpoint chosen fills the form - the url, the Certificate URI with the server's applicationUri,
+	//and the mode and policy - on the Properties tab, where it can be read before Test Connection or Save.  Nothing is saved.
+	//Needs only a url:  the gateway's discovery client presents no certificate, so no slug names one.
+	readonly canDiscover = computed( ()=>!this.testing() && !!(this.properties() as Partial<ServerCnnctn>|null)?.url?.trim() );
+	async onDiscoverClick(){
+		if( !this.canDiscover() )
+			return;//disabledInteractive, as Test Connection
+		const url = (this.properties() as ServerCnnctn).url.trim();
+		const rowLoad = this.#rowLoads.current;
+		const pick = await DiscoverDialog.open( this.dialog, {gateway: this.gateway, url} );
+		if( !pick || !this.#rowLoads.is(rowLoad) )
+			return;
+		this.applyPick( pick );
+	}
+	applyPick( pick:EndpointPick ){
+		this.properties.set( Properties.edited( ServerCnnctn, this.properties(), pick ) );
+		this.tabIndex.set( 0 );
+		this.#announcer.announce( `URL, Certificate URI, Security Mode and Security Policy set from ${pick.url}.` );
 	}
 	//a mutation, POSTed:  it connects the gateway to the form's url and issues the slug's certificate, which a GET must not do.  The
 	//settings go as the save would send them, null where the form leaves one unset, so the test tests the connection Save would save.

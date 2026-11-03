@@ -219,7 +219,7 @@ namespace Jde::Opc::Gateway{
 			bool NoneEndpoint{};
 			α Tokens()Ι->ETokenType{ ETokenType y{}; for( const auto& p : Policies ) y |= p.Type; return y; }//every type offered, on any endpoint.
 		};
-		Ω LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary;//a discovery client's synchronous GetEndpoints:  the blocking pool's.
+		Ω LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary;//Discovery::GetEndpoints, synchronous:  the blocking pool's.
 		α LogClientEndpoints()ι->void;
 		Ω IdentityRejectedDetail( const sp<UAClient>& client, const EndpointSummary& endpoints, bool allowPlain, str clientUri )ι->string;
 		Ω AnswerConnect( sp<UAClient> client, UA_SessionState sessionState, StatusCode connectStatus, string detail )ι->void;

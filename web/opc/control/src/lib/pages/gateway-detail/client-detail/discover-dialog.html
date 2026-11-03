@@ -1,0 +1,91 @@
+<h2 mat-dialog-title>Discover</h2>
+<mat-dialog-content>
+	<div class="where">
+		<mat-form-field class="url">
+			<mat-label>Discovery URL</mat-label>
+			<input matInput [value]="url()" (input)="url.set($any($event.target).value)" (keydown.enter)="findServers()" placeholder="opc.tcp://host:4840" [disabled]="loading()">
+			<button matSuffix matIconButton type="button" (click)="findServers()" [disabled]="!canFind()" aria-label="Find servers" matTooltip="Find the servers at this URL"><mat-icon>search</mat-icon></button>
+			<mat-hint>A Local Discovery Server lists what registered with it;  a server answers with itself.</mat-hint>
+		</mat-form-field>
+	</div>
+	<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Discovering"></mat-progress-bar>
+	@if( server(); as s ){
+		<nav class="trail" aria-label="Where you are">
+			@if( servers().length>1 ){
+				<button matButton type="button" class="crumb" (click)="back()" [disabled]="loading()"><mat-icon aria-hidden="true">arrow_back</mat-icon>Servers</button>
+				<mat-icon class="sep" aria-hidden="true">chevron_right</mat-icon>
+			}
+			<span class="current">{{ serverName(s) }}</span>
+			<span class="at">at {{ endpointsAt() }}</span>
+			<span class="spacer"></span>
+			@if( typedInstead(); as typed ){
+				<button matButton="outlined" type="button" (click)="tryTyped()" [disabled]="loading()" matTooltip="Read the endpoints at the URL typed instead of the one the server advertises">Use {{ typed }}</button>
+			}
+		</nav>
+		<mat-table [dataSource]="endpoints()" class="mat-elevation-z2 jde-dense endpoints">
+			<ng-container matColumnDef="url">
+				<mat-header-cell *matHeaderCellDef>Endpoint</mat-header-cell>
+				<mat-cell *matCellDef="let ep"><span [title]="ep.url">{{ ep.url }}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="policy">
+				<mat-header-cell *matHeaderCellDef>Policy</mat-header-cell>
+				<mat-cell *matCellDef="let ep"><span [title]="ep.policy">{{ policyName(ep) }}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="mode">
+				<mat-header-cell *matHeaderCellDef>Mode</mat-header-cell>
+				<mat-cell *matCellDef="let ep"><span [title]="'Security level ' + ep.securityLevel">{{ modeName(ep) }}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="tokens">
+				<mat-header-cell *matHeaderCellDef>Tokens</mat-header-cell>
+				<mat-cell *matCellDef="let ep"><span [title]="tokensTitle(ep)">{{ tokens(ep) }}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="certificate">
+				<mat-header-cell *matHeaderCellDef>Certificate</mat-header-cell>
+				<mat-cell *matCellDef="let ep"><span [title]="certificateTitle(ep)" [class.empty]="!ep.certificate">{{ certificateText(ep) }}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="choose">
+				<mat-header-cell *matHeaderCellDef></mat-header-cell>
+				<mat-cell *matCellDef="let ep">
+					<button matIconButton type="button" (click)="choose(ep)" [disabled]="loading()" aria-label="Choose this endpoint" matTooltip="Fill the form with this endpoint"><mat-icon>check_circle</mat-icon></button>
+				</mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="endpointColumns"></mat-header-row>
+			<mat-row *matRowDef="let row; columns: endpointColumns"></mat-row>
+		</mat-table>
+		@if( !loading() && !endpoints().length && !error() ){
+			<p class="empty" role="status">No endpoints at {{ endpointsAt() }}.</p>
+		}
+	}
+	@else{
+		<mat-table [dataSource]="servers()" class="mat-elevation-z2 jde-dense servers">
+			<ng-container matColumnDef="name">
+				<mat-header-cell *matHeaderCellDef>Server</mat-header-cell>
+				<mat-cell *matCellDef="let s"><button matButton type="button" class="open" (click)="pick(s)" [disabled]="loading()">{{ serverName(s) }}</button></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="uri">
+				<mat-header-cell *matHeaderCellDef>Application URI</mat-header-cell>
+				<mat-cell *matCellDef="let s"><span [title]="s.applicationUri">{{ s.applicationUri }}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="type">
+				<mat-header-cell *matHeaderCellDef>Type</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{ s.applicationType }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="urls">
+				<mat-header-cell *matHeaderCellDef>Discovery URLs</mat-header-cell>
+				<mat-cell *matCellDef="let s"><span [title]="urls(s)">{{ urls(s) }}</span></mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="serverColumns"></mat-header-row>
+			<mat-row *matRowDef="let row; columns: serverColumns"></mat-row>
+		</mat-table>
+		@if( !loading() && !servers().length && !error() ){
+			<p class="empty" role="status">{{ url().trim() ? 'No servers at ' + url().trim() + '.' : 'Enter a URL to discover.' }}</p>
+		}
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<span class="hint-line">Choosing an endpoint fills the URL, Certificate URI, Security Mode and Security Policy.  Nothing is saved.</span>
+	<button matButton="outlined" type="button" (click)="dialogRef.close()">Cancel</button>
+</mat-dialog-actions>
