@@ -23,10 +23,15 @@ namespace Jde::Crypto{
 		string SubjectAltName;
 		string Upn;               //SAN otherName 1.3.6.1.4.1.311.20.2.3 (ms UPN), empty if absent.
 		string Email;             //SAN rfc822Name, empty if absent.
+		TimePoint NotBefore;      //notBefore.
 		TimePoint Expiration;     //notAfter.
 		string Fingerprint;       //sha-256 of the DER, colon-separated upper hex as `openssl x509 -fingerprint -sha256` prints it.
+		//sha-1 of the DER, upper hex with no separators:  the thumbprint a UA client's certificate list shows and a secure channel's
+		//rejected file is named by (OPC 10000-6 6.2.2's thumbprint is the SHA-1), so an operator can match the two.
+		string Thumbprint;
 	};
 	Φ ReadCertificate( const fs::path& certificate, SRCE )ε->vector<byte>;//PEM or DER on disk - see TrustDirs' IsCertificateFile - DER back.
+	Φ ParseCertificate( std::span<const byte> pemOrDer, SRCE )ε->vector<byte>;//ReadCertificate for bytes already read:  PEM or DER, DER back.
 	Φ WriteCertificate( const fs::path& path, std::span<const byte> certificate, SRCE )ε->void;//DER, the first certificate of `certificate` - a UA trust list's encoding.
 }
 #undef Φ

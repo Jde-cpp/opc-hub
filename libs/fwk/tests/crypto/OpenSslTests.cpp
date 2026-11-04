@@ -142,6 +142,19 @@ namespace Jde::Crypto{
 		fs::remove_all( dir );
 	}
 
+	//reviews-issue/415-clients-trust.md #10:  ReadCertificate for bytes already read - the gateway's clientCertificate{} reads its
+	//file once, parses it here and answers its text as the PEM.  Both encodings give the same DER;  junk throws, nothing queued.
+	TEST_F( OpenSslTests, ParseCertificateTakesPemOrDer ){
+		let der = ReadCertificate( CertificateFile );
+		let pem = IO::LoadBinary( CertificateFile );
+		EXPECT_TRUE( ParseCertificate(std::span<const byte>{(const byte*)pem.data(), pem.size()})==der ) << "the PEM file's bytes parsed to other DER";
+		EXPECT_TRUE( ParseCertificate(der)==der ) << "DER parsed to other DER";
+		let junk = string{ "neither a PEM header nor a DER SEQUENCE" };
+		ERR_clear_error();
+		EXPECT_THROW( ParseCertificate(std::span<const byte>{(const byte*)junk.data(), junk.size()}), OpenSslException );
+		EXPECT_EQ( ERR_peek_error(), 0ul ) << "left on the queue: " << OpenSslException::CurrentError( (uint32)ERR_peek_error() );
+	}
+
 	//reviews/m2-closing.md #10:  an OpenSslException took one error off the thread's queue and left the rest.  A file that is
 	//neither encoding fails two parses, and the DER one queues more than one error, so every bad file in a trust directory -
 	//loadAnchors reads them one by one and carries on - left its tail behind, and the next OpenSslException on that thread,
@@ -216,7 +229,16 @@ namespace Jde::Crypto{
 		EXPECT_EQ( info.SubjectAltName, "email:tester@jde-cpp.com,otherName:msUPN;UTF8:upn-tester@jde-cpp.com,URI:urn:my.server.application" );
 		EXPECT_EQ( info.SanUri(), "urn:my.server.application" );//not the whole SAN - that was the applicationUri bug.
 		EXPECT_GT( info.Expiration, Clock::now() );//CreateCertificate issues 365-day certs.
+		EXPECT_LE( info.NotBefore, Clock::now() );
+		EXPECT_LT( info.NotBefore, info.Expiration );
+		//the thumbprint a UA client shows and a rejected file is named by:  sha-1 of the DER, upper hex, no separators - beside the
+		//sha-256 fingerprint openssl prints, with its colons.  Both of the whole DER, so another certificate has another of each.
+		EXPECT_EQ( info.Thumbprint.size(), 40u ) << info.Thumbprint;
+		EXPECT_TRUE( std::ranges::all_of(info.Thumbprint, []( char c ){ return std::isxdigit((unsigned char)c) && !std::islower((unsigned char)c); }) ) << info.Thumbprint;
+		EXPECT_EQ( info.Fingerprint.size(), 32u*3-1 ) << info.Fingerprint;
 		let plain = Crypto::Certificate{ ReadCertificate(CertificateFile) };//fixture cert has a URI-only SAN.
+		EXPECT_NE( plain.Thumbprint, info.Thumbprint );
+		EXPECT_NE( plain.Fingerprint, info.Fingerprint );
 		EXPECT_TRUE( plain.Email.empty() );
 		EXPECT_TRUE( plain.Upn.empty() );
 		EXPECT_EQ( plain.SubjectAltName, "URI:"+plain.SanUri() );//single entry - SanUri is the whole thing bar the prefix.

@@ -29,6 +29,10 @@ namespace Jde::Opc::Gateway{
 		Ω Create( Jde::Handle client, ConnectionWake wake )ε->UA_ConnectionManager*;
 		struct Counts final{ uint Opened{}; uint Established{}; uint Closings{}; uint Resolves{}; };
 		Ω Stats( UA_Client* ua )ι->optional<Counts>;//the client's manager's, where it is this one - for tests.
+		//`host`'s addresses, looked up on the net thread's resolver threads within `timeout`, else none:  a nameserver that never
+		//answers holds getaddrinfo for ~10 s, which ReachableUrl's caller, a blocking-pool thread, is not to wait out (#353 review #3).
+		//A lookup past its deadline finishes on the net thread and answers no one.
+		Ω Resolve( str host, uint16 port, steady_clock::duration timeout )ι->vector<boost::asio::ip::tcp::endpoint>;
 	private:
 		AsioConnectionManager( Jde::Handle client, ConnectionWake wake )ε;
 		~AsioConnectionManager();

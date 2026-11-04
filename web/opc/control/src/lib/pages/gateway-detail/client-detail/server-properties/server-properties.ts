@@ -1,8 +1,9 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, input, output } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { modeName, policyName } from '../../../../model/gateway-endpoint';
-import { Server } from '../../../../model/server';
+import { ClientCertificate, RejectedCertificate, Server } from '../../../../model/server';
 
 /** A row of the description list:  a label and the server's value for it, empty when the server left the field blank;
  * `title` carries the full value when the one shown is an abbreviation of it. */
@@ -15,7 +16,7 @@ const abbreviated = ( label:string, value:string, shown:string ):ServerField=>( 
 	selector: 'server-properties',
 	templateUrl: './server-properties.html',
 	styleUrls: ['./server-properties.scss'],
-	imports: [MatIcon, MatProgressSpinner]
+	imports: [MatButtonModule, MatIcon, MatProgressSpinner]
 })
 export class ServerProperties{
 	//unset when the gateway has no session with the server:  the tab then says so instead of the page hiding it, with the
@@ -46,4 +47,65 @@ export class ServerProperties{
 			{ label: "Discovery Profile URI", value: s.discoveryProfileUri }
 		];
 	} );
+
+	//the server certificate the gateway rejected for this connection (docs/clients/spec.md *Trust*, #415):  shown under the
+	//Not connected reason, with Trust for an admin.  Null when there is none.
+	rejected = input<RejectedCertificate|null>( null );
+	//the gateway's own certificate for the connection, the one it presents - shown with a PEM download, so carrying it to a
+	//third-party server's trust list is a button, not a copy-by-path.  Null when its file does not exist.
+	client = input<ClientCertificate|null>( null );
+	//a trustServer in flight:  the Trust button then reads Trusting… and is disabled, as Test Connection does.
+	trusting = input( false );
+	//the admin pressed Trust:  the rejected certificate's thumbprint, which the page hands trustServer.  The page gates on the
+	//right and shows the refusal - a viewer sees Trust and a toast, as Test Connection is (the server is the gate).
+	trust = output<string>();
+	readonly rejectedFields = computed<ServerField[]>( ()=>{
+		const c = this.rejected();
+		return !c ? [] : [
+			{ label: "Subject", value: c.subject },
+			{ label: "Issuer", value: c.issuer },
+			{ label: "Valid From", value: c.notBefore },
+			{ label: "Valid To", value: c.notAfter },
+			{ label: "Application URI", value: c.uri },
+			{ label: "Thumbprint", value: c.thumbprint }
+		];
+	} );
+	readonly clientFields = computed<ServerField[]>( ()=>{
+		const c = this.client();
+		return !c ? [] : [
+			{ label: "Subject", value: c.subject },
+			{ label: "Application URI", value: c.uri },
+			{ label: "Valid From", value: c.notBefore },
+			{ label: "Valid To", value: c.notAfter },
+			{ label: "File", value: c.path }
+		];
+	} );
+	onTrust():void{
+		const c = this.rejected();
+		if( c && !this.trusting() )
+			this.trust.emit( c.thumbprint );
+	}
+	//the gateway's certificate as a .pem file:  a Blob the browser saves, no new route - the PEM is already on the row.  The anchor is
+	//attached for its click, and the url outlives it:  Chrome starts the fetch inside click(), Firefox and Safari after it returns,
+	//and a url revoked by then saves nothing.  Revoked long after, as FileSaver.js does - the blob is a few kB.
+	downloadPem():void{
+		const c = this.client();
+		if( !c )
+			return;
+		const blob = new Blob( [c.pem], {type: 'application/x-pem-file'} );
+		const url = URL.createObjectURL( blob );
+		const a = document.createElement( 'a' );
+		a.href = url;
+		a.download = `${this.certificateName(c)}.pem`;
+		a.hidden = true;
+		document.body.append( a );
+		a.click();
+		a.remove();
+		setTimeout( ()=>URL.revokeObjectURL(url), 40_000 );
+	}
+	//the file's stem for the download name, else "gateway-certificate" - the path is the gateway's, "<slug>.pem" as issued.
+	private certificateName( c:ClientCertificate ):string{
+		const stem = c.path.split( /[/\\]/ ).pop()?.replace( /\.pem$/i, '' );
+		return stem || 'gateway-certificate';
+	}
 }

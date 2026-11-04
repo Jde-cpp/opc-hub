@@ -199,21 +199,21 @@ namespace Jde::Opc::Gateway::Tests{
 	class CertTests : public Auth{
 	protected:
 		CertTests()ι:Auth{ETokenType::Certificate}{}
-		α Connect( atomic_flag& done )ι->void{ Tests::Connect( Connection->Slug, Credential{Crypto::PublicKey{}}, &_client, &_exception, &done ); }//detached:  the test runs several at once.
+		α Connect()ι->sp<Connecting>{ return Tests::Connect( Connection->Slug, Credential{Crypto::PublicKey{}} ); }//detached:  the test runs several at once.
 	};
 
 	TEST_F( CertTests, Authenticate ){
-		string opcId{ Connection->Slug };
-		atomic_flag a,b,c,d;
-		Connect( a );//test Connection.
-		Connect( b );//test waiting for a.
-		a.wait( false );
-		b.wait( false );
-		Connect( c );//test already have connection.
-		Connect( d );
-		c.wait( false );
-		d.wait( false );
-		EXPECT_FALSE( _exception );
+		let a = Connect();//test Connection.
+		let b = Connect();//test waiting for a.
+		ASSERT_TRUE( a->Wait() );
+		ASSERT_TRUE( b->Wait() );
+		let c = Connect();//test already have connection.
+		let d = Connect();
+		ASSERT_TRUE( c->Wait() );
+		ASSERT_TRUE( d->Wait() );
+		for( let& connect : {a, b, c, d} )
+			EXPECT_FALSE( connect->Error ) << connect->Error->what();
+		_client = d->Result;//TearDown's to remove.
 		//security-matrix #8:  certificate authentication presents the app client's own certificate, so the name the gateway gives
 		//is that certificate's uri - the gateway's, not the server's, which stays the endpoint filter.
 		ASSERT_TRUE( _client );

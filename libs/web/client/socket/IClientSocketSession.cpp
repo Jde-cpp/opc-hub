@@ -120,6 +120,10 @@ namespace Jde::Web::Client{
 		//work, and io_context::run - hence Process::Shutdown - blocks on it.  A process that exited within the timeout of its
 		//last request therefore sat out the remainder and was killed by the shutdown watchdog (emulator-review #11).
 		_timeouts.emplace( requestId, timer.Canceller() );
+		if( !HasTask(requestId) ){//CloseTasks ran between AddTask and the emplace above:  it failed the request and found no timer to cancel.
+			_timeouts.erase( requestId );
+			co_return;
+		}
 		auto _ = co_await timer;
 		_timeouts.erase( requestId );
 		if( !HasTask(requestId) )

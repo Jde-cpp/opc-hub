@@ -55,7 +55,16 @@ function( sync=false )
 		///access/trustedCertDirs, where this list lived until 2026-09-18:  in the hub that one is the AppServer role's enrollment
 		//anchors - every certificate under it may create a user - and a server the gateway talks to has no business among them
 		//(reviews/security-matrix.md #3).
-		trustedCertDirs: [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator"), args.serversDir("$(PRODUCT_NAME)") ],
+		trustedCertDirs: [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator"), self.serversDir ],
+		//This product's own trusted-server directory, ssl/servers:  where an operator drops a third-party server's certificate, and
+		//where Trust (trustServer) moves one - so it must stay among trustedCertDirs, above, for the move to mean anything.  A `::`
+		//key is its default, shown hidden.
+		serversDir:: args.serversDir("$(PRODUCT_NAME)"),
+		//Where the verifier writes a server certificate it rejects, <thumbprint>.der (libs/opc ServerTrust.cpp), so the Connection
+		//tab shows it and Trust can move it.  A `::` key is its default, shown hidden.  Not ssl/servers/rejected, the gateway's own
+		//endpoint's /gateway/server/rejectedCertDir below, for the client certificates IT refuses (the other direction of trust),
+		//which it prunes to the newest few.
+		rejectedCertDir:: self.serversDir + "/rejected-servers",
 		//The gateway's historian (libs/historian/docs/spec.md, *Placement*):  the groups defined on it.  No `hist` block, or another
 		//process holding the lock under `path`, runs the gateway without its historian.  A `::` key is its default, shown hidden:
 		//un-hide it to change it.
@@ -198,6 +207,8 @@ function( sync=false )
 		}
 	},
 	workers:{
+		blocking:: { threads: 2 },//the connects' pool (src/async/BlockingPool.h):  a client's build and connect - the certificate issue, the trust scan, the host probe - run here, never on the executor.
+		discovery:: { threads: 2 },//the discover mutation's pool (src/async/BlockingPool.h DiscoveryPool):  FindServers and GetEndpoints, up to 15 s each, never on the connects' pool.
 		drive:{ threads:  2 },
 		executor:{ threads:  3 }
 	}

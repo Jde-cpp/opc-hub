@@ -19,11 +19,13 @@ namespace Jde::Opc::Gateway{
 		α await_resume()ε->sp<UAClient> override;
 		Ω Resume( sp<UAClient> client )ι->void;
 		Ω Resume( str slug, Credential cred, const UAClientException&& e )ι->void;
+		//The row, then the client built and connected on the blocking pool (BlockingPool.h), for the waiters on slug and cred.  Start's,
+		//for the first, and UAClient's for a connect whose row was edited under it.
+		Ω Create( ServerCnnctnNK slug, Credential cred, SRCE )ι->TAwait<vector<ServerCnnctn>>::Task;
 	private:
 		Ω Resume( str slug, Credential cred, function<void(ConnectAwait::Handle)> resume )ι->void;
 		α ResolveDefault()ι->TAwait<vector<ServerCnnctn>>::Task;//"" -> the default connection's slug, then Start.
 		α Start()ι->void;//find a live client, else register and Create - Suspend once the slug is known.
-		α Create()ι->TAwait<vector<ServerCnnctn>>::Task;
 		string _opcSlug;
 		Credential _cred;
 		SessionPK _sessionId{};//non-zero only on the web-session ctors: a successful connect is recorded in _sessions so opcSessions counts it.

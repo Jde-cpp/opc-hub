@@ -5,6 +5,8 @@
 #include <jde/fwk/crypto/digest.h>
 #include <spdlog/common.h>	//Entry.h only forward-declares source_loc; SourceLocation() is defined here.
 
+#define let const auto
+
 namespace Jde::Logging{
 	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, string&& m, vector<string> args )ι:
 		Entry( sl, l, tags, {}, move(m), move(args) )
@@ -70,3 +72,45 @@ namespace Jde::Logging{
     return _message;
 	}
 }
+#ifndef __cpp_lib_stacktrace
+α Jde::Logging::Locate( const boost::stacktrace::frame& frame )ι->FrameLocation{
+#ifdef BOOST_STACKTRACE_USE_BACKTRACE
+	FrameLocation y;
+	if( !frame )
+		return y;
+	let pc = reinterpret_cast<uintptr_t>( frame.address() );
+	string symbol;
+	{
+		static std::mutex mutex;
+		lg _{ mutex };
+		static ::backtrace_state* state = ::backtrace_create_state( nullptr, 0, [](void*, const char*, int){}, nullptr );//not threaded:  the mutex serializes every call.
+		if( state ){
+			//Every inlined level calls back, innermost first, and the last one stands - as boost's own callback.
+			::backtrace_pcinfo( state, pc, []( void* data, uintptr_t, const char* file, int line, const char* function )->int{
+				auto& y = *static_cast<FrameLocation*>( data );
+				if( file )
+					y.File = file;
+				if( function )
+					y.Function = function;
+				y.Line = (uint32_t)line;
+				return 0;
+			}, [](void*, const char*, int){}, &y );
+			if( y.Function.empty() )
+				::backtrace_syminfo( state, pc, []( void* data, uintptr_t, const char* name, uintptr_t, uintptr_t ){
+					if( name )
+						*static_cast<string*>( data ) = name;
+				}, [](void*, const char*, int){}, &symbol );
+		}
+	}
+	if( ::Dl_info dli; ::dladdr(frame.address(), &dli) && dli.dli_sname )//boost's name() prefers the dynamic symbol.
+		y.Function = dli.dli_sname;
+	else if( y.Function.empty() )
+		y.Function = move( symbol );
+	if( y.Function.size() )
+		y.Function = boost::core::demangle( y.Function.c_str() );
+	return y;
+#else
+	return { frame.source_file(), (uint32_t)frame.source_line(), frame.name() };
+#endif
+}
+#endif

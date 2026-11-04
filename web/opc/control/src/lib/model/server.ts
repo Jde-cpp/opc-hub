@@ -55,3 +55,16 @@ export type ServerProps = {
 /** What the gateway's `testConnection` answers for settings that are not saved:  the description, the policy and mode the
  * session was opened with, and the namespaces - a Server without its connection row (client-detail's Test Connection). */
 export type TestConnectionResult = ServerDescProps & { securityPolicyUri: string; securityMode: string; namespaces: Namespace[] };
+
+//The certificate panel's two fields on serverConnection (docs/clients/spec.md *Trust*, #415), read from the row - no connection,
+//so they survive a connect that fails.  rejectedCertificate is the server certificate the gateway's verifier last rejected for
+//the slug, null when there is none;  trustServer trusts it by its thumbprint.  clientCertificate is the gateway's own issued
+//certificate for the connection, the one it presents, null when its file does not exist;  `pem` is the file for the page to
+//offer as a download, so the help's copy-by-path (assets/help/gateways.md) becomes a button.
+export type RejectedCertificate = { subject:string; issuer:string; notBefore:string; notAfter:string; uri:string; thumbprint:string };
+export type ClientCertificate = { path:string; subject:string; notBefore:string; notAfter:string; uri:string; pem:string };
+export type ConnectionCertificates = { rejectedCertificate:RejectedCertificate|null; clientCertificate:ClientCertificate|null };
+//read from the row (ServerCnnctnSessionsQLAwait, no ConnectAwait), so it answers whether or not the gateway can connect.
+export const connectionCertificatesQuery = "serverConnection( slug:$opc, deleted:null ){ rejectedCertificate{ subject issuer notBefore notAfter uri thumbprint } clientCertificate{ path subject notBefore notAfter uri pem } }";
+//a system mutation under Administer, POSTed:  it changes the gateway's trust list.  It takes no selection - trustServer answers a scalar.
+export const trustServerMutation = "mutation trustServer( opc:$opc, thumbprint:$thumbprint )";

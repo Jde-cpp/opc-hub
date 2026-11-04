@@ -1,8 +1,6 @@
 #include "helpers.h"
-#include <thread>
 #include <open62541/client_config_default.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/settings.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
 #include <jde/opc/uatypes/opcHelpers.h>
@@ -204,5 +202,18 @@ namespace Jde::Opc::Gateway{
 	Tests::RetypedNode::~RetypedNode(){
 		EXPECT_EQ( retype(_ua, _node, _dataType), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( UA_Server_writeDataValue(_ua, _node, _value), UA_STATUSCODE_GOOD );
+	}
+
+	Tests::ExecutorHold::ExecutorHold()ι:
+		_threads{ ThreadCount() }{
+		for( uint i=0; i<_threads; ++i )
+			boost::asio::post( *Executor(), [state=_state]{ ++state->Holding; state->Release.wait( false ); } );
+	}
+	α Tests::ExecutorHold::Held( Duration timeout )Ι->bool{
+		return WaitUntil( [this]{ return _state->Holding==_threads; }, timeout );
+	}
+	α Tests::ExecutorHold::Release()ι->void{
+		_state->Release.test_and_set();
+		_state->Release.notify_all();
 	}
 }

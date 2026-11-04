@@ -10,14 +10,19 @@ namespace Jde::Opc::Gateway{
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};
-	//serverConnections{ … opcSessions{count} opcConnections{count} connectionStatus{name error} } - grafts live state onto the DB rows: opcSessions = web
-	//sessions holding a credential on the slug (auth cache), opcConnections = open UAClients (idle drain/disconnect shrink it), connectionStatus = those
-	//counts read as Connected|Idle|Error against UAClient::ConnectErrors(), so a broken slug is distinguishable from a merely unused one.
+	//serverConnections{ … opcSessions{count} opcConnections{count} connectionStatus{name error} rejectedCertificate{…} clientCertificate{…} } -
+	//grafts live state onto the DB rows.  opcSessions = web sessions holding a credential on the slug (auth cache), opcConnections = open
+	//UAClients (idle drain/disconnect shrink it), connectionStatus = those counts read as Connected|Idle|Error against UAClient::ConnectErrors(),
+	//so a broken slug is distinguishable from a merely unused one - the live-usage telemetry, which needs gateway/sessions Read as well.
+	//rejectedCertificate reads the <thumbprint>.der our verifier wrote for a slug whose server certificate we rejected (ServerTrust,
+	//UAClient::RejectedThumbprint), null for a slug with no standing rejection;  clientCertificate reads the gateway's own issued certificate
+	//for the slug (UAClient::CryptoSettings), the one it presents, so the page downloads its PEM, null when the file does not exist.  Both
+	//are the connection's, not telemetry:  under the table's Read alone, as the rest of the row is.
 	struct ServerCnnctnSessionsQLAwait final : QL::IQLTableAwaitExe{
 		using base = QL::IQLTableAwaitExe;
 		ServerCnnctnSessionsQLAwait( QL::TableQL&& q, QL::Creds&& creds, SRCE )ι:base{ move(q), move(creds), sl }{}
 		Ω IsApplicable( const QL::TableQL& q )ι->bool{ return q.JsonName.starts_with("serverConnection") && std::ranges::any_of( Tables, [&q]( sv t ){ return q.FindTable(t)!=nullptr; } ); }
-		static constexpr array<sv,3> Tables{ "opcSessions", "opcConnections", "connectionStatus" };//opcSessions is OpcSessionsQLAwait's at the top level too.
+		static constexpr array<sv,5> Tables{ "opcSessions", "opcConnections", "connectionStatus", "rejectedCertificate", "clientCertificate" };//opcSessions is OpcSessionsQLAwait's at the top level too.
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};

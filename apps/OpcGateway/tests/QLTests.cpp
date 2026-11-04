@@ -1,3 +1,4 @@
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <absl/cleanup/cleanup.h>
@@ -10,8 +11,10 @@
 #include "../src/auth/OpcServerSession.h"
 #include <jde/web/server/Sessions.h>
 #include "../src/ql/GatewayQL.h"//after Sessions.h:  IQLAwaitExe.h names Web::Server::SessionInfo.
+#include "../src/ql/DiscoverQLAwait.h"
 #include "../src/ql/OpcSessionsQLAwait.h"
 #include "../src/ql/SearchQLAwait.h"
+#include "../src/async/BlockingPool.h"
 #include "../src/UAClient.h"
 
 #define let const auto
@@ -197,6 +200,41 @@ namespace Jde::Opc::Gateway::Tests{
 
 		let value = Socket().QuerySync( "opcSessions{ count }" );//and unenforced again, the harness's own session still reads it.
 		EXPECT_TRUE( value.is_array() ) << serialize( value );
+	}
+
+	//reviews-issue/415-clients-trust.md #3:  the two certificate grafts are the connection's, not live-usage telemetry, so they sit under
+	//serverConnections Read alone - gated on gateway/sessions too, an enforced sessions resource hid the page's Trust panel from a user
+	//who could read the connection.  The telemetry grafts keep the sessions gate.  serverConnections ships unenforced, so the ungranted
+	//probe reads its rows;  the refused telemetry first shows the enforcement has landed.
+	TEST_F( QLTests, CertificatesNeedNoSessionsRead ){
+		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
+		auto query = [&]( str text )->jvalue{
+			auto ql = QL::Parse( text, {}, Schemas(), true );
+			return BlockAwait<ServerCnnctnSessionsQLAwait,jvalue>( ServerCnnctnSessionsQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		};
+		EnforceResource( "gateway", "sessions", true );
+		absl::Cleanup open = []{ try{ EnforceResource("gateway", "sessions", false); }catch( const std::exception& ){} };
+		let refused = WaitUntil( [&]{
+			try{
+				query( "serverConnections( deleted:null ){ slug opcConnections{ count } }" );
+			}
+			catch( const Exception& e ){
+				return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+			}
+			return false;
+		}, 5s, 50ms );
+		ASSERT_TRUE( refused ) << "gateway/sessions is enforced and an ungranted user still reads opcConnections";
+
+		jvalue rows;
+		try{
+			rows = query( "serverConnections( deleted:null ){ slug rejectedCertificate{ thumbprint } clientCertificate{ path } }" );
+		}
+		catch( const Exception& e ){
+			FAIL() << "the certificates were refused for want of gateway/sessions Read:  " << e.what();
+		}
+		ASSERT_TRUE( rows.is_array() && !rows.get_array().empty() ) << serialize( rows );
+		let& o = rows.get_array().front().as_object();
+		EXPECT_TRUE( o.contains("rejectedCertificate") && o.contains("clientCertificate") ) << serialize( o );
 	}
 
 	TEST_F( QLTests, webSessionCounted ){ //no manual AddSession: a jwt-backed web session's connect must register itself (ConnectAwait::await_resume).
@@ -394,6 +432,12 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NE( connectionStatus, fields.end() ) << serialize( fields );
 			EXPECT_EQ( Json::AsSV(connectionStatus->as_object(), "type/kind"), "OBJECT" );
 			EXPECT_EQ( Json::AsSV(connectionStatus->as_object(), "type/name"), "ConnectionStatus" );
+			auto rejectedCertificate = FindRow( fields, "name", "rejectedCertificate" );//#415
+			ASSERT_NE( rejectedCertificate, fields.end() ) << serialize( fields );
+			EXPECT_EQ( Json::AsSV(rejectedCertificate->as_object(), "type/name"), "RejectedCertificate" );
+			auto clientCertificate = FindRow( fields, "name", "clientCertificate" );
+			ASSERT_NE( clientCertificate, fields.end() ) << serialize( fields );
+			EXPECT_EQ( Json::AsSV(clientCertificate->as_object(), "type/name"), "ClientCertificate" );
 		}
 		{ //the status type carries a name and the reason the last connect failed - the SPA's list selects only the name.
 			let fields = Fields( "ConnectionStatus" );
@@ -410,6 +454,14 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::AsSV(count, "name"), "count" );
 			EXPECT_EQ( Json::AsSV(count, "type/kind"), "NON_NULL" );
 			EXPECT_EQ( Json::AsSV(count, "type/ofType/name"), "UInt" );
+		}
+		{ //#415:  the two certificate types the trust panel reads - the rejected server certificate and the gateway's own.
+			let rejected = Fields( "RejectedCertificate" );
+			EXPECT_EQ( rejected.size(), 6u ) << serialize( rejected );//subject issuer notBefore notAfter uri thumbprint
+			EXPECT_NE( FindRow(rejected, "name", "thumbprint"), rejected.end() ) << serialize( rejected );
+			let client = Fields( "ClientCertificate" );
+			EXPECT_EQ( client.size(), 6u ) << serialize( client );//path subject notBefore notAfter uri pem
+			EXPECT_NE( FindRow(client, "name", "pem"), client.end() ) << serialize( client );
 		}
 	}
 
@@ -510,6 +562,188 @@ namespace Jde::Opc::Gateway::Tests{
 		try{//a mutation:  a GET - a cross-site <img> - must not connect the gateway anywhere or issue a certificate.
 			Get( GatewayPort(), "/graphql?query=testConnection(opc:%22qlTestsTestConnection%22,url:%22opc.tcp://127.0.0.1:1%22)%7BapplicationUri%7D" );
 			ADD_FAILURE() << "testConnection ran over GET";
+		}
+		catch( const ClientHttpResException& e ){
+			EXPECT_EQ( e.Status(), boost::beast::http::status::bad_request ) << e.Res().Body();
+			EXPECT_TRUE( e.Res().Body().contains("Mutations must use post.") ) << e.Res().Body();
+		}
+	}
+
+	//The detached form of a socket query, for one that is meant to take a while:  what it answered, into `state`.
+	Ω querying( string query, jobject vars, sp<Awaited<jvalue>> state )ι->VoidTask{
+		try{
+			state->Result = co_await Any( Socket().Query(move(query), move(vars), true) );
+		}
+		catch( Exception& e ){
+			state->Error = e.Move();
+		}
+		state->Done.test_and_set();
+	}
+	//discover( url, servers, requestTimeout ) - the connection page's Discover (docs/clients/spec.md *Discovery*):  FindServers at a
+	//discovery url lists the servers it knows, GetEndpoints at a server url its endpoints with their token policies and its certificate
+	//decoded, both on a throwaway None-policy client on the blocking pool, so a url that isn't reached answers its error while the
+	//executor answers other requests;  under serverConnections' Update, so an ungranted user is refused;  a mutation, so not over GET.
+	TEST_F( QLTests, discover ){
+		let url = OpcUrl();
+		let urn = OpcUrn();
+		{//servers:  the embedded OpcServer answers FindServers with itself.
+			let value = Socket().QuerySync( "discover( url: $url, servers: true ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls }", {{"url", url}} );
+			TRACE( "discover servers: {}.", serialize(value) );
+			ASSERT_TRUE( value.is_array() ) << serialize( value );
+			let& servers = value.get_array();
+			let server = FindRow( servers, "applicationUri", urn );
+			ASSERT_NE( server, servers.end() ) << serialize( value );
+			let& o = server->as_object();
+			EXPECT_EQ( Json::AsSV(o, "applicationType"), "Server" ) << serialize( value );
+			EXPECT_FALSE( Json::AsSV(o, "applicationName").empty() ) << serialize( value );
+			EXPECT_FALSE( Json::AsArray(o, "discoveryUrls").empty() ) << serialize( value );
+			for( sv field : {"productUri", "gatewayServerUri", "discoveryProfileUri"} )
+				EXPECT_TRUE( o.contains(field) ) << field << ": " << serialize( value );
+		}
+		{//endpoints:  each with its token policies - the username policy among them, which the suite's config gives the server (Opc.Tests.jsonnet opc.users) - and the certificate it presents, decoded.
+			let value = Socket().QuerySync( "discover( url: $url ){ url applicationUri policy mode securityLevel tokenPolicies{ type policy policyId } certificate{ subject issuer notBefore notAfter uri thumbprint fingerprint } }", {{"url", url}} );
+			TRACE( "discover endpoints: {}.", serialize(value) );
+			ASSERT_TRUE( value.is_array() ) << serialize( value );
+			let& endpoints = value.get_array();
+			ASSERT_FALSE( endpoints.empty() ) << serialize( value );
+			ETokenType offered{};
+			const jobject* secured{};
+			optional<uint32> noneLevel;
+			for( let& row : endpoints ){
+				let& ep = row.as_object();
+				EXPECT_EQ( Json::AsSV(ep, "applicationUri"), urn ) << serialize( row );
+				EXPECT_TRUE( Json::AsSV(ep, "url").starts_with("opc.tcp://") ) << serialize( row );
+				EXPECT_TRUE( Json::AsSV(ep, "policy").starts_with("http://opcfoundation.org/UA/SecurityPolicy#") ) << serialize( row );
+				let mode = Json::AsSV( ep, "mode" );
+				EXPECT_TRUE( mode==ServerCnnctn::ModeNone || mode==ServerCnnctn::ModeSign || mode==ServerCnnctn::ModeSignAndEncrypt ) << serialize( row );
+				let level = Json::AsNumber<uint32>( ep, "securityLevel" );
+				if( mode==ServerCnnctn::ModeNone )
+					noneLevel = level;
+				else if( mode==ServerCnnctn::ModeSignAndEncrypt && !secured )
+					secured = &ep;
+				let& policies = Json::AsArray( ep, "tokenPolicies" );
+				EXPECT_FALSE( policies.empty() ) << serialize( row );
+				for( let& p : policies ){
+					let& policy = p.as_object();
+					let type = Json::AsSV( policy, "type" );
+					let i = std::ranges::find( TokenTypeNames, type );
+					ASSERT_TRUE( i!=TokenTypeNames.end() && i!=TokenTypeNames.begin() ) << serialize( p );
+					offered |= (ETokenType)( 1 << (std::distance(TokenTypeNames.begin(), i)-1) );//bit-indexed, as TokenTypeNames is.
+					EXPECT_TRUE( Json::AsSV(policy, "policy").starts_with("http://opcfoundation.org/UA/SecurityPolicy#") ) << "the token's own policy, or the channel's: " << serialize( p );
+					EXPECT_TRUE( policy.contains("policyId") ) << serialize( p );
+				}
+			}
+			let available = AvailableUserTokens( url );//what the suite's own GetEndpoints reads.
+			EXPECT_EQ( (uint)offered, (uint)available ) << serialize( value );
+			EXPECT_TRUE( (uint)offered & (uint)ETokenType::Username ) << "the config's users give the server a username policy: " << serialize( value );
+			ASSERT_TRUE( secured ) << "a Sign & Encrypt endpoint, which carries the server's certificate: " << serialize( value );
+			if( noneLevel )
+				EXPECT_GT( Json::AsNumber<uint32>(*secured, "securityLevel"), *noneLevel ) << "the server ranks its secured endpoint over None";
+			let& cert = Json::AsObject( *secured, "certificate" );
+			EXPECT_EQ( Json::AsSV(cert, "uri"), urn ) << "the SAN URI, the applicationUri a connection's certificateUri names: " << serialize( cert );
+			EXPECT_FALSE( Json::AsSV(cert, "subject").empty() ) << serialize( cert );
+			EXPECT_FALSE( Json::AsSV(cert, "issuer").empty() ) << serialize( cert );
+			let thumbprint = Json::AsSV( cert, "thumbprint" );
+			EXPECT_EQ( thumbprint.size(), 40u ) << "sha-1, upper hex, no separators: " << thumbprint;
+			EXPECT_TRUE( std::ranges::all_of(thumbprint, []( char c ){ return std::isxdigit((unsigned char)c) && !std::islower((unsigned char)c); }) ) << thumbprint;
+			EXPECT_EQ( std::ranges::count(Json::AsSV(cert, "fingerprint"), ':'), 31 ) << "sha-256 with colons: " << Json::AsSV( cert, "fingerprint" );
+			let notBefore = Json::AsSV( cert, "notBefore" ), notAfter = Json::AsSV( cert, "notAfter" );
+			EXPECT_LT( notBefore, notAfter ) << notBefore << " " << notAfter;
+			EXPECT_TRUE( notBefore.ends_with('Z') && notAfter.ends_with('Z') ) << "ISO-8601, UTC:  " << notBefore << " " << notAfter;
+		}
+		{//A url that isn't reached - a listener that never answers the HEL, open62541 giving the handshake no deadline of its own - answers its
+			//error after the requestTimeout, from the discovery pool:  a query on a connected slug answers the executor meanwhile, and with
+			//both discovery threads held (/workers/discovery/threads' default 2) a connect's job still runs on the blocking pool at once
+			//(414-clients-discovery review #1:  on the blocking pool, two discovers held every connect).
+			boost::asio::io_context ctx;
+			boost::asio::ip::tcp::acceptor silent{ ctx, {boost::asio::ip::make_address("127.0.0.1"), 0} };
+			let start = steady_clock::now();
+			array<sp<Awaited<jvalue>>,2> discovering{ ms<Awaited<jvalue>>(), ms<Awaited<jvalue>>() };
+			for( auto& d : discovering )
+				querying( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"requestTimeout", 2000}}, d );
+			let node = Socket().QuerySync( "node( opc: $opc, id: $id ){ id name }", {{"opc", OpcServerSlug}, {"id", Intensity.ToJson()}} );
+			let nodeAnswered = steady_clock::now()-start;
+			auto ran = ms<std::atomic_flag>();
+			let posted = steady_clock::now();
+			BlockingPool::Post( [ran]{ ran->test_and_set(); } );
+			ASSERT_TRUE( WaitUntil([&]{ return ran->test(); }, 5s, 10ms) ) << "the blocking pool ran the job";
+			let jobRan = steady_clock::now()-posted;
+			EXPECT_FALSE( discovering[0]->Done.test() || discovering[1]->Done.test() ) << "the discovers are still waiting on the listener";
+			EXPECT_FALSE( Json::AsSV(node.as_object(), "name").empty() ) << serialize( node );
+			EXPECT_LT( nodeAnswered, 2s ) << "the node query did not wait on the discovers";
+			EXPECT_LT( jobRan, 1s ) << "a connect's job did not queue behind the discovers";
+			for( let& d : discovering ){
+				ASSERT_TRUE( d->Wait(10s) ) << "the discover answered";
+				ASSERT_TRUE( d->Error ) << "a listener that never answers is the mutation's error: " << serialize( d->Result );
+				TRACE( "discover unanswered: {}.", d->Error->what() );
+				EXPECT_TRUE( sv{d->Error->what()}.contains("did not answer GetEndpoints") ) << d->Error->what();
+			}
+			let elapsed = steady_clock::now()-start;
+			EXPECT_GE( elapsed, 2s ) << "the requestTimeout is the deadline";
+			EXPECT_LT( elapsed, 8s ) << "the request's 2 s, not the gateway's 10 s, and the two at once";
+		}
+		{//A name that doesn't exist (.invalid, RFC 6761) is said so;  a lookup past its deadline - a nameserver that doesn't answer - names
+			//the deadline, which is the request's where that is shorter than 3 s (review #5).
+			try{
+				Socket().QuerySync( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", "opc.tcp://jde-discover-test.invalid:4840"}, {"requestTimeout", 1000}} );
+				ADD_FAILURE() << "a discover at a name that doesn't exist succeeded";
+			}
+			catch( const GatewayErrorResponse& e ){
+				const sv what{ e.what() };
+				TRACE( "discover unresolved: {}.", what );
+				EXPECT_TRUE( what.contains("'jde-discover-test.invalid' did not resolve") ) << what;
+				if( what.contains("within") )
+					EXPECT_TRUE( what.contains("within 1000 ms") ) << "the request's deadline, not 3 s: " << what;
+			}
+		}
+		try{
+			Socket().QuerySync( "discover( url: $url ){ url }", {{"url", "opc.tcp://127.0.0.1:1"}} );
+			ADD_FAILURE() << "a discover at a closed port succeeded";
+		}
+		catch( const GatewayErrorResponse& e ){
+			TRACE( "discover refused: {}.", e.what() );
+			EXPECT_TRUE( sv{e.what()}.contains("did not answer GetEndpoints") ) << e.what();
+		}
+		try{//over http, as the dialog sends it:  the body carried "Query failed." and the status alone, the reason dropped with what().
+			jobject body{ {"query", "mutation discover( url: $url, servers: true ){ applicationUri }"}, {"variables", jobject{{"url", "opc.tcp://127.0.0.1:1"}}} };
+			Post( GatewayPort(), "/graphql", serialize(body), Ƒ("{:x}", AppClient()->SessionId()) );
+			ADD_FAILURE() << "a discover at a closed port succeeded over http";
+		}
+		catch( const ClientHttpResException& e ){
+			TRACE( "discover refused over http: {}.", e.Res().Body() );
+			let& body = e.Res().Body();
+			let reason = body.find( " - 'opc.tcp://127.0.0.1:1' did not answer FindServers." );
+			EXPECT_NE( reason, string::npos ) << "the reason: " << body;
+			EXPECT_LT( body.find(")Bad"), reason ) << "the status before it: " << body;
+		}
+		EXPECT_THROW( Socket().QuerySync("discover( url: $url ){ url }", {{"url", " "}}), GatewayErrorResponse ) << "a url is required";
+		EXPECT_THROW( Socket().QuerySync("discover( url: $url, requestTimeout: 0 ){ url }", {{"url", url}}), GatewayErrorResponse ) << "a positive timeout";
+		try{//no longer than MaxTimeout:  a caller's deadline holds a discovery thread, and DiscoveryPool::Stop's join waits on it.
+			Socket().QuerySync( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", url}, {"requestTimeout", DiscoverQLAwait::MaxTimeout.count()+1}} );
+			ADD_FAILURE() << "a discover took a requestTimeout past MaxTimeout";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_TRUE( sv{e.what()}.contains(Ƒ("from 1 to {}", DiscoverQLAwait::MaxTimeout.count())) ) << e.what();
+		}
+		{//Under serverConnections' Update:  enforced, a user no grant names is refused, as an ungranted viewer is Test Connection.
+			constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };
+			EnforceResource( "gateway", "serverConnections", true );
+			absl::Cleanup _ = []{ try{ EnforceResource("gateway", "serverConnections", false); }catch( const std::exception& ){} };
+			let refused = WaitUntil( [&]{
+				try{
+					auto ql = QL::Parse( Ƒ("discover( url: \"{}\" ){{ url }}", url), {}, Schemas(), true );
+					BlockAwait<DiscoverQLAwait,jvalue>( DiscoverQLAwait{move(ql.Mutations().front()), QL::Creds{ungranted}} );
+				}
+				catch( const Exception& e ){
+					return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+				}
+				return false;
+			}, 5s, 50ms );
+			EXPECT_TRUE( refused ) << "gateway/serverConnections is enforced and an ungranted user still runs discover";
+		}
+		try{//a mutation:  a GET - a cross-site <img> - must not connect the gateway anywhere.
+			Get( GatewayPort(), "/graphql?query=discover(url:%22opc.tcp://127.0.0.1:1%22)%7Burl%7D" );
+			ADD_FAILURE() << "discover ran over GET";
 		}
 		catch( const ClientHttpResException& e ){
 			EXPECT_EQ( e.Status(), boost::beast::http::status::bad_request ) << e.Res().Body();

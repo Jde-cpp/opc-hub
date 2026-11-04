@@ -14,15 +14,19 @@ namespace Jde::Opc::Gateway{
 			return std::unexpected{ e.Move() };
 		}
 	}
-	α Tests::Connect( ServerCnnctnNK slug, Credential cred, sp<UAClient>* client, up<Exception>* error, atomic_flag* done )ι->ConnectAwait::Task{
+	Ω connecting( ServerCnnctnNK slug, Credential cred, sp<Tests::Connecting> state )ι->ConnectAwait::Task{
 		try{
-			*client = co_await UAClient::GetClient( move(slug), move(cred) );
+			state->Result = co_await UAClient::GetClient( move(slug), move(cred) );
 		}
 		catch( Exception& e ){
-			*error = e.Move();
+			state->Error = e.Move();
 		}
-		done->test_and_set();
-		done->notify_all();
+		state->Done.test_and_set();
+	}
+	α Tests::Connect( ServerCnnctnNK slug, Credential cred )ι->sp<Connecting>{
+		auto state = ms<Connecting>();
+		connecting( move(slug), move(cred), state );
+		return state;
 	}
 
 	α Tests::ClientFixture::TearDown()ι->void{

@@ -6,12 +6,14 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { DetailActions, DetailPage, errorMessage, isRefusal, PickOption, Properties} from 'jde-framework';
 import { Latest } from 'jde-spa';
 
+import { DiscoverDialog } from './discover-dialog';
 import { ServerProperties } from './server-properties/server-properties';
 import { ConnectionSettingName, connectionSettingNames, securedPolicies, securityModes, securityPolicyNone, ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
+import { EndpointPick } from '../../../model/discovery';
 import { modeName, policyName } from '../../../model/gateway-endpoint';
 import { Gateway } from '../../../services/gateway-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
-import { namespaceColumns, Server, serverDescColumns, TestConnectionResult } from '../../../model/server';
+import { ConnectionCertificates, connectionCertificatesQuery, namespaceColumns, Server, serverDescColumns, TestConnectionResult, trustServerMutation } from '../../../model/server';
 import { OpcStore } from '../../../services/opc-store';
 
 //what a connect depends on, as the test and the save send it:  the three the certificate and the credential key on, and the spec's
@@ -37,7 +39,10 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		this.serverError.set( this.row.serverError );
 		this.#resultFor.set( this.row.server || this.row.serverError ? connectSettings(this.row) : undefined );
 		this.testing.set( undefined );
+		this.trusting.set( false );
+		this.certificates.set( undefined );
 		this.#rowLoads.next();
+		this.#loadCertificates();//the rejected server certificate and the gateway's own, read from the row (no connect)
 	}
 	protected override upsert():ServerCnnctn{
 		return new ServerCnnctn( {
@@ -118,10 +123,93 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		this.serverError.set( error );
 		this.#resultFor.set( settings );
 		this.#announcer.announce( server ? `Connected to ${server.applicationName || settings.url}.` : `Not connected:  ${error}` );
+		await this.#loadCertificates();//the test connects under the slug, so a rejection records the server's certificate as a scheduled connect's does:  the Trust panel follows the test, without a reload
+	}
+	//Discover (docs/clients/spec.md *Discovery*):  the servers the gateway finds at the form's url and the endpoints of the one
+	//picked, in a dialog, and the endpoint chosen fills the form - the url, the Certificate URI with the server's applicationUri,
+	//and the mode and policy - on the Properties tab, where it can be read before Test Connection or Save.  Nothing is saved.
+	//Needs only a url:  the gateway's discovery client presents no certificate, so no slug names one.
+	readonly canDiscover = computed( ()=>!this.testing() && !!(this.properties() as Partial<ServerCnnctn>|null)?.url?.trim() );
+	async onDiscoverClick(){
+		if( !this.canDiscover() )
+			return;//disabledInteractive, as Test Connection
+		const url = (this.properties() as ServerCnnctn).url.trim();
+		const rowLoad = this.#rowLoads.current;
+		const pick = await DiscoverDialog.open( this.dialog, {gateway: this.gateway, url} );
+		if( !pick || !this.#rowLoads.is(rowLoad) )
+			return;
+		this.applyPick( pick );
+	}
+	applyPick( pick:EndpointPick ){
+		this.properties.set( Properties.edited( ServerCnnctn, this.properties(), pick ) );
+		this.tabIndex.set( 0 );
+		this.#announcer.announce( `URL, Certificate URI, Security Mode and Security Policy set from ${pick.url}.` );
+	}
+	//Trust (docs/clients/spec.md *Trust*, #415):  move the rejected server certificate into the gateway's trusted dir and
+	//reconnect the slug.  trustServer needs Administer, which a viewer lacks:  a refusal is a toast, as Test Connection's is, and
+	//the panel keeps the certificate.  On success the certificate is trusted - the panel clears - and the connection is re-described.
+	async onTrust( thumbprint:string ){
+		const slug = this.row.slug;
+		if( this.trusting() || !slug )
+			return;
+		const rowLoad = this.#rowLoads.current;
+		this.trusting.set( true );
+		try{
+			await this.gateway.postQL( ClientDetail.trustMutation, {opc: slug, thumbprint} );
+		}
+		catch( e ){
+			if( this.#rowLoads.is(rowLoad) ){//else onRow reset it, and a trust on the row shown now may be in flight
+				this.snackbar.exception( isRefusal(e) ? "Trust was refused." : "Could not trust the server.", e );
+				this.trusting.set( false );
+			}
+			return;
+		}
+		if( !this.#rowLoads.is(rowLoad) )
+			return;
+		this.#announcer.announce( "Server trusted.  Reconnecting." );
+		await this.#refreshConnection( slug, rowLoad );
+		if( this.#rowLoads.is(rowLoad) )
+			this.trusting.set( false );//not before:  the panel shows the certificate just trusted until the refresh reloads it, and a second press would post it again
+	}
+	//after a trust:  re-describe the connection - the reconnect is the gateway's, so re-read its result - and reload the certificates.
+	async #refreshConnection( slug:string, rowLoad:number ){
+		this.#opcStore.forget( this.gateway.slug, slug );
+		let server:Server|undefined, error:string|undefined;
+		try{ server = await this.#opcStore.getConnection( this.gateway, slug, {fresh: true} ); }
+		catch( e ){ error = errorMessage( e ); }
+		if( !this.#rowLoads.is(rowLoad) )
+			return;
+		this.server.set( server );
+		this.serverError.set( error );
+		this.#resultFor.set( connectSettings(this.row) );
+		await this.#loadCertificates();
+	}
+	//the rejected server certificate and the gateway's own, read from the row (no connect), so they show whether or not the
+	//gateway can reach the server.  A new connection has neither.
+	async #loadCertificates(){
+		const slug = this.row?.slug;//optional:  a late load can land after the router has moved the page off its row
+		if( !slug || this.isNew ){
+			this.certificates.set( undefined );
+			return;
+		}
+		const rowLoad = this.#rowLoads.current;
+		try{
+			const data = await this.gateway.query<{serverConnection:ConnectionCertificates|null}>( connectionCertificatesQuery, {opc: slug} );
+			if( this.#rowLoads.is(rowLoad) )
+				this.certificates.set( data.serverConnection ?? undefined );
+		}
+		catch{
+			if( this.#rowLoads.is(rowLoad) )
+				this.certificates.set( undefined );//the panel hides;  the row still loads
+		}
 	}
 	//a mutation, POSTed:  it connects the gateway to the form's url and issues the slug's certificate, which a GET must not do.  The
 	//settings go as the save would send them, null where the form leaves one unset, so the test tests the connection Save would save.
 	static readonly testMutation = `mutation testConnection( opc: $opc, url: $url, certificateUri: $certificateUri, ${connectionSettingNames.map( n=>`${n}: $${n}` ).join( ", " )} ){ ${serverDescColumns} securityPolicyUri securityMode namespaces{ ${namespaceColumns} } }`;
+	static readonly trustMutation = trustServerMutation;//a POST:  it changes the gateway's trust list, which a GET must not do
+	//the rejected server certificate and the gateway's own for this connection (#415), read from the row;  the panel shows them
+	trusting = signal( false );
+	certificates = signal<ConnectionCertificates|undefined>( undefined );
 	//what the Connection tab shows:  the resolver's describe or its failure (onRow), then the last test's.  A new connection has
 	//neither until it is tested, and the tab says what the button does rather than why a session that was never tried is missing.
 	server = signal<Server|undefined>( undefined );
