@@ -7,6 +7,7 @@ import { DetailActions, DetailPage, errorMessage, isRefusal, PickOption, Propert
 import { Latest } from 'jde-spa';
 
 import { DiscoverDialog } from './discover-dialog';
+import { ServerDiagnostics } from './server-diagnostics/server-diagnostics';
 import { ServerProperties } from './server-properties/server-properties';
 import { ConnectionSettingName, connectionSettingNames, securedPolicies, securityModes, securityPolicyNone, ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
 import { EndpointPick } from '../../../model/discovery';
@@ -27,7 +28,7 @@ const settingLabels:Record<string,string> = { url: "URL", certificateUri: "Certi
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
 		host: {class:'main-content my-content client-detail'},
-	imports: [DetailActions, MatButtonModule, MatTabsModule, Properties, ServerProperties],
+	imports: [DetailActions, MatButtonModule, MatTabsModule, Properties, ServerDiagnostics, ServerProperties],
 })
 export class ClientDetail extends DetailPage<ServerCnnctn>{
 	constructor(){ super( 'client-detail' ); }

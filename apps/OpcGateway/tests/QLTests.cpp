@@ -438,6 +438,9 @@ namespace Jde::Opc::Gateway::Tests{
 			auto clientCertificate = FindRow( fields, "name", "clientCertificate" );
 			ASSERT_NE( clientCertificate, fields.end() ) << serialize( fields );
 			EXPECT_EQ( Json::AsSVPath(clientCertificate->as_object(), "type/name"), "ClientCertificate" );
+			auto clientDiagnostics = FindRow( fields, "name", "clientDiagnostics" );//#427
+			ASSERT_NE( clientDiagnostics, fields.end() ) << serialize( fields );
+			EXPECT_EQ( Json::AsSVPath(clientDiagnostics->as_object(), "type/name"), "ClientDiagnostics" );
 		}
 		{ //the status type carries a name and the reason the last connect failed - the SPA's list selects only the name.
 			let fields = Fields( "ConnectionStatus" );
@@ -462,6 +465,16 @@ namespace Jde::Opc::Gateway::Tests{
 			let client = Fields( "ClientCertificate" );
 			EXPECT_EQ( client.size(), 6u ) << serialize( client );//path subject notBefore notAfter uri pem
 			EXPECT_NE( FindRow(client, "name", "pem"), client.end() ) << serialize( client );
+		}
+		{ //#427:  the caller's own client as it stands - the Server tab's gateway panel.
+			let diagnostics = Fields( "ClientDiagnostics" );
+			EXPECT_EQ( diagnostics.size(), 8u ) << serialize( diagnostics );//connectedSince reconnects lastBreak sessionAge monitoredItems parkedItems reconnectWaiting clients
+			auto lastBreak = FindRow( diagnostics, "name", "lastBreak" );
+			ASSERT_NE( lastBreak, diagnostics.end() ) << serialize( diagnostics );
+			EXPECT_EQ( Json::AsSVPath(lastBreak->as_object(), "type/name"), "String" );//nullable:  a client that never broke
+			auto waiting = FindRow( diagnostics, "name", "reconnectWaiting" );
+			ASSERT_NE( waiting, diagnostics.end() ) << serialize( diagnostics );
+			EXPECT_EQ( Json::AsSVPath(waiting->as_object(), "type/ofType/name"), "Boolean" );
 		}
 	}
 

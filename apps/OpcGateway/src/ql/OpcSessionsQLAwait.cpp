@@ -115,6 +115,39 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
+	//clientDiagnostics{ connectedSince reconnects lastBreak sessionAge monitoredItems parkedItems reconnectWaiting clients }:  the caller's
+	//own client of the slug (UAClient::Find by slug and credential), null with no live client.  The times are ISO-8601 to the millisecond,
+	//lastBreak null for a client that never broke;  sessionAge is whole seconds since the session now up was activated;  monitoredItems
+	//is this client's, parkedItems, reconnectWaiting and clients the slug's.
+	Ω clientDiagnosticsJson( const QL::TableQL& q, const ServerCnnctnNK& slug, const Credential& credential, const flat_map<ServerCnnctnNK,uint32>& clients )ι->jvalue{
+		let client = UAClient::Find( slug, credential );
+		if( !client )
+			return jvalue{};
+		let d = client->ClientDiagnostics();
+		jobject y;
+		if( q.FindColumn("connectedSince") )
+			y["connectedSince"] = ToIsoString<std::chrono::milliseconds>( d.ConnectedSince );
+		if( q.FindColumn("reconnects") )
+			y["reconnects"] = d.Reconnects;
+		if( q.FindColumn("lastBreak") )
+			y["lastBreak"] = d.LastBreak==TimePoint{} ? jvalue{} : jvalue{ ToIsoString<std::chrono::milliseconds>(d.LastBreak) };
+		if( q.FindColumn("sessionAge") )
+			y["sessionAge"] = (uint)std::chrono::duration_cast<std::chrono::seconds>( Clock::now()-d.ActivatedAt ).count();
+		if( q.FindColumn("monitoredItems") ){
+			let nodes = client->TryMonitoredNodes();//never constructs:  null is a client that has monitored nothing.
+			y["monitoredItems"] = nodes ? nodes->Count() : 0;
+		}
+		if( q.FindColumn("parkedItems") )
+			y["parkedItems"] = UAClient::ParkedItems( slug );
+		if( q.FindColumn("reconnectWaiting") )
+			y["reconnectWaiting"] = UAClient::ReconnectWaiting( slug );
+		if( q.FindColumn("clients") ){
+			let p = clients.find( slug );
+			y["clients"] = p==clients.end() ? 0 : p->second;
+		}
+		return y;
+	}
+
 	α OpcSessionsQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl ); //gateway/sessions - declared in opcGateway-meta.jsonnet's `resources`, shipped unenforced;  enforced once an admin says so.
@@ -161,7 +194,8 @@ namespace Jde::Opc::Gateway{
 			auto statusQL = _query.ExtractTable( "connectionStatus" );
 			auto rejectedQL = _query.ExtractTable( "rejectedCertificate" );//the <thumbprint>.der our verifier wrote for the slug.
 			auto clientCertQL = _query.ExtractTable( "clientCertificate" );//the gateway's own issued certificate for the slug.
-			if( sessionsQL || connectionsQL || statusQL )//one gate covers the three - the same live-usage telemetry;  the certificates are the connection's, under the table's Read alone.
+			auto diagnosticsQL = _query.ExtractTable( "clientDiagnostics" );//the caller's own client of the slug, as it stands.
+			if( sessionsQL || connectionsQL || statusQL || diagnosticsQL )//one gate covers the four - the same live-usage telemetry;  the certificates are the connection's, under the table's Read alone.
 				QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl );
 			let addedSlug = _query.AddColumn( "slug" ); //the join key - both totals are per slug.
 			_query.ReturnRaw = true;
@@ -171,7 +205,8 @@ namespace Jde::Opc::Gateway{
 				for( let& c : SessionCounts() )
 					sessionTotals[c.Connection] += c.Count;
 			}
-			let connectionTotals = connectionsQL || statusQL ? UAClient::ConnectionCounts() : flat_map<ServerCnnctnNK,uint32>{};
+			let connectionTotals = connectionsQL || statusQL || diagnosticsQL ? UAClient::ConnectionCounts() : flat_map<ServerCnnctnNK,uint32>{};
+			let session = diagnosticsQL ? Session() : nullptr;//null for creds without one (a test's UserPK):  then the anonymous credential's client, if any.
 			let connectErrors = statusQL ? UAClient::ConnectErrors() : flat_map<ServerCnnctnNK,string>{};
 			auto graft = []( const flat_map<ServerCnnctnNK,uint32>& totals, const QL::TableQL& child, str slug )ι->jobject {
 				jobject y;
@@ -210,6 +245,10 @@ namespace Jde::Opc::Gateway{
 					o["rejectedCertificate"] = rejectedCertificateJson( *rejectedQL, slug );
 				if( clientCertQL )
 					o["clientCertificate"] = clientCertificateJson( *clientCertQL, slug );
+				if( diagnosticsQL ){//per row:  the credential a session holds is per slug (a password login's), else its jwt's.
+					let credential = session ? SessionCredential( session->SessionId, session->UserPK, slug ).value_or( Credential{} ) : Credential{};
+					o["clientDiagnostics"] = clientDiagnosticsJson( *diagnosticsQL, slug, credential, connectionTotals );
+				}
 			} );
 			Resume( move(rows) );
 		}

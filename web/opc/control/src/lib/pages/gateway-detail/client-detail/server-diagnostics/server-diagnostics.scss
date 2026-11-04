@@ -1,0 +1,61 @@
+@use '../../../read-only-rows';
+
+.content{
+	@include read-only-rows.column;
+}
+@include read-only-rows.rows;
+
+table.list th{
+	padding: .25rem 1rem;
+	border-block-end: 1px solid var(--mat-sys-outline-variant);
+	text-align: start;
+	font: var(--mat-sys-body-small);
+	color: var(--mat-sys-on-surface-variant);
+}
+/* a count:  right-aligned, digits lined up */
+td.count{
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+.row-count{
+	margin-left: 0.4em;
+}
+/* a section's title, as the tables' captions:  the field labels' size at title weight */
+section h3{
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	margin: 1.5rem 0 .25rem;
+	padding: 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-title-small);
+}
+section.status h3{
+	margin-block-start: 0;
+}
+p.empty{
+	padding: .5rem 1rem;
+	margin: 0;
+}
+/* the server not read:  the Connection tab's not-connected state - icon beside a title and the reason */
+.state{
+	display: flex;
+	gap: 1rem;
+	align-items: flex-start;
+	padding: .5rem 1rem;
+}
+.state mat-icon{
+	flex: none;
+	color: var(--mat-sys-error);
+}
+.state p{
+	margin: 0;
+}
+.state .title{
+	font: var(--mat-sys-title-small);
+}
+.state .detail{
+	margin-block-start: .25rem;
+	color: var(--mat-sys-on-surface-variant);
+	overflow-wrap: anywhere;
+}

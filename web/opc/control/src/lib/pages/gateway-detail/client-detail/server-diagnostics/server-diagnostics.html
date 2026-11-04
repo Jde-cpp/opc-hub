@@ -1,0 +1,119 @@
+<mat-toolbar class="jde-list-toolbar"><!--outside the states below:  Refresh is the retry after a failure, and a refresh keeps what it replaces-->
+	<div class="bar-left"></div>
+	<div class="bar-right">
+		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="isLoading() || !slug()" (click)="load()">
+			<mat-icon>refresh</mat-icon>
+		</button>
+	</div>
+</mat-toolbar>
+<mat-progress-bar [mode]="isLoading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+<div class="content"><!--below the toolbar, which spans the tab:  the Connection tab's rows, in its column-->
+@if( !slug() ){
+	<p class="empty unsaved">Save the connection to read the server's diagnostics.</p>
+}
+@else{
+	@if( serverError(); as e ){
+	<!--the four reads go as one request, and fail as one:  the gateway has no session with the server, or the user may not read it-->
+	<div class="state not-read">
+		<mat-icon aria-hidden="true">link_off</mat-icon>
+		<div>
+			<p class="title">Server not read</p>
+			<p class="detail">{{e}}</p>
+		</div>
+	</div>
+	}
+	@else if( !isLoading() ){
+	<section class="status">
+		<h3>Server status</h3>
+		@if( statusError(); as e ){
+			<p class="empty">{{e}}</p>
+		}
+		@else{
+		<dl class="fields">
+			@for( field of statusFields(); track field.label ){
+				<dt>{{field.label}}</dt>
+				<dd>@if( field.value ){ <span>{{field.value}}</span> } @else { <span class="empty">none</span> }</dd>
+			}
+		</dl>
+		}
+	</section>
+	<section class="summary">
+		<h3>Diagnostics summary</h3>
+		@if( summaryError(); as e ){
+			<p class="empty">{{e}}</p>
+		}
+		@else{
+		<dl class="fields">
+			@for( field of summaryFields(); track field.label ){
+				<dt>{{field.label}}</dt>
+				<dd>@if( field.value ){ <span>{{field.value}}</span> } @else { <span class="empty">none</span> }</dd>
+			}
+		</dl>
+		}
+	</section>
+	<!--the two arrays:  what the server lists, this gateway's sessions among them.  A server may fill neither, and the empty row says so
+		without naming the EnabledFlag, which does not decide it-->
+	<table class="list sessions">
+		<caption>Sessions@if( sessions().length ){<span class="row-count">({{sessions().length}})</span>}</caption>
+		@if( sessions().length ){
+			<thead><tr><th>Session</th><th>Client</th><th>Endpoint</th><th>Connected</th><th>Last contact</th><th>Subscriptions</th><th>Items</th></tr></thead>
+		}
+		<tbody>
+			@for( s of sessions(); track $index ){
+				<tr>
+					<td><span [matTooltip]="sessionId(s)">{{sessionName(s)}}</span></td>
+					<td>{{clientUri(s)}}</td>
+					<td>{{endpointUrl(s)}}</td>
+					<td>{{connectionTime(s)}}</td>
+					<td>{{lastContact(s)}}</td>
+					<td class="count">{{count(s, "CurrentSubscriptionsCount")}}</td>
+					<td class="count">{{count(s, "CurrentMonitoredItemsCount")}}</td>
+				</tr>
+			} @empty {
+				<tr><td class="empty" colspan="7">None listed.  A server may leave its session diagnostics empty.</td></tr>
+			}
+		</tbody>
+	</table>
+	<table class="list subscriptions">
+		<caption>Subscriptions@if( subscriptions().length ){<span class="row-count">({{subscriptions().length}})</span>}</caption>
+		@if( subscriptions().length ){
+			<thead><tr><th>Id</th><th>Session</th><th>Interval</th><th>Priority</th><th>Publishing</th><th>Items</th><th>Keep-alive</th><th>Lifetime</th></tr></thead>
+		}
+		<tbody>
+			@for( s of subscriptions(); track $index ){
+				<tr>
+					<td class="count">{{count(s, "SubscriptionId")}}</td>
+					<td>{{sessionId(s)}}</td>
+					<td class="count">{{interval(s)}}</td>
+					<td class="count">{{count(s, "Priority")}}</td>
+					<td>{{enabled(s)}}</td>
+					<td class="count">{{count(s, "MonitoredItemCount")}}</td>
+					<td class="count">{{count(s, "MaxKeepAliveCount")}}</td>
+					<td class="count">{{count(s, "MaxLifetimeCount")}}</td>
+				</tr>
+			} @empty {
+				<tr><td class="empty" colspan="8">None listed.  A server may leave its subscription diagnostics empty.</td></tr>
+			}
+		</tbody>
+	</table>
+	}
+	<!--the gateway's own client for this connection, this session's:  read apart from the server, so it shows while the server does not answer-->
+	<section class="client">
+		<h3><mat-icon aria-hidden="true">hub</mat-icon>Gateway client</h3>
+		@if( clientError(); as e ){
+			<p class="empty">{{e}}</p>
+		}
+		@else if( client()===null ){
+			<p class="empty no-client">No session.  The gateway holds no client for this connection under your credential - open a node page, or Test Connection, and refresh.</p>
+		}
+		@else if( client() ){
+		<dl class="fields">
+			@for( field of clientFields(); track field.label ){
+				<dt>{{field.label}}</dt>
+				<dd><span [attr.title]="field.title ?? null">{{field.value}}</span></dd>
+			}
+		</dl>
+		}
+	</section>
+}
+</div>

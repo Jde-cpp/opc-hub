@@ -86,6 +86,7 @@ namespace Jde::Opc::Gateway{
 		TimerCancel Wait;//the chain's backoff wait while it is in one - here, not only in its frame, so StopReconnects can cancel it.
 		uint Rejections{};//reconnect attempts refused outright in a row - see isRejection; the chain gives up at MaxRejections.
 		string LastFailure;//what the last attempt failed with; a repeat of it logs quietly.
+		UAClient::Diagnostics Lost;//the client whose loss started the chain, as it stood, for the one the chain builds to continue from (InheritBreaks).
 	};
 	flat_map<ServerCnnctnNK,flat_map<Credential,PendingSubscription>> _pending; mutex _pendingMutex;
 	std::atomic<uint> _reconnectsWaiting;
@@ -123,7 +124,7 @@ namespace Jde::Opc::Gateway{
 		auto r = _rebuilds.find( rebuild );
 		return r!=_rebuilds.end() && r->second.Nodes.size();
 	}
-	Ω parkLocked( const ServerCnnctnNK& slug, const Credential& credential, const Listeners& listeners )ι->bool;//into _pending - also defined below.
+	Ω parkLocked( const UAClient& client, const Listeners& listeners, TimePoint broke )ι->bool;//into _pending, under the client's key - also defined below.
 	Ω startReconnect( const ServerCnnctnNK& slug, const Credential& credential )ι->void;//the chain parkLocked asked for - also defined below.
 	Ω nodeCount( const Listeners& listeners )ι->uint{
 		uint y{};
@@ -582,11 +583,17 @@ namespace Jde::Opc::Gateway{
 			//a found client is a re-activation: no RequestDrain here - open62541 re-reads the namespace array only on
 			//a fresh client (haveNamespaces), so flagging would leave the drain waiting out its full limit for a read
 			//that never fires.
+			let broke = client->_brokeAt.load();//before Resubscribe takes it:  a break this activation ends is a reconnect for ClientDiagnostics.
 			client->ClearRequest( ConnectRequestId );
 			client->ReleaseParked();
 			if( client->RecordSession() )
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
 			client->_brokeAt = TimePoint{};//the same session back, or the rebuild has taken it:  a later loss is a new break.
+			client->_activatedAt = Clock::now();
+			if( broke!=TimePoint{} ){
+				client->_lastBreak = broke;
+				++client->_reconnects;
+			}
 			if( !client->_sessionUp.exchange(true) )//back after the break below - the endpoint's _Connection hears the reconnect.
 				notifyChange( client->Slug(), ConnectionChange::EKind::Activated );
 		}
@@ -755,6 +762,9 @@ namespace Jde::Opc::Gateway{
 			{
 				ul _{ _clientsMutex };
 				if( !(stale = editedSince(client->_opcServer, client->_editsAtRead)) ){//in the lock recordEdit takes:  an edit is seen here, or finds the client registered.
+					let now = Clock::now();//ClientDiagnostics' start and activation - a chain's client takes the lost one's start after this (InheritBreaks).
+					client->_connectedSince = now;
+					client->_activatedAt = now;
 					client->_connected = true;
 					client->_sessionUp = true;
 					auto& opcCreds = _clients.try_emplace( client->Slug() ).first->second;
@@ -1150,7 +1160,7 @@ namespace Jde::Opc::Gateway{
 						}
 						parked = nodeCount( remaining );
 						parkedListeners = remaining.size();
-						start = parkLocked( slug, client->Credential(), remaining );
+						start = parkLocked( *client, remaining, Clock::now() );//now:  StashPending took the client's break for the listeners it parked, which may be none.
 						remaining.clear();
 					}
 				}
@@ -1198,7 +1208,7 @@ namespace Jde::Opc::Gateway{
 				left = move( r->second.Nodes );
 				_rebuilds.erase( r );
 				if( !client->IsConnected() && !client->IsDiscarded() )
-					start = parkLocked( slug, client->Credential(), left );
+					start = parkLocked( *client, left, Clock::now() );//now, as the rebuild's other park:  StashPending took the break.
 			}
 		}
 		if( left.empty() )
@@ -1296,16 +1306,21 @@ namespace Jde::Opc::Gateway{
 				co_return;
 			}
 			uint rebuild{}, listenerCount{};
+			optional<UAClient::Diagnostics> lost;
 			{//straight from _pending into _rebuilds under the one lock, so an unsubscribe finds them in one or the other (#4).
 				lg _{ _pendingMutex };
 				Listeners listeners;
-				if( auto p = pendingFind(slug, credential); p )
+				if( auto p = pendingFind(slug, credential); p ){
 					listeners = move( p->Nodes );
+					lost = p->Lost;
+				}
 				pendingErase( slug, credential );//the chain ends here:  the rebuild owns them now, and parks back whatever this client dies before restoring (#2).
 				listenerCount = listeners.size();
 				if( listenerCount )
 					rebuild = rebuildStart( slug, move(listeners) );
 			}
+			if( lost )
+				client->InheritBreaks( *lost );//the chain's client, whatever it goes on to restore:  the lost one's start, one more reconnect, its break.
 			if( !rebuild )
 				co_return;
 			INFO( "[{}]Reconnected to '{}' after {} attempt(s) - restoring {} listener(s)' monitored nodes.", hex(client->Handle()), slug, attempt, listenerCount );
@@ -1349,12 +1364,17 @@ namespace Jde::Opc::Gateway{
 	//Both ways into _pending - a dying client's StashPending and a rebuild its client died under - so they share one chain per key.
 	//True when the caller has to start that chain (startReconnect), which it does once it has released the lock.  Always under the
 	//lock the listeners were taken under, so an unsubscribe finds them in one place or the other (#4, #14).
-	Ω parkLocked( const ServerCnnctnNK& slug, const Credential& credential, const Listeners& listeners )ι->bool{//_pendingMutex held
+	//`broke` is when the client's connection went, for the chain's client to report as its last break (ClientDiagnostics).
+	Ω parkLocked( const UAClient& client, const Listeners& listeners, TimePoint broke )ι->bool{//_pendingMutex held
 		if( listeners.empty() || Process::ShuttingDown() )//ShuttingDown under the lock StopReconnects clears under:  an entry parked after that clear would outlive Shutdown.
 			return false;
-		auto& creds = _pending[slug];
-		let start = !creds.contains( credential );//no entry yet is no chain yet - the entry's existence is the flag, so it has to be read before the insert below creates one.
-		auto& entry = creds[credential];
+		auto& creds = _pending[client.Slug()];
+		let start = !creds.contains( client.Credential() );//no entry yet is no chain yet - the entry's existence is the flag, so it has to be read before the insert below creates one.
+		auto& entry = creds[client.Credential()];
+		if( start ){//the client the chain stands in for, as it stood:  a later failure merging into the chain keeps the first's.
+			entry.Lost = client.ClientDiagnostics();
+			entry.Lost.LastBreak = broke;
+		}
 		for( let& [dataChange, nodes] : listeners )//merge: a second failure before the first reconnect finished must not drop the earlier listeners.
 			entry.Nodes[dataChange].insert( nodes.begin(), nodes.end() );
 		return start;
@@ -1384,7 +1404,7 @@ namespace Jde::Opc::Gateway{
 				listeners = monitoredNodes->TakeForResubscribe();
 				nodes = nodeCount( listeners );
 				listenerCount = listeners.size();
-				start = parkLocked( client->Slug(), client->Credential(), listeners );
+				start = parkLocked( *client, listeners, when );
 			}
 			client->_connected = false;
 		}
@@ -1412,6 +1432,30 @@ namespace Jde::Opc::Gateway{
 		return cancelled;
 	}
 	α UAClient::ReconnectsWaiting()ι->uint{ return _reconnectsWaiting; }
+	α UAClient::ParkedItems( const ServerCnnctnNK& slug )ι->uint{
+		uint y{};
+		lg _{ _pendingMutex };
+		if( let creds = _pending.find(slug); creds!=_pending.end() ){
+			for( let& [cred, entry] : creds->second )
+				y += itemCount( entry.Nodes );
+		}
+		for( let& [id, rebuild] : _rebuilds ){//out of _pending and not yet back on a client, as StatusCounts counts them.
+			if( rebuild.Slug==slug )
+				y += itemCount( rebuild.Nodes );
+		}
+		return y;
+	}
+	α UAClient::ReconnectWaiting( const ServerCnnctnNK& slug )ι->bool{
+		lg _{ _pendingMutex };
+		let creds = _pending.find( slug );
+		return creds!=_pending.end() && std::ranges::any_of( creds->second, []( let& entry ){ return (bool)entry.second.Wait; } );//Wait is set for the wait alone (waitThenConnect).
+	}
+	α UAClient::InheritBreaks( const Diagnostics& lost )ι->void{
+		if( lost.ConnectedSince!=TimePoint{} )
+			_connectedSince = lost.ConnectedSince;
+		_reconnects = lost.Reconnects+1;
+		_lastBreak = lost.LastBreak;
+	}
 
 	α UAClient::PurgePending( const sp<IDataChange>& dataChange )ι->void{
 		lg _{ _pendingMutex };
