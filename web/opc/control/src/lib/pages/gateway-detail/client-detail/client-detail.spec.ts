@@ -511,3 +511,35 @@ describe( 'ClientDetail trust', ()=>{
 		fixture.destroy();
 	} );
 } );
+
+//#427 (docs/clients/spec.md *Diagnostics*):  the Server tab, built when shown - matTabContent - over the row's gateway and slug, so a
+//page opened on Properties or Connection sends the server nothing, and a new connection's tab has no slug to read under.
+describe( 'ClientDetail server tab', ()=>{
+	beforeEach( ()=>localStorage.setItem('client-detail/tabIndex', '2') );//Server
+	afterEach( ()=>localStorage.removeItem('client-detail/tabIndex') );
+	const reads = { nodes: [{id: {ns: 0, i: 2256}, value: {State: 0, BuildInfo: {}}}, {id: {ns: 0, i: 2275}, value: {CurrentSessionCount: 1}}, {id: {ns: 0, i: 2290}, value: []}, {id: {ns: 0, i: 3707}, value: []}] };
+	const make = ( row:any )=>{
+		const query = vi.fn( async ( ql:string, _vars:any )=>ql.startsWith( "nodes(" ) ? reads : { serverConnection: {clientDiagnostics: null, rejectedCertificate: null, clientCertificate: null} } );
+		configureDetailPage( row, {gateway: {slug: "g", query}, providers: [
+			{ provide: OpcStore, useValue: {forget: ()=>{}} },
+			{ provide: LiveAnnouncer, useValue: {announce: async ()=>{}} }
+		]} );
+		const fixture = TestBed.createComponent( ClientDetail );
+		return { fixture, page: fixture.componentInstance, query };
+	};
+	//detectChanges runs ngOnInit once (the route subscription) and renders the Server tab;  destroy unsubscribes it.
+	const open = async ( fixture:any )=>{ fixture.detectChanges(); await flush( 3 ); };
+
+	it( 'reads the server and the client for the row once the tab is shown', async ()=>{
+		const { fixture, page, query } = make( {id: 7, slug: "plc", name: "plc"} );
+		await open( fixture );
+		expect( page.tabIndex() ).toBe( 2 );
+		const sent = query.mock.calls.map( ([ql, vars])=>[ql.split( "(" )[0], vars?.opc] );
+		expect( sent ).toContainEqual( ["nodes", "plc"] );
+		expect( sent ).toContainEqual( ["serverConnection", "plc"] );
+		expect( (fixture.nativeElement as HTMLElement).querySelector("server-diagnostics section.status") ).not.toBeNull();
+		fixture.destroy();
+	} );
+	//a new connection lands on Properties (the tab-index describe), whose form cannot render against the stub schema here;  its Server
+	//tab, shown later, has no slug and reads nothing - server-diagnostics.spec's 'not saved yet'
+} );

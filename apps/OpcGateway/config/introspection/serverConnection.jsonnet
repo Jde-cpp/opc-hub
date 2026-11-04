@@ -1,7 +1,7 @@
 //Live fields the gateway grafts onto the DB-backed ServerConnection rows (ql/OpcSessionsQLAwait.cpp: ServerCnnctnSessionsQLAwait answers
 //`serverConnections{ … opcSessions{count} }`). `extend: true` appends these to the introspected server_connections columns instead of replacing them.
 local types = import 'scalars.libsonnet';
-local String = types.String, UInt = types.UInt, NonNull = types.NonNull;
+local String = types.String, UInt = types.UInt, Boolean = types.Boolean, NonNull = types.NonNull;
 local serverConnection = {
 	extend: true,
 	fields: [
@@ -9,7 +9,8 @@ local serverConnection = {
 		{ name: "opcSessions", type: { kind: "OBJECT", name: "OpcSessions" } },
 		{ name: "opcConnections", type: { kind: "OBJECT", name: "OpcConnections" } },
 		{ name: "rejectedCertificate", type: { kind: "OBJECT", name: "RejectedCertificate" } },
-		{ name: "clientCertificate", type: { kind: "OBJECT", name: "ClientCertificate" } }
+		{ name: "clientCertificate", type: { kind: "OBJECT", name: "ClientCertificate" } },
+		{ name: "clientDiagnostics", type: { kind: "OBJECT", name: "ClientDiagnostics" } }
 	]
 };
 {
@@ -49,6 +50,18 @@ local serverConnection = {
 			{ name: "notAfter", type: NonNull(String) },
 			{ name: "uri", type: NonNull(String) },
 			{ name: "pem", type: NonNull(String) }
+		]
+	},
+	ClientDiagnostics: { //the caller's own client of the connection, as it stands (UAClient::ClientDiagnostics, #427), else the lost one a reconnect chain holds, null with neither - the sub-query never connects
+		fields: [
+			{ name: "connectedSince", type: NonNull(String) }, //when the gateway's client for this connection and credential first had its session, carried over a reconnect
+			{ name: "reconnects", type: NonNull(UInt) }, //breaks it came back from
+			{ name: "lastBreak", type: String }, //when the last of them was, null for none
+			{ name: "sessionAge", type: UInt }, //whole seconds since the session now up was activated, null with none up:  a lost client a reconnect chain holds, or one reconnecting in place
+			{ name: "monitoredItems", type: NonNull(UInt) }, //on this client
+			{ name: "parkedItems", type: NonNull(UInt) }, //the connection's:  items a lost client left for a reconnect, on no client yet
+			{ name: "reconnectWaiting", type: NonNull(Boolean) }, //a reconnect chain of the connection is in its backoff wait
+			{ name: "clients", type: NonNull(UInt) } //the connection's open clients, one per credential - opcConnections' count
 		]
 	}
 }

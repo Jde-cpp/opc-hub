@@ -13,6 +13,14 @@
 				<server-properties [server]="server()" [error]="serverError()" [untested]="untested" [connecting]="testing()" [staleFor]="staleFor()" [rejected]="certificates()?.rejectedCertificate ?? null" [client]="certificates()?.clientCertificate ?? null" [trusting]="trusting()" (trust)="onTrust($event)"></server-properties>
 		</ng-template>
 	</mat-tab>
+	<!--#427:  the server's own diagnostics - its status, summary, sessions and subscriptions - and the gateway's client for it.  Read when
+		the tab is shown (matTabContent builds it then), so a page opened on Properties costs the server nothing-->
+	<mat-tab>
+		<ng-template mat-tab-label>Server</ng-template>
+		<ng-template matTabContent>
+			<server-diagnostics [gateway]="gateway" [slug]="isNew ? undefined : row.slug"></server-diagnostics>
+		</ng-template>
+	</mat-tab>
 </mat-tab-group>
 <detail-actions [page]="this"><!--Purge too:  a deleted connection keeps its slug, and the create refusal says to restore or purge it (reviews/install-issues.md #51, #53)-->
 	<!--beside the two safe actions, outlined like Cancel:  it saves nothing - at most it issues the slug's certificate, as the saved connection's first connect would.

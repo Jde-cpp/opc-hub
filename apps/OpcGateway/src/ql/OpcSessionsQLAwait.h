@@ -10,10 +10,16 @@ namespace Jde::Opc::Gateway{
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};
-	//serverConnections{ … opcSessions{count} opcConnections{count} connectionStatus{name error} rejectedCertificate{…} clientCertificate{…} } -
-	//grafts live state onto the DB rows.  opcSessions = web sessions holding a credential on the slug (auth cache), opcConnections = open
-	//UAClients (idle drain/disconnect shrink it), connectionStatus = those counts read as Connected|Idle|Error against UAClient::ConnectErrors(),
-	//so a broken slug is distinguishable from a merely unused one - the live-usage telemetry, which needs gateway/sessions Read as well.
+	//serverConnections{ … opcSessions{count} opcConnections{count} connectionStatus{name error} rejectedCertificate{…} clientCertificate{…}
+	//clientDiagnostics{…} } - grafts live state onto the DB rows.  opcSessions = web sessions holding a credential on the slug (auth cache),
+	//opcConnections = open UAClients (idle drain/disconnect shrink it), connectionStatus = those counts read as Connected|Idle|Error against
+	//UAClient::ConnectErrors(), so a broken slug is distinguishable from a merely unused one - the live-usage telemetry, which needs
+	//gateway/sessions Read as well.  clientDiagnostics{ connectedSince reconnects lastBreak sessionAge monitoredItems parkedItems
+	//reconnectWaiting clients } is the same telemetry for the caller's own client of the slug, the one its session would use
+	//(SessionCredential, UAClient::Find), else the lost one its reconnect chain holds (UAClient::LostDiagnostics), null with neither - this
+	//never connects (docs/clients/spec.md *Diagnostics*, #427):  the client's start, breaks and session age (UAClient::ClientDiagnostics),
+	//the items it monitors, and the slug's - its parked items, whether a reconnect chain of it is waiting, and its client count,
+	//opcConnections' number.
 	//rejectedCertificate reads the <thumbprint>.der our verifier wrote for a slug whose server certificate we rejected (ServerTrust,
 	//UAClient::RejectedThumbprint), null for a slug with no standing rejection;  clientCertificate reads the gateway's own issued certificate
 	//for the slug (UAClient::CryptoSettings), the one it presents, so the page downloads its PEM, null when the file does not exist.  Both
@@ -22,7 +28,7 @@ namespace Jde::Opc::Gateway{
 		using base = QL::IQLTableAwaitExe;
 		ServerCnnctnSessionsQLAwait( QL::TableQL&& q, QL::Creds&& creds, SRCE )ι:base{ move(q), move(creds), sl }{}
 		Ω IsApplicable( const QL::TableQL& q )ι->bool{ return q.JsonName.starts_with("serverConnection") && std::ranges::any_of( Tables, [&q]( sv t ){ return q.FindTable(t)!=nullptr; } ); }
-		static constexpr array<sv,5> Tables{ "opcSessions", "opcConnections", "connectionStatus", "rejectedCertificate", "clientCertificate" };//opcSessions is OpcSessionsQLAwait's at the top level too.
+		static constexpr array<sv,6> Tables{ "opcSessions", "opcConnections", "connectionStatus", "rejectedCertificate", "clientCertificate", "clientDiagnostics" };//opcSessions is OpcSessionsQLAwait's at the top level too.
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};

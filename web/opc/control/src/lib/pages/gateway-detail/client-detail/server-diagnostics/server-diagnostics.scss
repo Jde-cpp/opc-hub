@@ -1,0 +1,90 @@
+@use '../../../read-only-rows';
+
+.content{
+	@include read-only-rows.column;
+	max-width: none;//the two tables take the tab's width;  everything else keeps the form's, the other tabs' edge
+	> *{
+		max-width: var(--jde-form-max-width);
+	}
+	> .table-scroll{
+		max-width: none;
+	}
+}
+@include read-only-rows.rows;
+
+/* the session and subscription lists:  as wide as their values need, up to the tab, never narrower than the sections above them, and
+   scrolled sideways rather than broken mid-word where even that is too narrow */
+.table-scroll{
+	overflow-x: auto;
+}
+table.list{
+	width: auto;
+	min-width: min(100%, var(--jde-form-max-width));
+}
+table.list td{
+	overflow-wrap: normal;
+}
+td.time{
+	white-space: nowrap;
+}
+
+table.list th{
+	padding: .25rem 1rem;
+	border-block-end: 1px solid var(--mat-sys-outline-variant);
+	text-align: start;
+	font: var(--mat-sys-body-small);
+	color: var(--mat-sys-on-surface-variant);
+}
+/* a count:  right-aligned, digits lined up */
+td.count{
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+.row-count{
+	margin-left: 0.4em;
+}
+/* a section's title, as the tables' captions:  the field labels' size at title weight */
+section h3{
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	margin: 1.5rem 0 .25rem;
+	padding: 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-title-small);
+}
+section.status h3{
+	margin-block-start: 0;
+}
+p.empty{
+	padding: .5rem 1rem;
+	margin: 0;
+}
+/* the server not read:  the Connection tab's not-connected state - icon beside a title and the reason */
+.state{
+	display: flex;
+	gap: 1rem;
+	align-items: flex-start;
+	padding: .5rem 1rem;
+}
+.state mat-icon{
+	flex: none;
+	color: var(--mat-sys-error);
+}
+.state p{
+	margin: 0;
+}
+.state .title{
+	font: var(--mat-sys-title-small);
+}
+.state .detail{
+	margin-block-start: .25rem;
+	color: var(--mat-sys-on-surface-variant);
+	overflow-wrap: anywhere;
+}
+/* a second line under a value:  a session's id under its name, a client field's explanation under its figure */
+.node-id, .hint{
+	display: block;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}
