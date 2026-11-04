@@ -32,9 +32,9 @@ namespace Jde::Access::Server{
 		try{
 			let args = _mutation.ExtrapolateVariables();
 			let identityPK = Json::AsNumber<IdentityPK::Type>( args, "identity/id" );
-			auto permissionPK = Json::FindNumberPath<PermissionPK::Type>( args, "permissionRight/id" );
+			auto permissionPK = Json::FindNumber<PermissionPK::Type>( args, "permissionRight/id" );
 			if( !permissionPK )
-				permissionPK = Json::FindNumberPath<PermissionPK::Type>( args, "role/id" );
+				permissionPK = Json::FindNumber<PermissionPK::Type>( args, "role/id" );
 			THROW_IF( !permissionPK, "Could not find permissionRight or role id in '{}'", serialize(args) );
 			let isRole = co_await DS().ScalerOpt<uint>( DB::Sql{Ƒ("select is_role from {} where permission_id=?", GetTable("permissions").DBName), vector<DB::Value>{{*permissionPK}}} );
 			THROW_IF( !isRole, "[{}]Permission not found.", *permissionPK );
@@ -102,7 +102,7 @@ namespace Jde::Access::Server{
 		let denied = ( ERights )Json::FindNumber<uint8>( permission, "denied" ).value_or( 0 );
 		try{
 			auto& resource = permission.at("resource").as_object();
-			auto key = Json::AsKey( resource );
+			auto key = DB::AsKey( resource );
 			if( !key.IsPK() ){
 				auto criteria = Json::FindString( resource, "criteria" );
 				auto dbCriteria = criteria ? DB::Value{move(*criteria)} : DB::Value{nullptr};

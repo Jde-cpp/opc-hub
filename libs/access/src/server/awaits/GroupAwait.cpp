@@ -67,12 +67,12 @@ namespace Jde::Access::Server{
 				co_return;
 			}
 			auto addMembers = [&](jobject& group){
-				optional<GroupPK> groupPK = Json::FindKey<GroupPK>(group);//did not ask for group_id.
+				const GroupPK groupPK{ Json::FindNumber<GroupPK::Type>(group, "id").value_or(0) };//did not ask for group_id.
 				jarray groupMembers;
 				for( auto&& memberValue : *members ){
 					auto& member = memberValue.as_object();
 					const GroupPK memberGroupPK{ Json::FindNumber<GroupPK::Type>(member, "groupId").value_or(0) };//group already assigned
-					if( !groupPK || memberGroupPK==*groupPK ){
+					if( !groupPK || memberGroupPK==groupPK ){
 						member.erase( "groupId" );
 						if( haveId )
 							member["id"] = Json::AsNumber<IdentityPK::Type>( member, "memberId" );

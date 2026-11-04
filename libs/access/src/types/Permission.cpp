@@ -8,7 +8,7 @@ namespace Jde::Access{
 	{}
 
 	//Missing is nullopt - None to the constructor, unchanged to an update:  RoleMAwait::AddPermission defaults an omitted allowed/denied
-	//to 0, and a notification carries only the keys the mutation sent (Json::Combine of its args, TrimColumns copies what is present)
+	//to 0, and a notification carries only the keys the mutation sent (QL::Combine of its args, TrimColumns copies what is present)
 	//- so the key can be absent here, and this is noexcept:  AsNumber would have thrown across it into std::terminate (access-review3 #6).
 	α FindRights( const jobject& o, sv key )ι->optional<ERights>{
 		if( let array = Json::FindArray(o, key); array )
@@ -19,7 +19,7 @@ namespace Jde::Access{
 	}
 	Permission::Permission( const jobject& o )ε:
 		PK{ Json::AsNumber<PermissionPK::Type>(o, "id") },
-		ResourcePK{ Json::FindNumberPath<Access::ResourcePK::Type>(o, "resource/id").value_or(0) },
+		ResourcePK{ Json::FindNumber<Access::ResourcePK::Type>(o, "resource/id").value_or(0) },
 		Allowed{ FindRights(o, "allowed").value_or(ERights::None) },
 		Denied{ FindRights(o, "denied").value_or(ERights::None) }
 	{}

@@ -21,7 +21,7 @@ namespace Jde::QL{
 				}
 				if( auto array = mutationResult.is_array() ? &mutationResult.get_array() : nullptr; array && array->size() )
 					mutationResult = Json::AsObject( move((*array)[0]) );
-				let available = mutationResult.is_object() ? Json::Combine( mutationResult.get_object(), m.ExtrapolateVariables() ) : m.ExtrapolateVariables();
+				let available = mutationResult.is_object() ? Combine( mutationResult.get_object(), m.ExtrapolateVariables() ) : m.ExtrapolateVariables();
 				jobject result;
 				auto& returnObject = returnRaw ? result : result[commandName].emplace_object();
 				returnObject = resultRequest->TrimColumns( available );

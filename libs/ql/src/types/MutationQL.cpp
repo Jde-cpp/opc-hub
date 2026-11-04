@@ -50,3 +50,23 @@ namespace Jde::QL{
 		return isMutation;
 	}
 }
+namespace Jde{
+	α QL::Combine( const jobject& a, const jobject& b )ι->jobject{
+		jobject y = a;
+		for( let& [key,bValue] : b ){
+			if( auto yValue = y.if_contains(key); yValue ){
+				if( let yObject = bValue.is_object() && yValue->is_object() ? &yValue->get_object() : nullptr; yObject )
+					y[key] = Combine( *yObject, bValue.get_object() );
+				else if( let yArray = yValue->is_array() && bValue.is_array() ? &yValue->get_array() : nullptr; yArray ){
+					for( let& item : bValue.get_array() ){
+						if( std::ranges::find(*yArray, item)==yArray->end() )
+							yArray->emplace_back( item );
+					}
+				}
+			}
+			else
+				y[key] = bValue;
+		}
+		return y;
+	}
+}

@@ -140,7 +140,7 @@ namespace Jde::QL{
 					if( let array = result.try_as_array(); array && array->size() )
 						result = ( *array )[0];
 					let args = m.ExtrapolateVariables();
-					available = result.is_object() ? Json::Combine( result.get_object(), args ) : args;
+					available = result.is_object() ? Combine( result.get_object(), args ) : args;
 					//match every scalar arg that maps to a column - slug alone is ambiguous (e.g. resources rows differing only by criteria).
 					//Args only: the result's fields are server-formatted (a `$now` default needn't byte-match what was written) and today carry nothing but id/rowCount anyway.
 					if( !available.contains("id") ){

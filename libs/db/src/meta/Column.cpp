@@ -41,10 +41,10 @@ namespace Jde::DB{
 	Column::Column( sv name, const jobject& j )ε:
 		Name{ name },
 		Criteria{ getCriteria(j) },
-		IsNullable{ FindDefaultBool(j, "nullable") },
+		IsNullable{ FindBool(j, "nullable").value_or(false) },
 		MaxLength{ FindNumber<uint16>(j, "length") },
 		PKTable{ getPK(j) },
-		IsSequence{ PKTable ? false : FindDefaultBool(j, "sequence") },
+		IsSequence{ PKTable ? false : FindBool(j, "sequence").value_or(false) },
 		Insertable{ FindBool(j, "insertable").value_or(!IsSequence) },
 		SKIndex{ IsSequence ? optional<uint8>{0} : FindNumber<uint8>(j, "sk") },
 		QLAppend{ FindDefaultSV(j, "qlAppend") },

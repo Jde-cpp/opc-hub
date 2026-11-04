@@ -24,7 +24,7 @@ namespace Jde::Google{
 		Azp{ Json::FindDefaultSV(j, "azp") },
 		Aud{ Json::FindDefaultSV(j, "aud") },
 		Email{ Json::FindDefaultSV(j, "email") },
-		EmailVerified{ Json::FindDefaultBool(j, "email_verified") },
+		EmailVerified{ Json::FindBool(j, "email_verified").value_or(false) },
 		Name{ Json::FindDefaultSV(j, "name") },
 		PictureUrl{ Json::FindDefaultSV(j, "picture") },
 		GivenName{ Json::FindDefaultSV(j, "given_name") },

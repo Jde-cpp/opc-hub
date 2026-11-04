@@ -88,6 +88,6 @@ namespace Jde::Access{
 	TEST_F( UserTests, ProvidersSelect ){
 		let readGroups = "__type(name: \"Provider\") { enumValues { id name } }";
 		let readGroupsJson = QL().QuerySync( readGroups, {}, GetRoot() );
-		ASSERT_TRUE( AsArrayPath(readGroupsJson, "enumValues").size()>0 );
+		ASSERT_TRUE( AsArray(readGroupsJson, "enumValues").size()>0 );
 	}
 }
