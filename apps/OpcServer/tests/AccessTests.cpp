@@ -72,6 +72,7 @@ namespace Jde::Opc::Server::Tests{
 			addRole( "writer", _writerAllowed, _writerDenied );
 			addRole( "admin", _adminAllowed, _adminDenied );
 			addRole( "branch", ERights::Read, ERights::None, true );
+			addRole( "caller", ERights::Read | ERights::Execute, ERights::None );//may call methods, and not write (#318).
 			_app->QuerySync<jvalue>( "restoreResource( slug:$slug, criteria:null )", nodeSlug );
 		}
 		Ω TearDownTestCase()ι->void{}
@@ -136,6 +137,44 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_FALSE( mayAddReference(_users.at("readerUser")) ) << "a reference is a write to its source node";
 		EXPECT_TRUE( mayAddReference(_users.at("writerUser")) );//Update
 		EXPECT_FALSE( mayAddReference(unknownUser) );
+	}
+
+	//Clients spec *Methods* (#318, *Open questions* #9):  a call is Execute on the node asked about - the method's own for the
+	//UserExecutable attribute, the object's for the Call service's on-object check, since a method a type declares is called with
+	//its own id and the instance as the object - and Update implies nothing.  Both used to deny every method (the on-object form
+	//asserted), so the gateway's call path was dead against this server.
+	TEST_F( AccessTests, ExecuteGatesMethodCalls ){
+		let method = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER_GETMONITOREDITEMS );//Server's own GetMonitoredItems, in the Objects tree.
+		let typesMethod = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERTYPE_GETMONITOREDITEMS );//ServerType's declaration of it, outside the tree:  no resource of its own, so the root's.
+		let server = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER );
+		let executable = [&]( UserPK user, const UA_NodeId& m ){
+			auto ctx = Session( user );
+			return UAAccess::GetUserExecutable( _ua->Ptr(), nullptr, nullptr, &ctx, &m, nullptr );
+		};
+		let onObject = [&]( UserPK user, const UA_NodeId& m, const UA_NodeId& object ){
+			auto ctx = Session( user );
+			return UAAccess::GetUserExecutableOnObject( _ua->Ptr(), nullptr, nullptr, &ctx, &m, nullptr, &object, nullptr );
+		};
+		let user = [&]( const string& slug ){ return UserPK{ (UserPK::Type)_users.at(slug) }; };
+		auto& auth = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
+		ASSERT_TRUE( WaitUntil([&]{ return !empty(auth.NodeRights(NodeId{method}, user("callerUser")) & ERights::Execute); }) ) << "the caller's grant reaches the authorizer";
+		EXPECT_FALSE( executable(user("writerUser"), method) ) << "Update implies nothing";
+		EXPECT_FALSE( onObject(user("writerUser"), typesMethod, server) );
+		EXPECT_FALSE( executable(user("adminUser"), method) ) << "nor does Administer";
+		EXPECT_TRUE( executable(user("callerUser"), method) );
+		EXPECT_TRUE( onObject(user("callerUser"), typesMethod, server) ) << "a type's method, by the instance's rights";
+		EXPECT_FALSE( onObject(user("callerUser"), typesMethod, criteriaNode()) ) << "the object's own resource withholds everything";
+		EXPECT_FALSE( executable(UserPK{std::numeric_limits<UserPK::Type>::max()}, method) ) << "no acl row at all";
+		EXPECT_FALSE( UAAccess::GetUserExecutable(_ua->Ptr(), nullptr, nullptr, nullptr, &method, nullptr) ) << "no session context";
+
+		//An Execute grant on the object alone - ServerDiagnostics, a node no other test maps - allows a call on it and on nothing above it.
+		const NodeId diagnostics{ UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERDIAGNOSTICS) };
+		let objectCaller = FindOrCreateUser( *_app, "objectCallerUser" );
+		GrantRole( *_app, roleSlug("objectCaller"), objectCaller, {{_resource, "nodeIds", ERights::Read}, {_resource, "nodeIds", ERights::Execute, {}, diagnostics.ToString(), "ServerDiagnostics"}} );
+		ASSERT_TRUE( WaitUntil([&]{ return !empty(auth.NodeRights(diagnostics, objectCaller) & ERights::Execute); }) ) << "the node's grant reaches the authorizer";
+		EXPECT_TRUE( onObject(objectCaller, typesMethod, diagnostics) ) << "Execute on the object";
+		EXPECT_FALSE( onObject(objectCaller, typesMethod, server) ) << "the node's grant stays on the node";
+		EXPECT_FALSE( executable(objectCaller, method) );
 	}
 
 	//open62541 1.5.9 gates every attribute read but Value and RolePermissions on allowBrowseNode, so a user without Read on

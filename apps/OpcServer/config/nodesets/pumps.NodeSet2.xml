@@ -16,6 +16,10 @@
     pump4.motorRpm      0.5 PERCENT_OF_EU_RANGE (3) of its EURange, 0-3000: 15 rpm.
     pumpManual.motorRpm 10, with no format: the server adds ABSOLUTE_VALUE.
   The PLC emulator loads the file too and keeps no history: there the attribute and the objects are only nodes.
+
+  pumpManual.toHertz is the test method (clients spec *Methods*, #318): a Double in, a Double and a String out.  A nodeset
+  declares no callback, so the OpcServer binds one after the load (nodesets.cpp BindPumpMethods); the emulator binds none,
+  and a call there answers BadInternalError.
 -->
 <UANodeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
   <NamespaceUris>
@@ -40,6 +44,7 @@
     <Alias Alias="HasTypeDefinition">i=40</Alias>
     <Alias Alias="HasSubtype">i=45</Alias>
     <Alias Alias="HasComponent">i=47</Alias>
+    <Alias Alias="Argument">i=296</Alias>
   </Aliases>
   <UAObjectType NodeId="ns=1;i=1001" BrowseName="1:PumpType">
     <DisplayName>PumpType</DisplayName>
@@ -428,6 +433,7 @@
       <Reference ReferenceType="HasComponent">ns=1;i=6052</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6053</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6054</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6055</Reference>
     </References>
   </UAObject>
   <UAVariable NodeId="ns=1;i=6051" BrowseName="1:manufacturerName" ParentNodeId="ns=1;i=5005" DataType="String" AccessLevel="1">
@@ -469,6 +475,94 @@
     </References>
     <Value>
       <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAMethod NodeId="ns=1;i=6055" BrowseName="1:toHertz" ParentNodeId="ns=1;i=5005">
+    <DisplayName>toHertz</DisplayName>
+    <Description Locale="en">Converts a motor speed in rpm to its frequency in Hz, and spells it.</Description>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=6056</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6057</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
+    </References>
+  </UAMethod>
+  <UAVariable NodeId="ns=1;i=6056" BrowseName="InputArguments" ParentNodeId="ns=1;i=6055" DataType="Argument" ValueRank="1" ArrayDimensions="1">
+    <DisplayName>InputArguments</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6055</Reference>
+    </References>
+    <Value>
+      <uax:ListOfExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=297</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:Argument>
+              <uax:Name>rpm</uax:Name>
+              <uax:DataType>
+                <uax:Identifier>i=11</uax:Identifier>
+              </uax:DataType>
+              <uax:ValueRank>-1</uax:ValueRank>
+              <uax:ArrayDimensions />
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>The motor speed, in rpm.</uax:Text>
+              </uax:Description>
+            </uax:Argument>
+          </uax:Body>
+        </uax:ExtensionObject>
+      </uax:ListOfExtensionObject>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6057" BrowseName="OutputArguments" ParentNodeId="ns=1;i=6055" DataType="Argument" ValueRank="1" ArrayDimensions="2">
+    <DisplayName>OutputArguments</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6055</Reference>
+    </References>
+    <Value>
+      <uax:ListOfExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=297</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:Argument>
+              <uax:Name>hertz</uax:Name>
+              <uax:DataType>
+                <uax:Identifier>i=11</uax:Identifier>
+              </uax:DataType>
+              <uax:ValueRank>-1</uax:ValueRank>
+              <uax:ArrayDimensions />
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>The same speed, in Hz.</uax:Text>
+              </uax:Description>
+            </uax:Argument>
+          </uax:Body>
+        </uax:ExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=297</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:Argument>
+              <uax:Name>text</uax:Name>
+              <uax:DataType>
+                <uax:Identifier>i=12</uax:Identifier>
+              </uax:DataType>
+              <uax:ValueRank>-1</uax:ValueRank>
+              <uax:ArrayDimensions />
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>The frequency spelled, "25 Hz".</uax:Text>
+              </uax:Description>
+            </uax:Argument>
+          </uax:Body>
+        </uax:ExtensionObject>
+      </uax:ListOfExtensionObject>
     </Value>
   </UAVariable>
   <UAObject NodeId="ns=1;i=7050" BrowseName="HA Configuration" ParentNodeId="ns=1;i=6054">

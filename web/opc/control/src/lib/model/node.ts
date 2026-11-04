@@ -41,6 +41,7 @@ export abstract class UaNode extends NodeId{
 	get isSystem(){ return this.ns==0 && this.isNumericId && this.numericId<32750; }
 	get isObject(){ return this.nodeClass == ENodeClass.Object; }
 	get isVariable(){ return false; }
+	get isMethod(){ return false; }
 	abstract get nodeClass():ENodeClass;
 	parent?:UaNode;
 	refType?:NodeId;
@@ -49,6 +50,14 @@ export abstract class UaNode extends NodeId{
 
 export class ObjectType extends UaNode{
 	override get nodeClass():ENodeClass{ return ENodeClass.ObjectType; }
+}
+
+//A method of its parent object:  a row with a Call action (clients spec *Methods*, #318), no page of its own and nothing to
+//subscribe to.  The browse used to drop the class (spec *Gaps* #6).
+export class Method extends UaNode{
+	override get nodeClass():ENodeClass{ return ENodeClass.Method; }
+	override get displayed(){ return true; }
+	override get isMethod(){ return true; }
 }
 
 export enum EObjects{

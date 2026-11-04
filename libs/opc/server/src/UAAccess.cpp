@@ -467,16 +467,25 @@ namespace Jde::Opc::Server{
 		return underlying( context.NodeAccess->UserRights(*nodeId, ctx->UserPK) );
 	}
 
-	α UAAccess::GetUserExecutable( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *methodId, void *methodContext )ι->UA_Boolean{
-		ASSERT( methodId );
-		if( !methodId )
+	//A call is Execute on the node asked about (clients spec *Methods*, *Open questions* #9):  the method's own for the
+	//UserExecutable attribute, and the object's for the Call service, which asks the on-object form - a method a type declares,
+	//Acknowledge i=9111 say, is called with its own namespace-0 id and the instance as the object, and only the instance has
+	//rights of its own.  Update implies nothing, so a user who may write a node's values and not call its methods stays
+	//possible.  Used to deny every method but one (gateway-review #12's "dead code" ruling), and the on-object form asserted.
+	Ω executable( UA_Server* server, UA_AccessControl* ac, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId* nodeId )ι->UA_Boolean{
+		ASSERT( nodeId );
+		let ctx = UAAccess::readContext( sessionId, sessionContext );//null for a call with no session context - denied below, silently.
+		auto& context = UAAccess::context( server, ac );
+		if( !nodeId || !ctx || UAAccess::expired(context, ctx) )
 			return false;
-		if( methodId->namespaceIndex==0 && methodId->identifierType==UA_NODEIDTYPE_NUMERIC && methodId->identifier.numeric==UA_NS0ID_SERVER_NAMESPACEARRAY )
-			return true;
-		WARNT( (ELogTags)EOpcLogTags::Server, "GetUserExecutable: MethodId {} not enforced; denying by default.", NodeId{*methodId}.ToString() );
-		return false;//deny-by-default, matching the other unenforced Allow* callbacks; method execution has no ACL yet.
+		return !empty( context.NodeAccess->NodeRights(*nodeId, ctx->UserPK) & Access::ERights::Execute );
 	}
-	α UAAccess::GetUserExecutableOnObject( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *methodId, void *methodContext, const UA_NodeId *objectId, void *objectContext )ι->UA_Boolean{ ASSERT(false); return false; }
+	α UAAccess::GetUserExecutable( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *methodId, void */*methodContext*/ )ι->UA_Boolean{
+		return executable( server, ac, sessionId, sessionContext, methodId );
+	}
+	α UAAccess::GetUserExecutableOnObject( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId */*methodId*/, void */*methodContext*/, const UA_NodeId *objectId, void */*objectContext*/ )ι->UA_Boolean{
+		return executable( server, ac, sessionId, sessionContext, objectId );
+	}
 	α UAAccess::AllowAddNode( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_AddNodesItem *item )ι->UA_Boolean{ ASSERT(false); return false; }
 	α UAAccess::AllowAddReference( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_AddReferencesItem *item )ι->UA_Boolean{
 		ASSERT( item );

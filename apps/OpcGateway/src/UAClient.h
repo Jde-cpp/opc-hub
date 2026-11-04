@@ -15,6 +15,7 @@
 #include "uatypes/Browse.h"
 #include "NodeIndex.h"
 #include "EnumTypeCache.h"
+#include "MethodArguments.h"
 #include "AggregateFunctions.h"
 
 namespace Jde::Opc{ 	struct Value; }
@@ -187,6 +188,7 @@ namespace Jde::Opc::Gateway{
 		α Name()Ι->str{ return _opcServer.Name; }
 		α Index()ι->NodeIndex&{ return _nodeIndex; }//node names for `search`, crawled on first use;  dies with the client.
 		α EnumTypes()ι->EnumTypeCache&{ return _enumTypes; }//enumeration definitions for `__type(opc,ns,i)`, read on first use;  dies with the client.
+		α Methods()ι->MethodArgumentCache&{ return _methods; }//a method's InputArguments and OutputArguments for `call` and `method(opc,id)`, read on first use;  dies with the client.
 		α Aggregates()ι->AggregateFunctions&{ return _aggregates; }//the server's AggregateFunctions folder for an aggregate `history`, read on first use;  dies with the client.
 		α Url()Ι->str{ return _opcServer.Url; }
 		α ConnectUrl()Ι->str{ return _connectUrl.empty() ? _opcServer.Url : _connectUrl; }//what Connect() handed open62541 - Url(), or ReachableUrl's substitute for it.
@@ -296,6 +298,7 @@ namespace Jde::Opc::Gateway{
 
 		NodeIndex _nodeIndex;
 		EnumTypeCache _enumTypes;
+		MethodArgumentCache _methods;
 		AggregateFunctions _aggregates;
 		std::once_flag _monitoredNodesOnce;
 		up<UAMonitoringNodes> _monitoredNodes;//destroy first

@@ -31,7 +31,7 @@
 				<ng-container matColumnDef="name">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Name </mat-header-cell>
 					<mat-cell mat-cell *matCellDef="let r">
-						@if( r.isVariable ){
+						@if( r.isVariable || r.isMethod ){<!--neither has a page of its own-->
 							<span>{{r.name}}</span>
 						}
 						@else{
@@ -50,7 +50,10 @@
 				<ng-container matColumnDef="snapshot">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Snapshot </mat-header-cell>
 					<mat-cell mat-cell *matCellDef="let r">
-						@if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
+						@if( r.isMethod ){<!--a method has no value:  its cell is its Call (clients spec *Methods*)-->
+							<button matButton="outlined" class="call-button" type="button" (click)="call(r)" [attr.aria-label]="'Call ' + r.name">Call</button>
+						}
+						@else if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
 							<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
 						}
 						@else if( r.dataType==ETypes.Boolean && !r.isArray ){

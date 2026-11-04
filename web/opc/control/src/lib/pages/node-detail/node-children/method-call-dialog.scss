@@ -1,0 +1,50 @@
+@use '../../status';
+
+mat-form-field{
+	display: block;
+	width: 100%;
+}
+.hint{
+	margin: 0 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+.value-toggle{
+	display: block;
+	margin: .25rem 0 .5rem;
+}
+/* the server's answer */
+.refused, .results li{
+	@include status.refused( 0 );
+	mat-icon{
+		&.uncertain{ color: var(--mat-sys-tertiary); }
+		&.good{ color: var(--mat-sys-on-surface-variant); }
+	}
+}
+.refused{
+	margin: .75rem 0 0;
+}
+.results{
+	list-style: none;
+	margin: .75rem 0 0;
+	padding: 0;
+	.argument{ padding-inline-start: 1.5rem; }
+}
+.outputs{
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: .25rem .75rem;
+	margin: .75rem 0 0;
+	font-variant-numeric: tabular-nums;
+	dt{ color: var(--mat-sys-on-surface-variant); }
+	dd{ margin: 0; overflow-wrap: anywhere; }
+}
+mat-dialog-actions{
+	gap: 12px;
+	justify-content: flex-end;
+}
+.problem{
+	flex: 1 1 auto;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}

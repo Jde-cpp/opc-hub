@@ -1,5 +1,6 @@
 #include "nodesets.h"
 #include <jde/fwk/exceptions/IOException.h>
+#include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/server/UAServer.h>
 #include <NodesetLoader/backendOpen62541.h>
 
@@ -10,6 +11,28 @@ namespace Jde::Opc{
 		CHECK_PATH( configFile, sl );
 		auto success = NodesetLoader_loadFile( ua.Ptr(), configFile.string().c_str(), nullptr );
 		THROW_IFSL( !success, "Failed to load nodeset file: '{}'", configFile.string() );
+	}
+
+	//pumpManual.toHertz (clients spec *Methods*, #318):  the test method the gateway's CallTests call - `rpm` Double in, `hertz`
+	//Double and `text` String out.  The server has type-checked the inputs against InputArguments by here, so the shape check is
+	//a guard, not the rule.
+	Ω toHertz( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t inputSize, const UA_Variant* input, size_t outputSize, UA_Variant* output )->UA_StatusCode{
+		if( inputSize!=1 || outputSize!=2 || !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_DOUBLE]) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		const UA_Double hertz = *(const UA_Double*)input[0].data/60;
+		if( let sc = UA_Variant_setScalarCopy(&output[0], &hertz, &UA_TYPES[UA_TYPES_DOUBLE]); sc )
+			return sc;
+		let text = Ƒ( "{} Hz", hertz );
+		const UA_String s = UA_STRING( (char*)text.c_str() );
+		return UA_Variant_setScalarCopy( &output[1], &s, &UA_TYPES[UA_TYPES_STRING] );
+	}
+	α Server::BindPumpMethods( UAServer& ua )ι->void{
+		size_t ns{};
+		if( UA_Server_getNamespaceByName(ua.Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) )
+			return;//not loaded here.
+		const NodeId method{ (NsIndex)ns, 6055 };//pumpManual.toHertz, as the nodeset numbers it.
+		if( let sc = UA_Server_setMethodNodeCallback(ua.Ptr(), method, &toHertz); sc )
+			WARNT( ELogTags::App, "Could not bind pumpManual.toHertz ({}):  {}", method.ToString(), UA_StatusCode_name(sc) );
 	}
 
 	//The nodeset loader files every type it reads through UA_Server_addDataTypeFromDescription, which lands in the server's
