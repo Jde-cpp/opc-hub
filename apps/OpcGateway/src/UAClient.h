@@ -66,6 +66,12 @@ namespace Jde::Opc::Gateway{
 		//entry here was never attempted (or was drained when idle), which is what separates `Idle` from `Error` in serverConnections{connectionStatus}.
 		Ω ConnectErrors()ι->flat_map<ServerCnnctnNK,string>;
 		Ω LastFailures()ι->flat_map<ServerCnnctnNK,string>;//per slug, "<status> - <detail>" of its last failed connect, a later success or not.
+		//The SHA-1 thumbprint of the certificate OUR verifier last rejected for the slug, the <thumbprint>.der it wrote under the
+		//rejected directory (ServerTrust), kept as the connect errors are:  rejectedCertificate{} reads that file and trustServer
+		//moves it.  Cleared when the slug connects.  A slug with no entry had no server-certificate rejection.
+		Ω RejectedThumbprint( const ServerCnnctnNK& slug )ι->string;
+		Ω SetRejectedThumbprint( const ServerCnnctnNK& slug, string thumbprint )ι->void;//the verifier's record, kept per slug;  "" clears it.
+		Ω ClearRejectedThumbprint( sv thumbprint )ι->vector<ServerCnnctnNK>;//every slug whose standing rejection is `thumbprint`, cleared - trustServer's, the moment it moves the file the slugs share.  Returns them.
 		Ω Find( UA_Client* ua, SRCE )ε->sp<UAClient>;
 		Ω TryFind( UA_Client* ua, SRCE )ι->sp<UAClient>;
 		Ω RemoveClient( sp<UAClient>&& client )ι->bool;//forget the client:  it stops, and what it was monitoring ends with it.
@@ -203,7 +209,7 @@ namespace Jde::Opc::Gateway{
 		Ω Deregister( sp<UAClient>&& client )ι->bool;//the stop-and-erase RemoveClient and ConnectionLost share.
 		Ω StateCallback( UA_Client *ua, UA_SecureChannelState channelState, UA_SessionState sessionState, StatusCode connectStatus )ι->void;
 		Ω SetConnectError( const ServerCnnctnNK& slug, string message )ι->void;
-		Ω ClearConnectError( const ServerCnnctnNK& slug )ι->void;
+		Ω ClearConnectError( const ServerCnnctnNK& slug )ι->void;//clears the slug's rejected thumbprint too:  a reachable slug has no standing server-certificate rejection.
 		Ω ServiceNotificationCallback( UA_Client* ua, UA_ApplicationNotificationType type, const UA_KeyValueMap payload )ι->void;
 		α Configuration()ε->void;
 		α Create()ε->UA_Client*;

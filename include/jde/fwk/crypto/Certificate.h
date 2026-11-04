@@ -31,6 +31,7 @@ namespace Jde::Crypto{
 		string Thumbprint;
 	};
 	Φ ReadCertificate( const fs::path& certificate, SRCE )ε->vector<byte>;//PEM or DER on disk - see TrustDirs' IsCertificateFile - DER back.
+	Φ ParseCertificate( std::span<const byte> pemOrDer, SRCE )ε->vector<byte>;//ReadCertificate for bytes already read:  PEM or DER, DER back.
 	Φ WriteCertificate( const fs::path& path, std::span<const byte> certificate, SRCE )ε->void;//DER, the first certificate of `certificate` - a UA trust list's encoding.
 }
 #undef Φ

@@ -5,6 +5,7 @@
 #include "HistGroupQLAwait.h"
 #include "ServerCnnctnMAwait.h"
 #include "TestConnectionQLAwait.h"
+#include "TrustServerQLAwait.h"
 #include "../GatewayAppClient.h"
 #include "../UAClient.h"
 #include "../hist/HistHost.h"
@@ -45,6 +46,8 @@ namespace Jde::Opc{
 		if( auto await = TestConnectionQLAwait::Test(m, creds, sl); await )
 			return await;
 		if( auto await = DiscoverQLAwait::Test(m, creds, sl); await )//the connection page's Discover:  FindServers or GetEndpoints at a url.
+			return await;
+		if( auto await = TrustServerQLAwait::Test(m, creds, sl); await )//the Connection tab's Trust:  move a rejected server certificate into a trusted dir.
 			return await;
 		if( auto await = ServerCnnctnMAwait::Test(m, creds, sl); await )//a connection row's rules, provider row and live side.
 			return await;

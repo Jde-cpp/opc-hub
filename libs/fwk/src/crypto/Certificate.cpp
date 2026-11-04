@@ -119,6 +119,16 @@ namespace Jde{
 		return ToDer( cert.get(), sl );
 	}
 
+	α Crypto::ParseCertificate( std::span<const byte> pemOrDer, SL sl )ε->vector<byte>{
+		X509Ptr cert{ ::PEM_read_bio_X509(MemBio(pemOrDer, sl).get(), nullptr, 0, nullptr), ::X509_free };
+		if( !cert ){//not PEM - DER, as ReadCertificate tries them.
+			::ERR_clear_error();
+			const unsigned char* p = (const unsigned char*)pemOrDer.data();
+			cert = X509Ptr{ ::d2i_X509(nullptr, &p, (long)pemOrDer.size()), ::X509_free };
+		}
+		THROW_IFX( !cert, OpenSslException("Could not parse the certificate as PEM or DER", sl) );
+		return ToDer( cert.get(), sl );
+	}
 	α Crypto::WriteCertificate( const fs::path& path, std::span<const byte> certificate, SL sl )ε->void{
 		let der = ToDer( ParseDer(certificate, sl).get(), sl );//the first certificate alone, re-encoded:  a UA peer may send its chain after it.
 		IO::SaveBinary( path, std::span{der}, false, sl );//not WriteFile:  its "w" is text mode on Windows, which mangles DER.

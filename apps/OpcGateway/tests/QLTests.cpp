@@ -202,6 +202,41 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( value.is_array() ) << serialize( value );
 	}
 
+	//reviews-issue/415-clients-trust.md #3:  the two certificate grafts are the connection's, not live-usage telemetry, so they sit under
+	//serverConnections Read alone - gated on gateway/sessions too, an enforced sessions resource hid the page's Trust panel from a user
+	//who could read the connection.  The telemetry grafts keep the sessions gate.  serverConnections ships unenforced, so the ungranted
+	//probe reads its rows;  the refused telemetry first shows the enforcement has landed.
+	TEST_F( QLTests, CertificatesNeedNoSessionsRead ){
+		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
+		auto query = [&]( str text )->jvalue{
+			auto ql = QL::Parse( text, {}, Schemas(), true );
+			return BlockAwait<ServerCnnctnSessionsQLAwait,jvalue>( ServerCnnctnSessionsQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		};
+		EnforceResource( "gateway", "sessions", true );
+		absl::Cleanup open = []{ try{ EnforceResource("gateway", "sessions", false); }catch( const std::exception& ){} };
+		let refused = WaitUntil( [&]{
+			try{
+				query( "serverConnections( deleted:null ){ slug opcConnections{ count } }" );
+			}
+			catch( const Exception& e ){
+				return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+			}
+			return false;
+		}, 5s, 50ms );
+		ASSERT_TRUE( refused ) << "gateway/sessions is enforced and an ungranted user still reads opcConnections";
+
+		jvalue rows;
+		try{
+			rows = query( "serverConnections( deleted:null ){ slug rejectedCertificate{ thumbprint } clientCertificate{ path } }" );
+		}
+		catch( const Exception& e ){
+			FAIL() << "the certificates were refused for want of gateway/sessions Read:  " << e.what();
+		}
+		ASSERT_TRUE( rows.is_array() && !rows.get_array().empty() ) << serialize( rows );
+		let& o = rows.get_array().front().as_object();
+		EXPECT_TRUE( o.contains("rejectedCertificate") && o.contains("clientCertificate") ) << serialize( o );
+	}
+
 	TEST_F( QLTests, webSessionCounted ){ //no manual AddSession: a jwt-backed web session's connect must register itself (ConnectAwait::await_resume).
 		const jobject vars{ {"opc", OpcServerSlug} };
 		Socket().QuerySync( "serverDescription( opc: $opc ){ applicationUri }", vars );//forces a ConnectAwait for this socket's session.
@@ -397,6 +432,12 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NE( connectionStatus, fields.end() ) << serialize( fields );
 			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/kind"), "OBJECT" );
 			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/name"), "ConnectionStatus" );
+			auto rejectedCertificate = FindRow( fields, "name", "rejectedCertificate" );//#415
+			ASSERT_NE( rejectedCertificate, fields.end() ) << serialize( fields );
+			EXPECT_EQ( Json::AsSVPath(rejectedCertificate->as_object(), "type/name"), "RejectedCertificate" );
+			auto clientCertificate = FindRow( fields, "name", "clientCertificate" );
+			ASSERT_NE( clientCertificate, fields.end() ) << serialize( fields );
+			EXPECT_EQ( Json::AsSVPath(clientCertificate->as_object(), "type/name"), "ClientCertificate" );
 		}
 		{ //the status type carries a name and the reason the last connect failed - the SPA's list selects only the name.
 			let fields = Fields( "ConnectionStatus" );
@@ -413,6 +454,14 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::AsSV(count, "name"), "count" );
 			EXPECT_EQ( Json::AsSVPath(count, "type/kind"), "NON_NULL" );
 			EXPECT_EQ( Json::AsSVPath(count, "type/ofType/name"), "UInt" );
+		}
+		{ //#415:  the two certificate types the trust panel reads - the rejected server certificate and the gateway's own.
+			let rejected = Fields( "RejectedCertificate" );
+			EXPECT_EQ( rejected.size(), 6u ) << serialize( rejected );//subject issuer notBefore notAfter uri thumbprint
+			EXPECT_NE( FindRow(rejected, "name", "thumbprint"), rejected.end() ) << serialize( rejected );
+			let client = Fields( "ClientCertificate" );
+			EXPECT_EQ( client.size(), 6u ) << serialize( client );//path subject notBefore notAfter uri pem
+			EXPECT_NE( FindRow(client, "name", "pem"), client.end() ) << serialize( client );
 		}
 	}
 

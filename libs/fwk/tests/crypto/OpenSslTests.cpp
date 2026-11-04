@@ -142,6 +142,19 @@ namespace Jde::Crypto{
 		fs::remove_all( dir );
 	}
 
+	//reviews-issue/415-clients-trust.md #10:  ReadCertificate for bytes already read - the gateway's clientCertificate{} reads its
+	//file once, parses it here and answers its text as the PEM.  Both encodings give the same DER;  junk throws, nothing queued.
+	TEST_F( OpenSslTests, ParseCertificateTakesPemOrDer ){
+		let der = ReadCertificate( CertificateFile );
+		let pem = IO::LoadBinary( CertificateFile );
+		EXPECT_TRUE( ParseCertificate(std::span<const byte>{(const byte*)pem.data(), pem.size()})==der ) << "the PEM file's bytes parsed to other DER";
+		EXPECT_TRUE( ParseCertificate(der)==der ) << "DER parsed to other DER";
+		let junk = string{ "neither a PEM header nor a DER SEQUENCE" };
+		ERR_clear_error();
+		EXPECT_THROW( ParseCertificate(std::span<const byte>{(const byte*)junk.data(), junk.size()}), OpenSslException );
+		EXPECT_EQ( ERR_peek_error(), 0ul ) << "left on the queue: " << OpenSslException::CurrentError( (uint32)ERR_peek_error() );
+	}
+
 	//reviews/m2-closing.md #10:  an OpenSslException took one error off the thread's queue and left the rest.  A file that is
 	//neither encoding fails two parses, and the DER one queues more than one error, so every bad file in a trust directory -
 	//loadAnchors reads them one by one and carries on - left its tail behind, and the next OpenSslException on that thread,

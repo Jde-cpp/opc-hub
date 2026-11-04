@@ -147,3 +147,65 @@ describe( 'ServerProperties for settings the form no longer holds', ()=>{
 		expect( render({server: new Server(props())}).querySelector('.stale') ).toBeNull();
 	} );
 } );
+//#415:  the certificate panels - the rejected server certificate with Trust, and the gateway's own with a PEM download.
+describe( 'ServerProperties certificate panels', ()=>{
+	const rejected = { subject: "CN=plc", issuer: "CN=plc", notBefore: "2026-01-01T00:00:00Z", notAfter: "2027-01-01T00:00:00Z", uri: "urn:plc", thumbprint: "AB12CD34" };
+	const client = { path: "/var/lib/Jde-Cpp/OpcHub/ssl/certs/OpcHub.plc.pem", subject: "CN=gateway", notBefore: "2026-01-01T00:00:00Z", notAfter: "2027-01-01T00:00:00Z", uri: "urn:gw", pem: "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n" };
+	afterEach( ()=>vi.restoreAllMocks() );//the PEM-download test spies on URL and the anchor prototype
+	const render = ( inputs:Record<string,unknown> )=>{
+		TestBed.configureTestingModule({});
+		const fixture = TestBed.createComponent( ServerProperties );
+		for( const [name, value] of Object.entries(inputs) )
+			fixture.componentRef.setInput( name, value );
+		fixture.detectChanges();
+		return fixture;
+	};
+
+	it( 'shows the rejected certificate and emits its thumbprint on Trust', ()=>{
+		const fixture = render( {error: "server certificate rejected", rejected} );
+		const root = fixture.nativeElement as HTMLElement;
+		expect( texts(root, '.certificate.rejected dl.fields dd span') ).toEqual( ["CN=plc", "CN=plc", "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z", "urn:plc", "AB12CD34"] );
+		const trusted:string[] = [];
+		fixture.componentInstance.trust.subscribe( (t)=>trusted.push(t) );
+		(root.querySelector('.certificate.rejected button') as HTMLButtonElement).click();
+		expect( trusted ).toEqual( ["AB12CD34"] );
+	} );
+
+	it( 'disables Trust and reads Trusting while a trust is in flight', ()=>{
+		const root = render( {rejected, trusting: true} ).nativeElement as HTMLElement;
+		const button = root.querySelector( '.certificate.rejected button' ) as HTMLButtonElement;
+		expect( button.disabled ).toBe( true );
+		expect( button.textContent!.trim() ).toBe( "Trusting…" );
+	} );
+
+	//reviews-issue/415-clients-trust.md #7:  a detached anchor, and its url revoked under the click - Firefox and Safari read the url
+	//after click() returns, and saved nothing.
+	it( 'downloads the gateway certificate as a .pem named for its file', ()=>{
+		const created:Blob[] = [];
+		vi.spyOn( URL, 'createObjectURL' ).mockImplementation( (b)=>{ created.push(b as Blob); return 'blob:x'; } );
+		const revoked:string[] = [];
+		vi.spyOn( URL, 'revokeObjectURL' ).mockImplementation( (u)=>{ revoked.push(u); } );
+		const clicks:{ name:string; attached:boolean; anchor:HTMLAnchorElement }[] = [];
+		vi.spyOn( HTMLAnchorElement.prototype, 'click' ).mockImplementation( function( this:HTMLAnchorElement ){ clicks.push( {name: this.download, attached: this.isConnected, anchor: this} ); } );
+		const root = render( {client} ).nativeElement as HTMLElement;
+		expect( texts(root, '.certificate.client dl.fields dd span') ).toEqual( ["CN=gateway", "urn:gw", "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z", client.path] );
+		vi.useFakeTimers();
+		try{
+			(root.querySelector('.certificate.client button') as HTMLButtonElement).click();
+			expect( created.length ).toBe( 1 );
+			expect( clicks.map( ({name, attached})=>({name, attached}) ) ).toEqual( [{name: "OpcHub.plc.pem", attached: true}] );
+			expect( clicks[0].anchor.isConnected ).toBe( false );//and taken out again
+			expect( revoked ).toEqual( [] );//not under the click
+			vi.runAllTimers();
+			expect( revoked ).toEqual( ["blob:x"] );
+		}
+		finally{
+			vi.useRealTimers();
+		}
+	} );
+
+	it( 'shows neither panel when there is no certificate', ()=>{
+		const root = render( {server: new Server(props())} ).nativeElement as HTMLElement;
+		expect( root.querySelector('.certificate') ).toBeNull();
+	} );
+} );

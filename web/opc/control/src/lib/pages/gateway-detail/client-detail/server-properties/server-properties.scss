@@ -45,3 +45,32 @@
 	color: var(--mat-sys-on-surface-variant);
 	overflow-wrap: anywhere;
 }
+
+/* #415:  the two certificate panels - the rejected server certificate with Trust, and the gateway's own with a PEM download.
+   On the same inset as the rows and states above, a heading with an icon, the fields, then the action. */
+.certificate{
+	padding: .5rem 1rem 1rem;
+	border-block-start: 1px solid var(--mat-sys-outline-variant);
+	margin-block-start: .5rem;
+}
+.certificate h3{
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	margin: 0;
+	font: var(--mat-sys-title-small);
+}
+.certificate.rejected h3 mat-icon{
+	color: var(--mat-sys-error);
+}
+.certificate .detail{
+	margin-block: .25rem .75rem;
+	color: var(--mat-sys-on-surface-variant);
+	overflow-wrap: anywhere;
+}
+.certificate .fields{
+	margin-block-end: .75rem;
+}
+.certificate button mat-icon{
+	margin-inline-end: .25rem;
+}

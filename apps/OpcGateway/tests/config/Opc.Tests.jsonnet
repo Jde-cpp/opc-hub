@@ -61,8 +61,15 @@ local logsDir = args.logsDir;
 		}
 	},
 	server:{ port: instance.http.app.port }, //the gateway's and embedded OpcServer's app client (default 1967).
+	//the embedded OpcServer's UA certificate is issued into the test product's one ssl/certs - the same directory the embedded
+	//AppServer anchors enrollment on, but a list of its own (ServerTrust.h) - and a servers dir of its own beside it (under logsDir,
+	//so a run cleans up after itself), where trustServer moves a trusted certificate:  not the list's first entry, the enrollment
+	//anchors, where every certificate may create a user (#415).  The rejected directory is its default, serversDir's
+	//rejected-servers child.
+	local serversDir = logsDir + "/servers/opc-gateway-tests",
 	gateway:{
-		trustedCertDirs: instance.access.trustedCertDirs, //the embedded OpcServer's UA certificate is issued into the test product's one ssl/certs - the same directory the embedded AppServer anchors enrollment on, but a list of its own (ServerTrust.h).
+		trustedCertDirs: instance.access.trustedCertDirs + [ serversDir ],
+		serversDir: serversDir,
 		issuedCerts: instance.http.gateway.ssl,
 		allowPlaintextPassword: false, //the shipped default; PlaintextPasswordTests flips it for one test.
 		subscription: { publishingInterval: "PT0.1S" }, //not the shipped 0.5 s:  a push waits out up to a publishing interval at the server, about 18 s of the suite at 0.5 s.

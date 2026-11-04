@@ -69,3 +69,32 @@ row per field like the list above - a nodeset-loaded server reports a dozen.-->
 	</div>
 </div>
 }
+<!--#415:  the server certificate the gateway rejected for this connection, under the reason, with Trust.  Trusting it copies it
+into the gateway's trusted dir and reconnects;  a viewer's Trust is refused with a toast, as Test Connection is-->
+@if( rejected(); as c ){
+<section class="certificate rejected">
+	<h3><mat-icon aria-hidden="true">gpp_bad</mat-icon>Untrusted server certificate</h3>
+	<p class="detail">The gateway rejected this certificate.  Check it is the server's, then Trust it to connect.</p>
+	<dl class="fields">
+		@for( field of rejectedFields(); track field.label ){
+			<dt>{{field.label}}</dt>
+			<dd>@if( field.value ){ <span>{{field.value}}</span> } @else { <span class="empty">none</span> }</dd>
+		}
+	</dl>
+	<button matButton="filled" type="button" (click)="onTrust()" [disabled]="trusting()">{{ trusting() ? "Trusting…" : "Trust This Server" }}</button>
+</section>
+}
+<!--the gateway's own certificate for the connection, with a PEM download - carry it to a third-party server's trust list-->
+@if( client(); as c ){
+<section class="certificate client">
+	<h3><mat-icon aria-hidden="true">badge</mat-icon>Gateway certificate</h3>
+	<p class="detail">The certificate the gateway presents to this server.  Download it to trust the gateway on the server.</p>
+	<dl class="fields">
+		@for( field of clientFields(); track field.label ){
+			<dt>{{field.label}}</dt>
+			<dd>@if( field.value ){ <span>{{field.value}}</span> } @else { <span class="empty">none</span> }</dd>
+		}
+	</dl>
+	<button matButton="outlined" type="button" (click)="downloadPem()"><mat-icon aria-hidden="true">download</mat-icon>Download PEM</button>
+</section>
+}

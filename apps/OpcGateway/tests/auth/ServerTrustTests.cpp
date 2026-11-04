@@ -102,6 +102,34 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Verify(_other), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
 	}
 
+	//#415:  the thumbprint of the certificate the verifier rejected is readable through the config, for the client to keep per
+	//slug - what rejectedCertificate{} answers and trustServer moves - and is its SHA-1, the <thumbprint>.der it writes;  a trusted
+	//certificate records none, and a later success clears it.  The file is the once-only test, not the process having seen the
+	//certificate before:  once it has left the directory - trusted, or deleted by hand - the next rejection writes it again
+	//(reviews-issue/415-clients-trust.md #1).
+	TEST_F( ServerTrustTests, ARejectionRecordsItsThumbprint ){
+		let thumbprint = Crypto::Certificate{ Crypto::ReadCertificate(_other) }.Thumbprint;
+		let rejectedFile = ServerTrust::RejectedDir( "/gateway" )/Ƒ( "{}.der", thumbprint );
+		std::error_code removed;
+		fs::remove( rejectedFile, removed );//an earlier test may have rejected the fixture's certificate.
+		absl::Cleanup removeFile = [&]{ std::error_code ec; fs::remove( rejectedFile, ec ); };
+		ServerTrust::Install( _config, true, {_trustedDir}, TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( ServerTrust::RejectedThumbprint(_config), "" ) << "a trusted certificate records no rejection";
+
+		EXPECT_EQ( Verify(_other), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+		EXPECT_EQ( ServerTrust::RejectedThumbprint(_config), thumbprint ) << "the SHA-1 of the rejected certificate, the <thumbprint>.der it names";
+		EXPECT_TRUE( fs::exists(rejectedFile) ) << rejectedFile;
+
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( ServerTrust::RejectedThumbprint(_config), "" ) << "a later success clears the standing rejection";
+
+		ASSERT_TRUE( fs::remove(rejectedFile) );//trusted or deleted by hand, and rejected again:  written again, not skipped as seen this run.
+		EXPECT_EQ( Verify(_other), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+		EXPECT_EQ( ServerTrust::RejectedThumbprint(_config), thumbprint );
+		EXPECT_TRUE( fs::exists(rejectedFile) ) << "a certificate rejected again after its file left the directory was not written again";
+	}
+
 	TEST_F( ServerTrustTests, OffAcceptsAnything ){
 		ServerTrust::Install( _config, false, {_trustedDir}, TestHandle, "opc.tcp://server.under.test:4840" );
 		EXPECT_EQ( ServerTrust::AnchorCount(_config), 0u );

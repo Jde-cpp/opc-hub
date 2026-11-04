@@ -7,6 +7,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { OpcStore } from '../../../services/opc-store';
 import { ServerCnnctn } from '../../../model/server-cnnctn';
 import { namespaceColumns, serverDescColumns } from '../../../model/server';
+import { flush } from 'jde-spa/testing';
 import { ClientDetail } from './client-detail';
 import { DiscoverDialog } from './discover-dialog';
 import { configureDetailPage, dialogStub } from 'jde-framework/testing';
@@ -397,5 +398,116 @@ describe( 'ClientDetail discover', ()=>{
 		const { page } = await create( {id: 7, slug: "plc1", name: "PLC 1", url: "opc.tcp://old:4840", certificateUri: "", server: {applicationName: "PLC 1"}}, pick );
 		await page.onDiscoverClick();
 		expect( page.staleFor() ).toBe( "URL opc.tcp://old:4840, an empty Certificate URI, an unset Security Mode, an unset Security Policy" );
+	} );
+} );
+//#415:  the certificate panel's data and Trust.  onRow loads the rejected server certificate and the gateway's own from the row
+//(no connect);  Trust POSTs trustServer by thumbprint, and a refusal is a toast, as Test Connection's is.
+describe( 'ClientDetail trust', ()=>{
+	//open on the Connection tab (server-properties), where the panel lives:  a cert load resolving triggers a tick, and the
+	//Properties tab's form would render against the test's stub schema.  As the tab-index describe does.
+	beforeEach( ()=>localStorage.setItem('client-detail/tabIndex', '1') );
+	afterEach( ()=>localStorage.removeItem('client-detail/tabIndex') );
+	const rejected = { subject: "CN=plc", issuer: "CN=plc", notBefore: "2026-01-01T00:00:00Z", notAfter: "2027-01-01T00:00:00Z", uri: "urn:plc", thumbprint: "AB12CD34" };
+	//the fixture is destroyed at the end:  this gateway's query resolves, so onRow's certificate load is real async, and change
+	//detection would otherwise run against the torn-down row after the test.
+	//`certificates` is what the gateway's row answers at each load, `test` its testConnection, `connect` the re-describe after a trust
+	const make = ( row:any, opts:{ trust?:( vars:any )=>Promise<void>; certificates?:()=>unknown; test?:()=>Promise<unknown>; connect?:()=>Promise<unknown> }={} )=>{
+		const posts:{ ql:string; vars:any }[] = [];
+		const gateway = {
+			slug: "g",
+			query: async ( _ql:string, _vars:any )=>({ serverConnection: opts.certificates ? opts.certificates() : { rejectedCertificate: rejected, clientCertificate: null } }),
+			postQL: async ( ql:string, vars:any )=>{
+				posts.push( {ql, vars} );
+				if( ql==ClientDetail.testMutation )
+					return { testConnection: await opts.test!() };
+				if( opts.trust ) await opts.trust( vars );
+				return { trustServer: true };
+			}
+		};
+		const { snackbar } = configureDetailPage( row, {gateway, providers: [
+			{ provide: OpcStore, useValue: {forget: ()=>{}, getConnection: opts.connect ?? (async ()=>undefined)} },
+			{ provide: LiveAnnouncer, useValue: {announce: async ()=>{}} }
+		]} );
+		const fixture = TestBed.createComponent( ClientDetail );
+		return { fixture, page: fixture.componentInstance, posts, snackbar };
+	};
+	//detectChanges runs ngOnInit once (the route subscription) and renders the Connection tab;  destroy unsubscribes it.
+	const open = async ( fixture:any )=>{ fixture.detectChanges(); await flush( 2 ); };
+
+	it( 'loads the row\'s certificates on open', async ()=>{
+		const { fixture, page } = make( {id: 7, slug: "plc", name: "plc"} );
+		await open( fixture );
+		expect( page.certificates()?.rejectedCertificate?.thumbprint ).toBe( "AB12CD34" );
+		fixture.destroy();
+	} );
+
+	it( 'posts trustServer by thumbprint and reloads', async ()=>{
+		const { fixture, page, posts } = make( {id: 7, slug: "plc", name: "plc"} );
+		await open( fixture );
+		await page.onTrust( "AB12CD34" );
+		await flush( 2 );
+		expect( posts[0] ).toEqual( {ql: ClientDetail.trustMutation, vars: {opc: "plc", thumbprint: "AB12CD34"}} );
+		expect( page.trusting() ).toBe( false );
+		fixture.destroy();
+	} );
+
+	//reviews-issue/415-clients-trust.md #2:  a test is a connect under the slug, and the gateway records the certificate it rejects
+	//for the slug as it does a scheduled connect's - the panel had stayed on the row load's answer until a page reload.
+	it( 'reloads the certificates after a test the gateway rejected the server on', async ()=>{
+		let answer:unknown = { rejectedCertificate: null, clientCertificate: null };
+		const { fixture, page } = make( {id: 7, slug: "plc", name: "plc", url: "opc.tcp://plc:4840"}, {certificates: ()=>answer, test: async ()=>{
+			answer = { rejectedCertificate: rejected, clientCertificate: null };//the gateway wrote the .der and recorded its thumbprint
+			throw new Error( "server certificate for 'opc.tcp://plc:4840' rejected" );
+		}} );
+		await open( fixture );
+		expect( page.certificates()?.rejectedCertificate ).toBeNull();
+		await page.onTestClick();
+		expect( page.serverError() ).toContain( "rejected" );
+		expect( page.certificates()?.rejectedCertificate?.thumbprint ).toBe( "AB12CD34" );
+		fixture.destroy();
+	} );
+
+	it( 'clears the rejected certificate once a test connects', async ()=>{
+		let answer:unknown = { rejectedCertificate: rejected, clientCertificate: null };
+		const described = { applicationUri: "urn:plc", productUri: "", applicationName: "PLC 1", applicationType: "Server", gatewayServerUri: "", discoveryProfileUri: "", discoveryUrls: ["opc.tcp://plc:4840"], securityPolicyUri: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", securityMode: "SignAndEncrypt", namespaces: [] };
+		const { fixture, page } = make( {id: 7, slug: "plc", name: "plc", url: "opc.tcp://plc:4840"}, {certificates: ()=>answer, test: async ()=>{
+			answer = { rejectedCertificate: null, clientCertificate: null };//trusted by hand:  its file moved out of the rejected directory
+			return described;
+		}} );
+		await open( fixture );
+		expect( page.certificates()?.rejectedCertificate?.thumbprint ).toBe( "AB12CD34" );
+		await page.onTestClick();
+		expect( page.server()?.applicationName ).toBe( "PLC 1" );
+		expect( page.certificates()?.rejectedCertificate ).toBeNull();
+		fixture.destroy();
+	} );
+
+	//reviews-issue/415-clients-trust.md #5:  the button came back over the certificate just trusted while the gateway reconnected,
+	//and a second press posted trustServer again, for a 404 toast.
+	it( 'keeps Trust disabled until the reconnect has answered', async ()=>{
+		let connected!:()=>void;
+		const { fixture, page, posts } = make( {id: 7, slug: "plc", name: "plc"}, {connect: ()=>new Promise<undefined>( resolve=>connected = ()=>resolve(undefined) )} );
+		await open( fixture );
+		const trust = page.onTrust( "AB12CD34" );
+		await flush( 2 );
+		expect( posts.length ).toBe( 1 );
+		expect( page.trusting() ).toBe( true );//the mutation answered, the reconnect has not
+		await page.onTrust( "AB12CD34" );//pressed again
+		expect( posts.length ).toBe( 1 );
+		connected();
+		await trust;
+		expect( page.trusting() ).toBe( false );
+		fixture.destroy();
+	} );
+
+	it( 'toasts a refused trust and keeps the panel', async ()=>{
+		const refusal = new HttpErrorResponse( {status: 403, error: {message: "Administer required"}} );
+		const { fixture, page, snackbar } = make( {id: 7, slug: "plc", name: "plc"}, {trust: async ()=>{ throw refusal; }} );
+		await open( fixture );
+		await page.onTrust( "AB12CD34" );
+		await flush( 2 );
+		expect( snackbar.exception ).toHaveBeenCalled();
+		expect( page.trusting() ).toBe( false );
+		fixture.destroy();
 	} );
 } );
