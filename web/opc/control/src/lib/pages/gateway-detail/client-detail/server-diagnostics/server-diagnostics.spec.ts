@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { SnackbarService } from 'jde-framework';
 import { snackbarStub } from 'jde-framework/testing';
-import { stable } from 'jde-spa/testing';
+import { flush, stable } from 'jde-spa/testing';
 import { ClientDiagnostics, clientDiagnosticsQuery, serverDiagnosticsIds, serverDiagnosticsQuery, serverDiagnosticsSummaryId, serverStatusId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId } from '../../../../model/server';
 import { ageText, enumName, memberLabel, nodeIdText, refusedClientText, ServerDiagnostics } from './server-diagnostics';
 
@@ -43,7 +43,7 @@ const cells = ( root:HTMLElement, table:string )=>[...root.querySelectorAll<HTML
 const field = ( root:HTMLElement, section:string, label:string )=>{
 	const dts = [...root.querySelectorAll<HTMLElement>(`${section} dl.fields dt`)];
 	const dt = dts.find( d=>d.textContent!.trim()==label );
-	return dt?.nextElementSibling?.textContent!.trim();
+	return dt?.nextElementSibling?.firstElementChild?.textContent!.trim();//the value, not the hint under it
 };
 
 describe( 'ServerDiagnostics', ()=>{
@@ -90,10 +90,57 @@ describe( 'ServerDiagnostics', ()=>{
 		expect( field(page, "section.client", "Reconnects") ).toBe( "0" );
 	} );
 
+	//a reconnect between attempts:  no client is registered, and the gateway answers with the lost one its chain holds, sessionAge null
+	it( 'says a lost client is reconnecting, with the items it parked', async ()=>{
+		const page = await render( create({}, {...client, sessionAge: null, monitoredItems: 0, parkedItems: 4, reconnectWaiting: true}, {serverError: "BadConnectionClosed"}).fixture );
+		expect( page.querySelector("section.client .reconnecting")?.textContent ).toContain( "Reconnecting" );
+		expect( page.querySelector("section.client .no-client") ).toBeNull();
+		expect( field(page, "section.client", "Session age") ).toBe( "none - reconnecting" );
+		expect( field(page, "section.client", "Parked items") ).toBe( "4" );
+		expect( field(page, "section.client", "Reconnect waiting") ).toBe( "yes" );
+		expect( field(page, "section.client", "Reconnects") ).toBe( "1" );
+	} );
+	it( 'says nothing of a reconnect for a live client', async ()=>{
+		const page = await render( create().fixture );
+		expect( page.querySelector("section.client .reconnecting") ).toBeNull();
+	} );
+
+	//a server that does not answer yet - a connect waiting out its timeout - holds back its own sections alone
+	it( 'shows the client while the server read is still connecting', async ()=>{
+		const { fixture } = createWith( async ql=>ql==clientDiagnosticsQuery ? { serverConnection: {clientDiagnostics: client} } : new Promise( ()=>{} ) );
+		const page = await render( fixture );
+		expect( field(page, "section.client", "Reconnects") ).toBe( "1" );
+		expect( page.querySelector("section.status") ).toBeNull();
+		expect( fixture.componentInstance.isLoading() ).toBe( true );
+	} );
+	it( 'holds a null client until the server read answers', async ()=>{
+		const { fixture } = createWith( async ql=>ql==clientDiagnosticsQuery ? { serverConnection: {clientDiagnostics: null} } : new Promise( ()=>{} ) );
+		const page = await render( fixture );
+		expect( page.querySelector("section.client .no-client") ).toBeNull();
+		expect( fixture.componentInstance.clientLoading() ).toBe( true );
+	} );
+
+	//the first view of a connection with no client:  the server's reads build it, after the client query beside them answered null
+	it( 'asks for the client again once the server read has connected it', async ()=>{
+		let asked = 0;
+		const { fixture, query } = createWith( async ( ql, _vars )=>ql==clientDiagnosticsQuery ? { serverConnection: {clientDiagnostics: asked++ ? client : null} } : { nodes: rows({}) } );
+		const page = await render( fixture );
+		expect( query.mock.calls.filter( ([ql])=>ql==clientDiagnosticsQuery ) ).toHaveLength( 2 );
+		expect( page.querySelector("section.client .no-client") ).toBeNull();
+		expect( field(page, "section.client", "Reconnects") ).toBe( "1" );
+	} );
+	it( 'does not ask again when the server read failed', async ()=>{
+		const { fixture, query } = create( {}, null, {serverError: "BadConnectionClosed"} );
+		const page = await render( fixture );
+		expect( query.mock.calls.filter( ([ql])=>ql==clientDiagnosticsQuery ) ).toHaveLength( 1 );
+		expect( page.querySelector("section.client .no-client")?.textContent ).toContain( "No session" );
+	} );
+
 	//null:  the gateway has no client for this session - the query never connects - and the server's reads still show
 	it( 'says the gateway holds no client for this session when the client is null', async ()=>{
 		const page = await render( create({}, null).fixture );
 		expect( page.querySelector("section.client .no-client")?.textContent ).toContain( "No session" );
+		expect( page.querySelector("section.client .no-client")?.textContent ).not.toContain( "Test Connection" );//its client is registered nowhere, so it never gives the gateway one
 		expect( page.querySelector("section.client dl.fields") ).toBeNull();
 		expect( field(page, "section.status", "State") ).toBe( "Running" );
 	} );
@@ -126,13 +173,115 @@ describe( 'ServerDiagnostics', ()=>{
 	} );
 
 	//a read the server does not serve answers a status alone ({sc}) where the others answered:  that section says so, the rest shows
+	//a server restricting its diagnostics arrays answers a status, not an empty list
+	//keyboard and screen-reader users reach neither through a hover
+	it( 'shows a session\'s id under its name, where the Subscriptions table names it', async ()=>{
+		const named = { ...session, SessionName: "Jde OpcHub" };
+		const page = await render( create({sessions: [named], subscriptions: [subscription]}).fixture );
+		expect( texts(page, "table.sessions td .node-id") ).toEqual( ["ns=1;g=883e3c6c"] );
+		expect( texts(page, "table.sessions td:first-child > span:first-child") ).toEqual( ["Jde OpcHub"] );
+		expect( cells(page, "subscriptions")[0][1] ).toBe( "ns=1;g=883e3c6c" );
+	} );
+	it( 'writes the client fields\' explanations as text', async ()=>{
+		const page = await render( create().fixture );
+		expect( texts(page, "section.client dd .hint") ).toEqual( [
+			"Items a lost connection is holding for its reconnect - on no client until it comes back.",
+			"A reconnect of this connection is in its backoff wait.",
+			"The gateway's open clients for this connection, one per credential."
+		] );
+		expect( page.querySelector("section.client [title]") ).toBeNull();
+		expect( field(page, "section.client", "Parked items") ).toBe( "0" );
+	} );
+	//the lists take the tab's width, not the form's, and scroll sideways where even that is too narrow - never a value broken mid-word
+	it( 'gives the session list the tab\'s width, its values whole', async ()=>{
+		const page = await render( create({sessions: [session], subscriptions: [subscription]}).fixture );
+		const sessions = page.querySelector<HTMLElement>( "table.sessions" )!;
+		const scroll = sessions.parentElement!;
+		expect( scroll.classList ).toContain( "table-scroll" );
+		expect( getComputedStyle(scroll).overflowX ).toBe( "auto" );
+		expect( getComputedStyle(scroll).maxWidth ).toBe( "none" );
+		expect( getComputedStyle(page.querySelector("section.client")!).maxWidth ).toBe( "var(--jde-form-max-width)" );
+		expect( getComputedStyle(sessions.querySelector("td")!).overflowWrap ).toBe( "normal" );
+		expect( [...sessions.querySelectorAll("td.time")].map( td=>getComputedStyle(td).whiteSpace ) ).toEqual( ["nowrap", "nowrap"] );
+		expect( page.querySelector("table.subscriptions")!.parentElement!.classList ).toContain( "table-scroll" );
+	} );
+	it( 'says an array read was refused, not left empty', async ()=>{
+		const page = await render( create({sessions: {sc: 0x801F0000}}).fixture );
+		expect( cells(page, "sessions") ).toEqual( [["The server did not answer its session diagnostics (Bad 0x801F0000)."]] );
+		expect( cells(page, "subscriptions") ).toEqual( [["None listed. A server may leave its subscription diagnostics empty."]] );
+	} );
 	it( 'marks one read the server did not answer, keeping the others', async ()=>{
 		const page = await render( create({summary: {sc: 0x80340000}, sessions: [session]}).fixture );
-		expect( texts(page, "section.summary .empty") ).toEqual( ["The server did not answer the diagnostics summary (status 0x80340000)."] );
+		expect( texts(page, "section.summary .empty") ).toEqual( ["The server did not answer the diagnostics summary (Bad 0x80340000)."] );
 		expect( field(page, "section.status", "State") ).toBe( "Running" );
 		expect( cells(page, "sessions").length ).toBe( 1 );
 	} );
+	//the code as the rest of the app writes it, and a Good one is no failure
+	it( 'says a Good read with no value came back empty', async ()=>{
+		const page = await render( create({status: {sc: 0}, sessions: {sc: 0}}).fixture );
+		expect( texts(page, "section.status .empty") ).toEqual( ["The server answered ServerStatus with no value."] );
+		expect( cells(page, "sessions") ).toEqual( [["The server answered its session diagnostics with no value."]] );
+		expect( page.textContent ).not.toContain( "0x00000000" );
+	} );
+	it( 'writes an Uncertain code by its severity', async ()=>{
+		const page = await render( create({summary: {sc: 0x40920000}}).fixture );
+		expect( texts(page, "section.summary .empty") ).toEqual( ["The server did not answer the diagnostics summary (Uncertain 0x40920000)."] );
+	} );
 
+	it( 'keeps the server sections up while a refresh is out', async ()=>{
+		let hold = false;
+		const { fixture } = createWith( async ql=>ql==clientDiagnosticsQuery ? { serverConnection: {clientDiagnostics: client} } : hold ? new Promise( ()=>{} ) : { nodes: rows({}) } );
+		const page = await render( fixture );
+		hold = true;
+		( page.querySelector("button[aria-label=Refresh]") as HTMLButtonElement ).click();
+		await stable( fixture, 2 );
+		expect( fixture.componentInstance.serverLoading() ).toBe( true );
+		expect( field(page, "section.status", "State") ).toBe( "Running" );
+	} );
+	it( 'clears another row\'s figures while the new row reads', async ()=>{
+		let hold = false;
+		const { fixture } = createWith( async ql=>hold ? new Promise( ()=>{} ) : ql==clientDiagnosticsQuery ? { serverConnection: {clientDiagnostics: client} } : { nodes: rows({}) } );
+		const page = await render( fixture );
+		expect( field(page, "section.status", "State") ).toBe( "Running" );
+		hold = true;
+		fixture.componentRef.setInput( "slug", "other" );
+		await stable( fixture, 2 );
+		expect( page.querySelector("section.status") ).toBeNull();
+		expect( page.querySelector("section.client dl.fields") ).toBeNull();
+	} );
+	//the router reuses the page for another gateway's connection of the same slug
+	it( 'reads again from another gateway with the same slug', async ()=>{
+		const { fixture, query } = create();
+		const page = await render( fixture );
+		const other = vi.fn( async ( ql:string )=>ql==clientDiagnosticsQuery ? { serverConnection: {clientDiagnostics: {...client, reconnects: 7}} } : { nodes: rows({}) } );
+		fixture.componentRef.setInput( "gateway", { query: other } );
+		await stable( fixture, 2 );
+		expect( query ).toHaveBeenCalledTimes( 2 );
+		expect( other ).toHaveBeenCalledTimes( 2 );
+		expect( field(page, "section.client", "Reconnects") ).toBe( "7" );
+	} );
+	//matTabContent destroys the tab when it is left:  a read still out neither lands nor toasts
+	it( 'drops a read still out when the tab is destroyed', async ()=>{
+		let fail!:( e:unknown )=>void;
+		const { fixture, snackbar } = createWith( ql=>ql==clientDiagnosticsQuery ? Promise.resolve( {serverConnection: {clientDiagnostics: client}} ) : new Promise( (_, reject)=>fail = reject ) );
+		await render( fixture );
+		const component = fixture.componentInstance;
+		fixture.destroy();
+		fail( new Error("BadTimeout") );
+		await flush( 2 );
+		expect( snackbar.exception ).not.toHaveBeenCalled();
+		expect( component.serverError() ).toBeNull();
+	} );
+	it( 'drops a read still out when the row becomes unsaved', async ()=>{
+		let answer!:( v:unknown )=>void;
+		const { fixture } = createWith( ql=>ql==clientDiagnosticsQuery ? Promise.resolve( {serverConnection: {clientDiagnostics: client}} ) : new Promise( resolve=>answer = resolve ) );
+		await render( fixture );
+		fixture.componentRef.setInput( "slug", undefined );
+		await stable( fixture, 2 );
+		answer( {nodes: rows({})} );
+		await stable( fixture, 2 );
+		expect( fixture.componentInstance.status() ).toBeUndefined();
+	} );
 	it( 'refreshes on the button, keeping what it replaces until the answer', async ()=>{
 		const { fixture, query } = create();
 		const page = await render( fixture );

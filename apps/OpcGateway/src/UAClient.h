@@ -75,7 +75,7 @@ namespace Jde::Opc::Gateway{
 		Ω Find( UA_Client* ua, SRCE )ε->sp<UAClient>;
 		Ω TryFind( UA_Client* ua, SRCE )ι->sp<UAClient>;
 		Ω RemoveClient( sp<UAClient>&& client )ι->bool;//forget the client:  it stops, and what it was monitoring ends with it.
-		Ω ConnectionLost( sp<UAClient>&& client )ι->bool;//RemoveClient for a client whose connection failed:  what it was monitoring is parked and reconnected first.
+		Ω ConnectionLost( sp<UAClient>&& client, bool edited=false )ι->bool;//RemoveClient for a client whose connection failed:  what it was monitoring is parked and reconnected first.  edited:  ConnectionEdited's, no break - the reconnect's client starts its ClientDiagnostics afresh.
 		//The statuses that say the connection went, not that the server turned the request down - the one definition RemoveIfDisconnected
 		//and the rebuild read (reviews/m2-closing.md #2).  BadServerNotConnected:  the submit found the channel
 		//already down.  BadConnectionClosed:  it went under the submit - sendRequest hands back connectStatus, or the send failed.
@@ -118,11 +118,11 @@ namespace Jde::Opc::Gateway{
 		//built a client nothing stopped (subscription-disconnect #3).  Shutdown's first step; returns how many waits it cancelled.
 		Ω StopReconnects()ι->uint;
 		Ω ReconnectsWaiting()ι->uint;//chains in their backoff wait right now - for tests and diagnostics.
-		//clientDiagnostics' per-slug reads (docs/clients/spec.md *Diagnostics*, #427):  the monitored items parked on no client of the
-		//slug - every credential's _pending entry and the rebuilds still putting theirs back, StatusCounts' parked for one slug - and
-		//whether a reconnect chain of the slug is in its backoff wait right now.
-		Ω ParkedItems( const ServerCnnctnNK& slug )ι->uint;
-		Ω ReconnectWaiting( const ServerCnnctnNK& slug )ι->bool;
+		//Per slug, under one lock:  the monitored items parked on no client - every credential's _pending entry and the rebuilds still
+		//putting theirs back - and whether a reconnect chain of it is in its backoff wait right now.  StatusCounts' parked is their sum;
+		//clientDiagnostics (docs/clients/spec.md *Diagnostics*, #427) takes one per query.
+		struct Parked final{ uint Items{}; bool Waiting{}; };
+		Ω ParkedCounts()ι->flat_map<ServerCnnctnNK,Parked>;
 		//Connect once to report, not to serve:  testConnection's.  The client connects as ConnectAwait's would - the same certificate
 		//and credential, keyed on its slug - but is registered nowhere:  not in the client registry, so no query, search or status
 		//ever finds it;  not in ConnectErrors, so a failed test is not the slug's connectionStatus;  and no ConnectAwait waiter is
@@ -163,6 +163,7 @@ namespace Jde::Opc::Gateway{
 		α SessionToken()Ι->string{ lg _{_sessionTokenMutex}; return _sessionToken; }//the token RecordSession last read - empty means it could not be read, which turns the rebuild off (see there).
 		α RecordBreak()ι->void;//StateCallback, for any state short of an activated session:  the first since the last activation is when the connection broke.
 		α TakeBreak()ι->TimePoint;//when the connection broke, for IDataChange::ConnectionLost - RecordBreak's time, else now - and clears it, so the next loss is a new break.
+		α LostAt()Ι->optional<TimePoint>;//the break StashPending parked this client's items under, none for an edit's - the rebuild's later parks of the client take the same.
 
 		//The url to hand open62541:  `url` itself, unless its host is a name whose first address takes no connection and a later one
 		//does - then that address in the name's place.  open62541's own tcp manager connected to the first address a name resolves to
@@ -202,12 +203,15 @@ namespace Jde::Opc::Gateway{
 		//clientDiagnostics' per-client figures (#427):  when the gateway's client for this slug and credential first had its session -
 		//carried from a lost client to the one the reconnect chain builds in its place (InheritBreaks), so it outlives the client -
 		//how many breaks that client, or the chain's line of clients, came back from, when the last of those breaks was (TimePoint{}
-		//for none), and when the session now up was activated.  Written where the session comes and goes - AnswerConnect, StateCallback,
+		//for none), when the session now up was activated, and whether one is up.  Written where the session comes and goes - AnswerConnect, StateCallback,
 		//the chain's connectPending - and read off those threads by the query, each an atomic of its own:  a reader may see a
 		//reconnect's count before its break, never a torn value.
-		struct Diagnostics final{ TimePoint ConnectedSince{}; uint Reconnects{}; TimePoint LastBreak{}; TimePoint ActivatedAt{}; };
-		α ClientDiagnostics()Ι->Diagnostics{ return { _connectedSince, _reconnects, _lastBreak, _activatedAt }; }
-		α InheritBreaks( const Diagnostics& lost )ι->void;//the chain's:  this client stands where `lost` stood - its start, one more reconnect, its break.
+		struct Diagnostics final{ TimePoint ConnectedSince{}; uint Reconnects{}; TimePoint LastBreak{}; TimePoint ActivatedAt{}; bool SessionUp{}; };
+		α ClientDiagnostics()Ι->Diagnostics{ return { _connectedSince, _reconnects, _lastBreak, _activatedAt, _sessionUp }; }
+		α InheritBreaks( const Diagnostics& lost )ι->void;//the chain's:  this client continues from `lost` - the earlier start, `lost`'s reconnects and one more added to its own, the later break.
+		//The lost client's figures a reconnect chain of slug+credential holds (PendingSubscription::Lost) - clientDiagnostics' answer
+		//while the chain waits or tries, when no client is registered under the key - nullopt for no chain, or an edit's.
+		Ω LostDiagnostics( const ServerCnnctnNK& slug, const Credential& credential )ι->optional<Diagnostics>;
 		α Row()Ι->const ServerCnnctn&{ return _opcServer; }//the copy this client was built from, with any later ping_interval and ttl edit (KeepAliveEdited) - its mode and policy, for the Connection tab and the tests.
 		α Handle()Ι->Jde::Handle{ return _handle; }
 		α UAPointer()Ι->UA_Client*{ return _ptr; }
@@ -219,7 +223,7 @@ namespace Jde::Opc::Gateway{
 		Ω EditedSince( const ServerCnnctn& row, uint edits )ι->bool;//row edited after Edits() answered `edits`.
 		Ω ConnectAgain( sp<UAClient> client )ι->void;//AnswerConnect's, for a client built from a row edited since:  stopped, and its waiters' connect run again.
 		Ω BuiltFrom( const DB::Key& connection )ι->vector<sp<UAClient>>;//the registered clients of that server_connections row:  by its id when that is the key, else by slug.
-		Ω StashPending( const sp<UAClient>& client )ι->void;//ConnectionLost's:  parks what the client monitored, then clears connected - defined beside the rebuild it feeds.
+		Ω StashPending( const sp<UAClient>& client, bool edited )ι->void;//ConnectionLost's:  parks what the client monitored, then clears connected - defined beside the rebuild it feeds.
 		Ω Deregister( sp<UAClient>&& client )ι->bool;//the stop-and-erase RemoveClient and ConnectionLost share.
 		Ω StateCallback( UA_Client *ua, UA_SecureChannelState channelState, UA_SessionState sessionState, StatusCode connectStatus )ι->void;
 		Ω SetConnectError( const ServerCnnctnNK& slug, string message )ι->void;
@@ -276,6 +280,7 @@ namespace Jde::Opc::Gateway{
 		//outage, and spec *Compression*'s late-report rule needs the break, not that.
 		std::atomic<TimePoint> _brokeAt{};
 		std::atomic<TimePoint> _connectedSince{}, _lastBreak{}, _activatedAt{};//ClientDiagnostics'.
+		std::atomic<TimePoint> _lostAt{};//LostAt's, TimePoint{} for none.
 		std::atomic<uint> _reconnects{};
 
 		sp<UA_CreateSubscriptionResponse> _createdSubscriptionResponse;

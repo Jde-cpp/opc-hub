@@ -116,14 +116,17 @@ namespace Jde::Opc::Gateway{
 	}
 
 	//clientDiagnostics{ connectedSince reconnects lastBreak sessionAge monitoredItems parkedItems reconnectWaiting clients }:  the caller's
-	//own client of the slug (UAClient::Find by slug and credential), null with no live client.  The times are ISO-8601 to the millisecond,
-	//lastBreak null for a client that never broke;  sessionAge is whole seconds since the session now up was activated;  monitoredItems
-	//is this client's, parkedItems, reconnectWaiting and clients the slug's.
-	Ω clientDiagnosticsJson( const QL::TableQL& q, const ServerCnnctnNK& slug, const Credential& credential, const flat_map<ServerCnnctnNK,uint32>& clients )ι->jvalue{
+	//own client of the slug (UAClient::Find by slug and credential), else the lost one a reconnect chain of the key holds, which has no
+	//session and monitors nothing - what it monitored is parkedItems' - and null with neither.  The times are ISO-8601 to the millisecond,
+	//lastBreak null for a client that never broke;  sessionAge is whole seconds since the session now up was activated, null with none up
+	//- the chain's, or a client open62541 is reconnecting in place - and never negative, though the clock is the system's;
+	//monitoredItems is this client's, parkedItems, reconnectWaiting and clients the slug's.
+	Ω clientDiagnosticsJson( const QL::TableQL& q, const ServerCnnctnNK& slug, const Credential& credential, const flat_map<ServerCnnctnNK,uint32>& clients, const flat_map<ServerCnnctnNK,UAClient::Parked>& parked )ι->jvalue{
 		let client = UAClient::Find( slug, credential );
-		if( !client )
+		let lost = client ? nullopt : UAClient::LostDiagnostics( slug, credential );//ConnectionLost deregistered it:  the chain stands in for it until its client registers - not an edit's, whose client starts afresh.
+		if( !client && !lost )
 			return jvalue{};
-		let d = client->ClientDiagnostics();
+		let d = client ? client->ClientDiagnostics() : *lost;
 		jobject y;
 		if( q.FindColumn("connectedSince") )
 			y["connectedSince"] = ToIsoString<std::chrono::milliseconds>( d.ConnectedSince );
@@ -132,15 +135,16 @@ namespace Jde::Opc::Gateway{
 		if( q.FindColumn("lastBreak") )
 			y["lastBreak"] = d.LastBreak==TimePoint{} ? jvalue{} : jvalue{ ToIsoString<std::chrono::milliseconds>(d.LastBreak) };
 		if( q.FindColumn("sessionAge") )
-			y["sessionAge"] = (uint)std::chrono::duration_cast<std::chrono::seconds>( Clock::now()-d.ActivatedAt ).count();
+			y["sessionAge"] = client && d.SessionUp ? jvalue{ (uint)std::chrono::duration_cast<std::chrono::seconds>( std::max<Clock::duration>(Clock::now()-d.ActivatedAt, {}) ).count() } : jvalue{};
 		if( q.FindColumn("monitoredItems") ){
-			let nodes = client->TryMonitoredNodes();//never constructs:  null is a client that has monitored nothing.
+			let nodes = client ? client->TryMonitoredNodes() : nullptr;//never constructs:  null is a client that has monitored nothing.
 			y["monitoredItems"] = nodes ? nodes->Count() : 0;
 		}
+		let p = parked.find( slug );
 		if( q.FindColumn("parkedItems") )
-			y["parkedItems"] = UAClient::ParkedItems( slug );
+			y["parkedItems"] = p==parked.end() ? 0 : p->second.Items;
 		if( q.FindColumn("reconnectWaiting") )
-			y["reconnectWaiting"] = UAClient::ReconnectWaiting( slug );
+			y["reconnectWaiting"] = p!=parked.end() && p->second.Waiting;
 		if( q.FindColumn("clients") ){
 			let p = clients.find( slug );
 			y["clients"] = p==clients.end() ? 0 : p->second;
@@ -206,6 +210,7 @@ namespace Jde::Opc::Gateway{
 					sessionTotals[c.Connection] += c.Count;
 			}
 			let connectionTotals = connectionsQL || statusQL || diagnosticsQL ? UAClient::ConnectionCounts() : flat_map<ServerCnnctnNK,uint32>{};
+			let parked = diagnosticsQL ? UAClient::ParkedCounts() : flat_map<ServerCnnctnNK,UAClient::Parked>{};//one snapshot for every row
 			let session = diagnosticsQL ? Session() : nullptr;//null for creds without one (a test's UserPK):  then the anonymous credential's client, if any.
 			let connectErrors = statusQL ? UAClient::ConnectErrors() : flat_map<ServerCnnctnNK,string>{};
 			auto graft = []( const flat_map<ServerCnnctnNK,uint32>& totals, const QL::TableQL& child, str slug )ι->jobject {
@@ -247,7 +252,7 @@ namespace Jde::Opc::Gateway{
 					o["clientCertificate"] = clientCertificateJson( *clientCertQL, slug );
 				if( diagnosticsQL ){//per row:  the credential a session holds is per slug (a password login's), else its jwt's.
 					let credential = session ? SessionCredential( session->SessionId, session->UserPK, slug ).value_or( Credential{} ) : Credential{};
-					o["clientDiagnostics"] = clientDiagnosticsJson( *diagnosticsQL, slug, credential, connectionTotals );
+					o["clientDiagnostics"] = clientDiagnosticsJson( *diagnosticsQL, slug, credential, connectionTotals, parked );
 				}
 			} );
 			Resume( move(rows) );

@@ -472,6 +472,9 @@ namespace Jde::Opc::Gateway::Tests{
 			auto lastBreak = FindRow( diagnostics, "name", "lastBreak" );
 			ASSERT_NE( lastBreak, diagnostics.end() ) << serialize( diagnostics );
 			EXPECT_EQ( Json::AsSVPath(lastBreak->as_object(), "type/name"), "String" );//nullable:  a client that never broke
+			auto sessionAge = FindRow( diagnostics, "name", "sessionAge" );
+			ASSERT_NE( sessionAge, diagnostics.end() ) << serialize( diagnostics );
+			EXPECT_EQ( Json::AsSVPath(sessionAge->as_object(), "type/name"), "UInt" );//nullable:  the lost client a reconnect chain holds
 			auto waiting = FindRow( diagnostics, "name", "reconnectWaiting" );
 			ASSERT_NE( waiting, diagnostics.end() ) << serialize( diagnostics );
 			EXPECT_EQ( Json::AsSVPath(waiting->as_object(), "type/ofType/name"), "Boolean" );

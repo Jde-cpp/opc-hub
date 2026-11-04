@@ -52,12 +52,12 @@ local serverConnection = {
 			{ name: "pem", type: NonNull(String) }
 		]
 	},
-	ClientDiagnostics: { //the caller's own client of the connection, as it stands (UAClient::ClientDiagnostics, #427), null with no live client - the sub-query never connects
+	ClientDiagnostics: { //the caller's own client of the connection, as it stands (UAClient::ClientDiagnostics, #427), else the lost one a reconnect chain holds, null with neither - the sub-query never connects
 		fields: [
 			{ name: "connectedSince", type: NonNull(String) }, //when the gateway's client for this connection and credential first had its session, carried over a reconnect
 			{ name: "reconnects", type: NonNull(UInt) }, //breaks it came back from
 			{ name: "lastBreak", type: String }, //when the last of them was, null for none
-			{ name: "sessionAge", type: NonNull(UInt) }, //whole seconds since the session now up was activated
+			{ name: "sessionAge", type: UInt }, //whole seconds since the session now up was activated, null with none up:  a lost client a reconnect chain holds, or one reconnecting in place
 			{ name: "monitoredItems", type: NonNull(UInt) }, //on this client
 			{ name: "parkedItems", type: NonNull(UInt) }, //the connection's:  items a lost client left for a reconnect, on no client yet
 			{ name: "reconnectWaiting", type: NonNull(Boolean) }, //a reconnect chain of the connection is in its backoff wait
