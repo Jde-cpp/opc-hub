@@ -83,11 +83,11 @@ namespace Jde::Access::Tests{
 		RemoveFromGroup( hr, {hrManagers, associate}, root );
 		AddToGroup( {hr}, {hrManagers, associate}, root );
 		let members = QL().QuerySync( Ƒ(ql, hr.Value), {}, root );
-		let array = Json::AsArrayPath( members, "groupMembers" );
+		let array = Json::AsArray( members, "groupMembers" );
 		ASSERT_EQ( array.size(), 2 );
 
 		constexpr sv userQL = "user(id:{}){{ groups{{id name}} }}";
-		ASSERT_EQ( Json::AsArrayPath(QL().QuerySync(Ƒ(userQL, manager.Value), {}, root), "groups" ).size(), 1 );
+		ASSERT_EQ( Json::AsArray(QL().QuerySync(Ƒ(userQL, manager.Value), {}, root), "groups" ).size(), 1 );
 
 		RemoveFromGroup( hr, {hrManagers, associate}, root );
 		RemoveFromGroup( hrManagers, {manager}, root );
@@ -109,7 +109,7 @@ namespace Jde::Access::Tests{
 
 		let groupIds = [&]( sv key, sv args ){
 			vector<uint> ids;
-			for( let& group : Json::AsArrayPath(QL().QuerySync(Ƒ("user( {} ){{ groups{}{{ id }} }}", key, args), {}, root), "groups") )
+			for( let& group : Json::AsArray(QL().QuerySync(Ƒ("user( {} ){{ groups{}{{ id }} }}", key, args), {}, root), "groups") )
 				ids.push_back( GetId(AsObject(group)) );
 			std::ranges::sort( ids );
 			return ids;
@@ -142,10 +142,10 @@ namespace Jde::Access::Tests{
 		for( let columns : {"id", ""} ){
 			EXPECT_TRUE( query(", deleted:null", columns).empty() ) << '"' << columns << '"';
 			let found = query( R"(, deleted:{"ne":null})", columns );
-			EXPECT_EQ( Json::AsArrayPath(found, "groupMembers").size(), 1 ) << serialize( found );
+			EXPECT_EQ( Json::AsArray(found, "groupMembers").size(), 1 ) << serialize( found );
 			EXPECT_EQ( found.contains("id"), *columns!='\0' ) << serialize( found );
 			let byKey = query( "", columns );
-			EXPECT_EQ( Json::AsArrayPath(byKey, "groupMembers").size(), 1 ) << serialize( byKey );
+			EXPECT_EQ( Json::AsArray(byKey, "groupMembers").size(), 1 ) << serialize( byKey );
 			EXPECT_EQ( byKey.contains("id"), *columns!='\0' ) << serialize( byKey );
 		}
 

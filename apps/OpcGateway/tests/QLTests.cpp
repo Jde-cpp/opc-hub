@@ -138,7 +138,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let userPK = AppClient()->UserPK().Value;
 		auto row = find_if( rows, [&](let& r){
 			let& o = r.as_object();
-			return Json::AsSVPath(o, "connection/slug")==OpcServerSlug && Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==userPK; //user may be null for anonymous rows.
+			return Json::AsSV(o, "connection/slug")==OpcServerSlug && Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumber<Jde::UserPK::Type>(o, "user/id")==userPK; //user may be null for anonymous rows.
 		} );
 		ASSERT_NE( row, rows.end() ) << serialize( value );
 		let& user = Json::AsObject( row->as_object(), "user" );
@@ -246,7 +246,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let& rows = value.as_array();
 		let row = find_if( rows, [&](let& r){
 			let& o = r.as_object();
-			return Json::AsSVPath(o, "connection/slug")==OpcServerSlug && Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==userPK;
+			return Json::AsSV(o, "connection/slug")==OpcServerSlug && Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumber<Jde::UserPK::Type>(o, "user/id")==userPK;
 		} );
 		ASSERT_NE( row, rows.end() ) << serialize( value );
 		EXPECT_GE( Json::AsNumber<uint32>(row->as_object(), "count"), 1u );
@@ -289,11 +289,11 @@ namespace Jde::Opc::Gateway::Tests{
 		for( let& r : rows.as_array() ){
 			let& o = r.as_object();
 			EXPECT_TRUE( o.contains("slug") ) << serialize( o ); //requested explicitly here, so it must not be erased.
-			let count = Json::FindNumberPath<uint32>( o, "opcSessions/count" );
+			let count = Json::FindNumber<uint32>( o, "opcSessions/count" );
 			ASSERT_TRUE( count ) << serialize( o );
-			let connectionCount = Json::FindNumberPath<uint32>( o, "opcConnections/count" );
+			let connectionCount = Json::FindNumber<uint32>( o, "opcConnections/count" );
 			ASSERT_TRUE( connectionCount ) << serialize( o );
-			let status = Json::FindSVPath( o, "connectionStatus/name" );
+			let status = Json::FindSV( o, "connectionStatus/name" );
 			ASSERT_TRUE( status ) << serialize( o ); //grafted for every row, connected or not.
 			if( Json::AsNumber<ServerCnnctnPK>(o, "id")==connection->Id ){
 				found = true;
@@ -307,7 +307,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( found ) << serialize( rows );
 		let& o = single.as_object();
 		EXPECT_FALSE( o.contains("slug") ) << serialize( o );
-		EXPECT_GE( Json::FindNumberPath<uint32>(o, "opcSessions/count").value_or(0), 1u ) << serialize( o );
+		EXPECT_GE( Json::FindNumber<uint32>(o, "opcSessions/count").value_or(0), 1u ) << serialize( o );
 	}
 
 	TEST_F( QLTests, search ){
@@ -326,14 +326,14 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NE( lamp, first.end() ) << serialize( first );
 		let& o = lamp->as_object();
 		EXPECT_EQ( Json::AsSV(o, "name"), "Lamp1" );
-		EXPECT_EQ( Json::AsSVPath(o, "connection/slug"), OpcServerSlug );
-		EXPECT_EQ( Json::AsSVPath(o, "browse/name"), "Lamp1" );
+		EXPECT_EQ( Json::AsSV(o, "connection/slug"), OpcServerSlug );
+		EXPECT_EQ( Json::AsSV(o, "browse/name"), "Lamp1" );
 		EXPECT_EQ( Json::AsNumber<uint16>(o.at("browse").as_object(), "ns"), 4 );
 		EXPECT_EQ( Json::AsNumber<uint8>(o, "depth"), 4 );
 		EXPECT_TRUE( o.contains("ns") && o.contains("i") ) << "id is spelled the way node{id} spells it: " << serialize( o );
 		EXPECT_TRUE( o.contains("nodeClass") ) << serialize( o );
 		for( let& row : first )//substring, case-insensitive, on the display or browse name.
-			EXPECT_TRUE( Str::ToLower(Json::AsString(row.as_object(), "name")).contains("lamp1") || Str::ToLower(Json::AsSVPath(row.as_object(), "browse/name")).contains("lamp1") ) << serialize( row );
+			EXPECT_TRUE( Str::ToLower(Json::AsString(row.as_object(), "name")).contains("lamp1") || Str::ToLower(Json::AsSV(row.as_object(), "browse/name")).contains("lamp1") ) << serialize( row );
 
 		let again = rows( "search( opc: $opc, text: \"LAMP1\" ){ path }" );//served from the index, case-folded.
 		EXPECT_EQ( again.size(), first.size() );
@@ -381,7 +381,7 @@ namespace Jde::Opc::Gateway::Tests{
 				EXPECT_NE( FindRow(fields, "name", name), fields.end() ) << name << ": " << serialize( fields );
 			auto connection = FindRow( fields, "name", "connection" );
 			ASSERT_NE( connection, fields.end() );
-			EXPECT_EQ( Json::AsSVPath(connection->as_object(), "type/name"), "SearchConnection" );
+			EXPECT_EQ( Json::AsSV(connection->as_object(), "type/name"), "SearchConnection" );
 		}
 	}
 
@@ -392,8 +392,8 @@ namespace Jde::Opc::Gateway::Tests{
 				EXPECT_NE( FindRow(fields, "name", name), fields.end() ) << name << ": " << serialize( fields );
 			auto values = FindRow( fields, "name", "values" );
 			ASSERT_NE( values, fields.end() );
-			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/kind"), "LIST" );
-			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/ofType/name"), "HistoryValue" );
+			EXPECT_EQ( Json::AsSV(values->as_object(), "type/kind"), "LIST" );
+			EXPECT_EQ( Json::AsSV(values->as_object(), "type/ofType/name"), "HistoryValue" );
 		}
 		for( sv edit : {"createHistory"sv, "updateHistory"sv, "upsertHistory"sv, "purgeHistory"sv} ){
 			let fields = Fields( edit );
@@ -407,7 +407,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let resolveFields = Fields( "resolveHistory" );
 		auto nodes = FindRow( resolveFields, "name", "nodes" );
 		ASSERT_NE( nodes, resolveFields.end() ) << serialize( resolveFields );
-		EXPECT_EQ( Json::AsSVPath(nodes->as_object(), "type/ofType/name"), "HistoryResolvedNode" );
+		EXPECT_EQ( Json::AsSV(nodes->as_object(), "type/ofType/name"), "HistoryResolvedNode" );
 		let resolvedFields = Fields( "HistoryResolvedNode" );
 		for( sv name : {"templateNode"sv, "path"sv, "node"sv, "status"sv} )
 			EXPECT_NE( FindRow(resolvedFields, "name", name), resolvedFields.end() ) << name << ": " << serialize( resolvedFields );
@@ -423,40 +423,40 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NE( FindRow(fields, "name", "url"), fields.end() ) << serialize( fields ); //extend:true keeps the DB columns.
 			auto opcSessions = FindRow( fields, "name", "opcSessions" );
 			ASSERT_NE( opcSessions, fields.end() ) << serialize( fields );
-			EXPECT_EQ( Json::AsSVPath(opcSessions->as_object(), "type/kind"), "OBJECT" );
-			EXPECT_EQ( Json::AsSVPath(opcSessions->as_object(), "type/name"), "OpcSessions" );
+			EXPECT_EQ( Json::AsSV(opcSessions->as_object(), "type/kind"), "OBJECT" );
+			EXPECT_EQ( Json::AsSV(opcSessions->as_object(), "type/name"), "OpcSessions" );
 			auto opcConnections = FindRow( fields, "name", "opcConnections" );
 			ASSERT_NE( opcConnections, fields.end() ) << serialize( fields );
-			EXPECT_EQ( Json::AsSVPath(opcConnections->as_object(), "type/name"), "OpcConnections" );
+			EXPECT_EQ( Json::AsSV(opcConnections->as_object(), "type/name"), "OpcConnections" );
 			auto connectionStatus = FindRow( fields, "name", "connectionStatus" );
 			ASSERT_NE( connectionStatus, fields.end() ) << serialize( fields );
-			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/kind"), "OBJECT" );
-			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/name"), "ConnectionStatus" );
+			EXPECT_EQ( Json::AsSV(connectionStatus->as_object(), "type/kind"), "OBJECT" );
+			EXPECT_EQ( Json::AsSV(connectionStatus->as_object(), "type/name"), "ConnectionStatus" );
 			auto rejectedCertificate = FindRow( fields, "name", "rejectedCertificate" );//#415
 			ASSERT_NE( rejectedCertificate, fields.end() ) << serialize( fields );
-			EXPECT_EQ( Json::AsSVPath(rejectedCertificate->as_object(), "type/name"), "RejectedCertificate" );
+			EXPECT_EQ( Json::AsSV(rejectedCertificate->as_object(), "type/name"), "RejectedCertificate" );
 			auto clientCertificate = FindRow( fields, "name", "clientCertificate" );
 			ASSERT_NE( clientCertificate, fields.end() ) << serialize( fields );
-			EXPECT_EQ( Json::AsSVPath(clientCertificate->as_object(), "type/name"), "ClientCertificate" );
+			EXPECT_EQ( Json::AsSV(clientCertificate->as_object(), "type/name"), "ClientCertificate" );
 			auto clientDiagnostics = FindRow( fields, "name", "clientDiagnostics" );//#427
 			ASSERT_NE( clientDiagnostics, fields.end() ) << serialize( fields );
-			EXPECT_EQ( Json::AsSVPath(clientDiagnostics->as_object(), "type/name"), "ClientDiagnostics" );
+			EXPECT_EQ( Json::AsSV(clientDiagnostics->as_object(), "type/name"), "ClientDiagnostics" );
 		}
 		{ //the status type carries a name and the reason the last connect failed - the SPA's list selects only the name.
 			let fields = Fields( "ConnectionStatus" );
 			ASSERT_EQ( fields.size(), 2u ) << serialize( fields );
 			EXPECT_EQ( Json::AsSV(fields[0].as_object(), "name"), "name" );
-			EXPECT_EQ( Json::AsSVPath(fields[0].as_object(), "type/ofType/name"), "String" );
+			EXPECT_EQ( Json::AsSV(fields[0].as_object(), "type/ofType/name"), "String" );
 			EXPECT_EQ( Json::AsSV(fields[1].as_object(), "name"), "error" );
-			EXPECT_EQ( Json::AsSVPath(fields[1].as_object(), "type/name"), "String" );
+			EXPECT_EQ( Json::AsSV(fields[1].as_object(), "type/name"), "String" );
 		}
 		for( sv typeName : {"OpcSessions"sv, "OpcConnections"sv} ){ //config-only types - no view behind them.
 			let fields = Fields( typeName );
 			ASSERT_EQ( fields.size(), 1u ) << serialize( fields );
 			let& count = fields[0].as_object();
 			EXPECT_EQ( Json::AsSV(count, "name"), "count" );
-			EXPECT_EQ( Json::AsSVPath(count, "type/kind"), "NON_NULL" );
-			EXPECT_EQ( Json::AsSVPath(count, "type/ofType/name"), "UInt" );
+			EXPECT_EQ( Json::AsSV(count, "type/kind"), "NON_NULL" );
+			EXPECT_EQ( Json::AsSV(count, "type/ofType/name"), "UInt" );
 		}
 		{ //#415:  the two certificate types the trust panel reads - the rejected server certificate and the gateway's own.
 			let rejected = Fields( "RejectedCertificate" );
@@ -471,13 +471,13 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( diagnostics.size(), 8u ) << serialize( diagnostics );//connectedSince reconnects lastBreak sessionAge monitoredItems parkedItems reconnectWaiting clients
 			auto lastBreak = FindRow( diagnostics, "name", "lastBreak" );
 			ASSERT_NE( lastBreak, diagnostics.end() ) << serialize( diagnostics );
-			EXPECT_EQ( Json::AsSVPath(lastBreak->as_object(), "type/name"), "String" );//nullable:  a client that never broke
+			EXPECT_EQ( Json::AsSV(lastBreak->as_object(), "type/name"), "String" );//nullable:  a client that never broke
 			auto sessionAge = FindRow( diagnostics, "name", "sessionAge" );
 			ASSERT_NE( sessionAge, diagnostics.end() ) << serialize( diagnostics );
-			EXPECT_EQ( Json::AsSVPath(sessionAge->as_object(), "type/name"), "UInt" );//nullable:  the lost client a reconnect chain holds
+			EXPECT_EQ( Json::AsSV(sessionAge->as_object(), "type/name"), "UInt" );//nullable:  the lost client a reconnect chain holds
 			auto waiting = FindRow( diagnostics, "name", "reconnectWaiting" );
 			ASSERT_NE( waiting, diagnostics.end() ) << serialize( diagnostics );
-			EXPECT_EQ( Json::AsSVPath(waiting->as_object(), "type/ofType/name"), "Boolean" );
+			EXPECT_EQ( Json::AsSV(waiting->as_object(), "type/ofType/name"), "Boolean" );
 		}
 	}
 

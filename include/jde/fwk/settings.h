@@ -12,7 +12,7 @@ namespace Jde::Settings{
 	Φ Set( sv path, jvalue v, SRCE )ε->jvalue*;
 	Φ Load()ι->void;
 	Φ Directory()ι->fs::path;
-	Ξ AsObject( sv path, SRCE )ι->const jobject&{ return Json::AsObject(Value(), path, sl); }
+	Ξ AsObject( sv path, SRCE )ε->const jobject&{ return Json::AsObject(Value(), path, sl); }
 
 	Ξ FindArray( sv path )ι->const jarray*{ return Json::FindArray(Value(), path); }
 	Ξ FindBool( sv path )ι->optional<bool>{ return Json::FindBool(Value(), path); }

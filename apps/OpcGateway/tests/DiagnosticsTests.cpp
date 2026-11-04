@@ -323,7 +323,7 @@ namespace Jde::Opc::Gateway::Tests{
 		auto row = Socket().QuerySync( "serverConnection( slug: $opc ){ slug opcConnections{ count } clientDiagnostics{ clients } }", jobject{ {"opc", IdleSlug} } );
 		let& o = row.as_object();
 		EXPECT_EQ( Json::AsSV(o, "slug"), IdleSlug ) << serialize( o );
-		EXPECT_EQ( Json::FindNumberPath<uint>(o, "opcConnections/count").value_or(99), 0u ) << serialize( o );
+		EXPECT_EQ( Json::FindNumber<uint>(o, "opcConnections/count").value_or(99), 0u ) << serialize( o );
 		ASSERT_TRUE( o.contains("clientDiagnostics") ) << serialize( o );
 		EXPECT_TRUE( o.at("clientDiagnostics").is_null() ) << serialize( o );
 	}

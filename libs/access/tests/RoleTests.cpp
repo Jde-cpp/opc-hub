@@ -35,20 +35,20 @@ namespace Jde::Access::Tests{
 		jobject vars{ {"roleId", rolePK.Value}, {"resource", resourceName} };
 		let q = "role( id:$roleId ){permissionRight{id allowed denied resource(slug:$resource,criteria:null)} }";
 		let role = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object(); //{"role":{"member":{"id":1,"allowed":[],"denied":[]}}}
-		return Json::FindDefaultObjectPath( role, "permissionRight" );
+		return Json::FindDefaultObject( role, "permissionRight" );
 	}
 	//as above, on one schema's resource - a slug like `logs` that several schemas carry.
 	α GetRolePermission( RolePK rolePK, sv schemaName, sv resourceName, UserPK executer )ε->jobject{
 		jobject vars{ {"roleId", rolePK.Value}, {"schema", schemaName}, {"resource", resourceName} };
 		let q = "role( id:$roleId ){permissionRight{id allowed denied resource(schemaName:$schema,slug:$resource,criteria:null)} }";
 		let role = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object();
-		return Json::FindDefaultObjectPath( role, "permissionRight" );
+		return Json::FindDefaultObject( role, "permissionRight" );
 	}
 	α GetRoleChild( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jobject{
 		jobject vars = { {"parent", parentRolePK.Value}, {"child",childRolePK.Value} };
 		let q = "role( id:$parent ){role(id:$child){id slug deleted} }";
 		auto y = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), userPK} );
-		return y.is_object() ? Json::FindDefaultObjectPath( y.get_object(), "role" ) : jobject{};
+		return y.is_object() ? Json::FindDefaultObject( y.get_object(), "role" ) : jobject{};
 	}
 
 	α AddRolePermission( RolePK rolePK, sv resourceName, ERights allowed, ERights denied, UserPK userPK )ε->jobject{
@@ -171,8 +171,8 @@ namespace Jde::Access::Tests{
 	TEST_F( RoleTests, AddRemove ){
 		const RolePK rolePK{ GetId( getRole("rolePermissionsTest", GetRoot()) ) };
 		auto initial = AddRolePermission( rolePK, "users", ERights::All, ERights::None, GetRoot() );
-		ASSERT_EQ( ToRights( Json::AsArrayPath(initial, "allowed") ), ERights::All );
-		ASSERT_EQ( ToRights( Json::AsArrayPath(initial, "denied") ), ERights::None );
+		ASSERT_EQ( ToRights( Json::AsArray(initial, "allowed") ), ERights::All );
+		ASSERT_EQ( ToRights( Json::AsArray(initial, "denied") ), ERights::None );
 
 		RemoveRolePermission( rolePK, PermissionPK{GetId(initial)}, GetRoot() );
 		auto roleMember = GetRolePermission( rolePK, "users", GetRoot() );
@@ -235,8 +235,8 @@ namespace Jde::Access::Tests{
 		let bAfter = GetRolePermission( bRole, "users", GetRoot() );
 		ASSERT_FALSE( bAfter.empty() );
 		EXPECT_EQ( GetId(bAfter), GetId(bPermission) );
-		EXPECT_EQ( ToRights(Json::AsArrayPath(bAfter, "allowed")), ERights::Read );
-		EXPECT_EQ( ToRights(Json::AsArrayPath(bAfter, "denied")), ERights::Update );
+		EXPECT_EQ( ToRights(Json::AsArray(bAfter, "allowed")), ERights::Read );
+		EXPECT_EQ( ToRights(Json::AsArray(bAfter, "denied")), ERights::Update );
 
 		const UserPK victim{ GetId(GetUser("roleRemoveScopeVictim", GetRoot())) };
 		let aclPermissionPK = CreateAcl( victim, ERights::Read, ERights::None, "users", GetRoot() );//a direct grant, in no role at all.

@@ -54,7 +54,7 @@ namespace Jde::Access::Tests{
 		jobject vars{ {"g",group.Value}, {"m",member.Value} };
 		EXPECT_NO_THROW( QL().QuerySync<jvalue>("mutation addGroup( id:$g, memberId:$m )", vars, root) );
 
-		let members = Json::AsArrayPath( QL().QuerySync(ql("group(id:"+std::to_string(group.Value)+")<groupMembers<id>>"), {}, root), "groupMembers" );
+		let members = Json::AsArray( QL().QuerySync(ql("group(id:"+std::to_string(group.Value)+")<groupMembers<id>>"), {}, root), "groupMembers" );
 		ASSERT_EQ( members.size(), 1u );
 		EXPECT_EQ( Json::AsNumber<uint>(Json::AsObject(members[0]), "id"), member.Value );
 
@@ -116,7 +116,7 @@ namespace Jde::Access::Tests{
 			EXPECT_NE( what.find("created"), string::npos ) << what;//the column is named in the statement now, so the db can say which.
 		}
 		//nothing was added:  the statement never ran.
-		let members = Json::AsArrayPath( QL().QuerySync(ql("group(id:"+std::to_string(group.Value)+")<groupMembers<id>>"), {}, root), "groupMembers" );
+		let members = Json::AsArray( QL().QuerySync(ql("group(id:"+std::to_string(group.Value)+")<groupMembers<id>>"), {}, root), "groupMembers" );
 		EXPECT_TRUE( members.empty() );
 		PurgeGroup( group, root );
 		PurgeUser( member, root );
@@ -127,7 +127,7 @@ namespace Jde::Access::Tests{
 		let group = GroupPK{ GetId(GetGroup("review49-plain", root)) };
 		let member = UserPK{ GetId(GetUser("review49-plainMember", root)) };
 		QL().QuerySync<jvalue>( Ƒ("mutation addGroup( id:{}, memberId:{} )", group.Value, member.Value), {}, root );
-		let members = Json::AsArrayPath( QL().QuerySync(ql("group(id:"+std::to_string(group.Value)+")<groupMembers<id>>"), {}, root), "groupMembers" );
+		let members = Json::AsArray( QL().QuerySync(ql("group(id:"+std::to_string(group.Value)+")<groupMembers<id>>"), {}, root), "groupMembers" );
 		ASSERT_EQ( members.size(), 1u );
 		RemoveFromGroup( group, {IdentityPK{member}}, root );
 		PurgeGroup( group, root );

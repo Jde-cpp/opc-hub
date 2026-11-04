@@ -168,7 +168,7 @@ namespace Jde::QL{
 		else if( auto o = result[0].if_object(); o )
 			v = move( *o );
 		else{
-			DBGT( ELogTags::QL, "[{}]a singular table's first result is a {}, not an object - returning no row.", JsonName, Json::Kind(result[0].kind()) );
+			DBGT( ELogTags::QL, "[{}]a singular table's first result is a {}, not an object - returning no row.", JsonName, to_string(result[0].kind()) );
 			v = jobject{};
 		}
 		return ReturnRaw ? move( v ) : jobject{ {ReturnName(), move(v)} };
@@ -208,7 +208,7 @@ namespace Jde::QL{
 				if( auto o = p->if_object(); o )
 					y[t.JsonName] = t.TrimColumns( *o );
 				else
-					WARNT( ELogTags::QL, "[{}.{}]expected an object for the sub-table, got a {} - omitted.", JsonName, t.JsonName, Json::Kind(p->kind()) );
+					WARNT( ELogTags::QL, "[{}.{}]expected an object for the sub-table, got a {} - omitted.", JsonName, t.JsonName, to_string(p->kind()) );
 			}
 		}
 		return y;

@@ -78,6 +78,9 @@ namespace Jde::QL::Tests{
 		EXPECT_FALSE( filterValue(DB::EOperator::In, list).Test(DB::Value{uint{4}}) );
 		EXPECT_TRUE( filterValue(DB::EOperator::NotIn, list).Test(DB::Value{uint{4}}) );
 		EXPECT_FALSE( filterValue(DB::EOperator::NotIn, list).Test(DB::Value{uint{2}}) );
+		EXPECT_TRUE( filterValue(DB::EOperator::In, 2).Test(DB::Value{uint{2}}) ) << "a lone value is a list of one";
+		EXPECT_FALSE( filterValue(DB::EOperator::In, 2).Test(DB::Value{uint{3}}) );
+		EXPECT_FALSE( filterValue(DB::EOperator::In, jarray{jarray{2}}).Test(DB::Value{uint{2}}) ) << "only a list's scalars count";
 	}
 
 	TEST( FilterTests, Regex ){

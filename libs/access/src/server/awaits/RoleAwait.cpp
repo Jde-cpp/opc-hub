@@ -67,7 +67,7 @@ namespace Jde::Access::Server{
 	Ω childSlugs( const jobject& childRole )ε->vector<string>{
 		vector<string> y;
 		if( auto slug = childRole.if_contains("slug"); slug )
-			y = slug->is_array() ? Json::ToVector<string>( *slug ) : vector<string>{ string{Json::AsString(childRole, "slug")} };
+			y = slug->is_array() ? Json::FromArray<string>( slug->get_array() ) : vector<string>{ string{Json::AsString(childRole, "slug")} };
 		return y;
 	}
 	α RoleMAwait::Members( RolePK parentRolePK, const jobject& childRole )ι->void{
@@ -137,7 +137,7 @@ namespace Jde::Access::Server{
 		if( y.Criteria && y.Criteria->empty() )
 			y.Criteria = nullopt;
 		auto schema = Json::FindString( resource, "schemaName" );
-		if( let key = Json::AsKey(resource); key.IsPK() ){
+		if( let key = DB::AsKey(resource); key.IsPK() ){
 			let existing = auth.FindResource( ResourcePK{static_cast<ResourcePK::Type>(key.PK())} );
 			THROW_IF( !existing, "Resource with PK '{}' not found.", key.PK() );
 			y.Slug = existing->Slug;
@@ -394,7 +394,8 @@ namespace Jde::Access::Server{
 				if( roleMembers && !role.contains(roleKey) )
 					role[roleKey] = rolePlural ? ( jvalue )jarray{} : ( jvalue )jobject{};
 			};
-			Json::Visit( move(qlRoles), addRole );
+			if( !qlRoles.is_null() )
+				Json::Visit( qlRoles, [&]( jobject& role ){ addRole(move(role)); } );
 			jvalue y;
 			if( returnArray ){
 				jarray jRoles;

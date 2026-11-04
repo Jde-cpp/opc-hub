@@ -28,7 +28,10 @@ namespace Jde::Web::Server{
 				if( query.FindColumn("value") )
 					setting["value"] = ServerSetting( target, *appClient );
 
-				Json::AppendOrAssign( y, setting );
+				if( y.is_array() )//DefaultResult: [] for a plural query, {} for one.
+					y.get_array().push_back( move(setting) );
+				else
+					y = move( setting );
 			});
 			return y;
 		}, sl );

@@ -155,12 +155,12 @@ namespace Jde{
 				y |= ToLogTags( (sv)*s );
 			}
 			else
-				WARNT( ELogTags::Settings, "Expected string in tags array but got {}", Json::Kind(item.kind()) );
+				WARNT( ELogTags::Settings, "Expected string in tags array but got {}", to_string(item.kind()) );
 		}
 		return y;
 	}
 	else{
-		WARNT( ELogTags::Settings, "Expected string or array for tags but got {}", Json::Kind(v.kind()) );
+		WARNT( ELogTags::Settings, "Expected string or array for tags but got {}", to_string(v.kind()) );
 		return ELogTags::None;
 	}
 }
