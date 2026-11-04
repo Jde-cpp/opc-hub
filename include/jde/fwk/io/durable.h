@@ -11,14 +11,14 @@ namespace Jde::IO{
 
 	//A file's directories, on Windows, where a write makes none.  Nothing on Linux:  there the file's first write makes
 	//them, and fsyncs each one it makes.
-	Φ MakeDirectories( const fs::path& directory, SRCE )ε->void;
+	Φ CreateDirsForWrite( const fs::path& directory, SRCE )ε->void;
 	//fsyncs root/relative and each directory above it through root, so a name an earlier process made under root, and
 	//may have crashed before it fsynced, survives a power loss along with its data.  Nothing on Windows, which has no
 	//such call.
-	Φ SyncDirectories( const fs::path& root, const fs::path& relative={}, SRCE )ε->void;
+	Φ SyncDirs( const fs::path& root, const fs::path& relative={}, SRCE )ε->void;
 	//Renames from over to, which is then what from was whatever stops the process:  a POSIX-semantics rename on Windows, so a
 	//handle open on to goes on reading the file it opened, as with rename on Linux, where the name is durable once
-	//SyncDirectories has fsynced to's directory.  Where Windows has no POSIX rename, MoveFileExW with MOVEFILE_WRITE_THROUGH,
+	//SyncDirs has fsynced to's directory.  Where Windows has no POSIX rename, MoveFileExW with MOVEFILE_WRITE_THROUGH,
 	//which fails while anyone has to open.
 	Φ Replace( const fs::path& from, const fs::path& to, SRCE )ε->void;
 	//Removes a temp file a rewrite left, but nothing else at its path:  a directory or a link there isn't one, and stays,

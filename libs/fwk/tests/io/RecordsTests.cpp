@@ -13,6 +13,9 @@
 #include <jde/fwk/io/crc.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/process/execution.h>
+#ifdef _MSC_VER
+	#include <jde/fwk/process/os/windows/WindowsHandle.h>
+#endif
 DISABLE_WARNINGS
 #include <jde/fwk/tests/proto/Tests.Records.pb.h>
 #include <google/protobuf/io/coded_stream.h>
@@ -1264,19 +1267,19 @@ namespace Jde::IO::Records::Tests{
 		EXPECT_TRUE( PathLock::TryLock(Dir, "test.lock") );
 
 		let day = Dir/DayDirectory( March6 );
-		MakeDirectories( day );
+		CreateDirsForWrite( day );
 #ifdef _WIN32
-		ASSERT_TRUE( fs::is_directory(day) ) << "MakeDirectories made no directory";
+		ASSERT_TRUE( fs::is_directory(day) ) << "CreateDirsForWrite made no directory";
 #else
-		fs::create_directories( day );//MakeDirectories is a no-op here:  the first write makes them.
+		fs::create_directories( day );//CreateDirsForWrite is a no-op here:  the first write makes them.
 #endif
 		save( day/"g.binpb", "old" );
 		save( day/"g.binpb.tmp", "new" );
 		Replace( day/"g.binpb.tmp", day/"g.binpb" );
 		EXPECT_EQ( contents(day/"g.binpb"), "new" );
 		EXPECT_FALSE( fs::exists(day/"g.binpb.tmp") );
-		SyncDirectories( Dir, DayDirectory(March6) );
-		SyncDirectories( Dir );
+		SyncDirs( Dir, DayDirectory(March6) );
+		SyncDirs( Dir );
 		EXPECT_THROW( Replace(day/"missing", day/"g.binpb"), IOException );
 		fs::create_directories( day/"dir.tmp" );
 		EXPECT_FALSE( RemoveTemp(day/"dir.tmp") );//a directory isn't a temp file.

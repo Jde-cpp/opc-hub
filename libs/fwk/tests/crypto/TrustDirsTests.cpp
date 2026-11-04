@@ -52,7 +52,7 @@ namespace Jde::Crypto{
 			{"publicKey", jobject{{"path", (mint/"public.pem").string()}}},
 			{"dh", ""}
 		}, {} };
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		Crypto::CreateKeyCertificate( settings, SRCE_CUR );
 		return mint/"cert.pem";
 	}

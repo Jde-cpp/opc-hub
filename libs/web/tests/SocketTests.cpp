@@ -95,7 +95,7 @@ namespace Jde::Web{
 			return;
 		Crypto::CryptoSettings settings{ "http/ssl" };//the client signs the jwt with its own key pair - the server's 'web.tests' identity is not the caller's.
 		if( !fs::exists(settings.PrivateKey.Path) || !fs::exists(settings.PublicKey.Path) ){//first run on a machine; no certificate needed, the mock '/login' verifies the signature against the jwt's key.
-			settings.CreateDirectories();
+			settings.CreateDirs();
 			Crypto::CreateKey( settings, SRCE_CUR );
 		}
 		auto publicKey = Crypto::ReadPublicKey( settings.PublicKey.Path );

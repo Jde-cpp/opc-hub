@@ -84,7 +84,7 @@ namespace Jde::Crypto{
 			{"certificate", jobject{{"path", certificateFile}, {"subjectAltName", "URI:urn:my.server.application"}, {"company", "jde-cpp"}, {"country", "US"}, {"commonName", "trustStoreTests"}}},
 			{"privateKey", jobject{{"path", privateKeyFile}, {"passcode", passcode}}},
 			{"publicKey", jobject{{"path", publicKeyFile}}},
-			{"dh", ""}//explicit, or CreateDirectories makes <programData>/Jde-Cpp/<productName>/ssl for a file no test reads (#27).
+			{"dh", ""}//explicit, or CreateDirs makes <programData>/Jde-Cpp/<productName>/ssl for a file no test reads (#27).
 		}, {} };
 	}
 

@@ -28,8 +28,8 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( settings.ReadLimit, 500 );
 	}
 
-	//A relative path is made absolute against the current directory, so every write resolves it as the lock does:  on
-	//Windows IO::WriteAwait's \\?\ prefix would take it as it is.
+	//A relative path is made absolute against the current directory, once, so the lock, the scans and every write resolve it
+	//the same way.
 	TEST( SettingsTests, RelativePathIsAbsolute ){
 		EXPECT_EQ( (Settings{parse(R"({"path":"hist"})").as_object(), "x"}.Path), fs::current_path()/"hist" );
 		EXPECT_EQ( Settings{fs::path{"hist"}}.Path, fs::current_path()/"hist" );

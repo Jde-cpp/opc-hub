@@ -37,7 +37,7 @@ namespace Jde::Crypto{
 	struct Γ CryptoSettings final{
 		CryptoSettings( str settingsPath )ι;
 		CryptoSettings( const jobject& settings, sv certInstance={} )ι;
-		α CreateDirectories()Ε->void;
+		α CreateDirs()Ε->void;
 
 		struct Γ PublicKeyPath{
 			PublicKeyPath( const jobject& o, sv defaultFileName )ι;
