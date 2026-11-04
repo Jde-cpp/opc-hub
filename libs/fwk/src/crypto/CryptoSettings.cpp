@@ -96,12 +96,12 @@ namespace Jde{
 			DhPath{ getPath(settings, "dh", "", "dh") }
 		{}
 
-		α CryptoSettings::CreateDirectories()Ε->void{
-			IO::CreateDirectories( Certificate.Path.parent_path() );
-			IO::CreateDirectories( PrivateKey.Path.parent_path() );
-			IO::CreateDirectories( PublicKey.Path.parent_path() );
+		α CryptoSettings::CreateDirs()Ε->void{
+			IO::CreateDirs( Certificate.Path.parent_path() );
+			IO::CreateDirs( PrivateKey.Path.parent_path() );
+			IO::CreateDirs( PublicKey.Path.parent_path() );
 			if( !DhPath.empty() )
-				IO::CreateDirectories( DhPath.parent_path() );
+				IO::CreateDirs( DhPath.parent_path() );
 		}
 	}
 

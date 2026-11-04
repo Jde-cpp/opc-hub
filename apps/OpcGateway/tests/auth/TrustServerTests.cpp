@@ -35,7 +35,7 @@ namespace Jde::Opc::Gateway::Tests{
 			{"publicKey", jobject{ {"path", (dir/"server.pub").string()} }}
 		};
 		Crypto::CryptoSettings y{ settings };
-		y.CreateDirectories();
+		y.CreateDirs();
 		Crypto::EnsureKeyCertificate( y );
 		return y;
 	}

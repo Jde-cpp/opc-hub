@@ -290,8 +290,7 @@ namespace Jde::Opc::Hist{
 						auto next = opening.Next();
 						for( ; next==ENext::More && !Ended(); next = opening.Next() ){
 							let w = *opening.Wants();
-							IO::ReadAwait read{ opening.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size} };
-							opening.Feed( co_await Any(read) );
+							opening.Feed( co_await IO::ReadAwait{opening.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size}} );
 						}
 						if( next==ENext::More )
 							break;//the end gave up on the flush mid-scan (Stopped):  a file read in part is no file to adopt.
@@ -385,8 +384,7 @@ namespace Jde::Opc::Hist{
 										throw Abandoned{};
 									if( part==IO::Records::EPart::More ){//the rewrite's merge wants bytes of the file it merges.
 										let w = *archive->Wants();
-										IO::ReadAwait read{ archive->File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size} };
-										archive->Feed( co_await Any(read) );
+										archive->Feed( co_await IO::ReadAwait{archive->File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size}} );
 									}
 									else
 										co_await archive->Write();
@@ -522,8 +520,7 @@ namespace Jde::Opc::Hist{
 									throw Abandoned{};
 								if( part==IO::Records::EPart::More ){//the rewrite's merge wants bytes of the file it merges.
 									let w = *archive->Wants();
-									IO::ReadAwait read{ archive->File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size} };
-									archive->Feed( co_await Any(read) );
+									archive->Feed( co_await IO::ReadAwait{archive->File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size}} );
 								}
 								else
 									co_await archive->Write();

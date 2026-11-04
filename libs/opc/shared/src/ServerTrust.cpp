@@ -92,7 +92,7 @@ namespace Jde::Opc{
 				{
 					std::lock_guard _{ _rejectedWriteMutex };
 					if( !fs::exists(path) ){
-						IO::CreateDirectories( c.RejectedDir );
+						IO::CreateDirs( c.RejectedDir );
 						Crypto::WriteCertificate( path, der, SRCE_CUR );
 						written = true;
 					}

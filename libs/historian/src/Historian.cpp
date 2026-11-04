@@ -45,8 +45,7 @@ namespace Jde::Opc::Hist{
 		}
 	}
 
-	//Against the current directory, as the lock, the directories and the scans resolve it, since a write through
-	//IO::WriteAwait on Windows takes the path as it is:  its \\?\ prefix turns relative resolution off.
+	//Against the current directory, once, so the lock, the directories, the scans and every write resolve it the same way.
 	Ω absolute( const fs::path& path, SL sl )ε->fs::path{
 		THROW_IFSL( path.empty(), "hist.path is empty." );
 		std::error_code ec;

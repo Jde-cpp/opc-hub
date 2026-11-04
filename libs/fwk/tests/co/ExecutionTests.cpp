@@ -50,7 +50,7 @@ namespace Jde::Tests{
 	}
 
 	//Post( Handle&&, Exception&& ) is the executor's error-resume path - one caller repo-wide (Subscriptions) and
-	//no test anywhere.  Every sibling path (ResumeExp, FileIOArg::PostExp, BlockAwait) keeps the concrete type.
+	//no test anywhere.  Every sibling path (ResumeExp, FileOp::Complete, BlockAwait) keeps the concrete type.
 	struct PostThrower final : VoidAwait{
 		PostThrower( SRCE )ι:VoidAwait{sl}{}
 		//a *copy* of the handle, which is the production shape (Subscriptions posts handles held in its own

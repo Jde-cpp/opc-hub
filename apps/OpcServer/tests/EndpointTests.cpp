@@ -32,7 +32,7 @@ namespace Jde::Opc::Server::Tests{
 	struct TrustedClient final : noncopyable{
 		TrustedClient( sv name, sv securityPolicyUri )ε:
 			_ssl{ settings(name) }{
-			_ssl.CreateDirectories();
+			_ssl.CreateDirs();
 			Crypto::CreateKeyCertificate( _ssl );
 			try{
 				UA_ClientConfig config{};

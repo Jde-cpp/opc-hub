@@ -15,6 +15,7 @@
 //concrete type differently.
 #ifdef _MSC_VER
 	#include "../src/process/os/windows/WindowsDrive.h"
+	#include "../src/io/FileOp.h"//OpenFile::Impl, for the HANDLE OpenFileIocpRefused binds elsewhere first.
 	namespace Jde::IO{ using NativeDriveType = WindowsDrive; }
 #else
 	#include "../src/process/os/linux/LinuxDrive.h"
@@ -53,7 +54,7 @@ namespace Jde::IO::Tests{
 	Ω write( fs::path file, uuid guid1, uuid guid2, sp<Vector<uuid>> written, sp<CoMutex> fileLock, bool createFile, SRCE )->VoidAwait::Task{
 		auto l = co_await fileLock->Lock();
 		try{
-			co_await IO::WriteAwait{ file, Ƒ("{}\n{}\n", ToString(guid1), ToString(guid2)), createFile, IO::EWriteMode::Append, Jde::ELogTags::IO, sl };
+			co_await IO::WriteAwait{ file, Ƒ("{}\n{}\n", ToString(guid1), ToString(guid2)), IO::WriteOptions{.Create=createFile}, sl };
 		}
 		catch( Exception& e ){
 			e.Log();
@@ -63,7 +64,7 @@ namespace Jde::IO::Tests{
 		written->push_back( guid2 );
 	}
 
-	Ω read( fs::path file, sp<Vector<uuid>> readValues, SRCE )ι->TAwait<string>::Task{
+	Ω read( fs::path file, sp<Vector<uuid>> readValues, SRCE )ι->VoidTask{
 		let content = co_await IO::ReadAwait{ file, {}, sl };
 		let guidStrings = Str::Split( content, '\n' );
 		ul _{ readValues->Mutex };
@@ -126,7 +127,7 @@ namespace Jde::IO::Tests{
 	//tests assert on - dropping it left the call site with only a content mismatch or a timeout to report.
 	Ω writeRaw( fs::path file, string content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::EWriteMode mode=IO::EWriteMode::Append, bool create=true, SRCE )->VoidAwait::Task{
 		try{
-			co_await IO::WriteAwait{ move(file), move(content), create, mode, Jde::ELogTags::IO, sl };
+			co_await IO::WriteAwait{ move(file), move(content), IO::WriteOptions{.Create=create, .Mode=mode}, sl };
 		}
 		catch( Exception& e ){
 			if( error )
@@ -135,7 +136,7 @@ namespace Jde::IO::Tests{
 		*done = true;
 	}
 
-	Ω readRaw( fs::path file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::ReadOptions options={}, SRCE )ι->TAwait<string>::Task{
+	Ω readRaw( fs::path file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::ReadOptions options={}, SRCE )ι->VoidTask{
 		try{
 			*content = co_await IO::ReadAwait{ move(file), options, sl };
 		}
@@ -352,8 +353,8 @@ namespace Jde::IO::Tests{
 
 	// The IO failure paths had no coverage at all - readRaw/readRaw dropped every exception and no test asserted
 	// an IOException, so a regression that resumed the coroutine without an error (or never resumed it) would
-	// have shown up as a content mismatch or a hang.  ReadAwait::await_ready turns the open failure into
-	// ExceptionPtr and await_resume rethrows it, so this never suspends.
+	// have shown up as a content mismatch or a hang.  ReadAwait::await_ready puts the open failure in
+	// the error slot and await_resume throws it, so this never suspends.
 	TEST_F( FileTests, ReadMissingFileThrows ){
 		let file = Tests::file( 700 );
 		if( fs::exists(file) )
@@ -386,10 +387,10 @@ namespace Jde::IO::Tests{
 		}
 	}
 
-	// A directory opens read-only fine on linux, so the failure arrives as -EISDIR on the io_uring completion -
-	// the res<0 -> PostExp branch, which must also give back the request slot (fwk-max #5) or the poller falls
-	// into its busy loop; windows fails at CreateFile instead.  Either way the coroutine resumes with an
-	// IOException rather than hanging, and the io that follows still works.
+	// A read by path opens through OpenFile, which refuses a directory at the open on both platforms, as not a regular
+	// file on linux and at CreateFile on windows, so the coroutine resumes with an IOException without suspending, and
+	// the io that follows still works.  The failed io_uring completion (the res<0 -> Complete branch, which must also
+	// give back the in-flight count or the poller falls into its busy loop) is FailuresAreClassified's and SyncFailureSurfaces'.
 	TEST_F( FileTests, ReadDirectoryThrows ){
 		let dir = Tests::file( 0 ).parent_path();
 		auto content = ms<string>( "sentinel" );
@@ -443,13 +444,15 @@ namespace Jde::IO::Tests{
 		ASSERT_EQ( string(loaded.begin(), loaded.end()), content );
 		EXPECT_EQ( IO::Load(file), content ) << "the string overload has to agree with the vector<char> one";
 
-		//both sides are sized from fs::file_size and read binary, so an embedded NUL is content, not a terminator -
+		//both sides are sized from the open file and read binary, so an embedded NUL is content, not a terminator -
 		//which is what makes these usable for the protobuf payloads (protobuf.h) and drive blobs that call them.
 		string binary{ "a\0b", 3 };
 		IO::SaveBinary<const char>( file, std::span{binary} );
 		EXPECT_EQ( IO::Load(file).size(), 3u );
 		EXPECT_EQ( IO::Load(file), binary );
 		EXPECT_EQ( IO::LoadBinary(file).size(), 3u );
+		if( let relative = fs::relative(file); !relative.empty() )//none from another drive than the cwd's.
+			EXPECT_EQ( IO::Load(relative), binary ) << "windows' \\\\?\\ prefix takes no relative path, which ifstream did";
 	}
 
 	//the append flag is the whole of SaveBinary's mode selection and nothing chose the non-default before.  Getting it
@@ -467,9 +470,8 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( IO::Load(file), second ) << "the default appended - it must truncate";
 	}
 
-	//Load/LoadBinary open CHECK_PATH-first, so a missing path is an IOException naming it rather than an empty string
-	//handed back to a caller that cannot tell the difference.  A directory gets past CHECK_PATH (it exists) and fails
-	//in fs::file_size instead, which arrives wrapped rather than as a raw fs::filesystem_error.
+	//A missing path is an IOException naming it rather than an empty string handed back to a caller that cannot tell
+	//the difference.  A directory opens on linux, and OpenFile refuses it as no regular file.
 	TEST_F( FileTests, LoadThrowsRatherThanReturningNothing ){
 		let missing = Tests::file( 602 );
 		if( fs::exists(missing) )
@@ -493,19 +495,19 @@ namespace Jde::IO::Tests{
 	//every caller discards the bool, so nothing said which way round it is - and "already there" reads equally well as
 	//either answer.  It is fs::create_directories': true means this call created it, false means it was already a
 	//directory; anything that is not a directory is an error, not a false.
-	TEST_F( FileTests, CreateDirectoriesReportsWhetherItCreated ){
-		let root = Tests::file( 0 ).parent_path()/"createDirectories";
+	TEST_F( FileTests, CreateDirsReportsWhetherItCreated ){
+		let root = Tests::file( 0 ).parent_path()/"createDirs";
 		fs::remove_all( root );
 		let nested = root/"a"/"b";
-		EXPECT_TRUE( IO::CreateDirectories(nested) ) << "a new tree reports that it was created";
+		EXPECT_TRUE( IO::CreateDirs(nested) ) << "a new tree reports that it was created";
 		EXPECT_TRUE( fs::is_directory(nested) );
-		EXPECT_FALSE( IO::CreateDirectories(nested) ) << "an existing directory is not an error, and is not a creation either";
-		EXPECT_FALSE( IO::CreateDirectories(root) ) << "...nor is an existing parent of it";
+		EXPECT_FALSE( IO::CreateDirs(nested) ) << "an existing directory is not an error, and is not a creation either";
+		EXPECT_FALSE( IO::CreateDirs(root) ) << "...nor is an existing parent of it";
 
 		let file = Tests::file( 603 );
 		let content = string( 4, 'c' );
 		IO::SaveBinary<const char>( file, std::span{content} );
-		EXPECT_THROW( IO::CreateDirectories(file/"child"), IOException ) << "a file standing where a directory has to go is an error, not a false";
+		EXPECT_THROW( IO::CreateDirs(file/"child"), IOException ) << "a file standing where a directory has to go is an error, not a false";
 		fs::remove_all( root );
 	}
 
@@ -579,10 +581,10 @@ namespace Jde::IO::Tests{
 	}
 
 	// An Offset on an Append is an At that lost its Mode.  Appending anyway would grow the file on every write, so the
-	// write fails and leaves the file alone.  The bool overload refuses a number outright, where it would have converted
-	// to create.
+	// write fails and leaves the file alone.  There is no positional form for a number to convert into:  WriteOptions takes
+	// the create and the offset by name.
 	TEST_F( FileTests, AppendWithOffsetThrows ){
-		static_assert( std::is_constructible_v<IO::WriteAwait, fs::path, string, bool> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, int> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, uint> );
+		static_assert( !std::is_constructible_v<IO::WriteAwait, fs::path, string, bool> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, int> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, uint> );
 
 		let file = Tests::file( 1011 );
 		fs::remove( file );
@@ -863,26 +865,6 @@ namespace Jde::IO::Tests{
 		EXPECT_FALSE( io->Written ) << "the write itself failed";
 	}
 
-	// The options reach the op through its constructor, and a read has no write mode:  nothing that asks whether an op
-	// appends or truncates can take a read for one.
-	TEST( FileAwaitTests, OptionsReachTheOp ){
-		IO::ReadAwait read{ "x", IO::ReadOptions{.Offset=4, .Size=2, .Tags=ELogTags::Test} };
-		EXPECT_TRUE( read._arg->IsRead );
-		EXPECT_FALSE( read._arg->Mode );
-		EXPECT_EQ( read._arg->Offset, 4u );
-		EXPECT_EQ( read._arg->Limit, 2u );
-		EXPECT_EQ( read._arg->_tags, ELogTags::Test );
-
-		IO::WriteAwait write{ "x", string{"data"}, IO::WriteOptions{.Mode=IO::EWriteMode::At, .Offset=8, .Sync=true, .Tags=ELogTags::Test} };
-		EXPECT_FALSE( write._arg->IsRead );
-		EXPECT_EQ( write._arg->Mode, IO::EWriteMode::At );
-		EXPECT_EQ( write._arg->Offset, 8u );
-		EXPECT_TRUE( write._arg->Sync );
-		EXPECT_FALSE( write._arg->Limit );
-		EXPECT_EQ( write._arg->_tags, ELogTags::Test );
-		EXPECT_EQ( (IO::WriteAwait{"x", string{"data"}}._arg->Mode), IO::EWriteMode::Append ) << "the default";
-	}
-
 	TEST( IOExceptionTests, MapsNativeCodes ){
 #ifdef _MSC_VER
 		EXPECT_EQ( IO::ToIOError(ERROR_PATH_NOT_FOUND), IO::EIOError::NotFound );
@@ -917,7 +899,7 @@ namespace Jde::IO::Tests{
 		let content = string{ "x" };
 		IO::SaveBinary<const char>( plain, std::span{content} );
 		try{
-			IO::CreateDirectories( plain/"child" );
+			IO::CreateDirs( plain/"child" );
 			ADD_FAILURE() << "made a directory under a file";
 		}
 		catch( const IOException& e ){
@@ -942,6 +924,17 @@ namespace Jde::IO::Tests{
 			return e.Tags==ELogTags::Test && e.Message().contains( "ReadAwait::Suspend" ) && e.Message().contains( file.string() );
 		}} );
 		EXPECT_EQ( suspends.size(), 1u ) << "the read did not log under the tag it was given";
+	}
+	TEST_F( FileTests, WriteLogsUnderItsTags ){
+		let file = Tests::file( 1013 );
+		fs::remove( file );
+		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
+		Logging::ClearMemory();
+		ASSERT_EQ( writeNow(file, "content", {.Create=true, .Tags=ELogTags::Test}), "" );
+		let suspends = logger.Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
+			return e.Tags==ELogTags::Test && e.Message().contains( "WriteAwait::Suspend" ) && e.Message().contains( file.string() );
+		}} );
+		EXPECT_EQ( suspends.size(), 1u ) << "the write did not log under the tag it was given";
 	}
 
 	TEST_F( FileTests, ReadRange ){
@@ -968,7 +961,7 @@ namespace Jde::IO::Tests{
 	}
 
 	//A read over an open file:  readRaw's shape, the handle in place of the path.
-	Ω readShared( sp<IO::OpenFile> file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::ReadOptions options={}, SRCE )ι->TAwait<string>::Task{
+	Ω readShared( sp<IO::OpenFile> file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::ReadOptions options={}, SRCE )ι->VoidTask{
 		try{
 			*content = co_await IO::ReadAwait{ move(file), options, sl };
 		}
@@ -1045,7 +1038,7 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( waitError(done, error), "" );
 		EXPECT_EQ( *y, content );
 #ifndef _WIN32
-		let open = [&file]{//the drain loop holds the last FileIOArg a moment past the resume.
+		let open = [&file]{//the drain loop holds the last FileOp a moment past the resume.
 			for( let& fd : fs::directory_iterator{"/proc/self/fd"} ){
 				std::error_code ec;
 				if( fs::read_symlink(fd.path(), ec)==file )
@@ -1161,7 +1154,7 @@ namespace Jde::IO::Tests{
 		ASSERT_EQ( writeNow(file, "content", {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
 		auto open = ms<IO::OpenFile>( file );
 		HandlePtr port{ WinHandle{::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1)} };
-		ASSERT_EQ( ::CreateIoCompletionPort(open->Native(), port.get(), 0, 0), port.get() ) << ::GetLastError();
+		ASSERT_EQ( ::CreateIoCompletionPort(open->Native().Handle.get(), port.get(), 0, 0), port.get() ) << ::GetLastError();
 		EXPECT_TRUE( readNow(open).starts_with("failed: ") );
 		EXPECT_TRUE( readNow(open).starts_with("failed: ") ) << "a later read tries again, and fails the same";
 		EXPECT_EQ( open->Size(), 7u );
@@ -1171,7 +1164,7 @@ namespace Jde::IO::Tests{
 	constexpr uint _fileSize{ 5 };
 	TEST_F( FileTests, WriteRead ){
 		ASSERT_TRUE( IO::ChunkByteSize()<74 ); //guid+\n*2
-		ASSERT_TRUE( IO::ThreadSize()>1 ); //guid+\n
+		ASSERT_TRUE( IO::WindowSize()>1 ); //guid+\n
 		vector<std::jthread> threads;
 		for( uint i=0; i<_fileSize; ++i )
 			threads.emplace_back( [i](){testFile(i);} );
