@@ -204,7 +204,7 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( listener->Changes.size(), 1u );
 	}
 
-	//review3 #54: Json::Combine keeps the *first* argument's value on a scalar collision, and the args were first - so a
+	//review3 #54: QL::Combine keeps the *first* argument's value on a scalar collision, and the args were first - so a
 	//client-supplied `id` masked the one the database assigned and every subscriber was told the client's.  On the AppServer
 	//AccessListener would have cached it (`userCreated` -> Authorizer().CreateUser(pk)).  The result is the base now.
 	TEST_F( SubscriptionsTests, TheResultWinsOverAClientSuppliedArg ){

@@ -58,6 +58,6 @@ namespace Jde::Opc::Hub::Tests{
 		let& endpoint = answer.is_object() && answer.get_object().contains("endpoint") ? Json::AsObject( answer.get_object(), "endpoint" ) : answer.as_object();
 		EXPECT_EQ( Json::AsString(endpoint, "url"), Gateway::GatewayServer::Instance()->Url() );
 		let& sessions = Json::AsArray( endpoint, "sessions" );
-		EXPECT_TRUE( std::ranges::any_of(sessions, []( let& row ){ let& o = row.as_object(); return Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==1; }) ) << serialize( answer );
+		EXPECT_TRUE( std::ranges::any_of(sessions, []( let& row ){ let& o = row.as_object(); return Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumber<Jde::UserPK::Type>(o, "user/id")==1; }) ) << serialize( answer );
 	}
 }

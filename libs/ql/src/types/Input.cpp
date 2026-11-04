@@ -20,7 +20,7 @@ namespace Jde::QL{
 			else if( value.is_array() ) //( id: [1,2,3] ) or ( name: ["charlie","bob"] )
 				columnFilters.emplace_back( DB::EOperator::In, move(value) );
 			else
-				THROW( "Invalid filter value type '{}'.", Json::Kind(value.kind()) );
+				THROW( "Invalid filter value type '{}'.", to_string(value.kind()) );
 			return columnFilters;
 		};
 		_filter = QL::Filter{};

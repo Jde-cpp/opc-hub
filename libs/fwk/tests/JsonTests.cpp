@@ -1,34 +1,15 @@
+#include <jde/fwk/chrono.h>
 #include <jde/fwk/io/json.h>
 
 #define let const auto
 
 namespace Jde::Tests{
 	struct JsonTests : public ::testing::Test{};
-
-	// QL extrapolates mutation-result variables by merging objects: nested objects merge recursively and arrays
-	// union de-duped, rather than b replacing a.  No test anywhere called Combine.
-	TEST_F( JsonTests, Combine ){
-		let a = jobject{ {"nested", jobject{{"x",1}}}, {"arr", jarray{1,2}}, {"onlyA", true} };
-		let b = jobject{ {"nested", jobject{{"y",2}}}, {"arr", jarray{2,3}}, {"onlyB", "s"} };
-		let y = Json::Combine( a, b );
-
-		let& nested = y.at("nested").as_object();
-		ASSERT_EQ( nested.size(), 2u ) << serialize(y);
-		EXPECT_EQ( nested.at("x").as_int64(), 1 );
-		EXPECT_EQ( nested.at("y").as_int64(), 2 );
-
-		let& arr = y.at("arr").as_array();
-		ASSERT_EQ( arr.size(), 3u ) << "arrays union rather than concatenate - the shared 2 appears once: " << serialize(y);
-		EXPECT_EQ( arr[0].as_int64(), 1 );
-		EXPECT_EQ( arr[2].as_int64(), 3 );
-
-		EXPECT_TRUE( y.at("onlyA").as_bool() );//keys from either side survive.
-		EXPECT_EQ( y.at("onlyB").as_string(), "s" );
-
-		//a collision that is neither two objects nor two arrays keeps a's value: there is no else branch.
-		EXPECT_EQ( Json::Combine(jobject{{"k",1}}, jobject{{"k",2}}).at("k").as_int64(), 1 );
-		EXPECT_TRUE( Json::Combine(jobject{{"k",jobject{{"x",1}}}}, jobject{{"k",2}}).at("k").is_object() );
-		EXPECT_EQ( Json::Combine(jobject{}, b).size(), b.size() );
+	//the what() of the CodeException convert throws - empty when it throws none.
+	Ω codeWhat( auto&& convert )->string{
+		try{ convert(); }
+		catch( const CodeException& e ){ return e.what(); }
+		return {};
 	}
 
 	// noexcept and hand-rolled because to_number<uint> throws for negatives: the sign handling across the
@@ -101,7 +82,8 @@ namespace Jde::Tests{
 		EXPECT_EQ( p, &v.as_object().at("a").as_object().at("b") ) << "a pointer into v, not a copy";
 		EXPECT_EQ( Json::FindValue(v, "/missing"), nullptr );
 		EXPECT_EQ( Json::FindNumber<int>(v, "/a/b"), 7 );
-		EXPECT_EQ( Json::FindNumber<int>(v.as_object().at("a").as_object().at("b"), {}), 7 ) << "empty path = the value itself";
+		EXPECT_EQ( Json::FindValue(v, ""), &v ) << "an empty pointer is the value itself - Boost's own rule (RFC 6901)";
+		EXPECT_EQ( Json::FindNumber<int>(v.as_object().at("a").as_object().at("b"), {}), 7 ) << "so FindNumber needs no branch for it - GroupAwait's memberId list";
 		EXPECT_EQ( Json::FindBool(v, "/a/flag"), true );
 		EXPECT_FALSE( Json::FindBool(v, "/a/b").has_value() ) << "wrong kind is nullopt, not a throw";
 		EXPECT_EQ( Json::FindObject(v, "/a"), &v.as_object().at("a").as_object() );
@@ -119,9 +101,73 @@ namespace Jde::Tests{
 		EXPECT_EQ( Json::FindValue(o, "a/missing"), nullptr );
 		EXPECT_EQ( Json::FindValue(o, "a/"), nullptr ) << "a trailing slash addresses the empty key, not the parent";
 		EXPECT_EQ( Json::FindValue(o, ""), nullptr ) << "unlike the jvalue overload, for which an empty path is the value itself";
-		EXPECT_EQ( Json::FindNumberPath<int>(o, "a/b"), 7 ) << "what AclAwait's permissionRight/id goes through";
+		EXPECT_EQ( Json::FindNumber<int>(o, "a/b"), 7 ) << "what AclAwait's permissionRight/id goes through";
 		const jvalue v = o;
 		EXPECT_NE( Json::FindValue(v, "/a/b"), nullptr );
 		EXPECT_EQ( Json::FindValue(v, "a/b"), nullptr ) << "the jvalue overload stays strict - SettingsTests.UnrootedPathResolvesToNothing";
+	}
+
+	//Every jobject overload resolves through FindValue, so a bare key and a path are one argument - there are no Path twins.
+	//AsSV and AsArray used to look for a key with a slash in it, and throw.
+	TEST_F( JsonTests, ObjectOverloadsTakeAPath ){
+		jobject o{ {"a", jobject{ {"s","x"}, {"n",7}, {"flag",true}, {"arr",jarray{1}}, {"obj",jobject{{"k",1}}}, {"at","2024-01-02T03:04:05Z"}, {"every","PT1M"} }}, {"top","t"} };
+		const jobject& c = o;
+		EXPECT_EQ( Json::AsSV(c, "top"), "t" ) << "a bare key is a one-token path";
+		EXPECT_EQ( Json::AsSV(c, "a/s"), "x" );
+		EXPECT_EQ( Json::AsSV(c, "/a/s"), "x" ) << "the rooted spelling too";
+		EXPECT_EQ( Json::AsString(c, "a/s"), "x" );
+		EXPECT_EQ( Json::AsArray(c, "a/arr").size(), 1u );
+		EXPECT_EQ( &Json::AsObject(c, "a/obj"), &o.at("a").as_object().at("obj").as_object() );
+		EXPECT_EQ( &Json::AsObject(o, "a/obj"), &o.at("a").as_object().at("obj").as_object() ) << "the mutable overload";
+		EXPECT_THROW( Json::AsSV(c, "a/missing"), Exception );
+		EXPECT_THROW( Json::AsArray(c, "a/s"), CodeException ) << "found, but not an array";
+
+		EXPECT_EQ( Json::FindSV(c, "a/s"), "x" );
+		EXPECT_EQ( Json::FindString(c, "a/s"), "x" );
+		EXPECT_EQ( Json::FindDefaultSV(c, "a/s"), "x" );
+		EXPECT_EQ( Json::FindNumber<int>(c, "a/n"), 7 );
+		EXPECT_EQ( Json::FindBool(c, "a/flag"), true );
+		EXPECT_EQ( Json::FindArray(c, "a/arr"), &o.at("a").as_object().at("arr").as_array() );
+		EXPECT_EQ( Json::FindDefaultArray(c, "a/arr").size(), 1u );
+		EXPECT_EQ( Json::FindObject(c, "a/obj"), &o.at("a").as_object().at("obj").as_object() );
+		EXPECT_EQ( Json::FindObject(o, "a/obj"), &o.at("a").as_object().at("obj").as_object() ) << "the mutable overload";
+		EXPECT_EQ( Json::FindDefaultObject(c, "a/obj").size(), 1u );
+		EXPECT_EQ( Json::FindDuration(c, "a/every"), 1min );
+		EXPECT_EQ( Json::FindTimePoint(c, "a/at"), Chrono::ToTimePoint("2024-01-02T03:04:05Z") );
+		EXPECT_FALSE( Json::FindSV(c, "a/n").has_value() ) << "wrong kind is nullopt, as with a key";
+	}
+
+	//Eval builds a conversion's message only once it is throwing, so a success pays for no serialize - the failure still names the
+	//value, in the one shape every value conversion shares.
+	TEST_F( JsonTests, AsConversionsNameTheValueOnFailure ){
+		EXPECT_EQ( Json::AsNumber<int>(jvalue{7}), 7 );
+		EXPECT_EQ( Json::AsSV(jvalue{"s"}), "s" );
+		EXPECT_TRUE( Json::AsBool(jvalue{true}) );
+
+		let number = codeWhat( []{ return Json::AsNumber<int>(jvalue{"seven"}); } );
+		EXPECT_NE( number.find("'\"seven\"' could not convert to number."), string::npos ) << number;
+		let string = codeWhat( []{ return Json::AsSV(jvalue{12}); } );
+		EXPECT_NE( string.find("'12' could not convert to string."), string::npos ) << string;
+		let boolean = codeWhat( []{ return Json::AsBool(jobject{{"flag", 1}}, "flag"); } );
+		EXPECT_NE( boolean.find("'1' could not convert to bool."), string::npos ) << boolean;
+		let array = codeWhat( []{ return Json::AsArray(jvalue{1}); } );
+		EXPECT_NE( array.find("'1' could not convert to array."), string::npos ) << array;
+		let object = codeWhat( []{ return Json::AsObject(jvalue{jarray{1}}); } );
+		EXPECT_NE( object.find("'[1]' could not convert to object."), string::npos ) << object;
+		EXPECT_THROW( Json::AsObject(jvalue{jobject{{"a",1}}}, "/b"), Exception ) << "a path on a value that isn't there";
+		EXPECT_EQ( Json::AsObject(jvalue{jobject{{"a",jobject{{"b",1}}}}}, "/a").size(), 1u );
+	}
+
+	//One try_value_to body for every element type: a number converts as AsNumber did, exact or not at all, and a string as AsString did.
+	TEST_F( JsonTests, FromArray ){
+		EXPECT_EQ( Json::FromArray<uint32>(jarray{1, 2u, 3.0}), (vector<uint32>{1,2,3}) ) << "a whole double converts";
+		EXPECT_EQ( Json::FromArray<string>(jarray{"a", "b"}), (vector<string>{"a","b"}) );
+		EXPECT_TRUE( Json::FromArray<uint>(jarray{}).empty() );
+
+		EXPECT_THROW( Json::FromArray<uint32>(jarray{1, 2.5}), CodeException ) << "not exact";
+		EXPECT_THROW( Json::FromArray<uint32>(jarray{-1}), CodeException );
+		EXPECT_THROW( Json::FromArray<uint32>(jarray{"1"}), CodeException ) << "no string-to-number";
+		let what = codeWhat( []{ return Json::FromArray<string>(jarray{"a", 1}); } );
+		EXPECT_NE( what.find("Element 1, '1', could not convert."), string::npos ) << what;
 	}
 }

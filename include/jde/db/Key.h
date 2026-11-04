@@ -1,4 +1,5 @@
 #pragma once
+#include <jde/fwk/io/json.h>
 
 namespace Jde::DB{
 	struct Key{
@@ -13,4 +14,11 @@ namespace Jde::DB{
 		private:
 			variant<uint,string> _key;
 	};
+	Ξ AsKey( const jobject& o, SRCE )ε->Key{
+		if( auto p = o.if_contains("id"); p )
+			return Key{ Json::AsNumber<uint>(*p, sl) };
+		if( auto p = o.if_contains("slug"); p )
+			return Key{ string{Json::AsSV(*p, sl)} };
+		THROWSL( "Could not find 'id' or 'slug' in {}.", serialize(o) );
+	}
 }

@@ -179,6 +179,12 @@ namespace Jde::QL{
 		}
 		return add( value ) ? y : vector<TimePoint>{};
 	}
+	//In and NotIn:  a list filter holds value among its scalars, and a lone scalar is a list of one.
+	Ω isIn( const jvalue& value, const jvalue& filter )ι->bool{
+		if( let list = filter.if_array(); list )
+			return std::ranges::any_of( *list, [&]( let& item ){ return item.is_primitive() && item==value; } );
+		return filter.is_primitive() && value.is_primitive() && filter==value;
+	}
 
 	FilterValue::FilterValue( DB::EOperator op, jvalue value )ι:
 		Operator{ op },
@@ -240,8 +246,8 @@ namespace Jde::QL{
 			case Equal: passesFilters = Value==db.ToJson(); break;
 			case NotEqual: passesFilters = Value!=db.ToJson(); break;
 			case Regex: case Glob: passesFilters = _pattern && _pattern->Match( db.ToString() ); break; //compiled/validated in the ctor; a null pattern matches nothing.
-			case In: passesFilters = Json::Find( Value, db.ToJson() ); break;
-			case NotIn: passesFilters = !Json::Find( Value, db.ToJson() ); break;
+			case In: passesFilters = isIn( db.ToJson(), Value ); break;
+			case NotIn: passesFilters = !isIn( db.ToJson(), Value ); break;
 			case Greater: passesFilters = db.ToJson() > Value; break;
 			case GreaterOrEqual: passesFilters = db.ToJson() >= Value; break;
 			case Less: passesFilters = db.ToJson() < Value; break;
@@ -340,7 +346,7 @@ namespace Jde{
 						json = &first.value();
 					}
 					else
-						THROW("Invalid filter value type '{}'.", Json::Kind(value.kind()) );
+						THROW("Invalid filter value type '{}'.", to_string(value.kind()) );
 					if( json->is_array() )
 						where.Add( column, filter.Operator, DB::ToValue<uint>(Json::FromArray<uint>(json->get_array())) );
 					else

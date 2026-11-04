@@ -344,7 +344,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let own = [&]( const jvalue& answer )->optional<jobject>{
 			for( let& row : Json::AsArray(answer.as_object(), "sessions") ){
 				let& o = row.as_object();
-				if( !before.contains(Json::AsString(o, "id")) && Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==AppClient()->UserPK().Value )
+				if( !before.contains(Json::AsString(o, "id")) && Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumber<Jde::UserPK::Type>(o, "user/id")==AppClient()->UserPK().Value )
 					return o;
 			}
 			return nullopt;

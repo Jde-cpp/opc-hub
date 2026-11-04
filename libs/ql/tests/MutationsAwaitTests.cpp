@@ -53,4 +53,30 @@ namespace Jde::QL::Tests{
 		EXPECT_TRUE( y.is_array() && y.get_array().empty() ) << serialize(y);//asked for nothing back; the mutation still ran.
 		EXPECT_EQ( ql->Answered, 1u );
 	}
+
+	//What a result request and the subscription fan-out read:  the mutation's result with its extrapolated arguments merged in.
+	//Nested objects merge recursively and arrays union de-duped, rather than b replacing a.  Moved here from fwk's JsonTests.
+	TEST( MutationsAwaitTests, Combine ){
+		let a = jobject{ {"nested", jobject{{"x",1}}}, {"arr", jarray{1,2}}, {"onlyA", true} };
+		let b = jobject{ {"nested", jobject{{"y",2}}}, {"arr", jarray{2,3}}, {"onlyB", "s"} };
+		let y = Combine( a, b );
+
+		let& nested = y.at("nested").as_object();
+		ASSERT_EQ( nested.size(), 2u ) << serialize(y);
+		EXPECT_EQ( nested.at("x").as_int64(), 1 );
+		EXPECT_EQ( nested.at("y").as_int64(), 2 );
+
+		let& arr = y.at("arr").as_array();
+		ASSERT_EQ( arr.size(), 3u ) << "arrays union rather than concatenate - the shared 2 appears once: " << serialize(y);
+		EXPECT_EQ( arr[0].as_int64(), 1 );
+		EXPECT_EQ( arr[2].as_int64(), 3 );
+
+		EXPECT_TRUE( y.at("onlyA").as_bool() );//keys from either side survive.
+		EXPECT_EQ( y.at("onlyB").as_string(), "s" );
+
+		//a collision that is neither two objects nor two arrays keeps a's value: there is no else branch.
+		EXPECT_EQ( Combine(jobject{{"k",1}}, jobject{{"k",2}}).at("k").as_int64(), 1 );
+		EXPECT_TRUE( Combine(jobject{{"k",jobject{{"x",1}}}}, jobject{{"k",2}}).at("k").is_object() );
+		EXPECT_EQ( Combine(jobject{}, b).size(), b.size() );
+	}
 }

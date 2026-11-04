@@ -124,7 +124,7 @@ namespace Jde::App::Server{
 				if( !values )
 					continue;
 				let array = values->try_as_array();
-				THROW_IF( !array, "{} takes a list of {{tags,level}} records, not {}.", type, Json::Kind(values->kind()) );
+				THROW_IF( !array, "{} takes a list of {{tags,level}} records, not {}.", type, to_string(values->kind()) );
 				for( auto&& [tag,level] : ToTagLevels(*array) ){//by name from here: the db column, the break check and the push all want the joined spelling.
 					if( tag==Logging::BreakTag ){//this process's debugger trap, not a tag level - neither persisted nor pushed.
 #ifndef NDEBUG

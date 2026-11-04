@@ -78,7 +78,7 @@ namespace Jde::Opc::Emulator{
 		let code = status.is_string() ? ParseStatus( status.get_string(), sl ) : ParseStatus( std::to_string(Json::AsNumber<UA_StatusCode>(status, sl)), sl );
 		let limit = Json::FindSV( o, "limit" );
 		HasLimit = limit.has_value();
-		Status = Compose( code, {limit ? ParseLimit(*limit, sl) : ELimit::None, Json::FindDefaultBool(o, "overflow"), Json::FindDefaultBool(o, "structureChanged"), Json::FindDefaultBool(o, "semanticsChanged")} );
+		Status = Compose( code, {limit ? ParseLimit(*limit, sl) : ELimit::None, Json::FindBool(o, "overflow").value_or(false), Json::FindBool(o, "structureChanged").value_or(false), Json::FindBool(o, "semanticsChanged").value_or(false)} );
 		Hold = Json::FindBool( o, "hold" ).value_or( UA_StatusCode_isBad(Status) || isLastUsable(Status) );
 		THROW_IFSL( Start<Duration::zero(), "Tag '{}' quality '{}': start must not be negative.", tagName, ToString(Status) );
 		THROW_IFSL( Length<=Duration::zero(), "Tag '{}' quality '{}': duration is required and must be positive.", tagName, ToString(Status) );
