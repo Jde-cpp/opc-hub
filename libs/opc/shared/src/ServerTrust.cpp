@@ -8,6 +8,7 @@
 #include <jde/fwk/crypto/Certificate.h>
 #include <jde/fwk/crypto/TrustDirs.h>
 #include <jde/fwk/crypto/TrustStore.h>
+#include <stdexcept>
 
 #define let const auto
 namespace Jde::Opc{
@@ -29,11 +30,6 @@ namespace Jde::Opc{
 		};
 		α context( const UA_CertificateGroup& g )ι->Context*{ return (Context*)g.context; }
 		α anchorsNote( const Context& c )ι->string{ return Ƒ( "{} trusted certificate{}", c.Anchors, c.Anchors==1 ? "" : "s" ); }
-
-		//<thumbprint>.der once per certificate for the whole run:  a server that keeps presenting the same rejected certificate -
-		//every reconnect, every client of the slug - writes it once, as UATrust's rejected list does on the server side.
-		std::mutex _rejectedWrittenMutex;
-		flat_set<string> _rejectedWritten;
 
 		//The url's host, opc.tcp://<host>:<port>/<path>, for the SAN host/address warning - empty when it will not parse.
 		Ω urlHost( str url )ι->string{
@@ -77,29 +73,35 @@ namespace Jde::Opc{
 					WARNT( _tags, "[{}]'{}' is trusted, but its certificate's subjectAltName names neither the host nor the address '{}' of the url - {} - a strict client would reject it.", hex(c.Handle), c.Url, host, hosts.empty() ? "it carries no DNS or IP name" : Ƒ("it names {}", Str::Join(hosts, ", ")) );
 			}
 		}
-		//The rejected certificate written to RejectedDir as <thumbprint>.der (the SHA-1, the thumbprint a UA client shows), once per
-		//certificate and run, and its thumbprint recorded on the context for the client to keep per slug.  Junk that is no
-		//certificate - an endpoint carrying none, a garbage senderCertificate - has no thumbprint and nothing to write.
+		//The rejected certificate written to RejectedDir as <thumbprint>.der (the SHA-1, the thumbprint a UA client shows), and its
+		//thumbprint recorded on the context for the client to keep per slug - only once the file is there, so the thumbprint always
+		//names one.  The file is the once-only test:  a server that keeps presenting the same rejected certificate - every reconnect,
+		//every client of the slug - writes it once, as UATrust's rejected list does on the server side, and writes it again only
+		//after it has left the directory (trusted, or deleted by hand) and is rejected anew.  Junk that is no certificate - an
+		//endpoint carrying none, a garbage senderCertificate - has no thumbprint and nothing to write.
+		std::mutex _rejectedWriteMutex;//several slugs rejecting one certificate at once write it once.
 		Ω recordRejected( Context& c, const UA_ByteString* certificate )ι->void{
+			c.RejectedThumbprint.clear();
 			if( c.RejectedDir.empty() || !certificate || !certificate->length )
 				return;
 			try{
 				const std::span<const byte> der{ (const byte*)certificate->data, certificate->length };
 				const Crypto::Certificate parsed{ der };
-				c.RejectedThumbprint = parsed.Thumbprint;
 				let path = c.RejectedDir/Ƒ( "{}.der", parsed.Thumbprint );
+				bool written{};
 				{
-					std::lock_guard _{ _rejectedWrittenMutex };
-					if( !_rejectedWritten.emplace(parsed.Thumbprint).second )
-						return;//written this run already.
+					std::lock_guard _{ _rejectedWriteMutex };
+					if( !fs::exists(path) ){
+						IO::CreateDirectories( c.RejectedDir );
+						Crypto::WriteCertificate( path, der, SRCE_CUR );
+						written = true;
+					}
 				}
-				if( fs::exists(path) )
-					return;
-				fs::create_directories( c.RejectedDir );
-				Crypto::WriteCertificate( path, der, SRCE_CUR );
-				INFOT( _tags, "[{}]The certificate '{}' presented is written to '{}' - trust it from '{}' to admit the server.", hex(c.Handle), c.Url, path.string(), c.RejectedDir.string() );
+				c.RejectedThumbprint = parsed.Thumbprint;
+				if( written )
+					INFOT( _tags, "[{}]The certificate '{}' presented is written to '{}' - trust it from '{}' to admit the server.", hex(c.Handle), c.Url, path.string(), c.RejectedDir.string() );
 			}
-			catch( const std::exception& e ){
+			catch( const runtime_error& e ){
 				DBG( "[{}]A rejected certificate was not written to '{}':  {}", hex(c.Handle), c.RejectedDir.string(), e.what() );
 			}
 		}
@@ -149,16 +151,15 @@ namespace Jde::Opc{
 	}
 
 	α ServerTrust::Enabled( sv settingsRoot )ι->bool{ return Settings::FindBool( Ƒ("{}/verifyServerCertificate", settingsRoot) ).value_or(true); }
-	Ω settingDirs( sv settingsRoot )ι->vector<fs::path>{
-		vector<fs::path> dirs;
-		for( let& dir : Settings::FindStringArray(Ƒ("{}/trustedCertDirs", settingsRoot)) )
-			dirs.emplace_back( dir );
-		return dirs;
+	α ServerTrust::ServersDir( sv settingsRoot )ι->fs::path{
+		return Settings::FindPath( Ƒ("{}/serversDir", settingsRoot) ).value_or( Process::AppDataFolder()/"ssl"/"servers" );
 	}
 	α ServerTrust::RejectedDir( sv settingsRoot )ι->fs::path{
-		return Settings::FindPath( Ƒ("{}/rejectedCertDir", settingsRoot) ).value_or( Process::AppDataFolder()/"ssl"/"servers"/"rejected" );
+		return Settings::FindPath( Ƒ("{}/rejectedCertDir", settingsRoot) ).value_or( ServersDir(settingsRoot)/"rejected-servers" );
 	}
-	Ω createOwn( const fs::path& configured, sv settingsRoot, sv note )ι->void{//creates `configured` when it lies under this process's own data folder;  another product's directory is that product's to create (see the header).
+	//Creates `configured` when it lies under this process's own data folder;  another product's directory is that product's to
+	//create (see the header).  `setting` names it in the log, and `hint` says what the directory is for.
+	Ω createOwn( const fs::path& configured, sv settingsRoot, sv setting, sv hint )ι->void{
 		let own = Process::AppDataFolder().lexically_normal();
 		let dir = configured.lexically_normal();
 		std::error_code ec;
@@ -169,30 +170,34 @@ namespace Jde::Opc{
 			return;
 		fs::create_directories( dir, ec );
 		if( ec )
-			WARNT( _tags, "Could not create the {} directory '{}': {}", note, dir.string(), ec.message() );
+			WARNT( _tags, "Could not create the {} directory '{}': {}", setting, dir.string(), ec.message() );
 		if( !ec )//not `else`: the log macros expand to their own `if`.
-			INFOT( _tags, "Created '{}' ({}/{}) - {}.", dir.string(), settingsRoot, note, note=="trustedCertDirs" ? Ƒ("copy an OPC server's certificate ({}) here to trust it", Crypto::CertificateExtensions) : "a rejected server certificate is written here" );
+			INFOT( _tags, "Created '{}' ({}/{}) - {}.", dir.string(), settingsRoot, setting, hint );
 	}
 	α ServerTrust::EnsureDirs( sv settingsRoot )ι->void{
-		for( let& configured : settingDirs(settingsRoot) )
-			createOwn( configured, settingsRoot, "trustedCertDirs" );
-		createOwn( RejectedDir(settingsRoot), settingsRoot, "rejectedCertDir" );
+		let copyHere = Ƒ( "copy an OPC server's certificate ({}) here to trust it", Crypto::CertificateExtensions );
+		for( let& configured : Settings::FindPathArray(Ƒ("{}/trustedCertDirs", settingsRoot)) )//the setting's, not an override's:  startup creates what is configured.
+			createOwn( configured, settingsRoot, "trustedCertDirs", copyHere );
+		createOwn( RejectedDir(settingsRoot), settingsRoot, "rejectedCertDir", "a rejected server certificate is written here" );
 	}
 
 	α ServerTrust::OverrideTrustedCertDirs( optional<vector<fs::path>> dirs )ι->void{
 		std::lock_guard _{ _overrideMutex };
 		_override = move( dirs );
 	}
-	α ServerTrust::Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri, SL sl )ε->void{
+	α ServerTrust::TrustedDirs( sv settingsRoot )ι->vector<fs::path>{
 		//On the optional, not on what it holds:  an override of no directories is the plainest way to say "this client trusts
 		//nothing", and testing the copy for empty read it as "no override" - the production list came back in silence, and a
 		//test written that way passed for trusting the very anchors it meant to leave out (reviews/m2-closing.md #12).
-		optional<vector<fs::path>> overridden;
 		{
 			std::lock_guard _{ _overrideMutex };
-			overridden = _override;
+			if( _override )
+				return *_override;
 		}
-		Install( config, Enabled(settingsRoot), overridden ? *overridden : settingDirs(settingsRoot), h, url, settingsRoot, expectedUri, sl );
+		return Settings::FindPathArray( Ƒ("{}/trustedCertDirs", settingsRoot) );
+	}
+	α ServerTrust::Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri, SL sl )ε->void{
+		Install( config, Enabled(settingsRoot), TrustedDirs(settingsRoot), h, url, settingsRoot, expectedUri, sl );
 	}
 	α ServerTrust::Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& dirs, Jde::Handle h, str url, sv settingsRoot, sv expectedUri, SL sl )ε->void{
 		auto& g = config.certificateVerification;

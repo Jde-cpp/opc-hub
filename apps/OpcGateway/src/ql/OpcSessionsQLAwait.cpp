@@ -1,7 +1,7 @@
 #include "OpcSessionsQLAwait.h"
-#include <jde/ql/QLAwait.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/crypto/Certificate.h>
+#include <jde/ql/QLAwait.h>
 #include <jde/opc/ServerTrust.h>
 #include "../auth/OpcServerSession.h"
 #include "../GatewayAppClient.h"
@@ -93,8 +93,8 @@ namespace Jde::Opc::Gateway{
 		if( !fs::exists(path, ec) )
 			return jvalue{};
 		try{
-			let der = Crypto::ReadCertificate( path );
-			const Crypto::Certificate cert{ der };
+			let bytes = IO::LoadBinary( path );//read once:  the certificate parsed from it, and its text the PEM the page downloads.
+			const Crypto::Certificate cert{ Crypto::ParseCertificate(std::span<const byte>{(const byte*)bytes.data(), bytes.size()}) };
 			jobject y;
 			if( q.FindColumn("path") )
 				y["path"] = path.string();
@@ -106,10 +106,8 @@ namespace Jde::Opc::Gateway{
 				y["notAfter"] = ToIsoString<std::chrono::seconds>( cert.Expiration );
 			if( q.FindColumn("uri") )
 				y["uri"] = cert.SanUri();
-			if( q.FindColumn("pem") ){
-				let bytes = IO::LoadBinary( path );//the PEM on disk, as the help's copy-by-path hands an operator today.
-				y["pem"] = string{ bytes.begin(), bytes.end() };
-			}
+			if( q.FindColumn("pem") )
+				y["pem"] = string{ bytes.begin(), bytes.end() };//the file as it is on disk - always PEM, <base>.<slug>.pem as issued.
 			return y;
 		}
 		catch( const std::exception& ){
@@ -158,12 +156,13 @@ namespace Jde::Opc::Gateway{
 
 	α ServerCnnctnSessionsQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
-			QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl ); //one gate covers both grafts - the same live-usage telemetry.
 			auto sessionsQL = _query.ExtractTable( "opcSessions" ); //before the select: SelectAwait derefs every child's DBTable(), and these have none.
 			auto connectionsQL = _query.ExtractTable( "opcConnections" );
 			auto statusQL = _query.ExtractTable( "connectionStatus" );
 			auto rejectedQL = _query.ExtractTable( "rejectedCertificate" );//the <thumbprint>.der our verifier wrote for the slug.
 			auto clientCertQL = _query.ExtractTable( "clientCertificate" );//the gateway's own issued certificate for the slug.
+			if( sessionsQL || connectionsQL || statusQL )//one gate covers the three - the same live-usage telemetry;  the certificates are the connection's, under the table's Read alone.
+				QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl );
 			let addedSlug = _query.AddColumn( "slug" ); //the join key - both totals are per slug.
 			_query.ReturnRaw = true;
 			auto rows = co_await QL::QLAwait{ move(_query), UserPK(), _sl }; //UserPK ctor: no IQL, so CustomQuery is not re-entered; SelectAwait still authorizes the read.

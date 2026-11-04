@@ -1,6 +1,6 @@
 #include "TrustServerQLAwait.h"
+#include <jde/fwk/str.h>
 #include <jde/access/Authorize.h>
-#include <jde/fwk/settings.h>
 #include <jde/opc/ServerTrust.h>
 #include "../UAClient.h"
 #include "GatewayQL.h"
@@ -11,13 +11,18 @@ namespace Jde::Opc::Gateway{
 	//A thumbprint is the SHA-1 as upper hex, no separators (Crypto::Certificate) - and it names a file, so anything else is refused
 	//before it can reach outside the rejected directory.
 	Ω validThumbprint( sv thumbprint )ι->bool{ return thumbprint.size() && std::ranges::all_of( thumbprint, []( char c ){ return std::isxdigit((unsigned char)c); } ); }
-	//The ssl/servers dir trustServer moves into - the rejected directory's parent - must be among /gateway/trustedCertDirs, or a
-	//move there trusts nothing (ServerTrust reads only those).  Normalized string compare:  fs::equivalent needs both to exist, and
-	//the target may not yet.
+	Ω normal( const fs::path& dir )ι->fs::path{//"a/b/" and "a/b" alike
+		let y = dir.lexically_normal();
+		return y.has_filename() ? y : y.parent_path();
+	}
+	//The dir trustServer moves into, /gateway/serversDir, must be among the directories the verifier trusts (ServerTrust::TrustedDirs,
+	//the override included), or a move there trusts nothing.  fs::equivalent where both exist - a trailing separator, a symlink, a
+	//case difference on Windows - else the normalized paths.
 	Ω inTrustedCertDirs( const fs::path& dir )ι->bool{
-		let target = dir.lexically_normal();
-		for( let& configured : Settings::FindStringArray("/gateway/trustedCertDirs") ){
-			if( fs::path{configured}.lexically_normal()==target )
+		let target = normal( dir );
+		for( let& configured : ServerTrust::TrustedDirs("/gateway") ){
+			std::error_code ec;
+			if( normal(configured)==target || fs::equivalent(configured, dir, ec) )
 				return true;
 		}
 		return false;
@@ -30,12 +35,14 @@ namespace Jde::Opc::Gateway{
 			const string thumbprint{ _query.As<jstring>("thumbprint") };
 			THROW_IFX( slug.empty(), Exception(_sl, {EHttpStatus::BadRequest}, "An opc slug is required.") );
 			THROW_IFX( !validThumbprint(thumbprint), Exception(_sl, {EHttpStatus::BadRequest}, "A thumbprint is required, the SHA-1 hex rejectedCertificate answered.") );
+			//the named connection's standing rejection, what its page offered:  the slug is what the log credits and what reconnects.
+			THROW_IFX( UAClient::RejectedThumbprint(slug)!=thumbprint, Exception(_sl, {EHttpStatus::NotFound}, "'{}' has no standing rejection of certificate '{}' - it may have been trusted already.", slug, thumbprint) );
 			let rejectedDir = ServerTrust::RejectedDir( "/gateway" );
 			let source = rejectedDir/Ƒ( "{}.der", thumbprint );
 			std::error_code ec;
 			THROW_IFX( !fs::exists(source, ec), Exception(_sl, {EHttpStatus::NotFound}, "No rejected certificate '{}' to trust - it may have been trusted already.", thumbprint) );
-			let trustedDir = rejectedDir.parent_path();//ssl/servers, the rejected directory's sibling (spec *Trust*).
-			THROW_IFX( !inTrustedCertDirs(trustedDir), Exception(_sl, {EHttpStatus::BadRequest}, "'{}' is not among /gateway/trustedCertDirs, so moving the certificate there would trust nothing - add it to that setting.", trustedDir.string()) );
+			let trustedDir = ServerTrust::ServersDir( "/gateway" );//ssl/servers (spec *Trust*).
+			THROW_IFX( !inTrustedCertDirs(trustedDir), Exception(_sl, {EHttpStatus::BadRequest}, "'{}' (/gateway/serversDir) is not among /gateway/trustedCertDirs, so moving the certificate there would trust nothing - add it to that setting.", trustedDir.string()) );
 			fs::create_directories( trustedDir, ec );
 			let target = trustedDir/Ƒ( "{}.der", thumbprint );
 			fs::rename( source, target, ec );
@@ -44,9 +51,12 @@ namespace Jde::Opc::Gateway{
 				THROW_IFX( ec, Exception(_sl, {EHttpStatus::InternalServerError}, "Could not move '{}' to '{}':  {}", source.string(), target.string(), ec.message()) );
 				fs::remove( source, ec );
 			}
-			INFO( "Trusted server certificate '{}' for '{}':  moved to '{}'.", thumbprint, slug, target.string() );
-			UAClient::SetRejectedThumbprint( slug, {} );//the standing rejection is gone the moment the file moves;  the reconnect clears it too on success.
-			UAClient::ConnectionEdited( DB::Key{slug}, false );//the trust list is loaded per connect, so reconnect the slug on it.
+			//The file is every slug's that rejected the certificate - two connections to one server:  each one's standing rejection goes
+			//with it, and each reconnects now, on the trust list loaded per connect, rather than on its own retry.
+			let slugs = UAClient::ClearRejectedThumbprint( thumbprint );
+			INFO( "Trusted server certificate '{}' from '{}':  moved to '{}' - reconnecting {}.", thumbprint, slug, target.string(), Str::Join(slugs, ", ") );
+			for( let& rejecting : slugs )
+				UAClient::ConnectionEdited( DB::Key{rejecting}, false );
 			Resume( jvalue{true} );
 		}
 		catch( runtime_error& e ){

@@ -202,6 +202,41 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( value.is_array() ) << serialize( value );
 	}
 
+	//reviews-issue/415-clients-trust.md #3:  the two certificate grafts are the connection's, not live-usage telemetry, so they sit under
+	//serverConnections Read alone - gated on gateway/sessions too, an enforced sessions resource hid the page's Trust panel from a user
+	//who could read the connection.  The telemetry grafts keep the sessions gate.  serverConnections ships unenforced, so the ungranted
+	//probe reads its rows;  the refused telemetry first shows the enforcement has landed.
+	TEST_F( QLTests, CertificatesNeedNoSessionsRead ){
+		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
+		auto query = [&]( str text )->jvalue{
+			auto ql = QL::Parse( text, {}, Schemas(), true );
+			return BlockAwait<ServerCnnctnSessionsQLAwait,jvalue>( ServerCnnctnSessionsQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		};
+		EnforceResource( "gateway", "sessions", true );
+		absl::Cleanup open = []{ try{ EnforceResource("gateway", "sessions", false); }catch( const std::exception& ){} };
+		let refused = WaitUntil( [&]{
+			try{
+				query( "serverConnections( deleted:null ){ slug opcConnections{ count } }" );
+			}
+			catch( const Exception& e ){
+				return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+			}
+			return false;
+		}, 5s, 50ms );
+		ASSERT_TRUE( refused ) << "gateway/sessions is enforced and an ungranted user still reads opcConnections";
+
+		jvalue rows;
+		try{
+			rows = query( "serverConnections( deleted:null ){ slug rejectedCertificate{ thumbprint } clientCertificate{ path } }" );
+		}
+		catch( const Exception& e ){
+			FAIL() << "the certificates were refused for want of gateway/sessions Read:  " << e.what();
+		}
+		ASSERT_TRUE( rows.is_array() && !rows.get_array().empty() ) << serialize( rows );
+		let& o = rows.get_array().front().as_object();
+		EXPECT_TRUE( o.contains("rejectedCertificate") && o.contains("clientCertificate") ) << serialize( o );
+	}
+
 	TEST_F( QLTests, webSessionCounted ){ //no manual AddSession: a jwt-backed web session's connect must register itself (ConnectAwait::await_resume).
 		const jobject vars{ {"opc", OpcServerSlug} };
 		Socket().QuerySync( "serverDescription( opc: $opc ){ applicationUri }", vars );//forces a ConnectAwait for this socket's session.

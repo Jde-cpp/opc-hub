@@ -123,6 +123,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		this.serverError.set( error );
 		this.#resultFor.set( settings );
 		this.#announcer.announce( server ? `Connected to ${server.applicationName || settings.url}.` : `Not connected:  ${error}` );
+		await this.#loadCertificates();//the test connects under the slug, so a rejection records the server's certificate as a scheduled connect's does:  the Trust panel follows the test, without a reload
 	}
 	//Discover (docs/clients/spec.md *Discovery*):  the servers the gateway finds at the form's url and the endpoints of the one
 	//picked, in a dialog, and the endpoint chosen fills the form - the url, the Certificate URI with the server's applicationUri,
@@ -157,16 +158,18 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 			await this.gateway.postQL( ClientDetail.trustMutation, {opc: slug, thumbprint} );
 		}
 		catch( e ){
-			if( this.#rowLoads.is(rowLoad) )
+			if( this.#rowLoads.is(rowLoad) ){//else onRow reset it, and a trust on the row shown now may be in flight
 				this.snackbar.exception( isRefusal(e) ? "Trust was refused." : "Could not trust the server.", e );
-			this.trusting.set( false );
+				this.trusting.set( false );
+			}
 			return;
 		}
 		if( !this.#rowLoads.is(rowLoad) )
 			return;
-		this.trusting.set( false );
 		this.#announcer.announce( "Server trusted.  Reconnecting." );
 		await this.#refreshConnection( slug, rowLoad );
+		if( this.#rowLoads.is(rowLoad) )
+			this.trusting.set( false );//not before:  the panel shows the certificate just trusted until the refresh reloads it, and a second press would post it again
 	}
 	//after a trust:  re-describe the connection - the reconnect is the gateway's, so re-read its result - and reload the certificates.
 	async #refreshConnection( slug:string, rowLoad:number ){

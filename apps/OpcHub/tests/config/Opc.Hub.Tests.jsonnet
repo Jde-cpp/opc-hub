@@ -62,7 +62,7 @@ local logsDir = args.logsDir;
 	local serversDir = logsDir + "/servers/opc-hub-tests",//trustServer's target, beside ssl/certs and under logsDir - not the enrollment anchors (#415).
 	gateway:{
 		trustedCertDirs: instance.access.trustedCertDirs + [ serversDir ], //the embedded OpcServer's UA certificate is in the test product's one ssl/certs; the gateway role reads its own list, not the enrollment anchors (ServerTrust.h).
-		rejectedCertDir: serversDir + "/rejected",
+		serversDir: serversDir, //the rejected directory is its default, serversDir/rejected-servers.
 		issuedCerts: instance.http.gateway.ssl,
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-hub-tests" }, //the gateway role's historian:  its own path, so a gateway test run beside this one never contends for the lock.

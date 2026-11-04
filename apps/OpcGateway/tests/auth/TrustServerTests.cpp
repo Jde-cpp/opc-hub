@@ -1,19 +1,21 @@
 //Clients phase 3, trust (#415):  the gateway's end of server-certificate trust, the mirror of RefusedCertificateTests' (which is the
 //server rejecting OUR certificate).  A throwaway server whose certificate no trusted directory holds is rejected by our verifier
 //(ServerTrust), which writes <thumbprint>.der under /gateway/rejectedCertDir;  the thumbprint is what rejectedCertificate{} answers,
-//trustServer moves the file into the ssl/servers trusted dir and the next connect succeeds, and a non-admin's trustServer is refused.
+//trustServer moves the file into the ssl/servers trusted dir - refused under a slug that never rejected it, clearing every one that
+//did - and the next connect succeeds, a trust withdrawn by hand has the certificate rejected and offered again, and a non-admin's
+//trustServer is refused.
 //And a server that presents a trusted certificate under another applicationUri connects, with the SAN-URI warning logged (spec *Trust*,
 //*Open questions* #14).
+#include <fstream>
+#include <absl/cleanup/cleanup.h>
 #include <open62541/plugin/accesscontrol_default.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/io/file.h>
 #include <jde/fwk/crypto/Certificate.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/fwk/crypto/issue.h>
 #include <jde/opc/ServerTrust.h>
-#include <absl/cleanup/cleanup.h>
 #include "../utils/ClientFixture.h"
 #include "../utils/GatewayClientSocket.h"
 #include "../utils/TestUaServer.h"
@@ -48,14 +50,23 @@ namespace Jde::Opc::Gateway::Tests{
 		static constexpr EThrowawayPort Port{ EThrowawayPort::UntrustedServer };
 		inline static const string Slug{ "opcTestsUntrustedServer" };
 		Ω TearDownTestSuite()->void{ PurgeServerCnnctn( Slug ); }
+		//The files a test leaves, removed by name - never a directory:  both are settings-derived, and without
+		//gateway.serversDir the trusted one is the product's live ssl/servers trust store (reviews-issue/415-clients-trust.md #6).
 		α TearDown()ι->void override{
-			std::error_code ec;
-			let rejectedDir = ServerTrust::RejectedDir( "/gateway" );
-			fs::remove_all( rejectedDir, ec );//the <thumbprint>.der our verifier wrote, and the trusted copy trustServer moved beside it.
-			fs::remove_all( rejectedDir.parent_path(), ec );
+			for( let& file : _made ){
+				std::error_code ec;
+				fs::remove( file, ec );
+			}
 			UAClient::SetRejectedThumbprint( Slug, {} );
 			ClientFixture::TearDown();
 		}
+		//The two files a throwaway server's certificate can leave:  the <thumbprint>.der our verifier writes to the rejected
+		//directory, and the trusted copy trustServer moves into the servers dir.
+		α Made( const Crypto::CryptoSettings& ssl )ε->void{
+			let file = Ƒ( "{}.der", Crypto::Certificate{Crypto::ReadCertificate(ssl.Certificate.Path)}.Thumbprint );
+			_made = { ServerTrust::RejectedDir("/gateway")/file, ServerTrust::ServersDir("/gateway")/file };
+		}
+		vector<fs::path> _made;
 		α Connect()ι->void{
 			if( auto cached = UAClient::Find(Slug, Credential{}); cached )
 				UAClient::RemoveClient( move(cached) );//trust is loaded per connect:  a cached client would skip the fresh scan.
@@ -64,11 +75,13 @@ namespace Jde::Opc::Gateway::Tests{
 	};
 
 	//The whole flow:  a rejected certificate lands in the rejected directory with the thumbprint rejectedCertificate{} answers,
-	//trustServer moves it and the next connect succeeds.
-	TEST_F( TrustServerTests, RejectedCertificateIsTrustedAndTheNextConnectSucceeds ){
+	//trustServer moves it and the next connect succeeds;  and the trusted copy deleted by hand - the help's way to withdraw it -
+	//has the next connect rejected and the certificate written and offered again (reviews-issue/415-clients-trust.md #1).
+	TEST_F( TrustServerTests, RejectedCertificateIsTrustedThenWithdrawn ){
 		let dir = fs::temp_directory_path()/Ƒ( "trustServerTests-{}", Process::ProcessId() );
 		absl::Cleanup removeDir = [&]{ std::error_code ec; fs::remove_all( dir, ec ); };
 		let ssl = makePair( dir, "urn:jde:trustServerTests:untrusted" );
+		Made( ssl );
 		let serverUri = ssl.Certificate.SanUri();
 		TestUaServer server{ Port, ssl, &anonymousSecured };
 		GetConnection( Slug, Url(Port), serverUri );//certificateUri = the server's applicationUri:  a secured channel, so the server presents its certificate and our verifier runs.
@@ -95,12 +108,40 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsSV(rejected, "uri"), serverUri ) << serialize( *row );
 		EXPECT_FALSE( Json::AsSV(rejected, "subject").empty() ) << serialize( *row );
 
-		//trustServer moves it into the ssl/servers trusted dir (the rejected directory's parent).
-		Socket().QuerySync( "trustServer( opc:$opc, thumbprint:$thumbprint )", {{"opc", Slug}, {"thumbprint", thumbprint}} );
+		//refused under a slug whose standing rejection it is not (reviews-issue/415-clients-trust.md #4):  the log would credit, and
+		//the reconnect name, a connection that never rejected it.
+		try{
+			Socket().QuerySync( "trustServer( opc:$opc, thumbprint:$thumbprint )", {{"opc", "opcTestsNoSuchSlug"}, {"thumbprint", thumbprint}} );
+			ADD_FAILURE() << "trustServer moved a certificate under a slug that never rejected it";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_NE( string{e.what()}.find("has no standing rejection"), string::npos ) << e.what();
+		}
+		ASSERT_TRUE( fs::exists(rejectedFile) ) << "a refused trust moved the file";
+
+		//another connection to the same server rejected the same certificate, so shares the file:  a trust from either page clears both.
+		let twin = Slug+"Twin";
+		UAClient::SetRejectedThumbprint( twin, thumbprint );
+		absl::Cleanup clearTwin = [&twin]{ UAClient::SetRejectedThumbprint( twin, {} ); };
+
+		//trustServer moves it into the ssl/servers trusted dir (/gateway/serversDir) - found among trustedCertDirs though the list
+		//spells it with a trailing separator (reviews-issue/415-clients-trust.md #8).
+		{
+			jarray original, slashed;
+			for( let& dir : Settings::FindStringArray("/gateway/trustedCertDirs") ){
+				original.emplace_back( dir );
+				slashed.emplace_back( dir+"/" );
+			}
+			Settings::Set( "/gateway/trustedCertDirs", slashed );
+			absl::Cleanup restore = [&original]{ try{ Settings::Set("/gateway/trustedCertDirs", original); }catch( const std::exception& ){} };
+			Socket().QuerySync( "trustServer( opc:$opc, thumbprint:$thumbprint )", {{"opc", Slug}, {"thumbprint", thumbprint}} );
+		}
 		EXPECT_FALSE( fs::exists(rejectedFile) ) << "the rejected file was left behind";
-		let trusted = ServerTrust::RejectedDir( "/gateway" ).parent_path()/Ƒ( "{}.der", thumbprint );
+		let trusted = ServerTrust::ServersDir( "/gateway" )/Ƒ( "{}.der", thumbprint );
+		EXPECT_EQ( ServerTrust::RejectedDir("/gateway"), ServerTrust::ServersDir("/gateway")/"rejected-servers" ) << "the suite sets serversDir alone:  the rejected directory is its default";
 		ASSERT_TRUE( fs::exists(trusted) ) << trusted;
 		EXPECT_TRUE( UAClient::RejectedThumbprint(Slug).empty() ) << "the standing rejection was not cleared";
+		EXPECT_TRUE( UAClient::RejectedThumbprint(twin).empty() ) << "the other connection that rejected it still holds a thumbprint whose file is gone";
 
 		//the next connect trusts it - the list is loaded per connect.
 		Connect();
@@ -115,6 +156,42 @@ namespace Jde::Opc::Gateway::Tests{
 		let& client = Json::AsObject( crow->as_object(), "clientCertificate" );
 		EXPECT_FALSE( Json::AsSV(client, "path").empty() ) << serialize( *crow );
 		EXPECT_NE( Json::AsSV(client, "pem").find("-----BEGIN CERTIFICATE-----"), sv::npos ) << "the PEM for the page to download";
+
+		//withdrawn by hand:  rejected again, and written again - not skipped as a certificate this process has seen.
+		ASSERT_TRUE( fs::remove(trusted) ) << trusted;
+		Connect();
+		ASSERT_TRUE( _exception ) << "connected after its certificate's trust was withdrawn";
+		EXPECT_EQ( UAClient::RejectedThumbprint(Slug), thumbprint );
+		EXPECT_TRUE( fs::exists(rejectedFile) ) << "the certificate rejected again was not written again";
+		let again = Socket().QuerySync( "serverConnections( deleted:null ){ slug rejectedCertificate{ thumbprint } }", {} );
+		let& arows = again.is_array() ? again.get_array() : Json::AsArray( again.as_object(), "serverConnections" );
+		let arow = find_if( arows, [&]( let& r ){ return Json::AsSV(r.as_object(), "slug")==Slug; } );
+		ASSERT_NE( arow, arows.end() ) << serialize( again );
+		let rejectedAgain = arow->as_object().if_contains( "rejectedCertificate" );
+		ASSERT_TRUE( rejectedAgain && rejectedAgain->is_object() ) << "the page's Trust panel would not appear:  " << serialize( *arow );
+		EXPECT_EQ( Json::AsSV(rejectedAgain->as_object(), "thumbprint"), thumbprint ) << serialize( *arow );
+	}
+
+	//reviews-issue/415-clients-trust.md #9:  trustServer holds its target against the directories the verifier trusts - the test
+	//seam's while one is set, not the setting behind it.  An empty override trusts nothing, so the move is refused and the file
+	//stays.  No server:  the refusal comes before the file is read.
+	TEST_F( TrustServerTests, TheTargetIsHeldAgainstTheOverride ){
+		const string thumbprint{ "0123456789ABCDEF0123456789ABCDEF01234567" };
+		let rejectedFile = ServerTrust::RejectedDir( "/gateway" )/Ƒ( "{}.der", thumbprint );
+		_made = { rejectedFile, ServerTrust::ServersDir("/gateway")/Ƒ("{}.der", thumbprint) };
+		fs::create_directories( rejectedFile.parent_path() );
+		std::ofstream{ rejectedFile } << "never read:  the move is refused first";
+		UAClient::SetRejectedThumbprint( Slug, thumbprint );
+		ServerTrust::OverrideTrustedCertDirs( vector<fs::path>{} );
+		absl::Cleanup restore = []{ ServerTrust::OverrideTrustedCertDirs( nullopt ); };
+		try{
+			Socket().QuerySync( "trustServer( opc:$opc, thumbprint:$thumbprint )", {{"opc", Slug}, {"thumbprint", thumbprint}} );
+			ADD_FAILURE() << "trustServer moved a certificate into a directory the verifier does not trust";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_NE( string{e.what()}.find("is not among"), string::npos ) << e.what();
+		}
+		EXPECT_TRUE( fs::exists(rejectedFile) ) << "a refused trust moved the file";
 	}
 
 	//A non-admin's trustServer is refused:  Administer on gateway/serverConnections, enforced, a user no grant names.  The gate is

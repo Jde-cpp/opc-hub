@@ -31,8 +31,13 @@ namespace Jde::Opc::ServerTrust{
 	//Creates <root>/rejectedCertDir too (the same own-data-folder rule), where the verifier writes a server certificate it
 	//rejects, so an admin can see it and trustServer can move it.
 	α EnsureDirs( sv settingsRoot )ι->void;
+	//<root>/serversDir, this product's own trusted-server directory, default <AppDataFolder>/ssl/servers:  where an operator
+	//drops a third-party server's certificate, and where trustServer moves one it trusts - so it must be among
+	//<root>/trustedCertDirs, the list the verifier reads.
+	α ServersDir( sv settingsRoot )ι->fs::path;
 	//<root>/rejectedCertDir, the directory a rejected server certificate is written to as <thumbprint>.der, default
-	//<AppDataFolder>/ssl/servers/rejected (beside the ssl/servers trusted dir, whose sibling trustServer moves it into).
+	//<ServersDir>/rejected-servers.  Not ssl/servers/rejected:  that is the gateway endpoint's for the client certificates it
+	//refuses (/gateway/server/rejectedCertDir), which it prunes to the newest few.
 	α RejectedDir( sv settingsRoot )ι->fs::path;
 	//Before UA_ClientConfig_setDefault, which only fills a null verifyCertificate.  `url` names the server in the log and
 	//the rejection; `settingsRoot` - "/gateway", "/emulator" - is where both settings are read and what the rejection names.
@@ -41,17 +46,20 @@ namespace Jde::Opc::ServerTrust{
 	//*Trust*, *Open questions* #14);  empty where the connection pins no url (a None channel), so the check is skipped.
 	α Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri={}, SRCE )ε->void;
 	α Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& trustedCertDirs, Jde::Handle h, str url, sv settingsRoot="/gateway", sv expectedUri={}, SRCE )ε->void;//explicit, for tests.
-	//Test seam:  the directories the settings-driven Install uses instead of <root>/trustedCertDirs, for every client
-	//created until nullopt restores the setting - the live rejection is provoked here, mid-run, without rewriting a
-	//setting other clients in the process are reading.  An empty list is an override too:  no directories, nothing trusted.
+	//Test seam:  the directories TrustedDirs answers - and so the settings-driven Install uses - instead of <root>/trustedCertDirs,
+	//for every client created until nullopt restores the setting - the live rejection is provoked here, mid-run, without
+	//rewriting a setting other clients in the process are reading.  An empty list is an override too:  no directories, nothing trusted.
 	α OverrideTrustedCertDirs( optional<vector<fs::path>> dirs )ι->void;
+	//The directories the verifier trusts a server certificate from:  OverrideTrustedCertDirs' while one is set, else
+	//<root>/trustedCertDirs.  What the settings-driven Install loads, and what trustServer holds its target against.
+	α TrustedDirs( sv settingsRoot )ι->vector<fs::path>;
 	//Why this client's verifier last rejected a server certificate, "" if it never did or verification is off - the detail
 	//StateCallback hands the waiting requests, since the status alone (BadCertificateUntrusted) reads the same as the server
 	//rejecting OUR certificate.
 	α Rejection( const UA_ClientConfig& config )ι->string;
-	//The SHA-1 thumbprint of the certificate this client's verifier last rejected, "" if it never did - the name of the
-	//<thumbprint>.der the verifier wrote to RejectedDir, which the client records per slug (UAClient) for rejectedCertificate{}
-	//to read and trustServer to move.
+	//The SHA-1 thumbprint of the certificate this client's verifier last rejected, "" if it never did or that file could not be
+	//written - the name of the <thumbprint>.der in RejectedDir, which the client records per slug (UAClient) for
+	//rejectedCertificate{} to read and trustServer to move.
 	α RejectedThumbprint( const UA_ClientConfig& config )ι->string;
 	α AnchorCount( const UA_ClientConfig& config )ι->uint;//0 when verification is off.
 }

@@ -178,17 +178,30 @@ describe( 'ServerProperties certificate panels', ()=>{
 		expect( button.textContent!.trim() ).toBe( "Trusting…" );
 	} );
 
+	//reviews-issue/415-clients-trust.md #7:  a detached anchor, and its url revoked under the click - Firefox and Safari read the url
+	//after click() returns, and saved nothing.
 	it( 'downloads the gateway certificate as a .pem named for its file', ()=>{
 		const created:Blob[] = [];
 		vi.spyOn( URL, 'createObjectURL' ).mockImplementation( (b)=>{ created.push(b as Blob); return 'blob:x'; } );
-		vi.spyOn( URL, 'revokeObjectURL' ).mockImplementation( ()=>{} );
-		const clicks:string[] = [];
-		vi.spyOn( HTMLAnchorElement.prototype, 'click' ).mockImplementation( function( this:HTMLAnchorElement ){ clicks.push( this.download ); } );
+		const revoked:string[] = [];
+		vi.spyOn( URL, 'revokeObjectURL' ).mockImplementation( (u)=>{ revoked.push(u); } );
+		const clicks:{ name:string; attached:boolean; anchor:HTMLAnchorElement }[] = [];
+		vi.spyOn( HTMLAnchorElement.prototype, 'click' ).mockImplementation( function( this:HTMLAnchorElement ){ clicks.push( {name: this.download, attached: this.isConnected, anchor: this} ); } );
 		const root = render( {client} ).nativeElement as HTMLElement;
 		expect( texts(root, '.certificate.client dl.fields dd span') ).toEqual( ["CN=gateway", "urn:gw", "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z", client.path] );
-		(root.querySelector('.certificate.client button') as HTMLButtonElement).click();
-		expect( created.length ).toBe( 1 );
-		expect( clicks ).toEqual( ["OpcHub.plc.pem"] );
+		vi.useFakeTimers();
+		try{
+			(root.querySelector('.certificate.client button') as HTMLButtonElement).click();
+			expect( created.length ).toBe( 1 );
+			expect( clicks.map( ({name, attached})=>({name, attached}) ) ).toEqual( [{name: "OpcHub.plc.pem", attached: true}] );
+			expect( clicks[0].anchor.isConnected ).toBe( false );//and taken out again
+			expect( revoked ).toEqual( [] );//not under the click
+			vi.runAllTimers();
+			expect( revoked ).toEqual( ["blob:x"] );
+		}
+		finally{
+			vi.useRealTimers();
+		}
 	} );
 
 	it( 'shows neither panel when there is no certificate', ()=>{

@@ -161,6 +161,17 @@ namespace Jde::Opc::Gateway{
 		else
 			_rejectedThumbprints.insert_or_assign( slug, move(thumbprint) );
 	}
+	α UAClient::ClearRejectedThumbprint( sv thumbprint )ι->vector<ServerCnnctnNK>{
+		vector<ServerCnnctnNK> slugs;
+		lg _{ _connectErrorMutex };
+		std::erase_if( _rejectedThumbprints, [&]( let& entry ){
+			let match = entry.second==thumbprint;
+			if( match )
+				slugs.push_back( entry.first );
+			return match;
+		} );
+		return slugs;
+	}
 	//The endpoint's listener (ConnectionChange).  Its own lock, held for the copy alone:  the listener runs off every lock here.
 	static function<void(const ConnectionChange&)> _connectionListener; static mutex _connectionListenerMutex;
 	α UAClient::SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void{

@@ -70,7 +70,8 @@ namespace Jde::Opc::Gateway{
 		//rejected directory (ServerTrust), kept as the connect errors are:  rejectedCertificate{} reads that file and trustServer
 		//moves it.  Cleared when the slug connects.  A slug with no entry had no server-certificate rejection.
 		Ω RejectedThumbprint( const ServerCnnctnNK& slug )ι->string;
-		Ω SetRejectedThumbprint( const ServerCnnctnNK& slug, string thumbprint )ι->void;//the verifier's record, kept per slug;  trustServer clears it ("") the moment it moves the file.
+		Ω SetRejectedThumbprint( const ServerCnnctnNK& slug, string thumbprint )ι->void;//the verifier's record, kept per slug;  "" clears it.
+		Ω ClearRejectedThumbprint( sv thumbprint )ι->vector<ServerCnnctnNK>;//every slug whose standing rejection is `thumbprint`, cleared - trustServer's, the moment it moves the file the slugs share.  Returns them.
 		Ω Find( UA_Client* ua, SRCE )ε->sp<UAClient>;
 		Ω TryFind( UA_Client* ua, SRCE )ι->sp<UAClient>;
 		Ω RemoveClient( sp<UAClient>&& client )ι->bool;//forget the client:  it stops, and what it was monitoring ends with it.
