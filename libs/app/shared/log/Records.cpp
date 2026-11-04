@@ -254,8 +254,7 @@ namespace Jde::App::Log{
 			Opening opening{ _path, _was, Source() };
 			while( opening.Next()==ENext::More ){
 				let w = *opening.Wants();
-				IO::ReadAwait read{ opening.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size, .Tags=_tags} };
-				opening.Feed( co_await Any(read) );
+				opening.Feed( co_await IO::ReadAwait{opening.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size, .Tags=_tags}} );
 			}
 			Resume( opening.Take() );
 		}
@@ -290,8 +289,7 @@ namespace Jde::App::Log{
 				for( auto next = reader.Next(r); next!=ENext::End; next = reader.Next(r) ){
 					if( next==ENext::More ){
 						let w = *reader.Wants();
-						IO::ReadAwait read{ _file, IO::ReadOptions{.Offset=w.Offset, .Size=w.Size, .Tags=_tags} };
-						reader.Feed( co_await Any(read) );
+						reader.Feed( co_await IO::ReadAwait{_file, IO::ReadOptions{.Offset=w.Offset, .Size=w.Size, .Tags=_tags}} );
 					}
 					else if( reader.Field()!=StartField && reader.Field()!=CheckpointField ){
 						y.push_back( move(r) );

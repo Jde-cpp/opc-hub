@@ -45,10 +45,10 @@ namespace IO{
 	{}
 }
 #ifdef _WIN32
-	α IO::MakeDirectories( const fs::path& directory, SL sl )ε->void{
-		IO::CreateDirectories( directory, sl );
+	α IO::CreateDirsForWrite( const fs::path& directory, SL sl )ε->void{
+		IO::CreateDirs( directory, sl );
 	}
-	α IO::SyncDirectories( const fs::path&, const fs::path&, SL )ε->void{}
+	α IO::SyncDirs( const fs::path&, const fs::path&, SL )ε->void{}
 	α IO::Replace( const fs::path& from, const fs::path& to, SL sl )ε->void{
 		//POSIX semantics:  MoveFileEx is refused a target someone has open, even one opened FILE_SHARE_DELETE.
 		let handle = ::CreateFileW( from.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr );
@@ -74,7 +74,7 @@ namespace IO{
 	}
 namespace IO{
 	α PathLock::TryLock( const fs::path& dir, sv lockFileName, SL sl )ε->optional<PathLock>{
-		IO::CreateDirectories( dir, sl );
+		IO::CreateDirs( dir, sl );
 		let file = dir/lockFileName;
 		//Shared, so a second holder gets as far as the lock, whose refusal can only mean that it is held.
 		let handle = ::CreateFileW( file.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr );
@@ -96,7 +96,7 @@ namespace IO{
 	}
 }
 #else
-	α IO::MakeDirectories( const fs::path&, SL )ε->void{}
+	α IO::CreateDirsForWrite( const fs::path&, SL )ε->void{}
 
 	Ω syncDirectory( const fs::path& dir, SL sl )ε->void{
 		let fd = ::open( dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC );
@@ -109,7 +109,7 @@ namespace IO{
 	}
 	//relative's own directory each time, for the names it gains.  Above it, each directory's name once per process:  the
 	//owners share their days' directories, and a name, once durable, stays so.
-	α IO::SyncDirectories( const fs::path& root, const fs::path& relative, SL sl )ε->void{
+	α IO::SyncDirs( const fs::path& root, const fs::path& relative, SL sl )ε->void{
 		static absl::Mutex mutex;
 		static absl::flat_hash_set<string> named ABSL_GUARDED_BY( mutex );
 		syncDirectory( root/relative, sl );
@@ -132,7 +132,7 @@ namespace IO{
 	}
 namespace IO{
 	α PathLock::TryLock( const fs::path& dir, sv lockFileName, SL sl )ε->optional<PathLock>{
-		IO::CreateDirectories( dir, sl );
+		IO::CreateDirs( dir, sl );
 		let file = dir/lockFileName;
 		let fd = ::open( file.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666 );
 		if( fd==-1 )

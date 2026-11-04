@@ -123,7 +123,7 @@ namespace Jde::Crypto{
 	//return value is DER either way.  Junk in either encoding still throws, naming the file.
 	TEST_F( OpenSslTests, ReadCertificateTakesPemOrDer ){
 		let dir = ScratchDir( "readDer" );
-		IO::CreateDirectories( dir );//nothing here issues into it - the files are written by hand.
+		IO::CreateDirs( dir );//nothing here issues into it - the files are written by hand.
 		let pem = ReadCertificate( CertificateFile );//DER bytes, from the PEM fixture.
 		let derFile = dir/"cert.der";
 		IO::SaveBinary<const byte>( derFile, std::span{pem} );
@@ -149,7 +149,7 @@ namespace Jde::Crypto{
 	//to say so rather than name the certificate's fault.
 	TEST_F( OpenSslTests, AFailedParseLeavesNothingOnTheErrorQueue ){
 		let dir = ScratchDir( "errQueue" );
-		IO::CreateDirectories( dir );
+		IO::CreateDirs( dir );
 		let garbage = dir/"pkcs7-or-anything.cer";
 		//SEQUENCE{ OID pkcs7-signedData } - how a PKCS#7 .cer opens, and complete, which is what matters:  d2i_X509 gets as far as
 		//the member that should be the tbsCertificate SEQUENCE and queues "wrong tag" and then "nested asn1 error" twice on the
@@ -330,7 +330,7 @@ namespace Jde::Crypto{
 	}
 
 	//certInstance is the OPC Slug, settable through the createServerConnection mutation, and the CN is the stem of
-	//all three files - neither may escape the ssl tree, or CreateDirectories/IssueCertificate write a PEM anywhere the
+	//all three files - neither may escape the ssl tree, or CreateDirs/IssueCertificate write a PEM anywhere the
 	//service account can reach.
 	TEST_F( OpenSslTests, PathComponentsCannotEscapeTheSslTree ){
 		let sslDir = Process::ProgramDataFolder()/Process::CompanyRootDir()/Process::ProductName()/"ssl";
@@ -354,7 +354,7 @@ namespace Jde::Crypto{
 	TEST_F( OpenSslTests, EnsureKeyCertificate_MissingKeyReissuesCert ){
 		let dir = ScratchDir( "ensureKeyCert" );
 		let settings = SslSettings( (dir/"public.pem").string(), (dir/"private.pem").string(), (dir/"cert.pem").string(), "ensure-key-cert" );
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		Crypto::CreateKeyCertificate( settings );
 		let original = Crypto::ExtractPublicKey( ReadCertificate(settings.Certificate.Path) );
 
@@ -373,7 +373,7 @@ namespace Jde::Crypto{
 	TEST_F( OpenSslTests, EnsureKeyCertificate_MissingCertReissuesOnSameKey ){
 		let dir = ScratchDir( "missingCert" );
 		let settings = SslSettings( (dir/"public.pem").string(), (dir/"private.pem").string(), (dir/"cert.pem").string(), "missing-cert" );
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		Crypto::CreateKeyCertificate( settings );
 		let originalKey = Crypto::ReadPublicKey( settings.PublicKey.Path );
 		let originalDer = ReadCertificate( settings.Certificate.Path );
@@ -392,7 +392,7 @@ namespace Jde::Crypto{
 	TEST_F( OpenSslTests, EnsureKeyCertificate_BadCertThrows ){
 		let dir = ScratchDir( "badCert" );
 		let settings = SslSettings( (dir/"public.pem").string(), (dir/"private.pem").string(), (dir/"cert.pem").string(), "bad-cert" );
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		Crypto::CreateKeyCertificate( settings );
 		constexpr sv garbage{ "-----BEGIN CERTIFICATE-----\ngarbage\n" };
 		{ std::ofstream damaged{ settings.Certificate.Path, std::ios::trunc|std::ios::binary }; damaged << garbage; }//binary, so the read-back below compares the bytes that were written.
@@ -412,7 +412,7 @@ namespace Jde::Crypto{
 		let dir = ScratchDir( "reissueExpired" );
 		let publicFile = (dir/"public.pem").string(), privateFile = (dir/"private.pem").string(), certFile = (dir/"cert.pem").string();
 		let settings = SslSettings( publicFile, privateFile, certFile, "reissue-expired", "DNS:localhost" );
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		Crypto::CreateKey( settings, SRCE_CUR );
 		let key = Crypto::ReadPublicKey( publicFile );
 		let expiration = [&]{ return Crypto::Certificate{ ReadCertificate(certFile) }.Expiration; };
@@ -444,7 +444,7 @@ namespace Jde::Crypto{
 		let dir = ScratchDir( "readOnlyCert" );
 		let publicFile = (dir/"public.pem").string(), privateFile = (dir/"private.pem").string(), certFile = (dir/"cert.pem").string();
 		let settings = SslSettings( publicFile, privateFile, certFile, "read-only-cert", "DNS:localhost" );
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		Crypto::CreateKey( settings, SRCE_CUR );
 		Crypto::IssueCertificate( settings, std::chrono::hours{-24} );//expired, so EnsureKeyCertificate has to re-issue it.
 		ASSERT_EQ( Crypto::ReissueReason(settings).substr(0, 7), "expired" );
@@ -479,7 +479,7 @@ namespace Jde::Crypto{
 		let dir = ScratchDir( "mismatchedPair" );
 		let mine = SslSettings( (dir/"public.pem").string(), (dir/"private.pem").string(), (dir/"cert.pem").string(), "mismatched-pair" );
 		let other = SslSettings( (dir/"other-public.pem").string(), (dir/"other-private.pem").string(), (dir/"cert.pem").string(), "mismatched-pair" );//the same certificate path
-		mine.CreateDirectories();
+		mine.CreateDirs();
 		Crypto::CreateKeyCertificate( mine );
 		Crypto::CreateKeyCertificate( other );//re-issues the shared certificate on the other key
 		let key = Crypto::ReadPublicKey( mine.PublicKey.Path );
@@ -499,7 +499,7 @@ namespace Jde::Crypto{
 		let dir = ScratchDir( "reconcileSan" );
 		let publicFile = (dir/"public.pem").string(), privateFile = (dir/"private.pem").string(), certFile = (dir/"cert.pem").string();
 		let sanless = SslSettings( publicFile, privateFile, certFile, "reconcile-san", "" );
-		sanless.CreateDirectories();
+		sanless.CreateDirs();
 		Crypto::CreateKeyCertificate( sanless );
 		EXPECT_TRUE( Crypto::Certificate{ ReadCertificate(certFile) }.SubjectAltName.empty() );
 
@@ -521,7 +521,7 @@ namespace Jde::Crypto{
 		let dir = ScratchDir( "unmanaged" );
 		let publicFile = (dir/"public.pem").string(), privateFile = (dir/"private.pem").string(), certFile = (dir/"cert.pem").string();
 		let issued = SslSettings( publicFile, privateFile, certFile, "unmanaged-cn", "DNS:issued" );
-		issued.CreateDirectories();
+		issued.CreateDirs();
 		Crypto::CreateKeyCertificate( issued );//stands in for the operator's pair
 		auto originalDer = ReadCertificate( certFile );
 		fs::remove( publicFile );//a supplied pair comes without one
@@ -559,7 +559,7 @@ namespace Jde::Crypto{
 	TEST_F( OpenSslTests, EnsureKeyCertificate_EncryptsAKeyWrittenBeforeThePasscode ){
 		let dir = ScratchDir( "passcodeLater" );
 		let clear = keyed( dir, {} );
-		clear.CreateDirectories();
+		clear.CreateDirs();
 		Crypto::CreateKeyCertificate( clear );//the install's first start:  JDE_PASSCODE unset
 		ASSERT_EQ( pemHeader(clear.PrivateKey.Path), "-----BEGIN PRIVATE KEY-----" );
 		let originalKey = Crypto::ReadPublicKey( clear.PublicKey.Path );
@@ -580,7 +580,7 @@ namespace Jde::Crypto{
 	TEST_F( OpenSslTests, EnsureKeyCertificate_LeavesAnEncryptedKeyAlone ){
 		let dir = ScratchDir( "passcodeSet" );
 		let settings = keyed( dir, passcode );
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		Crypto::CreateKeyCertificate( settings );
 		let before = IO::Load( settings.PrivateKey.Path );
 		Crypto::EnsureKeyCertificate( settings );
@@ -593,7 +593,7 @@ namespace Jde::Crypto{
 	TEST_F( OpenSslTests, EnsureKeyCertificate_DoesNotEncryptWithoutAPasscodeOrAnOperatorsKey ){
 		let dir = ScratchDir( "passcodeNone" );
 		let clear = keyed( dir, {} );
-		clear.CreateDirectories();
+		clear.CreateDirs();
 		Crypto::CreateKeyCertificate( clear );
 		Crypto::EnsureKeyCertificate( clear );
 		EXPECT_EQ( pemHeader(clear.PrivateKey.Path), "-----BEGIN PRIVATE KEY-----" );

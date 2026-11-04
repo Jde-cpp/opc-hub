@@ -100,8 +100,7 @@ namespace Jde::App{
 				std::map<uuid,FileEntry> strings;//the day's new entries'.
 				if( existing ){
 					let size = existing->Size( _sl );
-					IO::ReadAwait read{ existing, IO::ReadOptions{.Offset=0, .Size=std::min<uint>(size, Log::ArchiveHeadBytes), .Tags=_tags} };//by reference: a ReadAwait does not move.
-					head = Log::HeadOf( co_await Any(read) );
+					head = Log::HeadOf( co_await IO::ReadAwait{existing, IO::ReadOptions{.Offset=0, .Size=std::min<uint>(size, Log::ArchiveHeadBytes), .Tags=_tags}} );
 					if( !head ){//as the historian leaves a file that isn't its own:  with the records for it dropped.
 						ERR( "'{}' isn't an archive the record layer wrote:  its {} entries for {} are dropped, and the log won't write to it until it is repaired or removed.", path.string(), entries.size(), IO::Records::DayDirectory(day).string() );
 						continue;
@@ -133,13 +132,10 @@ namespace Jde::App{
 					for( auto part = rewrite.Next(); part!=IO::Records::EPart::Done; part = rewrite.Next() ){
 						if( part==IO::Records::EPart::More ){//the rewrite's merge wants bytes of the archive it merges.
 							let w = *rewrite.Wants();
-							IO::ReadAwait read{ rewrite.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size, .Tags=_tags} };
-							rewrite.Feed( co_await Any(read) );
+							rewrite.Feed( co_await IO::ReadAwait{rewrite.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size, .Tags=_tags}} );
 						}
-						else{
-							auto write = rewrite.Write( _sl );
-							co_await Any( write );
-						}
+						else
+							co_await rewrite.Write( _sl );
 					}
 					IO::Replace( temp, path, _sl );//not fs::rename:  MoveFileEx on Windows, refused an archive a reader has open.
 				}

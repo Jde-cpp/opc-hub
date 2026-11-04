@@ -6,7 +6,7 @@
 
 #define Φ Γ auto
 namespace Jde::IO{
-	Φ CreateDirectories( const fs::path& path, SRCE )ε->bool;
+	Φ CreateDirs( const fs::path& path, SRCE )ε->bool;
 	Φ Load( const fs::path& path, SRCE )ε->string;
 	Φ LoadBinary( const fs::path& path, SRCE )ε->vector<char>;
 	Ŧ SaveBinary( const fs::path& path, std::span<T> values, bool append=false, SRCE )ε->void;

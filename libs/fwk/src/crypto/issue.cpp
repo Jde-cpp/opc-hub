@@ -50,7 +50,7 @@ namespace Jde{
 	//https://stackoverflow.com/questions/5927164/how-to-generate-rsa-private-key-using-openssl
 	α Crypto::CreateKey( const CryptoSettings& settings, SL sl )ε->void{
 		auto key = PrivateKey::Generate( sl );
-		settings.CreateDirectories();
+		settings.CreateDirs();
 		key.WritePublic( settings.PublicKey.Path, sl );
 		INFO( "Created public key at {}", settings.PublicKey.Path.string() );
 		key.Write( settings.PrivateKey.Path, settings.PrivateKey.Passcode, sl );
@@ -96,7 +96,7 @@ namespace Jde{
 
 		let& path = certSettings.Path;
 		if( !fs::exists(path.parent_path()) )
-			IO::CreateDirectories( path.parent_path() );
+			IO::CreateDirs( path.parent_path() );
 		OSSL_CALL( ::PEM_write_bio_X509(WriteFile(path, sl).get(), pCert), sl );//the BIO closes with the statement, so the read below sees the file.
 		Certificate{ ReadCertificate(path, sl), sl }.Log( Ƒ("Issued Certificate at {}", path.string()), sl );
 	}
@@ -155,7 +155,7 @@ namespace Jde{
 			THROW_IF( !fs::exists(settings.PrivateKey.Path), "certificate.managed is false and the private key '{}' does not exist - supply the pair, or set managed:true to have one issued.", settings.PrivateKey.Path.string() );
 			THROW_IF( !fs::exists(settings.Certificate.Path), "certificate.managed is false and the certificate '{}' does not exist - supply the pair, or set managed:true to have one issued.", settings.Certificate.Path.string() );
 			if( !fs::exists(settings.PublicKey.Path) ){//CreateKey writes it beside a key it generates; an operator's key comes without one, and the app server's identity (SetPublicKey) reads it.
-				settings.CreateDirectories();
+				settings.CreateDirs();
 				PrivateKey{ settings.PrivateKey.Path, settings.PrivateKey.Passcode, sl }.WritePublic( settings.PublicKey.Path, sl );
 				INFO( "Wrote the public key of '{}' to '{}'.", settings.PrivateKey.Path.string(), settings.PublicKey.Path.string() );
 			}

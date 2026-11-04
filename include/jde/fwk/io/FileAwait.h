@@ -1,26 +1,15 @@
 ﻿#pragma once
-#ifndef FILECO_H
-#define FILECO_H
-#include <queue>
-#include <jde/fwk/co/Task.h>
-#ifdef _MSC_VER
-	#include <jde/fwk/process/os/windows/WindowsHandle.h>
-	using HFile=Jde::HandlePtr;
-#else
-	using HFile=int;
-#endif
-#include <jde/fwk/co/Await.h>
+#ifndef FILE_AWAIT_H
+#define FILE_AWAIT_H
+#include <jde/fwk/co/AnyAwait.h>
 
 #define Φ Γ auto
 
 namespace Jde::IO{
 	Φ Init()ε->void;
-#ifndef _MSC_VER
-	α LinuxInit()ε->void;
-#endif
 
 	Φ ChunkByteSize()ι->uint32;
-	Φ ThreadSize()ι->uint8;
+	Φ WindowSize()ι->uint8;//chunks of one transfer in flight at once:  /workers/io/threads.
 
 	//Truncate replaces the file - required whenever data is the whole file, otherwise a shorter write leaves the previous version's tail behind.  At writes over what is there and leaves the rest of the file alone.
 	//Every mode shares the file with its readers, on windows as on linux, so a read by path under a Truncate can return bytes of both versions:  a file read while it is replaced whole goes to a temp, which IO::Replace puts over the name.
@@ -41,117 +30,47 @@ namespace Jde::IO{
 	//A file open to read at any offset, shared by the reads of it:  they read the file it opened whatever is renamed over
 	//its path after, where a read by path would open the new file.  Linux O_RDONLY|O_CLOEXEC, blocking (a FIFO's open waits
 	//for its writer, as an ifstream's does); Windows GENERIC_READ sharing read, write and delete, overlapped, with one asio
-	//handle for every read of it.
+	//handle for every read of it.  Or open to write, by ForWrite:  a WriteAwait's, and the whole of how a file is opened for one.
 	struct Γ OpenFile final : noncopyable{
 		OpenFile( fs::path path, SRCE )ε;//IOException, Error NotFound for a file that isn't there.
+		//Open for the write the options describe:  made when Create says so, and on linux the directories on its path; cut to
+		//Offset for a Truncate, which fails past the end of the file; the names a synced write adds counted, each directory
+		//that gained one held for the sync.  Shares read and write, and not delete.  IOException, as the read open.
+		Ω ForWrite( fs::path path, const WriteOptions& options, SRCE )ε->up<OpenFile>;
 		~OpenFile();
 		α Path()Ι->const fs::path&{ return _path; }
 		α Size( SRCE )Ε->uint;//now:  the file may have grown since the open, and a read is clamped to it.
 		//Up to size bytes at offset, read now on the calling thread, fewer at the end of the file and none past it:  the
 		//synchronous counterpart of a ReadAwait over the file, for a caller that can't await, such as one on an executor thread.
 		α Read( uint offset, char* buffer, uint size, SRCE )Ε->uint;
-#ifdef _MSC_VER
-		α Native()Ι->void*{ return _handle.get(); }//HANDLE
-		struct Asio;//the random_access_handle the reads share, over a duplicate of the HANDLE:  made on the first read, owned here.
-		α Shared( SRCE )ε->sp<Asio>;
-#else
-		α Native()Ι->int{ return _fd; }
-#endif
+		struct Impl;//the platform's handle, an fd or a HANDLE with the asio handle the reads share, and a write's name directories:  defined with the ops in libs/fwk/src/io/FileOp.h, so no platform type is here.
+		α Native()Ι->Impl&;
 	private:
+		OpenFile( fs::path path, up<Impl> impl )ι;//ForWrite's.
 		const fs::path _path;
-#ifdef _MSC_VER
-		HandlePtr _handle;
-		sp<Asio> _asio; std::mutex _mutex;
-#else
-		int _fd{ -1 };
-#endif
+		up<Impl> _impl;
 	};
 
-	struct FileIOArg;
-	struct IFileChunkArg{
-		IFileChunkArg( sp<FileIOArg>& arg, uint index ):
-			Index{index},
-			_fileIOArg{arg}
-		{}
-		virtual ~IFileChunkArg()=default;
-		β Handle()Ι->HFile&;
-		β Process()ι->void{};
-		β FileArg()Ι->sp<FileIOArg>{ return _fileIOArg; }
-		α IsRead()Ι->bool;
-
-		uint Index;
-	private:
-		sp<FileIOArg> _fileIOArg;
-	};
-
-	struct FileIOArg final : std::enable_shared_from_this<FileIOArg>, noncopyable{
-		using HCo=variant<StringAwait::Handle,VoidAwait::Handle>;
-		FileIOArg( fs::path path, ReadOptions options, bool vec, SRCE )ι;
-		FileIOArg( sp<OpenFile> file, ReadOptions options, SRCE )ι;//a read of an open file:  Handle borrows its descriptor on linux, Send its asio handle on windows, and neither is closed here.
-		FileIOArg( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SRCE )ι;
-		~FileIOArg();
-		α Open( bool create )ε->void;
-		α SizeBuffer( uint fileSize )ε->void;//reads: Buffer takes the range's share of a file that long.
-		α CheckPrefix( uint fileSize )ε->void;//Truncate: throws unless a file that long holds the Offset bytes it keeps.
-		α Send( HCo h )ι->void;
-		α Data()ι->char*{ return visit( [](auto&& x){return (char*)x.data();}, Buffer ); }
-		α Size()Ι{ return visit( [](auto&& x){return x.size();}, Buffer ); }
-		α PostExp( up<IFileChunkArg>&& chunk, uint32 code, string&& msg, bool written=false )ι->void;//written: the failure is the sync's, after the last byte - IOException::Written.
-		α ResumeExp( uint32 code, string&& msg )ι->void;
-		α ResumeExp( uint32 code, string&& m, lg& chunkLock )ι->void;
-
-		α CoHandle()ι->HCo{ lg _{_coHandleMutex}; auto h = _coHandle; if( IsRead ) _coHandle = StringAwait::Handle{}; else _coHandle = VoidAwait::Handle{}; return h; }
-		α ResumeComplete()ι->void;
-
-		variant<string,vector<byte>> Buffer;
-		std::queue<up<IFileChunkArg>> Chunks; std::mutex ChunkMutex;
-		std::atomic<bool> Finished{};//set on the op's first terminal transition (all chunks completed, or an error resume) - guards one-shot bookkeeping such as the platform request count.
-		atomic<uint> ChunksCompleted;
-		uint ChunksToSend;
-		uint Offset{};//the file offset of Buffer's first byte.  Appends: linux leaves it 0, O_APPEND placing the bytes, and windows' Open sets it to the EOF it finds.
-		optional<uint> Limit;//reads: the most bytes to take from Offset.
-		optional<EWriteMode> Mode;//writes only: a read has none, so nothing can take it for an append or a truncate.
-		bool Sync{};
-#ifdef _MSC_VER
-		HFile Handle{};//owning HandlePtr - null is the "no handle" sentinel and it self-closes; Send releases it into the asio handle, which then owns the close.
-#else
-		HFile Handle{ -1 };//raw fd - -1 is "no handle"; 0 is a *valid* descriptor and must not be conflated with unopened.
-#endif
-		vector<HFile> NameDirs;//Sync: the directories Open added a name to, the file's own first - each is synced after the data.  Raw fds on linux, which ~FileIOArg closes; windows only ever adds the file's name.
-		bool IsRead;
-		fs::path Path;
-		sp<OpenFile> Shared;//the open file a read is of, when it is of one.
-		SL _sl;
-		ELogTags _tags{ ELogTags::IO };
-		HCo _coHandle; mutex _coHandleMutex;
-	};
-
-	struct Γ IFileAwait{
-		IFileAwait( fs::path&& path, ReadOptions options, bool vec, SL sl )ι:_arg{ ms<FileIOArg>(move(path), options, vec, sl) }{}
-		IFileAwait( sp<OpenFile>&& file, ReadOptions options, SL sl )ι:_arg{ ms<FileIOArg>(move(file), options, sl) }{}
-		IFileAwait( fs::path&& path, variant<string,vector<byte>>&& data, WriteOptions options, SL sl )ι:_arg{ ms<FileIOArg>(move(path), move(data), options, sl) }{}
-		up<Exception> ExceptionPtr;
-		sp<FileIOArg> _arg;
-	};
-	struct Γ ReadAwait final : IFileAwait, StringAwait, noncopyable{
-		ReadAwait( fs::path path, ReadOptions options={}, SRCE )ι:IFileAwait{ move(path), options, false, sl }, StringAwait{ sl }{}
+	namespace Internal{ struct ReadOp; struct WriteOp; }//the ops behind the awaitables, libs/fwk/src/io/FileOp.h:  the platform files run them, and nothing a caller sees.
+	//Any family:  a coroutine of any return type co_awaits one, and an open that fails completes it in await_ready, with no
+	//suspend.  Movable until it suspends, as the family is - its op then resumes it by address, so a suspended one stays put.
+	struct Γ ReadAwait final : AnyAwait<string>{
+		ReadAwait( fs::path path, ReadOptions options={}, SRCE )ι;
 		//Over an open file:  its bytes at Offset, whatever is at its path now.
-		ReadAwait( sp<OpenFile> file, ReadOptions options={}, SRCE )ι:IFileAwait{ move(file), options, sl }, StringAwait{ sl }{}
-		α Suspend()ι->void override;
-		α await_ready()ι->bool override;
-		α await_resume()ε->string override;
-	};
-	struct Γ WriteAwait final : IFileAwait, VoidAwait, noncopyable{
-		WriteAwait( fs::path path, variant<string,vector<byte>> data, bool create=false, EWriteMode mode=EWriteMode::Append, ELogTags tags=ELogTags::IO, SRCE )ι:
-			WriteAwait{ move(path), move(data), WriteOptions{.Create=create, .Mode=mode, .Tags=tags}, sl }{}
-		template<class T> requires( std::is_arithmetic_v<T> && !std::is_same_v<T,bool> ) WriteAwait( fs::path, variant<string,vector<byte>>, T, EWriteMode=EWriteMode::Append, ELogTags=ELogTags::IO, SL=SRCE_CUR )=delete;//an offset would convert to create - WriteOptions takes one.
-		WriteAwait( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SRCE )ι:
-			IFileAwait{ move(path), move(data), options, sl }, VoidAwait{ sl }, _create{ options.Create }{}
-		α Suspend()ι->void override;
-		α await_ready()ι->bool override;
-		α await_resume()ε->void override;
+		ReadAwait( sp<OpenFile> file, ReadOptions options={}, SRCE )ι;
+		α await_ready()ι->bool override;//opens and sizes the buffer:  a range with no bytes in it completes here too, with an empty string.
+		α await_resume()ε->string;
 	private:
-		bool _create;
+		α Suspend()ι->void override;
+		sp<Internal::ReadOp> _op;
+	};
+	struct Γ WriteAwait final : AnyVoidAwait{
+		WriteAwait( fs::path path, variant<string,vector<byte>> data, WriteOptions options={}, SRCE )ι;
+		α await_ready()ι->bool override;//opens:  a failure, the options' or the file's, completes here.
+		α await_resume()ε->void;
+	private:
+		α Suspend()ι->void override;
+		sp<Internal::WriteOp> _op;
 	};
 }
 #undef Φ

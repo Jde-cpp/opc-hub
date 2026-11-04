@@ -457,7 +457,7 @@ namespace Jde::Opc::Hist{
 			}
 			restart = true;//removed since.
 		}
-		IO::MakeDirectories( file.Path.parent_path(), sl );
+		IO::CreateDirsForWrite( file.Path.parent_path(), sl );
 		let rewrite = ( file.Generation && !restart ) || Past( day, now ) || _recover.contains( day ) || _retired;
 		if( file.Unopened && !restart && !rewrite ){
 			try{
@@ -559,7 +559,7 @@ namespace Jde::Opc::Hist{
 				throw IO::IOException{ sl, file.Path, ELogLevel::Error, "{}, so the historian won't write to it", file.Refused };
 			restart = true;//removed since.
 		}
-		IO::MakeDirectories( file.Path.parent_path(), sl );
+		IO::CreateDirsForWrite( file.Path.parent_path(), sl );
 		if( file.Unopened && !restart ){
 			try{
 				IO::Records::Truncate( file.Path, *file.Unopened, sl );
@@ -627,7 +627,7 @@ namespace Jde::Opc::Hist{
 		//Every directory to the root, on a file's first append here:  a new file's write syncs only the names it added,
 		//and another group's write, or an earlier one that failed, may have made the rest.
 		if( run.Restart || !file.Named )
-			IO::SyncDirectories( _root, DayDirectory(run.Date), sl );
+			IO::SyncDirs( _root, DayDirectory(run.Date), sl );
 		if( run.Restart )
 			file = DayFile{ {.Path=move(file.Path)}, {} };
 		file.Committed( run.End, run.Chain, move(run.Runs) );
@@ -658,7 +658,7 @@ namespace Jde::Opc::Hist{
 		}
 		_unsynced.insert( rewrite.Date );
 		try{
-			IO::SyncDirectories( _root, DayDirectory(rewrite.Date), sl );
+			IO::SyncDirs( _root, DayDirectory(rewrite.Date), sl );
 			_unsynced.erase( rewrite.Date );
 		}
 		catch( const IO::IOException& ){}//said as it goes.
@@ -669,7 +669,7 @@ namespace Jde::Opc::Hist{
 			std::error_code ec;
 			if( fs::exists(File(day), ec) || ec ){//one purged since has no name to keep.
 				try{
-					IO::SyncDirectories( _root, DayDirectory(day), sl );
+					IO::SyncDirs( _root, DayDirectory(day), sl );
 				}
 				catch( const IO::IOException& e ){
 					e.SetLevel( ELogLevel::Debug );//said at Error by its Commit.

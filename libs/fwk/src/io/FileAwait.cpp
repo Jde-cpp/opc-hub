@@ -1,163 +1,196 @@
 ﻿#include <jde/fwk/io/FileAwait.h>
-#include <jde/fwk/process/execution.h>
 #include <jde/fwk/exceptions/IOException.h>
+#include <jde/fwk/process/execution.h>
+#include "FileOp.h"
 
 #define let const auto
 namespace Jde{
 	uint32 _chunkSize;
 	α IO::ChunkByteSize()ι->uint32{ return _chunkSize; }
-	uint8 _threadSize;
-	α IO::ThreadSize()ι->uint8{ return _threadSize; }
+	uint8 _windowSize;
+	α IO::WindowSize()ι->uint8{ return _windowSize; }
 	α IO::Init()ε->void{
 		_chunkSize = Settings::FindNumber<uint32>("/workers/io/chunkByteSize").value_or(1 << 19);//512 KB.
-		_threadSize = Settings::FindNumber<uint8>("/workers/io/threads").value_or(5);
+		_windowSize = Settings::FindNumber<uint8>("/workers/io/threads").value_or(5);
 #ifndef _MSC_VER
-		LinuxInit();
+		IO::Internal::LinuxInit();
 #endif
 	}
+	IO::OpenFile::OpenFile( fs::path path, up<Impl> impl )ι:_path{ move(path) }, _impl{ move(impl) }{}
+	IO::OpenFile::~OpenFile()=default;//Impl's:  on windows the asio handle, then the HandlePtrs; on linux its destructor.
+	α IO::OpenFile::Native()Ι->Impl&{ return *_impl; }
 
-namespace IO{
-	α IFileChunkArg::Handle()Ι->HFile&{ return _fileIOArg->Handle; }
-	α IFileChunkArg::IsRead()Ι->bool{ return _fileIOArg->IsRead; }
-
-	FileIOArg::FileIOArg( fs::path path, ReadOptions options, bool vec, SL sl )ι:
-		Offset{ options.Offset },
-		Limit{ options.Size },
-		IsRead{ true },
-		Path{ move(path) },
-		_sl{ sl },
-		_tags{ options.Tags }{
-		if( vec )
-			Buffer = vector<byte>{};
-	}
-	FileIOArg::FileIOArg( sp<OpenFile> file, ReadOptions options, SL sl )ι:
-		Offset{ options.Offset },
-		Limit{ options.Size },
-		IsRead{ true },
-		Path{ file->Path() },
-		Shared{ move(file) },
-		_sl{ sl },
-		_tags{ options.Tags }
-	{}
-	FileIOArg::FileIOArg( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SL sl )ι:
-		Buffer{ move(data) },
-		Offset{ options.Offset },
-		Mode{ options.Mode },
-		Sync{ options.Sync },
-		IsRead{ false },
-		Path{ move(path) },
-		_sl{ sl },
-		_tags{ options.Tags }
+namespace IO::Internal{
+	Chunk::Chunk( sp<FileOp> op, uint index )ι:
+		Op{ move(op) },
+		Index{ index },
+		Start{ index*ChunkByteSize() },
+		Bytes{ std::min<uint>(Start+ChunkByteSize(), Op->Size())-Start },
+		Offset{ Op->Offset+Start }
 	{}
 
-	α FileIOArg::SizeBuffer( uint fileSize )ε->void{
-		let size = fileSize>Offset ? std::min( Limit.value_or(fileSize), fileSize-Offset ) : 0;//a range that starts at or past the end reads nothing.
-		visit( [size](auto&& b){ b.resize(size); }, Buffer );
-	}
-	α FileIOArg::CheckPrefix( uint fileSize )ε->void{
-		if( fileSize>=Offset )
+	FileOp::FileOp( bool isRead, fs::path path, uint offset, ELogTags tags, SL sl )ι:
+		Offset{ offset },
+		IsRead{ isRead },
+		Path{ move(path) },
+		_sl{ sl },
+		_tags{ tags }
+	{}
+	atomic<uint> _inFlight{};
+	α FileOp::InFlight()ι->uint{ return _inFlight; }
+	α FileOp::Send( sp<FileOp> self )ι->void{
+		if( !Executor() ){//finalizing - the io could never run, nor the resume be posted:  Post's drop semantics, on both platforms.
+			WARN( "[{}]Send after executor teardown - dropping file io.", Path.string() );
 			return;
-		//cutting a shorter file to Offset grows it with zeros, which would then pass for the kept bytes.
-		IOException e{ Path, Ƒ("Truncate offset {} is past the end of the file, {} bytes", Offset, fileSize), _sl };
+		}
+		let chunkByteSize = ChunkByteSize();
+		ChunksToSend = (Size()+chunkByteSize-1)/chunkByteSize;
+		++_inFlight;
+		if( !ChunksToSend && !Syncs() ){//an empty write:  no completion will come, and nothing to sync.
+			TRACE( "[{}]Empty file - resuming without io.", Path.string() );
+			Complete();
+			return;
+		}
+		Start( move(self) );
+	}
+	α FileOp::NextChunk()ι->optional<uint>{
+		let index = _nextChunk++;
+		return index<ChunksToSend ? optional<uint>{ index } : nullopt;
+	}
+	α FileOp::Transferred( Chunk& chunk, uint bytes )ι->ETransfer{
+		if( !bytes )
+			return ETransfer::NoProgress;
+		if( bytes<chunk.Bytes ){
+			TRACE( "Partial {}: {}, index: {}, completed: {} of {} - resubmitting remainder.", IsRead ? "read" : "write", Path.string(), chunk.Index, bytes, chunk.Bytes );
+			chunk.Start += bytes; chunk.Offset += bytes; chunk.Bytes -= bytes;
+			return ETransfer::Resubmit;
+		}
+		if( ChunksToSend>++ChunksCompleted )
+			return ETransfer::Next;
+		return Syncs() ? ETransfer::Sync : ETransfer::Done;
+	}
+	α FileOp::Synced( uint step )Ι->optional<uint>{ return step<NameDirs().size() ? optional<uint>{ step+1 } : nullopt; }
+	α FileOp::Window()Ι->uint{ return std::min<uint>( ChunksToSend, WindowSize() ); }
+	α FileOp::Complete( up<Exception> error )ι->void{
+		if( Finished.exchange(true) )
+			return;
+		--_inFlight;
+		if( error )
+			_nextChunk = ChunksToSend;//no chunk starts after a failure:  those in flight land here, as nothing.
+		PostResume( move(error) );
+	}
+	α FileOp::Complete( uint32 code, string&& m, bool written )ι->void{
+		auto e = mu<IOException>( Path, code, move(m), _sl );
+		e->Written = written;
+		Complete( move(e) );
+	}
+
+	ReadOp::ReadOp( fs::path path, ReadOptions options, SL sl )ι:
+		TypedOp<ReadAwait>{ true, move(path), options.Offset, options.Tags, sl },
+		Limit{ options.Size }
+	{}
+	ReadOp::ReadOp( sp<OpenFile> file, ReadOptions options, SL sl )ι:
+		TypedOp<ReadAwait>{ true, file->Path(), options.Offset, options.Tags, sl },
+		Limit{ options.Size }{
+		_file = move( file );
+	}
+	α ReadOp::Open()ε->void{
+		if( !_file )
+			_file = ms<OpenFile>( Path, _sl );
+		SizeBuffer( _file->Size(_sl) );
+		TRACE( "[{}]Read size={}", Path.string(), Size() );
+	}
+	α ReadOp::SizeBuffer( uint fileSize )ε->void{
+		let size = fileSize>Offset ? std::min( Limit.value_or(fileSize), fileSize-Offset ) : 0;//a range that starts at or past the end reads nothing.
+		Buffer.resize( size );
+		_bytes = Buffer;
+	}
+	α ReadOp::PostResume( up<Exception> error )ι->void{
+		auto buffer = error ? string{} : move( Buffer );//a failed read keeps its buffer:  a chunk of it may still be in flight, landing in it.
+		Post( [a=Take(), error=move(error), buffer=move(buffer)]() mutable { if( error ) a->ResumeExp( move(*error) ); else a->Resume( move(buffer) ); } );
+	}
+
+	WriteOp::WriteOp( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SL sl )ι:
+		TypedOp<WriteAwait>{ false, move(path), options.Offset, options.Tags, sl },
+		Data{ move(data) },
+		Options{ options }{
+		_bytes = visit( []( auto& x ){ return std::span<char>{ (char*)x.data(), x.size() }; }, Data );
+	}
+	α WriteOp::Open()ε->void{
+		if( Options.Mode==EWriteMode::Append && Options.Offset ){//an At that lost its Mode - appending instead would grow the file on every write.
+			IOException e{ Path, "Append takes no Offset - EWriteMode::At writes at one", _sl };
+			e.Error = EIOError::Invalid;
+			e.Throw();
+		}
+		_file = OpenFile::ForWrite( Path, Options, _sl );
+#ifdef _MSC_VER
+		if( Options.Mode==EWriteMode::Append )//chunks write at explicit offsets, from the end the open found.  Linux's O_APPEND places them, and Offset stays 0.
+			Offset = _file->Size( _sl );
+#endif
+		TRACE( "[{}]Write size={}", Path.string(), Size() );
+	}
+	α WriteOp::PostResume( up<Exception> error )ι->void{
+		Post( [a=Take(), error=move(error)]() mutable { if( error ) a->ResumeExp( move(*error) ); else a->Resume(); } );
+	}
+}
+namespace IO{
+	using namespace Internal;
+	α Internal::CheckPrefix( const fs::path& path, uint offset, uint fileSize, SL sl )ε->void{
+		if( fileSize>=offset )
+			return;
+		IOException e{ path, Ƒ("Truncate offset {} is past the end of the file, {} bytes", offset, fileSize), sl };
 		e.Error = EIOError::Invalid;
 		e.Throw();
 	}
 
-	α FileIOArg::PostExp( up<IFileChunkArg>&& chunk, uint32 code, string&& m, bool written )ι->void{
-		{
-			lg l{ ChunkMutex };
-			while( Chunks.size() )
-				Chunks.pop();
-		}
-		//one arm for both handle types - the read/write promises share ResumeExp(Exception&&, h).  CoHandle already
-		//nulled _coHandle under _coHandleMutex; a null handle means the awaiter was already resumed, nothing to post.
-		visit( [&]( auto h ){
-			if( h )
-				Post( [path=move(Path), sl=_sl, m=move(m), code, written, h](){
-					IO::IOException e{ path, code, move(m), sl };
-					e.Written = written;
-					h.promise().ResumeExp( move(e), h );
-				} );
-		}, CoHandle() );
-		chunk=nullptr;
-	}
-
-	α FileIOArg::ResumeComplete()ι->void{
-		visit( [this]( auto h ){
-			constexpr bool isRead = std::is_same_v<decltype(h), StringAwait::Handle>;
-			if( !h ){//a read loses its handle to PostExp when an earlier chunk failed while a later one was still in flight - that
-				if constexpr( !isRead )//completion is expected & silent.  A write completes only once every chunk has, so a missing handle is a bug.
-					CRITICAL( "[{}]no handle.", Path.string() );
-				return;
-			}
-			if constexpr( isRead )
-				Post( get<string>(move(Buffer)), move(h) );
-			else
-				Post( move(h) );
-		}, CoHandle() );
-	}
-
-	α FileIOArg::ResumeExp( uint32 code, string&& m )ι->void{
-		lg l{ ChunkMutex };
-		ResumeExp( code, move(m), l );
-	}
-	α FileIOArg::ResumeExp( uint32 code, string&& m, lg& /*chunkLock*/ )ι->void{
-		IOException e{ Path, code, move(m), _sl };
-		visit( [&e]( auto h ){ h.promise().ResumeExp( move(e), h ); }, CoHandle() );//same contract as before: the caller holds a live handle.
-	}
+	ReadAwait::ReadAwait( fs::path path, ReadOptions options, SL sl )ι:
+		AnyAwait<string>{ sl }, _op{ ms<ReadOp>(move(path), options, sl) }
+	{}
+	ReadAwait::ReadAwait( sp<OpenFile> file, ReadOptions options, SL sl )ι:
+		AnyAwait<string>{ sl }, _op{ ms<ReadOp>(move(file), options, sl) }
+	{}
+	WriteAwait::WriteAwait( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SL sl )ι:
+		AnyVoidAwait{ sl }, _op{ ms<WriteOp>(move(path), move(data), options, sl) }
+	{}
 
 	α ReadAwait::await_ready()ι->bool{
 		try{
-			_arg->Open( false );
+			_op->Open();
 		}
 		catch( IOException& e ){
-			ExceptionPtr = e.Move();
+			_error = e.Move();
+			return true;
 		}
-		return ExceptionPtr!=nullptr;
+		if( _op->Size() )
+			return false;
+		_result = string{};//nothing to send:  an empty file, or a range at or past its end.
+		return true;
 	}
 
 	α WriteAwait::await_ready()ι->bool{
-		if( _arg->Mode==EWriteMode::Append && _arg->Offset ){//an At that lost its Mode - appending instead would grow the file on every write.
-			auto e = mu<IOException>( _arg->Path, "Append takes no Offset - EWriteMode::At writes at one", _arg->_sl );
-			e->Error = EIOError::Invalid;
-			ExceptionPtr = move( e );
-			return true;
-		}
 		try{
-			_arg->Open( _create );
+			_op->Open();
 		}
 		catch( IOException& e ){
-			ExceptionPtr = e.Move();
+			_error = e.Move();
 		}
-		return ExceptionPtr!=nullptr;
+		return _error!=nullptr;
 	}
 
 	α ReadAwait::Suspend()ι->void{
-		DBGT( _arg->_tags, "ReadAwait::Suspend: {}, size: {}", _arg->Path.string(), _arg->Size() );
-		_arg->Send( _h );
+		DBGT( _op->_tags, "ReadAwait::Suspend: {}, size: {}", _op->Path.string(), _op->Size() );
+		ReadOp::Send( _op, *this );
 	}
 	α WriteAwait::Suspend()ι->void{
-		DBGT( _arg->_tags, "WriteAwait::Suspend: {}, size: {}", _arg->Path.string(), _arg->Size() );
-		_arg->Send( _h );
+		DBGT( _op->_tags, "WriteAwait::Suspend: {}, size: {}", _op->Path.string(), _op->Size() );
+		WriteOp::Send( _op, *this );
 	}
 	α ReadAwait::await_resume()ε->string{
-		if( ExceptionPtr )
-			ExceptionPtr->Throw();
-		DBGT( _arg->_tags, "ReadAwait::Complete: {}, size: {}", _arg->Path.string(), _arg->Size() );
-		//The failure of a suspended read lives in the promise - PostExp/ResumeExp put it there - and Open sized Buffer to the
-		//file *before* the io ran, so a read that failed still has a full-length buffer the io never filled.  Testing r.size()
-		//first therefore reported every such failure as a successful read of that many zero bytes; reading a directory
-		//returned 200 of them instead of throwing EISDIR.  CheckException keeps the concrete IOException type.
-		if( Promise()->Exp() )
-			CheckException();
-		if( auto& r = get<string>(_arg->Buffer); r.size() )
-			return move(r);
-		return StringAwait::await_resume();
+		DBGT( _op->_tags, "ReadAwait::Complete: {}, size: {}", _op->Path.string(), _op->Size() );
+		return AnyAwait<string>::await_resume();//the error slot first, then the bytes - a failed read's buffer never reaches here.
 	}
 	α WriteAwait::await_resume()ε->void{
-		if( ExceptionPtr )
-			ExceptionPtr->Throw();
-		DBGT( _arg->_tags, "WriteAwait::Complete: {}, size: {}", _arg->Path.string(), _arg->Size() );
-		VoidAwait::await_resume();
+		DBGT( _op->_tags, "WriteAwait::Complete: {}, size: {}", _op->Path.string(), _op->Size() );
+		AnyVoidAwait::await_resume();
 	}
 }}

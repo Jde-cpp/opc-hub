@@ -41,8 +41,7 @@ namespace Jde::App{
 				if( !timeAsc )
 					std::ranges::reverse( days );
 				for( let& file : days ){
-					IO::ReadAwait read{ file };//by reference: a ReadAwait does not move.
-					auto bytes = co_await Any( read );
+					auto bytes = co_await IO::ReadAwait{ file };
 					if( !Log::HeadOf(bytes) )
 						throw IO::IOException{ _sl, file, ELogLevel::Error, "isn't an archive the record layer wrote" };
 					archive.Append( _ql, Log::ParseRecords(bytes, file) );
