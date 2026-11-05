@@ -194,7 +194,7 @@ namespace Jde::App::Server{
 			if( result.at("adminCheck").at("isAdmin").as_bool() )
 				Resume();
 			else
-				ResumeExp( Exception{Source(), {}, "User {:x} is not admin for resource '{}' with criteria '{}'.", _userPK.Value, _resource, _criteria} );
+				ResumeExp( Exception{Source(), {}, "User {} is not admin for resource '{}' with criteria '{}'.", _userPK.Value, _resource, _criteria} );//plain {}:  an Exception keeps its arguments as strings, so a numeric spec is a bad format
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

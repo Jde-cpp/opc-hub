@@ -1,0 +1,41 @@
+:host{
+	display: block;
+	width: 100%;
+}
+.truncated{
+	margin: 8px 0;
+	color: var(--mat-sys-on-surface-variant);
+}
+.direction-icon{
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	margin-inline-end: 4px;
+	color: var(--mat-sys-on-surface-variant);
+}
+.mat-column-direction, .mat-column-class{
+	flex: 0 0 120px;
+	padding-inline: 5px;
+}
+.mat-column-refType, .mat-column-typeDef{
+	flex: 0 0 200px;
+	min-width: 0;
+	padding-inline: 5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mat-column-target{
+	flex: 1 1 200px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+//the target's name as a link-shaped button, sized to the dense row
+.target{
+	min-width: 0;
+	height: 28px;
+	padding-inline: 8px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

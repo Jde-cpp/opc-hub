@@ -2,18 +2,18 @@ import { inject, Injectable } from '@angular/core';
 import { Router } from '@angular/router';
 import { ISearchProvider, SearchResult } from 'jde-spa';
 import { errorMessage, isRefusal } from 'jde-framework';
-import { ENodeClass } from '../model/node';
+import { ENodeClass, NodePlace, pageSegments } from '../model/node';
 import { NodeId } from '../model/node-id';
 import { toBrowse } from '../model/types';
-import { Gateway, GATEWAY_SERVICE } from './gateway-service';
+import { Gateway, GATEWAY_SERVICE, placeNode } from './gateway-service';
 import { OPC_STORE } from './opc-store';
 
 export type NodeSearchRow = { connection:{ slug:string; name:string }; path:string; name:string; nodeClass:number; depth:number };
 
 //OPC node names through the gateway's `search` query.  Inside a connection's node tree only that connection is searched;
 //anywhere else every gateway is asked without an `opc`, which answers from the clients this session already holds - a name
-//search never opens an OPC session.  Hits render as name over `<connection>/<browse path>`.  A node id, `ns=2;i=1001`, is
-//looked up instead:  inside a connection the gateway walks up to the Objects folder for its page's path (NodeQLAwait's id
+//search never opens an OPC session.  Hits render as name over `<connection>/<browse path>`, the path from Root
+//(`Objects/…`).  A node id, `ns=2;i=1001`, is looked up instead:  inside a connection the gateway walks up to Root for its page's path (NodeQLAwait's id
 //form, the node-scoped resources' link), which connects as that connection's own pages do;  elsewhere there is no connection
 //to look it up on, and a notice says so.
 @Injectable({ providedIn: 'root' })
@@ -61,19 +61,19 @@ export class NodeSearchProvider implements ISearchProvider{
 		}
 		return hits.slice( 0, limit ).map( ({gateway, row})=>({
 			title: row.name,
-			route: [ '/gateways', gateway.slug, row.connection.slug, ...NodeSearchProvider.pagePath(row) ],//array form: the router encodes each browse segment, NodeRoute decodes them back.
+			route: [ '/gateways', gateway.slug, row.connection.slug, ...pageSegments(row.path, row.nodeClass) ],//array form: the router encodes each browse segment, NodeRoute decodes them back.
 			summary: `${row.connection.name}/${NodeSearchProvider.displayPath(row.path)}`,
 			icon: NodeSearchProvider.icon( row.nodeClass ),
 			rank: row.name.toLowerCase().startsWith( text.toLowerCase() ) ? 0 : 1,
 			source: this.name
 		}) );
 	}
-	//the one hit a node id names:  its page, by the path the gateway walks up - none for a node it cannot place (unknown, or
-	//outside the Objects folder, which has no page) - as a notice, so the id is not mistaken for a name no node has.
+	//the one hit a node id names:  its page, by the path the gateway walks up - none for a node it cannot place (unknown, or with a
+	//browse name no url can carry) - as a notice, so the id is not mistaken for a name no node has.
 	async byId( gateway:Gateway, opc:string, id:NodeId ):Promise<SearchResult[]>{
-		let node:{ name?:string; nodeClass?:number; path:string|null };
+		let node:NodePlace|undefined;
 		try{
-			node = await gateway.querySingle( `node( opc:$opc, id:$id ){ name nodeClass path }`, {opc, id: id.toJson()} );
+			node = await placeNode( gateway, opc, id );
 		}
 		catch( e ){
 			console.warn( `search: '${id.uaString()}' on '${opc}' failed.`, e );
@@ -81,9 +81,9 @@ export class NodeSearchProvider implements ISearchProvider{
 		}
 		const name = this.#opcStore.cnnctnName( gateway.slug, opc );
 		if( node?.path==null )
-			return [{ title: `No page for ${id.uaString()}`, summary: `${name}: no such node, or one outside the Objects folder.`, route: [], icon: 'error_outline', rank: 0, source: this.name, disabled: true }];
+			return [{ title: `No page for ${id.uaString()}`, summary: `${name}: no such node, or one the gateway cannot place.`, route: [], icon: 'error_outline', rank: 0, source: this.name, disabled: true }];
 		const row:NodeSearchRow = { connection: {slug: opc, name}, path: node.path, name: typeof node.name=="string" && node.name ? node.name : id.uaString(), nodeClass: node.nodeClass ?? ENodeClass.Object, depth: 0 };
-		return [{ title: row.name, route: [ '/gateways', gateway.slug, opc, ...NodeSearchProvider.pagePath(row) ], summary: `${name}${row.path ? '/'+NodeSearchProvider.displayPath(row.path) : ''}`, icon: NodeSearchProvider.icon( row.nodeClass ), rank: 0, source: this.name }];
+		return [{ title: row.name, route: [ '/gateways', gateway.slug, opc, ...pageSegments(row.path, row.nodeClass) ], summary: `${name}${row.path ? '/'+NodeSearchProvider.displayPath(row.path) : ''}`, icon: NodeSearchProvider.icon( row.nodeClass ), rank: 0, source: this.name }];
 	}
 	//the text as a node id in the UA spelling, `[ns=<n>;]<i|s|g|b>=<identifier>`, or nothing:  a name is never that shape
 	static nodeId( text:string ):NodeId|undefined{
@@ -95,13 +95,6 @@ export class NodeSearchProvider implements ISearchProvider{
 		const refused = isRefusal( e );//gateway/search is enforceable:  the index is fine, the user is not allowed.
 		return { title: refused ? `Search is not permitted for ${name}` : `Search is unavailable for ${name}`, summary: errorMessage(e), route: [], icon: refused ? 'block' : 'error_outline', rank: 0, source: this.name, disabled: true };
 	}
-	//The page a hit opens.  Only an Object has a page:  a Variable (or a Method) is a row on its parent's - its value, status and
-	//subscribe box - and routing to it showed a false "Not found." or the variable's own children (reviews/m3-closing.md #9).
-	//A Variable the crawl found under another Variable still lands on a Variable here;  NodeResolver walks that on up.
-	static pagePath( row:NodeSearchRow ):string[]{
-		const segments = row.path ? row.path.split( '/' ) : [];//the Objects folder's own path is empty:  the connection's page
-		return row.nodeClass==ENodeClass.Object ? segments : segments.slice( 0, -1 );
-	}
 	//the browse path as the breadcrumbs name it (nodeSegmentName):  `5~pumps/5~pump1` reads pumps/pump1.
 	static displayPath( path:string ):string{
 		return path.split( '/' ).map( segment=>String(toBrowse(segment, undefined).name) ).join( '/' );
@@ -110,6 +103,8 @@ export class NodeSearchProvider implements ISearchProvider{
 		switch( nodeClass ){
 			case ENodeClass.Variable: return 'label';
 			case ENodeClass.Method: return 'functions';
+			case ENodeClass.ObjectType: case ENodeClass.VariableType: case ENodeClass.DataType: case ENodeClass.ReferenceType: return 'category';
+			case ENodeClass.View: return 'visibility';
 			default: return 'folder';
 		}
 	}

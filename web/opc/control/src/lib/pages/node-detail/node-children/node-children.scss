@@ -136,3 +136,11 @@ be held wider by a long description. */
 	padding: 0;
 	margin-inline-start: 4px;
 }
+//the toolbar's *system nodes* toggle, beside Refresh and the views
+.system-toggle{
+	margin-inline-end: 8px;
+}
+//a Variable page's own row (NodeResolver):  the page itself, so no link
+mat-cell.mat-column-name > .self{
+	font-weight: 500;
+}

@@ -11,6 +11,7 @@ import { OpcError } from '../../../model/opc-error';
 import { EAccess, ETypes } from '../../../model/types';
 import { MethodCallDialog } from './method-call-dialog';
 import { NodeChildren } from './node-children';
+import { OpcStore } from '../../../services/opc-store';
 import { flush, pageTitleStub, provideRoute, silence, screenSize } from 'jde-spa/testing';
 import { snackbarStub } from 'jde-framework/testing';
 import { fakeGateway, TestGateway, variable } from 'jde-opc/testing';
@@ -526,5 +527,68 @@ describe( 'NodeChildren a Method\'s Call button', ()=>{
 		const open = vi.spyOn( MethodCallDialog, 'open' ).mockResolvedValue( undefined );
 		fixture.nativeElement.querySelector( 'button[aria-label="Call toHertz"]' ).click();
 		expect( open.mock.calls[0][1].method ).toBe( toHertz );
+	} );
+} );
+
+//reviews-issue/416-address-space.md #5:  the toggle off hid a ns-0 Variable page's own row - the row the page is for - and the sidenav
+//followed the toggle only at the next navigation.
+describe( 'NodeChildren the System nodes toggle', ()=>{
+	const create = ()=>{
+		TestBed.configureTestingModule({ providers: [screenSize(), provideRoute(), { provide: GATEWAY_SERVICE, useValue: {} }, { provide: SnackbarService, useValue: snackbarStub() }, pageTitleStub] });
+		const fixture = TestBed.createComponent( NodeChildren );
+		const page = fixture.componentInstance;
+		const self = new Variable( <any>{ns: 0, i: 2258, name: 'CurrentTime', browse: {ns: 0, name: 'CurrentTime'}} );
+		const route = { profileKey: 'k', node: self };
+		page.pageData = { gateway: fakeGateway( 'local' ), route, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
+		page.profile = { subscriptions: [] } as any;
+		fixture.componentRef.setInput( 'node', self );
+		page.viewSet.reset( [NodeView.default()] );
+		return { fixture, page, self };
+	};
+
+	it( "keeps a ns-0 Variable page's own row while it hides the other system nodes", ()=>{
+		const { page, self } = create();
+		const sibling = new Variable( <any>{ns: 0, i: 2257, name: 'StartTime', browse: {ns: 0, name: 'StartTime'}} );
+		const own = new Variable( <any>{ns: 2, i: 30, name: 'mine', browse: {ns: 2, name: 'mine'}} );
+		(<any>page).setNodes( [self, sibling, own], false );
+		page.setShowSystem( false );
+		expect( page.rows().map( n=>n.name ) ).toEqual( ['CurrentTime', 'mine'] );
+		page.setShowSystem( true );
+		expect( page.rows().map( n=>n.name ) ).toEqual( ['CurrentTime', 'mine', 'StartTime'] );
+	} );
+
+	//reviews-issue/416-address-space.md #12:  the Types folder's children are all system nodes, so its page was empty by default and said
+	//"No node matches this view." - the view's filters, which weren't the cause
+	it( 'says the toggle hid every row, and turns it on from there', ()=>{
+		const { fixture, page } = create();
+		const objectTypes = new OpcObject( <any>{ns: 0, i: 88, name: 'ObjectTypes', browse: {ns: 0, name: 'ObjectTypes'}, description: {text: ''}} );//as the browse answers it
+		(<any>page).setNodes( [objectTypes], false );
+		page.setShowSystem( false );
+		page.isLoading.set( false );
+		fixture.detectChanges();
+		const empty = ()=>fixture.nativeElement.querySelector( '.jde-empty' );
+		expect( empty()?.textContent ).toContain( 'System nodes are hidden.' );
+		expect( empty()?.textContent ).not.toContain( 'No node matches this view.' );
+		empty()!.querySelector( 'button' )!.click();
+		fixture.detectChanges();
+		expect( page.showSystem() ).toBe( true );
+		expect( page.rows().map( n=>n.name ) ).toEqual( ['ObjectTypes'] );
+		expect( empty() ).toBeNull();
+	} );
+	it( 'says the view matched nothing when the toggle hid nothing', ()=>{
+		const { page } = create();
+		page.setShowSystem( false );
+		(<any>page).setNodes( [], false );
+		expect( page.hiddenBySystem() ).toBe( false );
+	} );
+
+	//reviews-issue/416-address-space.md #15:  the toggle's state was kept in four places - this component's signal, LocalPrefs, the
+	//store's copy and the resolver's re-read - and the store's drifted until the next navigation.  The store holds the one.
+	it( "is the store's", ()=>{
+		const { page } = create();
+		page.setShowSystem( false );
+		page.setShowSystem( true );
+		expect( TestBed.inject( OpcStore ).showSystem() ).toBe( true );
+		expect( page.showSystem ).toBe( TestBed.inject( OpcStore ).showSystem );
 	} );
 } );

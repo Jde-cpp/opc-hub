@@ -1,6 +1,6 @@
-import { OpcObject } from './node';
+import { ObjectType, OpcObject, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
-import { EAccess } from './types';
+import { childBySegment, EAccess } from './types';
 import { variable } from 'jde-opc/testing';
 
 const x = ( json:object={} )=>variable( 1, 'x', json );
@@ -96,5 +96,60 @@ describe( 'Variable.historyWritable', ()=>{
 		expect( x( {historizing: true, userAccessLevel: EAccess.HistoryWrite} ).historyWritable ).toBe( true );
 		expect( x( {historizing: false, userAccessLevel: EAccess.All} ).historyWritable ).toBe( false );
 		expect( x( {historizing: true} ).historyWritable ).toBe( true );
+	} );
+} );
+//clients spec *Address space* (#416):  every class the browse answers is a node with a page, but a Method;  the standard's own nodes
+//are system nodes behind the children table's toggle, with Objects, Types and Views exempt as the root was;  and a namespace-0
+//name is spelled bare in a url, as the default namespace's is.
+describe( 'UaNode classes', ()=>{
+	const json = ( nodeClass:number, i=1 )=>({ ns: 0, i, name: 'n', browse: {ns: 0, name: 'n'}, nodeClass });
+	it( 'builds every class the gateway spells, and none it does not', ()=>{
+		expect( [1, 2, 4, 8, 16, 32, 64, 128].map( c=>UaNode.fromJson( json(c) )?.nodeClass ) ).toEqual( [1, 2, 4, 8, 16, 32, 64, 128] );
+		expect( UaNode.fromJson( json(1) ) ).toBeInstanceOf( OpcObject );
+		expect( UaNode.fromJson( json(2) ) ).toBeInstanceOf( Variable );
+		expect( UaNode.fromJson( json(8) ) ).toBeInstanceOf( ObjectType );
+		expect( UaNode.fromJson( json(0) ) ).toBeUndefined();
+	} );
+	it( 'gives every class a page but a Method', ()=>{
+		expect( [1, 2, 8, 16, 32, 64, 128].map( c=>UaNode.fromJson( json(c) )!.hasPage ) ).toEqual( [true, true, true, true, true, true, true] );
+		expect( UaNode.fromJson( json(4) )!.hasPage ).toBe( false );
+	} );
+	it( 'marks the standard\'s nodes system, with the first level exempt', ()=>{
+		expect( new OpcObject( json(1, 2253) ).isSystem ).toBe( true );//Server
+		expect( UaNode.fromJson( json(8, 58) )!.isSystem ).toBe( true );//BaseObjectType
+		expect( [84, 85, 86, 87].map( i=>new OpcObject( json(1, i) ).isSystem ) ).toEqual( [true, false, false, false] );//Root is never a row
+		expect( x().isSystem ).toBe( false );//namespace 2
+		expect( new OpcObject( <any>{ns: 0, s: 'own', name: 'n', browse: {ns: 0, name: 'n'}} ).isSystem ).toBe( false );//a string id of namespace 0 is a server's own
+		expect( OpcObject.rootNode.isRoot ).toBe( true );
+		expect( OpcObject.objectsNode.isRoot ).toBe( false );
+	} );
+	it( 'spells a namespace-0 name bare, as the default namespace\'s', ()=>{
+		expect( OpcObject.objectsNode.browseFQ( 1 ) ).toBe( 'Objects' );
+		expect( x().browseFQ( 2 ) ).toBe( 'x' );
+		expect( x().browseFQ( 1 ) ).toBe( '2~x' );
+	} );
+	//reviews-issue/416-address-space.md #7:  a namespace-0 name and the default namespace's, siblings, were both spelled bare, and the
+	//gateway took the default's where the store took the first in id order - namespace 0's.  A bare name is the default's on both
+	//sides, so its namespace-0 twin is `0~name`;  under Root the other way round, as the gateway's translate takes Root's first segment.
+	it( "spells a namespace-0 name `0~` beside a default namespace sibling of the same name", ()=>{
+		const ns0 = new OpcObject( <any>{ns: 0, i: 2253, name: 'Server', browse: {ns: 0, name: 'Server'}} );
+		const own = new OpcObject( <any>{ns: 2, i: 9, name: 'Server', browse: {ns: 2, name: 'Server'}} );
+		const other = new OpcObject( <any>{ns: 2, i: 10, name: 'pump1', browse: {ns: 2, name: 'pump1'}} );
+		expect( ns0.browseFQ( 2, [ns0, other] ) ).toBe( 'Server' );
+		expect( ns0.browseFQ( 2, [ns0, own, other] ) ).toBe( '0~Server' );
+		expect( own.browseFQ( 2, [ns0, own, other] ) ).toBe( 'Server' );
+		expect( ns0.browseFQ( 0, [ns0, own] ) ).toBe( 'Server' );//namespace 0 the default:  no twin to tell apart
+		expect( ns0.browseFQ( 2, [ns0, own], true ) ).toBe( 'Server' );//Root's children:  namespace 0's first
+		expect( own.browseFQ( 2, [ns0, own], true ) ).toBe( '2~Server' );
+	} );
+	it( "takes a bare segment for the default namespace's child first, then namespace 0's", ()=>{
+		const ns0 = { browse: {ns: 0, name: 'Server'} }, own = { browse: {ns: 2, name: 'Server'} }, objects = { browse: {ns: 0, name: 'Objects'} };
+		expect( childBySegment( [ns0, own], 'Server', 2 ) ).toBe( own );
+		expect( childBySegment( [ns0, own], '0~Server', 2 ) ).toBe( ns0 );
+		expect( childBySegment( [ns0, own], '2~Server', 2 ) ).toBe( own );
+		expect( childBySegment( [ns0, objects], 'Objects', 2 ) ).toBe( objects );
+		expect( childBySegment( [ns0], 'Server', undefined ) ).toBe( ns0 );
+		expect( childBySegment( [ns0, own], 'Server', 2, true ) ).toBe( ns0 );
+		expect( childBySegment( [ns0, own], '3~Server', 2 ) ).toBeUndefined();
 	} );
 } );

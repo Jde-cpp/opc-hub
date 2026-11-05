@@ -9,11 +9,12 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	//Each segment `ns~name`, or a bare name in defaultNS.
-	Ω toSegments( std::span<const sv> segments, NsIndex defaultNS )ι->vector<BrowseSegment>{
+	//Each segment `ns~name`, or a bare name in defaultNS - the first from Root in namespace 0 (Browse.h).
+	Ω toSegments( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start )ι->vector<BrowseSegment>{
 		auto y = Reserve<BrowseSegment>( segments.size() );
+		const NodeId root = NodeId::RootFolder();
 		for( let segment : segments ){
-			BrowseSegment browse{ defaultNS, string{segment} };
+			BrowseSegment browse{ y.empty() && UA_NodeId_equal(&start, &root) ? (NsIndex)0 : defaultNS, string{segment} };
 			if( let nsPath = Str::Split(segment, '~'); nsPath.size()>1 ){
 				if( let ns = Str::TryTo<NsIndex>(nsPath[0]); ns ){
 					browse.Ns = *ns;
@@ -25,7 +26,7 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 	UABrowsePath::UABrowsePath( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start )ι:
-		UABrowsePath{ toSegments(segments, defaultNS), start }
+		UABrowsePath{ toSegments(segments, defaultNS, start), start }
 	{}
 }
 namespace Jde::Opc{
@@ -124,9 +125,6 @@ namespace Browse{
 		}
 		return mask;
 	}
-	Request::Request( NodeId&& id, const QL::TableQL& ql )ι:
-		Request( move(id), calcMask(ql) )
-	{}
 	α Request::Hierarchical( NodeId&& id, UA_BrowseResultMask mask )ι->Request{
 		vector<NodeId> ids; ids.push_back( move(id) );//one description setup, shared - so the two overloads cannot drift.
 		return Hierarchical( move(ids), mask );
@@ -151,12 +149,33 @@ namespace Browse{
 			d.browseDirection = UA_BROWSEDIRECTION_INVERSE;
 			d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
 			d.includeSubtypes = true;
-			d.nodeClassMask = UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE;//DI/IA hang children under variables too, as the crawl allows.
+			d.nodeClassMask = UA_NODECLASS_UNSPECIFIED;//every class:  a type's parents are types and the Types folder, a view's the Views folder.  The class comes back, so the walk can still prefer an object's.
 		}
 		return y;
 	}
-	α Request::Properties( NodeId&& id )ι->Request{
-		Request y{ move(id), UA_BROWSERESULTMASK_BROWSENAME };
+	α Request::Children( NodeId&& id, const QL::TableQL& ql )ι->Request{ return Children( move(id), calcMask(ql) ); }
+	α Request::Children( NodeId&& id, UA_BrowseResultMask mask )ι->Request{
+		Request y{ move(id), mask };
+		auto& d = y.nodesToBrowse[0];
+		d.browseDirection = UA_BROWSEDIRECTION_FORWARD;
+		d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
+		d.includeSubtypes = true;
+		d.nodeClassMask = UA_NODECLASS_UNSPECIFIED;
+		return y;
+	}
+	α Request::References( NodeId&& id, UA_UInt32 maxReferences )ι->Request{
+		Request y{ move(id), UA_BROWSERESULTMASK_ALL };
+		y.requestedMaxReferencesPerNode = maxReferences;//a type node's inverse HasTypeDefinition is every instance it has (reviews-issue/416-address-space.md #9)
+		auto& d = y.nodesToBrowse[0];
+		d.browseDirection = UA_BROWSEDIRECTION_BOTH;
+		d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_REFERENCES );
+		d.includeSubtypes = true;
+		d.nodeClassMask = UA_NODECLASS_UNSPECIFIED;
+		return y;
+	}
+	α Request::Properties( NodeId&& id, const QL::TableQL& ql )ι->Request{ return Properties( move(id), calcMask(ql) ); }
+	α Request::Properties( NodeId&& id, UA_BrowseResultMask mask )ι->Request{
+		Request y{ move(id), mask };
 		auto& d = y.nodesToBrowse[0];
 		d.browseDirection = UA_BROWSEDIRECTION_FORWARD;
 		d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HASPROPERTY );

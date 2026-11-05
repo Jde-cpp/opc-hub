@@ -31,6 +31,9 @@ function( sync=false )
 			includeServer: false, //index the ns=0 Server object's diagnostics subtree
 			skipBrowseNames:: ["_Hints"] // Browse names neither indexed nor descended
 		},
+		browse:: { //a node page's browses (src/ql/NodeQLAwait.cpp)
+			maxReferences: 1000 //the References tab's rows:  `truncated` past this - a type node's inverse HasTypeDefinition is every instance it has
+		},
 		//certificate.managed:false (default true) presents your own pair - one a CA the OPC servers trust issued - as found:  never
 		//issued, never re-issued on expiry or a changed applicationUri.  One private key for the block (privateKey.path), and one
 		//certificate per connection, looked for at <certificate.path, or the default>.<connection slug>.pem - a copy of the same

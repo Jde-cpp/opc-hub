@@ -3,6 +3,7 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
 #include "UAClient.h"
+#include "async/ReleaseBrowseAwait.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -55,7 +56,7 @@ namespace Jde::Opc::Gateway{
 			let defaultNs = client->DefaultBrowseNs();
 			struct Pending{ NodeId Id; string Path; uint8 Depth; bool Retried{}; };
 			std::deque<Pending> pending;
-			pending.push_back( {NodeId::ObjectsFolder(), {}, 0} );
+			pending.push_back( {NodeId::ObjectsFolder(), "Objects", 0} );//the crawl is the Objects folder's;  a page path runs from Root (NodeQLAwait).
 			flat_set<NodeId> seen; seen.emplace( NodeId::ObjectsFolder() );//cycles:  hierarchical references may still reach a node twice.
 			bool warnedSlash{};
 			constexpr UA_BrowseResultMask mask{ UA_BROWSERESULTMASK_BROWSENAME|UA_BROWSERESULTMASK_DISPLAYNAME|UA_BROWSERESULTMASK_NODECLASS };
@@ -130,6 +131,9 @@ namespace Jde::Opc::Gateway{
 						WARNT( BrowseTag, "[{}]search index: '{}' returned a continuation point - children beyond the server's limit are not indexed.", hex(client->Handle()), parent.Path );
 						truncated = true;//not `stop`:  the references this browse did return are still ours to index.
 					}
+					flat_set<string> defaultNames;//a namespace-0 name beside one of these is `0~name`, as NodeQLAwait::segment spells a twin
+					if( defaultNs!=0 )
+						response->VisitWhile( r, [&]( const UA_ReferenceDescription& ref ){ if( ref.browseName.namespaceIndex==defaultNs ) defaultNames.emplace( ToSV(ref.browseName.name) ); return true; } );
 					response->VisitWhile( r, [&]( const UA_ReferenceDescription& ref ){
 						NodeId id{ ref.nodeId.nodeId };
 						if( seen.find(id)!=seen.end() )
@@ -146,8 +150,9 @@ namespace Jde::Opc::Gateway{
 							}
 							return true;
 						}
-						let segment = ref.browseName.namespaceIndex==defaultNs ? browse : Ƒ( "{}~{}", ref.browseName.namespaceIndex, browse );
-						string path = parent.Path.empty() ? segment : Ƒ( "{}/{}", parent.Path, segment );
+						let ns = ref.browseName.namespaceIndex;
+						let segment = ns==defaultNs || (ns==0 && defaultNames.find(browse)==defaultNames.end()) ? browse : Ƒ( "{}~{}", ns, browse );//as NodeQLAwait::segment spells one.
+						string path = Ƒ( "{}/{}", parent.Path, segment );
 						let depth = (uint8)( parent.Depth+1 );
 						if( (ref.nodeClass==UA_NODECLASS_OBJECT || ref.nodeClass==UA_NODECLASS_VARIABLE) && depth<maxDepth )//DI/IA hang children under variables too.
 							pending.push_back( {NodeId{id}, path, depth} );
@@ -161,6 +166,12 @@ namespace Jde::Opc::Gateway{
 						}
 						return !stop;
 					} );
+				}
+				try{//the folders the server capped:  what they did not return is not indexed (truncated, above), and the points that hold it are let go
+					co_await Any( ReleaseBrowseAwait{*response, client} );
+				}
+				catch( const runtime_error& e ){
+					DBGT( BrowseTag, "[{}]search index: could not release the continuation points:  {}", hex(client->Handle()), e.what() );
 				}
 			}
 			if( entries.empty() && refused )//Objects itself refused:  a Ready empty index would answer [] until a refresh, and the notice would never show.

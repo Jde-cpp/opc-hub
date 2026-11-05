@@ -36,14 +36,14 @@ describe( 'HistAdminService', ()=>{
 		expect( await service.createGroupMember( stub( {createHistGroupNode: [{id: 8}]} ), 5, new ExNodeId( {ns: 2, i: 1} ) ) ).toBe( 8 );
 		await expect( service.createGroupMember( stub( {createHistGroupNode: []} ), 5, new ExNodeId( {ns: 2, i: 1} ) ) ).rejects.toThrow( 'answered no id' );
 	} );
-	//roots by browse path, in one query by the server's index:  one by URI through the namespaces, and one the server lacks or the
-	//gateway can't place has none
+	//roots by browse path from Root, in one query by the server's index:  one by URI through the namespaces, one under Types, and one
+	//the server lacks, the gateway can't place, or Root itself has none
 	it( "places a connection's roots by their browse paths", async ()=>{
 		const server = { namespaces: [{index: 0, uri: 'http://opcfoundation.org/UA/'}, {index: 2, uri: 'urn:jde:pumps'}] };
-		const g = stub( {nodes: [{path: 'pumps/5~pump1'}, {path: null}, {path: ''}]} );
-		const roots = [new ExNodeId( {nsu: 'urn:jde:pumps', i: 5001} ), new ExNodeId( {nsu: 'urn:other', i: 1} ), new ExNodeId( {ns: 2, i: 9} ), new ExNodeId( {ns: 0, i: 85} )];
-		expect( await service.rootPaths( g, 'local', server, roots ) ).toEqual( ['Objects/pumps/pump1', undefined, undefined, 'Objects'] );
-		expect( g.query ).toHaveBeenCalledWith( 'nodes( opc:$opc, id:$id ){ path }', {opc: 'local', id: [{ns: 2, i: 5001}, {ns: 2, i: 9}, {ns: 0, i: 85}]} );
+		const g = stub( {nodes: [{path: 'Objects/pumps/5~pump1'}, {path: null}, {path: 'Objects'}, {path: 'Types/ObjectTypes/BaseObjectType'}, {path: ''}]} );
+		const roots = [new ExNodeId( {nsu: 'urn:jde:pumps', i: 5001} ), new ExNodeId( {nsu: 'urn:other', i: 1} ), new ExNodeId( {ns: 2, i: 9} ), new ExNodeId( {ns: 0, i: 85} ), new ExNodeId( {ns: 0, i: 58} ), new ExNodeId( {ns: 0, i: 84} )];
+		expect( await service.rootPaths( g, 'local', server, roots ) ).toEqual( ['Objects/pumps/pump1', undefined, undefined, 'Objects', 'Types/ObjectTypes/BaseObjectType', undefined] );
+		expect( g.query ).toHaveBeenCalledWith( 'nodes( opc:$opc, id:$id ){ path }', {opc: 'local', id: [{ns: 2, i: 5001}, {ns: 2, i: 9}, {ns: 0, i: 85}, {ns: 0, i: 58}, {ns: 0, i: 84}]} );
 		const none = stub( {} );
 		expect( await service.rootPaths( none, 'local', server, [roots[1]] ) ).toEqual( [undefined] );
 		expect( none.query ).not.toHaveBeenCalled();

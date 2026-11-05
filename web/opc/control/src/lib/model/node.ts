@@ -14,7 +14,20 @@ export enum ENodeClass{
 	VariableType = 16,
 	ReferenceType = 32,
 	DataType = 64,
-	nodeClassView = 128,
+	View = 128,
+}
+//what every node page reads of a node, and what a Variable adds (Gateway.browseObjectsFolder, NodeResolver):  historizing gates the History tab
+export const nodeColumns = "id name browse nodeClass refType typeDef description";
+export const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";
+
+//A node known by id alone, placed in the tree:  its name, its class and its page path - the gateway's walk up to Root (NodeQLAwait's id
+//form), null for a node it cannot place.  What a search by id, a References target and a node-access link ask (placeNode).
+export type NodePlace = { name?:string; nodeClass?:ENodeClass; path:string|null };
+//The url segments of the page a node opens, from its page path:  every class but a Method has a page of its own, and a Method is a Call
+//on its object's row, so it opens the object;  Root's path is empty, the connection's page (reviews-issue/416-address-space.md #14).
+export function pageSegments( path:string, nodeClass?:ENodeClass ):string[]{
+	const segments = path ? path.split( '/' ) : [];
+	return nodeClass==ENodeClass.Method ? segments.slice( 0, -1 ) : segments;
 }
 
 export abstract class UaNode extends NodeId{
@@ -27,9 +40,28 @@ export abstract class UaNode extends NodeId{
 		this.refType = json.refType ? new NodeId( json.refType ) : undefined;//the keys the browse writes (Browse::Response::SetJson)
 		this.typeDef = json.typeDef ? new NodeId( json.typeDef ) : undefined;
 	}
-	browseFQ( defaultNS:Ns|undefined ):string{
+	//the node's url segment:  the bare name in the connection's default namespace or in namespace 0 - Objects, Types and everything under
+	//Types - else `ns~name`, as the gateway spells a page path (NodeQLAwait::segment) and reads one (childBySegment).  A bare name
+	//takes the default namespace's sibling first (Root's, namespace 0's), so the other of two `siblings` of one name is `ns~name`.
+	browseFQ( defaultNS:Ns|undefined, siblings?:UaNode[], atRoot=false ):string{
 		const browse = this.browse!;
-		return browse.ns===defaultNS ? browse.name.toString() : `${browse.ns}~${browse.name}`;
+		const [first, second] = atRoot ? [0, defaultNS] : [defaultNS, 0];
+		const twin = ()=>first!==undefined && first!==second && !!siblings?.some( s=>s!==this && s.browse?.ns===first && s.browse.name===browse.name );
+		return browse.ns===first || (browse.ns===second && !twin()) ? browse.name.toString() : `${browse.ns}~${browse.name}`;
+	}
+	//the node a browse or a path query answers, by its class - none for a class the gateway does not spell
+	static fromJson( json:any, parent?:UaNode ):UaNode|undefined{
+		switch( <ENodeClass>json.nodeClass ){
+			case ENodeClass.Object: return new OpcObject( json, parent );
+			case ENodeClass.Variable: return new Variable( json, parent );
+			case ENodeClass.Method: return new Method( json, parent );
+			case ENodeClass.ObjectType: return new ObjectType( json, parent );
+			case ENodeClass.VariableType: return new VariableType( json, parent );
+			case ENodeClass.ReferenceType: return new ReferenceType( json, parent );
+			case ENodeClass.DataType: return new DataType( json, parent );
+			case ENodeClass.View: return new UaView( json, parent );
+		}
+		return undefined;
 	}
 
 	get nodeId(){ return new NodeId( this ); }
@@ -37,8 +69,12 @@ export abstract class UaNode extends NodeId{
 
 	browse?:Browse;
 	description:ILocalizedText;
-	get displayed(){ return false; }
-	get isSystem(){ return this.ns==0 && this.isNumericId && this.numericId<32750; }
+	//a node of the standard's own, behind the children table's *system nodes* toggle (clients spec *Address space*):  the Server object and its
+	//hundreds of diagnostics, the type trees - but never Objects, Types and Views, the first level, as the root never was
+	get isSystem(){ return this.ns==0 && this.isNumericId && this.numericId<32750 && ![EObjects.ObjectsFolder, EObjects.Types, EObjects.Views].includes( this.numericId ); }
+	get isRoot(){ return this.ns==0 && this.numericId===EObjects.Root; }
+	//every class but a Method has a page - a Variable its properties, a type node its subtypes and declarations - and a Method is a Call on its object's row
+	get hasPage(){ return !this.isMethod; }
 	get isObject(){ return this.nodeClass == ENodeClass.Object; }
 	get isVariable(){ return false; }
 	get isMethod(){ return false; }
@@ -48,25 +84,40 @@ export abstract class UaNode extends NodeId{
 	typeDef?:NodeId;
 }
 
+//The type trees and the views (clients spec *Address space*, #416):  each a page like an object's, its children what hangs under it.
 export class ObjectType extends UaNode{
 	override get nodeClass():ENodeClass{ return ENodeClass.ObjectType; }
+}
+export class VariableType extends UaNode{
+	override get nodeClass():ENodeClass{ return ENodeClass.VariableType; }
+}
+export class ReferenceType extends UaNode{
+	override get nodeClass():ENodeClass{ return ENodeClass.ReferenceType; }
+}
+export class DataType extends UaNode{
+	override get nodeClass():ENodeClass{ return ENodeClass.DataType; }
+}
+export class UaView extends UaNode{//UaView:  jde-framework's View is the list view
+	override get nodeClass():ENodeClass{ return ENodeClass.View; }
 }
 
 //A method of its parent object:  a row with a Call action (clients spec *Methods*, #318), no page of its own and nothing to
 //subscribe to.  The browse used to drop the class (spec *Gaps* #6).
 export class Method extends UaNode{
 	override get nodeClass():ENodeClass{ return ENodeClass.Method; }
-	override get displayed(){ return true; }
 	override get isMethod(){ return true; }
 }
 
 export enum EObjects{
+	Root = 84, /* Object - the web's root, so Objects, Types and Views are the first level (clients spec *Address space*) */
 	ObjectsFolder = 85, /* Object */
+	Types = 86,
+	Views = 87,
 	Server = 2253
 }
 export class OpcObject extends UaNode{
-	static get rootNode(){ return new OpcObject({ ns: 0, i: EObjects.ObjectsFolder, name: {locale:"en-US", text:"root"}}); }
-	override get displayed(){ return !this.isSystem || this.equals(OpcObject.rootNode); }
+	static get rootNode(){ return new OpcObject({ ns: 0, i: EObjects.Root, name: {locale:"en-US", text:"root"}}); }
+	static get objectsNode(){ return new OpcObject({ ns: 0, i: EObjects.ObjectsFolder, name: {locale:"en-US", text:"Objects"}, browse: {ns: 0, name: "Objects"}}); }//the historian's template paths and group roots start here
 	override get nodeClass():ENodeClass{ return ENodeClass.Object; }
 }
 
@@ -115,7 +166,6 @@ export class Variable extends UaNode{
 	historizing?:boolean;
 	dataType?:ETypes;
 	customDataType?:NodeId|Enum;
-	override get displayed(){ return true; }
 	get isArray():boolean{ return this.valueRank!=-1 && Array.isArray(this.value); }
 	override get isVariable(){ return true; }
 	get isInteger():boolean{ return [ETypes.SByte, ETypes.Int16, ETypes.Int32, ETypes.Int64].includes(this.dataType!); }

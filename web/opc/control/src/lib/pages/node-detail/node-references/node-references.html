@@ -1,0 +1,43 @@
+<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+@if( error(); as text ){
+	<div class="jde-empty" role="alert">
+		<mat-icon aria-hidden="true">error_outline</mat-icon>
+		<p class="title">Could not read the references.</p>
+		<p>{{ text }}</p>
+	</div>
+}
+@else if( !loading() && !rows().length ){
+	<div class="jde-empty" role="status">
+		<mat-icon aria-hidden="true">link_off</mat-icon>
+		<p class="title">No references.</p>
+	</div>
+}
+@else{
+	@if( truncated() ){
+		<p class="truncated" role="status">Showing the first {{ rows().length.toLocaleString() }} references;  this node has more.</p>
+	}
+	<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense">
+		<ng-container matColumnDef="direction">
+			<mat-header-cell *matHeaderCellDef>Direction</mat-header-cell>
+			<mat-cell *matCellDef="let r"><mat-icon class="direction-icon" aria-hidden="true" [fontIcon]="r.isForward ? 'arrow_forward' : 'arrow_back'"></mat-icon>{{ r.direction }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="refType">
+			<mat-header-cell *matHeaderCellDef>Reference Type</mat-header-cell>
+			<mat-cell *matCellDef="let r"><span [matTooltip]="r.refType.uaString()">{{ r.refType.label }}</span></mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="target"><!--the target's page, by the path the gateway walks up - a button, as the path is not known until asked-->
+			<mat-header-cell *matHeaderCellDef>Target</mat-header-cell>
+			<mat-cell *matCellDef="let r"><button matButton type="button" class="target" (click)="open(r)" [matTooltip]="r.target.id.uaString()" [attr.aria-label]="'Open ' + r.targetLabel">{{ r.targetLabel }}</button></mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="class">
+			<mat-header-cell *matHeaderCellDef>Class</mat-header-cell>
+			<mat-cell *matCellDef="let r">{{ r.className }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="typeDef">
+			<mat-header-cell *matHeaderCellDef>Type Definition</mat-header-cell>
+			<mat-cell *matCellDef="let r">@if( r.typeDef ){<span [matTooltip]="r.typeDef.uaString()">{{ r.typeDef.label }}</span>}</mat-cell>
+		</ng-container>
+		<mat-header-row *matHeaderRowDef="columns"></mat-header-row>
+		<mat-row *matRowDef="let row; columns: columns"></mat-row>
+	</mat-table>
+}

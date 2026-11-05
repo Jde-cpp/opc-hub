@@ -3,7 +3,7 @@ import { ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resolve, Router, Rou
 import { SnackbarService } from 'jde-framework';
 import { LocalPrefs, ProfileStore, RecentVisits } from 'jde-spa';
 import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
-import { ENodeClass, OpcObject, UaNode } from '../../model/node';
+import { ENodeClass, nodeColumns, OpcObject, UaNode, Variable, variableColumns } from '../../model/node';
 import { NodeRoute } from '../../model/node-route';
 import { OPC_STORE } from '../opc-store';
 import { Server } from '../../model/server';
@@ -38,28 +38,36 @@ export class NodeResolver implements Resolve<NodePageData> {
 			let gateway = await this.#gatewayService.gateway( route.gatewaySlug );
 			const server = await this.#opcStore.getConnection( gateway, route.cnnctnSlug );
 			const defaultBrowseNs = server.connection.defaultBrowseNs;
-			if( route.node?.isVariable || route.node?.isMethod )//browsed already, so the store knows what it is
+			if( route.node?.isMethod )//browsed already, so the store knows what it is:  a Call on its object's row, no page
 				return this.#showParent( route );
 			if( !route.node ){
+				//the url's path from Root (clients spec *Address space*):  the node, and its parents, each with the browse name the server
+				//spells, since a bare segment may be namespace 0's.  Each parent with its class and a Variable's own columns - read for
+				//every parent, a non-Variable answering each with a status - so the store keeps a Variable parent as a Variable, with its
+				//value and history gate, not an object (reviews-issue/416-address-space.md #3).  The node's own the same way:  the path form
+				//reads no `... on Variable{}` fragment, as it learns the class with the columns, and a read by id after cost a round trip (#13).
 				const vars = { opc: route.cnnctnSlug, path: route.browsePath };
-				const node = (await gateway.query<any>(`node( opc: $opc, path:$path ){id name nodeClass parents{id name path}}`, vars) )["node"];
+				const node = (await gateway.query<any>(`node( opc: $opc, path:$path, root:"Root" ){${nodeColumns} ${variableColumns} parents{${nodeColumns} path ${variableColumns}}}`, vars) )["node"];
 				if( node.sc )
 					throw new NodeNotFoundError( (await gateway.errorCodeText(node.sc)), {cause:"Opc Interface"} );
-				if( node.nodeClass!=undefined && node.nodeClass!=ENodeClass.Object )//a Variable or a Method - wrapped as an object, its own children were listed under its name
+				if( node.nodeClass==ENodeClass.Method )
 					return this.#showParent( route );
-				route.node = new OpcObject( {...node, browse: route.browse(defaultBrowseNs)} );
+				route.node = UaNode.fromJson( node ) ?? new OpcObject( node );//a class the model does not spell is browsed as an object
 				this.#opcStore.insertNode( route, node.parents, defaultBrowseNs );
 			}
-			let references = await gateway.browseObjectsFolder( route.cnnctnSlug, route.node, true );
-			let displayed = references.filter( (r)=>r.displayed );
+			const [references] = await Promise.all( [//apart:  the one reads the children, the other the node's own DataType
+				gateway.browseObjectsFolder( route.cnnctnSlug, route.node, true ),
+				route.node instanceof Variable ? gateway.resolveEnum( route.cnnctnSlug, route.node ) : undefined//its own row's select:  a deep link's node, or a parent the path query stored (#3), was never resolved
+			] );
+			const nodes = route.node.isVariable ? [route.node, ...references] : references;//a Variable's page shows its own value, status and tick first, then its children
 			if( !this.#opcStore.nodeView() ){//a load straight onto a node page:  NodeChildren has not read the views yet, and the sidenav order is fixed here.  ProfileStore caches the row, so the component's own read is a hit.
 				const views = NodeView.viewSet( this.#profileStore, this.#prefs );
 				await NodeView.loadViews( views );
 				this.#opcStore.nodeView.set( views.current() );
 			}
 			this.#opcStore.setRoute( route, defaultBrowseNs );
-			const groups = await this.#groups( gateway, route.cnnctnSlug, displayed );
-			return { route: route, nodes: displayed, gateway: gateway, server: server, groups };
+			const groups = await this.#groups( gateway, route.cnnctnSlug, nodes );
+			return { route: route, nodes, gateway: gateway, server: server, groups };
 		}catch( e ){
 			this.#snackbar.exception( "Not found.", e );
 			if( e instanceof NodeNotFoundError )//a removed or renamed node:  the redirect is a NavigationCancel, so RecentVisits never sees it (reviews/m3-closing.md #25).  Not on an outage, or every node tile would go.
@@ -80,10 +88,9 @@ export class NodeResolver implements Resolve<NodePageData> {
 			return [];
 		}
 	}
-	//A node with no page of its own - a Variable is a row on its parent's page, with its value, status and subscribe box - reached
-	//by a search hit, a bookmark or a typed url.  Not an error:  the page to show is the parent's, and a Variable under a Variable
-	//walks up one level per resolve (reviews/m3-closing.md #9).  It used to throw from browseObjectsFolder and say "Not found."
-	//about a node that exists.
+	//A node with no page of its own - a Method is a Call on its object's row (reviews-issue/318-opc-calls.md #7) - reached by a
+	//search hit, a bookmark or a typed url.  Not an error:  the page to show is the parent's.  A Variable had none either
+	//(reviews/m3-closing.md #9) until Phase 4 gave it one (#416).
 	#showParent( route:NodeRoute ):NodePageData{
 		this.#router.navigateByUrl( createUrlTreeFromSnapshot(route.route, ['..']) );
 		return undefined as unknown as NodePageData;

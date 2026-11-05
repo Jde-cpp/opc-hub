@@ -24,6 +24,7 @@ namespace Jde::Opc{
 		explicit NodeId( const jvalue& j )ε;
 		Ω ParseQL( const QL::TableQL& q )ε->vector<NodeId>;
 		Ω ObjectsFolder()ι->NodeId{ return NodeId{0, UA_NS0ID_OBJECTSFOLDER}; }
+		Ω RootFolder()ι->NodeId{ return NodeId{0, UA_NS0ID_ROOTFOLDER}; }
 
 		α operator<( const NodeId& x )Ι->bool{ return UA_NodeId_order( this, &x )==UA_ORDER_LESS; }
 		template<class H> friend α AbslHashValue( H h, const NodeId& n )ι->H{ return HashNodeId( std::move(h), n ); }

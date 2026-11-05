@@ -313,7 +313,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( QLTests, search ){
 		const jobject vars{ {"opc", OpcServerSlug} };
 		Socket().QuerySync( "serverDescription( opc: $opc ){ applicationUri }", vars );//search never connects - give this socket's session a live client first.
-		constexpr sv lampPath{ "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1" };//BrowseTests.NodeId resolves the same path.
+		constexpr sv lampPath{ "Objects/4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1" };//the page path, from Root (#416);  BrowseTests.NodeId resolves it from the Objects folder.
 		auto rows = [&]( string q ){
 			auto value = Socket().QuerySync( string{q}, vars );
 			TRACE( "{}: {}.", q, serialize(value) );
