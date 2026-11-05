@@ -31,8 +31,11 @@
 				<ng-container matColumnDef="name">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Name </mat-header-cell>
 					<mat-cell mat-cell *matCellDef="let r">
-						@if( r.isVariable ){
+						@if( r.isVariable || r.isMethod ){<!--neither has a page of its own-->
 							<span>{{r.name}}</span>
+							@if( r.isMethod && !snapshotShown() ){<!--the Snapshot cell's Call, where the view hides that column-->
+								<button matIconButton type="button" class="call-icon" (click)="call(r)" [attr.aria-label]="'Call ' + r.name" matTooltip="Call"><mat-icon aria-hidden="true" fontIcon="play_arrow"></mat-icon></button>
+							}
 						}
 						@else{
 							<a [routerLink]="routerLink(r)" routerLinkActive="router-link-active" >{{r.name}}</a>
@@ -50,7 +53,10 @@
 				<ng-container matColumnDef="snapshot">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Snapshot </mat-header-cell>
 					<mat-cell mat-cell *matCellDef="let r">
-						@if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
+						@if( r.isMethod ){<!--a method has no value:  its cell is its Call (clients spec *Methods*)-->
+							<button matButton="outlined" class="call-button" type="button" (click)="call(r)" [attr.aria-label]="'Call ' + r.name">Call</button>
+						}
+						@else if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
 							<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
 						}
 						@else if( r.dataType==ETypes.Boolean && !r.isArray ){

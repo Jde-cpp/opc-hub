@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { ProfileStore } from 'jde-spa';
-import { ENodeClass, OpcObject, UaNode, Variable } from '../../model/node';
+import { ENodeClass, Method, OpcObject, UaNode, Variable } from '../../model/node';
 import { GATEWAY_SERVICE } from '../gateway-service';
 import { OPC_STORE, OpcStore } from '../opc-store';
 import { NodeResolver } from './node-resolver';
@@ -12,14 +12,18 @@ const pump1 = new OpcObject( {ns: 2, i: 10, name: "pump1", browse: {ns: 2, name:
 const serverDescription = { connection: {id: 1, slug: 'cn', name: 'Line 1', url: 'opc.tcp://plc:4840', certificateUri: '', defaultBrowseNs: 1}, desc: {}, policy: '', mode: 'None', namespaces: [] };
 const nodes:Record<string, any> = {//the gateway's answer to node( path ){ … nodeClass … } per browse path
 	'2~pump1': { ns: 2, i: 10, name: 'pump1', nodeClass: ENodeClass.Object, parents: [] },
-	'2~pump1/2~flow': { ns: 2, i: 11, name: 'flow', nodeClass: ENodeClass.Variable, parents: [{ns: 2, i: 10, name: 'pump1', path: '2~pump1'}] }
+	'2~pump1/2~flow': { ns: 2, i: 11, name: 'flow', nodeClass: ENodeClass.Variable, parents: [{ns: 2, i: 10, name: 'pump1', path: '2~pump1'}] },
+	'2~pump1/2~toHertz': { ns: 2, i: 12, name: 'toHertz', nodeClass: ENodeClass.Method, parents: [{ns: 2, i: 10, name: 'pump1', path: '2~pump1'}] }
 };
 const flow = ()=>new Variable( {ns: 2, i: 11, name: "flow", browse: {ns: 2, name: "flow"}} as any, pump1 );
+const toHertz = ()=>new Method( {ns: 2, i: 12, name: "toHertz", browse: {ns: 2, name: "toHertz"}} as any, pump1 );
 //gatewayDown:  the gateway does not answer at all.  groups:  the gateway's answer to historyGroups, or an error it throws for it.
 async function open( url:string, browsed:boolean, gatewayDown = false, groups:any = undefined ){
 	const browseObjectsFolder = vi.fn( async ( _cnnctn:string, parent:UaNode )=>{
 		if( parent.isVariable )
 			throw new EvalError( "Cannot browse children of variable node." );
+		if( parent.isMethod )
+			throw new EvalError( "Browsed a method as a page." );
 		return groups ? [flow()] : [];
 	} );
 	const postQL = vi.fn( async ( ql:string, _vars:any )=>{
@@ -43,9 +47,9 @@ async function open( url:string, browsed:boolean, gatewayDown = false, groups:an
 	], url, before: ()=>{
 		const store = TestBed.inject( OpcStore );
 		store.nodeView.set( <any>{sortNodes: ( n:UaNode[] )=>n} );
-		if( browsed ){//the parent's page was open:  browseObjectsFolder stored its children, the Variable among them
+		if( browsed ){//the parent's page was open:  browseObjectsFolder stored its children, the Variable and the Method among them
 			store.setNodes( 'gw', 'cn', OpcObject.rootNode, [pump1] );
-			store.setNodes( 'gw', 'cn', pump1, [flow()] );
+			store.setNodes( 'gw', 'cn', pump1, [flow(), toHertz()] );
 		}
 	}} );
 	return { router, exception: snackbar.exception, browseObjectsFolder, forget, postQL, pageData: leaf().data['pageData'] };
@@ -68,6 +72,22 @@ describe( 'NodeResolver on a Variable', ()=>{
 		expect( exception ).not.toHaveBeenCalled();
 		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
 		expect( browseObjectsFolder.mock.calls.map(c=>(c[1] as UaNode).name) ).not.toContain( "flow" );
+	} );
+} );
+
+//reviews-issue/318-opc-calls.md #7:  a Method has no page either - it is a Call on its object's row.  The browse stores methods
+//now, so a stored one reached the resolver as a node, was browsed, and its argument properties listed as a page.
+describe( 'NodeResolver on a Method', ()=>{
+	it( 'shows the parent when the parent was browsed', async ()=>{
+		const { router, exception, browseObjectsFolder } = await open( '/gateways/gw/cn/2~pump1/2~toHertz', true );
+		expect( exception ).not.toHaveBeenCalled();
+		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
+		expect( browseObjectsFolder.mock.calls.map(c=>(c[1] as UaNode).name) ).not.toContain( "toHertz" );
+	} );
+	it( 'shows the parent when it was not', async ()=>{
+		const { router, exception } = await open( '/gateways/gw/cn/2~pump1/2~toHertz', false );
+		expect( exception ).not.toHaveBeenCalled();
+		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
 	} );
 } );
 

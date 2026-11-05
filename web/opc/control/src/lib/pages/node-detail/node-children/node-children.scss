@@ -127,3 +127,12 @@ be held wider by a long description. */
 	color: var(--mat-sys-on-surface-variant);
 	font-style: italic;
 }
+//a Method row's Call in the Name cell, where the view hides Snapshot:  sized to the dense row, as the history table's row actions are
+.call-icon{
+	--mat-icon-button-state-layer-size: 32px;
+	--mat-icon-button-icon-size: 18px;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	margin-inline-start: 4px;
+}

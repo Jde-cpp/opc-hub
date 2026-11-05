@@ -1,0 +1,87 @@
+<h2 mat-dialog-title>Call {{ title }}</h2>
+<mat-dialog-content>
+	@if( data.method.description.text ){
+		<p class="hint">{{ data.method.description.text }}</p>
+	}
+	@if( loadError(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+	@else if( !arguments() ){
+		<mat-progress-bar mode="indeterminate" aria-label="Reading the arguments"></mat-progress-bar>
+	}
+	@else{
+		@if( !inputs.length ){
+			<p class="hint">The method takes no arguments.</p>
+		}
+		@for( a of inputs; track $index ){
+			@switch( a.editor ){
+				@case( 'boolean' ){
+					<mat-slide-toggle class="value-toggle" [checked]="flags()[$index]" (change)="setFlag($index, $event.checked)" [disabled]="busy()" [attr.aria-label]="a.name">{{ label(a) }}: {{ flags()[$index] ? "true" : "false" }}</mat-slide-toggle>
+					@if( a.description ){<p class="hint">{{ a.description }}</p>}
+				}
+				@case( 'number' ){
+					<mat-form-field>
+						<mat-label>{{ label(a) }}</mat-label>
+						<input matInput type="number" step="any" [value]="texts()[$index]" (input)="setText($index, $any($event.target).value)" [disabled]="busy()">
+						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
+					</mat-form-field>
+				}
+				@case( 'enum' ){
+					<mat-form-field>
+						<mat-label>{{ label(a) }}</mat-label>
+						<mat-select [value]="texts()[$index]" (selectionChange)="setText($index, $event.value)" [disabled]="busy()">
+							@for( option of a.enum!.enumValues; track option.id ){
+								<mat-option [value]="'' + option.id">{{ option.name }}</mat-option>
+							}
+						</mat-select>
+						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
+					</mat-form-field>
+				}
+				@case( 'datetime' ){
+					<mat-form-field>
+						<mat-label>{{ label(a) }}</mat-label>
+						<input matInput type="datetime-local" step="0.001" [value]="texts()[$index]" (input)="setText($index, $any($event.target).value)" [disabled]="busy()">
+						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
+					</mat-form-field>
+				}
+				@default{
+					<mat-form-field>
+						<mat-label>{{ label(a) }}</mat-label>
+						<input matInput type="text" [value]="texts()[$index]" (input)="setText($index, $any($event.target).value)" [disabled]="busy()">
+						@if( hint(a) ){<mat-hint>{{ hint(a) }}</mat-hint>}
+					</mat-form-field>
+				}
+			}
+		}
+	}
+	@if( busy() ){
+		<mat-progress-bar mode="indeterminate" aria-label="Calling"></mat-progress-bar>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+	@if( result(); as r ){
+		<div role="alert"><!--on a wrapper:  a list given another role has no list items, axe's listitem rule-->
+			<ul class="results" aria-label="The server's answer">
+				<li>@if( statusIcon(r.statusCode); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ statusText(r.statusCode) }}</li>
+				@for( a of argumentResults(); track $index ){
+					<li class="argument">@if( statusIcon(a.status); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ a.name }}: {{ statusText(a.status) }}</li>
+				}
+			</ul>
+		</div>
+		@if( outputs().length ){
+			<dl class="outputs" aria-label="The outputs">
+				@for( o of outputs(); track $index ){
+					<dt>{{ o.name }}</dt><dd>{{ o.text }}</dd>
+				}
+			</dl>
+		}
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	@if( problem(); as p ){
+		<span class="problem">{{ p }}</span>
+	}
+	<button matButton="outlined" type="button" (click)="dialogRef.close(result())" [disabled]="busy()">Close</button>
+	<button matButton="tonal" type="button" [disabled]="busy() || !!problem()" (click)="apply()">Call</button>
+</mat-dialog-actions>

@@ -57,6 +57,17 @@ namespace Jde::Opc{
 		return status ? jvalue{ jobject{ {"v", move(j)}, {"sc", status} } } : move(j);
 	}
 
+	α Value::Settable( const UA_DataType& type )ι->bool{
+		switch( type.typeKind ){//Set's arms
+		case UA_DATATYPEKIND_BOOLEAN: case UA_DATATYPEKIND_BYTE: case UA_DATATYPEKIND_SBYTE: case UA_DATATYPEKIND_INT16: case UA_DATATYPEKIND_UINT16:
+		case UA_DATATYPEKIND_INT32: case UA_DATATYPEKIND_UINT32: case UA_DATATYPEKIND_INT64: case UA_DATATYPEKIND_UINT64: case UA_DATATYPEKIND_DOUBLE:
+		case UA_DATATYPEKIND_FLOAT: case UA_DATATYPEKIND_STRING: case UA_DATATYPEKIND_LOCALIZEDTEXT: case UA_DATATYPEKIND_DATETIME:
+			return true;
+		default:
+			return false;
+		}
+	}
+
 	α Value::Set( const jvalue& j, SL sl )ε->void{
 		//Whatever ToJson emits, Set has to accept back.  Two of its shapes are objects that every arm below would reject,
 		//since Json::AsNumber's try_to_number returns not_number for one and the type inference has no arm for one either:
@@ -153,7 +164,7 @@ namespace Jde::Opc{
 			let v = UADateTime{j}.UA();//SetScalar, not SetNumber: that takes a jvalue, so the int64 was boxed into json
 			SetScalar( &v, sl );//and parsed straight back out.
 			break;}
-		default:
+		default://an arm added here goes in Settable too - ValueTests.SettableListsSetsArms holds them together.
 			THROW( "Setting type '{}' has not been implemented - {}", type->typeName, serialize(j) );
 		}
 	}

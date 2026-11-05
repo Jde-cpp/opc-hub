@@ -165,6 +165,16 @@ namespace Browse{
 		return y;
 	}
 
+	α Request::Supertype( NodeId&& id )ι->Request{
+		Request y{ move(id), UA_BROWSERESULTMASK_NONE };//the reference's target is all a step needs
+		auto& d = y.nodesToBrowse[0];
+		d.browseDirection = UA_BROWSEDIRECTION_INVERSE;
+		d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HASSUBTYPE );
+		d.includeSubtypes = false;
+		d.nodeClassMask = UA_NODECLASS_DATATYPE;
+		return y;
+	}
+
 	α Response::VisitWhile( uint resultsIndex, function<bool(const UA_ReferenceDescription& ref)> f )Ι->bool{
 		if( resultsIndex>=resultsSize ){
 			ASSERT_DESC( !resultsSize, Ƒ("resultsIndex {} out of range {}.", resultsIndex, resultsSize) );//an index past a *non-empty* response is a caller bug, and still worth flagging.

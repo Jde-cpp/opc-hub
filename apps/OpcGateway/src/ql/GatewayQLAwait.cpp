@@ -9,6 +9,7 @@
 #include "../async/NamespacesAwait.h"
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
+#include "CallQLAwait.h"
 #include "HistEditQLAwait.h"
 #include "HistQLAwait.h"
 #include "HistComputedQLAwait.h"
@@ -111,7 +112,7 @@ namespace Jde::Opc::Gateway{
 	//A hist edit with `group` alone is the gateway historian's (HistGroupEditQLAwait), which needs no client.  One that names
 	//both `opc` and `group`, or neither, is this await's to refuse.
 	α GatewayQLMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
-		return m.JsonTableName=="variable" || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
+		return m.JsonTableName=="variable" || m.CommandName==CallQLAwait::Command || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
 	}
 	α GatewayQLMAwait::Suspend()ι->void{
 		if( let edit = HistQL::FindEdit(_query.CommandName); edit && HistQL::Target(_query)==HistQL::ETarget::Neither )
@@ -154,6 +155,12 @@ namespace Jde::Opc::Gateway{
 				auto type = co_await _client->EnumTypes().Get( _client, move(id), _sl );//AnyAwait - legal from this TAwait<jvalue>::Task.
 				y = type->ToJson( _query );
 			}
+			else if( _query.JsonName=="method" ){//a method's arguments (clients spec *Methods*), read from the server on first use and cached with the client.
+				auto ids = NodeId::ParseQL( _query );
+				THROW_IF( ids.size()!=1, "method takes one id." );
+				auto arguments = co_await _client->Methods().Get( _client, move(ids.front()), _sl );
+				y = arguments->ToJson( _query );
+			}
 			else if( _query.JsonName=="securityPolicyUri" )
 				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return _query.TransformResult( SecurityPolicyUri(_client) ); }, _sl };
 			else if( _query.JsonName=="securityMode" )
@@ -175,6 +182,8 @@ namespace Jde::Opc::Gateway{
 				y = co_await QL::QLAwait<>( move(_query), UserPK(), _sl );
 			else if( _query.JsonTableName=="variable" )
 				y = co_await VariableQLAwait{ move(_query), RequireSession(), _sl };
+			else if( _query.CommandName==CallQLAwait::Command )//a method call over the caller's client (clients spec *Methods*).
+				y = co_await CallQLAwait{ move(_query), move(_client), _sl };
 			else if( let edit = HistQL::FindEdit(_query.CommandName); edit )//the server's own history, over the caller's session (spec *Pass-through*).
 				y = co_await HistEditQLAwait{ move(_query), *edit, move(_client), _sl };
 			else

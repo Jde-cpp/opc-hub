@@ -27,6 +27,11 @@ namespace Jde::Opc::Server{
 		//Reads nothing from the server - since 1.5.9 it answers for every attribute read but Value (review #12).
 		α MayBrowse( const NodeId& nodeId, UserPK executer )ι->bool override;
 		α UserRights( const NodeId& nodeId, UserPK executer )ι->EAccess override;//NodeRights in UA access-level bits, for getUserAccessLevel, but HistoryWrite, which is EditRights'.
+		//The rights for a call of `method` on `object`:  the object's chain with a resource configured on the method node itself one
+		//level below it - a grant there adds, a deny there wins (reviews-issue/318-opc-calls.md #2).  Not the method's NodeRights:  an
+		//instance of a type references the type's method node rather than copying it, so the instances share one node, which the walk
+		//maps to whichever instance it met first.
+		α CallRights( const NodeId& object, const NodeId& method, UserPK executer )ι->Access::ERights override;
 		α AssignRights( UA_Server& server )ι->void;
 		//The AppServer's delegated admin check (ServerSocketSession::TestAdminAwait → OpcServerQL's adminCheck):  who may grant on a node is
 		//whoever NodeRights gives Administer there - the same resolution, which only this server can make.  Other targets take the generic flat rule.  Throws AccessException
@@ -72,6 +77,7 @@ namespace Jde::Opc::Server{
 		std::map<NodeId, Access::ResourcePK> _nodeResources ABSL_GUARDED_BY(_nodeResourcesMutex);
 		std::map<NodeId, vector<Access::ResourcePK>> _beneath ABSL_GUARDED_BY(_nodeResourcesMutex);//the resources configured below each node in the Objects tree that has any.
 		std::map<Access::ResourcePK, Access::ResourcePK> _enclosing ABSL_GUARDED_BY(_nodeResourcesMutex);//each criteria resource's nearest configured ancestor's, the root's for one with no other.
+		std::map<NodeId, Access::ResourcePK> _configured ABSL_GUARDED_BY(_nodeResourcesMutex);//the walk's Base:  the nodeIds resources by the node each names, for CallRights.
 		std::set<NodeId> _typeNodes ABSL_GUARDED_BY(_nodeResourcesMutex);//the ObjectTypes, VariableTypes, DataTypes and ReferenceTypes outside namespace 0, for MayBrowse.
 		bool _enabled ABSL_GUARDED_BY(_nodeResourcesMutex){};//true once a base resource is enforced; when false the server is unauthorized and every node is fully accessible, but for edits of its history.
 		std::atomic<bool> _assigned{};//AssignRights has run (with or without base resources) - TestAdminNode denies until then.

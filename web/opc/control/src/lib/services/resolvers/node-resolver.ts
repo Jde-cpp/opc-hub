@@ -38,7 +38,7 @@ export class NodeResolver implements Resolve<NodePageData> {
 			let gateway = await this.#gatewayService.gateway( route.gatewaySlug );
 			const server = await this.#opcStore.getConnection( gateway, route.cnnctnSlug );
 			const defaultBrowseNs = server.connection.defaultBrowseNs;
-			if( route.node?.isVariable )//browsed already, so the store knows what it is
+			if( route.node?.isVariable || route.node?.isMethod )//browsed already, so the store knows what it is
 				return this.#showParent( route );
 			if( !route.node ){
 				const vars = { opc: route.cnnctnSlug, path: route.browsePath };

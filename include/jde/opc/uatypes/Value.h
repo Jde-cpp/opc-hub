@@ -19,6 +19,9 @@ namespace Jde::Opc{
 		α ToJson()Ι->jvalue;
 		Ŧ AsNumber( SRCE )ε->T;
 		α Set( const jvalue& j, SRCE )ε->void;
+		//Whether Set has an arm for the type.  Any other throws "has not been implemented" whatever the json - the conversion's
+		//limit, not a value that does not fit its type.
+		Ω Settable( const UA_DataType& type )ι->bool;
 		Ŧ Get( uint index )Ι->const T&{ return ((T*)value.data)[index]; };
 	private:
 		Ŧ SetNumber( const jvalue& j, SRCE )ε->void;

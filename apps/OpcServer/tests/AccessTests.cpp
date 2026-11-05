@@ -72,10 +72,20 @@ namespace Jde::Opc::Server::Tests{
 			addRole( "writer", _writerAllowed, _writerDenied );
 			addRole( "admin", _adminAllowed, _adminDenied );
 			addRole( "branch", ERights::Read, ERights::None, true );
+			addRole( "caller", ERights::Read | ERights::Execute, ERights::None );//may call methods, and not write (#318).
 			_app->QuerySync<jvalue>( "restoreResource( slug:$slug, criteria:null )", nodeSlug );
 		}
 		Ω TearDownTestCase()ι->void{}
 		α SetUp()ι->void{}
+		//UAAccess's two Execute callbacks for `user`'s session:  the UserExecutable attribute's, and the Call service's on `object`.
+		Ω Executable( UserPK user, const UA_NodeId& method )ι->bool{
+			auto ctx = Session( user );
+			return UAAccess::GetUserExecutable( _ua->Ptr(), nullptr, nullptr, &ctx, &method, nullptr );
+		}
+		Ω OnObject( UserPK user, const UA_NodeId& method, const UA_NodeId& object )ι->bool{
+			auto ctx = Session( user );
+			return UAAccess::GetUserExecutableOnObject( _ua->Ptr(), nullptr, nullptr, &ctx, &method, nullptr, &object, nullptr );
+		}
 //	private:
 		static sp<App::Client::IAppClient> _app;
 		static inline flat_map<string, uint> _roles;
@@ -136,6 +146,81 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_FALSE( mayAddReference(_users.at("readerUser")) ) << "a reference is a write to its source node";
 		EXPECT_TRUE( mayAddReference(_users.at("writerUser")) );//Update
 		EXPECT_FALSE( mayAddReference(unknownUser) );
+	}
+
+	//Clients spec *Methods* (#318, *Open questions* #9):  a call is Execute on the node asked about - the method's own for the
+	//UserExecutable attribute, the object's for the Call service's on-object check, since a method a type declares is called with
+	//its own id and the instance as the object - and Update implies nothing.  Both used to deny every method (the on-object form
+	//asserted), so the gateway's call path was dead against this server.
+	TEST_F( AccessTests, ExecuteGatesMethodCalls ){
+		let method = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER_GETMONITOREDITEMS );//Server's own GetMonitoredItems, in the Objects tree.
+		let typesMethod = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERTYPE_GETMONITOREDITEMS );//ServerType's declaration of it, outside the tree:  no resource of its own, so the root's.
+		let server = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER );
+		let user = [&]( const string& slug ){ return UserPK{ (UserPK::Type)_users.at(slug) }; };
+		auto& auth = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
+		ASSERT_TRUE( WaitUntil([&]{ return !empty(auth.NodeRights(NodeId{method}, user("callerUser")) & ERights::Execute); }) ) << "the caller's grant reaches the authorizer";
+		EXPECT_FALSE( Executable(user("writerUser"), method) ) << "Update implies nothing";
+		EXPECT_FALSE( OnObject(user("writerUser"), typesMethod, server) );
+		EXPECT_FALSE( Executable(user("adminUser"), method) ) << "nor does Administer";
+		EXPECT_TRUE( Executable(user("callerUser"), method) );
+		EXPECT_TRUE( OnObject(user("callerUser"), typesMethod, server) ) << "a type's method, by the instance's rights";
+		EXPECT_FALSE( OnObject(user("callerUser"), typesMethod, criteriaNode()) ) << "the object's own resource withholds everything";
+		EXPECT_FALSE( Executable(UserPK{std::numeric_limits<UserPK::Type>::max()}, method) ) << "no acl row at all";
+		EXPECT_FALSE( UAAccess::GetUserExecutable(_ua->Ptr(), nullptr, nullptr, nullptr, &method, nullptr) ) << "no session context";
+
+		//An Execute grant on the object alone - ServerDiagnostics, a node no other test maps - allows a call on it and on nothing above it.
+		const NodeId diagnostics{ UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERDIAGNOSTICS) };
+		let objectCaller = FindOrCreateUser( *_app, "objectCallerUser" );
+		let callerRole = GrantRole( *_app, roleSlug("objectCaller"), objectCaller, {{_resource, "nodeIds", ERights::Read}, {_resource, "nodeIds", ERights::Execute, {}, diagnostics.ToString(), "ServerDiagnostics"}} );
+		//both go after (reviews-issue/318-opc-calls.md #10):  the row, or every later test sees a resource beneath Server it did not
+		//make;  the role, or a later run's GrantRole finds it without the grant on the purged row.
+		absl::Cleanup purge = [&]{
+			try{
+				_app->QuerySync<jvalue>( "purgeRole( id:$id )", {{"id", callerRole.Value}} );
+				_app->QuerySync<jvalue>( "purgeResource( schemaName:$schema, slug:\"nodeIds\", criteria:$criteria )", {{"schema", _resource}, {"criteria", diagnostics.ToString()}} );
+				if( !WaitUntil([&]{ return !auth.FindActiveResourcePK(_resource, "nodeIds", diagnostics.ToString()).has_value(); }) )
+					ADD_FAILURE() << "the ServerDiagnostics row's purge didn't reach the authorizer";
+			}
+			catch( const std::exception& e ){ ADD_FAILURE() << "the objectCaller role or the ServerDiagnostics row wasn't purged:  " << e.what(); }
+		};
+		ASSERT_TRUE( WaitUntil([&]{ return !empty(auth.NodeRights(diagnostics, objectCaller) & ERights::Execute); }) ) << "the node's grant reaches the authorizer";
+		EXPECT_TRUE( OnObject(objectCaller, typesMethod, diagnostics) ) << "Execute on the object";
+		EXPECT_FALSE( OnObject(objectCaller, typesMethod, server) ) << "the node's grant stays on the node";
+		EXPECT_FALSE( Executable(objectCaller, method) );
+	}
+
+	//reviews-issue/318-opc-calls.md #2:  a resource on the method node itself is one level below the object - a grant there alone
+	//calls it, and a deny there wins over the object's Execute - and the UserExecutable attribute, which has no object, agrees for an
+	//instance's own method.  Server.GetMonitoredItems is Server's own node;  ServerType's declaration of it has no resource of its
+	//own, so a call of it on Server stays the object's.
+	TEST_F( AccessTests, TheMethodsOwnResourceCounts ){
+		let method = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER_GETMONITOREDITEMS );
+		let typesMethod = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERTYPE_GETMONITOREDITEMS );
+		let server = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER );
+		const NodeId methodId{ method };
+		auto& auth = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
+		let grantee = FindOrCreateUser( *_app, "methodGranteeUser" ), denied = FindOrCreateUser( *_app, "methodDeniedUser" );
+		let granteeRole = GrantRole( *_app, roleSlug("methodGrantee"), grantee, {{_resource, "nodeIds", ERights::Read}, {_resource, "nodeIds", ERights::Execute, {}, methodId.ToString(), "GetMonitoredItems"}} );
+		let deniedRole = GrantRole( *_app, roleSlug("methodDenied"), denied, {{_resource, "nodeIds", ERights::Read | ERights::Execute}, {_resource, "nodeIds", ERights::None, ERights::Execute, methodId.ToString(), "GetMonitoredItems"}} );
+		absl::Cleanup purge = [&]{//as ExecuteGatesMethodCalls':  the roles and the row
+			try{
+				for( let role : {granteeRole, deniedRole} )
+					_app->QuerySync<jvalue>( "purgeRole( id:$id )", {{"id", role.Value}} );
+				_app->QuerySync<jvalue>( "purgeResource( schemaName:$schema, slug:\"nodeIds\", criteria:$criteria )", {{"schema", _resource}, {"criteria", methodId.ToString()}} );
+				if( !WaitUntil([&]{ return !auth.FindActiveResourcePK(_resource, "nodeIds", methodId.ToString()).has_value(); }) )
+					ADD_FAILURE() << "the GetMonitoredItems row's purge didn't reach the authorizer";
+			}
+			catch( const std::exception& e ){ ADD_FAILURE() << "the method roles or the GetMonitoredItems row weren't purged:  " << e.what(); }
+		};
+		ASSERT_TRUE( WaitUntil([&]{ return !empty(auth.NodeRights(methodId, grantee) & ERights::Execute) && empty(auth.NodeRights(methodId, denied) & ERights::Execute); }) ) << "the method's grants reach the authorizer";
+
+		EXPECT_TRUE( OnObject(grantee, method, server) ) << "a grant on the method alone calls it";
+		EXPECT_TRUE( Executable(grantee, method) ) << "and the attribute says so";
+		EXPECT_FALSE( OnObject(grantee, typesMethod, server) ) << "a method with no resource of its own goes by the object, which grants no Execute";
+
+		EXPECT_FALSE( OnObject(denied, method, server) ) << "the method's deny wins over the object's Execute";
+		EXPECT_FALSE( Executable(denied, method) ) << "and the attribute says so";
+		EXPECT_TRUE( OnObject(denied, typesMethod, server) ) << "the object's Execute still calls its other methods";
 	}
 
 	//open62541 1.5.9 gates every attribute read but Value and RolePermissions on allowBrowseNode, so a user without Read on

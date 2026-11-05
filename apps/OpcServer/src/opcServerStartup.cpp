@@ -34,6 +34,7 @@ namespace Jde::Opc{
 		auto& ua = GetUAServer();
 		for( let& config : Settings::FindPathArray("/opcServer/configFiles") )
 			LoadNodeset( ua, config );
+		BindPumpMethods( ua );//the nodesets' methods need their callbacks, which no nodeset carries.
 		StartHistory( ua, HistoryHost() );//after the nodesets, which say what is historized, and before AssignRights, which maps the nodes it adds.
 		//Both before Run(), which is what opens the listener.  AssignRights browses the address space, and the nodestore
 		//(ns0 included) is built by UA_Server_newWithConfig, so it needs the nodesets loaded, not the server started.

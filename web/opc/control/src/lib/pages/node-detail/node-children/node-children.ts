@@ -1,7 +1,9 @@
 import { SelectionModel, SelectionChange } from '@angular/cdk/collections';
 import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, output, signal } from '@angular/core';
+import {MatButtonModule} from '@angular/material/button';
 import {MatCheckboxChange, MatCheckboxModule} from '@angular/material/checkbox';
 import {MatChipsModule} from '@angular/material/chips';
+import {MatDialog} from '@angular/material/dialog';
 import {MatIconModule} from '@angular/material/icon';
 import {MatSelectChange, MatSelectModule} from '@angular/material/select';
 import { MatSortModule, Sort } from "@angular/material/sort";
@@ -19,7 +21,8 @@ import { OpcStore } from '../../../services/opc-store';
 import { numberValue, Reading, Value, valueString } from '../../../model/value';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
-import { ENodeClass, Variable, UaNode }  from '../../../model/node';
+import { ENodeClass, Method, Variable, UaNode }  from '../../../model/node';
+import { MethodCallDialog } from './method-call-dialog';
 import { NodeView } from '../../../model/node-view';
 import { Server } from '../../../model/server';
 import { NodeId } from '../../../model/node-id';
@@ -28,7 +31,7 @@ import { NodeId } from '../../../model/node-id';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -288,6 +291,20 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.#repaint();
 	}
 
+	//a Method row's Call (clients spec *Methods*):  the dialog reads the method's arguments through the gateway and calls it on this
+	//page's node, the object the method belongs to.  The codes it answers are registered before the names are fetched - the
+	//fetch asks only for codes already pending, and the dialog's template would register them after it.
+	call( m:Method ){
+		MethodCallDialog.open( this.#dialog, {
+			object: this.node(), method: m,
+			arguments: ()=>this._iot.methodArguments( this.cnnctnSlug, m.nodeId ),
+			call: args=>this._iot.call( this.cnnctnSlug, this.nodeId, m.nodeId, args ),
+			names: codes=>{
+				if( codes.filter( sc=>!OpcError.statusCodeText(sc) ).length )
+					this._iot.updateErrorCodes();
+			}
+		} );
+	}
 	routerLink(n:UaNode):string[]{
 		return [ `./${n.browseFQ(this.server.connection.defaultBrowseNs)}` ];
 	}
@@ -333,6 +350,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	rows = computed<UaNode[]>( ()=>this.view() ? this.view().apply( this.nodes() ) : [] );
 	displayedColumns = computed<string[]>( ()=>this.view()?.displayedColumns ?? [] );
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
+	snapshotShown = computed<boolean>( ()=>this.displayedColumns().includes("snapshot") );//a Method row's Call is in the Snapshot cell, and in its Name cell where the view hides that (reviews-issue/318-opc-calls.md #6)
 	get variables():Variable[]{ return <Variable[]>this.nodes().filter((x)=>x.nodeClass==ENodeClass.Variable); }
 	selections = new SelectionModel<UaNode>(true, []);
 	//sideNav = model.required<NodeRoute>();
@@ -347,6 +365,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 
 	#profileStore = inject( ProfileStore );
 	#opcStore = inject( OpcStore );
+	#dialog = inject( MatDialog );
 }
 //per node (keyed by profileKey):  the subscriptions.  The tab index used to live here too, but is LocalPrefs' now;  the columns and sort are the view's now, shared by every node.
 class UserSettings{

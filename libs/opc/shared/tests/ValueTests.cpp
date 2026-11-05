@@ -249,6 +249,24 @@ namespace Jde::Opc::Tests{
 		EXPECT_THROW( Value( jvalue{5}, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] ), Exception ); //not implemented, and says so.
 	}
 
+	//Settable is Set's arms, so a caller can tell the conversion's limit from a value that does not fit its type
+	//(reviews-issue/318-opc-calls.md #5):  every type it refuses is one Set says it has not implemented, and no other.
+	TEST( ValueTests, SettableListsSetsArms ){
+		for( uint i=0; i<UA_TYPES_COUNT; ++i ){
+			let& type = UA_TYPES[i];
+			string thrown;
+			try{
+				Value v{ jvalue{0}, &type };
+			}
+			catch( const std::exception& e ){
+				thrown = e.what();
+			}
+			EXPECT_EQ( Value::Settable(type), thrown.find("has not been implemented")==string::npos ) << type.typeName << ":  " << thrown;
+		}
+		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_NODEID]) );
+		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_DURATION]) ) << "a Double";
+	}
+
 	//A typeless Value infers the UA type from the json kind - the path a write takes before the node's DataType is known.
 	TEST( ValueTests, TypelessSetInfers ){
 		EXPECT_FALSE( Value( jvalue{5}, nullptr ).ToJson().at("unsigned").as_bool() ); //int64 -> the Long form.

@@ -45,8 +45,11 @@ installed.
   block, no endpoint.  `endpoint{ url policies trustedCertDirs rejectedCertDir served sessions }` describes it for the web's
   Endpoint tab and a group's page ([`src/ql/OpcSessionsQLAwait.h`](src/ql/OpcSessionsQLAwait.h)), null without one.
 - **GraphQL** (`src/ql/`): `serverConnections`, `opcSessions`, `node` and `nodes` for browse and read, `updateVariable`
-  for a write, `search` over a per-connection name index crawled on the first search (`src/NodeIndex.*`), and
-  `__type(opc, ns, i)` for a server's enumerations, read from its DataType nodes (`src/EnumTypeCache.*`).
+  for a write, `call( opc, object, method, args )` for a method call with `method( opc, id )` for its arguments, read from
+  the InputArguments/OutputArguments properties and cached per connection (`src/MethodArguments.*`) - an argument of a type of
+  the server's own goes as the namespace-0 type it derives from (`src/BaseTypeCache.*`) - `search` over a
+  per-connection name index crawled on the first search (`src/NodeIndex.*`), and `__type(opc, ns, i)` for a server's
+  enumerations, read from its DataType nodes (`src/EnumTypeCache.*`).
   `config/introspection/*.jsonnet` extends the schema the site sees.
 - **The OPC websocket** (`src/GatewaySocketSession.*`, protobuf, `src/types/proto`): subscribe and unsubscribe by node,
   the data changes pushed back, and GraphQL over the socket too.  The REST side is `POST /login`, `POST /logout` and

@@ -19,8 +19,8 @@ namespace Jde::Opc::Gateway{
 		//anything keyed by `opc`.  Null for any other, so a host QL (OpcHub, through Gateway::CustomQuery) hands it every query
 		//and app/access tables never reach ConnectAwait.
 		Ω Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
-		//The server-bound queries Query answers - node/variable/dataType singular and plural - and serverDescription{ discoveryUrls }.
-		static constexpr array<sv,12> Tables{ "dataType", "dataTypes", "discoveryUrls", "history", "namespaces", "node", "nodes", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables" };
+		//The server-bound queries Query answers - node/variable/dataType singular and plural, method - and serverDescription{ discoveryUrls }.
+		static constexpr array<sv,13> Tables{ "dataType", "dataTypes", "discoveryUrls", "history", "method", "namespaces", "node", "nodes", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables" };
 		α Suspend()ι->void override{ GetClient( this ); }
 		//The connection-attribute readers, untransformed - each builds what `q` asks for - shared with testConnection, which answers
 		//all of them in one object for a connection that is not saved.  Strand-only:  connection attributes are sync UA services.
@@ -34,7 +34,7 @@ namespace Jde::Opc::Gateway{
 	struct GatewayQLMAwait final : QL::IQLTableMutationExe, IGatewayQLAwait{
 		using base = QL::IQLTableMutationExe;
 		GatewayQLMAwait( QL::MutationQL&& q, QL::Creds creds, SRCE )ι:base{move(q), move(creds), sl}{}
-		Ω IsApplicable( const QL::MutationQL& m )ι->bool;//the server-bound mutations, updateVariable and every hist edit but a group's.
+		Ω IsApplicable( const QL::MutationQL& m )ι->bool;//the server-bound mutations, updateVariable, call and every hist edit but a group's.
 		Ω Test( QL::MutationQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
 		α Suspend()ι->void override;
 	private:

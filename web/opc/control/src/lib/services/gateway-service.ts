@@ -14,7 +14,8 @@ import * as FromServer from 'jde-proto/Opc.FromServer';
 import { OPC_STORE, OpcStore } from './opc-store';
 import { CnnctnSlug } from "../model/server-cnnctn";
 import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
-import { ENodeClass, ObjectType, OpcObject, UaNode, Variable } from '../model/node';
+import { ENodeClass, Method, ObjectType, OpcObject, UaNode, Variable } from '../model/node';
+import { CallResult, MethodArguments, toCallResult } from '../model/method';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
 import { ExtensionObject, Reading, shortestFloat, toReading, Value, valueJson } from '../model/value';
@@ -243,14 +244,13 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			switch( <ENodeClass>ref.nodeClass ){
 				case ENodeClass.Object: child = new OpcObject(ref, parent); break;
 				case ENodeClass.ObjectType: parent.typeDef = new ObjectType(ref); break; //y.push( new ObjectType(ref) ); break;
+				case ENodeClass.Method: child = new Method(ref, parent); break;
 				case ENodeClass.Variable:
 					let variable = new Variable(ref, parent);
 					child = variable;
 					if( variable.customDataType )
 						try{
-							const nodeId = <NodeId>variable.customDataType
-							let x = await super.querySingle<Type>( `__type( opc: ${StringUtils.qlString(cnnctn)}, ${nodeId.qlArgs()}){ name enumValues{id name description}}` );
-							variable.customDataType = new Enum(nodeId, x);
+							variable.customDataType = await this.enumType( cnnctn, <NodeId>variable.customDataType );
 						}
 						catch( e:unknown ){
 							console.log( errorMessage(e) );
@@ -274,6 +274,32 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		//avoids hand-escaping the literal.
 		const v = await super.querySingle<{value:any}>( `node( opc: $opc, id: $id ){value}`, {opc: opcId, id: n.toJson()} );
 		return toReading( v["value"] );
+	}
+	//an enumeration of the server's own:  its name and values, read from its DataType node once per connection (EnumTypeCache)
+	async enumType( opcId:CnnctnSlug, id:NodeId ):Promise<Enum>{
+		return new Enum( id, await super.querySingle<Type>( `__type( opc: ${StringUtils.qlString(opcId)}, ${id.qlArgs()}){ name enumValues{id name description}}` ) );
+	}
+	//a method's arguments, read from its InputArguments and OutputArguments once per method and kept with the gateway's connection
+	//(MethodArgumentCache):  what the call dialog is built from, with the values of each enumeration of the server's own - without
+	//them, its editor is the number it is sent as
+	async methodArguments( opcId:CnnctnSlug, method:NodeId ):Promise<MethodArguments>{
+		const columns = "name dataType baseDataType valueRank description";
+		const json = await super.querySingle<any>( `method( opc: $opc, id: $id ){ name inputArguments{ ${columns} } outputArguments{ ${columns} } }`, {opc: opcId, id: method.toJson()} );
+		const y = new MethodArguments( json ?? {} );
+		await Promise.all( [...y.inputs, ...y.outputs].filter( a=>a.isEnumeration ).map( a=>this.enumType( opcId, a.customDataType! ).then(
+			e=>{ a.enum = e; },
+			e=>console.warn( `No values for ${a.name}'s ${a.customDataType!.uaString()} - ${errorMessage( e )}` )
+		) ) );
+		return y;
+	}
+	//call( opc, object, method, args ) - a system mutation (clients spec *Methods*):  the arguments typed at the gateway from the
+	//method's InputArguments, the rights the server's under this session.  The server's answer whatever its status - a refused
+	//call is an answer, with a status per argument - so only a failure before the call throws.
+	async call( opcId:CnnctnSlug, object:NodeId, method:NodeId, args:Value[] ):Promise<CallResult>{
+		const q = `call( opc: $opc, object: $object, method: $method, args: $args ){ statusCode inputArgumentResults outputArguments }`;
+		const vars = { opc: opcId, object: object.toJson(), method: method.toJson(), args: args.map( a=>valueJson( a ) ) };
+		const data:any = await super.postQL<any>( q, vars );
+		return toCallResult( data?.["call"] ?? data );//keyed by command name, as write()'s is;  the caller asks for the codes' names
 	}
 	async write( opcId:CnnctnSlug, n:NodeId, v:Value ):Promise<Reading>{
 		const q = `updateVariable( opc: $opc, id: $id, value: $value ){ value }`;

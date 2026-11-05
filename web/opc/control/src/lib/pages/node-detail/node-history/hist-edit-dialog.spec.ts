@@ -112,6 +112,9 @@ describe( 'HistEditDialog', ()=>{
 		expect( d.names() ).toEqual( [[0x80A30000, 0]] );
 		d.fixture.detectChanges();
 		expect( d.fixture.nativeElement.querySelector( '.results li' )?.textContent ).toContain( 'rpm at' );
+		const list = d.fixture.nativeElement.querySelector( 'ul.results' );
+		expect( list.getAttribute('role') ).toBeNull();//reviews-issue/318-opc-calls.md #15:  a list, so its items are list items to axe
+		expect( list.parentElement.getAttribute('role') ).toBe( 'alert' );
 		OpcError.setMessages( [{sc: 0x80A30000, message: 'BadEntryExists'}] );
 		d.fixture.detectChanges();
 		expect( d.fixture.nativeElement.querySelector( '.results li' )?.textContent ).toContain( 'BadEntryExists' );
