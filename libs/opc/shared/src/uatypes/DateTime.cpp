@@ -46,19 +46,7 @@ namespace Jde::Opc{
 			: duration_cast<UATick>( sinceEpoch ).count()+_ua1970;
 	}
 
-	//One second of headroom below the exact bound:  the sum below adds up to 1e9-1 nanoseconds on top of the seconds,
-	//and at the exact bound that addition is what overflows.
-	constexpr _int _maxSeconds = (std::numeric_limits<Duration::rep>::max)()/(Duration::period::den/Duration::period::num) - 1;
 	constexpr _int _nanosPerSecond = 1'000'000'000;
-
-	//The same range, applied without throwing, for the ι constructor.  libc++'s from_time_t multiplies the seconds by
-	//1e6 with no check of its own, so what a protobufjs client legitimately emits for an int64 - INT64_MAX - wrapped to
-	//a moment in 1969 and was written silently; saturating is the noexcept counterpart of the json ctor's throw.
-	Ω toTimePoint( _int s, _int ns )ι->TimePoint{
-		let seconds_ = s>_maxSeconds ? _maxSeconds : s<-_maxSeconds ? -_maxSeconds : s;
-		let nanos = ns>=_nanosPerSecond ? _nanosPerSecond-1 : ns<=-_nanosPerSecond ? -_nanosPerSecond+1 : ns;
-		return Chrono::Epoch()+duration_cast<Duration>( seconds{seconds_} )+duration_cast<Duration>( nanoseconds{nanos} );
-	}
 
 	UADateTime::UADateTime( const UA_DateTime& dt )ι:
 		_time{ Chrono::Epoch()+duration_cast<Duration>(UATick{toTicks(dt)}) }
@@ -66,13 +54,13 @@ namespace Jde::Opc{
 
 	UADateTime::UADateTime( const jvalue& v, SL sl )ε{
 		let at = [&]( _int s, _int ns )ε->TimePoint{
-			if( s>_maxSeconds || s<-_maxSeconds )
-				throw Exception{ sl, (ELogTags)EOpcLogTags::Opc, "DateTime seconds {} is outside the ±{} a TimePoint holds: {}", s, _maxSeconds, serialize(v) };
+			if( s>Protobuf::MaxSeconds || s<-Protobuf::MaxSeconds )
+				throw Exception{ sl, (ELogTags)EOpcLogTags::Opc, "DateTime seconds {} is outside the ±{} a TimePoint holds: {}", s, Protobuf::MaxSeconds, serialize(v) };
 			//Bounding the seconds alone left the sum overflowing at the bound; a protobuf Timestamp's nanos are defined
 			//to be in [0,1e9) anyway, so anything else is malformed rather than "extra seconds".
 			if( ns>=_nanosPerSecond || ns<=-_nanosPerSecond )
 				throw Exception{ sl, (ELogTags)EOpcLogTags::Opc, "DateTime nanos {} is outside ±1e9: {}", ns, serialize(v) };
-			return toTimePoint( s, ns );
+			return Protobuf::ToTimePoint( s, ns );
 		};
 		if( v.is_object() ){
 			let& o = v.get_object();
@@ -98,29 +86,15 @@ namespace Jde::Opc{
 			throw Exception{ sl, {(ELogTags)EOpcLogTags::Opc}, "Invalid DateTime object: {}", serialize(v) };
 	}
 	UADateTime::UADateTime( const google::protobuf::Timestamp& timestamp )ι:
-		_time{ toTimePoint(timestamp.seconds(), timestamp.nanos()) }
+		_time{ Protobuf::ToTimePoint(timestamp) }
 	{}
 
 	α UADateTime::ToJson()Ι->jobject{
-		let [seconds,nanos] = ToParts();
-		return jobject{ {"seconds", seconds}, {"nanos", nanos} };
+		let t = ToProto();
+		return jobject{ {"seconds", t.seconds()}, {"nanos", t.nanos()} };
 	}
 	α UADateTime::ToProto()Ι->google::protobuf::Timestamp{
-		let [seconds,nanos] = ToParts();
-		google::protobuf::Timestamp t;
-		t.set_seconds( seconds );
-		t.set_nanos( nanos );
-		return t;
-	}
-	//A duration split, not a calendar round trip.  Going out through UA_DateTime_toStruct and back through
-	//Chrono::ToTimePoint called an ε function from this Ι one - a pre-year-0 year wrapped into its uint16_t parameter and
-	//THROW_IFSL(!ymd.ok()) then escaped a noexcept frame - and it cost a full civil-time conversion to learn nothing the
-	//duration did not already say.  floor, not duration_cast: nanos has to stay in [0,1e9) for a protobuf Timestamp, and
-	//truncation toward zero would make it negative before 1970.
-	α UADateTime::ToParts()Ι->tuple<_int,int>{
-		let sinceEpoch = _time-Chrono::Epoch();
-		let secs = floor<seconds>( sinceEpoch );
-		return make_tuple( (_int)secs.count(), (int)duration_cast<nanoseconds>(sinceEpoch-secs).count() );
+		return Protobuf::ToTimestamp( _time );
 	}
 	α UADateTime::UA()Ι->UA_DateTime{
 		return fromTimePoint( _time );

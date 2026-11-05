@@ -7,16 +7,9 @@
 #include <google/protobuf/message.h>
 #include <google/protobuf/timestamp.pb.h>
 #pragma warning( pop )
-#include <limits>
-#include <jde/fwk/io/file.h>
-#include <jde/fwk/io/json.h>
 
 #define let const auto
 namespace Jde::Protobuf{
-	Ŧ Load( const fs::path& path, SRCE )ε->up<T>;
-	Ŧ TryLoad( const fs::path& path, SRCE )ι->up<T>;
-	Ŧ Load( const fs::path& path, T& p, SRCE )ε->void;
-
 	Ŧ Deserialize( const vector<char>& data )ε->up<T>;
 	Ŧ Deserialize( const google::protobuf::uint8* p, uint size )ε->T;
 	Ŧ Deserialize( string&& x )ε->T;
@@ -24,18 +17,18 @@ namespace Jde::Protobuf{
 	Ŧ ToVector( google::protobuf::RepeatedPtrField<T>&& x )ι->vector<T>;
 	Ŧ ToVector( const google::protobuf::RepeatedField<T>& x )ι->vector<T>;
 
-	α Save( const google::protobuf::MessageLite& msg, fs::path path, SL )ε->void;
+	inline constexpr int64_t MaxSeconds{ (std::numeric_limits<Duration::rep>::max)()/(Duration::period::den/Duration::period::num) - 1 };//± the seconds a TimePoint holds, less one for the nanos on top.
 	α ToString( const google::protobuf::MessageLite& msg )ε->string;
 	α ToTimestamp( TimePoint t )ι->google::protobuf::Timestamp;
 	Ξ ToBytes( const uuid& g )ι->sv{ return sv{(char*)g.data(), 16}; }
 	Ξ ToGuid( sv g )ι->uuid{ uuid y{}; memcpy(&y, g.data(), std::min(sizeof(uuid), g.size())); return y; }//value-init: short input must zero-fill the tail, not leave it indeterminate.
-	α ToTimePoint( google::protobuf::Timestamp t )ι->TimePoint;
+	α ToTimePoint( const google::protobuf::Timestamp& t )ι->TimePoint;
+	α ToTimePoint( int64_t seconds, int64_t nanos )ι->TimePoint;//saturates: seconds to ±MaxSeconds, nanos to ±(1e9-1).
 
 	namespace Internal{
 		Ŧ Deserialize( const google::protobuf::uint8* p, uint size, T& proto )ε->void{
-			THROW_IF( size>(uint)std::numeric_limits<int>::max(), "{} bytes exceeds protobuf's {} byte limit.", size, std::numeric_limits<int>::max() );//CodedInputStream takes an int - a narrowing cast would silently negate/truncate the size.
-			google::protobuf::io::CodedInputStream input{ p, (int)size };
-			THROW_IF( !proto.MergePartialFromCodedStream(&input), "MergePartialFromCodedStream returned false." );
+			THROW_IF( size>(uint)std::numeric_limits<int>::max(), "{} bytes exceeds protobuf's {} byte limit.", size, std::numeric_limits<int>::max() );//ParsePartialFromArray takes an int - a narrowing cast would silently negate/truncate the size.
+			THROW_IF( !proto.ParsePartialFromArray(p, (int)size), "ParsePartialFromArray returned false." );//not MergePartialFromCodedStream: it answers true when a 0 or END_GROUP tag ends the parse early.
 		}
 	}
 }
@@ -64,38 +57,6 @@ namespace Jde{
 		x.clear();
 		return y;
 	}
-	Ŧ Protobuf::Load( const fs::path& path, T& proto, SL sl )ε->void{
-		vector<char> bytes;
-		try{
-			bytes = IO::LoadBinary( path, sl );
-		}
-		catch( fs::filesystem_error& e ){
-			throw IO::IOException( move(e) );
-		}
-		if( !bytes.size() ){
-			fs::remove( path );
-			throw IO::IOException{ path, "has 0 bytes. Removed", sl };
-		}
-		Internal::Deserialize( (google::protobuf::uint8*)bytes.data(), bytes.size(), proto );
-	}
-
-	Ŧ Protobuf::Load( const fs::path& path, SL sl )ε->up<T>{
-		auto p = mu<T>();
-		Load( path, *p, sl );
-		return p;
-	}
-
-	Ŧ Protobuf::TryLoad( const fs::path& path, SL sl )ι->up<T>{
-		up<T> pValue{};
-		if( fs::exists(path) ){
-			try{
-				pValue = Load<T>( path, sl );
-			}
-			catch( const Exception& )
-			{}
-		}
-		return pValue;
-	}
 
 	Ŧ Protobuf::FromVector( vector<T>&& x )ι->google::protobuf::RepeatedPtrField<T>{
 		google::protobuf::RepeatedPtrField<T> y;
@@ -114,20 +75,26 @@ namespace Jde{
 	}
 
 	Ξ Protobuf::ToTimestamp( TimePoint t )ι->google::protobuf::Timestamp{
+		let sinceEpoch = t.time_since_epoch();
+		auto secs = duration_cast<std::chrono::seconds>( sinceEpoch );//toward zero, so sinceEpoch-secs can't overflow; floor's can, at TimePoint::min().
+		auto rest = sinceEpoch-secs;
+		if( rest<Duration::zero() ){//a Timestamp's nanos are in [0,1e9), before 1970 too.
+			--secs;
+			rest += std::chrono::seconds{ 1 };
+		}
 		google::protobuf::Timestamp proto;
-		let seconds = Clock::to_time_t( t );
-		let nanos = std::chrono::duration_cast<std::chrono::nanoseconds>( t-TimePoint{} )-std::chrono::duration_cast<std::chrono::nanoseconds>( std::chrono::seconds(seconds) );
-		proto.set_seconds( seconds );
-		proto.set_nanos( (int)nanos.count() );
+		proto.set_seconds( secs.count() );
+		proto.set_nanos( (int)duration_cast<std::chrono::nanoseconds>(rest).count() );
 		return proto;
 	}
-	Ξ Protobuf::ToTimePoint( google::protobuf::Timestamp t )ι->TimePoint{
-#if defined(_MSC_VER) || defined(__clang__)
-		Clock::duration duration = duration_cast<Clock::duration>( std::chrono::nanoseconds(t.nanos()) );
-		return Clock::from_time_t( t.seconds() ) + duration;
-#else
-		return Clock::from_time_t( t.seconds() )+std::chrono::nanoseconds( t.nanos() );
-#endif
+	Ξ Protobuf::ToTimePoint( const google::protobuf::Timestamp& t )ι->TimePoint{
+		return ToTimePoint( t.seconds(), t.nanos() );
+	}
+	Ξ Protobuf::ToTimePoint( int64_t secs, int64_t nanos )ι->TimePoint{
+		constexpr int64_t maxNanos{ 999'999'999 };
+		return TimePoint{}
+			+ duration_cast<Duration>( std::chrono::seconds{std::clamp(secs, -MaxSeconds, MaxSeconds)} )
+			+ duration_cast<Duration>( std::chrono::nanoseconds{std::clamp(nanos, -maxNanos, maxNanos)} );
 	}
 }
 #undef let
