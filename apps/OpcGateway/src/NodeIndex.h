@@ -15,7 +15,7 @@ namespace Jde::Opc::Gateway{
 	struct NodeIndex final : noncopyable{
 		struct Entry{
 			NodeId Id;
-			string Path;	//browse-path segments from Objects, the UABrowsePath/NodeRoute convention:  `name` in the connection's default browse ns, else `<ns>~<name>`.
+			string Path;	//browse-path segments from Root, the page path (NodeQLAwait::segment):  `Objects/…`, `name` in the connection's default browse ns or in namespace 0, else `<ns>~<name>`.
 			string Name;	//displayName text.
 			string Browse;	//browseName, original case.
 			string NameLower, BrowseLower;

@@ -55,7 +55,7 @@ namespace Jde::Opc::Gateway{
 			let defaultNs = client->DefaultBrowseNs();
 			struct Pending{ NodeId Id; string Path; uint8 Depth; bool Retried{}; };
 			std::deque<Pending> pending;
-			pending.push_back( {NodeId::ObjectsFolder(), {}, 0} );
+			pending.push_back( {NodeId::ObjectsFolder(), "Objects", 0} );//the crawl is the Objects folder's;  a page path runs from Root (NodeQLAwait).
 			flat_set<NodeId> seen; seen.emplace( NodeId::ObjectsFolder() );//cycles:  hierarchical references may still reach a node twice.
 			bool warnedSlash{};
 			constexpr UA_BrowseResultMask mask{ UA_BROWSERESULTMASK_BROWSENAME|UA_BROWSERESULTMASK_DISPLAYNAME|UA_BROWSERESULTMASK_NODECLASS };
@@ -146,8 +146,8 @@ namespace Jde::Opc::Gateway{
 							}
 							return true;
 						}
-						let segment = ref.browseName.namespaceIndex==defaultNs ? browse : Ƒ( "{}~{}", ref.browseName.namespaceIndex, browse );
-						string path = parent.Path.empty() ? segment : Ƒ( "{}/{}", parent.Path, segment );
+						let segment = ref.browseName.namespaceIndex==defaultNs || ref.browseName.namespaceIndex==0 ? browse : Ƒ( "{}~{}", ref.browseName.namespaceIndex, browse );//as NodeQLAwait::segment spells one.
+						string path = Ƒ( "{}/{}", parent.Path, segment );
 						let depth = (uint8)( parent.Depth+1 );
 						if( (ref.nodeClass==UA_NODECLASS_OBJECT || ref.nodeClass==UA_NODECLASS_VARIABLE) && depth<maxDepth )//DI/IA hang children under variables too.
 							pending.push_back( {NodeId{id}, path, depth} );

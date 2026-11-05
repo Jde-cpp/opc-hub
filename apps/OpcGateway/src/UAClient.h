@@ -16,6 +16,7 @@
 #include "NodeIndex.h"
 #include "BaseTypeCache.h"
 #include "EnumTypeCache.h"
+#include "DisplayNameCache.h"
 #include "MethodArguments.h"
 #include "AggregateFunctions.h"
 
@@ -189,6 +190,7 @@ namespace Jde::Opc::Gateway{
 		α Name()Ι->str{ return _opcServer.Name; }
 		α Index()ι->NodeIndex&{ return _nodeIndex; }//node names for `search`, crawled on first use;  dies with the client.
 		α EnumTypes()ι->EnumTypeCache&{ return _enumTypes; }//enumeration definitions for `__type(opc,ns,i)`, read on first use;  dies with the client.
+		α DisplayNames()ι->DisplayNameCache&{ return _displayNames; }//the DisplayNames of the reference types and type definitions `references` names, read on first use;  dies with the client.
 		α BaseTypes()ι->BaseTypeCache&{ return _baseTypes; }//each DataType of the server's own to its first namespace-0 supertype, what a method argument is encoded by;  dies with the client.
 		α Methods()ι->MethodArgumentCache&{ return _methods; }//a method's InputArguments and OutputArguments for `call` and `method(opc,id)`, read on first use;  dies with the client.
 		α Aggregates()ι->AggregateFunctions&{ return _aggregates; }//the server's AggregateFunctions folder for an aggregate `history`, read on first use;  dies with the client.
@@ -300,6 +302,7 @@ namespace Jde::Opc::Gateway{
 
 		NodeIndex _nodeIndex;
 		EnumTypeCache _enumTypes;
+		DisplayNameCache _displayNames;
 		BaseTypeCache _baseTypes;
 		MethodArgumentCache _methods;
 		AggregateFunctions _aggregates;

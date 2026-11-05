@@ -29,7 +29,7 @@ namespace Jde::Opc::Gateway{
 						}
 						else if( parent.Refused )
 							y[w.Slot].Lost = true;
-						else if( parent.AtObjects ){
+						else if( parent.AtStop ){
 							std::ranges::reverse( w.Segments );
 							std::ranges::reverse( w.Ids );
 							y[w.Slot].Parents = move( w.Segments );
@@ -60,18 +60,20 @@ namespace Jde::Opc::Gateway{
 					for( uint k=0; k<asked.size(); ++k ){
 						PathParent parent{ .Refused = k>=response->resultsSize || UA_StatusCode_isBad(response->results[k].statusCode) };
 						if( !parent.Refused ){
-							optional<NodeId> id; optional<BrowseSegment> name;
+							optional<NodeId> id; optional<BrowseSegment> name; uint8 rank{};//the parent taken so far:  3 the stop node, 2 the Objects folder, 1 an object or a variable, 0 any other.
 							response->VisitWhile( k, [&]( const UA_ReferenceDescription& ref ){
 								NodeId candidate{ ref.nodeId.nodeId };
-								let isObjects = UA_NodeId_equal( &candidate, &objects );
-								if( !id || isObjects ){
+								let isStop = UA_NodeId_equal( &candidate, &_stop );
+								const uint8 candidateRank = isStop ? 3 : UA_NodeId_equal(&candidate, &objects) ? 2 : ref.nodeClass==UA_NODECLASS_OBJECT || ref.nodeClass==UA_NODECLASS_VARIABLE ? 1 : 0;
+								if( !id || candidateRank>rank ){
 									id = move( candidate );
 									name = BrowseSegment{ ref.browseName.namespaceIndex, string{ToSV(ref.browseName.name)} };
-									parent.AtObjects = isObjects;
+									parent.AtStop = isStop;
+									rank = candidateRank;
 								}
-								return !isObjects;
+								return !isStop;
 							} );
-							if( !parent.AtObjects && id )
+							if( !parent.AtStop && id )
 								parent.Up.emplace( move(*id), move(*name) );
 						}
 						_parents.emplace( asked[k], move(parent) );

@@ -6,6 +6,7 @@
 #include "../src/async/TranslateBrowsePathsAwait.h"
 #include "utils/helpers.h"
 #include "utils/ITest.h"
+#include "utils/Pumps.h"
 #include "../src/types/UAClientException.h"
 #include <jde/fwk/co/BlockAwait.h>
 #define let const auto
@@ -81,20 +82,21 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//reviews/m3-closing.md #9:  the node page's path query asks the node's class too, so a search hit or a url that names a
-	//Variable - which has no page of its own - goes to its parent instead of being browsed as an object.  The class has to come
-	//back as the number the SPA's ENodeClass compares.
+	//Variable, which had no page of its own then, went to its parent instead of being browsed as an object.  The class has to come
+	//back as the number the SPA's ENodeClass compares.  The page path a node id answers runs from Root (#416), so the path form
+	//takes it under `root: Root`.
 	TEST_F( BrowseTests, APathQueryAnswersTheNodesClass ){
 		auto run = [&]( string query, jobject vars ){
 			let value = NodeQL( move(query), move(vars) );
 			TRACE( "{}", serialize(value) );
 			return value.as_object();
 		};
-		auto nodeClass = [&]( sv path ){//NodeResolver's query, parents and all
-			return Json::FindNumber<uint>( run("node( opc: $opc, path:$path ){ id name nodeClass parents{id name path} }", {{"opc", OpcServerSlug}, {"path", path}}), "nodeClass" );
+		auto nodeClass = [&]( sv path, sv root ){//NodeResolver's query, parents and all
+			return Json::FindNumber<uint>( run(Ƒ("node( opc: $opc, path:$path, root:\"{}\" ){{ id name nodeClass parents{{id name path}} }}", root), {{"opc", OpcServerSlug}, {"path", path}}), "nodeClass" );
 		};
-		EXPECT_EQ( nodeClass("4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"), UA_NODECLASS_OBJECT );
+		EXPECT_EQ( nodeClass("4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1", "Objects"), UA_NODECLASS_OBJECT );
 		let path = string{ Json::AsSV(run("node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", Intensity.ToJson()}}), "path") };//the Variable SubscribeTests monitors - its page path, as the node-scoped resources' links find it
-		EXPECT_EQ( nodeClass(path), UA_NODECLASS_VARIABLE ) << path;
+		EXPECT_EQ( nodeClass(path, "Root"), UA_NODECLASS_VARIABLE ) << path;
 	}
 
 	TEST_F( BrowseTests, NodeId ){
@@ -105,24 +107,130 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_EQ( value.at("name"), "Lamp1" );
 	}
 
-	//The reverse of NodeId above:  a node known only by id answers `path` - the inverse-hierarchical walk up to the Objects
-	//folder (NodeQLAwait::Path), spelled as BrowsePathsToNodeIds and the search index spell a path, so the answer routes
-	//straight back into the path form and into the SPA's node url.  What the Effective rights tab links a node-scoped
-	//resource ("ns=4;i=…") with.  The Objects folder itself has an empty path; a node outside its tree (a type) has none.
+	//The reverse of NodeId above:  a node known only by id answers `path` - the inverse-hierarchical walk up to Root
+	//(ParentPathsAwait), spelled as the search index spells a path, so the answer routes straight back into the path form under
+	//`root: Root` and into the SPA's node url.  What the Effective rights tab links a node-scoped resource ("ns=4;i=…") with.
+	//Root itself has an empty path, the connection's page;  the Objects folder's is its bare namespace-0 name, as a type's is
+	//(RootPathsResolveTypesAndWalkBack).
 	TEST_F( BrowseTests, PathFromId ){
 		constexpr sv path{ "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1" };
 		let lamp = ExNodeId{ NodeQL("node( opc: $opc, path:$path ){ id parents{ id } }", {{"opc", OpcServerSlug}, {"path", path}}) };//parents{}: the lamp hangs off a HasComponent, which the plain translate (Organizes only) cannot follow - the parents walk can, as NodeId above relies on.
 		let value = NodeQL( "node( opc: $opc, id:$id ){ id name path }", {{"opc", OpcServerSlug}, {"id", NodeId{lamp.nodeId}.ToJson()}} );
 		TRACE( "value: {}", serialize(value) );
-		EXPECT_EQ( Json::AsSV(value.as_object(), "path"), path );
+		EXPECT_EQ( Json::AsSV(value.as_object(), "path"), Ƒ("Objects/{}", path) );
 		EXPECT_EQ( Json::AsSV(value.as_object(), "name"), "Lamp1" ) << "the read still answers alongside";
 		EXPECT_TRUE( ExNodeId{value}.Numeric().has_value() );
 
 		let objectsValue = NodeQL( "node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", NodeId::ObjectsFolder().ToJson()}} );
-		EXPECT_EQ( Json::AsSV(objectsValue.as_object(), "path"), "" );
+		EXPECT_EQ( Json::AsSV(objectsValue.as_object(), "path"), "Objects" );
 
-		let typeValue = NodeQL( "node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", NodeId{0, UA_NS0ID_BASEOBJECTTYPE}.ToJson()}} );
-		EXPECT_TRUE( typeValue.as_object().at("path").is_null() ) << "the Types tree has no page";
+		let rootValue = NodeQL( "node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", NodeId::RootFolder().ToJson()}} );
+		EXPECT_EQ( Json::AsSV(rootValue.as_object(), "path"), "" );
+	}
+
+	//Phase 4 (#416, spec *Address space*):  the path form's `root` - Objects by default, so today's urls and the historian's template
+	//paths stand, or Root, the web's pages - and the walk back up from an id, which stops at Root, so a type node has a path.  A
+	//namespace-0 name is spelled bare, as the default namespace's are:  the translate takes the first segment from Root in namespace 0
+	//and the level-by-level browse the rest (Browse.h), with parents{} and without.
+	TEST_F( BrowseTests, RootPathsResolveTypesAndWalkBack ){
+		let ns = PumpsNs(); let defaultNs = _client->DefaultBrowseNs();
+		auto segment = [&]( sv name ){ return ns==defaultNs ? string{name} : Ƒ("{}~{}", ns, name); };
+		constexpr sv base{ "Types/ObjectTypes/BaseObjectType" };
+		const string pumpType = Ƒ( "{}/{}", base, segment("PumpType") ), pump1 = Ƒ( "Objects/{}", segment("pump1") );
+		auto byPath = [&]( string path, sv root, bool parents ){
+			let value = NodeQL( Ƒ("node( opc: $opc, path:$path, root:\"{}\" ){{ id name nodeClass{} }}", root, parents ? " parents{ id path }" : ""), {{"opc", OpcServerSlug}, {"path", path}} );
+			TRACE( "{}: {}", path, serialize(value) );
+			return value.as_object();
+		};
+		let baseType = byPath( string{base}, "Root", true );
+		EXPECT_EQ( NodeId{jvalue{baseType}}, NodeId(0, UA_NS0ID_BASEOBJECTTYPE) );
+		EXPECT_EQ( Json::AsSV(baseType, "name"), "BaseObjectType" );
+		EXPECT_EQ( Json::FindNumber<uint>(baseType, "nodeClass"), UA_NODECLASS_OBJECTTYPE );
+		vector<string> parentPaths;
+		for( let& parent : baseType.at("parents").as_array() )
+			parentPaths.push_back( Json::AsString(parent.as_object(), "path") );
+		EXPECT_EQ( parentPaths, (vector<string>{"Types", "Types/ObjectTypes"}) );
+		EXPECT_EQ( NodeId{jvalue{byPath(string{base}, "Root", false)}}, NodeId(0, UA_NS0ID_BASEOBJECTTYPE) ) << "without parents{}:  every segment but the first browsed level by level";
+		let pumpTypeNode = byPath( pumpType, "Root", true );
+		EXPECT_EQ( NodeId{jvalue{pumpTypeNode}}, NodeId(ns, 1001) ) << serialize( pumpTypeNode );
+		EXPECT_EQ( Json::AsSV(pumpTypeNode, "name"), "PumpType" );
+		EXPECT_EQ( NodeId{jvalue{byPath(pump1, "Root", false)}}, NodeId(ns, Pump1) ) << "an object under Objects, from Root";
+		EXPECT_EQ( NodeId{jvalue{byPath(segment("pump1"), "Objects", false)}}, NodeId(ns, Pump1) ) << "today's url, from the Objects folder";
+		let lampPath = "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"s;
+		EXPECT_EQ( NodeId{jvalue{byPath(lampPath, "Objects", true)}}, NodeId{jvalue{byPath("Objects/"+lampPath, "Root", true)}} ) << "the same node either way";
+		try{
+			byPath( string{base}, "Views", false );
+			ADD_FAILURE() << "a root the form does not take answered";
+		}
+		catch( const Exception& e ){
+			EXPECT_TRUE( string{e.what()}.contains("root is 'Objects' or 'Root'") ) << e.what();
+		}
+
+		auto pathOf = [&]( const NodeId& id ){ return string{ Json::AsSV(NodeQL("node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", id.ToJson()}}).as_object(), "path") }; };
+		EXPECT_EQ( pathOf(NodeId(0, UA_NS0ID_BASEOBJECTTYPE)), base );
+		EXPECT_EQ( pathOf(NodeId(ns, 1001)), pumpType );
+		EXPECT_EQ( pathOf(NodeId(ns, Pump1)), pump1 );
+		EXPECT_EQ( pathOf(NodeId(0, UA_NS0ID_TYPESFOLDER)), "Types" );
+	}
+
+	//Every class the browse answers is kept (spec *Address space*), and `children` is what hangs under a node, its hierarchical
+	//references forward:  Root's are the standard's three folders, ObjectTypes' are object types, and a pump's are its variables -
+	//its type, reached by HasTypeDefinition, is no child.  A Variable page lists `properties`, the HasProperty children alone:  pump3's
+	//motorRpm has its two ranges, and its HA Configuration hangs off a HasHistoricalConfiguration.
+	TEST_F( BrowseTests, ChildrenAreHierarchicalOfEveryClass ){
+		let ns = PumpsNs();
+		auto rows = [&]( const NodeId& id, sv table ){
+			let value = NodeQL( Ƒ("node( opc: $opc, id:$id ){{ {}{{ id name browse nodeClass }} }}", table), {{"opc", OpcServerSlug}, {"id", id.ToJson()}} );
+			TRACE( "{} {}: {}", id.ToString(), table, serialize(value) );
+			return value.as_object().at( table ).as_array();
+		};
+		auto names = []( const jarray& a ){ vector<string> y; for( let& r : a ) y.push_back( Json::AsString(r.as_object(), "name") ); std::ranges::sort( y ); return y; };
+		auto classOf = []( const jarray& a, sv name )->optional<uint>{ for( let& r : a ) if( Json::AsSV(r.as_object(), "name")==name ) return Json::FindNumber<uint>( r.as_object(), "nodeClass" ); return {}; };
+		let root = rows( NodeId::RootFolder(), "children" );
+		EXPECT_EQ( names(root), (vector<string>{"Objects", "Types", "Views"}) );
+		let objectTypes = rows( NodeId(0, UA_NS0ID_OBJECTTYPESFOLDER), "children" );
+		EXPECT_EQ( classOf(objectTypes, "BaseObjectType"), UA_NODECLASS_OBJECTTYPE );
+		let pump = rows( NodeId(ns, Pump1), "children" );
+		EXPECT_EQ( names(pump), (vector<string>{"motorRpm", "status"}) ) << "PumpType is the pump's type definition, not a child";
+		EXPECT_EQ( classOf(pump, "status"), UA_NODECLASS_VARIABLE );
+		let properties = rows( NodeId(ns, Rpm3), "properties" );
+		EXPECT_EQ( names(properties), (vector<string>{"EURange", "InstrumentRange"}) );
+	}
+
+	//Phase 4 (#416):  `references` answers every reference of a node in both directions, the reference type and the target's type
+	//definition named from the per-client DisplayName cache, read in one batch for the ids not yet seen.  pump1 (pumps.NodeSet2.xml):
+	//HasComponent forward to its status and motorRpm, HasTypeDefinition to PumpType, and Organizes inverse to the Objects folder.
+	TEST_F( BrowseTests, ReferencesAnswerBothDirectionsNamed ){
+		let ns = PumpsNs();
+		let value = NodeQL( "node( opc: $opc, id:$id ){ references{ direction refType target class typeDef } }", {{"opc", OpcServerSlug}, {"id", NodeId(ns, Pump1).ToJson()}} );
+		TRACE( "{}", serialize(value) );
+		let& rows = value.as_object().at( "references" ).as_array();
+		auto find = [&]( sv direction, sv refType, const NodeId& target )->const jobject*{
+			auto p = find_if( rows, [&](let& r){ let& o = r.as_object(); return Json::AsSV(o, "direction")==direction && Json::AsSV(o, "refType/name")==refType && NodeId{o.at("target")}==target; } );
+			return p==rows.end() ? nullptr : &p->as_object();
+		};
+		let status = find( "Forward", "HasComponent", NodeId(ns, Status1) );
+		ASSERT_TRUE( status ) << serialize( rows );
+		EXPECT_EQ( Json::AsSV(*status, "target/name"), "status" );
+		EXPECT_EQ( Json::AsSV(*status, "target/browse/name"), "status" );
+		EXPECT_EQ( Json::FindNumber<uint>(*status, "class"), UA_NODECLASS_VARIABLE );
+		EXPECT_EQ( NodeId{status->at("typeDef")}, NodeId(0, UA_NS0ID_BASEDATAVARIABLETYPE) );
+		EXPECT_EQ( Json::AsSV(*status, "typeDef/name"), "BaseDataVariableType" );
+		EXPECT_EQ( NodeId{status->at("refType")}, NodeId(0, UA_NS0ID_HASCOMPONENT) );
+		EXPECT_TRUE( find("Forward", "HasComponent", NodeId(ns, Rpm1)) ) << serialize( rows );
+		let type = find( "Forward", "HasTypeDefinition", NodeId(ns, 1001) );
+		ASSERT_TRUE( type ) << serialize( rows );
+		EXPECT_EQ( Json::AsSV(*type, "target/name"), "PumpType" );
+		EXPECT_EQ( Json::FindNumber<uint>(*type, "class"), UA_NODECLASS_OBJECTTYPE );
+		EXPECT_TRUE( type->at("typeDef").is_null() ) << "a type has no type definition";
+		let objects = find( "Inverse", "Organizes", NodeId::ObjectsFolder() );
+		ASSERT_TRUE( objects ) << serialize( rows );
+		EXPECT_EQ( Json::AsSV(*objects, "target/name"), "Objects" );
+		EXPECT_EQ( Json::AsSV(*objects, "typeDef/name"), "FolderType" );
+		EXPECT_GE( _client->DisplayNames().Size(), 5u ) << "HasComponent, HasTypeDefinition, Organizes, BaseDataVariableType and FolderType, kept for the next query";
+		let again = NodeQL( "node( opc: $opc, id:$id ){ references{ refType } }", {{"opc", OpcServerSlug}, {"id", NodeId(ns, Pump2).ToJson()}} ).as_object().at( "references" ).as_array();
+		EXPECT_TRUE( find_if(again, [](let& r){ return Json::AsSV(r.as_object(), "refType/name")=="Organizes"; })!=again.end() ) << "named from the cache:  " << serialize( again );
+		EXPECT_FALSE( again.front().as_object().contains("direction") ) << "projection:  only the requested column";
 	}
 
 	//Historian 5a (#222):  the translate follows HierarchicalReferences with subtypes, so a path through HasComponent resolves
