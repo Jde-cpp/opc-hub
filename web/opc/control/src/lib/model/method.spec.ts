@@ -69,6 +69,7 @@ describe( 'An argument of the server\'s own type', ()=>{
 		expect( argumentValue( a, '', false ) ).toBeUndefined();
 		expect( a.valueText( 2 ) ).toBe( 'OFF_SPEC' );
 		expect( a.valueText( 7 ) ).toBe( '7' );//one the server didn't name
+		expect( a.valueText( [0, 2] ) ).toBe( '[NORMAL, OFF_SPEC]' );
 	} );
 	it( 'is the number an enumeration is sent as, where its values could not be read', ()=>{
 		const a = enumeration( false );
@@ -104,5 +105,8 @@ describe( 'MethodArguments and toCallResult', ()=>{
 		expect( toCallResult( {statusCode: 0x80AB0000, inputArgumentResults: [0x80740000], outputArguments: []} ) ).toEqual( {statusCode: 0x80AB0000, inputArgumentResults: [0x80740000], outputArguments: []} );
 		expect( toCallResult( {statusCode: 0, outputArguments: [{high: 0, low: 7, unsigned: false}]} ).outputArguments[0] ).toEqual( Long.fromNumber( 7 ) );
 		expect( toCallResult( undefined ) ).toEqual( {statusCode: 0, inputArgumentResults: [], outputArguments: []} );
+		const handles = arg( {dataType: {i: ETypes.UInt32}, valueRank: 1} );//reviews-issue/318-opc-calls.md W1:  an empty array reads as one, not as nothing
+		expect( handles.valueText( [] ) ).toBe( '[]' );
+		expect( handles.valueText( [1, 2] ) ).toBe( '[1, 2]' );
 	} );
 } );

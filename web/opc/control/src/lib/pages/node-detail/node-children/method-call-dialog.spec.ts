@@ -48,6 +48,20 @@ describe( 'MethodCallDialog', ()=>{
 		expect( d.calls() ).toHaveLength( 0 );
 		expect( d.fixture.nativeElement.textContent ).toContain( 'Converts rpm to Hz.' );
 	} );
+	//reviews-issue/318-opc-calls.md W1:  open62541 answers a refused call with an empty value per declared output, which the dialog
+	//listed as the outputs' names over nothing;  a Bad status is the whole answer
+	it( 'lists no outputs for a refused call, and an empty array as one', async ()=>{
+		const d = await open();
+		d.dialog.setText( 0, '1500' );
+		d.answerWith( {statusCode: 0x80280000, inputArgumentResults: [], outputArguments: [[], []]} );//BadSubscriptionIdInvalid
+		await d.dialog.apply();
+		expect( d.dialog.outputs() ).toEqual( [] );
+		d.fixture.detectChanges();
+		expect( d.fixture.nativeElement.querySelector( 'dl.outputs' ) ).toBeNull();
+		d.answerWith( {statusCode: 0, inputArgumentResults: [], outputArguments: [[], 'none']} );
+		await d.dialog.apply();
+		expect( d.dialog.outputs() ).toEqual( [{name: 'hertz', text: '[]'}, {name: 'text', text: 'none'}] );
+	} );
 	//reviews-issue/318-opc-calls.md #3:  an enumeration of the server's own is a choice of its values, sent as the id, and an output of
 	//one reads by name
 	it( 'offers an enumeration\'s values and sends the one chosen', async ()=>{

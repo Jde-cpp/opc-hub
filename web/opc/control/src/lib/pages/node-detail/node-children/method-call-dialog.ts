@@ -11,9 +11,9 @@ import { errorMessage } from 'jde-framework';
 import { Argument, argumentValue, CallResult, MethodArguments } from '../../../model/method';
 import { Method, UaNode } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
-import { statusIcon } from '../../../model/status-code';
+import { isBad, statusIcon } from '../../../model/status-code';
 import { StatusCode } from '../../../model/types';
-import { Value, valueString } from '../../../model/value';
+import { Value } from '../../../model/value';
 
 //what the dialog opens on:  the object and its method, how to read the method's arguments and how to call it, so a spec stands
 //in for the gateway with two functions
@@ -98,10 +98,14 @@ export class MethodCallDialog implements OnInit{
 	}
 	//the server's answer:  each argument's status where it refused one, and the outputs by name
 	argumentResults = computed<{name:string; status:StatusCode}[]>( ()=>( this.result()?.inputArgumentResults ?? [] ).map( (status, i)=>({name: this.inputs[i]?.name ?? `argument ${i+1}`, status}) ) );
+	//none for a refused call:  open62541 answers one with an empty value per declared output, and Part 4 §5.11.2 has the outputs
+	//only for a call that succeeded (reviews-issue/318-opc-calls.md W1)
 	outputs = computed<{name:string; text:string}[]>( ()=>{
 		const r = this.result();
+		if( !r || isBad( r.statusCode ) )
+			return [];
 		const declared = this.arguments()?.outputs ?? [];
-		return r ? r.outputArguments.map( (v, i)=>({name: declared[i]?.name ?? `output ${i+1}`, text: declared[i] ? declared[i].valueText( v ) : valueString( v )}) ) : [];
+		return r.outputArguments.map( (v, i)=>({name: declared[i]?.name ?? `output ${i+1}`, text: ( declared[i] ?? new Argument( {} ) ).valueText( v )}) );
 	} );
 	statusText( sc:StatusCode ):string{ return OpcError.text( sc ); }
 	statusIcon( sc:StatusCode ){ return statusIcon( sc ); }

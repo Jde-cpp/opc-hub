@@ -61,8 +61,11 @@ export class Argument{
 		const base = this.baseType===undefined ? undefined : ETypes[this.baseType];
 		return base ? `${this.customDataType.uaString()}, a ${base}` : this.customDataType.uaString();
 	}
-	//an output's value as the dialog shows it:  an enumeration's by name
+	//an output's value as the dialog shows it:  an enumeration's by name, and an array in brackets, so an empty one reads as one
+	//rather than as nothing
 	valueText( v:Value ):string{
+		if( Array.isArray( v ) )
+			return `[${v.map( x=>this.valueText( x ) ).join( ", " )}]`;
 		const named = this.enum?.enumValues.find( e=>e.id===v );
 		return named ? named.name : valueString( v );
 	}
