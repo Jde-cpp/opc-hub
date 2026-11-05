@@ -14,7 +14,6 @@ namespace Jde::Opc{
 		α Time()Ι->TimePoint{ return _time; }
 		α UA()Ι->UA_DateTime;
 	private:
-		α ToParts()Ι->tuple<_int,int>;
 		TimePoint _time;
 	};
 }

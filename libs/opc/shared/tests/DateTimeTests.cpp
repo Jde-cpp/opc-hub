@@ -72,7 +72,7 @@ namespace Jde::Opc::Tests{
 	//passed (int16)dts.year into a uint16_t parameter, so a pre-year-0 timestamp wrapped to 33768+ and THROW_IFSL(!ymd.ok())
 	//fired inside a noexcept frame.  That never reproduced here: `dt - _ua1970` overflowed first, so ToParts got a
 	//scrambled but in-range date and returned quietly - INT64_MIN and INT64_MAX both came back as seconds=6802270473.
-	//Both halves are gone: ToParts is a duration split, and the input is clamped to the span TimePoint can hold.
+	//Both halves are gone: Protobuf::ToTimestamp is a duration split, and the input is clamped to the span TimePoint can hold.
 	TEST( DateTimeTests, ExtremeTimestampsDoNotCollapse ){
 		let low = UADateTime{ std::numeric_limits<UA_Int64>::min() }.ToJson();
 		let high = UADateTime{ std::numeric_limits<UA_Int64>::max() }.ToJson();
@@ -108,7 +108,7 @@ namespace Jde::Opc::Tests{
 			EXPECT_EQ( serialize(UADateTime{jvalue{low}}.ToJson()), serialize(low) );
 	}
 
-	//review3 #5: the ±_maxSeconds guard only covered the plain-number spelling.  The protobufjs Long form went straight
+	//review3 #5: the ±Protobuf::MaxSeconds guard only covered the plain-number spelling.  The protobufjs Long form went straight
 	//to Protobuf::ToTimePoint - from_time_t, which multiplies with no check - so {high:2147483647,low:-1}, exactly what
 	//protobufjs emits for INT64_MAX, wrapped to 1969-12-31T23:59:59Z and was written to the node silently.
 	TEST( DateTimeTests, LongFormTakesTheSameGuard ){

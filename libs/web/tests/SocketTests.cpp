@@ -533,7 +533,7 @@ namespace Jde::Web{
 		vector<Logging::Entry> logs;
 		while( logs.size()==0 && steady_clock::now()<expiration ){
 			std::this_thread::sleep_for( 100ms );
-			logs = Logging::Find( Crypto::CalcMd5("MergePartialFromCodedStream returned false."sv) );//TODO send a exception to server.
+			logs = Logging::Find( Crypto::CalcMd5("ParsePartialFromArray returned false."sv) );//TODO send a exception to server.
 		}
 		ASSERT_TRUE( logs.size()>0 );
 	}
