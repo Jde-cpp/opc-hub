@@ -8,20 +8,24 @@ import { Blank, profileStoreStub } from 'jde-spa/testing';
 import { openRoute } from 'jde-framework/testing';
 import { fakeGateway } from 'jde-opc/testing';
 
-const pump1 = new OpcObject( {ns: 2, i: 10, name: "pump1", browse: {ns: 2, name: "pump1"}} as any );
+const objects = OpcObject.objectsNode;
+const pump1 = new OpcObject( {ns: 2, i: 10, name: "pump1", browse: {ns: 2, name: "pump1"}} as any, objects );
 const serverDescription = { connection: {id: 1, slug: 'cn', name: 'Line 1', url: 'opc.tcp://plc:4840', certificateUri: '', defaultBrowseNs: 1}, desc: {}, policy: '', mode: 'None', namespaces: [] };
-const nodes:Record<string, any> = {//the gateway's answer to node( path ){ … nodeClass … } per browse path
-	'2~pump1': { ns: 2, i: 10, name: 'pump1', nodeClass: ENodeClass.Object, parents: [] },
-	'2~pump1/2~flow': { ns: 2, i: 11, name: 'flow', nodeClass: ENodeClass.Variable, parents: [{ns: 2, i: 10, name: 'pump1', path: '2~pump1'}] },
-	'2~pump1/2~toHertz': { ns: 2, i: 12, name: 'toHertz', nodeClass: ENodeClass.Method, parents: [{ns: 2, i: 10, name: 'pump1', path: '2~pump1'}] }
+const objectsParent = { ns: 0, i: 85, name: 'Objects', browse: {ns: 0, name: 'Objects'}, nodeClass: ENodeClass.Object, path: 'Objects' };
+const pumpParent = { ns: 2, i: 10, name: 'pump1', browse: {ns: 2, name: 'pump1'}, nodeClass: ENodeClass.Object, path: 'Objects/2~pump1' };
+const nodes:Record<string, any> = {//the gateway's answer to node( path, root:"Root" ){ … nodeClass … parents{…} } per browse path from Root
+	'Objects/2~pump1': { ns: 2, i: 10, name: 'pump1', browse: {ns: 2, name: 'pump1'}, nodeClass: ENodeClass.Object, parents: [objectsParent] },
+	'Objects/2~pump1/2~flow': { ns: 2, i: 11, name: 'flow', browse: {ns: 2, name: 'flow'}, nodeClass: ENodeClass.Variable, parents: [objectsParent, pumpParent] },
+	'Objects/2~pump1/2~toHertz': { ns: 2, i: 12, name: 'toHertz', browse: {ns: 2, name: 'toHertz'}, nodeClass: ENodeClass.Method, parents: [objectsParent, pumpParent] }
 };
-const flow = ()=>new Variable( {ns: 2, i: 11, name: "flow", browse: {ns: 2, name: "flow"}} as any, pump1 );
+const flow = ()=>new Variable( {ns: 2, i: 11, name: "flow", browse: {ns: 2, name: "flow"}, value: 7, historizing: true} as any, pump1 );
 const toHertz = ()=>new Method( {ns: 2, i: 12, name: "toHertz", browse: {ns: 2, name: "toHertz"}} as any, pump1 );
+const euRange = ()=>new Variable( {ns: 2, i: 13, name: "EURange", browse: {ns: 0, name: "EURange"}} as any );
 //gatewayDown:  the gateway does not answer at all.  groups:  the gateway's answer to historyGroups, or an error it throws for it.
 async function open( url:string, browsed:boolean, gatewayDown = false, groups:any = undefined ){
 	const browseObjectsFolder = vi.fn( async ( _cnnctn:string, parent:UaNode )=>{
 		if( parent.isVariable )
-			throw new EvalError( "Cannot browse children of variable node." );
+			return [euRange()];//its properties
 		if( parent.isMethod )
 			throw new EvalError( "Browsed a method as a page." );
 		return groups ? [flow()] : [];
@@ -33,11 +37,13 @@ async function open( url:string, browsed:boolean, gatewayDown = false, groups:an
 			throw groups;
 		return { historyGroups: groups };
 	} );
-	const gateway = Object.assign( fakeGateway( 'gw' ), { browseObjectsFolder, postQL, errorCodeText: async ()=>"", query: async ( ql:string, vars:any )=>{
+	const query = vi.fn( async ( ql:string, vars:any )=>{
 		if( ql.includes("serverDescription") )
 			return serverDescription;
 		return { node: nodes[vars.path] ?? {sc: 0x806f0000} };
-	} } );
+	} );
+	const querySingle = vi.fn( async ( _ql:string, _vars:any )=>({ value: 7, historizing: true }) );//the id form's read of a Variable's own columns
+	const gateway = Object.assign( fakeGateway( 'gw' ), { browseObjectsFolder, postQL, errorCodeText: async ()=>"", query, querySingle } );
 	const { router, snackbar, forget, leaf } = await openRoute( {routes: [{ path: 'gateways/:gateway', component: Blank }, { path: 'gateways/:gateway/:connection', children: [
 		{ path: '**', component: Blank, providers: [NodeResolver], resolve: {pageData: NodeResolver}, runGuardsAndResolvers: "pathParamsOrQueryParamsChange" }
 	]}], providers: [
@@ -48,46 +54,55 @@ async function open( url:string, browsed:boolean, gatewayDown = false, groups:an
 		const store = TestBed.inject( OpcStore );
 		store.nodeView.set( <any>{sortNodes: ( n:UaNode[] )=>n} );
 		if( browsed ){//the parent's page was open:  browseObjectsFolder stored its children, the Variable and the Method among them
-			store.setNodes( 'gw', 'cn', OpcObject.rootNode, [pump1] );
+			store.setNodes( 'gw', 'cn', OpcObject.rootNode, [objects] );
+			store.setNodes( 'gw', 'cn', objects, [pump1] );
 			store.setNodes( 'gw', 'cn', pump1, [flow(), toHertz()] );
 		}
 	}} );
-	return { router, exception: snackbar.exception, browseObjectsFolder, forget, postQL, pageData: leaf().data['pageData'] };
+	return { router, exception: snackbar.exception, browseObjectsFolder, query, querySingle, forget, postQL, pageData: leaf().data['pageData'] };
 }
 
-//reviews/m3-closing.md #9:  a Variable has no page of its own - its value, status and subscribe box are a row on its parent's -
-//yet a search hit, or a bookmark, could route to one.  With the parent browsed the stored Variable was handed to
-//browseObjectsFolder, which threw, and the page said "Not found." about a node that exists;  without, the path query's answer
-//was wrapped as an object and its own children listed under the variable's name.  Either way the page to show is the parent's.
+//Phase 4 (#416, clients spec *Address space*):  a Variable has a page of its own - its value, status and tick first, then its
+//HasProperty children - where reviews/m3-closing.md #9 sent it to its parent.  The url runs from Root, `Objects/…`, which the
+//path query asks under `root: "Root"`.
 describe( 'NodeResolver on a Variable', ()=>{
-	it( 'shows the parent, not a false "Not found.", when the parent was browsed', async ()=>{
-		const { router, exception, forget } = await open( '/gateways/gw/cn/2~pump1/2~flow', true );
+	it( 'shows the variable\'s page, itself first and its properties after, when the parent was browsed', async ()=>{
+		const { router, exception, forget, browseObjectsFolder, pageData } = await open( '/gateways/gw/cn/Objects/2~pump1/2~flow', true );
 		expect( exception ).not.toHaveBeenCalled();
 		expect( forget ).not.toHaveBeenCalled();
-		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
+		expect( router.url ).toBe( '/gateways/gw/cn/Objects/2~pump1/2~flow' );
+		expect( browseObjectsFolder.mock.calls.map( c=>(c[1] as UaNode).name ) ).toEqual( ["flow"] );
+		expect( pageData.nodes.map( ( n:UaNode )=>n.name ) ).toEqual( ["flow", "EURange"] );
+		expect( pageData.route.node.isVariable ).toBe( true );
 	} );
 
-	it( "shows the parent, not the variable's own children, when it was not", async ()=>{
-		const { router, exception, browseObjectsFolder } = await open( '/gateways/gw/cn/2~pump1/2~flow', false );
+	it( "reads it by its path from Root, then its own columns by id, when it was not", async ()=>{
+		const { router, exception, query, querySingle, pageData } = await open( '/gateways/gw/cn/Objects/2~pump1/2~flow', false );
 		expect( exception ).not.toHaveBeenCalled();
-		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
-		expect( browseObjectsFolder.mock.calls.map(c=>(c[1] as UaNode).name) ).not.toContain( "flow" );
+		expect( router.url ).toBe( '/gateways/gw/cn/Objects/2~pump1/2~flow' );
+		const path = query.mock.calls.find( c=>c[0].includes( 'path:$path' ) )!;
+		expect( path[0] ).toContain( 'root:"Root"' );
+		expect( path[1] ).toEqual( {opc: 'cn', path: 'Objects/2~pump1/2~flow'} );
+		expect( querySingle.mock.calls.map( c=>c[1] ) ).toEqual( [{opc: 'cn', id: {ns: 2, i: 11}}] );//the path form reads no class's columns
+		expect( pageData.nodes.map( ( n:UaNode )=>n.name ) ).toEqual( ["flow", "EURange"] );
+		expect( (<Variable>pageData.nodes[0]).value ).toBe( 7 );
+		expect( pageData.route.parent.path ).toBe( '/gateways/gw/cn/Objects/2~pump1' );//the sidenav's parent, through the Objects folder the store learned from `parents`
 	} );
 } );
 
-//reviews-issue/318-opc-calls.md #7:  a Method has no page either - it is a Call on its object's row.  The browse stores methods
+//reviews-issue/318-opc-calls.md #7:  a Method has no page - it is a Call on its object's row.  The browse stores methods
 //now, so a stored one reached the resolver as a node, was browsed, and its argument properties listed as a page.
 describe( 'NodeResolver on a Method', ()=>{
 	it( 'shows the parent when the parent was browsed', async ()=>{
-		const { router, exception, browseObjectsFolder } = await open( '/gateways/gw/cn/2~pump1/2~toHertz', true );
+		const { router, exception, browseObjectsFolder } = await open( '/gateways/gw/cn/Objects/2~pump1/2~toHertz', true );
 		expect( exception ).not.toHaveBeenCalled();
-		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
+		expect( router.url ).toBe( '/gateways/gw/cn/Objects/2~pump1' );
 		expect( browseObjectsFolder.mock.calls.map(c=>(c[1] as UaNode).name) ).not.toContain( "toHertz" );
 	} );
 	it( 'shows the parent when it was not', async ()=>{
-		const { router, exception } = await open( '/gateways/gw/cn/2~pump1/2~toHertz', false );
+		const { router, exception } = await open( '/gateways/gw/cn/Objects/2~pump1/2~toHertz', false );
 		expect( exception ).not.toHaveBeenCalled();
-		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
+		expect( router.url ).toBe( '/gateways/gw/cn/Objects/2~pump1' );
 	} );
 } );
 
@@ -98,13 +113,13 @@ describe( 'NodeResolver on a Method', ()=>{
 //gateway that can't say - one older than the field, or one that refuses - leaves the page with the server's history alone.
 describe( 'NodeResolver and the history groups', ()=>{
 	it( 'asks for the groups of the page\'s variables, and carries them', async ()=>{
-		const { exception, postQL, pageData } = await open( '/gateways/gw/cn/2~pump1', false, false, {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 11}]}]} );
+		const { exception, postQL, pageData } = await open( '/gateways/gw/cn/Objects/2~pump1', false, false, {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 11}]}]} );
 		expect( exception ).not.toHaveBeenCalled();
 		expect( postQL.mock.calls.map( ([, vars])=>vars ) ).toEqual( [{opc: 'cn', nodes: [{ns: 2, i: 11}]}] );
 		expect( pageData.groups.map( ( g:any )=>[g.id, g.name, g.nodes.length] ) ).toEqual( [[3, 'Pumps', 1]] );
 	} );
 	it( 'keeps the page, with no groups, when the gateway refuses the question', async ()=>{
-		const { exception, pageData } = await open( '/gateways/gw/cn/2~pump1', false, false, new Error( "Cannot query field historyGroups" ) );
+		const { exception, pageData } = await open( '/gateways/gw/cn/Objects/2~pump1', false, false, new Error( "Cannot query field historyGroups" ) );
 		expect( exception ).not.toHaveBeenCalled();
 		expect( pageData.nodes ).toHaveLength( 1 );
 		expect( pageData.groups ).toEqual( [] );
@@ -113,16 +128,16 @@ describe( 'NodeResolver and the history groups', ()=>{
 
 describe( 'NodeResolver on a node that is gone', ()=>{
 	it( "forgets the page of a path the server does not have, and still goes up a level", async ()=>{
-		const { router, exception, forget } = await open( '/gateways/gw/cn/2~pump1/2~gone', false );
+		const { router, exception, forget } = await open( '/gateways/gw/cn/Objects/2~pump1/2~gone', false );
 		expect( exception ).toHaveBeenCalled();
-		expect( forget ).toHaveBeenCalledWith( '/gateways/gw/cn/2~pump1/2~gone' );
-		expect( router.url ).toBe( '/gateways/gw/cn/2~pump1' );
+		expect( forget ).toHaveBeenCalledWith( '/gateways/gw/cn/Objects/2~pump1/2~gone' );
+		expect( router.url ).toBe( '/gateways/gw/cn/Objects/2~pump1' );
 	} );
 
 	it( 'keeps the page while the gateway is down', async ()=>{
-		const { router, exception, forget } = await open( '/gateways/gw/cn/2~pump1', false, true );
+		const { router, exception, forget } = await open( '/gateways/gw/cn/Objects/2~pump1', false, true );
 		expect( exception ).toHaveBeenCalled();
 		expect( forget ).not.toHaveBeenCalled();
-		expect( router.url ).toBe( '/gateways/gw' );//the level above, which the test's routes have to know of, or the redirect is an unhandled rejection
+		expect( router.url ).toBe( '/gateways/gw' );//each level above resolves and fails the same way, down to the gateway's page, which the test's routes have to know of, or the redirect is an unhandled rejection
 	} );
 } );

@@ -7,6 +7,7 @@ import * as FromServer from 'jde-proto/Opc.FromServer';
 import { HistTime, HistValue } from '../lib/model/hist';
 import { UaNode, Variable } from '../lib/model/node';
 import { NodeId, NodeKey } from '../lib/model/node-id';
+import { Reference } from '../lib/model/reference';
 import { Value } from '../lib/model/value';
 import { Gateway, HistEvent, HistSubscribeArgs, SubscriptionResult } from '../lib/services/gateway-service';
 import { OpcStore } from '../lib/services/opc-store';
@@ -51,8 +52,8 @@ export class Feed<T, A=unknown>{
 }
 
 //A Gateway for a page or a resolver to read through:  query/queryArray answer from `answers` as qlAnswering does, querySingle
-//nothing, browseObjectsFolder a node's children in `tree` by its key, and subscribe/histSubscribe open `values`/`histEvents` for the
-//test to feed.  Assign over whatever else a test needs.
+//nothing, browseObjectsFolder a node's children in `tree` by its key, references none and pagePath no page, and subscribe/histSubscribe
+//open `values`/`histEvents` for the test to feed.  Assign over whatever else a test needs.
 export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tree=new Map<NodeKey,UaNode[]>() ){
 	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>();
 	return {
@@ -61,6 +62,8 @@ export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tre
 		queryArray: qlAnswering( answers, {unwrapped: true} ),
 		querySingle: vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>null ),
 		browseObjectsFolder: vi.fn( async ( _opc:string, node:UaNode )=>tree.get( node.key ) ?? [] ),
+		references: vi.fn( async ( _opc:string, _node:NodeId ):Promise<Reference[]>=>[] ),
+		pagePath: vi.fn( async ( _opc:string, _node:NodeId ):Promise<string|null>=>null ),
 		subscribe: vi.fn( ( _opc:string, nodes:NodeId[], _owner?:string )=>values.open( nodes ) ),
 		histSubscribe: vi.fn( ( args:HistSubscribeArgs )=>histEvents.open( args ) ),
 		updateErrorCodes: vi.fn( async ()=>{} )

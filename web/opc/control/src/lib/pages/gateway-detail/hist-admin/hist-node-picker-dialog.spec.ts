@@ -18,7 +18,7 @@ const rpm = variable( 6012, 'rpm', {browse: {ns: 2, name: 'motorRpm'}, dataType:
 const status = variable( 6013, 'status', {dataType: {i: ETypes.Double}} );
 const odd = new Variable( <any>{ns: 3, i: 1, name: 'odd', browse: {ns: 3, name: 'odd'}, dataType: {i: ETypes.Double}} );
 const box = new OpcObject( <any>{ns: 3, i: 2, name: 'box', browse: {ns: 3, name: 'box'}} );
-const tree = new Map<NodeKey,UaNode[]>( [[OpcObject.rootNode.key, [pump1, pump2]], [pump1.key, [odd, rpm]], [pump2.key, [box, rpm, status]]] );
+const tree = new Map<NodeKey,UaNode[]>( [[OpcObject.objectsNode.key, [pump1, pump2]], [pump1.key, [odd, rpm]], [pump2.key, [box, rpm, status]]] );
 
 const open = ( data:Partial<HistNodePickerData> )=>{
 	const close = vi.fn( ( _y:unknown )=>{} );
@@ -43,7 +43,7 @@ describe( 'HistNodePickerDialog', ()=>{
 		expect( d.dialog.trail().length ).toBe( 1 );
 		expect( d.dialog.children().map( n=>n.name ) ).toEqual( ['pump1', 'pump2'] );
 		await d.dialog.open( pump1 );
-		expect( d.dialog.trail().map( n=>n.name ) ).toEqual( ['root', 'pump1'] );
+		expect( d.dialog.trail().map( n=>n.name ) ).toEqual( ['Objects', 'pump1'] );
 		expect( d.dialog.children().map( n=>n.name ) ).toEqual( ['odd', 'rpm'] );
 		expect( d.dialog.unspelled( odd ) ).toBe( true );
 		expect( d.dialog.unspelled( rpm ) ).toBe( false );

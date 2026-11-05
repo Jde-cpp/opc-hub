@@ -1,6 +1,6 @@
 import { Injectable, InjectionToken, signal } from "@angular/core";
 import { CnnctnSlug } from "../model/server-cnnctn";
-import { browseEq, ETypes, Ns, toBrowse } from '../model/types';
+import { ETypes, Ns, segmentMatches } from '../model/types';
 import { NodeRoute } from "../model/node-route";
 import { OpcObject, UaNode, ENodeClass } from "../model/node";
 import { NodeId, NodeKey } from "../model/node-id";
@@ -26,6 +26,8 @@ export class OpcStore{
 	//the node table's active view, kept current by NodeChildren.  setRoute orders the sidenav siblings by its sort, and runs from
 	//the resolver - before the component hears of the new route - so the view has to already be here rather than asked for.
 	nodeView = signal<NodeView|undefined>( undefined );
+	//the children table's *system nodes* toggle (NodeChildren), off by default:  the sidenav siblings follow it, as they follow the view's sort.
+	showSystem = signal<boolean>( false );
 
 	//Memoized per gateway for the node pages, which share it.  That used to be the whole story, so a describe that succeeded once
 	//answered for the life of the page:  an edited Name or Default Namespace never reached the node pages, and the Connection tab
@@ -92,7 +94,7 @@ export class OpcStore{
 		for( let segment of segments.slice(0, -1) ){
 			if( !parent )
 				return undefined;
-			let child = parent.children.find( (c)=>browseEq(c.browse!, toBrowse(segment, defaultNs)) );
+			let child = parent.children.find( (c)=>segmentMatches(c.browse!, segment, defaultNs) );
 			if( !child )
 				return undefined;
 			parent = opcNodes.get( child.key );
@@ -101,11 +103,14 @@ export class OpcStore{
 			throw new EvalError( `Parent not set for '${path}'`, {cause:"Internal Error"} );
 		return parent?.node;
 	}
-	insertNode( route:NodeRoute, parents:any, defaultNs:Ns ):void{
+	insertNode( route:NodeRoute, parents:any[], defaultNs:Ns ):void{
 		let opcNodes = this.getNodes( route.gatewaySlug, route.cnnctnSlug );
-		for( let parent of parents ){
-			parent.browse = toBrowse( parent.path, defaultNs );
-			let obj = new OpcObject( parent );
+		//shallowest first:  each parent hangs under the one before it, and the gateway answers them in node-id order (a flat_map by
+		//NodeId), which under Types put BaseObjectType (i=58) ahead of Types (i=86).  Each with the browse name the server spells - a
+		//url segment cannot say whether a bare name is namespace 0's.
+		const ordered = [...parents].sort( ( a, b )=>a.path.split( "/" ).length-b.path.split( "/" ).length );
+		for( let parent of ordered ){
+			let obj = UaNode.fromJson( parent ) ?? new OpcObject( parent );
 			if( !obj.parent )
 				obj.parent = this.getParent( opcNodes, parent.path, defaultNs );
 			if( !opcNodes.has(obj.key) )
@@ -168,7 +173,7 @@ export class OpcStore{
 		for( const sibling of parent.children ){
 			const siblingStore = sibling.key == route.nodeId.key ? store : findStore( sibling.nodeId );
 			const siblingRef = siblingStore?.node;
-			if( siblingRef?.isObject && siblingRef?.displayed )
+			if( siblingRef?.hasPage && (this.showSystem() || !siblingRef.isSystem) )//every class with a page, as the table lists them
 				siblings.push( siblingRef );
 		}
 		const view = this.nodeView() ?? NodeView.default();
@@ -184,7 +189,7 @@ export class OpcStore{
 		const segments = browsePath.split( "/" );
 		let uaNode: UaNode|undefined;
 		for( let i=0; i<segments.length; ++i ){
-			uaNode = storeNode.children.find( (c)=>browseEq(c.browse!, toBrowse(segments[i], cnnctn?.connection.defaultBrowseNs)) );
+			uaNode = storeNode.children.find( (c)=>segmentMatches(c.browse!, segments[i], cnnctn?.connection.defaultBrowseNs) );
 			if( !uaNode )
 				return undefined;
 			if( i+1==segments.length )

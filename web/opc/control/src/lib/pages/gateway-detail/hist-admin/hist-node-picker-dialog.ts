@@ -77,7 +77,7 @@ export class HistNodePickerDialog{
 			const server = await this.#store.getConnection( this.data.gateway, slug );
 			this.server.set( server );
 			const root = parseHistNodeText( this.rootText() );
-			const start = root ? HistNodePickerDialog.toUaNode( root, server ) : OpcObject.rootNode;
+			const start = root ? HistNodePickerDialog.toUaNode( root, server ) : OpcObject.objectsNode;//a template path runs from the Objects folder (NodeQLAwait's default root)
 			this.trail.set( [start] );
 			await this.#browse( start );
 		}
@@ -102,7 +102,7 @@ export class HistNodePickerDialog{
 		this.error.set( undefined );
 		try{
 			const refs = await this.data.gateway.browseObjectsFolder( this.connection()!, node, true );
-			this.children.set( refs.filter( r=>r.displayed ).sort( HistNodePickerDialog.order ) );
+			this.children.set( refs.filter( r=>(r.isObject || r.isVariable) && !r.isSystem ).sort( HistNodePickerDialog.order ) );//objects to open, variables to pick;  the Server object and its diagnostics stay out of the way
 		}
 		catch( e ){
 			this.children.set( [] );

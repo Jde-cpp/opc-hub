@@ -44,6 +44,17 @@ describe( 'OpcStore.findNodeId', ()=>{
 		expect( store.findNodeId(gateway, cnnctn, "2~a/2~x") ).toBeUndefined();
 	} );
 
+	//Phase 4 (#416):  a bare segment is the default namespace's name, else namespace 0's - `Objects/2~a`, as the gateway spells a page path.
+	it( 'takes a bare segment for a namespace-0 name, as the Objects folder is', ()=>{
+		const store = TestBed.inject( OpcStore );
+		const objects = OpcObject.objectsNode, b = node( 4, "b" );
+		store.setNodes( gateway, cnnctn, OpcObject.rootNode, [objects] );
+		store.setNodes( gateway, cnnctn, objects, [b] );
+		expect( store.findNodeId(gateway, cnnctn, "Objects/2~b") ).toBe( b );
+		expect( store.findNodeId(gateway, cnnctn, "0~Objects/2~b") ).toBe( b );
+		expect( store.findNodeId(gateway, cnnctn, "2~Objects/2~b") ).toBeUndefined();
+	} );
+
 	it( 'answers undefined for a connection it has never seen', ()=>{
 		const store = create();
 		expect( store.findNodeId(gateway, "other", "2~a") ).toBeUndefined();

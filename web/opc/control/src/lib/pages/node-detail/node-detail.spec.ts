@@ -5,12 +5,16 @@ import { UaNode } from '../../model/node';
 import { NodeId } from '../../model/node-id';
 import { NodeChildren } from './node-children/node-children';
 import { NodeDetail } from './node-detail';
+import { NodeReferences } from './node-references/node-references';
 import { pageTitleStub, provideRoute } from 'jde-spa/testing';
 import { variable } from 'jde-opc/testing';
 
-//a stub, not a blanked NodeChildren:  its ngOnInit loads the views and subscribes to the route's data
+//stubs, not blanked components:  NodeChildren's ngOnInit loads the views and subscribes to the route's data, and NodeReferences reads
+//the gateway
 @Component({ selector: 'node-children', template: '' })
 class ChildrenStub{ node = input<UaNode>(); refreshed = output<UaNode[]>(); }
+@Component({ selector: 'node-references', template: '' })
+class ReferencesStub{ node = input<UaNode>(); pageData = input<unknown>(); }
 
 const child = ( historizing:boolean )=>variable( 1, 'a', {historizing} );
 
@@ -23,16 +27,16 @@ describe( 'NodeDetail', ()=>{
 			provideRoute( {data: {pageData}} ),
 			pageTitleStub
 		]});
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren]}, add: {imports: [ChildrenStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeReferences]}, add: {imports: [ChildrenStub, ReferencesStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
 		const tabs = ()=>[...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() );
-		expect( tabs() ).toEqual( ['Children'] );
+		expect( tabs() ).toEqual( ['Children', 'References'] );
 
 		fixture.debugElement.query( By.directive(ChildrenStub) ).componentInstance.refreshed.emit( [child( true )] );
 		fixture.detectChanges();
-		expect( tabs() ).toEqual( ['Children', 'History'] );
+		expect( tabs() ).toEqual( ['Children', 'References', 'History'] );
 		fixture.destroy();
 	} );
 	//A group's member needn't be one the server historizes (#335):  the tab shows for it, with the group's members among the
@@ -46,11 +50,11 @@ describe( 'NodeDetail', ()=>{
 			provideRoute( {data: {pageData}} ),
 			pageTitleStub
 		]});
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren]}, add: {imports: [ChildrenStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeReferences]}, add: {imports: [ChildrenStub, ReferencesStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
-		expect( [...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() ) ).toEqual( ['Children', 'History'] );
+		expect( [...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() ) ).toEqual( ['Children', 'References', 'History'] );
 		expect( fixture.componentInstance.historizable() ).toEqual( [] );
 		expect( fixture.componentInstance.groups().map( g=>[g.id, g.name, g.nodes.map( n=>n.name )] ) ).toEqual( [[3, 'Pumps', ['a']]] );
 		fixture.destroy();

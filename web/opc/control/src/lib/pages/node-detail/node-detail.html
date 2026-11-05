@@ -1,9 +1,15 @@
 <mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
 	[(selectedIndex)]="tabIndex">
-	<mat-tab>
-		<ng-template mat-tab-label>Children</ng-template>
+	<mat-tab><!--a Variable's page lists its own value first, then its HasProperty children (clients spec *Address space*)-->
+		<ng-template mat-tab-label>{{ node().isVariable ? "Properties" : "Children" }}</ng-template>
 		<ng-template matTabContent>
 			<node-children [node]="node()" (refreshed)="nodes.set($event)"></node-children>
+		</ng-template>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>References</ng-template>
+		<ng-template matTabContent>
+			<node-references [pageData]="pageData()" [node]="node()"></node-references>
 		</ng-template>
 	</mat-tab>
 	@if( historizable().length || groups().length ){

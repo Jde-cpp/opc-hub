@@ -14,7 +14,8 @@ import * as FromServer from 'jde-proto/Opc.FromServer';
 import { OPC_STORE, OpcStore } from './opc-store';
 import { CnnctnSlug } from "../model/server-cnnctn";
 import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
-import { ENodeClass, Method, ObjectType, OpcObject, UaNode, Variable } from '../model/node';
+import { nodeColumns, UaNode, Variable, variableColumns } from '../model/node';
+import { Reference, referencesQuery } from '../model/reference';
 import { CallResult, MethodArguments, toCallResult } from '../model/method';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
@@ -230,40 +231,46 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		return `(${sc.toString(16)})${text}`;
 	}
 
+	//A node's children as the page's rows (clients spec *Address space*, #416):  what hangs under an object, a type or a view - its
+	//hierarchical references forward, every class kept, so a type node has a page like an object's and a Method row a Call - and a
+	//Variable's HasProperty children, its Properties.  The gateway browses `children` or `properties` and reads each row's attributes.
 	public async browseObjectsFolder( cnnctn:CnnctnSlug, parent:UaNode, snapshot:boolean ):Promise<UaNode[]>{
-		if( parent.isVariable )
-			throw new EvalError( `Cannot browse children of variable node.`, {cause:"Invalid Operation"} );
 		const vars = { opc: cnnctn, id: parent.nodeId.toJson() };
-		const commonColumns = "id name browse nodeClass refType typeDef description";
-		const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";//historizing gates the History tab
-		const ql = `node(opc:$opc, id:$id){children{${commonColumns} ... on Variable{${variableColumns}} }}`;
-		const children = (await this.query<any>( ql, vars ))["node"]["children"];
+		const table = parent.isVariable ? "properties" : "children";
+		const ql = `node(opc:$opc, id:$id){${table}{${nodeColumns} ... on Variable{${variableColumns}} }}`;
+		const children = (await this.query<any>( ql, vars ))["node"][table] ?? [];
 		const y = new Array<UaNode>();
 		for( const ref of children ){
-			let child:UaNode|undefined;
-			switch( <ENodeClass>ref.nodeClass ){
-				case ENodeClass.Object: child = new OpcObject(ref, parent); break;
-				case ENodeClass.ObjectType: parent.typeDef = new ObjectType(ref); break; //y.push( new ObjectType(ref) ); break;
-				case ENodeClass.Method: child = new Method(ref, parent); break;
-				case ENodeClass.Variable:
-					let variable = new Variable(ref, parent);
-					child = variable;
-					if( variable.customDataType )
-						try{
-							variable.customDataType = await this.enumType( cnnctn, <NodeId>variable.customDataType );
-						}
-						catch( e:unknown ){
-							console.log( errorMessage(e) );
-						}
-					break;
-				default: console.error( `browseObjectsFolder - unhandled nodeClass ${ref.nodeClass} for '${ref.name}'` );//was `debugger;` — froze the app whenever a debugger (DevTools/automation) was attached
+			const child = UaNode.fromJson( ref, parent );
+			if( !child ){
+				console.error( `browseObjectsFolder - unhandled nodeClass ${ref.nodeClass} for '${ref.name}'` );//was `debugger;` — froze the app whenever a debugger (DevTools/automation) was attached
+				continue;
 			}
-			if( child )
-				y.push( child );
+			if( child instanceof Variable && child.customDataType ){
+				try{
+					child.customDataType = await this.enumType( cnnctn, <NodeId>child.customDataType );
+				}
+				catch( e:unknown ){
+					console.log( errorMessage(e) );
+				}
+			}
+			y.push( child );
 		}
 		this.store.setNodes( this.slug, cnnctn, parent, y );
 		await this.updateErrorCodes();//awaited:  the rows are plain objects, so a name that lands after the first paint repaints nothing
 		return y;
+	}
+	//a node's references in both directions (clients spec *Address space*, #416), each with its type and the target's type definition
+	//named from the gateway's per-connection DisplayName cache:  the References tab
+	async references( opcId:CnnctnSlug, node:NodeId ):Promise<Reference[]>{
+		const rows:any[] = (await this.query<any>( referencesQuery, {opc: opcId, id: node.toJson()} ))["node"]?.["references"] ?? [];
+		return rows.map( r=>new Reference( r ) );
+	}
+	//the page path of a node known by id alone - the gateway's walk up to Root (NodeQLAwait's id form), null for a node it cannot
+	//place:  a References row's target
+	async pagePath( opcId:CnnctnSlug, node:NodeId ):Promise<string|null>{
+		const y = await super.querySingle<{path:string|null}>( `node( opc: $opc, id: $id ){ path }`, {opc: opcId, id: node.toJson()} );
+		return y?.path ?? null;
 	}
 	//read and write answer with the Reading - toValue() alone dropped the quality, so a refresh or a write's echo quietly turned an Uncertain row Good
 	async read( opcId:CnnctnSlug, n:NodeId ):Promise<Reading>{

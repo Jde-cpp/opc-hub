@@ -37,6 +37,12 @@ export function toBrowse( path:string, defaultNs:Ns|undefined ):Browse{
 	return { ns: defaultNs, name: text };
 }
 export function browseEq( a:Browse, b:Browse ):boolean{ return a.ns===b.ns && a.name===b.name; }
+//a url segment against a node's browse name:  `ns~name` exactly;  a bare name in the default namespace, else in namespace 0 - the
+//standard's folders and everything under Types, which a page path spells bare too (UaNode.browseFQ, the gateway's NodeQLAwait::segment)
+export function segmentMatches( browse:Browse, segment:string, defaultNs:Ns|undefined ):boolean{
+	const asked = toBrowse( segment, defaultNs );
+	return browseEq( browse, asked ) || ( toBrowse(segment, undefined).ns===undefined && browse.ns===0 && browse.name===asked.name );
+}
 
 //Namespace 0's DataTypes by id, as Part 6 names them - the node page's and the Members tab's type names - and Folder, the FolderType.
 export enum ETypes{

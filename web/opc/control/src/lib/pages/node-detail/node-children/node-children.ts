@@ -6,6 +6,7 @@ import {MatChipsModule} from '@angular/material/chips';
 import {MatDialog} from '@angular/material/dialog';
 import {MatIconModule} from '@angular/material/icon';
 import {MatSelectChange, MatSelectModule} from '@angular/material/select';
+import {MatSlideToggleModule} from '@angular/material/slide-toggle';
 import { MatSortModule, Sort } from "@angular/material/sort";
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
@@ -31,7 +32,7 @@ import { NodeId } from '../../../model/node-id';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -42,6 +43,9 @@ export class NodeChildren implements OnInit, OnDestroy {
 		//the sidenav siblings sort by the active view (OpcStore.setRoute), and a node switch is resolved before this component hears
 		//of it - so the store learns of every view change here, header sorts included, ahead of the next navigation.
 		effect( ()=>{ if( this.view() ) this.#opcStore.nodeView.set( this.view() ); } );
+		//the *system nodes* toggle (clients spec *Address space*):  kept per browser, as the tab is, and told to the store, whose sidenav
+		//siblings hide what the table hides
+		effect( ()=>{ this.#prefs.set( NodeView.collectionName, "systemNodes", this.showSystem() || null ); this.#opcStore.showSystem.set( this.showSystem() ); } );
 	}
 
 	async ngOnInit() {
@@ -63,7 +67,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 			this.profile.subscriptions = (this.profile.subscriptions ?? []).map( (s)=>new NodeId(s) );//revive persisted plain objects into NodeId instances (s.equals/s.key below would otherwise throw)
 			this.setNodes( this.pageData.nodes, true );
 			this.isLoading.set( false );
-			this.#componentPageTitle.title = this.server.connection.name + (this.node().id==85 ? '' : `/${this.node().name}`);
+			this.#componentPageTitle.title = this.server.connection.name + (this.node().isRoot ? '' : `/${this.node().name}`);
 		});
 	}
 
@@ -82,7 +86,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.pageData.nodes = nodes;
 		this.nodes.set( nodes );
 		const persisted = nodes.filter( n=>this.profile.subscriptions.some(s=>s.key==n.key) );
-		//A re-browse can drop a row the live subscription still holds - deleted or renamed server-side, or `displayed` flipped.
+		//A re-browse can drop a row the live subscription still holds - deleted or renamed server-side.
 		//Nothing else unsubscribed it (a new SelectionModel emits no `changed`), so the server went on publishing values for a
 		//node with no row and the next-handler below threw on every tick.  The persisted INTENT stays put, so the node
 		//re-subscribes on its own if a later browse brings it back.
@@ -105,7 +109,12 @@ export class NodeChildren implements OnInit, OnDestroy {
 				if( previous )
 					fresh.takeOver( previous );
 			}
-			this.setNodes( references.filter( r=>r.displayed ), false );
+			if( this.nodes().some( n=>this.isSelf(n) ) ){//a Variable page's own row, re-read as the properties were, stays first (NodeResolver)
+				const self = <Variable>this.node();
+				this.#setReading( self, await this._iot.read( this.cnnctnSlug, self.nodeId ) );
+				references.unshift( self );
+			}
+			this.setNodes( references, false );
 			this.refreshed.emit( this.pageData.nodes );
 		}
 		catch( e ){
@@ -308,6 +317,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	routerLink(n:UaNode):string[]{
 		return [ `./${n.browseFQ(this.server.connection.defaultBrowseNs)}` ];
 	}
+	isSelf( n:UaNode ):boolean{ return n.key==this.pageData.route.node?.key; }//a Variable page's own row (NodeResolver):  its name is no link.  The route's node, which `node` is too:  a row renders before the model is set
 	ETypes = ETypes;
 	get _iot():Gateway{ return this.pageData.gateway; }
 	//the quality of a row's reading (OPC 10000-4 7.38) - the Status cell's text, and the icon that stands in beside the value where a view hides the column
@@ -346,8 +356,13 @@ export class NodeChildren implements OnInit, OnDestroy {
 	get cnnctnSlug():string{ return this.server.connection.slug; }
 	pageData!:NodePageData;
 	profile!:UserSettings;
-	nodes = signal<UaNode[]>( [] );//every child the browse returned;  rows() is the view's cut of them
-	rows = computed<UaNode[]>( ()=>this.view() ? this.view().apply( this.nodes() ) : [] );
+	nodes = signal<UaNode[]>( [] );//every child the browse returned;  rows() is the view's cut of them, less the system nodes while the toggle is off
+	showSystem = signal<boolean>( inject(LocalPrefs).get(NodeView.collectionName, "systemNodes", false) );
+	rows = computed<UaNode[]>( ()=>{
+		const sorted = this.view() ? this.view().apply( this.nodes().filter( n=>this.showSystem() || !n.isSystem ) ) : [];
+		const self = sorted.find( n=>this.isSelf(n) );//a Variable page's own row stays first, whatever the view's sort
+		return self ? [self, ...sorted.filter( n=>n!==self )] : sorted;
+	} );
 	displayedColumns = computed<string[]>( ()=>this.view()?.displayedColumns ?? [] );
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
 	snapshotShown = computed<boolean>( ()=>this.displayedColumns().includes("snapshot") );//a Method row's Call is in the Snapshot cell, and in its Name cell where the view hides that (reviews-issue/318-opc-calls.md #6)
@@ -364,6 +379,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	schema = NodeView.schema;
 
 	#profileStore = inject( ProfileStore );
+	#prefs = inject( LocalPrefs );
 	#opcStore = inject( OpcStore );
 	#dialog = inject( MatDialog );
 }

@@ -8,13 +8,14 @@ import { NodeChildren } from './node-children/node-children';
 import { UaNode, Variable } from '../../model/node';
 import { NodeAccess } from './node-access/node-access';
 import { NodeHistory } from './node-history/node-history';
+import { NodeReferences } from './node-references/node-references';
 import { persistedTabIndex } from 'jde-spa';
 import { HistGroupMembers } from '../../model/hist';
 
 @Component( {
 	templateUrl: './node-detail.html',
 	host: {class:'main-content my-content'},
-	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeHistory]
+	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeHistory, NodeReferences]
 })
 export class NodeDetail implements OnInit{
 	#activatedRoute = inject( ActivatedRoute );
@@ -24,15 +25,15 @@ export class NodeDetail implements OnInit{
 			this.pageData.set( data["pageData"] );
 			this.nodes.set( this.pageData().nodes );
 			this.sideNav.set( this.pageData().route );
-			this.#componentPageTitle.title = this.server().connection.name + (this.node().id==85 ? '' : `/${this.node().name}`);
+			this.#componentPageTitle.title = this.server().connection.name + (this.node().isRoot ? '' : `/${this.node().name}`);
 		});
 	}
 
 	node = computed( ()=>this.sideNav().node );
 	pageData = signal<NodePageData>( null as any );
 	nodes = signal<UaNode[]>( [] );//the page's, then each Children refresh's
-	//the History tab shows when a child is historized and this user may read its history - a Variable has no
-	//page of its own (NodeResolver.#showParent), so the history of its parent's children is where a node's history is seen
+	//the History tab shows when a child is historized and this user may read its history - on a Variable's page the variable
+	//itself is the first row (NodeResolver), so its own history shows there
 	historizable = computed<Variable[]>( ()=>(<Variable[]>this.nodes().filter( n=>n.isVariable )).filter( v=>v.historyReadable ) );
 	//the gateway's groups that hold any of the page's variables (NodePageData.groups), each with its members among them:  the
 	//History tab's sources beside the server's own, whatever the server historizes

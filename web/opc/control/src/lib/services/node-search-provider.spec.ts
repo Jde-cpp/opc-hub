@@ -104,13 +104,13 @@ describe( 'NodeSearchProvider', ()=>{
 		warn.mockRestore();
 	});
 
-	//reviews/m3-closing.md #9:  a Variable (or a Method) has no page - it is a row on its parent's - so its hit opens the parent;
-	//the summary still names the node itself.  One directly under Objects opens the connection.
-	it( 'opens a variable\'s parent, naming the variable in the summary', async ()=>{
-		const top:NodeSearchRow = { connection: {slug: 'cn2', name: 'Line 2'}, path: 'status', name: 'status', nodeClass: 2, depth: 1 };
-		const results = await setup( '/access/users', [gateway( 'gw', [rpm, top] )] ).search( 'r', undefined, 5 );
-		expect( results[0] ).toMatchObject( { title: 'motorRpm', summary: 'Line 2/pump1/motorRpm', route: ['/gateways', 'gw', 'cn2', 'pump1'] } );
-		expect( results[1].route ).toEqual( ['/gateways', 'gw', 'cn2'] );
+	//A Variable has a page of its own since Phase 4 (#416), so its hit opens it;  a Method is a Call on its object's row, so its hit
+	//opens the object (reviews/m3-closing.md #9 sent both to the parent).  The summary names the node itself either way.
+	it( "opens a variable, and a method's object, naming the node in the summary", async ()=>{
+		const method:NodeSearchRow = { connection: {slug: 'cn2', name: 'Line 2'}, path: 'Objects/pump1/toHertz', name: 'toHertz', nodeClass: 4, depth: 2 };
+		const results = await setup( '/access/users', [gateway( 'gw', [rpm, method] )] ).search( 'r', undefined, 5 );
+		expect( results[0] ).toMatchObject( { title: 'motorRpm', summary: 'Line 2/pump1/motorRpm', route: ['/gateways', 'gw', 'cn2', 'pump1', 'motorRpm'] } );
+		expect( results[1] ).toMatchObject( { title: 'toHertz', summary: 'Line 2/Objects/pump1/toHertz', route: ['/gateways', 'gw', 'cn2', 'Objects', 'pump1'] } );
 	});
 
 	it( 'returns nothing for blank text without asking any gateway', async ()=>{
@@ -127,7 +127,7 @@ describe( 'NodeSearchProvider', ()=>{
 });
 
 //clients spec, Gaps #6:  a node id typed into the search, `ns=2;i=1001`, opens its page by the path the gateway walks up
-//from the node to the Objects folder (NodeQLAwait's id form, what the node-scoped resources link with).
+//from the node to Root (NodeQLAwait's id form, what the node-scoped resources link with).
 describe( 'NodeSearchProvider by node id', ()=>{
 	//the provider on a connection's page, over a gateway that answers the id form with `node` - or throws it
 	const create = ( node:{name?:string, nodeClass?:number, path:string|null}|Error, url='/gateways/gw/cn1/4~Examples' )=>{
@@ -153,14 +153,22 @@ describe( 'NodeSearchProvider by node id', ()=>{
 		expect( results[0].disabled ).toBeUndefined();
 	});
 
-	it( 'opens a variable\'s parent', async ()=>{
-		const [hit] = await create( {name: 'motorRpm', nodeClass: 2, path: 'pump1/motorRpm'} ).provider.search( 'ns=2;i=1001', undefined, 5 );
-		expect( hit ).toMatchObject( { title: 'motorRpm', route: ['/gateways', 'gw', 'cn1', 'pump1'], summary: 'Line 1/pump1/motorRpm', icon: 'label' } );
+	it( "opens a variable's own page, and a method's object", async ()=>{
+		const [hit] = await create( {name: 'motorRpm', nodeClass: 2, path: 'Objects/pump1/motorRpm'} ).provider.search( 'ns=2;i=1001', undefined, 5 );
+		expect( hit ).toMatchObject( { title: 'motorRpm', route: ['/gateways', 'gw', 'cn1', 'Objects', 'pump1', 'motorRpm'], summary: 'Line 1/Objects/pump1/motorRpm', icon: 'label' } );
+	});
+	it( "opens a method's object", async ()=>{
+		const [method] = await create( {name: 'toHertz', nodeClass: 4, path: 'Objects/pump1/toHertz'} ).provider.search( 'ns=2;i=1002', undefined, 5 );
+		expect( method ).toMatchObject( { title: 'toHertz', route: ['/gateways', 'gw', 'cn1', 'Objects', 'pump1'], icon: 'functions' } );
 	});
 
-	it( 'opens the connection itself for the Objects folder, whose path is empty', async ()=>{
-		const [objects] = await create( {name: 'Objects', nodeClass: 1, path: ''} ).provider.search( 'i=85', undefined, 5 );
-		expect( objects ).toMatchObject( { title: 'Objects', route: ['/gateways', 'gw', 'cn1'], summary: 'Line 1' } );
+	it( "opens the connection itself for Root, whose path is empty, and a type's page under Types", async ()=>{
+		const [root] = await create( {name: 'Root', nodeClass: 1, path: ''} ).provider.search( 'i=84', undefined, 5 );
+		expect( root ).toMatchObject( { title: 'Root', route: ['/gateways', 'gw', 'cn1'], summary: 'Line 1' } );
+	});
+	it( "opens a type's page under Types", async ()=>{
+		const [type] = await create( {name: 'PumpType', nodeClass: 8, path: 'Types/ObjectTypes/BaseObjectType/2~PumpType'} ).provider.search( 'ns=2;i=1001', undefined, 5 );
+		expect( type ).toMatchObject( { title: 'PumpType', route: ['/gateways', 'gw', 'cn1', 'Types', 'ObjectTypes', 'BaseObjectType', '2~PumpType'], summary: 'Line 1/Types/ObjectTypes/BaseObjectType/PumpType', icon: 'category' } );
 	});
 
 	it( 'keeps a string identifier\'s case, and the prefix form', async ()=>{
