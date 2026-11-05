@@ -467,24 +467,29 @@ namespace Jde::Opc::Server{
 		return underlying( context.NodeAccess->UserRights(*nodeId, ctx->UserPK) );
 	}
 
-	//A call is Execute on the node asked about (clients spec *Methods*, *Open questions* #9):  the method's own for the
-	//UserExecutable attribute, and the object's for the Call service, which asks the on-object form - a method a type declares,
-	//Acknowledge i=9111 say, is called with its own namespace-0 id and the instance as the object, and only the instance has
-	//rights of its own.  Update implies nothing, so a user who may write a node's values and not call its methods stays
-	//possible.  Used to deny every method but one (gateway-review #12's "dead code" ruling), and the on-object form asserted.
-	Ω executable( UA_Server* server, UA_AccessControl* ac, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId* nodeId )ι->UA_Boolean{
-		ASSERT( nodeId );
+	//A call is Execute (clients spec *Methods*, *Open questions* #9):  the method's own NodeRights for the UserExecutable attribute,
+	//which has no object, and CallRights for the Call service, which asks the on-object form - the object's, with a resource on the
+	//method node itself one level below it (reviews-issue/318-opc-calls.md #2).  A method a type declares, Acknowledge i=9111 say, is
+	//called with its own namespace-0 id and the instance as the object, so the instance's rights decide it.  Update implies nothing, so
+	//a user who may write a node's values and not call its methods stays possible.  Used to deny every method but one (gateway-review
+	//#12's "dead code" ruling), and the on-object form asserted.
+	Ω executable( UA_Server* server, UA_AccessControl* ac, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId* method, const UA_NodeId* object )ι->UA_Boolean{
+		ASSERT( method );
 		let ctx = UAAccess::readContext( sessionId, sessionContext );//null for a call with no session context - denied below, silently.
 		auto& context = UAAccess::context( server, ac );
-		if( !nodeId || !ctx || UAAccess::expired(context, ctx) )
+		if( !method || !ctx || UAAccess::expired(context, ctx) )
 			return false;
-		return !empty( context.NodeAccess->NodeRights(*nodeId, ctx->UserPK) & Access::ERights::Execute );
+		let rights = object ? context.NodeAccess->CallRights( *object, *method, ctx->UserPK ) : context.NodeAccess->NodeRights( *method, ctx->UserPK );
+		return !empty( rights & Access::ERights::Execute );
 	}
 	α UAAccess::GetUserExecutable( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *methodId, void */*methodContext*/ )ι->UA_Boolean{
-		return executable( server, ac, sessionId, sessionContext, methodId );
+		return executable( server, ac, sessionId, sessionContext, methodId, nullptr );
 	}
-	α UAAccess::GetUserExecutableOnObject( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId */*methodId*/, void */*methodContext*/, const UA_NodeId *objectId, void */*objectContext*/ )ι->UA_Boolean{
-		return executable( server, ac, sessionId, sessionContext, objectId );
+	α UAAccess::GetUserExecutableOnObject( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *methodId, void */*methodContext*/, const UA_NodeId *objectId, void */*objectContext*/ )ι->UA_Boolean{
+		ASSERT( objectId );
+		if( !objectId )
+			return false;
+		return executable( server, ac, sessionId, sessionContext, methodId, objectId );
 	}
 	α UAAccess::AllowAddNode( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_AddNodesItem *item )ι->UA_Boolean{ ASSERT(false); return false; }
 	α UAAccess::AllowAddReference( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_AddReferencesItem *item )ι->UA_Boolean{

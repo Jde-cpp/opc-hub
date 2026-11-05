@@ -5,6 +5,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { errorMessage } from 'jde-framework';
 import { Argument, argumentValue, CallResult, MethodArguments } from '../../../model/method';
@@ -30,7 +31,7 @@ export type MethodCallDialogData = {
 @Component({
 	templateUrl: './method-call-dialog.html',
 	styleUrls: ['./method-call-dialog.scss'],
-	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSlideToggleModule]
+	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatSlideToggleModule]
 })
 export class MethodCallDialog implements OnInit{
 	dialogRef = inject<MatDialogRef<MethodCallDialog,CallResult|undefined>>( MatDialogRef );
@@ -40,7 +41,7 @@ export class MethodCallDialog implements OnInit{
 
 	arguments = signal<MethodArguments|undefined>( undefined );
 	loadError = signal<string|undefined>( undefined );//the arguments could not be read
-	texts = signal<string[]>( [] );//each input as typed - a number, string, date or json
+	texts = signal<string[]>( [] );//each input as typed - a number, string, date or json - or an enumeration's chosen id
 	flags = signal<boolean[]>( [] );//a Boolean input's
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );//the gateway's refusal of the call
@@ -100,7 +101,7 @@ export class MethodCallDialog implements OnInit{
 	outputs = computed<{name:string; text:string}[]>( ()=>{
 		const r = this.result();
 		const declared = this.arguments()?.outputs ?? [];
-		return r ? r.outputArguments.map( (v, i)=>({name: declared[i]?.name ?? `output ${i+1}`, text: valueString( v )}) ) : [];
+		return r ? r.outputArguments.map( (v, i)=>({name: declared[i]?.name ?? `output ${i+1}`, text: declared[i] ? declared[i].valueText( v ) : valueString( v )}) ) : [];
 	} );
 	statusText( sc:StatusCode ):string{ return OpcError.text( sc ); }
 	statusIcon( sc:StatusCode ){ return statusIcon( sc ); }

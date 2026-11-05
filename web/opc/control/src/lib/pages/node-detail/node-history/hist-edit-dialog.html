@@ -86,11 +86,13 @@
 		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
 	}
 	@if( rows().length ){
-		<ul class="results" role="alert" aria-label="The server's answer">
-			@for( row of rows(); track $index ){
-				<li>@if( statusIcon(row.status); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ row.node }}@if( row.time ){ at {{ row.time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}}: {{ statusText(row.status) }}</li>
-			}
-		</ul>
+		<div role="alert"><!--on a wrapper:  a list given another role has no list items, axe's listitem rule-->
+			<ul class="results" aria-label="The server's answer">
+				@for( row of rows(); track $index ){
+					<li>@if( statusIcon(row.status); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ row.node }}@if( row.time ){ at {{ row.time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}}: {{ statusText(row.status) }}</li>
+				}
+			</ul>
+		</div>
 	}
 </mat-dialog-content>
 <mat-dialog-actions>

@@ -26,6 +26,17 @@
 						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
 					</mat-form-field>
 				}
+				@case( 'enum' ){
+					<mat-form-field>
+						<mat-label>{{ label(a) }}</mat-label>
+						<mat-select [value]="texts()[$index]" (selectionChange)="setText($index, $event.value)" [disabled]="busy()">
+							@for( option of a.enum!.enumValues; track option.id ){
+								<mat-option [value]="'' + option.id">{{ option.name }}</mat-option>
+							}
+						</mat-select>
+						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
+					</mat-form-field>
+				}
 				@case( 'datetime' ){
 					<mat-form-field>
 						<mat-label>{{ label(a) }}</mat-label>
@@ -50,12 +61,14 @@
 		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
 	}
 	@if( result(); as r ){
-		<ul class="results" role="alert" aria-label="The server's answer">
-			<li>@if( statusIcon(r.statusCode); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ statusText(r.statusCode) }}</li>
-			@for( a of argumentResults(); track $index ){
-				<li class="argument">@if( statusIcon(a.status); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ a.name }}: {{ statusText(a.status) }}</li>
-			}
-		</ul>
+		<div role="alert"><!--on a wrapper:  a list given another role has no list items, axe's listitem rule-->
+			<ul class="results" aria-label="The server's answer">
+				<li>@if( statusIcon(r.statusCode); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ statusText(r.statusCode) }}</li>
+				@for( a of argumentResults(); track $index ){
+					<li class="argument">@if( statusIcon(a.status); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ a.name }}: {{ statusText(a.status) }}</li>
+				}
+			</ul>
+		</div>
 		@if( outputs().length ){
 			<dl class="outputs" aria-label="The outputs">
 				@for( o of outputs(); track $index ){

@@ -1,4 +1,5 @@
 #include "nodesets.h"
+#include <charconv>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/server/UAServer.h>
@@ -13,17 +14,23 @@ namespace Jde::Opc{
 		THROW_IFSL( !success, "Failed to load nodeset file: '{}'", configFile.string() );
 	}
 
-	//pumpManual.toHertz (clients spec *Methods*, #318):  the test method the gateway's CallTests call - `rpm` Double in, `hertz`
-	//Double and `text` String out.  The server has type-checked the inputs against InputArguments by here, so the shape check is
-	//a guard, not the rule.
-	Ω toHertz( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t inputSize, const UA_Variant* input, size_t outputSize, UA_Variant* output )->UA_StatusCode{
+	//pumpManual.toHertz (clients spec *Methods*, #318):  the pumps demo's method, which an install has to try the Call dialog on and
+	//the gateway's CallTests call - `rpm` Double in, `hertz` Double and `text` String out.  It has no side effects.  The server has type-checked the inputs against InputArguments by here, so the shape check is
+	//a guard, not the rule.  Nothing in it throws - an exception would unwind through the server's C frames - so the text is
+	//spelled in place, as std::format would spell it, with no allocation but the copy open62541 makes.
+	Ω toHertz( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t inputSize, const UA_Variant* input, size_t outputSize, UA_Variant* output )ι->UA_StatusCode{
 		if( inputSize!=1 || outputSize!=2 || !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_DOUBLE]) )
 			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		const UA_Double hertz = *(const UA_Double*)input[0].data/60;
 		if( let sc = UA_Variant_setScalarCopy(&output[0], &hertz, &UA_TYPES[UA_TYPES_DOUBLE]); sc )
 			return sc;
-		let text = Ƒ( "{} Hz", hertz );
-		const UA_String s = UA_STRING( (char*)text.c_str() );
+		constexpr sv unit{ " Hz" };
+		char text[32];//the longest shortest-double is 24 characters
+		let [end, ec] = std::to_chars( text, text+sizeof(text)-unit.size(), hertz );
+		if( ec!=std::errc{} )
+			return UA_STATUSCODE_BADINTERNALERROR;
+		std::copy( unit.begin(), unit.end(), end );
+		const UA_String s{ (size_t)(end-text)+unit.size(), (UA_Byte*)text };
 		return UA_Variant_setScalarCopy( &output[1], &s, &UA_TYPES[UA_TYPES_STRING] );
 	}
 	α Server::BindPumpMethods( UAServer& ua )ι->void{

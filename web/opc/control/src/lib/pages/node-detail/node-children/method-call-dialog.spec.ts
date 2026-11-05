@@ -1,6 +1,9 @@
 import { TestBed } from '@angular/core/testing';
+import { flush, stable } from 'jde-spa/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
+import { Enum } from '../../../model/enum';
 import { CallResult, MethodArguments } from '../../../model/method';
+import { NodeId } from '../../../model/node-id';
 import { Method, OpcObject } from '../../../model/node';
 import { StatusCode } from '../../../model/types';
 import { Value } from '../../../model/value';
@@ -27,8 +30,7 @@ const open = async ( data:Partial<MethodCallDialogData>={} )=>{
 	]});
 	const fixture = TestBed.createComponent( MethodCallDialog );
 	const dialog = fixture.componentInstance;
-	await dialog.load();
-	fixture.detectChanges();
+	await stable( fixture, 2 );//ngOnInit's load, then the arguments rendered:  the only load - an explicit one beside it reset what a test typed when the second landed
 	return { fixture, dialog, ref,
 		calls: ()=>call.mock.calls.map( ([args])=>args ),
 		names: ()=>names.mock.calls.map( ([codes])=>codes ),
@@ -45,6 +47,33 @@ describe( 'MethodCallDialog', ()=>{
 		await d.dialog.apply();
 		expect( d.calls() ).toHaveLength( 0 );
 		expect( d.fixture.nativeElement.textContent ).toContain( 'Converts rpm to Hz.' );
+	} );
+	//reviews-issue/318-opc-calls.md #3:  an enumeration of the server's own is a choice of its values, sent as the id, and an output of
+	//one reads by name
+	it( 'offers an enumeration\'s values and sends the one chosen', async ()=>{
+		const health = new Enum( new NodeId( <any>{ns: 2, i: 6244} ), {name: 'DeviceHealthEnumeration', enumValues: [{id: 0, name: 'NORMAL'}, {id: 2, name: 'OFF_SPEC'}]} as any );
+		const arguments_ = new MethodArguments( {name: 'setHealth', inputArguments: [{name: 'health', dataType: {ns: 2, i: 6244}, baseDataType: {i: 29}}], outputArguments: [{name: 'was', dataType: {ns: 2, i: 6244}, baseDataType: {i: 29}}]} );
+		arguments_.inputs[0].enum = arguments_.outputs[0].enum = health;
+		const d = await open( {arguments: async ()=>arguments_} );
+		expect( d.dialog.inputs[0].editor ).toBe( 'enum' );
+		expect( d.dialog.label( d.dialog.inputs[0] ) ).toBe( 'health (DeviceHealthEnumeration)' );
+		expect( d.fixture.nativeElement.querySelector( 'mat-select' ) ).not.toBeNull();
+		expect( d.dialog.problem() ).toBe( 'Enter health.' );
+		d.dialog.setText( 0, '2' );
+		d.answerWith( {statusCode: 0, inputArgumentResults: [], outputArguments: [0]} );
+		await d.dialog.apply();
+		expect( d.calls() ).toEqual( [[2]] );
+		expect( d.dialog.outputs() ).toEqual( [{name: 'was', text: 'NORMAL'}] );
+	} );
+	//reviews-issue/318-opc-calls.md #9:  the spec loaded the arguments itself and then ran ngOnInit, which loaded them again
+	it( 'reads the arguments once, and keeps what was typed while the page awaits', async ()=>{
+		const read = vi.fn( async ()=>declared );
+		const d = await open( {arguments: read} );
+		d.dialog.setText( 0, '1500' );
+		await flush();
+		await d.dialog.apply();
+		expect( read ).toHaveBeenCalledTimes( 1 );
+		expect( d.calls() ).toEqual( [[1500]] );
 	} );
 	it( 'calls with the arguments typed and shows the status and the outputs by name', async ()=>{
 		const d = await open();
@@ -67,6 +96,11 @@ describe( 'MethodCallDialog', ()=>{
 		expect( d.dialog.argumentResults() ).toEqual( [{name: 'rpm', status: BadTypeMismatch}] );
 		expect( d.dialog.outputs() ).toEqual( [] );
 		expect( d.names() ).toEqual( [[BadInvalidArgument, BadTypeMismatch]] );
+		d.fixture.detectChanges();
+		const list = d.fixture.nativeElement.querySelector( 'ul.results' );
+		expect( list.getAttribute('role') ).toBeNull();//reviews-issue/318-opc-calls.md #15:  a list, so its items are list items to axe
+		expect( list.parentElement.getAttribute('role') ).toBe( 'alert' );
+		expect( list.querySelectorAll('li') ).toHaveLength( 2 );
 		d.answerWith( {statusCode: BadUserAccessDenied, inputArgumentResults: [], outputArguments: []} );
 		await d.dialog.apply();
 		expect( d.names().at( -1 ) ).toEqual( [BadUserAccessDenied] );

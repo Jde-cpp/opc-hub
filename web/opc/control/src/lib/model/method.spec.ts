@@ -1,6 +1,8 @@
 import Long from 'long';
 import { DateUtils } from 'jde-framework';
+import { Enum } from './enum';
 import { Argument, argumentValue, MethodArguments, toCallResult } from './method';
+import { NodeId } from './node-id';
 import { ETypes } from './types';
 
 const arg = ( json:object )=>new Argument( <any>{ name: 'a', ...json } );
@@ -23,12 +25,55 @@ describe( 'Argument', ()=>{
 		expect( arg( {dataType: {i: ETypes.Boolean}} ).editor ).toBe( 'boolean' );
 		expect( arg( {dataType: {i: ETypes.Int32}} ).editor ).toBe( 'number' );
 		expect( arg( {dataType: {i: ETypes.Duration}} ).editor ).toBe( 'number' );
-		expect( arg( {dataType: {ns: 2, i: 3002}} ).editor ).toBe( 'number' );//an enumeration goes as the number it is encoded as
 		expect( arg( {dataType: {i: ETypes.DateTime}} ).editor ).toBe( 'datetime' );
 		expect( arg( {dataType: {i: ETypes.String}} ).editor ).toBe( 'text' );
 		expect( arg( {dataType: {i: ETypes.Double}, valueRank: 1} ).editor ).toBe( 'json' );
 		expect( arg( {dataType: {i: ETypes.Double}, valueRank: 0} ).isArray ).toBe( true );
 		expect( arg( {dataType: {i: ETypes.Double}, valueRank: -3} ).isArray ).toBe( false );
+	} );
+} );
+
+//reviews-issue/318-opc-calls.md #3:  a type of the server's own goes as the namespace-0 type it derives from, which `method` answers
+//as baseDataType - the editor follows that, and an enumeration's is a choice of its values.
+describe( 'An argument of the server\'s own type', ()=>{
+	const health = new Enum( new NodeId( <any>{ns: 2, i: 6244} ), {name: 'DeviceHealthEnumeration', enumValues: [{id: 0, name: 'NORMAL'}, {id: 2, name: 'OFF_SPEC'}]} as any );
+	const enumeration = ( withValues:boolean )=>{
+		const a = arg( {dataType: {ns: 2, i: 6244}, baseDataType: {i: ETypes.Enumeration}} );
+		if( withValues )
+			a.enum = health;
+		return a;
+	};
+	it( 'takes its base\'s editor and value type', ()=>{
+		const speed = arg( {dataType: {ns: 5, s: 'Speed'}, baseDataType: {i: ETypes.Double}} );
+		expect( speed.valueType ).toBe( ETypes.Double );
+		expect( speed.editor ).toBe( 'number' );
+		expect( speed.typeName ).toBe( 'ns=5;s=Speed, a Double' );
+		expect( argumentValue( speed, '1500', false ) ).toBe( 1500 );
+		expect( argumentValue( arg( {dataType: {ns: 5, i: 1}, baseDataType: {i: ETypes.Int64}} ), '9007199254740993', false ) ).toEqual( Long.fromString( '9007199254740993' ) );
+		expect( arg( {dataType: {ns: 5, i: 1}, baseDataType: {i: ETypes.String}} ).editor ).toBe( 'text' );
+		expect( arg( {dataType: {ns: 5, i: 1}, baseDataType: {i: ETypes.Boolean}} ).editor ).toBe( 'boolean' );
+	} );
+	it( 'is json where the server names no base', ()=>{
+		const unknown = arg( {dataType: {ns: 2, i: 3002}, baseDataType: null} );
+		expect( unknown.baseType ).toBeUndefined();
+		expect( unknown.editor ).toBe( 'json' );
+		expect( unknown.typeName ).toBe( 'ns=2;i=3002' );
+		expect( argumentValue( unknown, '3', false ) ).toBe( 3 );
+	} );
+	it( 'is a choice of an enumeration\'s values, by name, sent as the id', ()=>{
+		const a = enumeration( true );
+		expect( a.isEnumeration ).toBe( true );
+		expect( a.editor ).toBe( 'enum' );
+		expect( a.typeName ).toBe( 'DeviceHealthEnumeration' );
+		expect( argumentValue( a, '2', false ) ).toBe( 2 );
+		expect( argumentValue( a, '', false ) ).toBeUndefined();
+		expect( a.valueText( 2 ) ).toBe( 'OFF_SPEC' );
+		expect( a.valueText( 7 ) ).toBe( '7' );//one the server didn't name
+	} );
+	it( 'is the number an enumeration is sent as, where its values could not be read', ()=>{
+		const a = enumeration( false );
+		expect( a.editor ).toBe( 'number' );
+		expect( argumentValue( a, '2', false ) ).toBe( 2 );
 	} );
 } );
 

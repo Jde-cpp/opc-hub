@@ -17,7 +17,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//Status2 isn't historized.
 	constexpr UA_UInt32 Pump1{ 5001 }, Pump2{ 5002 }, Pump3{ 5003 }, Pump4{ 5004 }, PumpManual{ 5005 };
 	constexpr UA_UInt32 Status1{ 6011 }, Rpm1{ 6012 }, Status2{ 6021 }, Rpm2{ 6022 }, Status3{ 6031 }, Rpm3{ 6032 }, Rpm4{ 6042 }, RpmManual{ 6054 };
-	//pumpManual's toHertz( rpm: Double ) -> ( hertz: Double, text: String ), the test method CallTests call (#318), bound by the OpcServer after the load.
+	//pumpManual's toHertz( rpm: Double ) -> ( hertz: Double, text: String ), the pumps demo's method, which CallTests call (#318), bound by the OpcServer after the load.
 	constexpr UA_UInt32 ToHertz{ 6055 };
 	//The pumps' namespace on the embedded OpcServer;  0 without one.
 	Ξ PumpsNs()ε->NsIndex{

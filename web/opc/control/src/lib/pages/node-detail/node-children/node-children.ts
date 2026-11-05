@@ -292,13 +292,17 @@ export class NodeChildren implements OnInit, OnDestroy {
 	}
 
 	//a Method row's Call (clients spec *Methods*):  the dialog reads the method's arguments through the gateway and calls it on this
-	//page's node, the object the method belongs to;  the names of the statuses it answers are fetched as a reading's are.
+	//page's node, the object the method belongs to.  The codes it answers are registered before the names are fetched - the
+	//fetch asks only for codes already pending, and the dialog's template would register them after it.
 	call( m:Method ){
 		MethodCallDialog.open( this.#dialog, {
 			object: this.node(), method: m,
 			arguments: ()=>this._iot.methodArguments( this.cnnctnSlug, m.nodeId ),
 			call: args=>this._iot.call( this.cnnctnSlug, this.nodeId, m.nodeId, args ),
-			names: ()=>this._iot.updateErrorCodes()
+			names: codes=>{
+				if( codes.filter( sc=>!OpcError.statusCodeText(sc) ).length )
+					this._iot.updateErrorCodes();
+			}
 		} );
 	}
 	routerLink(n:UaNode):string[]{
@@ -346,6 +350,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	rows = computed<UaNode[]>( ()=>this.view() ? this.view().apply( this.nodes() ) : [] );
 	displayedColumns = computed<string[]>( ()=>this.view()?.displayedColumns ?? [] );
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
+	snapshotShown = computed<boolean>( ()=>this.displayedColumns().includes("snapshot") );//a Method row's Call is in the Snapshot cell, and in its Name cell where the view hides that (reviews-issue/318-opc-calls.md #6)
 	get variables():Variable[]{ return <Variable[]>this.nodes().filter((x)=>x.nodeClass==ENodeClass.Variable); }
 	selections = new SelectionModel<UaNode>(true, []);
 	//sideNav = model.required<NodeRoute>();

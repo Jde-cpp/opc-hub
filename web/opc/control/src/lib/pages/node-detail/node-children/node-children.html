@@ -33,6 +33,9 @@
 					<mat-cell mat-cell *matCellDef="let r">
 						@if( r.isVariable || r.isMethod ){<!--neither has a page of its own-->
 							<span>{{r.name}}</span>
+							@if( r.isMethod && !snapshotShown() ){<!--the Snapshot cell's Call, where the view hides that column-->
+								<button matIconButton type="button" class="call-icon" (click)="call(r)" [attr.aria-label]="'Call ' + r.name" matTooltip="Call"><mat-icon aria-hidden="true" fontIcon="play_arrow"></mat-icon></button>
+							}
 						}
 						@else{
 							<a [routerLink]="routerLink(r)" routerLinkActive="router-link-active" >{{r.name}}</a>

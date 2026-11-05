@@ -11,5 +11,7 @@ namespace Jde::Opc::Server{
 		β EditRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights=0;//for an edit of its history.
 		β MayBrowse( const NodeId& nodeId, UserPK executer )ι->bool=0;
 		β UserRights( const NodeId& nodeId, UserPK executer )ι->EAccess=0;//the UserAccessLevel.
+		//The rights for a call of `method` on `object`, the Call service's question.  The object's, for a host that keeps none per method.
+		β CallRights( const NodeId& object, const NodeId& /*method*/, UserPK executer )ι->Access::ERights{ return NodeRights( object, executer ); }
 	};
 }

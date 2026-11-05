@@ -63,6 +63,88 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( StatusCode(missing), UA_STATUSCODE_BADARGUMENTSMISSING ) << serialize( missing );
 	}
 
+	//An argument of a type the gateway cannot encode - a NodeId here - is refused as unsupported in its slot, not as a mismatch of
+	//the user's value (reviews-issue/318-opc-calls.md #5):  no text is a NodeId to it, a valid one included.  The method is added
+	//to the embedded server for the test, under pumpManual;  its callback is never reached.
+	TEST_F( CallTests, AnArgumentTypeTheGatewayCannotSendIsUnsupported ){
+		auto& ua = Server::GetUAServer();
+		UA_Argument argument; UA_Argument_init( &argument );
+		argument.name = UA_STRING( (char*)"node" );
+		argument.dataType = UA_TYPES[UA_TYPES_NODEID].typeId;
+		argument.valueRank = UA_VALUERANK_SCALAR;
+		UA_MethodAttributes attributes = UA_MethodAttributes_default;
+		attributes.executable = attributes.userExecutable = true;
+		const UA_NodeId id = UA_NODEID_STRING( PumpsNs(), (char*)"CallTests.nodeIdArgument" );
+		const NodeId method{ id };//copied:  from the prvalue it would take the literal, and free it.
+		ASSERT_EQ( UA_Server_addMethodNode(ua.Ptr(), method, _object, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(PumpsNs(), (char*)"nodeIdArgument"), attributes,
+			[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t, const UA_Variant*, size_t, UA_Variant* )->UA_StatusCode{ return UA_STATUSCODE_GOOD; },
+			1, &argument, 0, nullptr, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup remove = [&]{ UA_Server_deleteNode( ua.Ptr(), method, true ); };
+		let y = Call( _object, method, {"ns=2;i=5"} );
+		EXPECT_EQ( StatusCode(y), UA_STATUSCODE_BADINVALIDARGUMENT ) << serialize( y );
+		EXPECT_EQ( InputResults(y), Statuses{UA_STATUSCODE_BADNOTSUPPORTED} ) << serialize( y );
+	}
+
+	//reviews-issue/318-opc-calls.md #3:  an argument of a type of the server's own goes as its first namespace-0 supertype - DI's
+	//DeviceHealthEnumeration as an Int32, a subtype of a subtype of Double as a Double - and one deriving from Structure is refused as
+	//unsupported (#421), as a namespace-0 structure is.  Sent as the json implied, both went as Int64, which the server refuses.  The
+	//types and the methods are added to the embedded server for the test, under pumpManual;  the callbacks answer Good unread.
+	TEST_F( CallTests, AnArgumentOfTheServersOwnTypeGoesAsItsBase ){
+		auto& ua = Server::GetUAServer();
+		size_t di{};
+		ASSERT_EQ( UA_Server_getNamespaceByName(ua.Ptr(), UA_STRING((char*)"http://opcfoundation.org/UA/DI/"), &di), UA_STATUSCODE_GOOD ) << "the embedded server loads DI";
+		vector<NodeId> added;
+		absl::Cleanup remove = [&]{
+			for( auto p = added.rbegin(); p!=added.rend(); ++p )
+				UA_Server_deleteNode( ua.Ptr(), *p, true );
+		};
+		let id = [&]( const char* name ){ const UA_NodeId x = UA_NODEID_STRING( PumpsNs(), (char*)name ); return NodeId{ x }; };//copied:  from the prvalue it would take the literal
+		let addType = [&]( const char* name, const NodeId& parent ){
+			let type = id( name );
+			ASSERT_EQ( UA_Server_addDataTypeNode(ua.Ptr(), type, parent, UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE), UA_QUALIFIEDNAME(PumpsNs(), (char*)name), UA_DataTypeAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD ) << name;
+			added.push_back( type );
+		};
+		let addMethod = [&]( const char* name, vector<std::pair<const char*, NodeId>> inputs ){
+			vector<UA_Argument> arguments( inputs.size() );
+			for( uint i=0; i<inputs.size(); ++i ){
+				UA_Argument_init( &arguments[i] );
+				arguments[i].name = UA_STRING( (char*)inputs[i].first );
+				arguments[i].dataType = inputs[i].second;
+				arguments[i].valueRank = UA_VALUERANK_SCALAR;
+			}
+			UA_MethodAttributes attributes = UA_MethodAttributes_default;
+			attributes.executable = attributes.userExecutable = true;
+			let method = id( name );
+			ASSERT_EQ( UA_Server_addMethodNode(ua.Ptr(), method, _object, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(PumpsNs(), (char*)name), attributes,
+				[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t, const UA_Variant*, size_t, UA_Variant* )->UA_StatusCode{ return UA_STATUSCODE_GOOD; },
+				arguments.size(), arguments.data(), 0, nullptr, nullptr, nullptr), UA_STATUSCODE_GOOD ) << name;
+			added.push_back( method );
+		};
+		addType( "CallTests.Speed", NodeId{UA_NS0ID_DOUBLE} );
+		addType( "CallTests.SubSpeed", id("CallTests.Speed") );
+		addType( "CallTests.Record", NodeId{UA_NS0ID_STRUCTURE} );
+		addMethod( "CallTests.typed", {{"health", NodeId{(NsIndex)di, 6244}}, {"speed", id("CallTests.SubSpeed")}} );
+		addMethod( "CallTests.structured", {{"record", id("CallTests.Record")}} );
+
+		let bases = [&]( const char* method ){
+			let y = Socket().QuerySync( "method( opc: $opc, id: $id ){ inputArguments{ baseDataType } }", {{"opc", OpcServerSlug}, {"id", id(method).ToJson()}} ).as_object();
+			jarray bases;
+			for( let& a : y.at("inputArguments").as_array() )
+				bases.push_back( a.at("baseDataType") );
+			return bases;
+		};
+		const jarray typedBases{ NodeId{UA_NS0ID_ENUMERATION}.ToJson(), NodeId{UA_NS0ID_DOUBLE}.ToJson() };
+		EXPECT_EQ( bases("CallTests.typed"), typedBases ) << "Enumeration, and Double two steps up";
+		let typed = Call( _object, id("CallTests.typed"), {2, 1500} );
+		EXPECT_EQ( StatusCode(typed), UA_STATUSCODE_GOOD ) << serialize( typed );
+
+		const jarray structuredBases{ NodeId{UA_NS0ID_STRUCTURE}.ToJson() };
+		EXPECT_EQ( bases("CallTests.structured"), structuredBases );
+		let structured = Call( _object, id("CallTests.structured"), {jobject{}} );
+		EXPECT_EQ( StatusCode(structured), UA_STATUSCODE_BADINVALIDARGUMENT ) << serialize( structured );
+		EXPECT_EQ( InputResults(structured), Statuses{UA_STATUSCODE_BADNOTSUPPORTED} ) << serialize( structured );
+	}
+
 	//A method the server does not have fails reading its class, with the server's status - an error, not a result, since there is
 	//no InputArguments to type the arguments from.  Retried from scratch next time:  a mistyped id does not poison the connection.
 	TEST_F( CallTests, AnUnknownMethodIsRefused ){
@@ -94,7 +176,8 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//The rights are the server's:  with nodeIds enforced, a user holding Read and Update and not Execute is refused, Update implying
-	//nothing (spec *Open questions* #9), and one granted Execute calls.  Denied, not merely ungranted:  another suite's role may
+	//nothing (spec *Open questions* #9), and one granted Execute calls - until a deny of Execute on the method node itself, which wins
+	//over the object's (reviews-issue/318-opc-calls.md #2).  Denied, not merely ungranted:  another suite's role may
 	//already hold it for this user when this runs after it (HistEditTests' GatewayHistoryEditor, All on nodeIds), and a deny wins
 	//over any grant.  The roles are found or made as the other suites' are, and this user's acl on them purged after, so the
 	//next run starts as this one did;  nodeIds is opened again, as it ships.
@@ -117,11 +200,17 @@ namespace Jde::Opc::Gateway::Tests{
 			return pk;
 		};
 		vector<Access::RolePK> held;
+		optional<Access::RolePK> methodDenied;//purged with the toHertz row, which takes its grant:  the next run's GrantRole would find it without one.
 		absl::Cleanup open = [&]{
 			try{
 				enforce( false );
 				for( let role : held )
 					app->QuerySync<jvalue>( "purgeAcl( identity:{ id:$userId }, role:{ id:$roleId } )", {{"userId", user.Value}, {"roleId", role.Value}} );
+				if( methodDenied ){//the row unenforced first:  while it is, the purge's delegated admin check wants Administer on it, which this login lacks.
+					app->QuerySync<jvalue>( "purgeRole( id:$id )", {{"id", methodDenied->Value}} );
+					EnforceResource( *app, authorizer, schema, "nodeIds", false, _method.ToString() );
+					app->QuerySync<jvalue>( "purgeResource( schemaName:$schema, slug:\"nodeIds\", criteria:$criteria )", {{"schema", schema}, {"criteria", _method.ToString()}} );
+				}
 			}
 			catch( const std::exception& e ){ ADD_FAILURE() << "nodeIds wasn't opened again, or the acl wasn't purged:  " << e.what(); }
 		};
@@ -140,5 +229,12 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitUntil([&]{ return !empty(authorizer.NodeRights(_object, user) & ERights::Execute); }) ) << "the Execute grant reaches the server";
 		let allowed = Call( _object, _method, {1500} );
 		EXPECT_EQ( StatusCode(allowed), UA_STATUSCODE_GOOD ) << serialize( allowed );
+
+		enforce( false );
+		methodDenied = GrantRole( *app, "GatewayCallToHertzDenied", user, {{schema, "nodeIds", ERights::None, ERights::Execute, _method.ToString(), "toHertz"}} );
+		enforce( true );
+		ASSERT_TRUE( WaitUntil([&]{ return empty(authorizer.NodeRights(_method, user) & ERights::Execute) && !empty(authorizer.NodeRights(_object, user) & ERights::Execute); }) ) << "the method's deny reaches the server";
+		let deniedOnMethod = Call( _object, _method, {1500} );
+		EXPECT_EQ( StatusCode(deniedOnMethod), UA_STATUSCODE_BADUSERACCESSDENIED ) << "the object's Execute does not carry past the method's deny:  " << serialize( deniedOnMethod );
 	}
 }

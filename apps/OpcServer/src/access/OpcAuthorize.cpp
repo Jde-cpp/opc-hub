@@ -123,6 +123,7 @@ namespace Jde::Opc::Server{
 		_beneath = move( walk.Beneath );
 		_enclosing = move( walk.Enclosing );
 		_typeNodes = move( walk.TypeNodes );
+		_configured = move( walk.Base );
 		_rootResourcePK = walk.RootResource;
 		_enabled = walk.Enforcing;
 	}
@@ -202,6 +203,22 @@ namespace Jde::Opc::Server{
 
 	α OpcAuthorize::NodeRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights{ return Resolve( nodeId, executer ).Rights; }
 	α OpcAuthorize::EditRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights{ return Resolve( nodeId, executer ).Edits; }
+	α OpcAuthorize::CallRights( const NodeId& object, const NodeId& method, UserPK executer )ι->Access::ERights{
+		optional<Governing> governing;
+		{
+			rl _{ _nodeResourcesMutex };
+			governing = GoverningLocked( object );
+			if( let own = _enabled ? Find(_configured, method) : nullopt; own ){//its own alone:  its _enclosing is the first instance's.
+				if( !governing )
+					governing = Governing{ {}, false };//an object outside every configured branch is open, and the method's resource is all there is.
+				governing->Chain.insert( governing->Chain.begin(), *own );
+			}
+		}
+		if( !governing )
+			return Access::ERights::All;
+		rl _{ Mutex };
+		return RightsOnLocked( governing->Chain, executer ).Rights;
+	}
 	α OpcAuthorize::Resolve( const NodeId& nodeId, UserPK executer )ι->NodeAccess{
 		using enum Access::ERights;
 		optional<Governing> governing;

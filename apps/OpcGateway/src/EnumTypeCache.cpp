@@ -10,16 +10,16 @@
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 
-	α EnumTypeCache::SourceName( ESource s )ι->sv{
+	α EnumTypeCache::SourceName( EEnumSource s )ι->sv{
 		switch( s ){
-			case ESource::Definition: return "DataTypeDefinition";
-			case ESource::EnumValues: return "EnumValues";
-			case ESource::EnumStrings: return "EnumStrings";
+			case EEnumSource::Definition: return "DataTypeDefinition";
+			case EEnumSource::EnumValues: return "EnumValues";
+			case EEnumSource::EnumStrings: return "EnumStrings";
 		}
 		return "?";
 	}
 
-	α EnumTypeCache::EnumType::ToJson( const QL::TableQL& q )Ι->jobject{
+	α EnumType::ToJson( const QL::TableQL& q )Ι->jobject{
 		jobject y;
 		y["name"] = Name;//unconditionally, as QL::Object::ToJson does - the SPA's Type.name is not optional.
 		if( auto valuesQL = q.FindTable("enumValues"); valuesQL ){
@@ -40,53 +40,11 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 
-	α EnumTypeCache::GetAwait::await_ready()ι->bool{
-		if( auto p = _cache.Find(_id); p ){
-			_result = move( p );
-			return true;
-		}
-		return false;
-	}
-	α EnumTypeCache::GetAwait::Suspend()ι->void{
-		_cache.StartLocked( move(_client), move(_id), this );
-	}
-
-	α EnumTypeCache::Find( const NodeId& id )Ι->Ptr{
-		rl _{ _mutex };
-		auto p = _slots.find( id );
-		return p!=_slots.end() && p->second.State()==Slot::EState::Ready ? p->second.Value() : Ptr{};
-	}
-
 	α EnumTypeCache::Refused( const NodeId& id )Ι->bool{
 		rl _{ _mutex };
 		auto p = _slots.find( id );
 		return p!=_slots.end() && p->second.State()==Slot::EState::Failed;
 	}
-
-	α EnumTypeCache::StartLocked( sp<UAClient>&& client, NodeId&& id, GetAwait* waiter )ι->void{
-		bool launch{};
-		{
-			ul _{ _mutex };
-			launch = _slots.try_emplace( NodeId{id} ).first->second.Start( waiter );//a new slot:  own the fetch.
-		}
-		if( launch )
-			Fetch( move(client), move(id) );//fire & forget:  the task keeps the client (and so this cache) alive until Finish.
-	}
-
-	α EnumTypeCache::Finish( const NodeId& id, Ptr type, up<Exception> error, bool retryable )ι->void{
-		Slot::Resumes resumes;
-		{
-			ul _{ _mutex };
-			auto slot = _slots.find( id );
-			ASSERT( slot!=_slots.end() );
-			resumes = slot->second.Finish( move(type), move(error), retryable );
-			if( slot->second.State()==Slot::EState::Empty )
-				_slots.erase( slot );//a transport/session failure or an unknown id - the next request retries from scratch, and a mistyped id does not poison the connection.
-		}
-		resumes.Run();
-	}
-
-	Ω browseIs( const UA_ReferenceDescription& ref, sv name )ι->bool{ return ref.browseName.namespaceIndex==0 && ToSV(ref.browseName.name)==name; }
 
 	//Source order:  the DataTypeDefinition attribute (normative since 1.04), else the DataType node's EnumValues property (has
 	//descriptions), else EnumStrings (names only).  One coroutine with Any-wrapped awaits rather than a hand-off chain - three
@@ -108,7 +66,7 @@ namespace Jde::Opc::Gateway{
 				type->Name = Opc::ToString( ((UA_LocalizedText*)displayName.value.data)->text );
 			if( def.hasValue && def.value.type==&UA_TYPES[UA_TYPES_ENUMDEFINITION] ){
 				type->Fields = FromDefinition( *(UA_EnumDefinition*)def.value.data );
-				type->Source = ESource::Definition;
+				type->Source = EEnumSource::Definition;
 			}
 			else if( def.hasValue && def.value.type==&UA_TYPES[UA_TYPES_STRUCTUREDEFINITION] )
 				THROW( "'{}' ({}) is a structure, not an enumeration.", type->Name, id.ToString() );
@@ -119,11 +77,11 @@ namespace Jde::Opc::Gateway{
 				optional<NodeId> enumValues, enumStrings; bool optionSet{};
 				if( refs.resultsSize )
 					refs.VisitWhile( 0, [&]( const UA_ReferenceDescription& ref ){
-						if( browseIs(ref, "EnumValues") )
+						if( Browse::IsNs0Name(ref, "EnumValues") )
 							enumValues = NodeId{ ref.nodeId.nodeId };
-						else if( browseIs(ref, "EnumStrings") )
+						else if( Browse::IsNs0Name(ref, "EnumStrings") )
 							enumStrings = NodeId{ ref.nodeId.nodeId };
-						else if( browseIs(ref, "OptionSetValues") )
+						else if( Browse::IsNs0Name(ref, "OptionSetValues") )
 							optionSet = true;
 						return true;
 					} );
@@ -136,7 +94,7 @@ namespace Jde::Opc::Gateway{
 				if( !v->second.hasValue )
 					throw UAClientException{ (StatusCode)v->second.status, client->Handle(), Ƒ("read {} of '{}'", propName, id.ToString()) };
 				type->Fields = enumValues ? FromEnumValues( v->second.value ) : FromEnumStrings( v->second.value );
-				type->Source = enumValues ? ESource::EnumValues : ESource::EnumStrings;
+				type->Source = enumValues ? EEnumSource::EnumValues : EEnumSource::EnumStrings;
 			}
 			INFO( "[{}]Enum '{}' ({}) - {} fields from {}.", hex(client->Handle()), type->Name, id.ToString(), type->Fields.size(), SourceName(type->Source) );
 		}
@@ -150,31 +108,31 @@ namespace Jde::Opc::Gateway{
 		Finish( id, move(type), move(error), retryable );
 	}
 
-	α EnumTypeCache::FromDefinition( const UA_EnumDefinition& def )ι->vector<Field>{
-		vector<Field> y; y.reserve( def.fieldsSize );
+	α EnumTypeCache::FromDefinition( const UA_EnumDefinition& def )ι->vector<EnumField>{
+		vector<EnumField> y; y.reserve( def.fieldsSize );
 		for( size_t i=0; i<def.fieldsSize; ++i ){
 			let& f = def.fields[i];
 			string name = Opc::ToString( f.name );
 			if( name.empty() )
 				name = Opc::ToString( f.displayName.text );
-			y.push_back( Field{ f.value, move(name), Opc::ToString(f.description.text) } );
+			y.push_back( EnumField{ f.value, move(name), Opc::ToString(f.description.text) } );
 		}
 		return y;
 	}
-	α EnumTypeCache::FromEnumValues( const UA_Variant& v )ε->vector<Field>{
+	α EnumTypeCache::FromEnumValues( const UA_Variant& v )ε->vector<EnumField>{
 		THROW_IF( v.type!=&UA_TYPES[UA_TYPES_ENUMVALUETYPE] || UA_Variant_isScalar(&v), "EnumValues is a '{}' {}, not an EnumValueType array.", v.type ? v.type->typeName : "null", UA_Variant_isScalar(&v) ? "scalar" : "array" );
-		vector<Field> y; y.reserve( v.arrayLength );
+		vector<EnumField> y; y.reserve( v.arrayLength );
 		for( size_t i=0; i<v.arrayLength; ++i ){
 			let& e = ((UA_EnumValueType*)v.data)[i];
-			y.push_back( Field{ e.value, Opc::ToString(e.displayName.text), Opc::ToString(e.description.text) } );
+			y.push_back( EnumField{ e.value, Opc::ToString(e.displayName.text), Opc::ToString(e.description.text) } );
 		}
 		return y;
 	}
-	α EnumTypeCache::FromEnumStrings( const UA_Variant& v )ε->vector<Field>{
+	α EnumTypeCache::FromEnumStrings( const UA_Variant& v )ε->vector<EnumField>{
 		THROW_IF( v.type!=&UA_TYPES[UA_TYPES_LOCALIZEDTEXT] || UA_Variant_isScalar(&v), "EnumStrings is a '{}' {}, not a LocalizedText array.", v.type ? v.type->typeName : "null", UA_Variant_isScalar(&v) ? "scalar" : "array" );
-		vector<Field> y; y.reserve( v.arrayLength );
+		vector<EnumField> y; y.reserve( v.arrayLength );
 		for( size_t i=0; i<v.arrayLength; ++i )
-			y.push_back( Field{ (_int)i, Opc::ToString(((UA_LocalizedText*)v.data)[i].text), {} } );
+			y.push_back( EnumField{ (_int)i, Opc::ToString(((UA_LocalizedText*)v.data)[i].text), {} } );
 		return y;
 	}
 }

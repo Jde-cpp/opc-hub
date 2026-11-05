@@ -250,9 +250,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					child = variable;
 					if( variable.customDataType )
 						try{
-							const nodeId = <NodeId>variable.customDataType
-							let x = await super.querySingle<Type>( `__type( opc: ${StringUtils.qlString(cnnctn)}, ${nodeId.qlArgs()}){ name enumValues{id name description}}` );
-							variable.customDataType = new Enum(nodeId, x);
+							variable.customDataType = await this.enumType( cnnctn, <NodeId>variable.customDataType );
 						}
 						catch( e:unknown ){
 							console.log( errorMessage(e) );
@@ -277,12 +275,22 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		const v = await super.querySingle<{value:any}>( `node( opc: $opc, id: $id ){value}`, {opc: opcId, id: n.toJson()} );
 		return toReading( v["value"] );
 	}
+	//an enumeration of the server's own:  its name and values, read from its DataType node once per connection (EnumTypeCache)
+	async enumType( opcId:CnnctnSlug, id:NodeId ):Promise<Enum>{
+		return new Enum( id, await super.querySingle<Type>( `__type( opc: ${StringUtils.qlString(opcId)}, ${id.qlArgs()}){ name enumValues{id name description}}` ) );
+	}
 	//a method's arguments, read from its InputArguments and OutputArguments once per method and kept with the gateway's connection
-	//(MethodArgumentCache):  what the call dialog is built from
+	//(MethodArgumentCache):  what the call dialog is built from, with the values of each enumeration of the server's own - without
+	//them, its editor is the number it is sent as
 	async methodArguments( opcId:CnnctnSlug, method:NodeId ):Promise<MethodArguments>{
-		const columns = "name dataType valueRank description";
+		const columns = "name dataType baseDataType valueRank description";
 		const json = await super.querySingle<any>( `method( opc: $opc, id: $id ){ name inputArguments{ ${columns} } outputArguments{ ${columns} } }`, {opc: opcId, id: method.toJson()} );
-		return new MethodArguments( json ?? {} );
+		const y = new MethodArguments( json ?? {} );
+		await Promise.all( [...y.inputs, ...y.outputs].filter( a=>a.isEnumeration ).map( a=>this.enumType( opcId, a.customDataType! ).then(
+			e=>{ a.enum = e; },
+			e=>console.warn( `No values for ${a.name}'s ${a.customDataType!.uaString()} - ${errorMessage( e )}` )
+		) ) );
+		return y;
 	}
 	//call( opc, object, method, args ) - a system mutation (clients spec *Methods*):  the arguments typed at the gateway from the
 	//method's InputArguments, the rights the server's under this session.  The server's answer whatever its status - a refused
@@ -291,8 +299,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		const q = `call( opc: $opc, object: $object, method: $method, args: $args ){ statusCode inputArgumentResults outputArguments }`;
 		const vars = { opc: opcId, object: object.toJson(), method: method.toJson(), args: args.map( a=>valueJson( a ) ) };
 		const data:any = await super.postQL<any>( q, vars );
-		this.updateErrorCodes();
-		return toCallResult( data?.["call"] ?? data );//keyed by command name, as write()'s is
+		return toCallResult( data?.["call"] ?? data );//keyed by command name, as write()'s is;  the caller asks for the codes' names
 	}
 	async write( opcId:CnnctnSlug, n:NodeId, v:Value ):Promise<Reading>{
 		const q = `updateVariable( opc: $opc, id: $id, value: $value ){ value }`;

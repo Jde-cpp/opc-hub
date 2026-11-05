@@ -46,7 +46,8 @@ installed.
   Endpoint tab and a group's page ([`src/ql/OpcSessionsQLAwait.h`](src/ql/OpcSessionsQLAwait.h)), null without one.
 - **GraphQL** (`src/ql/`): `serverConnections`, `opcSessions`, `node` and `nodes` for browse and read, `updateVariable`
   for a write, `call( opc, object, method, args )` for a method call with `method( opc, id )` for its arguments, read from
-  the InputArguments/OutputArguments properties and cached per connection (`src/MethodArguments.*`), `search` over a
+  the InputArguments/OutputArguments properties and cached per connection (`src/MethodArguments.*`) - an argument of a type of
+  the server's own goes as the namespace-0 type it derives from (`src/BaseTypeCache.*`) - `search` over a
   per-connection name index crawled on the first search (`src/NodeIndex.*`), and `__type(opc, ns, i)` for a server's
   enumerations, read from its DataType nodes (`src/EnumTypeCache.*`).
   `config/introspection/*.jsonnet` extends the schema the site sees.

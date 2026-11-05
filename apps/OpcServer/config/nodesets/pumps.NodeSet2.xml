@@ -17,9 +17,10 @@
     pumpManual.motorRpm 10, with no format: the server adds ABSOLUTE_VALUE.
   The PLC emulator loads the file too and keeps no history: there the attribute and the objects are only nodes.
 
-  pumpManual.toHertz is the test method (clients spec *Methods*, #318): a Double in, a Double and a String out.  A nodeset
-  declares no callback, so the OpcServer binds one after the load (nodesets.cpp BindPumpMethods); the emulator binds none,
-  and a call there answers BadInternalError.
+  pumpManual.toHertz is the pumps demo's method (clients spec *Methods*, #318): what an install has to try the Call dialog on,
+  and what the gateway's CallTests call - a Double in, a Double and a String out.  A nodeset declares no callback, so the
+  OpcServer binds one after the load (nodesets.cpp BindPumpMethods).  The emulator binds none and grants no Execute, so a
+  call there is refused (BadUserAccessDenied).
 -->
 <UANodeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
   <NamespaceUris>

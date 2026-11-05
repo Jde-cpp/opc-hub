@@ -5,14 +5,15 @@ import { DateUtils, ProtoUtils, SnackbarService, Timestamp, ViewType } from 'jde
 import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
 import { NodeId } from '../../../model/node-id';
-import { UaNode, Variable } from '../../../model/node';
+import { Method, OpcObject, UaNode, Variable } from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
 import { OpcError } from '../../../model/opc-error';
 import { EAccess, ETypes } from '../../../model/types';
+import { MethodCallDialog } from './method-call-dialog';
 import { NodeChildren } from './node-children';
 import { flush, pageTitleStub, provideRoute, silence, screenSize } from 'jde-spa/testing';
 import { snackbarStub } from 'jde-framework/testing';
-import { fakeGateway, variable } from 'jde-opc/testing';
+import { fakeGateway, TestGateway, variable } from 'jde-opc/testing';
 
 const X = variable( 1, "x" ), Y = variable( 2, "y" );
 
@@ -473,5 +474,57 @@ describe( 'NodeChildren Delete', ()=>{
 		page.onViewDelete( mine );
 		await flush();
 		expect( snackbar.exception.mock.calls ).toEqual( [["Could not delete view.", expect.any( Error )]] );
+	} );
+} );
+
+//reviews-issue/318-opc-calls.md #1:  only a code registered as pending is fetched, and the dialog's `names` fetched the pending set
+//as it stood - which the call's codes were not yet in, so a refusal read "Bad 0x801F0000" for good.
+describe( 'NodeChildren a Method\'s Call', ()=>{
+	it( 'fetches the names of the codes the call answered', async ()=>{
+		const gateway = new TestGateway();
+		const code = 0x801F0000;//BadUserAccessDenied, which no other test here names
+		gateway.names = [{sc: code, message: 'BadUserAccessDenied'}];
+		TestBed.configureTestingModule({ providers: [screenSize(), provideRoute(), { provide: GATEWAY_SERVICE, useValue: {} }, { provide: SnackbarService, useValue: snackbarStub() }, pageTitleStub] });
+		const fixture = TestBed.createComponent( NodeChildren );
+		const page = fixture.componentInstance;
+		page.pageData = { gateway, route: {profileKey: 'k'}, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
+		const pump = new OpcObject( <any>{ns: 2, i: 5005, name: 'pumpManual', browse: {ns: 2, name: 'pumpManual'}} );
+		fixture.componentRef.setInput( 'node', pump );
+		const open = vi.spyOn( MethodCallDialog, 'open' ).mockResolvedValue( undefined );
+		page.call( new Method( <any>{ns: 2, i: 6055, name: 'toHertz', browse: {ns: 2, name: 'toHertz'}}, pump ) );
+		open.mock.calls[0][1].names!( [code] );
+		await flush( 3 );
+		expect( gateway.gets.mock.calls.map( ([target])=>target.split( /[=,]/ ).slice( 1 ).map( Number ) ).flat() ).toContain( code );//asked for - TestGateway answers its names whatever was asked
+		expect( OpcError.text(code) ).toBe( 'BadUserAccessDenied' );
+	} );
+} );
+
+//reviews-issue/318-opc-calls.md #6:  a Method row's Call is in the Snapshot cell, and a view that hides Snapshot left none anywhere -
+//so the Name cell carries it there, as the Snapshot cell's quality icon stands in for a hidden Status column.  One per row.
+describe( 'NodeChildren a Method\'s Call button', ()=>{
+	it( 'is in the Snapshot cell, or in the Name cell where the view hides Snapshot', async ()=>{
+		TestBed.configureTestingModule({ providers: [screenSize(), provideRoute(), { provide: GATEWAY_SERVICE, useValue: {} }, { provide: SnackbarService, useValue: snackbarStub() }, pageTitleStub] });
+		const fixture = TestBed.createComponent( NodeChildren );
+		const page = fixture.componentInstance;
+		const pump = new OpcObject( <any>{ns: 2, i: 5005, name: 'pumpManual', browse: {ns: 2, name: 'pumpManual'}} );
+		const toHertz = new Method( <any>{ns: 2, i: 6055, name: 'toHertz', browse: {ns: 2, name: 'toHertz'}, description: {text: 'Converts rpm to Hz.'}}, pump );
+		page.pageData = { gateway: fakeGateway( 'local' ), route: {profileKey: 'k'}, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
+		page.profile = { subscriptions: [] } as any;
+		fixture.componentRef.setInput( 'node', pump );
+		(<any>page).setNodes( [toHertz], false );
+		page.isLoading.set( false );//the route's load, which provideRoute() leaves out
+		const views = [NodeView.default(), NodeView.fromConfig({name: "no snapshot", configColumns: ["id", "name", "description"], sort: []}, NodeView.schema)];
+		const cell = ( b:Element )=>b.closest( 'mat-cell' )?.classList.contains( 'mat-column-name' ) ? 'name' : b.closest( 'mat-cell' )?.classList.contains( 'mat-column-snapshot' ) ? 'snapshot' : '?';
+		const calls = ()=>[...fixture.nativeElement.querySelectorAll( 'button[aria-label="Call toHertz"]' )].map( cell );
+		page.viewSet.reset( views );
+		fixture.detectChanges();
+		expect( calls() ).toEqual( ['snapshot'] );
+		page.viewSet.reset( views, 1 );
+		fixture.detectChanges();
+		expect( page.snapshotShown() ).toBe( false );
+		expect( calls() ).toEqual( ['name'] );
+		const open = vi.spyOn( MethodCallDialog, 'open' ).mockResolvedValue( undefined );
+		fixture.nativeElement.querySelector( 'button[aria-label="Call toHertz"]' ).click();
+		expect( open.mock.calls[0][1].method ).toBe( toHertz );
 	} );
 } );
