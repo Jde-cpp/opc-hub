@@ -145,6 +145,37 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( InputResults(structured), Statuses{UA_STATUSCODE_BADNOTSUPPORTED} ) << serialize( structured );
 	}
 
+	//The AppServer's delegated admin check refused with "bad format: User {:x} is not admin …":  an Exception keeps its arguments
+	//as strings, so a numeric spec fails (ExceptionTests.WhatBadSpecNoTerminate).  Reached by purging the toHertz row while it is
+	//enforced, as the embedded OpcServer's login, which administers nothing.
+	TEST_F( CallTests, ARefusedAdminCheckSaysWhoAndWhat ){
+		auto app = Server::AppClient();
+		let& schema = app->ResourceSchema;
+		auto& authorizer = static_cast<Server::OpcAuthorize&>( *Server::GetSchema().Authorizer );
+		let criteria = _method.ToString();
+		let purgeRow = [&]{ app->QuerySync<jvalue>( "purgeResource( schemaName:$schema, slug:\"nodeIds\", criteria:$criteria )", {{"schema", schema}, {"criteria", criteria}} ); };
+		let role = GrantRole( *app, "GatewayAdminRefusal", AppClient()->UserPK(), {{schema, "nodeIds", ERights::Read, ERights::None, criteria, "toHertz"}} );//the grant mints the row, enforced
+		absl::Cleanup purge = [&]{//the row unenforced first, which opens the check
+			try{
+				app->QuerySync<jvalue>( "purgeRole( id:$id )", {{"id", role.Value}} );
+				EnforceResource( *app, authorizer, schema, "nodeIds", false, criteria );
+				purgeRow();
+			}
+			catch( const std::exception& e ){ ADD_FAILURE() << "the toHertz row or its role wasn't purged:  " << e.what(); }
+		};
+		const UserPK stranger{ std::numeric_limits<UserPK::Type>::max() };//no acl row:  open while nothing is enforced, nothing under the row
+		ASSERT_TRUE( WaitUntil([&]{ return empty( authorizer.NodeRights(_method, stranger) ); }) ) << "the row reaches the server, enforced";
+		try{
+			purgeRow();
+			ADD_FAILURE() << "a login that administers nothing purged an enforced row";
+		}
+		catch( const std::exception& e ){
+			let what = string{ e.what() };
+			EXPECT_TRUE( what.contains(Ƒ("User {} is not admin for resource 'nodeIds' with criteria '{}'.", app->UserPK().Value, criteria)) ) << what;
+			EXPECT_FALSE( what.contains("bad format") ) << what;
+		}
+	}
+
 	//A method the server does not have fails reading its class, with the server's status - an error, not a result, since there is
 	//no InputArguments to type the arguments from.  Retried from scratch next time:  a mistyped id does not poison the connection.
 	TEST_F( CallTests, AnUnknownMethodIsRefused ){
