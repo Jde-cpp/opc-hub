@@ -32,7 +32,7 @@ class AccessStub{
 //dialog answers a confirmation or the picker's picks.  `render` lets the fixture's first change detection run ngOnInit and draw the
 //page, where the rest drive the page by hand.
 const servedRpm = { id: 7, nodeId: 'ns=3;i=6012', path: 'Objects/local/pump1/motorRpm' };//member 7 as the endpoint serves it
-const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tcp://hub:4841', served: [servedRpm]}, root:unknown={path: 'pumps/5~pump1'} )=>{
+const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tcp://hub:4841', served: [servedRpm]}, root:unknown={path: 'Objects/pumps/5~pump1'} )=>{
 	//query:  endpoint{…}, and nodes( id ){ path }, the root's, which the admin service's own rootPaths sends
 	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ), query: vi.fn( async ( ql:string, _vars?:unknown )=>ql==HistAdminService.rootPathsQuery ? {nodes: [root]} : {endpoint} ) };
 	const mutations = ()=>gateway.mutate.mock.calls.flatMap( ([m])=>Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m] );

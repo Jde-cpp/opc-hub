@@ -84,9 +84,10 @@ export class HistAdminService{
 		return toHistResolved( data?.resolveHistory );
 	}
 	static readonly resolveMutation = 'mutation resolveHistory( group: $group ){ nodes{ templateNode path node status holder{ id name } } }';
-	//Groups' roots on one connection by their browse paths from Objects (NodeQLAwait's `path` on the id form), in one query:  names
+	//Groups' roots on one connection by their browse paths from Root (NodeQLAwait's `path` on the id form), in one query:  names
 	//only, as a member's path shows, without a segment's `ns~`.  The gateway takes a node by the server's index, so a root by URI goes
-	//through the server's namespaces.  Undefined for a root in a namespace the server lacks, or one the gateway can't place.
+	//through the server's namespaces.  Undefined for a root in a namespace the server lacks, one the gateway can't place, or Root,
+	//which has no segment.  The path already starts at Objects (reviews-issue/416-address-space.md #2).
 	async rootPaths( reader:HistReader, slug:string, server:Pick<Server,'namespaces'>, roots:ExNodeId[] ):Promise<(string|undefined)[]>{
 		const ids = roots.map( r=>{
 			const ns = r.nsu ? server.namespaces.find( n=>n.uri==r.nsu )?.index : r.ns;
@@ -98,7 +99,7 @@ export class HistAdminService{
 		let i = 0;
 		return ids.map( id=>{
 			const path = id ? paths[i++]?.path : undefined;
-			return typeof path=='string' ? ['Objects', ...(path ? path.split( '/' ).map( s=>toBrowse( s, undefined ).name ) : [])].join( '/' ) : undefined;
+			return typeof path=='string' && path ? path.split( '/' ).map( s=>toBrowse( s, undefined ).name ).join( '/' ) : undefined;
 		} );
 	}
 	static readonly rootPathsQuery = 'nodes( opc:$opc, id:$id ){ path }';

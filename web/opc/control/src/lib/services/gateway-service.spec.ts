@@ -4,6 +4,9 @@ import { AppService, AUTH_STORE, ETransport } from 'jde-framework';
 import { GatewayService } from './gateway-service';
 import { OPC_STORE } from './opc-store';
 import { anonymousAuthStore } from 'jde-framework/testing';
+import { TestGateway } from 'jde-opc/testing';
+import { ENodeClass, Variable } from '../model/node';
+import { NodeId } from '../model/node-id';
 
 const instances = [ {host:'localhost', port:1968, instanceName:'A'}, {host:'localhost', port:1969, instanceName:'B'} ];
 
@@ -94,5 +97,57 @@ describe( 'Gateway.logout', ()=>{
 		expect( postRaw.mock.calls[0][0] ).toBe( 'logout' );
 		expect( postRaw.mock.calls[0][2]?.headers?.Authorization ).toBe( "d10c90aa" );
 		expect( logout ).toHaveBeenCalledTimes( 1 );
+	} );
+} );
+
+//reviews-issue/416-address-space.md #4:  a Variable's page browsed `properties`, HasProperty alone, so a structured variable's members
+//(HasComponent) were nowhere in the tree, though the search index reaches them.  It browses `children`, as every page does.
+describe( 'Gateway.browseObjectsFolder', ()=>{
+	class BrowseGateway extends TestGateway{
+		queries:string[] = [];
+		override async ql<Y>( q?:any ):Promise<Y>{
+			this.queries.push( q.text );
+			return <Y>{ node: {children: [
+				{ns: 2, i: 21, name: 'speed', browse: {ns: 2, name: 'speed'}, nodeClass: ENodeClass.Variable, refType: {ns: 0, i: 47}, value: 3},
+				{ns: 2, i: 22, name: 'EURange', browse: {ns: 0, name: 'EURange'}, nodeClass: ENodeClass.Variable, refType: {ns: 0, i: 46}}
+			]} };
+		}
+	}
+	it( "lists a Variable's member variables beside its properties", async ()=>{
+		const g = new BrowseGateway();
+		const motor = new Variable( <any>{ns: 2, i: 20, name: 'motor', browse: {ns: 2, name: 'motor'}} );
+		const rows = await g.browseObjectsFolder( 'cn', motor, true );
+		expect( g.queries[0] ).toContain( 'children{' );
+		expect( g.queries[0] ).not.toContain( 'properties' );
+		expect( rows.map( r=>r.name ) ).toEqual( ['speed', 'EURange'] );
+		expect( rows.every( r=>r.parent===motor ) ).toBe( true );
+	} );
+} );
+
+//reviews-issue/416-address-space.md #10:  one step for every Variable whose DataType is the server's own - a browsed row, or a node
+//page's own Variable - so a deep link's select offers the values too.
+describe( 'Gateway.resolveEnum', ()=>{
+	class EnumGateway extends TestGateway{
+		queries:string[] = [];
+		override async ql<Y>( q?:any ):Promise<Y>{
+			this.queries.push( q.text );
+			if( q.text.includes( '7000' ) )
+				throw new Error( 'BadNodeIdUnknown' );
+			return <Y>{ __type: {name: 'DeviceHealthEnumeration', enumValues: [{id: 0, name: 'NORMAL'}, {id: 2, name: 'OFF_SPEC'}]} };
+		}
+	}
+	const mode = ( i:number )=>new Variable( <any>{ns: 2, i: 30, name: 'mode', browse: {ns: 2, name: 'mode'}, dataType: {ns: 2, i}} );
+	it( "reads a server's enumeration once, and leaves one it can't read a NodeId", async ()=>{
+		const g = new EnumGateway(), v = mode( 6244 ), unknown = mode( 7000 ), plain = new Variable( <any>{ns: 2, i: 31, name: 'rpm', browse: {ns: 2, name: 'rpm'}, dataType: {i: 11}} );
+		await g.resolveEnum( 'cn', v );
+		expect( (<any>v.customDataType).enumValues.map( ( e:any )=>e.name ) ).toEqual( ['NORMAL', 'OFF_SPEC'] );
+		await g.resolveEnum( 'cn', v );
+		expect( g.queries ).toHaveLength( 1 );//an Enum already
+		const log = vi.spyOn( console, 'log' ).mockImplementation( ()=>{} );
+		await g.resolveEnum( 'cn', unknown );
+		expect( unknown.customDataType ).toBeInstanceOf( NodeId );
+		expect( log ).toHaveBeenCalled();
+		await g.resolveEnum( 'cn', plain );//a namespace-0 type:  nothing to read
+		expect( g.queries ).toHaveLength( 2 );
 	} );
 } );

@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { ProfileStore } from 'jde-spa';
-import { ENodeClass, Method, OpcObject, UaNode, Variable } from '../../model/node';
+import { ENodeClass, Method, nodeColumns, OpcObject, UaNode, Variable, variableColumns } from '../../model/node';
 import { GATEWAY_SERVICE } from '../gateway-service';
 import { OPC_STORE, OpcStore } from '../opc-store';
 import { NodeResolver } from './node-resolver';
@@ -13,10 +13,12 @@ const pump1 = new OpcObject( {ns: 2, i: 10, name: "pump1", browse: {ns: 2, name:
 const serverDescription = { connection: {id: 1, slug: 'cn', name: 'Line 1', url: 'opc.tcp://plc:4840', certificateUri: '', defaultBrowseNs: 1}, desc: {}, policy: '', mode: 'None', namespaces: [] };
 const objectsParent = { ns: 0, i: 85, name: 'Objects', browse: {ns: 0, name: 'Objects'}, nodeClass: ENodeClass.Object, path: 'Objects' };
 const pumpParent = { ns: 2, i: 10, name: 'pump1', browse: {ns: 2, name: 'pump1'}, nodeClass: ENodeClass.Object, path: 'Objects/2~pump1' };
+const flowParent = { ns: 2, i: 11, name: 'flow', browse: {ns: 2, name: 'flow'}, nodeClass: ENodeClass.Variable, value: 7, historizing: true, path: 'Objects/2~pump1/2~flow' };
 const nodes:Record<string, any> = {//the gateway's answer to node( path, root:"Root" ){ … nodeClass … parents{…} } per browse path from Root
 	'Objects/2~pump1': { ns: 2, i: 10, name: 'pump1', browse: {ns: 2, name: 'pump1'}, nodeClass: ENodeClass.Object, parents: [objectsParent] },
-	'Objects/2~pump1/2~flow': { ns: 2, i: 11, name: 'flow', browse: {ns: 2, name: 'flow'}, nodeClass: ENodeClass.Variable, parents: [objectsParent, pumpParent] },
-	'Objects/2~pump1/2~toHertz': { ns: 2, i: 12, name: 'toHertz', browse: {ns: 2, name: 'toHertz'}, nodeClass: ENodeClass.Method, parents: [objectsParent, pumpParent] }
+	'Objects/2~pump1/2~flow': { ns: 2, i: 11, name: 'flow', browse: {ns: 2, name: 'flow'}, nodeClass: ENodeClass.Variable, value: 7, historizing: true, parents: [objectsParent, pumpParent] },
+	'Objects/2~pump1/2~toHertz': { ns: 2, i: 12, name: 'toHertz', browse: {ns: 2, name: 'toHertz'}, nodeClass: ENodeClass.Method, parents: [objectsParent, pumpParent] },
+	'Objects/2~pump1/2~flow/EURange': { ns: 2, i: 13, name: 'EURange', browse: {ns: 0, name: 'EURange'}, nodeClass: ENodeClass.Variable, parents: [objectsParent, pumpParent, flowParent] }
 };
 const flow = ()=>new Variable( {ns: 2, i: 11, name: "flow", browse: {ns: 2, name: "flow"}, value: 7, historizing: true} as any, pump1 );
 const toHertz = ()=>new Method( {ns: 2, i: 12, name: "toHertz", browse: {ns: 2, name: "toHertz"}} as any, pump1 );
@@ -59,7 +61,7 @@ async function open( url:string, browsed:boolean, gatewayDown = false, groups:an
 			store.setNodes( 'gw', 'cn', pump1, [flow(), toHertz()] );
 		}
 	}} );
-	return { router, exception: snackbar.exception, browseObjectsFolder, query, querySingle, forget, postQL, pageData: leaf().data['pageData'] };
+	return { router, exception: snackbar.exception, browseObjectsFolder, query, querySingle, forget, postQL, resolveEnum: gateway.resolveEnum, pageData: leaf().data['pageData'] };
 }
 
 //Phase 4 (#416, clients spec *Address space*):  a Variable has a page of its own - its value, status and tick first, then its
@@ -76,17 +78,44 @@ describe( 'NodeResolver on a Variable', ()=>{
 		expect( pageData.route.node.isVariable ).toBe( true );
 	} );
 
-	it( "reads it by its path from Root, then its own columns by id, when it was not", async ()=>{
+	//#13:  its own columns came by id after the path query, a round trip of their own
+	it( "reads it and its own columns by its path from Root, in one query, when it was not", async ()=>{
 		const { router, exception, query, querySingle, pageData } = await open( '/gateways/gw/cn/Objects/2~pump1/2~flow', false );
 		expect( exception ).not.toHaveBeenCalled();
 		expect( router.url ).toBe( '/gateways/gw/cn/Objects/2~pump1/2~flow' );
 		const path = query.mock.calls.find( c=>c[0].includes( 'path:$path' ) )!;
 		expect( path[0] ).toContain( 'root:"Root"' );
 		expect( path[1] ).toEqual( {opc: 'cn', path: 'Objects/2~pump1/2~flow'} );
-		expect( querySingle.mock.calls.map( c=>c[1] ) ).toEqual( [{opc: 'cn', id: {ns: 2, i: 11}}] );//the path form reads no class's columns
+		expect( path[0] ).toContain( `${nodeColumns} ${variableColumns} parents{` );
+		expect( querySingle ).not.toHaveBeenCalled();
 		expect( pageData.nodes.map( ( n:UaNode )=>n.name ) ).toEqual( ["flow", "EURange"] );
 		expect( (<Variable>pageData.nodes[0]).value ).toBe( 7 );
 		expect( pageData.route.parent.path ).toBe( '/gateways/gw/cn/Objects/2~pump1' );//the sidenav's parent, through the Objects folder the store learned from `parents`
+	} );
+
+	//reviews-issue/416-address-space.md #10:  the page's own Variable kept its DataType's NodeId - browseObjectsFolder resolves only the
+	//rows it browses - so a deep link's select had no values.  Resolved however the page was reached.
+	it( "resolves the page's own Variable's enumeration on a deep link", async ()=>{
+		const byUrl = await open( '/gateways/gw/cn/Objects/2~pump1/2~flow', false );
+		expect( byUrl.resolveEnum.mock.calls.map( c=>[c[0], (c[1] as UaNode).name] ) ).toEqual( [['cn', 'flow']] );
+		expect( byUrl.resolveEnum.mock.calls[0][1] ).toBe( byUrl.pageData.route.node );
+	} );
+	it( "resolves the page's own Variable's enumeration when the parent's page stored it", async ()=>{
+		const browsed = await open( '/gateways/gw/cn/Objects/2~pump1/2~flow', true );
+		expect( browsed.resolveEnum.mock.calls[0][1] ).toBe( browsed.pageData.route.node );
+	} );
+
+	//reviews-issue/416-address-space.md #3:  `parents` came without their class, so every parent was stored as an object - a
+	//property's Variable, opened from the sidenav, browsed `children` and showed no row of its own and no History tab.
+	it( "stores a Variable parent as a Variable, with its own columns", async ()=>{
+		const { exception, query } = await open( '/gateways/gw/cn/Objects/2~pump1/2~flow/EURange', false );
+		expect( exception ).not.toHaveBeenCalled();
+		expect( query.mock.calls.find( c=>c[0].includes( 'path:$path' ) )![0] ).toContain( `parents{${nodeColumns} path ${variableColumns}}` );
+		const stored = TestBed.inject( OpcStore ).findNodeId( 'gw', 'cn', 'Objects/2~pump1/2~flow' );
+		expect( stored ).toBeInstanceOf( Variable );
+		expect( (<Variable>stored).value ).toBe( 7 );
+		expect( (<Variable>stored).historyReadable ).toBe( true );
+		expect( TestBed.inject( OpcStore ).findNodeId( 'gw', 'cn', 'Objects/2~pump1' ) ).toBeInstanceOf( OpcObject );
 	} );
 } );
 

@@ -43,10 +43,11 @@ namespace Browse{
 		Request( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι;//one BrowseDescription per id;  results[i] answers ids[i].
 		Ω Hierarchical( NodeId&& id, UA_BrowseResultMask mask )ι->Request;//forward HierarchicalReferences (subtypes included), objects/variables/methods only - the NodeIndex crawl.
 		Ω Hierarchical( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι->Request;//the same, for a whole BFS level in one round trip.  PerNode.
-		Ω Children( NodeId&& id, const QL::TableQL& ql )ι->Request;//forward HierarchicalReferences (subtypes included), every class, the sub-query's columns - a node page's `children` (NodeQLAwait):  what hangs under the node, never its type or modelling rule.
+		Ω Children( NodeId&& id, UA_BrowseResultMask mask )ι->Request;//forward HierarchicalReferences (subtypes included), every class - what hangs under the node, never its type or modelling rule:  the path form's level-by-level walk (NodeQLAwait).
+		Ω Children( NodeId&& id, const QL::TableQL& ql )ι->Request;//the same by the sub-query's columns - a node page's `children` (NodeQLAwait).
 		Ω Properties( NodeId&& id, UA_BrowseResultMask mask=UA_BROWSERESULTMASK_BROWSENAME )ι->Request;//forward HasProperty (no subtypes), variables only - a DataType's EnumValues/EnumStrings by browse name (EnumTypeCache), a method's arguments (MethodArgumentCache).
 		Ω Properties( NodeId&& id, const QL::TableQL& ql )ι->Request;//the same by the sub-query's columns - a Variable page's `properties` (NodeQLAwait).
-		Ω References( NodeId&& id )ι->Request;//BOTH directions over References (subtypes included), every class, every result field - a node page's `references` (NodeQLAwait).
+		Ω References( NodeId&& id, UA_UInt32 maxReferences )ι->Request;//BOTH directions over References (subtypes included), every class, every result field, at most `maxReferences` - a node page's `references` (NodeQLAwait).
 		Ω Supertype( NodeId&& id )ι->Request;//INVERSE HasSubtype (no subtypes), data types only - one step of a DataType's walk up to namespace 0 (BaseTypeCache).
 		Ω Parents( vector<NodeId>&& ids )ι->Request;//INVERSE HierarchicalReferences (subtypes included), every class, browse name + class - one step of the walk up to the Objects folder or Root for every node still walking, in one round trip (ParentPathsAwait).  PerNode.
 		bool PerNode{};//a bad results[i].statusCode is the caller's to read - one unbrowsable node does not fail the request.  Set by the request, so a caller cannot forget it.

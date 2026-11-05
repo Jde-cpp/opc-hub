@@ -1,7 +1,7 @@
 <mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
 	[(selectedIndex)]="tabIndex">
-	<mat-tab><!--a Variable's page lists its own value first, then its HasProperty children (clients spec *Address space*)-->
-		<ng-template mat-tab-label>{{ node().isVariable ? "Properties" : "Children" }}</ng-template>
+	<mat-tab><!--a Variable's page lists its own value first, then its children:  its properties and any member variables (clients spec *Address space*)-->
+		<ng-template mat-tab-label>Children</ng-template>
 		<ng-template matTabContent>
 			<node-children [node]="node()" (refreshed)="nodes.set($event)"></node-children>
 		</ng-template>

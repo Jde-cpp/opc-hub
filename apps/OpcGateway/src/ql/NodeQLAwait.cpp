@@ -7,17 +7,19 @@
 #include "../async/ConnectAwait.h"
 #include "../async/ParentPathsAwait.h"
 #include "../async/ReadValueAwait.h"
+#include "../async/ReleaseBrowseAwait.h"
 #include "../async/TranslateBrowsePathsAwait.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
 	//A browse name as a path segment, spelled as the search index and PathPrefixes spell them:  the bare name in the
 	//connection's default namespace or in namespace 0 - the standard's Objects, Types, Views and everything under Types - `ns~name`
-	//otherwise.  None for a name holding a '/', the url's own separator.
-	Ω segment( NsIndex ns, sv name, NsIndex defaultNs )ι->optional<string>{
+	//otherwise.  A namespace-0 `twin`, beside a default-namespace sibling of the same name, is `0~name`:  childNamed takes the bare
+	//name for the default's (reviews-issue/416-address-space.md #7).  None for a name holding a '/', the url's own separator.
+	Ω segment( NsIndex ns, sv name, NsIndex defaultNs, bool twin=false )ι->optional<string>{
 		if( name.find('/')!=sv::npos )
 			return {};
-		return ns==defaultNs || ns==0 ? string{ name } : Ƒ( "{}~{}", ns, name );
+		return ns==defaultNs || (ns==0 && !twin) ? string{ name } : Ƒ( "{}~{}", ns, name );
 	}
 	Ω segment( const UA_QualifiedName& browse, NsIndex defaultNs )ι->optional<string>{ return segment( browse.namespaceIndex, ToSV(browse.name), defaultNs ); }
 
@@ -77,12 +79,13 @@ namespace Jde::Opc::Gateway{
 				Expected target = node==pathNodes.begin() ? Expected{ ExNodeId{NodeId{start}} } : Expected{ std::prev(node)->second };
 				//The translate stopped at `node`:  browse on from the deepest prefix that resolved, or the start, a segment at a time, by
 				//browse name - a bare one in the default namespace, else in namespace 0, which the translate could not try.  Without
-				//parents{} the one entry is the whole path, so every segment past those resolved is walked.
+				//parents{} the one entry is the whole path, so every segment past those resolved is walked.  Over what a page's `children`
+				//lists, as the translate goes:  never a type or a modelling rule (reviews-issue/416-address-space.md #11).
 				uint resolved = node==pathNodes.begin() ? 0 : Str::Split( std::prev(node)->first, '/' ).size();
 				for( ; target && node!=pathNodes.end(); ++node ){
 					let segments = Str::Split( node->first, '/' );
 					for( ; target && resolved<segments.size(); ++resolved ){
-						Browse::FoldersAwait browse{ NodeId{target->nodeId}, UA_BROWSERESULTMASK_BROWSENAME, _client, _sl };
+						Browse::FoldersAwait browse{ Browse::Request::Children(NodeId{target->nodeId}, UA_BROWSERESULTMASK_BROWSENAME), _client, _sl };
 						let response = co_await Any( browse );
 						if( auto found = childNamed(response, segments[resolved], defaultNs); found )
 							target = ExNodeId{ *found };
@@ -130,11 +133,23 @@ namespace Jde::Opc::Gateway{
 			else if( auto references = _query.FindTable("references"); references ){
 				//Every reference of the node in both directions (Browse::Request::References):  its direction, its type and the target's
 				//class and type definition as the server answered them, the type and the type definition named from the cache - one read
-				//for those not yet seen.
+				//for those not yet seen.  At most /gateway/browse/maxReferences, `truncated` when there were more - past the cap or the
+				//server's own - whose continuation point is released, not followed (reviews-issue/416-address-space.md #9).
 				const QL::TableQL referencesQL{ move(*references) };
 				const bool direction = referencesQL.FindColumn("direction"), refType = referencesQL.FindColumn("refType"), target = referencesQL.FindColumn("target"), nodeClass = referencesQL.FindColumn("class"), typeDef = referencesQL.FindColumn("typeDef");
-				Browse::FoldersAwait browse{ Browse::Request::References(NodeId{_query}), _client, _sl };
+				let maxReferences = (UA_UInt32)Settings::FindNumber<uint32>( "/gateway/browse/maxReferences" ).value_or( 1000 );//config/Opc.Gateway.jsonnet
+				Browse::FoldersAwait browse{ Browse::Request::References(NodeId{_query}, maxReferences), _client, _sl };
 				auto response = co_await Any( browse );
+				const bool truncated = response.resultsSize && response.results[0].continuationPoint.length;
+				if( truncated ){
+					try{
+						if( let sc = co_await Any( ReleaseBrowseAwait{response, _client, _sl} ); sc )
+							DBGT( BrowseTag, "[{}]references:  the continuation point's release answered {}.", hex(_client->Handle()), UAException::Message(sc) );
+					}
+					catch( const std::exception& e ){
+						DBGT( BrowseTag, "[{}]references:  could not release the continuation point:  {}", hex(_client->Handle()), e.what() );
+					}
+				}
 				flat_set<NodeId> toName;
 				response.VisitWhile( 0, [&]( const UA_ReferenceDescription& ref ){
 					if( refType )
@@ -166,7 +181,10 @@ namespace Jde::Opc::Gateway{
 					rows.push_back( move(row) );
 					return true;
 				} );
-				y = jobject{ {"references", move(rows)} };
+				jobject result{ {"references", move(rows)} };
+				if( _query.FindColumn("truncated") )
+					result["truncated"] = truncated;
+				y = move( result );
 			}
 			else if( auto children = _query.FindTable("children"), properties = _query.FindTable("properties"); children || properties ){
 				//What hangs under the node - `children`, its hierarchical references forward, every class, or `properties`, its
@@ -198,37 +216,74 @@ namespace Jde::Opc::Gateway{
 					const NodeId root = NodeId::RootFolder();
 					ReadAwait readOwn{ ReadRequest{nodeIds, UA_ATTRIBUTEID_BROWSENAME}, _client };
 					auto own = co_await Any( readOwn );
-					vector<NodeId> walked; vector<string> owns;
+					vector<NodeId> walked; vector<BrowseSegment> owns;
 					for( uint i=0; i<nodeIds.size(); ++i ){
 						let& requested = nodeIds[i];
-						optional<string> ownSegment;
-						if( i<own.resultsSize && own.results[i].status==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&own.results[i].value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) )
-							ownSegment = segment( *(const UA_QualifiedName*)own.results[i].value.data, defaultNs );
-						if( ownSegment && UA_NodeId_equal(&requested, &root) )
+						optional<BrowseSegment> ownName;
+						if( i<own.resultsSize && own.results[i].status==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&own.results[i].value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) ){
+							let& q = *(const UA_QualifiedName*)own.results[i].value.data;
+							if( segment(q, defaultNs) )
+								ownName = BrowseSegment{ q.namespaceIndex, string{ToSV(q.name)} };
+						}
+						if( ownName && UA_NodeId_equal(&requested, &root) )
 							paths.emplace( NodeId{requested}, jvalue{""} );
-						else if( ownSegment ){
+						else if( ownName ){
 							walked.push_back( requested );
-							owns.push_back( move(*ownSegment) );
+							owns.push_back( move(*ownName) );
 						}
 						else
 							paths.emplace( NodeId{requested}, jvalue{nullptr} );
 					}
 					PathParents parents;
 					let found = co_await ParentPathsAwait{ walked, parents, _client, std::numeric_limits<uint>::max(), root };
+					//Each segment of a walked node's path - its parents' names, then its own - with the node it hangs under:  Root for the first.
+					auto visit = [&]( uint k, function<void(const BrowseSegment&, const NodeId* under)> f ){
+						let& names = *found[k].Parents;
+						for( uint j=0; j<=names.size(); ++j )
+							f( j<names.size() ? names[j] : owns[k], j ? &found[k].Ids[j-1] : nullptr );
+					};
+					//The namespace-0 names with a default-namespace sibling of the same name, by the node they hang under, in one translate:
+					//those are `0~name` (segment).  Not under Root, whose first segment the path form takes as namespace 0's (Browse.h).
+					flat_set<std::pair<NodeId,string>> twins;
+					if( defaultNs!=0 ){
+						flat_set<std::pair<NodeId,string>> asked;
+						for( uint k=0; k<found.size(); ++k ){
+							if( found[k].Parents )
+								visit( k, [&]( const BrowseSegment& name, const NodeId* under ){ if( under && name.Ns==0 ) asked.emplace( *under, name.Name ); } );
+						}
+						if( asked.size() ){
+							vector<UABrowsePath> requests; requests.reserve( asked.size() );
+							for( let& [under, name] : asked ){
+								const BrowseSegment twin{ defaultNs, name };
+								requests.emplace_back( std::span<const BrowseSegment>{&twin, 1}, under );
+							}
+							try{
+								let answers = co_await Any( TranslateBrowsePathsAwait{move(requests), _client, _sl} );
+								uint i{};
+								for( let& key : asked ){
+									if( i<answers.size() && answers[i].has_value() )
+										twins.emplace( key );
+									++i;
+								}
+							}
+							catch( const std::exception& e ){
+								WARNT( BrowseTag, "[{}]path: could not look for namespace-0 twins - their names stay bare:  {}", hex(_client->Handle()), e.what() );
+							}
+						}
+					}
 					for( uint k=0; k<found.size(); ++k ){
 						jvalue path{ nullptr };
-						if( let& names = found[k].Parents; names ){
-							vector<string> segments;
-							for( let& parent : *names ){
-								if( auto routable = segment(parent.Ns, parent.Name, defaultNs); routable )
-									segments.push_back( move(*routable) );
+						if( found[k].Parents ){
+							vector<string> segments; bool routable{ true };
+							visit( k, [&]( const BrowseSegment& name, const NodeId* under ){
+								let twin = under && name.Ns==0 && twins.find( std::pair{*under, name.Name} )!=twins.end();
+								if( auto s = routable ? segment(name.Ns, name.Name, defaultNs, twin) : optional<string>{}; s )
+									segments.push_back( move(*s) );
 								else
-									break;
-							}
-							if( segments.size()==names->size() ){
-								segments.push_back( move(owns[k]) );
+									routable = false;
+							} );
+							if( routable )
 								path = Str::Join( segments, "/" );
-							}
 						}
 						else if( found[k].Deep )
 							WARNT( BrowseTag, "[{}]path: '{}' is deeper than {} or cyclic - no path.", hex(_client->Handle()), walked[k].ToString(), ParentPathsAwait::MaxDepth );

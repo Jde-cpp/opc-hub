@@ -6,6 +6,7 @@ import { NodeId } from '../../model/node-id';
 import { NodeChildren } from './node-children/node-children';
 import { NodeDetail } from './node-detail';
 import { NodeReferences } from './node-references/node-references';
+import { OpcStore } from '../../services/opc-store';
 import { pageTitleStub, provideRoute } from 'jde-spa/testing';
 import { variable } from 'jde-opc/testing';
 
@@ -20,6 +21,28 @@ const child = ( historizing:boolean )=>variable( 1, 'a', {historizing} );
 
 describe( 'NodeDetail', ()=>{
 	//A Children refresh assigned pageData.nodes, which the History tab's gate never saw (historian-web-trend #10).
+	//reviews-issue/416-address-space.md #5, #15 (browser walk):  a flip set the route's siblings again on the same object, which the
+	//sidenav never repainted for
+	it( 'hands the sidenav a new route when System nodes flips', ()=>{
+		const route = { node: {id: 85, name: 'Objects', toJson: ()=>({ns: 0, i: 85})}, siblings: [{title: 'Objects'}] };
+		const pageData = { route, nodes: [], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
+		TestBed.configureTestingModule({ providers: [provideRoute( {data: {pageData}} ), pageTitleStub] });
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeReferences]}, add: {imports: [ChildrenStub, ReferencesStub]}} );
+		const fixture = TestBed.createComponent( NodeDetail );
+		fixture.componentRef.setInput( 'sideNav', route );
+		fixture.detectChanges();
+		const store = TestBed.inject( OpcStore );
+		route.siblings = [{title: 'Objects'}, {title: 'Server'}];//what the flip's setRoute does to the route the resolver gave the page
+		store.setShowSystem( !store.showSystem() );
+		fixture.detectChanges();
+		const shown = fixture.componentInstance.sideNav();
+		expect( shown ).not.toBe( <any>route );
+		expect( shown.node ).toBe( <any>route.node );
+		expect( shown.siblings!.map( s=>s.title ) ).toEqual( ['Objects', 'Server'] );
+		store.setShowSystem( false );
+		fixture.destroy();
+	} );
+
 	it( 'shows the History tab when a Children refresh brings a historized node', ()=>{
 		const route = { node: {id: 85, name: 'Objects', toJson: ()=>({ns: 0, i: 85})} };
 		const pageData = { route, nodes: [child( false )], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };

@@ -82,7 +82,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	templates = signal<HistRef[]>( [] );
 	server = signal<Server|undefined>( undefined );//the group's connection, for its namespaces:  a node shown by the server's index
 	endpoint = signal<EndpointServed|null|undefined>( undefined );//the gateway's own and what it serves of the group, null for none;  undefined until it has answered
-	rootPath = signal<string|undefined>( undefined );//the saved root's browse path below Objects, once the gateway has placed it
+	rootPath = signal<string|undefined>( undefined );//the saved root's browse path from Root, once the gateway has placed it
 	members = new HistMembers<HistGroupMember>( this.snackbar );//its loading and busy are the Resolution tab's too
 	templateMembers = signal<HistTemplateMember[]>( [] );
 	resolved = signal<Map<number,HistResolvedMember>|undefined>( undefined );//the last resolve's answer, by template member

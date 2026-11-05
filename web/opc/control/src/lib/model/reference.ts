@@ -32,4 +32,6 @@ export class Reference{
 	get className():string{ return ENodeClass[this.nodeClass] ?? `${this.nodeClass}`; }
 	get targetLabel():string{ return this.target.name || this.target.id.uaString(); }
 }
-export const referencesQuery = "node( opc:$opc, id:$id ){ references{ direction refType target class typeDef } }";
+//`truncated`:  the node has more than the gateway reads - /gateway/browse/maxReferences, or the server's own cap (reviews-issue/416-address-space.md #9)
+export const referencesQuery = "node( opc:$opc, id:$id ){ references{ direction refType target class typeDef } truncated }";
+export type References = { rows:Reference[]; truncated:boolean };

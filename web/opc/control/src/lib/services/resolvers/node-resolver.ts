@@ -3,8 +3,7 @@ import { ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resolve, Router, Rou
 import { SnackbarService } from 'jde-framework';
 import { LocalPrefs, ProfileStore, RecentVisits } from 'jde-spa';
 import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
-import { ENodeClass, nodeColumns, OpcObject, UaNode, variableColumns } from '../../model/node';
-import { NodeId } from '../../model/node-id';
+import { ENodeClass, nodeColumns, OpcObject, UaNode, Variable, variableColumns } from '../../model/node';
 import { NodeRoute } from '../../model/node-route';
 import { OPC_STORE } from '../opc-store';
 import { Server } from '../../model/server';
@@ -43,26 +42,29 @@ export class NodeResolver implements Resolve<NodePageData> {
 				return this.#showParent( route );
 			if( !route.node ){
 				//the url's path from Root (clients spec *Address space*):  the node, and its parents, each with the browse name the server
-				//spells, since a bare segment may be namespace 0's
+				//spells, since a bare segment may be namespace 0's.  Each parent with its class and a Variable's own columns - read for
+				//every parent, a non-Variable answering each with a status - so the store keeps a Variable parent as a Variable, with its
+				//value and history gate, not an object (reviews-issue/416-address-space.md #3).  The node's own the same way:  the path form
+				//reads no `... on Variable{}` fragment, as it learns the class with the columns, and a read by id after cost a round trip (#13).
 				const vars = { opc: route.cnnctnSlug, path: route.browsePath };
-				const node = (await gateway.query<any>(`node( opc: $opc, path:$path, root:"Root" ){${nodeColumns} parents{id name browse path}}`, vars) )["node"];
+				const node = (await gateway.query<any>(`node( opc: $opc, path:$path, root:"Root" ){${nodeColumns} ${variableColumns} parents{${nodeColumns} path ${variableColumns}}}`, vars) )["node"];
 				if( node.sc )
 					throw new NodeNotFoundError( (await gateway.errorCodeText(node.sc)), {cause:"Opc Interface"} );
 				if( node.nodeClass==ENodeClass.Method )
 					return this.#showParent( route );
-				if( node.nodeClass==ENodeClass.Variable )//its own row's value, access and history gate:  the path form reads no class's columns, as it learns the class with them
-					Object.assign( node, await gateway.querySingle<any>( `node( opc: $opc, id: $id ){ ${variableColumns} }`, {opc: route.cnnctnSlug, id: new NodeId( node ).toJson()} ) ?? {} );
 				route.node = UaNode.fromJson( node ) ?? new OpcObject( node );//a class the model does not spell is browsed as an object
 				this.#opcStore.insertNode( route, node.parents, defaultBrowseNs );
 			}
-			const references = await gateway.browseObjectsFolder( route.cnnctnSlug, route.node, true );
-			const nodes = route.node.isVariable ? [route.node, ...references] : references;//a Variable's page shows its own value, status and tick first, then its properties
+			const [references] = await Promise.all( [//apart:  the one reads the children, the other the node's own DataType
+				gateway.browseObjectsFolder( route.cnnctnSlug, route.node, true ),
+				route.node instanceof Variable ? gateway.resolveEnum( route.cnnctnSlug, route.node ) : undefined//its own row's select:  a deep link's node, or a parent the path query stored (#3), was never resolved
+			] );
+			const nodes = route.node.isVariable ? [route.node, ...references] : references;//a Variable's page shows its own value, status and tick first, then its children
 			if( !this.#opcStore.nodeView() ){//a load straight onto a node page:  NodeChildren has not read the views yet, and the sidenav order is fixed here.  ProfileStore caches the row, so the component's own read is a hit.
 				const views = NodeView.viewSet( this.#profileStore, this.#prefs );
 				await NodeView.loadViews( views );
 				this.#opcStore.nodeView.set( views.current() );
 			}
-			this.#opcStore.showSystem.set( this.#prefs.get(NodeView.collectionName, "systemNodes", false) );//the toggle's last setting, which the sidenav siblings follow (NodeChildren)
 			this.#opcStore.setRoute( route, defaultBrowseNs );
 			const groups = await this.#groups( gateway, route.cnnctnSlug, nodes );
 			return { route: route, nodes, gateway: gateway, server: server, groups };

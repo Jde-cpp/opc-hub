@@ -11,8 +11,8 @@ namespace Jde::Opc::Gateway{
 	//the enumeration definitions are (EnumTypeCache).  Owned by the UAClient, so a disconnect/TTL drop discards it with the client.
 	struct DisplayNameCache final : noncopyable{
 		//AnyAwait, as LazyCache's:  the callers' coroutines have task types of their own, and a batch the cache holds every id of
-		//pre-completes.  Answers the names of `ids` the cache holds once the batch is read - an id the server answered with a status
-		//has none, and is asked again next time;  a failed read is the caller's exception.
+		//pre-completes.  Answers the names of `ids` the cache holds once the batch is read - an id the server answered with a status,
+		//or one in a read it refused, has none, and is asked again next time.  Never throws:  the names are decoration.
 		struct GetAwait final : AnyAwait<DisplayNames>{
 			GetAwait( DisplayNameCache& cache, sp<UAClient> client, vector<NodeId> ids, SRCE )ι:AnyAwait<DisplayNames>{sl}, _cache{cache}, _client{move(client)}, _ids{move(ids)}{}
 			α await_ready()ι->bool override;

@@ -12,7 +12,7 @@ import { fakeGateway } from 'jde-opc/testing';
 describe( 'OpcNodeLinkResolver', ()=>{
 	//the resolver, with `queried` - each node asked of a gateway, as gateway/connection/node - and `described` - each server it read
 	const create = ()=>{
-		const querySingle = vi.fn( async ( _slug:string, vars:any )=>vars.id.i==5005 ? { name: "Pump 1", path: "pumps/pump1" } : { name: "Type", path: null } );
+		const querySingle = vi.fn( async ( _slug:string, vars:any )=>vars.id.i==5005 ? { name: "Pump 1", path: "pumps/pump1" } : vars.id.i==6055 ? { name: "toHertz", nodeClass: 4, path: "pumps/pump1/toHertz" } : vars.id.i==84 ? { name: "Root", nodeClass: 1, path: "" } : { name: "Type", path: null } );
 		const gateway = ( slug:string, connections:string[] )=>Object.assign( fakeGateway( slug, {serverConnections: connections.map( c=>({slug: c}) )} ), {
 			querySingle: ( _ql:string, vars:any )=>querySingle( slug, vars )
 		} );
@@ -37,6 +37,14 @@ describe( 'OpcNodeLinkResolver', ()=>{
 		expect( await resolver.resolve("opc.debug", "ns=5;i=5005") ).toEqual( { route: ['/gateways', 'gw2', 'local', 'pumps', 'pump1'], name: "Pump 1", path: "pumps/pump1" } );
 		expect( described() ).toEqual( ["gw1/down", "gw1/other", "gw2/local"] );//an undescribable server is skipped, not fatal
 		expect( queried() ).toEqual( ["gw2/local/ns=5;i=5005"] );
+	} );
+
+	//reviews-issue/416-address-space.md #14:  the link split the path itself - a method's url, a page it has none of, and Root's [''] -
+	//where the search and the References tab drop a method's segment and send Root to the connection (pageSegments)
+	it( "routes a method to its object, and Root to the connection", async ()=>{
+		const { resolver } = create();
+		expect( (await resolver.resolve("opc.debug", "ns=5;i=6055"))?.route ).toEqual( ['/gateways', 'gw2', 'local', 'pumps', 'pump1'] );
+		expect( (await resolver.resolve("opc.debug", "i=84"))?.route ).toEqual( ['/gateways', 'gw2', 'local'] );
 	} );
 
 	it( 'remembers the placement, not a miss', async ()=>{

@@ -3,6 +3,7 @@
 #include "../src/UAClient.h"
 #include "../src/ql/GatewayQL.h"
 #include "../src/ql/NodeQLAwait.h"
+#include "../src/async/ReleaseBrowseAwait.h"
 #include "../src/async/TranslateBrowsePathsAwait.h"
 #include "utils/helpers.h"
 #include "utils/ITest.h"
@@ -128,6 +129,82 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsSV(rootValue.as_object(), "path"), "" );
 	}
 
+	//reviews-issue/416-address-space.md #3, #13:  the node page's path query asks a Variable's columns plainly - the path form reads no
+	//`... on Variable{}` fragment, as it learns the class with the columns - for the node and for its parents.  A Variable answers them;
+	//an object answers each with its status, not an error.
+	TEST_F( BrowseTests, PathReadsVariableColumnsOfEveryClass ){
+		let ns = PumpsNs(); let defaultNs = _client->DefaultBrowseNs();
+		auto segment = [&]( sv name ){ return ns==defaultNs ? string{name} : Ƒ("{}~{}", ns, name); };
+		let path = Ƒ( "Objects/{}/{}", segment("pump1"), segment("motorRpm") );
+		let value = NodeQL( "node( opc: $opc, path:$path, root:\"Root\" ){ id nodeClass value historizing parents{ id nodeClass path value historizing } }", {{"opc", OpcServerSlug}, {"path", path}} ).as_object();
+		TRACE( "{}: {}", path, serialize(value) );
+		EXPECT_EQ( Json::FindNumber<uint>(value, "nodeClass"), UA_NODECLASS_VARIABLE ) << serialize( value );
+		EXPECT_EQ( value.at("historizing"), jvalue{true} ) << serialize( value );
+		EXPECT_TRUE( value.contains("value") ) << serialize( value );
+		let& parents = value.at( "parents" ).as_array();
+		auto pump = find_if( parents, [&]( let& p ){ return NodeId{p}==NodeId(ns, Pump1); } );
+		ASSERT_NE( pump, parents.end() ) << serialize( value );
+		let& o = pump->as_object();
+		EXPECT_EQ( Json::FindNumber<uint>(o, "nodeClass"), UA_NODECLASS_OBJECT ) << serialize( o );
+		EXPECT_EQ( Json::FindNumber<StatusCode>(o, "historizing/sc"), UA_STATUSCODE_BADATTRIBUTEIDINVALID ) << serialize( o );
+		EXPECT_EQ( Json::FindNumber<StatusCode>(o, "value/sc"), UA_STATUSCODE_BADATTRIBUTEIDINVALID ) << serialize( o );
+	}
+
+	//reviews-issue/416-address-space.md #11:  the path form's level-by-level browse followed every forward reference, so a segment could
+	//resolve through a non-hierarchical one - a pump's PumpType by its HasTypeDefinition - to a page for a node the pump's Children
+	//table doesn't list.  It walks what `children` lists, as the translate does:  forward HierarchicalReferences.
+	TEST_F( BrowseTests, PathFollowsHierarchicalReferencesOnly ){
+		let ns = PumpsNs(); let defaultNs = _client->DefaultBrowseNs();
+		auto segment = [&]( sv name ){ return ns==defaultNs ? string{name} : Ƒ("{}~{}", ns, name); };
+		let typeDef = Ƒ( "Objects/{}/{}", segment("pump1"), segment("PumpType") );
+		for( let parents : {false, true} ){
+			let value = NodeQL( Ƒ("node( opc: $opc, path:$path, root:\"Root\" ){{ id{} }}", parents ? " parents{ id }" : ""), {{"opc", OpcServerSlug}, {"path", typeDef}} ).as_object();
+			EXPECT_EQ( Json::FindNumber<StatusCode>(value, "sc"), UA_STATUSCODE_BADNOMATCH ) << "parents:" << parents << " " << serialize( value );
+		}
+	}
+
+	//reviews-issue/416-address-space.md #7:  a namespace-0 name and the default namespace's, siblings, were both spelled bare - one url
+	//for two nodes, which the path form answers with the default's (childNamed).  The default's keeps the bare name and its namespace-0
+	//twin is `0~name`, in the id form's path and in the search index's, so each leads back to its own node.  A folder and the two
+	//twins are added to the embedded server for the test, under Objects.
+	TEST_F( BrowseTests, NamespaceZeroTwinIsSpelledApart ){
+		let defaultNs = _client->DefaultBrowseNs();
+		if( defaultNs==0 )
+			GTEST_SKIP() << "the default namespace is namespace 0:  no twin to tell apart";
+		auto& ua = Server::GetUAServer();
+		const UA_NodeId folderId = UA_NODEID_STRING( PumpsNs(), (char*)"BrowseTests.twins" ), ns0Id = UA_NODEID_STRING( PumpsNs(), (char*)"BrowseTests.ns0Twin" ), ownId = UA_NODEID_STRING( PumpsNs(), (char*)"BrowseTests.ownTwin" );
+		const NodeId folder{ folderId }, ns0{ ns0Id }, own{ ownId };//copied:  from the prvalue it would take the literal, and free it.
+		vector<NodeId> added;
+		absl::Cleanup remove = [&]{
+			for( auto p = added.rbegin(); p!=added.rend(); ++p )
+				UA_Server_deleteNode( ua.Ptr(), *p, true );
+		};
+		ASSERT_EQ( UA_Server_addObjectNode(ua.Ptr(), folder, UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(defaultNs, (char*)"twins"), UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), UA_ObjectAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		added.push_back( folder );
+		for( let& [id, ns] : {std::pair<const NodeId*,NsIndex>{&ns0, 0}, std::pair<const NodeId*,NsIndex>{&own, defaultNs}} ){
+			ASSERT_EQ( UA_Server_addVariableNode(ua.Ptr(), *id, folder, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(ns, (char*)"Twin"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), UA_VariableAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD );
+			added.push_back( *id );
+		}
+		const string ns0Path{ "Objects/twins/0~Twin" }, ownPath{ "Objects/twins/Twin" };
+		let rows = NodeQL( "nodes( opc: $opc, id:$id ){ id path }", {{"opc", OpcServerSlug}, {"id", jarray{ns0.ToJson(), own.ToJson()}}} );
+		TRACE( "twins: {}", serialize(rows) );
+		ASSERT_EQ( rows.as_array().size(), 2u ) << serialize( rows );
+		EXPECT_EQ( Json::AsSV(rows.as_array()[0].as_object(), "path"), ns0Path );
+		EXPECT_EQ( Json::AsSV(rows.as_array()[1].as_object(), "path"), ownPath );
+		for( let& [path, id] : {std::pair<sv,const NodeId*>{ns0Path, &ns0}, std::pair<sv,const NodeId*>{ownPath, &own}} ){
+			for( let query : {"node( opc: $opc, path:$path, root:\"Root\" ){ id }"sv, "node( opc: $opc, path:$path, root:\"Root\" ){ id parents{ id } }"sv} ){
+				let node = NodeQL( string{query}, {{"opc", OpcServerSlug}, {"path", path}} );
+				EXPECT_EQ( NodeId{ExNodeId{node}.nodeId}, *id ) << path << " " << query << ": " << serialize( node );
+			}
+		}
+		BlockAwait( _client->Index().Ready(_client, true) );
+		flat_map<NodeId,string> indexed;
+		for( let& e : _client->Index().Search("twin", 0) )
+			indexed.emplace( e.Id, e.Path );
+		EXPECT_EQ( indexed[ns0], ns0Path );
+		EXPECT_EQ( indexed[own], ownPath );
+	}
+
 	//Phase 4 (#416, spec *Address space*):  the path form's `root` - Objects by default, so today's urls and the historian's template
 	//paths stand, or Root, the web's pages - and the walk back up from an id, which stops at Root, so a type node has a path.  A
 	//namespace-0 name is spelled bare, as the default namespace's are:  the translate takes the first segment from Root in namespace 0
@@ -175,8 +252,9 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//Every class the browse answers is kept (spec *Address space*), and `children` is what hangs under a node, its hierarchical
 	//references forward:  Root's are the standard's three folders, ObjectTypes' are object types, and a pump's are its variables -
-	//its type, reached by HasTypeDefinition, is no child.  A Variable page lists `properties`, the HasProperty children alone:  pump3's
-	//motorRpm has its two ranges, and its HA Configuration hangs off a HasHistoricalConfiguration.
+	//its type, reached by HasTypeDefinition, is no child.  A Variable page lists its `children` too (reviews-issue/416-address-space.md
+	//#4):  pump3's motorRpm has its two ranges and, by a HasHistoricalConfiguration, its HA Configuration;  `properties` is the
+	//HasProperty ones alone.
 	TEST_F( BrowseTests, ChildrenAreHierarchicalOfEveryClass ){
 		let ns = PumpsNs();
 		auto rows = [&]( const NodeId& id, sv table ){
@@ -193,8 +271,52 @@ namespace Jde::Opc::Gateway::Tests{
 		let pump = rows( NodeId(ns, Pump1), "children" );
 		EXPECT_EQ( names(pump), (vector<string>{"motorRpm", "status"}) ) << "PumpType is the pump's type definition, not a child";
 		EXPECT_EQ( classOf(pump, "status"), UA_NODECLASS_VARIABLE );
+		let rpm = rows( NodeId(ns, Rpm3), "children" );
+		EXPECT_EQ( names(rpm), (vector<string>{"EURange", "HA Configuration", "InstrumentRange"}) );
 		let properties = rows( NodeId(ns, Rpm3), "properties" );
 		EXPECT_EQ( names(properties), (vector<string>{"EURange", "InstrumentRange"}) );
+	}
+
+	//reviews-issue/416-address-space.md #9:  `references` was every reference in both directions, uncapped - a type node's inverse
+	//HasTypeDefinition is every instance it has - and a server's own cap cut the list short unsaid, its continuation point left
+	//holding one of the session's slots.  The read stops at /gateway/browse/maxReferences or the server's cap, says `truncated`,
+	//and releases the point:  a second release of it is refused.  The embedded server caps at 2 for the test.
+	TEST_F( BrowseTests, ReferencesPastTheCapAreTruncatedAndReleased ){
+		auto& config = *UA_Server_getConfig( Server::GetUAServer().Ptr() );
+		let limit = config.maxReferencesPerNode;
+		absl::Cleanup restore = [&config, limit]{ config.maxReferencesPerNode = limit; };
+		const NodeId pump1{ PumpsNs(), Pump1 };
+		auto references = [&]{ return NodeQL( "node( opc: $opc, id:$id ){ references{ direction } truncated }", {{"opc", OpcServerSlug}, {"id", pump1.ToJson()}} ).as_object(); };
+		config.maxReferencesPerNode = 2;
+		let capped = references();
+		EXPECT_EQ( capped.at("references").as_array().size(), 2u ) << serialize( capped );
+		EXPECT_EQ( capped.at("truncated"), jvalue{true} ) << serialize( capped );
+		config.maxReferencesPerNode = limit;
+		let all = references();
+		EXPECT_GT( all.at("references").as_array().size(), 2u ) << serialize( all );
+		EXPECT_EQ( all.at("truncated"), jvalue{false} ) << serialize( all );
+
+		auto browse = BlockAwait<Browse::FoldersAwait,Browse::Response>( Browse::FoldersAwait{Browse::Request::References(NodeId{pump1}, 1), _client} );
+		ASSERT_TRUE( browse.resultsSize && browse.results[0].continuationPoint.length ) << "one reference of several leaves a continuation point";
+		auto release = [&]{ return BlockAwait<ReleaseBrowseAwait,StatusCode>( ReleaseBrowseAwait{browse, _client} ); };
+		EXPECT_EQ( release(), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( release(), UA_STATUSCODE_BADCONTINUATIONPOINTINVALID ) << "released already";
+	}
+
+	//reviews-issue/416-address-space.md #8:  the DisplayNames a `references` row names were one Read whatever their count, and any
+	//refusal failed the whole query.  A server whose MaxNodesPerRead is below the batch is asked in halves until it answers;  the
+	//embedded server's limit is 1 for the test.
+	TEST_F( BrowseTests, DisplayNamesHalveWhenTooMany ){
+		auto& config = *UA_Server_getConfig( Server::GetUAServer().Ptr() );
+		absl::Cleanup restore = [&config, limit=config.maxNodesPerRead]{ config.maxNodesPerRead = limit; };
+		config.maxNodesPerRead = 1;
+		DisplayNameCache cache;
+		const NodeId component{ 0, UA_NS0ID_HASCOMPONENT }, organizes{ 0, UA_NS0ID_ORGANIZES }, typeDef{ 0, UA_NS0ID_HASTYPEDEFINITION };
+		let names = BlockAwait<DisplayNameCache::GetAwait,DisplayNames>( cache.Get(_client, {component, organizes, typeDef}) );
+		EXPECT_EQ( names.size(), 3u );
+		EXPECT_EQ( names.contains(component) ? names.at(component) : "", "HasComponent" );
+		EXPECT_EQ( names.contains(typeDef) ? names.at(typeDef) : "", "HasTypeDefinition" );
+		EXPECT_EQ( cache.Size(), 3u );
 	}
 
 	//Phase 4 (#416):  `references` answers every reference of a node in both directions, the reference type and the target's type

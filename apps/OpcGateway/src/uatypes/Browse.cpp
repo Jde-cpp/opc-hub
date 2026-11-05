@@ -153,8 +153,9 @@ namespace Browse{
 		}
 		return y;
 	}
-	α Request::Children( NodeId&& id, const QL::TableQL& ql )ι->Request{
-		Request y{ move(id), calcMask(ql) };
+	α Request::Children( NodeId&& id, const QL::TableQL& ql )ι->Request{ return Children( move(id), calcMask(ql) ); }
+	α Request::Children( NodeId&& id, UA_BrowseResultMask mask )ι->Request{
+		Request y{ move(id), mask };
 		auto& d = y.nodesToBrowse[0];
 		d.browseDirection = UA_BROWSEDIRECTION_FORWARD;
 		d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
@@ -162,8 +163,9 @@ namespace Browse{
 		d.nodeClassMask = UA_NODECLASS_UNSPECIFIED;
 		return y;
 	}
-	α Request::References( NodeId&& id )ι->Request{
+	α Request::References( NodeId&& id, UA_UInt32 maxReferences )ι->Request{
 		Request y{ move(id), UA_BROWSERESULTMASK_ALL };
+		y.requestedMaxReferencesPerNode = maxReferences;//a type node's inverse HasTypeDefinition is every instance it has (reviews-issue/416-address-space.md #9)
 		auto& d = y.nodesToBrowse[0];
 		d.browseDirection = UA_BROWSEDIRECTION_BOTH;
 		d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_REFERENCES );

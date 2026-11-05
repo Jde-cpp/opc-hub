@@ -20,6 +20,16 @@ export enum ENodeClass{
 export const nodeColumns = "id name browse nodeClass refType typeDef description";
 export const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";
 
+//A node known by id alone, placed in the tree:  its name, its class and its page path - the gateway's walk up to Root (NodeQLAwait's id
+//form), null for a node it cannot place.  What a search by id, a References target and a node-access link ask (placeNode).
+export type NodePlace = { name?:string; nodeClass?:ENodeClass; path:string|null };
+//The url segments of the page a node opens, from its page path:  every class but a Method has a page of its own, and a Method is a Call
+//on its object's row, so it opens the object;  Root's path is empty, the connection's page (reviews-issue/416-address-space.md #14).
+export function pageSegments( path:string, nodeClass?:ENodeClass ):string[]{
+	const segments = path ? path.split( '/' ) : [];
+	return nodeClass==ENodeClass.Method ? segments.slice( 0, -1 ) : segments;
+}
+
 export abstract class UaNode extends NodeId{
 	constructor( json:any, parent?:UaNode ){
 		super( json );
@@ -31,10 +41,13 @@ export abstract class UaNode extends NodeId{
 		this.typeDef = json.typeDef ? new NodeId( json.typeDef ) : undefined;
 	}
 	//the node's url segment:  the bare name in the connection's default namespace or in namespace 0 - Objects, Types and everything under
-	//Types - else `ns~name`, as the gateway spells a page path (NodeQLAwait::segment) and reads one (segmentMatches)
-	browseFQ( defaultNS:Ns|undefined ):string{
+	//Types - else `ns~name`, as the gateway spells a page path (NodeQLAwait::segment) and reads one (childBySegment).  A bare name
+	//takes the default namespace's sibling first (Root's, namespace 0's), so the other of two `siblings` of one name is `ns~name`.
+	browseFQ( defaultNS:Ns|undefined, siblings?:UaNode[], atRoot=false ):string{
 		const browse = this.browse!;
-		return browse.ns===defaultNS || browse.ns===0 ? browse.name.toString() : `${browse.ns}~${browse.name}`;
+		const [first, second] = atRoot ? [0, defaultNS] : [defaultNS, 0];
+		const twin = ()=>first!==undefined && first!==second && !!siblings?.some( s=>s!==this && s.browse?.ns===first && s.browse.name===browse.name );
+		return browse.ns===first || (browse.ns===second && !twin()) ? browse.name.toString() : `${browse.ns}~${browse.name}`;
 	}
 	//the node a browse or a path query answers, by its class - none for a class the gateway does not spell
 	static fromJson( json:any, parent?:UaNode ):UaNode|undefined{

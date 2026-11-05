@@ -13,6 +13,9 @@
 	</div>
 }
 @else{
+	@if( truncated() ){
+		<p class="truncated" role="status">Showing the first {{ rows().length.toLocaleString() }} references;  this node has more.</p>
+	}
 	<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense">
 		<ng-container matColumnDef="direction">
 			<mat-header-cell *matHeaderCellDef>Direction</mat-header-cell>

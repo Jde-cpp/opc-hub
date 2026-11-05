@@ -2,10 +2,10 @@ import { inject, Injectable } from '@angular/core';
 import { Router } from '@angular/router';
 import { ISearchProvider, SearchResult } from 'jde-spa';
 import { errorMessage, isRefusal } from 'jde-framework';
-import { ENodeClass } from '../model/node';
+import { ENodeClass, NodePlace, pageSegments } from '../model/node';
 import { NodeId } from '../model/node-id';
 import { toBrowse } from '../model/types';
-import { Gateway, GATEWAY_SERVICE } from './gateway-service';
+import { Gateway, GATEWAY_SERVICE, placeNode } from './gateway-service';
 import { OPC_STORE } from './opc-store';
 
 export type NodeSearchRow = { connection:{ slug:string; name:string }; path:string; name:string; nodeClass:number; depth:number };
@@ -61,7 +61,7 @@ export class NodeSearchProvider implements ISearchProvider{
 		}
 		return hits.slice( 0, limit ).map( ({gateway, row})=>({
 			title: row.name,
-			route: [ '/gateways', gateway.slug, row.connection.slug, ...NodeSearchProvider.pagePath(row) ],//array form: the router encodes each browse segment, NodeRoute decodes them back.
+			route: [ '/gateways', gateway.slug, row.connection.slug, ...pageSegments(row.path, row.nodeClass) ],//array form: the router encodes each browse segment, NodeRoute decodes them back.
 			summary: `${row.connection.name}/${NodeSearchProvider.displayPath(row.path)}`,
 			icon: NodeSearchProvider.icon( row.nodeClass ),
 			rank: row.name.toLowerCase().startsWith( text.toLowerCase() ) ? 0 : 1,
@@ -71,9 +71,9 @@ export class NodeSearchProvider implements ISearchProvider{
 	//the one hit a node id names:  its page, by the path the gateway walks up - none for a node it cannot place (unknown, or with a
 	//browse name no url can carry) - as a notice, so the id is not mistaken for a name no node has.
 	async byId( gateway:Gateway, opc:string, id:NodeId ):Promise<SearchResult[]>{
-		let node:{ name?:string; nodeClass?:number; path:string|null };
+		let node:NodePlace|undefined;
 		try{
-			node = await gateway.querySingle( `node( opc:$opc, id:$id ){ name nodeClass path }`, {opc, id: id.toJson()} );
+			node = await placeNode( gateway, opc, id );
 		}
 		catch( e ){
 			console.warn( `search: '${id.uaString()}' on '${opc}' failed.`, e );
@@ -83,7 +83,7 @@ export class NodeSearchProvider implements ISearchProvider{
 		if( node?.path==null )
 			return [{ title: `No page for ${id.uaString()}`, summary: `${name}: no such node, or one the gateway cannot place.`, route: [], icon: 'error_outline', rank: 0, source: this.name, disabled: true }];
 		const row:NodeSearchRow = { connection: {slug: opc, name}, path: node.path, name: typeof node.name=="string" && node.name ? node.name : id.uaString(), nodeClass: node.nodeClass ?? ENodeClass.Object, depth: 0 };
-		return [{ title: row.name, route: [ '/gateways', gateway.slug, opc, ...NodeSearchProvider.pagePath(row) ], summary: `${name}${row.path ? '/'+NodeSearchProvider.displayPath(row.path) : ''}`, icon: NodeSearchProvider.icon( row.nodeClass ), rank: 0, source: this.name }];
+		return [{ title: row.name, route: [ '/gateways', gateway.slug, opc, ...pageSegments(row.path, row.nodeClass) ], summary: `${name}${row.path ? '/'+NodeSearchProvider.displayPath(row.path) : ''}`, icon: NodeSearchProvider.icon( row.nodeClass ), rank: 0, source: this.name }];
 	}
 	//the text as a node id in the UA spelling, `[ns=<n>;]<i|s|g|b>=<identifier>`, or nothing:  a name is never that shape
 	static nodeId( text:string ):NodeId|undefined{
@@ -94,12 +94,6 @@ export class NodeSearchProvider implements ISearchProvider{
 		const name = this.#opcStore.cnnctnName( gateway.slug, opc );//the node pages' memo, else the slug - never a describe against the gateway that just failed.
 		const refused = isRefusal( e );//gateway/search is enforceable:  the index is fine, the user is not allowed.
 		return { title: refused ? `Search is not permitted for ${name}` : `Search is unavailable for ${name}`, summary: errorMessage(e), route: [], icon: refused ? 'block' : 'error_outline', rank: 0, source: this.name, disabled: true };
-	}
-	//The page a hit opens.  Every class but a Method has one (clients spec *Address space*):  a Method is a Call on its object's
-	//row, so its hit opens the object.  Root's own path is empty:  the connection's page.
-	static pagePath( row:NodeSearchRow ):string[]{
-		const segments = row.path ? row.path.split( '/' ) : [];
-		return row.nodeClass==ENodeClass.Method ? segments.slice( 0, -1 ) : segments;
 	}
 	//the browse path as the breadcrumbs name it (nodeSegmentName):  `5~pumps/5~pump1` reads pumps/pump1.
 	static displayPath( path:string ):string{

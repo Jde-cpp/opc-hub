@@ -1,14 +1,15 @@
 import { inject, Injectable } from '@angular/core';
 import { NodeLink, NodeLinkResolver } from 'jde-access';
+import { pageSegments } from '../model/node';
 import { NodeId } from '../model/node-id';
-import { Gateway, GATEWAY_SERVICE } from './gateway-service';
+import { Gateway, GATEWAY_SERVICE, placeNode } from './gateway-service';
 import { OPC_STORE } from './opc-store';
 
 //jde-access's NODE_LINK_RESOLVER:  "opc.<x>" + "ns=5;i=5005" -> ['/gateways', gateway, connection, ...browse path], the node
 //page's url (app.routes.ts: gateways/:gateway/:connection/**, the array form the search provider builds too).  <x> is the
 //server's accessResource - the [bracketed] part of its applicationName, what node-access grants under - so every gateway's
 //connections are described until one matches, once per schema and only remembered when found.  The path is the gateway's
-//own answer (`node( id ){ name path }`, NodeQLAwait::Path):  a null path is a node it cannot place, hence no link.
+//own answer (placeNode):  a null path is a node it cannot place, hence no link;  a method's opens its object (pageSegments).
 @Injectable({providedIn: 'root'})
 export class OpcNodeLinkResolver implements NodeLinkResolver{
 	#gateways = inject( GATEWAY_SERVICE );
@@ -21,10 +22,10 @@ export class OpcNodeLinkResolver implements NodeLinkResolver{
 		const placement = await this.#connection( schema.substring("opc.".length) );
 		if( !placement )
 			return undefined;
-		const node = await placement.gateway.querySingle<{name?:string, path:string|null}>( `node( opc:$opc, id:$id ){ name path }`, {opc: placement.cnnctn, id: NodeId.fromUaString(criteria).toJson()} );
+		const node = await placeNode( placement.gateway, placement.cnnctn, NodeId.fromUaString(criteria) );
 		if( node?.path==null )
 			return undefined;
-		return { route: [ '/gateways', placement.gateway.slug, placement.cnnctn, ...node.path.split('/') ], name: node.name || undefined, path: node.path };
+		return { route: [ '/gateways', placement.gateway.slug, placement.cnnctn, ...pageSegments(node.path, node.nodeClass) ], name: node.name || undefined, path: node.path };
 	}
 
 	#connection( accessResource:string ):Promise<Placement|undefined>{

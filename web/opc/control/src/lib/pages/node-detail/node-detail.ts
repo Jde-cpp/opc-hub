@@ -1,4 +1,4 @@
-import { Component, computed, model, OnInit, signal, inject } from '@angular/core';
+import { Component, computed, effect, model, OnInit, signal, inject, untracked } from '@angular/core';
 import { MatTabsModule } from '@angular/material/tabs';
 import { NodePageData } from '../../services/resolvers/node-resolver';
 import { ActivatedRoute } from '@angular/router';
@@ -11,6 +11,7 @@ import { NodeHistory } from './node-history/node-history';
 import { NodeReferences } from './node-references/node-references';
 import { persistedTabIndex } from 'jde-spa';
 import { HistGroupMembers } from '../../model/hist';
+import { OpcStore } from '../../services/opc-store';
 
 @Component( {
 	templateUrl: './node-detail.html',
@@ -20,6 +21,22 @@ import { HistGroupMembers } from '../../model/hist';
 export class NodeDetail implements OnInit{
 	#activatedRoute = inject( ActivatedRoute );
 	#componentPageTitle = inject( ComponentPageTitle );
+	#opcStore = inject( OpcStore );
+	constructor(){
+		//A System nodes flip sets the route's siblings again (OpcStore.setShowSystem), on the same object - and ComponentNav, reading a
+		//RouteItem's plain fields, repaints only for a new input.  So the sidenav gets a copy, and follows the flip at once
+		//(reviews-issue/416-address-space.md #5, #15;  the browser walk found it still waiting for the next navigation).
+		let shown:boolean|undefined;
+		effect( ()=>{
+			const show = this.#opcStore.showSystem();
+			untracked( ()=>{
+				const route = this.pageData()?.route;
+				if( shown!==undefined && shown!==show && route )
+					this.sideNav.set( Object.assign(Object.create(Object.getPrototypeOf(route)), route) );
+				shown = show;
+			} );
+		} );
+	}
 	ngOnInit(){
 		this.#activatedRoute.data.subscribe( (data)=>{
 			this.pageData.set( data["pageData"] );

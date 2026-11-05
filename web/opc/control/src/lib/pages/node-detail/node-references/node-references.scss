@@ -2,6 +2,10 @@
 	display: block;
 	width: 100%;
 }
+.truncated{
+	margin: 8px 0;
+	color: var(--mat-sys-on-surface-variant);
+}
 .direction-icon{
 	font-size: 16px;
 	width: 16px;

@@ -1,6 +1,6 @@
 import { ObjectType, OpcObject, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
-import { EAccess } from './types';
+import { childBySegment, EAccess } from './types';
 import { variable } from 'jde-opc/testing';
 
 const x = ( json:object={} )=>variable( 1, 'x', json );
@@ -127,5 +127,29 @@ describe( 'UaNode classes', ()=>{
 		expect( OpcObject.objectsNode.browseFQ( 1 ) ).toBe( 'Objects' );
 		expect( x().browseFQ( 2 ) ).toBe( 'x' );
 		expect( x().browseFQ( 1 ) ).toBe( '2~x' );
+	} );
+	//reviews-issue/416-address-space.md #7:  a namespace-0 name and the default namespace's, siblings, were both spelled bare, and the
+	//gateway took the default's where the store took the first in id order - namespace 0's.  A bare name is the default's on both
+	//sides, so its namespace-0 twin is `0~name`;  under Root the other way round, as the gateway's translate takes Root's first segment.
+	it( "spells a namespace-0 name `0~` beside a default namespace sibling of the same name", ()=>{
+		const ns0 = new OpcObject( <any>{ns: 0, i: 2253, name: 'Server', browse: {ns: 0, name: 'Server'}} );
+		const own = new OpcObject( <any>{ns: 2, i: 9, name: 'Server', browse: {ns: 2, name: 'Server'}} );
+		const other = new OpcObject( <any>{ns: 2, i: 10, name: 'pump1', browse: {ns: 2, name: 'pump1'}} );
+		expect( ns0.browseFQ( 2, [ns0, other] ) ).toBe( 'Server' );
+		expect( ns0.browseFQ( 2, [ns0, own, other] ) ).toBe( '0~Server' );
+		expect( own.browseFQ( 2, [ns0, own, other] ) ).toBe( 'Server' );
+		expect( ns0.browseFQ( 0, [ns0, own] ) ).toBe( 'Server' );//namespace 0 the default:  no twin to tell apart
+		expect( ns0.browseFQ( 2, [ns0, own], true ) ).toBe( 'Server' );//Root's children:  namespace 0's first
+		expect( own.browseFQ( 2, [ns0, own], true ) ).toBe( '2~Server' );
+	} );
+	it( "takes a bare segment for the default namespace's child first, then namespace 0's", ()=>{
+		const ns0 = { browse: {ns: 0, name: 'Server'} }, own = { browse: {ns: 2, name: 'Server'} }, objects = { browse: {ns: 0, name: 'Objects'} };
+		expect( childBySegment( [ns0, own], 'Server', 2 ) ).toBe( own );
+		expect( childBySegment( [ns0, own], '0~Server', 2 ) ).toBe( ns0 );
+		expect( childBySegment( [ns0, own], '2~Server', 2 ) ).toBe( own );
+		expect( childBySegment( [ns0, objects], 'Objects', 2 ) ).toBe( objects );
+		expect( childBySegment( [ns0], 'Server', undefined ) ).toBe( ns0 );
+		expect( childBySegment( [ns0, own], 'Server', 2, true ) ).toBe( ns0 );
+		expect( childBySegment( [ns0, own], '3~Server', 2 ) ).toBeUndefined();
 	} );
 } );

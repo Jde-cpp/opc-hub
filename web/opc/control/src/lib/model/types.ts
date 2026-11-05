@@ -37,11 +37,17 @@ export function toBrowse( path:string, defaultNs:Ns|undefined ):Browse{
 	return { ns: defaultNs, name: text };
 }
 export function browseEq( a:Browse, b:Browse ):boolean{ return a.ns===b.ns && a.name===b.name; }
-//a url segment against a node's browse name:  `ns~name` exactly;  a bare name in the default namespace, else in namespace 0 - the
-//standard's folders and everything under Types, which a page path spells bare too (UaNode.browseFQ, the gateway's NodeQLAwait::segment)
-export function segmentMatches( browse:Browse, segment:string, defaultNs:Ns|undefined ):boolean{
-	const asked = toBrowse( segment, defaultNs );
-	return browseEq( browse, asked ) || ( toBrowse(segment, undefined).ns===undefined && browse.ns===0 && browse.name===asked.name );
+//The child a url segment names:  `ns~name` exactly;  a bare name the default namespace's, else namespace 0's - the standard's folders
+//and everything under Types, which a page path spells bare too (UaNode.browseFQ, the gateway's NodeQLAwait::segment).  The default
+//namespace's first whatever the order, as the gateway's childNamed takes it, so the two sides agree on a name both namespaces hold;  a
+//child of Root the other way round, as the gateway's translate takes Root's first segment (reviews-issue/416-address-space.md #7).
+export function childBySegment<T extends {browse?:Browse}>( children:T[], segment:string, defaultNs:Ns|undefined, atRoot=false ):T|undefined{
+	const spelled = toBrowse( segment, undefined );
+	if( spelled.ns!==undefined )
+		return children.find( c=>c.browse && browseEq(c.browse, spelled) );
+	const [first, second] = atRoot ? [0, defaultNs] : [defaultNs, 0];
+	const named = ( ns:Ns|undefined )=>ns===undefined ? undefined : children.find( c=>c.browse?.ns===ns && c.browse.name===spelled.name );
+	return named( first ) ?? named( second );
 }
 
 //Namespace 0's DataTypes by id, as Part 6 names them - the node page's and the Members tab's type names - and Folder, the FolderType.

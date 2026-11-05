@@ -1,5 +1,5 @@
 import { SelectionModel, SelectionChange } from '@angular/cdk/collections';
-import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, output, signal } from '@angular/core';
+import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, output, Signal, signal } from '@angular/core';
 import {MatButtonModule} from '@angular/material/button';
 import {MatCheckboxChange, MatCheckboxModule} from '@angular/material/checkbox';
 import {MatChipsModule} from '@angular/material/chips';
@@ -16,7 +16,6 @@ import { DateUtils, QLListSettings, SnackbarService, ProtoUtils, Timestamp, View
 import { EAccess, ETypes } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
-import { ComponentPageTitle } from 'jde-spa';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { OpcStore } from '../../../services/opc-store';
 import { numberValue, Reading, Value, valueString } from '../../../model/value';
@@ -37,15 +36,11 @@ import { NodeId } from '../../../model/node-id';
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
 	#snackbar = inject( SnackbarService );
-	#componentPageTitle = inject( ComponentPageTitle );
 	#cdRef = inject( ChangeDetectorRef );
 	constructor(){
 		//the sidenav siblings sort by the active view (OpcStore.setRoute), and a node switch is resolved before this component hears
 		//of it - so the store learns of every view change here, header sorts included, ahead of the next navigation.
 		effect( ()=>{ if( this.view() ) this.#opcStore.nodeView.set( this.view() ); } );
-		//the *system nodes* toggle (clients spec *Address space*):  kept per browser, as the tab is, and told to the store, whose sidenav
-		//siblings hide what the table hides
-		effect( ()=>{ this.#prefs.set( NodeView.collectionName, "systemNodes", this.showSystem() || null ); this.#opcStore.showSystem.set( this.showSystem() ); } );
 	}
 
 	async ngOnInit() {
@@ -66,8 +61,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 			this.profile = await this.#profileStore.load<UserSettings>( this.pageData.route.profileKey, new UserSettings() );
 			this.profile.subscriptions = (this.profile.subscriptions ?? []).map( (s)=>new NodeId(s) );//revive persisted plain objects into NodeId instances (s.equals/s.key below would otherwise throw)
 			this.setNodes( this.pageData.nodes, true );
-			this.isLoading.set( false );
-			this.#componentPageTitle.title = this.server.connection.name + (this.node().isRoot ? '' : `/${this.node().name}`);
+			this.isLoading.set( false );//the page's title is NodeDetail's:  set here too from the `node` input, which lags a navigation - and a hidden tab's never updates - it named a node already left (the #416 browser walk)
 		});
 	}
 
@@ -109,7 +103,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 				if( previous )
 					fresh.takeOver( previous );
 			}
-			if( this.nodes().some( n=>this.isSelf(n) ) ){//a Variable page's own row, re-read as the properties were, stays first (NodeResolver)
+			if( this.nodes().some( n=>this.isSelf(n) ) ){//a Variable page's own row, re-read as its children were, stays first (NodeResolver)
 				const self = <Variable>this.node();
 				this.#setReading( self, await this._iot.read( this.cnnctnSlug, self.nodeId ) );
 				references.unshift( self );
@@ -315,7 +309,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 		} );
 	}
 	routerLink(n:UaNode):string[]{
-		return [ `./${n.browseFQ(this.server.connection.defaultBrowseNs)}` ];
+		return [ `./${n.browseFQ(this.server.connection.defaultBrowseNs, this.nodes(), !!this.pageData.route.node?.isRoot)}` ];//the route's node, as isSelf's
 	}
 	isSelf( n:UaNode ):boolean{ return n.key==this.pageData.route.node?.key; }//a Variable page's own row (NodeResolver):  its name is no link.  The route's node, which `node` is too:  a row renders before the model is set
 	ETypes = ETypes;
@@ -357,12 +351,17 @@ export class NodeChildren implements OnInit, OnDestroy {
 	pageData!:NodePageData;
 	profile!:UserSettings;
 	nodes = signal<UaNode[]>( [] );//every child the browse returned;  rows() is the view's cut of them, less the system nodes while the toggle is off
-	showSystem = signal<boolean>( inject(LocalPrefs).get(NodeView.collectionName, "systemNodes", false) );
+	//the *system nodes* toggle (clients spec *Address space*):  the store's, which keeps it per browser and sets the sidenav by it
+	get showSystem():Signal<boolean>{ return this.#opcStore.showSystem; }
+	setShowSystem( show:boolean ):void{ this.#opcStore.setShowSystem( show ); }
 	rows = computed<UaNode[]>( ()=>{
-		const sorted = this.view() ? this.view().apply( this.nodes().filter( n=>this.showSystem() || !n.isSystem ) ) : [];
+		const sorted = this.view() ? this.view().apply( this.nodes().filter( n=>this.showSystem() || !n.isSystem || this.isSelf(n) ) ) : [];//a ns-0 Variable page keeps its own row
 		const self = sorted.find( n=>this.isSelf(n) );//a Variable page's own row stays first, whatever the view's sort
 		return self ? [self, ...sorted.filter( n=>n!==self )] : sorted;
 	} );
+	//every row the view would show is a system node the toggle hides - the Types folder's, by default:  the empty state says so, not
+	//that the view matches nothing (reviews-issue/416-address-space.md #12)
+	hiddenBySystem = computed<boolean>( ()=>!this.showSystem() && !this.rows().length && !!this.view() && this.view().apply( this.nodes() ).length>0 );
 	displayedColumns = computed<string[]>( ()=>this.view()?.displayedColumns ?? [] );
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
 	snapshotShown = computed<boolean>( ()=>this.displayedColumns().includes("snapshot") );//a Method row's Call is in the Snapshot cell, and in its Name cell where the view hides that (reviews-issue/318-opc-calls.md #6)
@@ -379,7 +378,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 	schema = NodeView.schema;
 
 	#profileStore = inject( ProfileStore );
-	#prefs = inject( LocalPrefs );
 	#opcStore = inject( OpcStore );
 	#dialog = inject( MatDialog );
 }

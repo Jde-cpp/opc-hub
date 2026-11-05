@@ -14,8 +14,8 @@ import * as FromServer from 'jde-proto/Opc.FromServer';
 import { OPC_STORE, OpcStore } from './opc-store';
 import { CnnctnSlug } from "../model/server-cnnctn";
 import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
-import { nodeColumns, UaNode, Variable, variableColumns } from '../model/node';
-import { Reference, referencesQuery } from '../model/reference';
+import { nodeColumns, NodePlace, UaNode, Variable, variableColumns } from '../model/node';
+import { Reference, References, referencesQuery } from '../model/reference';
 import { CallResult, MethodArguments, toCallResult } from '../model/method';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
@@ -231,14 +231,14 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		return `(${sc.toString(16)})${text}`;
 	}
 
-	//A node's children as the page's rows (clients spec *Address space*, #416):  what hangs under an object, a type or a view - its
-	//hierarchical references forward, every class kept, so a type node has a page like an object's and a Method row a Call - and a
-	//Variable's HasProperty children, its Properties.  The gateway browses `children` or `properties` and reads each row's attributes.
+	//A node's children as the page's rows (clients spec *Address space*, #416):  what hangs under it, its hierarchical references
+	//forward, every class kept - so a type node has a page like an object's, a Method row a Call, and a Variable lists its properties
+	//and, a structured one, its member variables (HasComponent), which the search index reaches too (reviews-issue/416-address-space.md
+	//#4).  The gateway browses `children` and reads each row's attributes.
 	public async browseObjectsFolder( cnnctn:CnnctnSlug, parent:UaNode, snapshot:boolean ):Promise<UaNode[]>{
 		const vars = { opc: cnnctn, id: parent.nodeId.toJson() };
-		const table = parent.isVariable ? "properties" : "children";
-		const ql = `node(opc:$opc, id:$id){${table}{${nodeColumns} ... on Variable{${variableColumns}} }}`;
-		const children = (await this.query<any>( ql, vars ))["node"][table] ?? [];
+		const ql = `node(opc:$opc, id:$id){children{${nodeColumns} ... on Variable{${variableColumns}} }}`;
+		const children = (await this.query<any>( ql, vars ))["node"]["children"] ?? [];
 		const y = new Array<UaNode>();
 		for( const ref of children ){
 			const child = UaNode.fromJson( ref, parent );
@@ -246,14 +246,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 				console.error( `browseObjectsFolder - unhandled nodeClass ${ref.nodeClass} for '${ref.name}'` );//was `debugger;` — froze the app whenever a debugger (DevTools/automation) was attached
 				continue;
 			}
-			if( child instanceof Variable && child.customDataType ){
-				try{
-					child.customDataType = await this.enumType( cnnctn, <NodeId>child.customDataType );
-				}
-				catch( e:unknown ){
-					console.log( errorMessage(e) );
-				}
-			}
+			if( child instanceof Variable )
+				await this.resolveEnum( cnnctn, child );
 			y.push( child );
 		}
 		this.store.setNodes( this.slug, cnnctn, parent, y );
@@ -261,16 +255,10 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		return y;
 	}
 	//a node's references in both directions (clients spec *Address space*, #416), each with its type and the target's type definition
-	//named from the gateway's per-connection DisplayName cache:  the References tab
-	async references( opcId:CnnctnSlug, node:NodeId ):Promise<Reference[]>{
-		const rows:any[] = (await this.query<any>( referencesQuery, {opc: opcId, id: node.toJson()} ))["node"]?.["references"] ?? [];
-		return rows.map( r=>new Reference( r ) );
-	}
-	//the page path of a node known by id alone - the gateway's walk up to Root (NodeQLAwait's id form), null for a node it cannot
-	//place:  a References row's target
-	async pagePath( opcId:CnnctnSlug, node:NodeId ):Promise<string|null>{
-		const y = await super.querySingle<{path:string|null}>( `node( opc: $opc, id: $id ){ path }`, {opc: opcId, id: node.toJson()} );
-		return y?.path ?? null;
+	//named from the gateway's per-connection DisplayName cache, and whether there were more than it read:  the References tab
+	async references( opcId:CnnctnSlug, node:NodeId ):Promise<References>{
+		const y = (await this.query<any>( referencesQuery, {opc: opcId, id: node.toJson()} ))["node"];
+		return { rows: (<any[]>(y?.["references"] ?? [])).map( r=>new Reference( r ) ), truncated: y?.["truncated"]===true };
 	}
 	//read and write answer with the Reading - toValue() alone dropped the quality, so a refresh or a write's echo quietly turned an Uncertain row Good
 	async read( opcId:CnnctnSlug, n:NodeId ):Promise<Reading>{
@@ -281,6 +269,19 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		//avoids hand-escaping the literal.
 		const v = await super.querySingle<{value:any}>( `node( opc: $opc, id: $id ){value}`, {opc: opcId, id: n.toJson()} );
 		return toReading( v["value"] );
+	}
+	//A Variable's DataType of the server's own as the Enum its row's select offers the values of - a browsed row, and a node page's own
+	//Variable however the page was reached (reviews-issue/416-address-space.md #10).  Once:  an Enum already is one.  A type that is no
+	//enumeration, or can't be read, stays the NodeId it is.
+	async resolveEnum( cnnctn:CnnctnSlug, v:Variable ):Promise<void>{
+		if( !v.customDataType || "enumValues" in v.customDataType )
+			return;
+		try{
+			v.customDataType = await this.enumType( cnnctn, v.customDataType );
+		}
+		catch( e:unknown ){
+			console.log( errorMessage(e) );
+		}
 	}
 	//an enumeration of the server's own:  its name and values, read from its DataType node once per connection (EnumTypeCache)
 	async enumType( opcId:CnnctnSlug, id:NodeId ):Promise<Enum>{
@@ -652,3 +653,8 @@ export type HistEvent =
 type HistLive = { args:HistSubscribeArgs; subscriber:Subscriber<HistEvent>; requestId:number; down:boolean; latest:Map<number,Date>; retry?:ReturnType<typeof setTimeout> };//down:  dropped and not acked since;  latest:  by slot
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );
+//A node known by id alone, placed (NodePlace) in one query:  the search's id hits, a References target, a node-access link.  The reader
+//is any Gateway - a function, as HistAdminService.rootPaths is, so a test stubs the query alone.
+export async function placeNode( reader:Pick<Gateway,'querySingle'>, opc:CnnctnSlug, id:NodeId ):Promise<NodePlace|undefined>{
+	return await reader.querySingle<NodePlace|null>( `node( opc:$opc, id:$id ){ name nodeClass path }`, {opc, id: id.toJson()} ) ?? undefined;
+}
