@@ -117,5 +117,11 @@ export function valueSc( json:any ):StatusCode|undefined{
 export type Reading = { value?:Value, sc?:StatusCode, source?:Date, server?:Date };
 export function toReading( json:any ):Reading{
 	const sc = valueSc( json ) ?? 0;
-	return !Array.isArray(json) && json?.hasOwnProperty('sc') && !json.hasOwnProperty('v') ? {sc} : { value: toValue(json), sc };
+	const y:Reading = !Array.isArray(json) && json?.hasOwnProperty('sc') && !json.hasOwnProperty('v') ? {sc} : { value: toValue(json), sc };
+	//the timestamps a `dataValue` read carries (Value::DataValueJson), as a push does:  the Attributes tab's Value row
+	if( json?.source )
+		y.source = ProtoUtils.toDate( json.source ) ?? undefined;
+	if( json?.server )
+		y.server = ProtoUtils.toDate( json.server ) ?? undefined;
+	return y;
 }

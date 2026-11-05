@@ -16,6 +16,7 @@ import { CnnctnSlug } from "../model/server-cnnctn";
 import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
 import { nodeColumns, NodePlace, UaNode, Variable, variableColumns } from '../model/node';
 import { Reference, References, referencesQuery } from '../model/reference';
+import { Attribute, attributesOf } from '../model/attribute';
 import { CallResult, MethodArguments, toCallResult } from '../model/method';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
@@ -259,6 +260,24 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	async references( opcId:CnnctnSlug, node:NodeId ):Promise<References>{
 		const y = (await this.query<any>( referencesQuery, {opc: opcId, id: node.toJson()} ))["node"];
 		return { rows: (<any[]>(y?.["references"] ?? [])).map( r=>new Reference( r ) ), truncated: y?.["truncated"]===true };
+	}
+	//a node's attributes (clients spec *Attributes*, #417):  those of its class in one read, each with its status where the server refused
+	//it, the Value as the DataValue with both timestamps - the Attributes tab's rows.  The names of the statuses are fetched before the rows
+	//are handed over, so they paint named.
+	async attributes( opcId:CnnctnSlug, node:UaNode ):Promise<Attribute[]>{
+		const defs = attributesOf( node.nodeClass );
+		const json = await super.querySingle<any>( `node( opc: $opc, id: $id ){ ${defs.map( d=>d.key ).join( ' ' )} }`, {opc: opcId, id: node.nodeId.toJson()} );
+		const rows = defs.map( d=>new Attribute( d, json?.[d.key] ) );
+		await this.updateErrorCodes();
+		return rows;
+	}
+	//updateNode( opc, id, attributes ):  the attributes given, written in one Write, each typed by the gateway - a bare string keeps a
+	//LocalizedText's locale - the server's first refusal the error;  `columns` are read back and answered
+	async updateNode( opcId:CnnctnSlug, id:NodeId, attributes:Record<string,unknown>, columns:string[] ):Promise<any>{
+		const q = `updateNode( opc: $opc, id: $id, attributes: $attributes ){ ${columns.join( ' ' )} }`;
+		const data:any = await super.postQL<any>( q, {opc: opcId, id: id.toJson(), attributes} );
+		this.updateErrorCodes();
+		return data?.["updateNode"] ?? data;
 	}
 	//read and write answer with the Reading - toValue() alone dropped the quality, so a refresh or a write's echo quietly turned an Uncertain row Good
 	async read( opcId:CnnctnSlug, n:NodeId ):Promise<Reading>{

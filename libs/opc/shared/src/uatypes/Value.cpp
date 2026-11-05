@@ -31,6 +31,23 @@ namespace Jde::Opc{
 			return UAException::ToJson( status );
 		if( IsEmpty() )
 			return hasStatus ? UAException::ToJson( status ) : jvalue{};//nothing to show, so say why if we were told.
+		auto j = ValueJson();
+		//A non-zero code rides along with the reading - {"v":…,"sc":…} - rather than replacing it.  Uncertain is the
+		//motivating case, but an informative Good sub-code (GoodClamped) is reported too: the rule is "never drop a status".
+		return status ? jvalue{ jobject{ {"v", move(j)}, {"sc", status} } } : move(j);
+	}
+	α Value::DataValueJson()Ι->jobject{
+		jobject y;
+		if( !UA_StatusCode_isBad(status) && !IsEmpty() )
+			y["v"] = ValueJson();
+		y["sc"] = status;
+		if( hasSourceTimestamp )
+			y["source"] = UADateTime{ sourceTimestamp }.ToJson();
+		if( hasServerTimestamp )
+			y["server"] = UADateTime{ serverTimestamp }.ToJson();
+		return y;
+	}
+	α Value::ValueJson()Ι->jvalue{
 		let scalar = IsScalar();
 		let& type = *value.type;
 		jvalue j{ scalar ? jvalue{} : jarray{} };
@@ -52,9 +69,7 @@ namespace Jde::Opc{
 			else
 				j.get_array().push_back( move(element) );
 		}
-		//A non-zero code rides along with the reading - {"v":…,"sc":…} - rather than replacing it.  Uncertain is the
-		//motivating case, but an informative Good sub-code (GoodClamped) is reported too: the rule is "never drop a status".
-		return status ? jvalue{ jobject{ {"v", move(j)}, {"sc", status} } } : move(j);
+		return j;
 	}
 
 	α Value::Settable( const UA_DataType& type )ι->bool{
@@ -149,6 +164,14 @@ namespace Jde::Opc{
 			break;
 		case UA_DATATYPEKIND_STRING:
 		case UA_DATATYPEKIND_LOCALIZEDTEXT:{
+			if( type->typeKind==UA_DATATYPEKIND_LOCALIZEDTEXT && j.is_object() ){//{locale, text}:  a text in a named locale (Part 3 §8.5) - updateNode's DisplayName and Description, which keep the node's locale unless one is named.
+				let& o = j.get_object();
+				let* text = o.if_contains( "text" ); let* locale = o.if_contains( "locale" );
+				THROW_IF( !text || !text->is_string() || (locale && !locale->is_null() && !locale->is_string()), "Expected a LocalizedText {{locale, text}} - '{}'.", serialize(j) );
+				const UA_LocalizedText lt{ locale && locale->is_string() ? ToUV(locale->get_string()) : UA_STRING_NULL, ToUV(text->get_string()) };
+				SetScalar( &lt, sl );
+				break;
+			}
 			THROW_IF( !j.is_string(), "Expected string '{}'.", serialize(j) );
 			let str = ToUV( j.get_string() );
 			if( type->typeKind==UA_DATATYPEKIND_STRING )

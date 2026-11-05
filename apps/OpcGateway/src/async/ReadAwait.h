@@ -7,6 +7,10 @@ namespace Jde::QL{ struct TableQL; }
 namespace Jde::Opc::Gateway{
 	namespace Browse{ struct Response; }
 	struct UAClient;
+	//`dataValue`:  the Value attribute answered as the DataValue the read brings - {v, sc, source, server} (Value::DataValueJson) - where
+	//`value` is the reading alone (clients spec *Attributes*).  No attribute id a server knows:  Push reads Value for it, with both
+	//timestamps, and SetJson keys the answer by what was asked.  31:  past the standard's 27 and within the enum's range, which a constexpr needs.
+	constexpr UA_AttributeId DataValueAttrib{ (UA_AttributeId)31 };
 	//Owns its node ids:  every UA_ReadValueId gets a UA_NodeId_copy, so the NodeId/vector<NodeId>/Browse::Response a ctor
 	//reads from need not outlive the request.  A shallow UA_NodeId slice here shares identifier.string.data with its
 	//source, and the request outlives that source on both async paths (a temporary vector<NodeId>, and the caller's frame
@@ -14,6 +18,7 @@ namespace Jde::Opc::Gateway{
 	struct ReadRequest final : UA_ReadRequest{
 		ReadRequest( const NodeId& nodeId, UA_AttributeId attrib )ι:ReadRequest{nodeId, {attrib}}{}
 		ReadRequest( const NodeId& nodeId, std::initializer_list<UA_AttributeId> attribs )ι;//one UA_ReadValueId per attribute, in order - results[i] answers attribs[i].
+		ReadRequest( const NodeId& nodeId, const vector<UA_AttributeId>& attribs )ι;//the same, from a list built at run time.
 		ReadRequest( const vector<NodeId>& ids, const QL::TableQL& ql )ι;
 		ReadRequest( const vector<NodeId>& ids, UA_AttributeId attrib )ι;//results[i] answers ids[i].
 		ReadRequest( const vector<NodeId>& ids, std::initializer_list<UA_AttributeId> attribs )ι;//results[i*attribs.size()+j] answers attribs[j] of ids[i].
@@ -22,11 +27,14 @@ namespace Jde::Opc::Gateway{
 		~ReadRequest();
 		α operator=( ReadRequest&& x )ι->ReadRequest&;
 		α Add( const QL::TableQL& ql, const flat_map<NodeId, jobject>& nodes )ι->void;
+		α Asked( uint i )Ι->UA_AttributeId{ return _asked[i]; }//what nodesToRead[i] was asked as:  its attribute, or DataValueAttrib.
 		Ω AttribName( UA_AttributeId id )ι->const string&;
+		Ω FindAttrib( sv jsonName )ι->optional<UA_AttributeId>;//the attribute a column names, as the reads spell them - updateNode's keys too.
 	private:
 		α Push( const UA_NodeId& nodeId, UA_AttributeId attrib )ι->void;//deep-copies nodeId into a new _readIds entry.
 		α SetNodesToRead()ι->void{ nodesToReadSize=_readIds.size(); nodesToRead=_readIds.data(); }//_readIds may have reallocated.
 		vector<UA_ReadValueId> _readIds;
+		vector<UA_AttributeId> _asked;//one per _readIds entry.
 	};
 	struct ReadResponse final : Owned<UA_ReadResponse, UA_TYPES_READRESPONSE>{
 		ReadResponse()ι=default;

@@ -6,6 +6,12 @@
 			<node-children [node]="node()" (refreshed)="nodes.set($event)"></node-children>
 		</ng-template>
 	</mat-tab>
+	<mat-tab><!--every attribute of the node's class, the Value with its timestamps, an edit where the UserWriteMask allows (clients spec *Attributes*)-->
+		<ng-template mat-tab-label>Attributes</ng-template>
+		<ng-template matTabContent>
+			<node-attributes [pageData]="pageData()" [node]="node()"></node-attributes>
+		</ng-template>
+	</mat-tab>
 	<mat-tab>
 		<ng-template mat-tab-label>References</ng-template>
 		<ng-template matTabContent>

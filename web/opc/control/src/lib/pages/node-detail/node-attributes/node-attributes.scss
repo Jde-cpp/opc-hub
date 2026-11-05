@@ -1,0 +1,38 @@
+@use '../../status';
+
+:host{
+	display: block;
+	width: 100%;
+}
+input[type="number"]{
+	text-align: end;
+}
+//a text editor takes the cell:  a description is a sentence
+input[type="text"]{
+	width: 100%;
+	max-width: 600px;
+}
+.mat-column-attribute{
+	flex: 0 0 200px;
+	padding-inline: 5px;
+}
+.mat-column-value{
+	flex: 1 1 300px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+mat-cell.mat-column-value > .value-text{//the ellipsis box is the child
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mat-column-sourceTime, .mat-column-serverTime{
+	flex: 0 0 180px;
+	min-width: 0;
+	padding-inline: 5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+@include status.quality;
