@@ -41,7 +41,7 @@ export function trendY( value:Value|undefined ):number|undefined{
 //holding the last value at the Bad's time - without it the step would end at the last good reading and the gap would start
 //early.  A value with no source time or no numeric value draws nothing.  A heartbeat, a group's stored repeat of its last value
 //(spec *Compression*), is a ring in the line's colour, `color`, so a flat line of them reads as a feed that is up, not a dead one,
-//and the tooltip says so;  an Uncertain one keeps the triangle.
+//and the tooltip says so;  an Uncertain one keeps the triangle.  A point alone between gaps is a marker.
 export function toTrendPoints( values:HistValue[], series:{key:NodeKey}, stepped:boolean, color?:string ):{points:TrendPoint[]; flags:TrendFlag[]}{
 	const points:TrendPoint[] = [], flags:TrendFlag[] = [];
 	let lastY:number|undefined, lastBad:number|undefined;
@@ -73,5 +73,11 @@ export function toTrendPoints( values:HistValue[], series:{key:NodeKey}, stepped
 		points.push( point );
 		lastY = y;
 	}
+	//a point with no drawn neighbour has no segment to show it:  it wears the line's marker, or a lone push - a setpoint's - drew
+	//nothing at all (420 #4)
+	points.forEach( (p, i)=>{
+		if( p.y!=null && !p.marker && points[i-1]?.y==null && points[i+1]?.y==null )
+			p.marker = { enabled: true };
+	} );
 	return { points, flags };
 }

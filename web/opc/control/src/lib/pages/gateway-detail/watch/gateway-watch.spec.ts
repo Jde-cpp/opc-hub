@@ -341,6 +341,40 @@ describe( 'GatewayWatch', ()=>{
 		expect( page.tickedRows().map( r=>r.name ) ).toEqual( ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] );
 		expect( page.displayedColumns()[0] ).toBe( 'trend' );
 	} );
+	//a refused subscribe's reading goes to no buffer, and a tick drew an empty line in one of the eight slots (420 #7)
+	it( "doesn't tick a row whose subscribe was refused", async ()=>{
+		const { page, values, row } = await create( [item( 'plc', B )], pumps() );
+		values.next( {opcId: 'plc', node: B, value: new OpcError( 0x80340000, "Subscribe", "", undefined ), sc: 0x80340000} );
+		expect( page.canTick( row( 'plc', B ) ) ).toBe( false );
+		expect( page.tickTooltip( row( 'plc', B ) ) ).toMatch( /^No value to trend:  / );
+		values.next( {opcId: 'plc', node: B, value: 2, sc: 0, source: new Date( 1000 )} );//a value at last
+		expect( page.canTick( row( 'plc', B ) ) ).toBe( true );
+	} );
+	//the ticked rows are session state:  a page reopened on Trend showed none (420 #9)
+	it( 'opens on the list, and again for the next gateway', async ()=>{
+		localStorage.setItem( 'gatewayWatch/tabIndex', '1' );
+		const { page, gatewayOf, open } = await create( [item( 'local', A )], pumps() );
+		expect( page.tabIndex() ).toBe( 0 );
+		page.tabIndex.set( 1 );
+		open( gatewayOf( 'h' ) );
+		await flush( 3 );
+		expect( page.tabIndex() ).toBe( 0 );
+		localStorage.removeItem( 'gatewayWatch/tabIndex' );
+	} );
+	//the checkbox of a ticked row that a Refresh failed to describe was disabled, so the row could not be unticked (420 #2)
+	it( 'unticks a ticked row that errors later', async ()=>{
+		const described = pumps();
+		const { page, row } = await create( [item( 'local', A )], described );
+		page.toggleTick( row( 'local', A ) );
+		described.set( `local/${A.uaString()}`, undefined );
+		await page.onRefresh();
+		expect( row( 'local', A ).error ).toBeDefined();
+		expect( page.canTick( row( 'local', A ) ) ).toBe( true );
+		page.toggleTick( row( 'local', A ) );
+		expect( page.tickedRows() ).toEqual( [] );
+		expect( page.canTick( row( 'local', A ) ) ).toBe( false );//once unticked, it is a row without a value again
+		expect( page.tickTooltip( row( 'local', A ) ) ).toBe( 'No value to trend.' );
+	} );
 	it( "keeps the window picked for the trend, and the buffer's", async ()=>{
 		const { page } = await create( [item( 'local', A )], pumps() );
 		expect( page.trendWindow() ).toBe( 10 );

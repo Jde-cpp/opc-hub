@@ -132,7 +132,7 @@
 			<mat-tab><!--the ticked rows' pushes over a window, with the History tab's chart (#420)-->
 				<ng-template mat-tab-label>Trend</ng-template>
 				<ng-template matTabContent>
-					<watch-trend [rows]="tickedRows()" [buffer]="buffer" [names]="names" [window]="trendWindow()" (windowChange)="setTrendWindow($event)"></watch-trend>
+					<watch-trend [rows]="tickedRows()" [buffer]="buffer" [names]="names" [window]="trendWindow()" (windowChange)="setTrendWindow($event)" [(stepped)]="trendStepped"></watch-trend>
 				</ng-template>
 			</mat-tab>
 		</mat-tab-group>

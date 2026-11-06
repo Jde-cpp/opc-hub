@@ -17,6 +17,13 @@ describe( 'LocalPrefs', ()=>{
 		expect( localStorage.getItem('navbar/showBreadcrumbs') ).toBeNull();
 	} );
 
+	//a value edited by hand threw in the reader's field initialiser, and the page failed to open (420-clients-live-trend #13)
+	it( 'answers the default for a value that is not JSON', ()=>{
+		vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+		localStorage.setItem( 'gatewayWatch/trendWindow', '10m' );
+		expect( prefs.get( 'gatewayWatch', 'trendWindow', 10 ) ).toBe( 10 );
+		vi.restoreAllMocks();
+	} );
 	it( 'keeps an owner\'s tab and view indexes apart, and the first of each as no entry', ()=>{
 		prefs.setTabIndex( 'users', 2 );
 		prefs.setViewIndex( 'users', 1 );

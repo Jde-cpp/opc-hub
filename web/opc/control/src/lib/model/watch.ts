@@ -36,6 +36,9 @@ export class WatchRow{
 		this.opc = opc;
 		this.node = node;
 		this.parameters = parameters;
+		this.key = WatchRow.keyOf( opc, node );
+		this.seriesId = `watch/${this.key}`;
+		this.trendKey = Symbol.for( this.seriesId );
 	}
 	static fromJson( json:WatchItemJson ):WatchRow{ return new WatchRow( json.opc, new NodeId( json.node ), WatchRow.parametersOf( json.parameters ) ); }
 	//the persisted shape, with a deadband filter read back whole:  a persisted parameter that is not a number is left out, as a
@@ -62,10 +65,12 @@ export class WatchRow{
 		return y;
 	}
 	toJson():WatchItemJson{ return { opc: this.opc, node: this.node.toJson(), parameters: this.parameters }; }
-	get key():string{ return WatchRow.keyOf( this.opc, this.node ); }
+	readonly key:string;//made once, as the row's connection and node never change (420 #14)
 	static keyOf( opc:CnnctnSlug, node:NodeId ):string{ return `${opc}\u0000${node.uaString()}`; }//text, as NodeId.key is a Symbol
-	//the trend series the row's pushes carry (HistValue.series):  the row's own, as two connections may hold one node id (#420)
-	get trendKey():NodeKey{ return Symbol.for( `watch/${this.key}` ); }
+	//The row's trend series:  its own, as two connections may hold one node id (#420).  `seriesId` is the chart's id, `watch/` apart
+	//from Highcharts' own `highcharts-` ids whatever the slug (420 #12);  `trendKey` what its pushes carry (HistValue.series).
+	readonly seriesId:string;
+	readonly trendKey:NodeKey;
 	//the node as the connection describes it:  a Variable's data type and enumeration render the value;  any other class has none to watch
 	describe( node:UaNode|undefined, path:string|null|undefined ){
 		this.error = undefined;//described again:  why it once had no node is past (419-watch #5)
@@ -104,8 +109,8 @@ export class WatchRow{
 	revise( r:Revised ){
 		this.revised = { samplingInterval: r.samplingInterval ?? this.revised?.samplingInterval, queueSize: r.queueSize ?? this.revised?.queueSize, sc: r.sc };
 	}
-	opc:CnnctnSlug;
-	node:NodeId;
+	readonly opc:CnnctnSlug;
+	readonly node:NodeId;
 	parameters:WatchParameters;
 	uaNode?:UaNode;
 	path?:string;//the node's page path from Root, as the gateway places it - none for a node it cannot place

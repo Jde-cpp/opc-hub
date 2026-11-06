@@ -18,7 +18,7 @@
 	</div>
 </mat-toolbar>
 @if( rows().length ){
-	<hist-trend [values]="values()" [series]="series()" [stepped]="stepped()" [hasEarlier]="false" [range]="range()" title="Live trend" [description]="description"></hist-trend>
+	<hist-trend [values]="values()" [series]="series()" [stepped]="stepped()" [hasEarlier]="false" [range]="range()" [follow]="true" [holdLast]="true" chartTitle="Live trend" [description]="description"></hist-trend>
 }
 @else{
 	<div class="jde-empty" role="status">

@@ -7,12 +7,8 @@ import { HistTrend } from './hist-trend';
 import { nodeSeries, TrendPoint, trendPalette } from './hist-trend-data';
 import { HighchartsLoader } from './highcharts-loader';
 import { silence, stable } from 'jde-spa/testing';
-import { fetchAnswer, histValue, stubFetch, variable } from 'jde-opc/testing';
+import { BundledHighcharts, fetchAnswer, histValue, stubFetch, variable } from 'jde-opc/testing';
 
-//The add-on the installed site serves by URL, here the package itself:  bundled into the test alone
-class BundledHighcharts extends HighchartsLoader{
-	protected override importFile( file:string ){ return file=='highstock.js' ? import('highcharts/esm/highstock') : import('highcharts/esm/modules/accessibility'); }
-}
 //No add-on to import:  the answer to the fetch the loader makes then, stubbed, says why
 class UnloadedHighcharts extends HighchartsLoader{
 	protected override importFile():Promise<any>{ return Promise.reject( new TypeError( 'Failed to fetch dynamically imported module' ) ); }

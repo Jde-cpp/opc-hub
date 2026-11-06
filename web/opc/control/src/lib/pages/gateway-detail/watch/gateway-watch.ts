@@ -9,7 +9,7 @@ import { MatTableModule } from '@angular/material/table';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
-import { ComponentPageTitle, LocalPrefs, persistedTabIndex, ProfileStore, RouteItem } from 'jde-spa';
+import { ComponentPageTitle, LocalPrefs, ProfileStore, RouteItem } from 'jde-spa';
 import { errorMessage, QLListSettings, SnackbarService, View, ViewToolbar } from 'jde-framework';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
@@ -22,7 +22,7 @@ import { HistConnection } from '../../../model/hist-admin';
 import { pageSegments } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { PushBuffer } from '../../../model/push-buffer';
-import { scHex, statusIcon } from '../../../model/status-code';
+import { isBad, scHex, statusIcon } from '../../../model/status-code';
 import { CnnctnSlug } from '../../../model/server-cnnctn';
 import { valueString } from '../../../model/value';
 import { discardText, filterText, queueText, samplingText, WatchParameters, WatchRow } from '../../../model/watch';
@@ -69,6 +69,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 			this.#down = false;
 			this.rows.set( [] );
 			this.ticked.set( new Set() );
+			this.tabIndex.set( 0 );
 			this.buffer.clear();
 			this.gateway = pageData.gateway;
 			this.sideNav.set( pageData.routing );
@@ -217,7 +218,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 			const previous = row.sc;
 			row.setReading( r );
 			if( !(r.value instanceof OpcError) )
-				this.buffer.push( row.key, {...pushValue( row.node, r, new Date() ), series: row.trendKey} );
+				this.buffer.push( row.key, pushValue( row.node, r, new Date(), row.trendKey ) );
 			if( row.sc && row.sc!=previous && !OpcError.statusCodeText( row.sc ) )
 				this.gateway.updateErrorCodes().then( ()=>this.#repaint() );
 		}
@@ -299,9 +300,9 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		write.catch( e=>this.#snackbar.exception( "Could not save the watch list.", e ) );
 	}
 
-	//The rows the Trend tab draws:  ticked on the list, up to the palette's eight, and only a row with a value to trend.  Session state,
-	//as the History tab's chips are.
-	canTick( row:WatchRow ):boolean{ return !row.error && (this.ticked().has( row.key ) || this.ticked().size<GatewayWatch.maxSeries); }
+	//The rows the Trend tab draws:  ticked on the list, up to the palette's eight, and only a row with a value to trend - though a ticked
+	//row that errors later can still be unticked (420 #2).  Session state, as the History tab's chips are.
+	canTick( row:WatchRow ):boolean{ return this.ticked().has( row.key ) || (!row.error && !noValue( row ) && this.ticked().size<GatewayWatch.maxSeries); }
 	toggleTick( row:WatchRow ){
 		if( this.ticked().has( row.key ) )
 			this.#untick( row );
@@ -312,7 +313,11 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		if( this.ticked().has( row.key ) )
 			this.ticked.update( keys=>{ const next = new Set( keys ); next.delete( row.key ); return next; } );
 	}
-	tickTooltip( row:WatchRow ):string{ return row.error ? "No value to trend." : this.canTick( row ) ? "Draw on the Trend tab" : `At most ${GatewayWatch.maxSeries} rows at a time`; }
+	tickTooltip( row:WatchRow ):string{
+		if( this.canTick( row ) )
+			return "Draw on the Trend tab";
+		return row.error ? "No value to trend." : noValue( row ) ? `No value to trend:  ${OpcError.text( row.sc! )}` : `At most ${GatewayWatch.maxSeries} rows at a time`;
+	}
 	//the window picked on the Trend tab is the buffer's, and kept between visits;  the default is not written, as a tab index is not
 	setTrendWindow( minutes:number ){
 		this.trendWindow.set( minutes );
@@ -375,15 +380,19 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		return this.view() ? this.view().apply( this.rows(), this.names ) : [];
 	} );
 	displayedColumns = computed<string[]>( ()=>['trend', ...(this.view()?.displayedColumns ?? []), 'actions'] );
-	tabIndex = persistedTabIndex( GatewayWatch.prefsOwner );//one for every gateway, as the router reuses the page across them
+	//not kept between visits:  the ticked rows aren't, so a page left on Trend reopened on an empty one (420 #9)
+	tabIndex = signal( 0 );
+	trendStepped = signal( true );//the Trend tab's line shape, kept while the tabs switch, as the tab is made again each visit (420 #10)
 	ticked = signal( new Set<string>() );//the rows' keys
 	//the ticked rows in list order, so a row keeps its colour whatever the sort;  #changes, as a describe names a row in place
 	tickedRows = computed<WatchRow[]>( ()=>{ this.#changes(); const ticked = this.ticked(); return this.rows().filter( r=>ticked.has( r.key ) ); } );
 	trendWindow = signal<number>( GatewayWatch.windowOf( this.#prefs.get( GatewayWatch.prefsOwner, 'trendWindow', GatewayWatch.defaultWindow ) ) );//minutes
-	buffer = new PushBuffer( this.trendWindow()*60_000 );
+	buffer = new PushBuffer( this.trendWindow()*60_000, key=>this.ticked().has( key ) );//the ticked rows are the last to give way (420 #6)
 	static windowOf( minutes:unknown ):number{ return typeof minutes=='number' && PushBuffer.windows.includes( minutes ) ? minutes : GatewayWatch.defaultWindow; }
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes( "status" ) );
 	get sort():Sort{ return this.view().sort[0] ?? {active: "connection", direction: "asc"}; }
 	get subscription(){ return this.#subscription; } #subscription:Subscription|undefined;
 	set subscription( x ){ if( !x && this.#subscription ) this.#subscription.unsubscribe(); this.#subscription = x; }
 }
+//a refused subscribe's reading, or a Bad push before any value:  nothing goes to the buffer, so a tick drew no line (420 #7)
+const noValue = ( row:WatchRow ):boolean=>row.value===undefined && isBad( row.sc );

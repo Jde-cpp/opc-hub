@@ -319,8 +319,11 @@ export function mergeHistValues( existing:HistValue[], incoming:HistValue[] ):Hi
 //A /opc push as a history value (the live tail).  One with no source time takes the server's, as the gateway's
 //own merge does (apps/OpcGateway/src/ql/HistQLAwait.h, Time), and failing that the moment it arrived.  A subscribe that
 //failed rides in as an OpcError value - a refusal, not a reading - and is not a value here.
-export function pushValue( node:NodeId, r:{value?:Value; sc?:StatusCode; source?:Date; server?:Date}, now:Date ):HistValue{
-	return { node, source: r.source ?? r.server ?? now, server: r.server ?? null, status: r.sc ?? 0, value: r.value instanceof OpcError ? undefined : r.value, bound: false, heartbeat: false };
+export function pushValue( node:NodeId, r:{value?:Value; sc?:StatusCode; source?:Date; server?:Date}, now:Date, series?:NodeKey ):HistValue{
+	const y:HistValue = { node, source: r.source ?? r.server ?? now, server: r.server ?? null, status: r.sc ?? 0, value: r.value instanceof OpcError ? undefined : r.value, bound: false, heartbeat: false };
+	if( series )
+		y.series = series;
+	return y;
 }
 //Where a group's subscription resumes after a break:  the oldest of its nodes' latest source times, so a node whose source clock
 //runs behind another's keeps what was stored meanwhile - from the newest of them, it got its bound alone (historian-live-trend
