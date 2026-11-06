@@ -14,18 +14,13 @@ namespace Jde::Logging{
 	Φ LogAddFailure( sv configName, const runtime_error& e )ι->void;
 	Φ Init()ι->void;
 
-	struct Entry;
+	struct Record;
 	struct Γ ILogger : LogTags, IShutdown{
 		ILogger( const jobject& o ): LogTags( o ){}
 		virtual ~ILogger(){} //important
-		β Write( const Entry& m )ι->void=0;
-		β Write( const Entry& m, uint32 appPK, uint32 instancePK )ι->void=0;
-		//The spdlog sink can format straight from the caller's args, skipping the Entry (which eagerly
-		//formats a string and copies every arg into a vector<string>).  Taking the args type-erased as
-		//fmt::format_args keeps that fast path out of line, so log.h needs only ILogger - not the
-		//complete SpdLog, and through it <spdlog/logger.h>.  Returning false means "not handled, build
-		//an Entry", which is what every logger but SpdLog does.
-		β WriteFormatted( ELogLevel /*level*/, SL /*sl*/, fmt::string_view /*fmt*/, fmt::format_args /*args*/ )ι->bool{ return false; }
+		//Every line, one way (Record):  SpdLog formats from the call's arguments when it has them, and every other logger reads
+		//record.Entry(), built once for the line;  a forwarded entry's origin is on the record.  Copy the Entry to keep it.
+		β Write( const Record& record )ι->void=0;
 	};
 
 	template<class T, class... Args>

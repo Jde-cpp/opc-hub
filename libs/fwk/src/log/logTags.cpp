@@ -242,6 +242,12 @@ namespace Jde{
 		return y;
 	}
 
+	Logging::Threshold::Threshold( sv name, const jobject* settings, const jobject& defaults )ι:
+		_name{ name }{
+		SetLevels( defaults, true );
+		if( settings )
+			SetLevels( *settings, true );
+	}
 	LogTags::LogTags( const jobject& o )ι:
 		_configuredTags{ parseTags<concurrent_flat_map<ELogTags,ELogLevel>>(Json::FindDefaultObject(o, "tags")) },
 		ExtrapolatedTags{ _configuredTags },
@@ -353,9 +359,7 @@ namespace Jde{
 		if( level==ELogLevel::NoLog )
 			return false;
 		let configuredMin = MinLevel( tags );
-		let result = configuredMin!=ELogLevel::NoLog && configuredMin <= level;
-		//ASSERT( !result || tags!=ELogTags::Locks );
-		return result;
+		return configuredMin!=ELogLevel::NoLog && configuredMin <= level;
 	}
 
 	α LogTags::ToString()ι->string{

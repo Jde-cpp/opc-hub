@@ -347,6 +347,23 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( archive.EntrySize(), 1u );
 	}
 
+	//An entry stored without its source answers no line, so the web's cell is blank, and nil ids, which the web resolves
+	//to an empty name.
+	TEST( ArchiveQueryTests, ToJsonEntryWithoutItsSource ){
+		let e = entry( tp(0), ELogLevel::Information, 42, "quiet" );
+		vector<Log::Proto::FileEntry> records;
+		*records.emplace_back().mutable_entry() = LogProto::LogEntryFile( e, 0, 0, {false, false} );
+		auto ql = table( "logs" );
+		addTable( ql, "entries", {"templateId","line","fileId","functionId"} );
+		ArchiveQuery af;
+		af.Append( ql, move(records) );
+		let o = af.ToJson( ql );
+		let& j = o.at( "entries" ).as_array().at( 0 ).as_object();
+		EXPECT_FALSE( j.contains("line") );
+		EXPECT_EQ( j.at("fileId").as_string(), to_string(uuid{}) );
+		EXPECT_EQ( j.at("functionId").as_string(), to_string(uuid{}) );
+	}
+
 	TEST( ArchiveQueryTests, ToJsonEntryColumns ){
 		let e = entry( tp(0), ELogLevel::Error, 42, "boom {}", {"9"}, "src/x.cpp", "Fn", ELogTags::Test, UserPK{7} );
 		let af = load( {e} );

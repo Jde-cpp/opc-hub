@@ -1,33 +1,20 @@
 #pragma once
 
-//https://stackoverflow.com/questions/21806561/concatenating-strings-and-numbers-in-variadic-template-function
 namespace Jde::ParamPack{
-	inline void Append( vector<string>& /*values*/ ){}
-
-	template<typename Head, typename... Tail>
-	void Append( vector<string>& values, Head&& h, Tail&&... t )ι;
-
-	template<typename... Tail>
-	void Append( vector<string>& values, string&& h, Tail&&... t )ι{
-		values.push_back( std::move(h) );
-		return Append( values, std::forward<Tail>(t)... );
+	//An argument as a log entry or exception stores it:  fmt's {}, which is what spdlog prints for the same field.  An ostream
+	//wrote a bool as 1, a uint8_t as a raw character and a double to six significant digits.  Text is copied as is:  that is
+	//what fmt prints for it, and a string type fmt has no formatter for (boost::json::string) still converts.
+	Ŧ ToString( T&& x )ι->string{
+		if constexpr( std::is_same_v<std::remove_cvref_t<T>, string> )
+			return string{ FWD(x) };
+		else if constexpr( std::is_convertible_v<const T&, sv> )
+			return string{ sv{x} };
+		else
+			return Ƒ( "{}", x );
 	}
-
-	template<class T> inline α ToStringT( const T& x )ι->string{
-		constexpr bool StringConcept = requires(const T& t) { t.data(); t.size(); };
-		if constexpr( StringConcept ){
-			return string{ x.data(), x.size() };
-		}
-		else{
-			std::ostringstream os;
-			os << x;
-			return os.str();
-		}
-	}
-
-	template<typename Head, typename... Tail>
-	void Append( vector<string>& values, Head&& h, Tail&&... t )ι{
-		values.push_back( ToStringT(std::forward<Head>(h)) );
-		return Append( values, std::forward<Tail>(t)... );
+	template<class... Args>
+	α Append( vector<string>& values, Args&&... args )ι->void{
+		values.reserve( values.size()+sizeof...(args) );
+		( values.push_back(ToString(FWD(args))), ... );
 	}
 }

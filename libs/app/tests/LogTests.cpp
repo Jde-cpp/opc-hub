@@ -91,11 +91,11 @@ namespace Jde::App::Tests{
 			Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{text} };
 			e.Time = Chrono::ToTimePoint( 2025, 1, (uint8)day, 12 );
 			if( external )
-				Log().Write( e, external->first, external->second );
+				Log().Write( {e, external->first, external->second} );
 			else
 				Log().Write( e );
 			for( uint i=0; i<filler; ++i ){
-				Log().Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("{} filler {}", text, i)} );
+				Log().Write( Logging::Entry{SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("{} filler {}", text, i)} );
 				if( filler<=100 && fs::exists(DayArchivePath(day)) )
 					break;
 			}
@@ -306,7 +306,7 @@ namespace Jde::App::Tests{
 		constexpr uint count{ 2'000 };
 		let text = []( uint i ){ return Ƒ("M5 cap probe {} - unique text, so each entry emits a string record of its own", i); };
 		for( uint i=0; i<count; ++i )
-			log->Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, text(i)} );
+			log->Write( Logging::Entry{SRCE_CUR, ELogLevel::Information, ELogTags::Test, text(i)} );
 
 		EXPECT_LE( log->BufferSize(), 45'000u ) << "the buffer grew past its cap while the daily file was unwritable";
 		ASSERT_GT( log->BufferSize(), 0u ) << "entries stopped being buffered at all";
@@ -348,7 +348,7 @@ namespace Jde::App::Tests{
 			//Past _delaySize, so the write triggers Save() - which runs inline to its first suspend, so by the time this loop ends
 			//the batch has left _toSave and is parked on the lock.
 			for( uint i=0; i<400 && log->BufferSize(); ++i )
-				log->Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("L1 filler {}", i)} );
+				log->Write( Logging::Entry{SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("L1 filler {}", i)} );
 			ASSERT_EQ( log->BufferSize(), 0u ) << "no flush was triggered, so there is nothing in flight to see";
 
 			bool found{};
@@ -365,7 +365,7 @@ namespace Jde::App::Tests{
 	TEST_F( DailyFileDayTests, DestructorOutlastsTheFlushTimer ){
 		for( uint i=0; i<20; ++i ){
 			let log = mu<App::ProtoLog>( jobject{{"path", (_root/std::to_string(i)).string()}, {"delay", "PT0.2S"}, {"timeZone", "America/New_York"}} );
-			log->Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("M9 destructor probe {}", i)} );//arms the timer.
+			log->Write( Logging::Entry{SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("M9 destructor probe {}", i)} );//arms the timer.
 		}
 		SUCCEED() << "20 build/write/tear-down cycles with a timer armed, clean under ASan";
 	}
@@ -408,7 +408,7 @@ namespace Jde::App::Tests{
 			//by size, not by waiting out /logging/proto/delay (PT1M in App.Tests.jsonnet); _delaySize is 8096 bytes.  All
 			//dated now, so nothing here arms a round of its own.
 			for( uint i=0; i<400; ++i )
-				Log().Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("DailyFileStartSurvivesFlush {} filler {}", attempt, i)} );
+				Log().Write( Logging::Entry{SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("DailyFileStartSurvivesFlush {} filler {}", attempt, i)} );
 			bool flushed{};
 			for( uint i=0; i<100 && !flushed; ++i ){
 				let now = mark();
@@ -447,7 +447,7 @@ namespace Jde::App::Tests{
 		//merges the buffer with the file, so the entry is found either way.
 		auto write = [this,&run]( App::ProgramPK a, App::ProgInstPK i, sv what )ε->optional<Attribution>{
 			Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("ForwardedEntryAttribution {} {}", what, run) };
-			Log().Write( e, a, i );
+			Log().Write( {e, a, i} );
 			for( let& fe : BlockAwait( App::DailyLoadAwait(Log()) ) ){
 				if( fe.has_entry() && Protobuf::ToGuid(fe.entry().template_id())==e.Id() )
 					return Attribution{ fe.entry().app_pk(), fe.entry().app_instance_pk() };
@@ -539,7 +539,11 @@ namespace Jde::App::Tests{
 	//Scratch loggers over a root of their own, as DailyFileDayTests, with a short delay so the timer flushes.
 	struct DailyFileLayerTests : DailyFileDayTests{
 	protected:
-		α Make( sv delay )ε->up<App::ProtoLog>{ return mu<App::ProtoLog>( jobject{{"path", _root.string()}, {"delay", string{delay}}, {"timeZone", "America/New_York"}} ); }
+		//Every entry keeps its source:  these tests tell entries apart by line.
+		α Make( sv delay )ε->up<App::ProtoLog>{
+			let every = jobject{ {"default", "Trace"} };
+			return mu<App::ProtoLog>( jobject{{"path", _root.string()}, {"delay", string{delay}}, {"timeZone", "America/New_York"}, {"file", every}, {"function", every}} );
+		}
 		α File()Ι->fs::path{ return _root/"log.binpb"; }
 		α Size()Ι->uint{ std::error_code ec; return fs::exists(File(), ec) ? (uint)fs::file_size(File(), ec) : 0; }
 		//A write, and the flush that lands it:  the file has grown.

@@ -55,6 +55,12 @@ namespace Jde{
 	α Logging::LogAddFailure( sv configName, const runtime_error& e )ι->void{
 		ERRT( ELogTags::Settings, "The '{}' logger is configured but could not be created, so it is not running: {}", configName, e.what() );
 	}
+	//Published once by Init, read by every LogStack:  the defaults until then.
+	std::atomic<const Logging::Threshold*> _stack{};
+	α Logging::ShouldCaptureStack( ELogLevel level, ELogTags tags )ι->bool{
+		let stack = _stack.load( std::memory_order_acquire );
+		return stack ? stack->ShouldLog( level, tags ) : level>=ELogLevel::Warning;
+	}
 	inline constexpr std::array<sv,7> ELogLevelStrings = { "Trace", "Debug", "Information", "Warning", "Error", "Critical", "None" };
 }
 
@@ -99,6 +105,8 @@ namespace Jde{
 		SetBreakLevel( Settings::FindEnum<ELogLevel>("/logging/breakLevel", ToLogLevel).value_or(ELogLevel::Warning) );
 #endif
 		Logging::Add<SpdLog>( "spd" );
+		static const Threshold stack{ "stack", Settings::FindObject("/logging/stack"), jobject{{"default", "Warning"}} };
+		_stack.store( &stack, std::memory_order_release );
 		auto& memoryLogger = Logging::GetLogger<MemoryLog>();
 		for( let logger : Loggers() ){
 			if( dynamic_cast<MemoryLog*>(logger) )

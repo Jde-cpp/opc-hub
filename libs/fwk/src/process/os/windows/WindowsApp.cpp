@@ -301,6 +301,7 @@ namespace Jde{
 
 	α Process::FreeLibrary( void* p )ι->void{
 		::FreeLibrary( (HMODULE)p );
+		Logging::ForgetSourceIds();
 	}
 #pragma clang diagnostic ignored "-Wmicrosoft-cast"
 	α Process::GetProcAddress( void* pModule, str procName )ε->void*{

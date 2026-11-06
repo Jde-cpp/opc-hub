@@ -22,14 +22,14 @@ namespace Jde::Logging{
 		α Name()Ι->sv override{ return _logger.name(); }
 		α FlushLevel()Ι->ELogLevel{ return (ELogLevel)_logger.flush_level(); }
 		α SetMinLevel( ELogLevel /*level*/ )ι->void override{}
-		α WriteFormatted( ELogLevel level, SL sl, fmt::string_view m, fmt::format_args args )ι->bool override{
-			_logger.log( ToSpdSL(sl), (spdlog::level::level_enum)level, fmt::vformat(m, args) );
-			return true;
+		α Write( const Record& r )ι->void override{
+			if( const auto m = r.Format() )//straight from the call's arguments, with no Entry.
+				_logger.log( ToSpdSL(r.Source()), (spdlog::level::level_enum)r.Level, fmt::vformat(fmt::string_view{m->Text.data(), m->Text.size()}, r.Args()) );
+			else{
+				const auto& e = r.Entry();
+				_logger.log( e.SourceLocation(), (spdlog::level::level_enum)e.Level, e.Message() );
+			}
 		}
-		α Write( const Entry& m )ι->void override{
-			_logger.log( m.SourceLocation(), (spdlog::level::level_enum)m.Level, m.Message() );
-		}
-		α Write( const Entry& m, uint32 /*appPK*/, uint32 /*instancePK*/ )ι->void override{ Write(m); }
 	private:
 		spdlog::logger _logger;
 	};

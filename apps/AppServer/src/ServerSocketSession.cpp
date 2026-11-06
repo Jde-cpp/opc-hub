@@ -124,7 +124,7 @@ namespace Jde::App::Server{
 			return;
 		}
 		Logging::Entry y{ LogProto::FromLogEntry(move(entry)) };
-		Logging::Log( move(y), pks.Program, pks.Instance );
+		Logging::Log( {y, pks.Program, pks.Instance} );
 	}
 	α ServerSocketSession::SendAck( uint32 id )ι->void{
 		Write( FromServer::Ack(id) );
@@ -381,7 +381,7 @@ namespace Jde::App::Server{
 		Write( FromServer::Subscription(move(serialized), requestId) );
 	}
 	α ServerSocketSession::WriteSubscription( App::ProgramPK appPK, App::ProgInstPK instancePK, const Logging::Entry& e, const QL::Subscription& sub )ι->void{
-		LogWrite( Ƒ("Subscription: {}", e.Text), 0 );
+		LogWrite( Ƒ("Subscription: {}", e.Text()), 0 );
 		Write( FromServer::LogSubscription(appPK, instancePK, e, sub) );
 	}
 }

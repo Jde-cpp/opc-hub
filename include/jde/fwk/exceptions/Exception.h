@@ -1,9 +1,10 @@
 #pragma once
 #include <stdexcept>
-#include <jde/fwk/utils/paramPack.h>
 #include "jde/fwk/log/logTags.h"
+#include <jde/fwk/log/Format.h>
 #include <jde/fwk/io/crc.h>
 
+namespace Jde::Logging{ struct SourceName; }
 namespace Jde{
 	static constexpr ELogLevel DefaultExceptionLevel{ ELogLevel::Debug };
 
@@ -59,8 +60,8 @@ namespace Jde{
 		Ω From( runtime_error&& e )ι->up<Exception>;//a caught runtime_error with its type:  a Jde one moved, any other wrapped.
 
 		Exception( string value, ExceptionArgs args={}, SRCE )ι;
-		$ Exception( SL sl, ExceptionArgs args, std::exception&& inner, fmt::format_string<Args...> m="", Args&&... sargs )ι;
-		$ Exception( SL sl, ExceptionArgs args, fmt::format_string<Args...> m, Args&&... sargs )ι;
+		$ Exception( SL sl, ExceptionArgs args, std::exception&& inner, Logging::Format<Args...> m="", Args&&... sargs )ι;
+		$ Exception( SL sl, ExceptionArgs args, Logging::Format<Args...> m, Args&&... sargs )ι;
 
 		virtual ~Exception();
 
@@ -86,12 +87,14 @@ namespace Jde{
 	protected:
 		Exception( SRCE )ι:base{""},_sl{ sl }{}
 		α Format()Ι->sv{ return visit( []( auto&& arg )->sv{return {arg.data(),arg.size()};}, _format ); }
+		α FormatName()Ι->Logging::SourceName;//Format() as its log entry keeps it:  a view of a Format's literal, otherwise a copy.
 		α BreakLog()Ι->void;
 
 		mutable string _what;
 		mutable bool _logged{};//log once: at construction when Level()>=BreakLevel, otherwise at destruction/explicit Log().
 		up<exception> _inner;
 		variant<sv,string> _format;
+		optional<StringMd5> _formatId;//the template's, from its Format:  what its log entry is stored under.
 		vector<string> _args;
 	private:
 		α operator=( Exception&& from )ι->Exception&;
@@ -121,24 +124,24 @@ namespace Jde{
 		return p ? up<std::exception>{ p->Move() } : up<std::exception>{ mu<runtime_error>(e.what()) };
 	}
 
-	$ Exception::Exception( SL sl, ExceptionArgs args, exception&& inner, fmt::format_string<Args...> m, Args&&... sargs )ι:
+	$ Exception::Exception( SL sl, ExceptionArgs args, exception&& inner, Logging::Format<Args...> m, Args&&... sargs )ι:
 		runtime_error{ "" },//not '{}': that picks runtime_error(const char*) with a null pointer - libc++ strlen's it.
 		ExceptionArgs{ args },
 		_inner{ ToExceptionPtr(move(inner)) }, //preserves derived message/type; mu<runtime_error> would slice.
-		_format{ sv{m.get().data(), m.get().size()} },
+		_format{ m.Specs ? decltype(_format){m.Template()} : decltype(_format){m.Text()} },
+		_formatId{ m.Id },
 		_sl{ sl }{
-		_args.reserve( sizeof...(sargs) );
-		ParamPack::Append( _args, sargs... );
+		m.Append( _args, sargs... );
 		BreakLog();
 	}
 
-	$ Exception::Exception( SL sl, ExceptionArgs args, fmt::format_string<Args...> m, Args&&... sargs )ι:
+	$ Exception::Exception( SL sl, ExceptionArgs args, Logging::Format<Args...> m, Args&&... sargs )ι:
 		runtime_error{ "" },
 		ExceptionArgs{ args },
-		_format{ sv{m.get().data(), m.get().size()} },
+		_format{ m.Specs ? decltype(_format){m.Template()} : decltype(_format){m.Text()} },
+		_formatId{ m.Id },
 		_sl{ sl }{
-		_args.reserve( sizeof...(sargs) );
-		ParamPack::Append( _args, sargs... );
+		m.Append( _args, sargs... );
 		BreakLog();
 	}
 

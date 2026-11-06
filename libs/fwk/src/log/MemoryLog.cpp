@@ -9,8 +9,8 @@ namespace Jde{
 	α Logging::Find( function<bool(const Logging::Entry&)> f )ι->vector<Logging::Entry>{ return memoryLog().Find( f ); }
 }
 namespace Jde::Logging{
-	α MemoryLog::Write( const Entry& m )ι->void{
-		_entries.emplace_back( m );
+	α MemoryLog::Write( const Record& r )ι->void{
+		_entries.emplace_back( r.Entry() );
 	}
 	α MemoryLog::Write( ILogger& logger )ι->void{
 		auto entries = _entries.copy(); //Write may log additional _entries.

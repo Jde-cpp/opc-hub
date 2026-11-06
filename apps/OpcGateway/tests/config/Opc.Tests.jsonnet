@@ -102,6 +102,7 @@ local logsDir = args.logsDir;
 	logging:{
 		loadFromServer: false,
 		breakLevel: "Critical",
+		stack:: { default: "Warning" },//open62541's lines (LogStack):  which walk the stack for their file, line and function.
 		spd:{
 			tags: {
 				default: "Information",
@@ -149,7 +150,9 @@ local logsDir = args.logsDir;
 		proto:{
 			path: logsDir + "/opc-tests",
 			timeZone: "America/New_York",
-			delay: "PT1M"
+			delay: "PT1M",
+			file:: { default: "Warning", exception: "Trace" },//which entries keep their file and line in the log files, a logger's `tags` shape:  warnings, errors and exceptions.
+			"function":: { default: "None", exception: "Trace" },//...and their function:  exceptions.
 		}
 	},
 	workers:{

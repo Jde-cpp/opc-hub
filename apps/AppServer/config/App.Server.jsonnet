@@ -104,6 +104,8 @@ function( sync=false )
 			path: logsDir + "/app-server",
 			//no timeZone:  the archive's day directories (<path>/<yyyy>/<m>/<d>) follow the machine's zone, ProtoLog's default - a developer's "America/New_York" here shipped to every install (reviews/m4-closing.md #14).  An IANA name pins them.
 			delay: "PT1M",
+			file:: { default: "Warning", exception: "Trace" },//which entries keep their file and line in the log files, a logger's `tags` shape:  warnings, errors and exceptions.
+			"function":: { default: "None", exception: "Trace" },//...and their function:  exceptions.
 			tags: {
 				default: "Debug",
 				externalLogger: "None"

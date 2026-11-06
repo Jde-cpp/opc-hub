@@ -19,8 +19,7 @@ namespace Jde::Web::Server{
 		Ω Unsubscribe( SocketId socketId )ι->void;
 		α Shutdown( bool terminate, SL sl )ι->void override;
 		α Add( sp<Web::Server::IWebsocketSession> session, vector<QL::Subscription>&& subs, UserPK executer )ε->void;
-		α Write( const Logging::Entry& m )ι->void override;
-		α Write( const Logging::Entry& m, uint32 appPK, App::ConnectionPK connectionPK )ι->void override;
+		α Write( const Logging::Record& r )ι->void override;
 	private:
 		struct Delivery{ Logging::Entry Entry; uint32 AppPK; App::ConnectionPK ConnectionPK; vector<sp<SessionSubscription>> Matches; };
 		α Deliver( std::stop_token stop )ι->void;

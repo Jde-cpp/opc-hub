@@ -330,7 +330,7 @@ namespace Jde::Opc::Emulator{
 		if( onlyIfChanged && summary==_lastStatus )
 			return;//the deadline landed on a statusPeriod boundary - Tick just wrote this exact line, and it is the record (#12).
 		_lastStatus = summary;
-		INFO( "{}", summary );//pre-formatted: a `{:.1f}` inside the log message itself is a MemoryLog::Find self-deadlock.
+		INFO( "{}", summary );
 	}
 
 	α Emulator::Run()ε->int{

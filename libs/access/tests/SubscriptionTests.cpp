@@ -290,7 +290,7 @@ namespace Jde::Access::Tests{
 		PurgeUser( user, root );
 	}
 
-	Ω idWarnings()ι->vector<Logging::Entry>{ return Logging::Find( [](const Logging::Entry& e){ return e.Text.contains("id lookup") || e.Text.contains("carried no id"); } ); }
+	Ω idWarnings()ι->vector<Logging::Entry>{ return Logging::Find( [](const Logging::Entry& e){ return e.Text().contains("id lookup") || e.Text().contains("carried no id"); } ); }
 
 	//authorize-names review #3:  users extends identities, and the fan-out's id lookup selected from access_users alone with its
 	//predicates on access_identities' columns - "no such column" - so every user mutation keyed by name or slug went out
@@ -316,7 +316,7 @@ namespace Jde::Access::Tests{
 		PurgeUser( user, root );
 
 		let warnings = idWarnings();
-		EXPECT_TRUE( warnings.empty() ) << warnings[0].Text;
+		EXPECT_TRUE( warnings.empty() ) << warnings[0].Text();
 		ASSERT_EQ( updated->Changes.size(), 2u );
 		EXPECT_EQ( Json::FindNumber<UserPK::Type>(updated->Resource(0), "id"), optional{user.Value} ) << "keyed by name";
 		EXPECT_EQ( Json::FindNumber<UserPK::Type>(updated->Resource(1), "id"), optional{user.Value} ) << "keyed by slug";
@@ -342,7 +342,7 @@ namespace Jde::Access::Tests{
 		PurgeGroup( group, root );
 
 		let warnings = idWarnings();
-		EXPECT_TRUE( warnings.empty() ) << warnings[0].Text;
+		EXPECT_TRUE( warnings.empty() ) << warnings[0].Text();
 		ASSERT_EQ( deleted->Changes.size(), 1u );
 		EXPECT_EQ( Json::FindNumber<GroupPK::Type>(deleted->Resource(0), "id"), optional{group.Value} );
 		ASSERT_EQ( restored->Changes.size(), 1u );

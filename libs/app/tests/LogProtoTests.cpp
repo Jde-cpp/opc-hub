@@ -3,6 +3,7 @@
 //senders compute.
 #include <gtest/gtest.h>
 #include <jde/fwk/str.h>
+#include <jde/app/log/ProtoLog.h>
 #include <jde/app/log/Records.h>
 #include <jde/app/proto/LogProto.h>
 #include "helpers.h"
@@ -26,7 +27,7 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( Protobuf::ToTimePoint(proto.time()), tp(5) );
 
 		auto back = LogProto::FromLogEntry( Log::Proto::LogEntryClient{proto} );
-		EXPECT_EQ( back.Text, "text {} {}" );
+		EXPECT_EQ( back.Text(), "text {} {}" );
 		EXPECT_EQ( back.Arguments, (vector<string>{"a","b"}) );
 		EXPECT_EQ( back.Level, ELogLevel::Warning );
 		EXPECT_EQ( back.Tags, ELogTags::Test );
@@ -53,6 +54,55 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( proto.line(), 7u );
 		EXPECT_EQ( proto.user_pk(), 3u );
 		EXPECT_EQ( Protobuf::ToTimePoint(proto.time()), tp(1) );
+	}
+
+	TEST( LogProtoTests, FileEntryCanLeaveOutItsSource ){
+		let e = entry( tp(1), ELogLevel::Error, 7, "boom", {}, "src/file.cpp", "Fn" );
+		let none = LogProto::LogEntryFile( e, 0, 0, {false, false} );
+		EXPECT_TRUE( none.file_id().empty() );
+		EXPECT_TRUE( none.function_id().empty() );
+		EXPECT_EQ( none.line(), 0u ) << "the line goes with the file";
+		EXPECT_EQ( Protobuf::ToGuid(none.template_id()), e.Id() );
+		let fileOnly = LogProto::LogEntryFile( e, 0, 0, {true, false} );
+		EXPECT_EQ( Protobuf::ToGuid(fileOnly.file_id()), e.FileId() );
+		EXPECT_EQ( fileOnly.line(), 7u );
+		EXPECT_TRUE( fileOnly.function_id().empty() );
+	}
+
+	//The defaults, on a ProtoLog of its own:  file and line on warnings and above and on exceptions, the function on
+	//exceptions alone - and a String record only for what some entry keeps.
+	TEST( LogProtoTests, ProtoLogKeepsTheSourceItsSettingsPass ){
+		let dir = fs::temp_directory_path()/"Jde.App.Tests.ProtoLogSource";
+		{
+			ProtoLog log{ jobject{{"path", dir.string()}} };
+			let info = entry( tp(1), ELogLevel::Information, 1, "info", {}, "src/info.cpp", "InfoFn" );
+			let warning = entry( tp(2), ELogLevel::Warning, 2, "warning", {}, "src/warning.cpp", "WarningFn" );
+			let thrown = entry( tp(3), ELogLevel::Debug, 3, "thrown", {}, "src/thrown.cpp", "ThrownFn", ELogTags::Sql | ELogTags::Exception );
+			for( let& e : {info, warning, thrown} )
+				log.Write( e );
+			flat_map<uuid,Log::Proto::LogEntryFile> byTemplate; flat_set<string> strings;
+			for( auto& r : log.Entries() ){
+				if( r.has_entry() )
+					byTemplate.emplace( Protobuf::ToGuid(r.entry().template_id()), r.entry() );
+				else if( r.has_str() )
+					strings.emplace( r.str().value() );
+			}
+			ASSERT_EQ( byTemplate.size(), 3u );
+			let& i = byTemplate.at( info.Id() ), w = byTemplate.at( warning.Id() ), t = byTemplate.at( thrown.Id() );
+			EXPECT_TRUE( i.file_id().empty() && i.function_id().empty() && i.line()==0 ) << "Information keeps no source";
+			EXPECT_EQ( Protobuf::ToGuid(w.file_id()), warning.FileId() );
+			EXPECT_EQ( w.line(), 2u );
+			EXPECT_TRUE( w.function_id().empty() ) << "the function only for exceptions";
+			EXPECT_EQ( Protobuf::ToGuid(t.file_id()), thrown.FileId() ) << "an exception keeps its source at any level";
+			EXPECT_EQ( Protobuf::ToGuid(t.function_id()), thrown.FunctionId() );
+			EXPECT_EQ( t.line(), 3u );
+			for( sv kept : {"src/warning.cpp", "src/thrown.cpp", "ThrownFn"} )
+				EXPECT_TRUE( strings.contains(string{kept}) ) << kept;
+			for( sv dropped : {"src/info.cpp", "InfoFn", "WarningFn"} )
+				EXPECT_FALSE( strings.contains(string{dropped}) ) << "a String no entry names: " << dropped;
+		}
+		std::error_code ec;
+		fs::remove_all( dir, ec );
 	}
 
 	//An entry the app server logs on behalf of a gateway/opc instance carries who it came from;  its own carry nothing.

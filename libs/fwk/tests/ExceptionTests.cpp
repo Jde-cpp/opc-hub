@@ -16,10 +16,23 @@ namespace Jde::Tests{
 		[[noreturn]] α Throw()->void override{ throw move(*this); }
 	};
 
-	TEST( ExceptionTests, WhatBadSpecNoTerminate ){
-		Exception e{ SRCE_CUR, ELogLevel::Debug, "{:x}", 10 };
-		let what = string{ e.what() };
-		EXPECT_TRUE( what.contains("10") ) << what;
+	//A spec is applied when the argument is stored, as a log line's is, so what() and the logged entry read as fmt prints
+	//them.  The template is stored with a plain {}, which is what its id names.
+	TEST( ExceptionTests, WhatAppliesASpec ){
+		Logging::ClearMemory();
+		{
+			Exception e{ SRCE_CUR, ELogLevel::Debug, "exception spec {:x}", 10 };
+			EXPECT_EQ( string{e.what()}, "exception spec a" );
+		}
+		let logged = Logging::GetLogger<Logging::MemoryLog>().Find( "exception spec a" );
+		ASSERT_EQ( logged.size(), 1u );
+		EXPECT_EQ( logged[0].Text(), "exception spec {}" );
+		EXPECT_EQ( logged[0].Id(), Logging::GenerateId("exception spec {}") );
+	}
+
+	TEST( ExceptionTests, ArgumentsMatchFmt ){
+		Exception e{ SRCE_CUR, ELogLevel::Debug, "{} {} {}", true, (uint8_t)5, 1234567.0 };
+		EXPECT_EQ( string{e.what()}, fmt::format("{} {} {}", true, (uint8_t)5, 1234567.0) );
 	}
 
 	TEST( ExceptionTests, WhatGoodSpec ){
@@ -58,7 +71,7 @@ namespace Jde::Tests{
 			EXPECT_EQ( string{copy.what()}, string{e.what()} );
 		}
 		//by the template, not the message:  a copy that logged as it was built would log before its args were copied.
-		let lines = Logging::Find( [](const Logging::Entry& e){ return e.Text.starts_with("(813)near x"); } );
+		let lines = Logging::Find( [](const Logging::Entry& e){ return e.Text().starts_with("(813)near x"); } );
 		EXPECT_EQ( lines.size(), 1u ) << "the original logs once, the copy never";
 	}
 
@@ -153,6 +166,23 @@ namespace Jde::Tests{
 			let movedAgain = moved->Move();
 		}//all three destroyed here.
 		EXPECT_EQ( logger.Find(message).size(), 1u ) << "the message logged once per Move, not once per object";
+	}
+
+	//An exception's entry is stored under its format's id, the compiler's (Logging::Format), as a log line's is, with a view
+	//of the literal for its template, and a Move keeps both.
+	TEST( ExceptionTests, LogsUnderItsFormatsId ){
+		static constexpr char format[]{ "exception id {}" };
+		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
+		Logging::ClearMemory();
+		{
+			Exception e{ SRCE_CUR, ELogLevel::Information, format, 1 };
+			let moved = e.Move();
+		}
+		let logged = memory.Find( "exception id 1" );
+		ASSERT_EQ( logged.size(), 1u );
+		EXPECT_EQ( logged[0].Id(), Logging::GenerateId("exception id {}") );
+		EXPECT_EQ( logged[0].Text().data(), format ) << "the template was copied";
+		EXPECT_EQ( logged[0].Arguments, vector<string>{"1"} );
 	}
 
 	//LogsOnce's other half, the path every shipped config takes:  an exception below BreakLevel, with the exception tag above

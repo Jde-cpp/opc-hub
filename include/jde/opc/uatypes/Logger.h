@@ -3,9 +3,10 @@
 
 namespace Jde::Opc{
 	//These extend fwk's ELogTags rather than colliding with it:  fwk uses bits 0-26 of the same 64-bit space, so ours
-	//start above the 32-bit line.  Opc takes the base bit and the vendor's UA_LogCategory values land in their own
-	//order immediately above it, which is what lets Logger::Log map a category to a tag by arithmetic.
-	constexpr uint OpcLogTagBase{ 32 };
+	//start at its LibraryTagBase, the 32-bit line, which also keeps them from breaking into the debugger (BreaksFor).
+	//Opc takes the base bit and the vendor's UA_LogCategory values land in their own order immediately above it, which is
+	//what lets Logger::Log map a category to a tag by arithmetic.
+	constexpr uint OpcLogTagBase{ LibraryTagBase };
 	constexpr uint UaLogTagBase{ OpcLogTagBase+1 };	//UA_LOGCATEGORY_NETWORK==0 lands here.
 	enum class EOpcLogTags : uint{
 		Opc           = 1ull << OpcLogTagBase,

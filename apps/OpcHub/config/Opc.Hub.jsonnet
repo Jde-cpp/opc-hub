@@ -31,6 +31,7 @@ function( sync=false )
 	dbServers: app.dbServers, //args-driven: the hub args mount access + app + gateway and list all three script dirs.
 	logging:{
 		breakLevel:: "Warning", // Debugging variable
+		stack:: gw.logging.stack,
 		//args.logFile (args/install: keep the previous starts' logs beside the file) merges into the file sink, and args.logConsole
 		//(args/install: no source locations) into the console's; the dev args set neither.
 		spd: app.logging.spd + { tags: app.logging.spd.tags + gw.logging.spd.tags, sinks: app.logging.spd.sinks + {

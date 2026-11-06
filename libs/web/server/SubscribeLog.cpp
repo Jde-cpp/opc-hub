@@ -156,13 +156,13 @@ namespace Jde::Web::Server{
 		WriteGuard()ι{ _writing = true; }
 		~WriteGuard(){ _writing = false; }
 	};
-	α SubscribeLog::Write( const Logging::Entry& m )ι->void{
-		Write( m, _appPK, _connectionPK );
-	}
-	α SubscribeLog::Write( const Logging::Entry& m, uint32 appPK, App::ConnectionPK connectionPK )ι->void{
+	α SubscribeLog::Write( const Logging::Record& r )ι->void{
 		if( _writing )
 			return;//re-entered while matching, or logged on the delivery thread - by a session's WriteSubscription or a gate:  the subscriber does not want its delivery echoed back to it, and dispatching it would not terminate.
 		WriteGuard guard;
+		let& m = r.Entry();
+		let appPK = r.AppPK ? r.AppPK : _appPK;//a forwarded entry's origin, otherwise this process.
+		let connectionPK = r.AppPK ? (App::ConnectionPK)r.InstancePK : _connectionPK;
 		vector<sp<SessionSubscription>> matches;
 		{
 			rl _{ _mutex };
@@ -171,7 +171,7 @@ namespace Jde::Web::Server{
 					continue;
 				let& filter = s->Sub.Fields.Filter();
 				let valid = filter.Test( "time", m.Time )
-					&& filter.Test( "text", m.Text )
+					&& ( !filter.ColumnFilters.contains("text") || filter.Test("text", string{m.Text()}) )
 					&& filter.Test( "line", m.Line )
 					&& filter.Test( "templateId", m.Id() )
 					&& filter.Test( "message", m.Message() )

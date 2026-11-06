@@ -66,6 +66,7 @@ local appPort = 2067;
 	},
 	logging:{
 		breakLevel: "Critical",
+		stack:: { default: "Warning" },//open62541's lines (LogStack):  which walk the stack for their file, line and function.
 		spd:{
 			tags: {
 				default: "Information",

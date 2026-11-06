@@ -27,8 +27,7 @@ namespace Jde::Tests{
 	//logger is missing, which is the half that made it hard to find.
 	struct UnbuildableLogger final : Logging::ILogger{
 		UnbuildableLogger( const jobject& o )ε:ILogger{o}{ throw Exception{"this logger cannot be created"}; }
-		α Write( const Logging::Entry& )ι->void override{}
-		α Write( const Logging::Entry&, uint32, uint32 )ι->void override{}
+		α Write( const Logging::Record& )ι->void override{}
 		α Shutdown( bool, SL )ι->void override{}
 		α Name()Ι->sv override{ return "Unbuildable"; }
 	};
@@ -38,7 +37,7 @@ namespace Jde::Tests{
 		Logging::ClearMemory();
 		EXPECT_EQ( Logging::Add<UnbuildableLogger>("l6-probe"), nullptr );
 		Settings::Set( "/logging/l6-probe", jvalue{} );//and gone again:  a null reads as no section.
-		let reported = Logging::Find( [](const Logging::Entry& e){ return e.Level>=ELogLevel::Error && e.Text.contains("could not be created"); } );
+		let reported = Logging::Find( [](const Logging::Entry& e){ return e.Level>=ELogLevel::Error && e.Text().contains("could not be created"); } );
 		EXPECT_FALSE( reported.empty() ) << "a configured logger that did not start said nothing at Error";
 	}
 
@@ -47,8 +46,7 @@ namespace Jde::Tests{
 	//incompatible" in the gateway suite.  This logger takes nothing, so it stays inert for the rest of the run.
 	struct QuietLogger final : Logging::ILogger{
 		QuietLogger():ILogger{ jobject{{"tags", jobject{{"default", "None"}}}} }{}
-		α Write( const Logging::Entry& )ι->void override{}
-		α Write( const Logging::Entry&, uint32, uint32 )ι->void override{}
+		α Write( const Logging::Record& )ι->void override{}
 		α Shutdown( bool, SL )ι->void override{}
 		α Name()Ι->sv override{ return "Quiet"; }
 	};
@@ -259,7 +257,7 @@ namespace Jde::Tests{
 	// never written, and nothing else in the suite reads Entry::UserPK back off the variadic ctors.
 	TEST_F( LogGeneralTests, EntryKeepsUserPK ){
 		constexpr auto userPK = Jde::UserPK{ 42 };
-		Logging::Entry e{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, string{"msg {}"}, 1 };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, "msg {}", 1 };
 		EXPECT_EQ( e.UserPK, userPK );
 		EXPECT_EQ( e.Level, ELogLevel::Debug );
 		EXPECT_EQ( e.Tags, ELogTags::Test );
@@ -267,7 +265,7 @@ namespace Jde::Tests{
 		EXPECT_EQ( e.Arguments[0], "1" );
 		EXPECT_EQ( e.Message(), "msg 1" );
 
-		Logging::Entry anonymous{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, string{"msg {}"}, 1 };
+		Logging::Entry anonymous{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, "msg {}", 1 };
 		EXPECT_EQ( anonymous.UserPK, Jde::UserPK{} ) << "the overload without a user must default it";
 
 		Logging::Entry preformatted{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, string{"msg {}"}, vector<string>{"1"} };
@@ -283,6 +281,40 @@ namespace Jde::Tests{
 	// the DBG both proves that level and memoizes it into the logger's ExtrapolatedTags, and only then is the tag
 	// raised to Trace - which fails unless SetLevel reaches the cumulative (it short-circuits the TRACE before any
 	// logger is consulted) *and* drops that memo.
+	//A Threshold's settings go over its defaults, a logger's `tags` shape (ProtoLog's file and function, LogStack's stack).
+	TEST_F( LogGeneralTests, ThresholdsApplyOverTheDefaults ){
+		let defaults = jobject{ {"default", "Warning"}, {"exception", "Trace"} };
+		let exception = ELogTags::Sql | ELogTags::Exception;
+		Logging::Threshold dflt{ "test", nullptr, defaults };
+		EXPECT_FALSE( dflt.ShouldLog(ELogLevel::Information, ELogTags::App) );
+		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Warning, ELogTags::App) );
+		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Debug, exception) );
+		let everything = jobject{ {"default", "Trace"} };
+		EXPECT_TRUE( Logging::Threshold("test", &everything, defaults).ShouldLog(ELogLevel::Trace, ELogTags::App) );
+		let noExceptions = jobject{ {"exception", "None"} };
+		Logging::Threshold quiet{ "test", &noExceptions, defaults };
+		EXPECT_FALSE( quiet.ShouldLog(ELogLevel::Error, exception) ) << "exception: None drops it from exceptions";
+		EXPECT_TRUE( quiet.ShouldLog(ELogLevel::Warning, ELogTags::App) ) << "...and leaves the default level in place";
+	}
+
+	//LogStack walks the stack only from /logging/stack's level, Warning as by default here:  below it an entry has no source,
+	//at it the caller's frame.  The first walk pays the symbolizer's one-time start, ~170 ms in a debug build.
+	TEST_F( LogGeneralTests, LogStackWalksFromItsThreshold ){
+		ASSERT_FALSE( Logging::ShouldCaptureStack(ELogLevel::Information, ELogTags::Test) ) << "the suite's config sets /logging/stack";
+		ASSERT_TRUE( Logging::ShouldCaptureStack(ELogLevel::Warning, ELogTags::Test) );
+		Logging::ClearMemory();
+		Logging::LogStack( ELogLevel::Information, ELogTags::Test, 0, "LogStack below its threshold {}", 1 );
+		Logging::LogStack( ELogLevel::Warning, ELogTags::Test, 0, "LogStack at its threshold {}", 1 );
+		let below = Logging::Find( [](let& e){ return e.Text()=="LogStack below its threshold {}"; } );
+		ASSERT_EQ( below.size(), 1u );
+		EXPECT_TRUE( below[0].File().empty() ) << below[0].File();
+		EXPECT_EQ( below[0].Line, 0u );
+		let at = Logging::Find( [](let& e){ return e.Text()=="LogStack at its threshold {}"; } );
+		ASSERT_EQ( at.size(), 1u );
+		EXPECT_TRUE( at[0].File().ends_with("LogGeneralTests.cpp") ) << "not the caller's frame: " << at[0].File();
+		EXPECT_NE( at[0].Line, 0u );
+	}
+
 	//install-issues #7: SpdLog is handed its own /logging/spd object and looked `flushOn` up by a root path, which the jobject
 	//overload (a key, not a path) never resolves - every config's flushOn was ignored and the default stood, Information in a
 	//release build, so a service's text log showed nothing below that until a flush.  The key reads it; the default holds without.

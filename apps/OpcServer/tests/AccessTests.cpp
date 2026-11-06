@@ -661,7 +661,7 @@ namespace Jde::Opc::Server::Tests{
 			UA_TrustListDataType_clear( &list );
 		}
 
-		let lines = Logging::Find( [&](const Logging::Entry& e){ return e.Text.contains("does not exist") && e.Message().contains(missing.string()); } );
+		let lines = Logging::Find( [&](const Logging::Entry& e){ return e.Text().contains("does not exist") && e.Message().contains(missing.string()); } );
 		ASSERT_EQ( lines.size(), 3u ) << "one line per scan";
 		EXPECT_EQ( lines[0].Level, ELogLevel::Warning );
 		EXPECT_EQ( lines[1].Level, ELogLevel::Debug );

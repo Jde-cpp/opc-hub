@@ -24,7 +24,7 @@ namespace Jde::App{
 
 	α LogProto::LogEntryClient( Logging::Entry&& e )ι->Log::Proto::LogEntryClient{
 		Log::Proto::LogEntryClient proto;
-		proto.set_text( move(e.Text) );
+		proto.set_text( move(e.TextString()) );
 		*proto.mutable_args() = Protobuf::FromVector( move(e.Arguments) );
 		proto.set_level( (Log::Proto::ELogLevel)e.Level );
 		proto.set_tags( (uint)e.Tags );
@@ -37,18 +37,21 @@ namespace Jde::App{
 		return proto;
 	}
 
-	α LogProto::LogEntryFile( const Logging::Entry& m, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->Log::Proto::LogEntryFile{
+	α LogProto::LogEntryFile( const Logging::Entry& m, App::ProgramPK appPK, App::ProgInstPK instancePK, SourceFields source )ι->Log::Proto::LogEntryFile{
 		Log::Proto::LogEntryFile proto;
 		proto.set_template_id( ToBytes(m.Id()) );
 		for( auto& arg : m.Arguments )
 			*proto.add_args() = ToBytes( Logging::Entry::GenerateId(arg) );
 		proto.set_level( (Log::Proto::ELogLevel)m.Level );
 		proto.set_tags( (uint)m.Tags );
-		proto.set_line( m.Line );
 		*proto.mutable_time() = Protobuf::ToTimestamp( m.Time );
 		proto.set_user_pk( m.UserPK.Value );
-		proto.set_file_id( ToBytes(m.FileId()) );
-		proto.set_function_id( ToBytes(m.FunctionId()) );
+		if( source.File && m.File().size() ){//none for an entry without a source:  a LogStack line below /logging/stack.
+			proto.set_line( m.Line );
+			proto.set_file_id( ToBytes(m.FileId()) );
+		}
+		if( source.Function && m.Function().size() )
+			proto.set_function_id( ToBytes(m.FunctionId()) );
 		proto.set_app_pk( appPK );//0 for an entry this process wrote:  a proto3 zero is not even on the wire.
 		proto.set_app_instance_pk( instancePK );
 		return proto;

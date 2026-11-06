@@ -32,15 +32,15 @@ namespace Jde::App::Client{
 		Logging::Add<RemoteLog>( "remote", move(client) );
 	}
 
-	α RemoteLog::Write( const Logging::Entry& m )ι->void{
-		if( !empty(m.Tags & _tags) )//recursion guard
+	α RemoteLog::Write( const Logging::Record& r )ι->void{
+		if( !empty(r.Tags & _tags) )//recursion guard
 			return;
 		bool firstDrop;
 		{
 			ul _{ _mutex };
 			if( !_client )
 				return;
-			_entries.push_back( m );
+			_entries.push_back( r.Entry() );
 			firstDrop = Cap();
 			ArmTimer();
 		}
