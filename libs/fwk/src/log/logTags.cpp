@@ -1,5 +1,5 @@
 #include <jde/fwk/log/logTags.h>
-#include <mutex>
+#include <bit>
 #include <jde/fwk/log/ILogger.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
@@ -300,30 +300,23 @@ namespace Jde{
 		ExtrapolatedTags = _configuredTags;
 	}
 
-	Ω split( ELogTags tags )ι->vector<ELogTags>{
-		vector<ELogTags> result;
-		for( uint i=1; i<ELogTagStrings.size(); ++i ){
-			let flag = ( ELogTags )( 1ul<<(i-1) );
-			if( !empty(tags & flag) )
-				result.push_back( flag );
-		}
-		return result;
-	}
+	//Every bit, not just the framework's that ELogTagStrings names:  a library's tag (EOpcLogTags) counts toward an overlap too.
+	Ω bits( ELogTags tags )ι->uint{ return (uint)std::popcount( std::to_underlying(tags) ); }
 	α LogTags::MinLevel( ELogTags tags )Ι->ELogLevel{
 		optional<ELogLevel> level;
 		if( ExtrapolatedTags.cvisit(tags, [&](let& kv){level = kv.second;}) )
 			return *level;
-		vector<ELogTags> individual = split( tags );
-		if( individual.size()>1 ){
+		if( bits(tags)>1 ){
 			uint matches{};
-			ExtrapolatedTags.cvisit_while( [&level,&matches,tags,count=individual.size()](let& kv){
-				if( empty(kv.first & tags) )
-					return true;
-				if( auto iterCount = split(kv.first & tags).size(); iterCount>matches ){
+			//configured tags only:  a memoized answer, the default included, would compete as a match.  Every one, since a tie
+			//takes the lower level, as combining loggers does, not whichever is visited first.
+			_configuredTags.cvisit_all( [&level,&matches,tags](let& kv){
+				if( let overlap = bits(kv.first & tags); overlap>matches ){
 					level = kv.second;
-					matches = iterCount;
+					matches = overlap;
 				}
-				return matches+1<count;
+				else if( overlap && overlap==matches )
+					level = Logging::min( *level, kv.second );
 			} );
 		}
 		let levelString = level ? Jde::ToString( *level ) : Ƒ( "unset - {}", Jde::ToString(_defaultLevel) );

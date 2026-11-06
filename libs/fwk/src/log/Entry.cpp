@@ -58,6 +58,25 @@ namespace Jde::Logging{
 	α GenerateId( sv text )ι->StringMd5{ return Crypto::CalcMd5(text); }
 
 	Ω sourceIds()ι->concurrent_flat_map<const char*,StringMd5>&{ static concurrent_flat_map<const char*,StringMd5> ids; return ids; }
+	//What an argument fmt refuses at run time, a null char pointer, is stored as in its place.
+	Ω formatError( const fmt::format_error& e )ι->string{ return string{"<format error: "}+e.what()+'>'; }
+	//An argument as stored:  with its field's spec, then without it if the value can't take the spec at run time, then, if fmt
+	//still refuses the value (a null char pointer), the error in its place.
+	Ω formatArgument( sv field, fmt::format_args one )ι->string{
+		try{
+			return fmt::vformat( fmt::string_view{field.data(), field.size()}, one );
+		}
+		catch( const fmt::format_error& e ){
+			if( field=="{}" )
+				return formatError( e );
+		}
+		try{
+			return fmt::vformat( "{}", one );
+		}
+		catch( const fmt::format_error& e ){
+			return formatError( e );
+		}
+	}
 
 	α Record::Entry()Ι->const Logging::Entry&{
 		if( !_entry )
@@ -110,12 +129,7 @@ namespace Jde::Logging{
 			break;
 		const fmt::format_args one{ &arg, 1 };
 		const bool spec = i<64 && ((m.Specs >> i) & 1) && i<(int)fields.size();
-		try{
-			y.push_back( spec ? fmt::vformat(fmt::string_view{fields[i].data(), fields[i].size()}, one) : fmt::vformat("{}", one) );
-		}
-		catch( const fmt::format_error& ){//fmt checked the spec against the type at compile time.
-			y.push_back( fmt::vformat("{}", one) );
-		}
+		y.push_back( formatArgument(spec ? fields[i] : sv{"{}"}, one) );
 	}
 	return y;
 }

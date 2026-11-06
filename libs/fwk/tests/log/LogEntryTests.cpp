@@ -94,6 +94,14 @@ namespace Jde::Tests{
 		EXPECT_EQ( spec.Text(), "template view {}" );
 	}
 
+	//fmt has no formatter for boost::json::string, so a log line couldn't take one;  fwk's formats it as its text, specs and all.
+	TEST_F( LogEntryTests, AJsonStringIsItsText ){
+		const boost::json::string text{ "text" }, spec{ "spec" };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "json {} {:>6}", text, spec };
+		EXPECT_EQ( e.Arguments, (vector<string>{"text", "  spec"}) );
+		EXPECT_EQ( e.Message(), "json text   spec" );
+	}
+
 	//Every logger gets the line as one Record.  Emit's builds its Entry on first ask, once, for every logger after;  an Entry's
 	//wraps it, with a forwarded entry's origin.
 	TEST_F( LogEntryTests, ARecordBuildsItsEntryOnce ){
@@ -116,17 +124,30 @@ namespace Jde::Tests{
 		EXPECT_EQ( forwarded.InstancePK, 8u );
 	}
 
+	//fmt refuses some values only at run time:  a null char pointer.  It is stored as the error, not thrown out of Entry's
+	//noexcept constructor.  A spec is dropped first, in case only the spec was refused.
+	TEST_F( LogEntryTests, AnArgumentFmtRefusesIsStoredAsTheError ){
+		const char* null{};
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "refused {} {:>4} {}", null, null, 1 };
+		const string nullError{ "<format error: string pointer is null>" };
+		ASSERT_EQ( e.Arguments.size(), 3u );
+		EXPECT_EQ( e.Arguments[0], nullError );
+		EXPECT_EQ( e.Arguments[1], nullError ) << "without its spec, it still fails";
+		EXPECT_EQ( e.Arguments[2], "1" );
+		EXPECT_EQ( e.Message(), Ƒ("refused {} {} 1", nullError, nullError) );
+	}
+
 	//A source_location's file and function are hashed once per call site, cached by the name's address.  The address is the
 	//key, not the text, so an unloaded library's names have to be forgotten (Process::FreeLibrary).
 	TEST_F( LogEntryTests, SourceIdsAreCachedByAddress ){
-		static char name[]{ "first name" };
+		char name[]{ "first name" };
 		let first = Logging::SourceId( name );
 		EXPECT_EQ( first, Logging::GenerateId("first name") );
 		std::ranges::copy( sv{"other name"}, name );
 		EXPECT_EQ( Logging::SourceId(name), first ) << "cached by address, so the new text is not hashed";
 		Logging::ForgetSourceIds();
 		EXPECT_EQ( Logging::SourceId(name), Logging::GenerateId("other name") ) << "forgotten, then hashed again";
-		Logging::ForgetSourceIds();//this address isn't a source_location's.
+		Logging::ForgetSourceIds();//a stack address, which later frames reuse.
 	}
 
 	//the overload the wire path uses: entries received from another instance are already built, so they arrive through

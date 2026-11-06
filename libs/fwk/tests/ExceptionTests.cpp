@@ -30,6 +30,20 @@ namespace Jde::Tests{
 		EXPECT_EQ( logged[0].Id(), Logging::GenerateId("exception spec {}") );
 	}
 
+	//An exception stores its arguments on its own typed path, which must not throw out of its noexcept constructor either.
+	TEST( ExceptionTests, WhatStoresAnArgumentFmtRefuses ){
+		const char* null{};
+		Exception e{ SRCE_CUR, ELogLevel::Debug, "refused {} {:>4}", null, null };
+		EXPECT_EQ( string{e.what()}, "refused <format error: string pointer is null> <format error: string pointer is null>" );
+	}
+
+	//An exception stores its arguments as a log line does, through ToArguments, so as fmt prints them:  an ostream wrote a bool
+	//as 1, a uint8_t as a raw character and a double to six significant digits.  A boost::json::string has fwk's formatter.
+	TEST( ExceptionTests, ArgumentsAreWhatFmtPrints ){
+		Exception e{ SRCE_CUR, ELogLevel::Debug, "{} {} {} {} {} {} {} {} {} {:>6}", true, (uint8_t)5, (int8_t)-3, 1234567.0, 0.1+0.2, 'c', "literal", sv{"view"}, boost::json::string{"json"}, boost::json::string{"spec"} };
+		EXPECT_EQ( string{e.what()}, "true 5 -3 1234567 0.30000000000000004 c literal view json   spec" ) << "shortest round trip, not six digits";
+	}
+
 	TEST( ExceptionTests, ArgumentsMatchFmt ){
 		Exception e{ SRCE_CUR, ELogLevel::Debug, "{} {} {}", true, (uint8_t)5, 1234567.0 };
 		EXPECT_EQ( string{e.what()}, fmt::format("{} {} {}", true, (uint8_t)5, 1234567.0) );

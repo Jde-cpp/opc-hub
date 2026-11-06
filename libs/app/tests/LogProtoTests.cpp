@@ -4,7 +4,6 @@
 #include <gtest/gtest.h>
 #include <jde/fwk/str.h>
 #include <jde/app/log/ProtoLog.h>
-#include <jde/app/log/Records.h>
 #include <jde/app/proto/LogProto.h>
 #include "helpers.h"
 

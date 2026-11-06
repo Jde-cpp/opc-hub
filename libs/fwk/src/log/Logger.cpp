@@ -9,13 +9,8 @@ namespace Jde{
 	//The one fan-out loop, behind Emit and Log( const Record& ).  Each logger checks its own level.
 	Ω write( const Logging::Record& record )ι->void{
 		for( auto& logger : Logging::Loggers() ){
-			try{
-				if( logger->ShouldLog(record.Level, record.Tags) )
-					logger->Write( record );
-			}
-			catch( const fmt::format_error& e ){
-				CRITICALT( ELogTags::App, "could not log '{}': '{}'", record.Format() ? record.Format()->Text : record.Entry().Text(), e.what() );
-			}
+			if( logger->ShouldLog(record.Level, record.Tags) )
+				logger->Write( record );
 		}
 	}
 	Ω breakFor( [[maybe_unused]] ELogLevel level, [[maybe_unused]] ELogTags tags )ι->void{

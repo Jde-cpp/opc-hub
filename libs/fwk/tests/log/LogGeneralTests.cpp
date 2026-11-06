@@ -12,6 +12,7 @@ namespace Jde::Tests{
 		~LogGeneralTests() override{}
 
 		static constexpr ELogTags MutatedTags{ ELogTags::Scheduler };
+		static constexpr ELogTags LibraryTag{ (ELogTags)(1ull<<LibraryTagBase) };//no library's tag parser is loaded here.
 		α SetUp()->void override{ Logging::ClearMemory(); }
 		α TearDown()->void override{ Logging::GetLogger<Logging::MemoryLog>().ClearLevel( MutatedTags ); }
 
@@ -143,8 +144,7 @@ namespace Jde::Tests{
 	// The level-resolution engine itself had no test.  fwk-max #3 was MinLevel counting split(tags).size() rather
 	// than the overlap, so the first configured entry sharing any bit won and the answer followed
 	// concurrent_flat_map iteration order; fwk-max #2 was the ctor leaving _minLevel at Information instead of the
-	// parsed default.  Every case here has a strict popcount winner - a tie (http vs client for HttpClientRead)
-	// really would be order-dependent, because the comparison is `iterCount>matches`.
+	// parsed default.  Every case here has a strict popcount winner;  LogTagsTieTakesTheLowerLevel has the ties.
 	TEST_F( LogGeneralTests, LogTagsResolvesBestMatch ){
 		//three single-bit distractors, so the buggy 'first overlapping entry wins' has to draw the one right entry
 		//out of four to look correct.  They are safe for the lookups below: only socket|client|read is asserted
@@ -156,8 +156,24 @@ namespace Jde::Tests{
 		EXPECT_EQ( t.MinLevel(ELogTags::Http), ELogLevel::Trace );//exact match.
 		EXPECT_EQ( t.MinLevel(ELogTags::SocketClientRead), ELogLevel::Debug ) << "socket.client's 2 shared bits must beat every 1-bit entry";
 		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Warning ) << "nothing overlaps sql - it falls back to the default";
+		EXPECT_EQ( t.MinLevel(LibraryTag | ELogTags::Read), ELogLevel::Critical ) << "a library's bit counts toward the overlap, as Opc's IotReadTag";
 		EXPECT_TRUE( t.ShouldLog(ELogLevel::Debug, ELogTags::SocketClientRead) );
 		EXPECT_FALSE( t.ShouldLog(ELogLevel::Trace, ELogTags::SocketClientRead) );
+	}
+
+	//Configured tags sharing as many bits with a line tie, and the lower level wins, as combining loggers does - not
+	//whichever concurrent_flat_map visits first.  Each case has distractors above the winner, so that order would miss it.
+	TEST_F( LogGeneralTests, LogTagsTieTakesTheLowerLevel ){
+		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"http","Critical"},{"client","Trace"},{"read","Error"}}}} };
+		EXPECT_EQ( t.MinLevel(ELogTags::HttpClientRead), ELogLevel::Trace );
+		LogTags silenced{ jobject{{"tags", jobject{{"default","Warning"},{"http","None"},{"client","Error"},{"read","Critical"}}}} };
+		EXPECT_EQ( silenced.MinLevel(ELogTags::HttpClientRead), ELogLevel::Error ) << "None yields to a real level, as in the cumulative";
+		LogTags gateway{ jobject{{"tags", jobject{{"default","Information"},{"socket.client.read","Information"},{"http.client.read","Information"}}}} };
+		gateway.SetLevel( LibraryTag, ELogLevel::Trace );//the gateway's opc: "Trace" against its *.read levels, for IotReadTag.
+		EXPECT_EQ( gateway.MinLevel(LibraryTag | ELogTags::Read), ELogLevel::Trace );
+		let sql = jobject{ {"sql", "Error"} };
+		Logging::Threshold file{ "test", &sql, jobject{{"default", "Warning"}, {"exception", "Trace"}} };
+		EXPECT_TRUE( file.ShouldLog(ELogLevel::Debug, ELogTags::Sql | ELogTags::Exception) ) << "an exception keeps its source whatever its other tags' levels";
 	}
 
 	// MinLevel memoizes its answer into ExtrapolatedTags, so both mutators have to drop the memo as well as the
@@ -289,6 +305,13 @@ namespace Jde::Tests{
 		EXPECT_FALSE( dflt.ShouldLog(ELogLevel::Information, ELogTags::App) );
 		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Warning, ELogTags::App) );
 		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Debug, exception) );
+		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Debug, LibraryTag | ELogTags::Exception) ) << "a library's exception, as a UAException";
+		Logging::Threshold memoized{ "test", nullptr, defaults };
+		for( uint i=0; i<LibraryTagBase; ++i ){//library lines memoized at the default, each sharing the library's bit with the exception.
+			if( let tag = (ELogTags)(1ull<<i); tag!=ELogTags::Exception )
+				memoized.ShouldLog( ELogLevel::Debug, LibraryTag | tag );
+		}
+		EXPECT_TRUE( memoized.ShouldLog(ELogLevel::Debug, LibraryTag | ELogTags::Exception) ) << "matched against an earlier line's memo";
 		let everything = jobject{ {"default", "Trace"} };
 		EXPECT_TRUE( Logging::Threshold("test", &everything, defaults).ShouldLog(ELogLevel::Trace, ELogTags::App) );
 		let noExceptions = jobject{ {"exception", "None"} };
@@ -328,6 +351,30 @@ namespace Jde::Tests{
 		EXPECT_EQ( Logging::SpdLog{settings("Trace")}.FlushLevel(), ELogLevel::Trace );
 		EXPECT_EQ( Logging::SpdLog{settings("Warning")}.FlushLevel(), ELogLevel::Warning );
 		EXPECT_EQ( Logging::SpdLog{settings(nullopt)}.FlushLevel(), _debug ? ELogLevel::Debug : ELogLevel::Information );
+	}
+
+	//SpdLog formats from the call's arguments, in a noexcept Write.  When fmt refuses a value there, it writes the line from
+	//the Entry instead, with the error in that argument's place.
+	TEST_F( LogGeneralTests, SpdLogWritesALineFmtRefuses ){
+		let dir = TestsDir( "spd/refused", true );
+		fs::remove_all( dir );
+		fs::create_directories( dir );
+		const jobject settings{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}}}}} };
+		constexpr Logging::Format<const char*> format{ "refused {}" };
+		let view = format.View();
+		const char* null{};
+		let args = fmt::make_format_args( null );
+		{
+			Logging::SpdLog spd{ settings };
+			spd.Write( Logging::Record{ELogLevel::Warning, ELogTags::Test, SRCE_CUR, view, args} );
+			spd.Shutdown( false, SRCE_CUR );
+		}
+		string text;
+		for( let& entry : fs::directory_iterator(dir) ){
+			std::ifstream is{ entry.path() };
+			text += string{ std::istreambuf_iterator<char>{is}, {} };
+		}
+		EXPECT_NE( text.find("refused <format error: string pointer is null>"), string::npos ) << text;
 	}
 
 	//install-issues #13: a start truncated the text log, so restarting a product after a failure erased the lines that said

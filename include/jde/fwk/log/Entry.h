@@ -25,8 +25,6 @@ namespace Jde::Logging{
 	//can come back holding other names.
 	Φ SourceId( const char* name )ι->StringMd5;
 	Φ ForgetSourceIds()ι->void;
-	//Each argument as a stored entry keeps it:  formatted with its field's spec, otherwise as fmt's {}.
-	Φ ToArguments( const FormatView& m, fmt::format_args args )ι->vector<string>;
 
 	//A name as an Entry carries it - its template, file and function: a view of static storage (a source_location's names,
 	//a Format's literal) or owned text, off the wire or stripped of specs, plus its id hashed at most once.  A view of a
@@ -151,8 +149,7 @@ namespace Jde::Logging{
 		UserPK{ userPK },
 		_text{ TemplateName(m.View()) },
 		_file{ sl.source_file() },
-		_function{ sl.description() },
-		_message{ fmt::vformat(m.Fmt, fmt::make_format_args(FWD(args)...)) }
+		_function{ sl.description() }
 	{}
 #else
 	template<class... Args>
@@ -166,8 +163,7 @@ namespace Jde::Logging{
 		Tags{ tags },
 		Time{ Clock::now() },
 		UserPK{ userPK },
-		_text{ TemplateName(m.View()) },
-		_message{ fmt::vformat(m.Fmt, fmt::make_format_args(FWD(args)...)) }{
+		_text{ TemplateName(m.View()) }{
 		auto at = Locate( sl );
 		Line = at.Line;
 		_file = SourceName{ move(at.File) };

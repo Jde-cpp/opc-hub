@@ -1,6 +1,12 @@
 #pragma once
 #include <jde/fwk/crypto/md5.h>
-#include <jde/fwk/utils/paramPack.h>
+
+//boost::json::string converts to sv, but fmt has no formatter for it:  formatted as its text, specs and all.
+template<> struct fmt::formatter<boost::json::string> : fmt::formatter<fmt::string_view>{
+	α format( const boost::json::string& s, fmt::format_context& ctx )const{
+		return fmt::formatter<fmt::string_view>::format( fmt::string_view{s.data(), s.size()}, ctx );
+	}
+};
 
 namespace Jde::Logging{
 	namespace Internal{
@@ -50,19 +56,6 @@ namespace Jde::Logging{
 			} );
 			return y;
 		}
-		Ŧ FormatField( sv field, const T& arg )ι->string{
-			try{
-				if constexpr( std::is_convertible_v<const T&, sv> ){//as ParamPack:  a string type fmt has no formatter for (boost::json::string) still converts.
-					const sv text{ arg };
-					return fmt::vformat( fmt::string_view{field.data(), field.size()}, fmt::make_format_args(text) );
-				}
-				else
-					return fmt::vformat( fmt::string_view{field.data(), field.size()}, fmt::make_format_args(arg) );
-			}
-			catch( const fmt::format_error& ){//fmt checked the spec against the type at compile time.
-				return ParamPack::ToString( arg );
-			}
-		}
 	}
 
 	//A Format with its arguments' types erased:  what the out-of-line Emit and Entry take.
@@ -72,6 +65,9 @@ namespace Jde::Logging{
 		uint64_t Specs;//bit i:  field i has a spec.
 		StringMd5 Id;
 	};
+	//Each argument as a stored entry keeps it, a log line's and an exception's alike:  formatted with its field's spec,
+	//otherwise as fmt's {}.
+	Γ α ToArguments( const FormatView& m, fmt::format_args args )ι->vector<string>;
 
 	//A log call's or an exception's format string:  fmt's checked format_string, and the id its entries are stored under -
 	//the md5 of the template with its specs stripped - both settled by the compiler at the call site, so a line never hashes
@@ -87,9 +83,6 @@ namespace Jde::Logging{
 		α Text()Ι->sv{ return sv{ Fmt.get().data(), Fmt.get().size() }; }
 		α Template()Ι->string{ return View().Template(); }
 		α View()Ι->FormatView{ return { Text(), Specs, Id }; }
-		//Each argument as a stored entry keeps it:  formatted with its field's spec, otherwise as ParamPack's {}.  An Exception's
-		//path, typed, since its arguments needn't have a formatter (boost::json::string);  a log line's is ToArguments.
-		template<class... T> α Append( vector<string>& values, const T&... args )Ι->void;
 
 		fmt::format_string<Args...> Fmt;
 		uint64_t Specs;//bit i:  field i has a spec.
@@ -97,24 +90,4 @@ namespace Jde::Logging{
 	};
 	//Args come from the call's arguments, never from the format, as with fmt::format_string.
 	template<class... Args> using Format = BasicFormat<std::type_identity_t<Args>...>;
-
-	template<class... Args> template<class... T>
-	α BasicFormat<Args...>::Append( vector<string>& values, const T&... args )Ι->void{
-		if( !Specs )
-			return ParamPack::Append( values, args... );
-		std::array<sv,sizeof...(T)> fields{};
-		uint i{};
-		Internal::ForEachField( Text(), []( sv ){}, [&]( sv field, sv ){
-			if( i<fields.size() )
-				fields[i] = field;
-			++i;
-		} );
-		values.reserve( values.size()+sizeof...(T) );
-		i = 0;
-		auto store = [&]( const auto& arg )->string{
-			const auto field = i++;
-			return field<64 && ((Specs >> field) & 1) ? Internal::FormatField( fields[field], arg ) : ParamPack::ToString( arg );
-		};
-		( values.push_back(store(args)), ... );
-	}
 }

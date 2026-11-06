@@ -35,12 +35,13 @@ namespace Jde::App::Client{
 	α RemoteLog::Write( const Logging::Record& r )ι->void{
 		if( !empty(r.Tags & _tags) )//recursion guard
 			return;
+		let& entry = r.Entry();//before the lock:  the first logger to ask formats the arguments.
 		bool firstDrop;
 		{
 			ul _{ _mutex };
 			if( !_client )
 				return;
-			_entries.push_back( r.Entry() );
+			_entries.push_back( entry );
 			firstDrop = Cap();
 			ArmTimer();
 		}

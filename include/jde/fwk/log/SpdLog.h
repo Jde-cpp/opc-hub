@@ -23,12 +23,15 @@ namespace Jde::Logging{
 		α FlushLevel()Ι->ELogLevel{ return (ELogLevel)_logger.flush_level(); }
 		α SetMinLevel( ELogLevel /*level*/ )ι->void override{}
 		α Write( const Record& r )ι->void override{
-			if( const auto m = r.Format() )//straight from the call's arguments, with no Entry.
-				_logger.log( ToSpdSL(r.Source()), (spdlog::level::level_enum)r.Level, fmt::vformat(fmt::string_view{m->Text.data(), m->Text.size()}, r.Args()) );
-			else{
-				const auto& e = r.Entry();
-				_logger.log( e.SourceLocation(), (spdlog::level::level_enum)e.Level, e.Message() );
+			if( const auto m = r.Format() ){//straight from the call's arguments, with no Entry...
+				try{
+					_logger.log( ToSpdSL(r.Source()), (spdlog::level::level_enum)r.Level, fmt::vformat(fmt::string_view{m->Text.data(), m->Text.size()}, r.Args()) );
+					return;
+				}
+				catch( const fmt::format_error& ){}//...unless fmt refuses a value at run time:  the Entry stores the error in its place.  spdlog catches its own.
 			}
+			const auto& e = r.Entry();
+			_logger.log( e.SourceLocation(), (spdlog::level::level_enum)e.Level, e.Message() );
 		}
 	private:
 		spdlog::logger _logger;

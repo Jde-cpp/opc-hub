@@ -131,7 +131,7 @@ namespace Jde{
 		_format{ m.Specs ? decltype(_format){m.Template()} : decltype(_format){m.Text()} },
 		_formatId{ m.Id },
 		_sl{ sl }{
-		m.Append( _args, sargs... );
+		_args = Logging::ToArguments( m.View(), fmt::make_format_args(sargs...) );
 		BreakLog();
 	}
 
@@ -141,7 +141,7 @@ namespace Jde{
 		_format{ m.Specs ? decltype(_format){m.Template()} : decltype(_format){m.Text()} },
 		_formatId{ m.Id },
 		_sl{ sl }{
-		m.Append( _args, sargs... );
+		_args = Logging::ToArguments( m.View(), fmt::make_format_args(sargs...) );
 		BreakLog();
 	}
 
