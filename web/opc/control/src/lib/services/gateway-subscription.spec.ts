@@ -3,6 +3,7 @@ import { ExtensionObject, valueString } from '../model/value';
 import { OpcError } from '../model/opc-error';
 import { scBadUnexpectedError } from '../model/types';
 import { Gateway, SubscriptionResult } from './gateway-service';
+import * as FromServer from 'jde-proto/Opc.FromServer';
 import { flush, silence } from 'jde-spa/testing';
 import { nodeA as A, nodeB as B, TestGateway } from 'jde-opc/testing';
 
@@ -124,6 +125,28 @@ describe( 'Gateway readings', ()=>{
 	it( 'pushes a Good reading as its value', async ()=>{
 		const { results, push } = await subscribed();
 		push( {doubleValue: 7} );//proto3 leaves 0/Good off the wire
+		expect( results ).toMatchObject( [{value: 7, sc: 0}] );
+	} );
+
+	//418-watch-items #8:  processMessage had no branch for the gateway's MonitoredItemModified push, so it threw "unknown message"
+	//and the rest of the transmission - here a reading - went unread.
+	it( 'takes a MonitoredItemModified push without an error, and reads on past it', async ()=>{
+		const { gateway, results } = await subscribed();
+		const node = {namespaceIndex: 2, numeric: 1};
+		const transmission = FromServer.Transmission.encode( FromServer.Transmission.create({messages: [
+			{monitoredItemModified: {opcId, node, revisedSamplingInterval: 250, revisedQueueSize: 2}},
+			{nodeValues: {opcId, node, value: {doubleValue: 7}}}
+		]}) ).finish();
+		const error = silence( 'error' );
+		const debug = vi.spyOn( console, 'debug' ).mockImplementation( ()=>{} );
+		try{
+			(gateway as any).processMessage( transmission );
+			expect( error ).not.toHaveBeenCalled();
+		}
+		finally{
+			error.mockRestore();
+			debug.mockRestore();
+		}
 		expect( results ).toMatchObject( [{value: 7, sc: 0}] );
 	} );
 

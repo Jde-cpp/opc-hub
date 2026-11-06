@@ -25,9 +25,10 @@ namespace Jde::Opc::Gateway{
 	};
 
 	struct MonitoredItemModifyResult final{ StatusCode Status{}; double RevisedSamplingInterval{}; uint32 RevisedQueueSize{}; };
-	//ModifyMonitoredItems:  new sampling, queue and discard settings for items this client already monitors, changed in place, so
-	//a node whose MinTimeInterval was edited keeps sampling through the change (spec *Collector contract*) - a delete and create
-	//would not.  One request per subscription the items are on;  the response's revised values go back to UAMonitoringNodes.  A
+	//ModifyMonitoredItems:  new sampling, queue, discard and filter settings for items this client already monitors, changed in
+	//place, so a node whose MinTimeInterval was edited keeps sampling through the change (spec *Collector contract*) - a delete and
+	//create would not.  UAMonitoringNodes posts one when a join or a leave changes what an item's listeners ask (spec *Watch
+	//list*).  One request per subscription the items are on;  the response's revised values go back to UAMonitoringNodes.  A
 	//node this client has no item for answers BadMonitoredItemIdInvalid without a round trip, and a request refused outright fails
 	//each of its nodes with the refusal, so every node asked about is in the result.
 	struct ModifyMonitoredItemsAwait final : TAwait<flat_map<NodeId,MonitoredItemModifyResult>>{

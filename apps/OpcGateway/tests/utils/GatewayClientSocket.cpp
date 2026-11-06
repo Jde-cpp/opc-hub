@@ -115,6 +115,9 @@ namespace Jde::Opc::Gateway::Tests{
 			case kNodeValues:
 				onNodeValues( move(*m->mutable_node_values()) );
 				break;
+			case kMonitoredItemModified:
+				onModified( m->monitored_item_modified() );
+				break;
 			case kException:{
 				if( duplicateRefused(requestId, m->exception().what()) )
 					break;
@@ -220,11 +223,14 @@ namespace Jde::Opc::Gateway::Tests{
 		return BlockAwait<await<jvalue>,jvalue>( Query(move(query), move(variables), returnRaw) );
 	}
 	α GatewayClientSocket::Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, sp<IListener> listener, SL sl )ε->await<FromServer::SubscriptionAck>{
+		return Subscribe( move(slug), nodes, {}, move(listener), sl );
+	}
+	α GatewayClientSocket::Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, const vector<MonitoringParameters>& parameters, sp<IListener> listener, SL sl )ε->await<FromServer::SubscriptionAck>{
 		let requestId = NextRequestId();
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]Subscribe: '{}'.", hex(requestId), slug );
 		ul _{ _subscriptionRequestMutex };
 		_subscriptionRequests.emplace( requestId, make_tuple(slug, nodes, move(listener)) );
-		return await<FromServer::SubscriptionAck>{ FromClientUtils::Subscription(move(slug), nodes, requestId), requestId, shared_from_this(), sl };
+		return await<FromServer::SubscriptionAck>{ FromClientUtils::Subscription(move(slug), nodes, requestId, parameters), requestId, shared_from_this(), sl };
 	}
 
 	α GatewayClientSocket::Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SL sl )ε->await<FromServer::UnsubscribeAck>{
@@ -299,6 +305,19 @@ namespace Jde::Opc::Gateway::Tests{
 			listener->OnPush( nodeValues );
 			listener->OnData( opcId, nodeId, nodeValues.value() );
 		}
+	}
+
+	α GatewayClientSocket::onModified( const FromServer::MonitoredItemModified& modified )ι->void{
+		rl _{ _subscriptionsMutex };
+		let nodeId = ProtoUtils::ToNodeId( modified.node() );
+		if( auto slugNodes = _subscriptions.find(modified.opc_id()); slugNodes!=_subscriptions.end() ){
+			if( auto listeners = slugNodes->second.find(nodeId); listeners!=slugNodes->second.end() ){
+				for( let& listener : listeners->second )
+					listener->OnModified( modified );
+				return;
+			}
+		}
+		DBGT( ELogTags::SocketClientRead, "[{},{}]A MonitoredItemModified for a node nothing here watches.", modified.opc_id(), nodeId.ToString() );
 	}
 
 	α GatewayClientSocket::CloseTasks( beast::error_code ec )ι->void{

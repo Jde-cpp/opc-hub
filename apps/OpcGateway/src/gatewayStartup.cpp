@@ -74,6 +74,10 @@ namespace Jde::Opc{
 		_ttl = Settings::FindDuration("/gateway/ttl").value_or( 2min );
 		_requestTimeout = positiveDuration( "/gateway/requestTimeout", 10s, milliseconds{std::numeric_limits<UA_UInt32>::max()} );//UA_ClientConfig::timeout
 		_publishingInterval = positiveDuration( "/gateway/subscription/publishingInterval", 500ms );
+		_lifetimeCount = Settings::FindNumber<uint32>( "/gateway/subscription/lifetimeCount" ).value_or( 10000 );
+		_maxKeepAliveCount = Settings::FindNumber<uint32>( "/gateway/subscription/maxKeepAliveCount" ).value_or( 10 );
+		_maxNotificationsPerPublish = Settings::FindNumber<uint32>( "/gateway/subscription/maxNotificationsPerPublish" ).value_or( 0 );
+		_priority = Settings::FindNumber<uint8>( "/gateway/subscription/priority" ).value_or( 0 );
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.
 		_processSsl.emplace( Json::FindDefaultObject(webServerSettings, "ssl"), sv{} );

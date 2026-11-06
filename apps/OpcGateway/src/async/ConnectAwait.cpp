@@ -25,7 +25,8 @@ namespace Jde::Opc::Gateway{
 		base{sl},
 		_opcSlug{ move(opc) },
 		_cred{ SessionCredential(sessionId, user, _opcSlug).value_or(Credential{}) },
-		_sessionId{ sessionId }
+		_sessionId{ sessionId },
+		_user{ user }
 	{}
 	α ConnectAwait::await_resume()ε->sp<UAClient>{
 		auto client = Promise() ? base::await_resume() : _result;
@@ -60,6 +61,8 @@ namespace Jde::Opc::Gateway{
 			auto servers = co_await ServerCnnctnAwait{ string{} };
 			THROW_IFX( servers.empty(), Exception( _sl, {EHttpStatus::NotFound}, "No default OPC server connection.") );
 			_opcSlug = servers.front().Slug;
+			if( _sessionId )//the session's credential for the slug, not for "":  a password login on the default connection stored it under the slug (418-watch-items N2).
+				_cred = SessionCredential( _sessionId, _user, _opcSlug ).value_or( Credential{} );
 			Start();
 		}
 		catch( Exception& e ){

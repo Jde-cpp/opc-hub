@@ -20,9 +20,7 @@ namespace Jde::Opc::Gateway{
 			UA_NodeId_copy( &n, &item.itemToMonitor.nodeId );//deep copy - clear() owns it; assignment would alias the NodeId's heap data.
 			item.itemToMonitor.attributeId = UA_ATTRIBUTEID_VALUE;
 			item.monitoringMode = UA_MONITORINGMODE_REPORTING;
-			item.requestedParameters.samplingInterval = parameters.SamplingInterval;
-			item.requestedParameters.queueSize = parameters.QueueSize;
-			item.requestedParameters.discardOldest = parameters.DiscardOldest;
+			parameters.Set( item.requestedParameters );
 		}
 	}
 	Ξ CreateMonitoredItemsRequest::ToJson()ι->jarray{
@@ -35,6 +33,10 @@ namespace Jde::Opc::Gateway{
 			j["samplingInterval"] = request.requestedParameters.samplingInterval;
 			j["queueSize"] = request.requestedParameters.queueSize;
 			j["discardOldest"] = request.requestedParameters.discardOldest;
+			if( const auto& filter = request.requestedParameters.filter; UA_ExtensionObject_hasDecodedType(&filter, &UA_TYPES[UA_TYPES_DATACHANGEFILTER]) ){
+				const auto& f = *(const UA_DataChangeFilter*)filter.content.decoded.data;
+				j["filter"] = jobject{ {"trigger", (uint32)f.trigger}, {"deadbandType", f.deadbandType}, {"deadbandValue", f.deadbandValue} };
+			}
 			values.push_back( j );
 		}
 		return values;

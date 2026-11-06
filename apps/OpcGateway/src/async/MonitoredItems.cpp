@@ -117,9 +117,7 @@ namespace Jde::Opc::Gateway{
 				let& parameters = _nodes.find( node )->second;
 				auto& item = request.itemsToModify[i];
 				item.monitoredItemId = monitorId;//open62541 assigns the clientHandle itself (MonitoredItems_prepareModify).
-				item.requestedParameters.samplingInterval = parameters.SamplingInterval;
-				item.requestedParameters.queueSize = parameters.QueueSize;
-				item.requestedParameters.discardOldest = parameters.DiscardOldest;
+				parameters.Set( item.requestedParameters );//the filter with the rest:  a modify without one clears a deadband the create set.
 				nodes.push_back( node );
 			}
 			RequestId _requestId{};//name required by the UACε macro.

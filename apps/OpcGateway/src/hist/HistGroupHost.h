@@ -66,8 +66,8 @@ namespace Jde::Opc::Gateway{
 		α Join( const HistGroupNodeRow& row, Opc::Hist::Thresholds thresholds, optional<Opc::Hist::Writer> by, SRCE )ε->void;
 		//The node leaves, its NodeRemoved by `by`, and its item goes.  Throws as Group::Remove does.
 		α Leave( HistGroupNodePK index, optional<Opc::Hist::Writer> by, SRCE )ε->void;
-		//Nodes' thresholds re-resolved:  the library's, and in one ModifyMonitoredItems the sampling and queue of each item whose
-		//parameters that changes, in place (spec *Collector contract*).  Throws as Group::SetThresholds does.
+		//Nodes' thresholds re-resolved:  the library's, and each item whose parameters that changes modified in place, through the
+		//map's one modify path (UAMonitoringNodes::ParametersChanged, spec *Collector contract*).  Throws as Group::SetThresholds does.
 		α SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SRCE )ε->void;
 		α FindThresholds( HistGroupNodePK index )Ι->optional<Opc::Hist::Thresholds>;
 		α Description( HistGroupNodePK index )Ι->optional<HistDescription>;
@@ -105,8 +105,9 @@ namespace Jde::Opc::Gateway{
 		α ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void override;
 		//On the strand, before the new subscription's first value:  the check of the server's namespaces starts here.
 		α ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void override;
-		α ItemParameters( const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;
+		α ItemParameters( const ServerCnnctnNK&, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;//the connection is this host's own, so the slug goes unread.
 		α RunsAt( Duration publishingInterval )ι->void override;//keeps the interval for the other Parameters callers, and gives the group its heartbeat hold.
+		α ItemModified( const ServerCnnctnNK&, const NodeId& node, const MonitoredItemModifyResult& result, const optional<AskReverted>& )ι->void override;//a refusal logged with the group's guid - the collector's clients are its own, so every modify is its own edit's - and a success left to the map's line.  A reverted ask is the map's:  ItemParameters answers from the thresholds.
 		α to_string()Ι->string override{ return Ƒ( "HistGroup({})", _guid ); }
 		//What the collector asks of a node's item (spec *Collector contract*):  sampling at its MinTimeInterval, or at 0, the
 		//server's fastest, when it has none, and a publishing interval's samples queued - `publishing`, the interval the
@@ -132,7 +133,9 @@ namespace Jde::Opc::Gateway{
 		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; HistNodeAttributes Attributes; bool Unwritten{}; };
 		α Subscribing()ι->VoidTask;
 		α Unsubscribe( flat_set<NodeId>&& nodes )ι->void;
-		α Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask;
+		//These members' items modified to what ItemParameters now answers, through the map (UAMonitoringNodes::ParametersChanged);
+		//with no client there is no item, and the next create asks ItemParameters.
+		α Modifying( flat_set<NodeId> nodes )ι->void;
 		α Retry()ι->void;
 		//Joining an item the collector's client already had, which sends no initial value:  each node's value read instead.
 		α ReadJoined( sp<UAClient> client, flat_set<NodeId> nodes )ι->VoidTask;

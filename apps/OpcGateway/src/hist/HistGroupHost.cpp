@@ -4,7 +4,6 @@
 #include <jde/opc/proto/opc.Common.h>
 #include "../async/ConnectAwait.h"
 #include "../async/DataChanges.h"
-#include "../async/MonitoredItems.h"
 #include "../async/ParentPathsAwait.h"
 #include "../async/ReadValueAwait.h"
 #include "../async/TranslateBrowsePathsAwait.h"
@@ -69,7 +68,7 @@ namespace Jde::Opc::Gateway{
 			Unsubscribe( {*id} );
 	}
 	α HistGroupHost::SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SL sl )ε->void{
-		flat_map<NodeId,MonitoringParameters> modify;
+		flat_set<NodeId> modify;
 		vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> set;//the members' the library has now, for the listener.
 		let finish = [&]{
 			if( modify.size() )
@@ -90,7 +89,7 @@ namespace Jde::Opc::Gateway{
 				let changed = parameters!=Parameters( node.Thresholds, _publishingInterval );//a deviation, or Stepped, or MaxTimeInterval:  the item has nothing to change.
 				node.Thresholds = move( thresholds );
 				if( changed && node.Subscribed )
-					modify.emplace( *node.Id, parameters );
+					modify.emplace( *node.Id );
 				else if( changed )
 					node.Stale = true;
 			}
@@ -282,7 +281,7 @@ namespace Jde::Opc::Gateway{
 				if( closed )//Close ran while this pass was out:  before the create registered this host, its unsubscribe found nothing to drop.
 					UAClient::Unsubscribe( self );
 				else{
-					flat_map<NodeId,MonitoringParameters> stale;//edited while the create was out:  SetNodeThresholds left their items to this.
+					flat_set<NodeId> stale;//edited while the create was out:  SetNodeThresholds left their items to this.
 					flat_set<NodeId> joined;//created on an item the client already had.
 					flat_set<NodeId> created;//each node's DataType read for the group.
 					for( let& result : ack.results() ){
@@ -302,7 +301,7 @@ namespace Jde::Opc::Gateway{
 						if( n && !std::exchange(n->Subscribed, true) ){
 							n->Lost.reset();
 							if( std::exchange(n->Stale, false) )
-								stale.emplace( node, Parameters(n->Thresholds, _publishingInterval) );
+								stale.emplace( node );
 							if( existing.contains(node) )
 								joined.emplace( node );
 							created.emplace( move(node) );
@@ -870,26 +869,14 @@ namespace Jde::Opc::Gateway{
 		if( nodes.size() )
 			Describe( move(client), move(nodes), true );
 	}
-	α HistGroupHost::Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask{
-		auto self = shared_from_this();
-		try{
-			auto client = Client();
-			if( !client )//no client, no item:  the next create takes ItemParameters.
-				co_return;
-			ModifyMonitoredItemsAwait modify{ move(parameters), client };//an lvalue, as ConnectAwait above.
-			auto results = co_await Any( modify );
-			for( let& [node,result] : results ){
-				if( result.Status ){
-					WARN( "[{}]'{}' refused to modify the item for '{}':  {}.", _guid, _slug, node.ToString(), UAException::Message(result.Status) );
-				}
-				else{
-					DBG( "[{}]Item for '{}' modified:  sampling {}ms, queue {}.", _guid, node.ToString(), result.RevisedSamplingInterval, result.RevisedQueueSize );
-				}
-			}
-		}
-		catch( const runtime_error& e ){
-			WARN( "[{}]Could not modify items on '{}':  {}", _guid, _slug, e.what() );
-		}
+	α HistGroupHost::Modifying( flat_set<NodeId> nodes )ι->void{
+		auto client = Client();
+		if( auto p = client ? client->TryMonitoredNodes() : nullptr; p )
+			p->ParametersChanged( shared_from_this(), nodes );
+	}
+	α HistGroupHost::ItemModified( const ServerCnnctnNK&, const NodeId& node, const MonitoredItemModifyResult& result, const optional<AskReverted>& )ι->void{
+		if( result.Status )//a success is the map's line (UAMonitoringNodes::Modifying);  a refusal is this group's edit, so it names the group.
+			WARN( "[{}]'{}' refused to modify the item for '{}':  {}.  It still samples at {}ms.", _guid, _slug, node.ToString(), UAException::Message(result.Status), result.RevisedSamplingInterval );
 	}
 	α HistGroupHost::FindNode( const NodeId& node )ι->std::pair<HistGroupNodePK,Node*>{
 		let p = _byNode.find( node );
@@ -908,7 +895,7 @@ namespace Jde::Opc::Gateway{
 		_publishingInterval = publishingInterval;
 		_group->SetPublishingInterval( publishingInterval );
 	}
-	α HistGroupHost::ItemParameters( const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters{
+	α HistGroupHost::ItemParameters( const ServerCnnctnNK&, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters{
 		ul _{ _mutex };
 		let n = const_cast<HistGroupHost*>( this )->FindNode( node ).second;//a read:  nothing is written through it.
 		return Parameters( n ? n->Thresholds : Opc::Hist::Thresholds{}, publishingInterval );
