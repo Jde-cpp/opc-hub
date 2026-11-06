@@ -11,9 +11,11 @@ namespace Jde::Opc::Gateway{
 	//(ReadRequest::FindAttrib);  one the table has no type for - browse, dataType, arrayDimensions, the permissions, value - is refused
 	//before the write, as is an unknown one.  A LocalizedText given as a bare string keeps the locale the node's text has, read first:
 	//a server keeps a text per locale (Part 3 §8.5), and open62541 answers a session without one the first text ever added, so a text
-	//written under no locale beside the nodeset's `en` would never read back;  {locale, text} names the locale instead.  The server's
-	//refusal of any attribute - the node's WriteMask lacks its bit, or the user's rights do, BadUserAccessDenied either way - is the
-	//mutation's error, as updateVariable's is, and the result request reads the node back.
+	//written under no locale beside the nodeset's `en` would never read back;  {locale, text} names the locale instead.  An empty text
+	//removes its locale's (open62541), so an empty description is gone, and a bare empty name is refused:  a node keeps its DisplayName.
+	//The server's refusal of any attribute - the node's WriteMask lacks its bit, or the user's rights do, BadUserAccessDenied either way -
+	//is the mutation's error, as updateVariable's is, and names the attributes written beside it (WriteAwait::Refusal);  otherwise the
+	//result request reads the node back.
 	struct NodeQLMAwait final : TAwaitEx<jvalue,TAwait<WriteResponse>::Task>{
 		using base = TAwaitEx<jvalue,TAwait<WriteResponse>::Task>;
 		NodeQLMAwait( QL::MutationQL&& mutation, sp<UAClient> client, SRCE )ι:base{ sl }, _mutation{move(mutation)}, _client{move(client)}{}

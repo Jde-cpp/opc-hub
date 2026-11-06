@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectorRef, Component, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { MatCheckboxChange, MatCheckboxModule } from '@angular/material/checkbox';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
@@ -31,6 +31,7 @@ export class NodeAttributes{
 	}
 	pageData = input.required<NodePageData>();
 	node = input.required<UaNode>();
+	renamed = output<string>();//the DisplayName the server read back after a write:  the page's title and sidenav take it
 	rows = signal<Attribute[]>( [] );
 	userWriteMask = signal<number|undefined>( undefined );//the node's, as read:  the edit gate
 	loading = signal<boolean>( true );
@@ -82,22 +83,34 @@ export class NodeAttributes{
 	}
 	changeText( a:Attribute, e:Event ){
 		const box = <HTMLInputElement>e.target;
-		return this.#write( a, box.value, ()=>box.value = a.text );
+		const show = ()=>box.value = a.text;
+		return a.def.required && !box.value.trim() ? show() : this.#write( a, box.value, show );//a blank DisplayName writes nothing;  a blank Description removes it
 	}
 	//The editor ends showing what the server reads back - the echo, with the mask it reads back too, or after a refusal every attribute
 	//read again - rather than what was typed, as the Children tab's editors do:  a binding re-applies only when its value changes.
+	//Leaving the box for another node fires the write as the page moves, and that node's rows usually land first:  an answer for rows
+	//since replaced is dropped, as load() drops one, so the last node's mask never becomes this one's edit gate.  A refusal still says so.
 	async #write( a:Attribute, value:Value, show?:()=>void ){
+		const load = this.#load, node = this.node();
 		try{
-			const json = await this.pageData().gateway.updateNode( this.cnnctnSlug, this.node().nodeId, {[a.key]: value}, [a.key, 'userWriteMask'] );
-			if( json && a.key in json )
+			const json = await this.pageData().gateway.updateNode( this.cnnctnSlug, node.nodeId, {[a.key]: value}, [a.key, 'userWriteMask'] );
+			if( load!=this.#load )
+				return;
+			if( json && a.key in json ){
 				a.take( json[a.key] );
+				if( a.key=='name' )
+					this.renamed.emit( a.text );
+			}
 			const mask = this.rows().find( r=>r.key=='userWriteMask' );
 			if( mask && json && 'userWriteMask' in json )
 				mask.take( json['userWriteMask'] );
 			this.#take( [...this.rows()] );
 		}
 		catch( e ){
-			this.#snackbar.exception( `Could not write ${a.label}.`, e );
+			const left = load!=this.#load;
+			this.#snackbar.exception( left ? `Could not write ${a.label} of ${node.name}.` : `Could not write ${a.label}.`, e );
+			if( left )
+				return;
 			await this.load();
 		}
 		show?.();

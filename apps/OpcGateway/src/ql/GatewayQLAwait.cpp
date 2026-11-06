@@ -118,6 +118,8 @@ namespace Jde::Opc::Gateway{
 	α GatewayQLMAwait::Suspend()ι->void{
 		if( let edit = HistQL::FindEdit(_query.CommandName); edit && HistQL::Target(_query)==HistQL::ETarget::Neither )
 			ResumeExp( HistQL::TargetRefused(*edit, _sl) );//before a client is opened for it.
+		else if( _query.JsonTableName=="node" && _query.Type!=QL::EMutationQL::Update )//createNode, deleteNode…:  refused before a connect, too.
+			ResumeExp( Exception{_sl, {}, "Only updateNode is supported."} );
 		else
 			GetClient( this );
 	}

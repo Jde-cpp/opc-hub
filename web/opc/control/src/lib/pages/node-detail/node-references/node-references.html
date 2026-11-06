@@ -1,4 +1,4 @@
-<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the references"></mat-progress-bar>
 @if( error(); as text ){
 	<div class="jde-empty" role="alert">
 		<mat-icon aria-hidden="true">error_outline</mat-icon>

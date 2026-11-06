@@ -61,7 +61,7 @@
 		<span class="row-count">{{ values().length }} {{ mode()=='modified' ? (values().length==1 ? "modification" : "modifications") : (values().length==1 ? "value" : "values") }}</span>
 	</div>
 </mat-toolbar>
-<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the history"></mat-progress-bar>
 @for( r of refused(); track r.node.key ){
 	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ nodeName(r.node) }}: {{ answerer() }} answered {{ statusText(r.status) }}.</p>
 }

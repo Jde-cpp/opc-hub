@@ -15,6 +15,9 @@ const objectJson = ( userWriteMask?:number )=>({ id: {ns: 2, i: 5005}, nodeClass
 //motorRpm's, the Value an Uncertain reading with both timestamps
 const variableJson = { id: {ns: 2, i: 6012}, nodeClass: 2, browse: {ns: 2, name: 'motorRpm'}, name: 'motorRpm', description: null, writeMask: 0, userWriteMask: 0, rolePermissions: {sc: badAttributeIdInvalid}, userRolePermissions: {sc: badAttributeIdInvalid}, accessRestrictions: {sc: badAttributeIdInvalid}, dataValue: {v: 1450.5, sc: 0x40900000, source: {seconds: 1762300000, nanos: 5000000}, server: {seconds: 1762300001, nanos: 0}}, dataType: {i: 11}, valueRank: -1, arrayDimensions: [], accessLevel: 3, userAccessLevel: 3, accessLevelEx: 3, minimumSamplingInterval: 0, historizing: true };
 const pumpManual = new OpcObject( {ns: 2, i: 5005, name: 'Pump (Manual)', browse: {ns: 2, name: 'pumpManual'}} );
+//pump1's:  no WriteMask, so nothing to edit
+const pump1Json = { ...objectJson( 0 ), id: {ns: 2, i: 5001}, browse: {ns: 2, name: 'pump1'}, name: 'Pump 1', writeMask: 0 };
+const pump1 = new OpcObject( {ns: 2, i: 5001, name: 'Pump 1', browse: {ns: 2, name: 'pump1'}} );
 
 describe( 'NodeAttributes', ()=>{
 	//the tab over a gateway that answers the attributes from `json` - as Gateway.attributes builds them - and echoes a write
@@ -56,6 +59,7 @@ describe( 'NodeAttributes', ()=>{
 		const cells = [...fixture.nativeElement.querySelectorAll( 'mat-row' )].map( r=>[...r.querySelectorAll( 'mat-cell' )].map( c=>c.textContent.trim() ) );
 		expect( cells.find( c=>c[0]=='Value' )?.slice( 0, 2 ) ).toEqual( ['Value', '1450.5'] );
 		expect( fixture.nativeElement.querySelectorAll( 'input, mat-checkbox' ).length ).toBe( 0 );//a mask of 0:  nothing to edit
+		expect( fixture.nativeElement.querySelector( 'mat-progress-bar' )?.getAttribute( 'aria-label' ) ).toBe( 'Reading the attributes' );//axe's aria-progressbar-name
 	} );
 
 	//the edit gate:  an editor where the UserWriteMask has the bit, and none where it has not, or where the server gave no mask
@@ -98,6 +102,44 @@ describe( 'NodeAttributes', ()=>{
 		expect( mask.value ).toBe( '96' );
 	} );
 
+	//an empty text removes the node's text in its locale:  a Description can go, a DisplayName can't
+	it( 'writes a cleared Description, and never a blank DisplayName', async ()=>{
+		const { fixture, page, gateway } = create( pumpManual, objectJson( EWriteMask.DisplayName|EWriteMask.Description ) );
+		await flush( 2 );
+		fixture.detectChanges();
+		const name = <HTMLInputElement>fixture.nativeElement.querySelector( 'input[aria-label="DisplayName"]' );
+		name.value = '  ';
+		name.dispatchEvent( new Event( 'change' ) );
+		await flush( 2 );
+		expect( gateway.updateNode ).not.toHaveBeenCalled();
+		expect( name.value ).toBe( 'Pump (Manual)' );
+		const description = <HTMLInputElement>fixture.nativeElement.querySelector( 'input[aria-label="Description"]' );
+		description.value = '';
+		description.dispatchEvent( new Event( 'change' ) );
+		await flush( 2 );
+		expect( gateway.updateNode ).toHaveBeenCalledWith( 'cn', expect.objectContaining( {ns: 2, id: 5005} ), {description: ''}, ['description', 'userWriteMask'] );
+		expect( row( page, 'description' ).text ).toBe( '' );
+	} );
+
+	//reviews-issue/417-clients-attributes.md #7:  the page's title and sidenav take the name the server read back
+	it( 'tells the page the DisplayName the server read back', async ()=>{
+		const { fixture, page } = create( pumpManual, objectJson( EWriteMask.DisplayName|EWriteMask.Description ) );
+		await flush( 2 );
+		fixture.detectChanges();
+		const renamed = vi.fn();
+		page.renamed.subscribe( renamed );
+		const description = <HTMLInputElement>fixture.nativeElement.querySelector( 'input[aria-label="Description"]' );
+		description.value = 'described';
+		description.dispatchEvent( new Event( 'change' ) );
+		await flush( 2 );
+		expect( renamed ).not.toHaveBeenCalled();
+		const name = <HTMLInputElement>fixture.nativeElement.querySelector( 'input[aria-label="DisplayName"]' );
+		name.value = 'Pump One';
+		name.dispatchEvent( new Event( 'change' ) );
+		await flush( 2 );
+		expect( renamed ).toHaveBeenCalledExactlyOnceWith( 'Pump One' );
+	} );
+
 	it( 'says so and reads the attributes again when the server refuses a write', async ()=>{
 		const { fixture, page, gateway, snackbar } = create( pumpManual, objectJson( EWriteMask.Description ) );
 		await flush( 2 );
@@ -110,6 +152,46 @@ describe( 'NodeAttributes', ()=>{
 		expect( snackbar.exception ).toHaveBeenCalledWith( 'Could not write Description.', expect.any( Error ) );
 		expect( gateway.attributes ).toHaveBeenCalledTimes( 2 );
 		expect( row( page, 'description' ).text ).toBe( 'Explicit object without a type.' );
+	} );
+
+	//Leaving the box for a sidenav sibling fires the write as the router moves, and the next node's one read beats the write and its
+	//read-back:  the echo is the last node's, and its UserWriteMask must not become the new node's edit gate.
+	const leaveMidWrite = async ()=>{
+		const t = create( pumpManual, objectJson( EWriteMask.Description ) );
+		await flush( 2 );
+		t.fixture.detectChanges();
+		let answer!:{ resolve:( json:any )=>void, reject:( e:Error )=>void };
+		t.gateway.updateNode.mockReturnValue( new Promise<any>( ( resolve, reject )=>answer = {resolve, reject} ) );
+		const box = <HTMLInputElement>t.fixture.nativeElement.querySelector( 'input[aria-label="Description"]' );
+		box.value = 'written';
+		box.dispatchEvent( new Event( 'change' ) );
+		t.gateway.attributes.mockImplementation( async ( _opc:string, n:UaNode )=>attributesOf( n.nodeClass ).map( d=>new Attribute( d, (<any>pump1Json)[d.key] ) ) );
+		t.fixture.componentRef.setInput( 'node', pump1 );
+		t.fixture.detectChanges();
+		await flush( 2 );
+		t.fixture.detectChanges();
+		expect( row( t.page, 'name' ).text ).toBe( 'Pump 1' );
+		return { ...t, answer };
+	};
+	it( "drops a write's echo that answers after the page has moved to another node", async ()=>{
+		const { fixture, page, gateway, answer } = await leaveMidWrite();
+		answer.resolve( {description: 'written', userWriteMask: EWriteMask.Description} );
+		await flush( 2 );
+		fixture.detectChanges();
+		expect( page.userWriteMask() ).toBe( 0 );
+		expect( row( page, 'userWriteMask' ).value ).toBe( 0 );
+		expect( row( page, 'description' ).text ).toBe( 'Explicit object without a type.' );
+		expect( fixture.nativeElement.querySelectorAll( 'input, mat-checkbox' ).length ).toBe( 0 );
+		expect( gateway.attributes ).toHaveBeenCalledTimes( 2 );
+	} );
+	it( 'still says so when a write the page has left is refused, but reads nothing again', async ()=>{
+		const { fixture, page, gateway, snackbar, answer } = await leaveMidWrite();
+		answer.reject( new Error( 'BadUserAccessDenied' ) );
+		await flush( 3 );
+		fixture.detectChanges();
+		expect( snackbar.exception ).toHaveBeenCalledWith( 'Could not write Description of Pump (Manual).', expect.any( Error ) );
+		expect( gateway.attributes ).toHaveBeenCalledTimes( 2 );
+		expect( page.userWriteMask() ).toBe( 0 );
 	} );
 
 	it( 'shows the error when the gateway cannot read them', async ()=>{

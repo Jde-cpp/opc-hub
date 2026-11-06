@@ -66,6 +66,7 @@ export abstract class UaNode extends NodeId{
 
 	get nodeId(){ return new NodeId( this ); }
 	get name(){ return this.#name?.text; } #name:ILocalizedText;
+	set name( text:string ){ this.#name = { locale: this.#name?.locale, text }; }//a DisplayName written on the Attributes tab, in the locale it had
 
 	browse?:Browse;
 	description:ILocalizedText;

@@ -22,8 +22,9 @@ export function writeMaskNames( mask:number ):string[]{
 //does not write, the Value among them, which is the Children tab's (updateVariable)
 export type AttributeEditor = 'text'|'number'|'boolean';
 //An attribute as the tab lists it:  the column the gateway reads it as (ReadAwait's names), its name in the standard, the classes that
-//carry it (OPC 10000-3 §5), the WriteMask bit that allows a write, and its editor.
-export type AttributeDef = { key:string; label:string; classes:number; bit?:EWriteMask; editor?:AttributeEditor };
+//carry it (OPC 10000-3 §5), the WriteMask bit that allows a write, and its editor.  `required`:  never written empty - an empty text removes
+//the node's text in its locale, and a node keeps its DisplayName.
+export type AttributeDef = { key:string; label:string; classes:number; bit?:EWriteMask; editor?:AttributeEditor; required?:boolean };
 const C = ENodeClass;
 const every = C.Object|C.Variable|C.Method|C.ObjectType|C.VariableType|C.ReferenceType|C.DataType|C.View;
 const types = C.ObjectType|C.VariableType|C.ReferenceType|C.DataType;
@@ -33,7 +34,7 @@ export const attributeDefs:readonly AttributeDef[] = [
 	{ key: 'id', label: 'NodeId', classes: every },
 	{ key: 'nodeClass', label: 'NodeClass', classes: every },
 	{ key: 'browse', label: 'BrowseName', classes: every },
-	{ key: 'name', label: 'DisplayName', classes: every, bit: EWriteMask.DisplayName, editor: 'text' },
+	{ key: 'name', label: 'DisplayName', classes: every, bit: EWriteMask.DisplayName, editor: 'text', required: true },
 	{ key: 'description', label: 'Description', classes: every, bit: EWriteMask.Description, editor: 'text' },
 	{ key: 'writeMask', label: 'WriteMask', classes: every, bit: EWriteMask.WriteMask, editor: 'number' },
 	{ key: 'userWriteMask', label: 'UserWriteMask', classes: every, bit: EWriteMask.UserWriteMask, editor: 'number' },
@@ -61,6 +62,25 @@ export const attributeDefs:readonly AttributeDef[] = [
 //the attributes of a class, in order:  what the tab reads in one `node( opc, id ){ … }`
 export function attributesOf( nodeClass:ENodeClass ):AttributeDef[]{ return attributeDefs.filter( d=>d.classes & nodeClass ); }
 
+const isPlain = ( v:unknown ):v is Record<string,unknown>=>typeof v=='object' && v!==null && !Array.isArray( v ) && Object.getPrototypeOf( v )===Object.prototype;
+const only = ( o:object, keys:string[] )=>Object.keys( o ).every( k=>keys.includes(k) );
+//A value as text:  a DateTime, a browse name and a node id as valueString and the standard spell them - known by their whole shape, so a
+//structure with a `name` or an `i` member stays a structure, and an ExpandedNodeId keeps its uri - and any other structure as its json
+//(reviews-issue/417-clients-attributes.md #4).
+function valueText( v:unknown ):string{
+	if( Array.isArray(v) )
+		return v.map( valueText ).join( ', ' );
+	if( !isPlain(v) )
+		return valueString( <Value>v );
+	if( 'seconds' in v && 'nanos' in v && only(v, ['seconds', 'nanos']) )
+		return valueString( <Value><unknown>v );
+	if( typeof v['name']=='string' && only(v, ['ns', 'name']) )
+		return `${v['ns'] ?? 0}:${v['name']}`;
+	if( only(v, ['ns', 'i', 's', 'g', 'b']) && ['i', 's', 'g', 'b'].filter( k=>k in v ).length==1 )
+		return new NodeId( v ).uaString();
+	return JSON.stringify( v );
+}
+
 //One attribute of a node as read:  its value where the server answered it, else the status it refused it with - and, the Value, its
 //status and both timestamps beside the reading (the gateway's `dataValue`).
 export class Attribute{
@@ -82,24 +102,16 @@ export class Attribute{
 	get key():string{ return this.def.key; }
 	get label():string{ return this.def.label; }
 	get refused():boolean{ return isBad( this.sc ); }//the server would not answer it:  the status is all there is
-	//the value as text:  a node id or a browse name as the standard spells them, a class or a namespace-0 data type by name, a structure as its json
+	//the value as text:  a class or a namespace-0 data type by name, anything else as valueText spells it
 	get text():string{
 		const v:unknown = this.value;
 		if( v==null )
 			return "";
 		if( this.key=='nodeClass' && typeof v=='number' )
 			return ENodeClass[v] ?? `${v}`;
-		if( typeof v=='object' && !Array.isArray(v) && Object.getPrototypeOf(v)===Object.prototype ){
-			const o = <Record<string,unknown>>v;
-			if( typeof o['name']=='string' )
-				return `${o['ns'] ?? 0}:${o['name']}`;
-			if( this.key=='dataType' && !o['ns'] && typeof o['i']=='number' && ETypes[o['i']] )
-				return ETypes[o['i']];
-			if( 'i' in o || 's' in o || 'g' in o || 'b' in o )
-				return new NodeId( o ).uaString();
-			return JSON.stringify( o );
-		}
-		return valueString( <Value>v );
+		if( this.key=='dataType' && isPlain(v) && !v['ns'] && typeof v['i']=='number' && ETypes[v['i']] )
+			return ETypes[v['i']];
+		return valueText( v );
 	}
 	//a mask's attributes by name, as the cell's tooltip
 	get tooltip():string{ return (this.key=='writeMask' || this.key=='userWriteMask') && typeof this.value=='number' ? writeMaskNames( this.value ).join( ', ' ) || 'none' : ''; }

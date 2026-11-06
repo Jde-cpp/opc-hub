@@ -7,6 +7,12 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
+	//`dataValue`:  the Value attribute answered as the DataValue the read brings - {v, sc, source, server} (Value::DataValueJson) - where
+	//`value` is the reading alone (clients spec *Attributes*).  No attribute id a server knows:  Push reads Value for it, with both
+	//timestamps, and SetJson keys the answer by what was asked.  Neither FindAttrib nor Asked hands it out, so it reaches no
+	//UA_ReadValueId or WriteItem (reviews-issue/417-clients-attributes.md #11).  31:  past the standard's 27 and within the enum's range,
+	//which a constexpr needs.
+	constexpr UA_AttributeId DataValueAttrib{ (UA_AttributeId)31 };
 	static const flat_map<string,UA_AttributeId> _attributes{
 		{ "invalid", UA_ATTRIBUTEID_INVALID },
 		{ "accessLevel", UA_ATTRIBUTEID_ACCESSLEVEL },
@@ -125,14 +131,7 @@ namespace Jde::Opc::Gateway{
 		}
 		SetNodesToRead();
 	}
-	ReadRequest::ReadRequest( const NodeId& nodeId, std::initializer_list<UA_AttributeId> attribs )ι:
-		UA_ReadRequest{}{
-		_readIds.reserve( attribs.size() );
-		for( let attrib : attribs )
-			Push( nodeId, attrib );
-		SetNodesToRead();
-	}
-	ReadRequest::ReadRequest( const NodeId& nodeId, const vector<UA_AttributeId>& attribs )ι:
+	ReadRequest::ReadRequest( const NodeId& nodeId, std::span<const UA_AttributeId> attribs )ι:
 		UA_ReadRequest{}{
 		_readIds.reserve( attribs.size() );
 		for( let attrib : attribs )
@@ -187,7 +186,9 @@ namespace Jde::Opc::Gateway{
 	}
 	α ReadRequest::FindAttrib( sv jsonName )ι->optional<UA_AttributeId>{
 		let p = _attributes.find( string{jsonName} );
-		return p==_attributes.end() || p->second==UA_ATTRIBUTEID_INVALID ? optional<UA_AttributeId>{} : p->second;
+		if( p==_attributes.end() || p->second==UA_ATTRIBUTEID_INVALID )
+			return {};
+		return p->second==DataValueAttrib ? UA_ATTRIBUTEID_VALUE : p->second;
 	}
 
 	α ReadResponse::Validate( Handle uahandle, SL sl )ε->void{
@@ -216,7 +217,7 @@ namespace Jde::Opc::Gateway{
 			//non-zero status - #15's bug, alive on this path - and serialized a Bad code as a bare number posing as a value.
 			//Now Bad → {"sc":…}, a non-zero code with a reading → {"v":…,"sc":…}, and Int64s go out in the Long form
 			//the SPA's toValue() was written for.  `dataValue` keeps the status and the timestamps beside the reading.
-			const Value value{ move(results[i]) };
+			const Value value = i<resultsSize ? Value{ move(results[i]) } : Value{ UA_STATUSCODE_BADUNEXPECTEDERROR };//a short response:  that entry was never answered
 			j[ReadRequest::AttribName( attrib )] = attrib==DataValueAttrib ? jvalue{ value.DataValueJson() } : value.ToJson();
 		}
 	}

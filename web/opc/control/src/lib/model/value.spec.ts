@@ -32,6 +32,14 @@ describe( 'toReading', ()=>{
 	it( 'takes a null - the server\'s empty value - as it comes', ()=>{
 		expect( toReading(null) ).toEqual( {value: null, sc: 0} );
 	} );
+	//reviews-issue/417-clients-attributes.md #5:  a structure value's `source` member became the reading's source time, an Invalid Date
+	it( 'takes the timestamps off a DataValue alone', ()=>{
+		const dv = toReading( {v: 1, sc: 0, source: {seconds: 1762300000, nanos: 0}, server: {seconds: 1762300001, nanos: 0}} );
+		expect( [dv.source?.getTime(), dv.server?.getTime()] ).toEqual( [1762300000000, 1762300001000] );
+		const structure = toReading( {source: 'PLC1', server: 'srv', rpm: 3} );
+		expect( [structure.source, structure.server] ).toEqual( [undefined, undefined] );
+		expect( structure.value ).toEqual( {source: 'PLC1', server: 'srv', rpm: 3} );
+	} );
 } );
 
 //A Float pushed over the socket decoded widened to a double, 21.3 as 21.299999237060547, and every screen showed that
@@ -53,6 +61,12 @@ describe( 'shortestFloat', ()=>{
 } );
 
 describe( 'valueString', ()=>{
+	//reviews-issue/417-clients-attributes.md W1:  a DateTime value read in UTC ISO beside its timestamps and editor in local time
+	it( 'shows a DateTime in local time, as the timestamp columns do', ()=>{
+		const local = new Date( 2026, 10, 5, 20, 18, 11, 92 );//the zone the spec runs in
+		expect( valueString(<any>{seconds: Math.floor(local.getTime()/1000), nanos: 92_000_000}) ).toBe( '2026-11-05 20:18:11.092' );
+		expect( valueString(<any>{seconds: 0, nanos: 0}) ).toBe( '' );//unset
+	} );
 	it( 'shows an ExtensionObject as its type id and body', ()=>{
 		const typeId = new NodeId( {ns: 2, i: 5001} );
 		expect( valueString(new ExtensionObject(typeId, new Uint8Array([1, 2, 3]))) ).toBe( "ns=2;i=5001 AQID" );

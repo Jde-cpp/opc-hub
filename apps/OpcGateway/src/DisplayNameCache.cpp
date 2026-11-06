@@ -20,6 +20,10 @@ namespace Jde::Opc::Gateway{
 		for( auto&& [id, name] : names )
 			_names.insert_or_assign( id, move(name) );
 	}
+	α DisplayNameCache::Erase( const NodeId& id )ι->void{
+		ul _{ _mutex };
+		_names.erase( id );
+	}
 	α DisplayNameCache::GetAwait::await_ready()ι->bool{
 		_missing.clear();
 		auto found = _cache.Find( _ids, &_missing );

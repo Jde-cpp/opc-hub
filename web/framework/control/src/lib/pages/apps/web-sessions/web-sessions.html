@@ -9,7 +9,7 @@
 		</button>
 	</div>
 </mat-toolbar>
-<mat-progress-bar [mode]="isLoading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+<mat-progress-bar [mode]="isLoading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the sessions"></mat-progress-bar>
 @if( error() ){
 	<p class="load-error">{{error()}}</p>
 }

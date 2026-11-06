@@ -1,6 +1,8 @@
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
 #include "utils/Pumps.h"
+#include "../src/async/ReadAwait.h"
+#include "../src/async/WriteAwait.h"
 
 #define let const auto
 
@@ -120,14 +122,17 @@ namespace Jde::Opc::Gateway::Tests{
 	//answers BadUserAccessDenied for a bit the node's mask lacks as for one the user's rights lack.  A bare string keeps the locale the node's
 	//text has - the nodeset's `en` - which is how it reads back on a session with no locale of its own;  {locale, text} adds a text in
 	//another, which that session never reads (open62541 answers it the first text added).  An attribute updateNode has no type for is
-	//refused before any write.  The description is put back after.
+	//refused before any write.  The description is put back after, and the `de` text removed.
 	TEST_F( WriteTests, DescriptionWritesWhereTheMaskAllows ){
 		const NodeId masked{ PumpsNs(), PumpManual }, unmasked{ PumpsNs(), Pump1 };
 		UA_LocalizedText before; UA_LocalizedText_init( &before );
 		UAε( UA_Server_readDescription(_ua, masked, &before) );
-		absl::Cleanup restore = [&]{
-			if( let sc = UA_Server_writeDescription(_ua, masked, before); sc )
-				ADD_FAILURE() << "pumpManual's description wasn't put back:  " << UA_StatusCode_name( sc );
+		absl::Cleanup restore = [&]{//the `de` text goes too:  a server keeps a text per locale, and an empty one removes its locale's
+			const UA_LocalizedText german{ UA_STRING_STATIC("de"), UA_STRING_NULL };
+			for( let& text : {german, before} ){
+				if( let sc = UA_Server_writeDescription(_ua, masked, text); sc )
+					ADD_FAILURE() << "pumpManual's description wasn't put back:  " << UA_StatusCode_name( sc );
+			}
 			UA_LocalizedText_clear( &before );
 		};
 		const string written{ "Written by WriteTests through updateNode." };
@@ -151,6 +156,129 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		EXPECT_THROW( UpdateNode(masked, {{"browse", "pumpManual"}}, "browse"), Exception ) << "no type to write a BrowseName as";
 		EXPECT_THROW( UpdateNode(masked, {{"value", 1}}, "value"), Exception ) << "updateVariable's";
+		try{//the Value read as its DataValue:  refused as `value` is, never sent as the read's sentinel id (#11)
+			UpdateNode( masked, {{"dataValue", 1}}, "description" );
+			ADD_FAILURE() << "dataValue took a write";
+		}
+		catch( const Exception& e ){
+			EXPECT_TRUE( string{e.what()}.contains("updateVariable writes a value") ) << e.what();
+		}
 		EXPECT_THROW( UpdateNode(masked, {}, "description"), Exception ) << "nothing to write";
+	}
+	//An empty text removes its locale's (open62541):  a Description cleared on the Attributes tab is gone, and reads back empty.  A bare empty
+	//name is refused before the write, since a node keeps its DisplayName.  The description is put back after.
+	TEST_F( WriteTests, AnEmptyDescriptionRemovesIt ){
+		const NodeId masked{ PumpsNs(), PumpManual };
+		UA_LocalizedText before; UA_LocalizedText_init( &before );
+		UAε( UA_Server_readDescription(_ua, masked, &before) );
+		absl::Cleanup restore = [&]{
+			if( let sc = UA_Server_writeDescription(_ua, masked, before); sc )
+				ADD_FAILURE() << "pumpManual's description wasn't put back:  " << UA_StatusCode_name( sc );
+			UA_LocalizedText_clear( &before );
+		};
+		let y = UpdateNode( masked, {{"description", ""}}, "description" );
+		EXPECT_EQ( y.at("description"), jvalue{""} ) << serialize( y );
+		UA_LocalizedText after; UA_LocalizedText_init( &after );
+		UAε( UA_Server_readDescription(_ua, masked, &after) );
+		EXPECT_EQ( after.text.length, 0u ) << "the server holds no text, in any locale:  " << ToSV( after.locale );
+		UA_LocalizedText_clear( &after );
+		let name = Read( masked, "name" ).at( "name" );
+		EXPECT_THROW( UpdateNode(masked, {{"name", ""}}, "name"), Exception ) << "a node keeps its DisplayName";
+		EXPECT_EQ( Read(masked, "name").at("name"), name );
+	}
+	//A Write applies each item on its own (Part 4 §5.10.4), so a refusal leaves the rest written:  the error keeps the first refusal's code
+	//and names every item refused and every one written.  A result the server never sent is BadUnexpectedError, not written (#6).
+	TEST_F( WriteTests, RefusalNamesWhatWasWritten ){
+		vector<WriteItem> items;
+		for( let attribute : {UA_ATTRIBUTEID_DISPLAYNAME, UA_ATTRIBUTEID_WRITEMASK, UA_ATTRIBUTEID_ACCESSLEVEL} )
+			items.push_back( WriteItem{_node, attribute, Value{UA_STATUSCODE_GOOD}} );
+		UA_StatusCode results[]{ UA_STATUSCODE_GOOD, UA_STATUSCODE_BADUSERACCESSDENIED, UA_STATUSCODE_BADOUTOFRANGE };
+		UA_WriteResponse response; UA_WriteResponse_init( &response );
+		response.results = results;
+		response.resultsSize = 3;
+		EXPECT_EQ( WriteAwait::Refusal(response, items), std::make_pair(UA_STATUSCODE_BADUSERACCESSDENIED, string{"write writeMask, accessLevel BadOutOfRange; written: name"}) );
+		response.resultsSize = 1;
+		EXPECT_EQ( WriteAwait::Refusal(response, items), std::make_pair(UA_STATUSCODE_BADUNEXPECTEDERROR, string{"write writeMask, accessLevel BadUnexpectedError; written: name"}) ) << "two results never sent";
+		response.resultsSize = 0;
+		EXPECT_EQ( WriteAwait::Refusal(response, {items[0]}), std::make_pair(UA_STATUSCODE_BADUNEXPECTEDERROR, string{"write name"}) ) << "a lone item with no result";
+		results[1] = results[2] = UA_STATUSCODE_GOOD;
+		response.resultsSize = 3;
+		EXPECT_EQ( WriteAwait::Refusal(response, items).first, UA_STATUSCODE_GOOD );
+	}
+	//updateNode( attributes:{name, writeMask} ) on pumpManual, whose WriteMask has DisplayName but not WriteMask:  the server writes the
+	//name and refuses the mask, and the error says so.  The name is put back after.
+	TEST_F( WriteTests, ARefusedAttributeLeavesTheOthersWritten ){
+		const NodeId masked{ PumpsNs(), PumpManual };
+		UA_LocalizedText before; UA_LocalizedText_init( &before );
+		UAε( UA_Server_readDisplayName(_ua, masked, &before) );
+		absl::Cleanup restore = [&]{
+			if( let sc = UA_Server_writeDisplayName(_ua, masked, before); sc )
+				ADD_FAILURE() << "pumpManual's name wasn't put back:  " << UA_StatusCode_name( sc );
+			UA_LocalizedText_clear( &before );
+		};
+		const string renamed{ "Renamed by WriteTests" };
+		try{
+			UpdateNode( masked, {{"name", renamed}, {"writeMask", 96}}, "name" );
+			ADD_FAILURE() << "pumpManual's WriteMask has no WriteMask bit, yet took one";
+		}
+		catch( const Exception& e ){
+			EXPECT_EQ( e.Code(), UA_STATUSCODE_BADUSERACCESSDENIED ) << e.what();
+			EXPECT_TRUE( string{e.what()}.contains("write writeMask; written: name") ) << e.what();
+		}
+		EXPECT_EQ( Read(masked, "name").at("name"), jvalue{renamed} ) << "written, though the mutation failed";
+	}
+	//A name updateNode writes leaves this client's DisplayName cache (reviews-issue/417-clients-attributes.md #7):  the References tab names a
+	//row's type definition from it, so a renamed type reads the new name, where the cache kept the old one for the connection's life.  PumpType,
+	//pump1's type definition, is given a DisplayName bit for the test;  its name and mask are put back after.
+	TEST_F( WriteTests, ARenamedTypeLeavesTheNameCache ){
+		const NodeId type{ PumpsNs(), 1001 }, pump1{ PumpsNs(), Pump1 };
+		UA_LocalizedText before; UA_LocalizedText_init( &before );
+		UAε( UA_Server_readDisplayName(_ua, type, &before) );
+		UA_UInt32 mask{};
+		UAε( UA_Server_readWriteMask(_ua, type, &mask) );
+		UAε( UA_Server_writeWriteMask(_ua, type, mask | UA_WRITEMASK_DISPLAYNAME) );
+		absl::Cleanup restore = [&]{
+			if( let sc = UA_Server_writeDisplayName(_ua, type, before) | UA_Server_writeWriteMask(_ua, type, mask); sc )
+				ADD_FAILURE() << "PumpType wasn't put back:  " << UA_StatusCode_name( sc );
+			UA_LocalizedText_clear( &before );
+		};
+		auto typeDefName = [&]()->string{
+			let y = Socket().QuerySync( "node( opc: $opc, id: $id ){ references{ target typeDef } }", {{"opc", OpcServerSlug}, {"id", NodeId::ObjectsFolder().ToJson()}} );
+			for( let& r : y.as_object().at("references").as_array() ){
+				if( NodeId{r.as_object().at("target")}==pump1 )
+					return string{ Json::AsSV(r.as_object(), "typeDef/name") };
+			}
+			return {};
+		};
+		EXPECT_EQ( typeDefName(), ToSV(before.text) ) << "read, and kept";
+		const string renamed{ "Renamed PumpType" };
+		UpdateNode( type, {{"name", renamed}}, "name" );
+		EXPECT_EQ( typeDefName(), renamed );
+	}
+	//A Read answered with fewer results than nodes asked - a server out of spec - left SetJson reading past the array
+	//(reviews-issue/417-clients-attributes.md #2):  each entry never answered is BadUnexpectedError.
+	TEST_F( WriteTests, AShortReadAnswersBadUnexpectedError ){
+		UA_ReadResponse rr; UA_ReadResponse_init( &rr );
+		rr.results = (UA_DataValue*)UA_Array_new( 1, &UA_TYPES[UA_TYPES_DATAVALUE] );
+		rr.resultsSize = 1;
+		const UA_LocalizedText name{ UA_STRING_STATIC("en"), UA_STRING_STATIC("Pump") };
+		UAε( UA_Variant_setScalarCopy(&rr.results[0].value, &name, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]) );
+		rr.results[0].hasValue = true;
+		ReadResponse response{ move(rr), ReadRequest{_node, {UA_ATTRIBUTEID_DISPLAYNAME, UA_ATTRIBUTEID_DESCRIPTION}} };
+		let nodes = response.GetJson();
+		ASSERT_EQ( nodes.size(), 1u );
+		let& j = nodes.begin()->second;
+		EXPECT_EQ( j.at("name"), jvalue{"Pump"} ) << serialize( j );
+		EXPECT_EQ( j.at("description"), jvalue{UAException::ToJson(UA_STATUSCODE_BADUNEXPECTEDERROR)} ) << serialize( j );
+	}
+	//createNode, deleteNode… are refused before a client is opened (#9):  an unknown connection still answers the refusal, not a failed connect.
+	TEST_F( WriteTests, OnlyUpdateNodeIsTakenBeforeAConnect ){
+		try{
+			Socket().QuerySync( "deleteNode( opc: $opc, id: $id ){ id }", {{"opc", "noSuchConnection"}, {"id", _node.ToJson()}} );
+			ADD_FAILURE() << "deleteNode was taken";
+		}
+		catch( const Exception& e ){
+			EXPECT_TRUE( string{e.what()}.contains("Only updateNode is supported.") ) << e.what();
+		}
 	}
 }

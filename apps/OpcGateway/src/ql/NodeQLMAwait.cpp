@@ -1,6 +1,7 @@
 #include "NodeQLMAwait.h"
-#include <jde/fwk/co/AnyAwait.h>
+#include <absl/cleanup/cleanup.h>
 #include "../async/ReadAwait.h"
+#include "../UAClient.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -30,6 +31,7 @@ namespace Jde::Opc::Gateway{
 				THROW_IF( !attribute, "'{}' is no attribute.", name );
 				let type = AttributeType( *attribute );
 				THROW_IF( !type, "'{}' is not written through updateNode{}.", name, *attribute==UA_ATTRIBUTEID_VALUE ? " - updateVariable writes a value" : "" );
+				THROW_IF( *attribute==UA_ATTRIBUTEID_DISPLAYNAME && json.is_string() && json.get_string().empty(), "name takes a text:  an empty one would remove the node's DisplayName in its locale - {{locale, text:\"\"}} removes a locale's on purpose." );
 				if( type->typeKind==UA_DATATYPEKIND_LOCALIZEDTEXT && json.is_string() )
 					localized.push_back( *attribute );
 				asked.push_back( Asked{*attribute, type, json} );
@@ -52,7 +54,13 @@ namespace Jde::Opc::Gateway{
 			for( let& a : asked )
 				items.push_back( WriteItem{nodeId, a.Attribute, Value{a.Json, a.Type, _sl}} );
 			WriteAwait write{ move(items), _client, _sl };
-			co_await write;
+			{//a name may be written though another attribute was refused (WriteAwait::Refusal), so it is forgotten either way:  a References tab naming the node reads it again
+				absl::Cleanup forget = [&, renamed=std::ranges::any_of( asked, [](let& a){ return a.Attribute==UA_ATTRIBUTEID_DISPLAYNAME; } )]{
+					if( renamed )
+						_client->DisplayNames().Erase( nodeId );
+				};
+				co_await write;
+			}
 			jvalue y;
 			if( auto& ql = _mutation.ResultRequest; ql ){
 				ReadAwait read{ {{nodeId}, *ql}, _client };

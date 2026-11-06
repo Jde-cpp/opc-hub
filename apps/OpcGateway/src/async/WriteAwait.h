@@ -16,12 +16,16 @@ namespace Jde::Opc::Gateway{
 		Value Written;
 	};
 	//One Write service of every item - a node's Value, or updateNode's attributes, one UA_WriteValue each (clients spec *Attributes*).
-	//The first item the server refuses is the error, named by its attribute, as a lone Value's was.
+	//Any item the server refuses is the error (Refusal).
 	struct WriteAwait final : UAAwait<WriteResponse>{
 		WriteAwait( NodeId nodeId, Value&& value, sp<UAClient> c, SRCE )ι:UAAwait{ move(c), sl }{ _items.push_back( WriteItem{move(nodeId), UA_ATTRIBUTEID_VALUE, move(value)} ); }
 		WriteAwait( vector<WriteItem>&& items, sp<UAClient> c, SRCE )ι:UAAwait{ move(c), sl }, _items{move(items)}{}
 		α Suspend()ι->void override;
 		α OnComplete( UA_WriteResponse&& response )ι->void;
+		//The first refused item's code, and the error's text:  every item refused - each after the first with its status - and every one
+		//written, since a Write applies each item on its own and a refusal leaves the rest written.  An item the server sent no result for
+		//is BadUnexpectedError:  nothing says it was written.  {0, ""} when every item was.
+		Ω Refusal( const UA_WriteResponse& response, const vector<WriteItem>& items )ι->std::pair<StatusCode,string>;
 	private:
 		vector<WriteItem> _items;
 	};
