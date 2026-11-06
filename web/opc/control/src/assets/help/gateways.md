@@ -79,6 +79,8 @@ One item per node per session stands at the gateway, so two listeners of one nod
 
 When the gateway goes away, the list says so and asks for its rows again once the gateway is back, every few seconds until it is.
 
+The **Trend** tab draws the rows ticked in the list's **Trend** column, up to eight, with the History tab's chart - the same lines, range buttons and strip, stepped or interpolated - over the values the page has received since it opened: each row's last **1 min**, **10 min** or **1 h**, behind its newest value, with the value before that window so a stepped line reaches its edge. The chart opens zoomed to the window and follows the newest value; its own buttons zoom to anything else it holds. Every row's values are kept, whether or not it is ticked, so a row ticked shows its window at once; a row removed takes them, and leaving the page drops them all, since there is nothing earlier to load. Where two ticked rows share a name, the legend spells each by its path, and adds the connection where those differ, as two connections may hold one node id. The window chosen is kept on this browser. The chart needs the add-on the install does not include - see [Trend chart](#trend-chart); without it the tab says so.
+
 ## Instances
 
 Under [Applications](/apps), a gateway instance's page has the eight tabs [Applications help](/help/apps#opchub) lists. Its own five:

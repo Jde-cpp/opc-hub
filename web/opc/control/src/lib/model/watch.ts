@@ -1,5 +1,5 @@
 import { CnnctnSlug } from './server-cnnctn';
-import { NodeId, NodeIdJson } from './node-id';
+import { NodeId, NodeIdJson, NodeKey } from './node-id';
 import { ENodeClass, UaNode, Variable } from './node';
 import { OpcError } from './opc-error';
 import { isBad } from './status-code';
@@ -64,6 +64,8 @@ export class WatchRow{
 	toJson():WatchItemJson{ return { opc: this.opc, node: this.node.toJson(), parameters: this.parameters }; }
 	get key():string{ return WatchRow.keyOf( this.opc, this.node ); }
 	static keyOf( opc:CnnctnSlug, node:NodeId ):string{ return `${opc}\u0000${node.uaString()}`; }//text, as NodeId.key is a Symbol
+	//the trend series the row's pushes carry (HistValue.series):  the row's own, as two connections may hold one node id (#420)
+	get trendKey():NodeKey{ return Symbol.for( `watch/${this.key}` ); }
 	//the node as the connection describes it:  a Variable's data type and enumeration render the value;  any other class has none to watch
 	describe( node:UaNode|undefined, path:string|null|undefined ){
 		this.error = undefined;//described again:  why it once had no node is past (419-watch #5)

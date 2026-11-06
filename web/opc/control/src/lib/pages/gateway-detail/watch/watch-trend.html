@@ -1,0 +1,29 @@
+<mat-toolbar class="jde-list-toolbar">
+	<div class="bar-left">
+		<!--how much of each row's pushes the buffer keeps, behind the row's newest-->
+		<mat-button-toggle-group class="window-group" hideSingleSelectionIndicator aria-label="Window" [value]="window()" (change)="window.set($event.value)">
+			@for( m of windows; track m ){
+				<mat-button-toggle [value]="m" [matTooltip]="'Keep the last ' + windowText(m) + ' of each row\'s values'">{{ windowText(m) }}</mat-button-toggle>
+			}
+		</mat-button-toggle-group>
+	</div>
+	<div class="bar-right">
+		@if( chart() ){
+			<mat-button-toggle-group class="shape-group" hideSingleSelectionIndicator aria-label="Line shape" [value]="stepped()" (change)="stepped.set($event.value)">
+				<mat-button-toggle [value]="true" matTooltip="A value holds until the next">Stepped</mat-button-toggle>
+				<mat-button-toggle [value]="false" matTooltip="A straight line between values">Interpolated</mat-button-toggle>
+			</mat-button-toggle-group>
+		}
+		<span class="row-count">{{ values().length }} {{ values().length==1 ? "value" : "values" }}</span>
+	</div>
+</mat-toolbar>
+@if( rows().length ){
+	<hist-trend [values]="values()" [series]="series()" [stepped]="stepped()" [hasEarlier]="false" [range]="range()" title="Live trend" [description]="description"></hist-trend>
+}
+@else{
+	<div class="jde-empty" role="status">
+		<mat-icon aria-hidden="true">show_chart</mat-icon>
+		<p class="title">No row ticked.</p>
+		<p>Tick rows on the <em>List</em> tab to trend them here, up to eight at a time.</p>
+	</div>
+}

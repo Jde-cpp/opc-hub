@@ -162,6 +162,7 @@ export type HistValue = {
 	bound:boolean;//one of the bounds returnBounds asked for
 	heartbeat:boolean;//a group's stored repeat of its last value;  never a server's
 	modification?:HistModification;
+	series?:NodeKey;//the trend series it belongs to where that is not its node's (trendKey):  the watch list's rows, two of which may share a node id across connections
 };
 export type HistNodeStatus = { node:NodeId; status:StatusCode };
 //A page:  the values in source-time order, later first in a reverse read, the continuation for the next page, null on the

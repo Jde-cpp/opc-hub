@@ -18,6 +18,12 @@ mat-header-cell .unit{
 	margin-left: .25rem;
 	color: var(--mat-sys-on-surface-variant);
 }
+/* the Trend tab's tick (#420) */
+.mat-column-trend{
+	flex: 0 0 60px;
+	justify-content: center;
+	padding-inline: 5px;
+}
 /* the connection and the node take the table's slack, as the children table's Name does;  what does not fit ends in an ellipsis */
 .mat-column-connection{
 	flex: .25 .25 160px;

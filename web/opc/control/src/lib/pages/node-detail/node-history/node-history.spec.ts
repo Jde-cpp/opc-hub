@@ -13,6 +13,7 @@ import { HistEditDialog, HistEditDialogData } from './hist-edit-dialog';
 import { HistThresholdsDialog, HistThresholdsDialogData } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
+import { TrendSeries } from './hist-trend-data';
 import { HighchartsLoader } from './highcharts-loader';
 import { NodeHistory } from './node-history';
 import { flush } from 'jde-spa/testing';
@@ -23,7 +24,7 @@ import { fakeGateway, histTick, histValue, variable } from 'jde-opc/testing';
 //axis has no length, so a redraw after a page lands throws a RangeError from Highcharts' time formatting of the NaN tick -
 //nothing of the tab's.
 @Component({ selector: 'hist-trend', template: '' })
-class TrendStub{ values = input<HistValue[]>(); series = input<Variable[]>(); stepped = input( true ); loading = input( false ); hasEarlier = input( true ); loadEarlier = output<void>(); }
+class TrendStub{ values = input<HistValue[]>(); series = input<TrendSeries[]>(); stepped = input( true ); loading = input( false ); hasEarlier = input( true ); loadEarlier = output<void>(); }
 
 const A = variable( 1, 'A', {historizing: true} );
 //A History tab on one historized node, A, or on the `candidates` and `groups` given.  Each read is held until `answer` gives it a
