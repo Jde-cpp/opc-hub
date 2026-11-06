@@ -31,6 +31,8 @@ local logsDir = std.extVar("logsDir");
 			path: logsDir + "/app-tests",
 			timeZone: "America/New_York", //explicit: LogTests asserts the <root>/2025/1/<day> archive folders, which are local dates.
 			delay: "PT1M",
+			file: { default: "Trace" },//every entry keeps its source:  LogProtoTests, ArchiveQueryTests and LogTests assert files, functions and lines.
+			"function": { default: "Trace" },
 			tags: {
 				default: "Information",
 				externalLogger: "None"

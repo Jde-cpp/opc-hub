@@ -27,7 +27,7 @@ namespace Jde::App::Tests{
 		α ClientQuery( QL::RequestQL&&, Jde::UserPK, SL )ε->up<TAwait<jvalue>> override{ throw Exception{"RemoteLog never queries."}; }
 
 		α SetConnected( bool x )ι->void{ _connected = x; }
-		α Texts()ι->vector<string>{ lg _{_mutex}; vector<string> y; for( let& e : Received ) y.push_back( e.Text ); return y; }
+		α Texts()ι->vector<string>{ lg _{_mutex}; vector<string> y; for( let& e : Received ) y.push_back( string{e.Text()} ); return y; }
 		α Count()ι->uint{ lg _{_mutex}; return Received.size(); }
 		//Which thread the batch was written on.  asio::post never runs a handler inline, so this is what separates "wrote
 		//it here" from "handed it to the executor" - a count alone only says the executor happened to be quick.

@@ -17,6 +17,8 @@ namespace Jde::App{
 		flat_set<uuid> Args;
 		flat_set<uuid> Strings;
 	};
+	//Which entries keep their file and line, or their function, in the log files:  a per-tag level object of a logger's `tags`
+	//shape, applied over the defaults.
 	struct ProtoLog final : BufferedLogger{
 		ProtoLog( const jobject& settings )ε;
 		~ProtoLog();
@@ -35,8 +37,7 @@ namespace Jde::App{
 		α SetAppPKs( App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void{ _appPK = appPK; _instancePK = instancePK; }
 		α TimeZone()Ι->const std::chrono::time_zone&{ return _tz; }
 		α Today()Ι->std::chrono::year_month_day{ ul _{_mutex}; return _today; }
-		α Write( const Logging::Entry& m )ι->void override;
-		α Write( const Logging::Entry& m, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void override;
+		α Write( const Logging::Record& r )ι->void override;
 	private:
 		friend struct ArchiveAwait;
 		friend struct DailyLoadAwait;
@@ -66,6 +67,8 @@ namespace Jde::App{
 		fs::path _root;
 		const std::chrono::time_zone& _tz;
 		std::chrono::year_month_day _today ABSL_GUARDED_BY(_mutex);
+		const Logging::Threshold _fileSource;//the file id, its String and the line - /logging/proto/file.
+		const Logging::Threshold _functionSource;//the function id and its String - /logging/proto/function.
 		//Each record as the daily file will hold it, in order:  every string a run's entries name, then the entry.
 		vector<App::Log::FileEntry> _toSave ABSL_GUARDED_BY(_mutex);
 		uint _toSaveBytes ABSL_GUARDED_BY(_mutex){};//what _toSave takes in the file, which the cap bounds.

@@ -10,11 +10,11 @@ namespace Jde::Web::Server{
 		RestException( const RestException& rhs );
 		RestException( RestException&& ) = default;
 
-		template<class... Args> RestException( EHttpStatus status, SL sl, HttpRequest&& req, fmt::format_string<Args...> fmt, Args&&... args )ι:
+		template<class... Args> RestException( EHttpStatus status, SL sl, HttpRequest&& req, Logging::Format<Args...> fmt, Args&&... args )ι:
 			Exception( sl, {status}, fmt, FWD(args)... ),
 			_request{ move(req) }
 		{}
-		template<class... Args> RestException( EHttpStatus status, Exception&& inner, HttpRequest&& req, fmt::format_string<Args...> fmt="", Args&&... args )ι:
+		template<class... Args> RestException( EHttpStatus status, Exception&& inner, HttpRequest&& req, Logging::Format<Args...> fmt="", Args&&... args )ι:
 			Exception{
 				inner.Source(),
 				{inner.Level(), inner.Tags, inner.Code(), status},

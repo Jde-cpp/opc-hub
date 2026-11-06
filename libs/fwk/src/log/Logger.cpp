@@ -6,28 +6,26 @@ namespace Jde{
 		return _loggedEntries.insert(id);
 	}
 
-	//The one fan-out loop behind both Log(Entry) overloads - they used to be copies differing only in the Write call.
-	//Returns false when the entry was skipped (finalizing, or below every logger's level) so the caller's BREAK_IF
-	//keeps its old early-return behaviour.
-	Ṫ log( const Logging::Entry& entry, T&& write )ι->bool{
-		if( Process::Finalizing() || !Logging::ShouldLog(entry.Level, entry.Tags) )
-			return false;
+	//The one fan-out loop, behind Emit and Log( const Record& ).  Each logger checks its own level.
+	Ω write( const Logging::Record& record )ι->void{
 		for( auto& logger : Logging::Loggers() ){
-			try{
-				if( logger->ShouldLog(entry.Level, entry.Tags) )
-					write( *logger );
-			}
-			catch( const fmt::format_error& e ){
-				CRITICALT( ELogTags::App, "could not log entry '{}' error: '{}'", entry.Text, e.what() );
-			}
+			if( logger->ShouldLog(record.Level, record.Tags) )
+				logger->Write( record );
 		}
-		return true;
 	}
-	α Logging::Log( const Entry& entry )ι->void{
-		[[maybe_unused]] const bool logged = log( entry, [&](ILogger& l){ l.Write(entry); } );
-		BREAK_IF( logged && entry.Tags<=ELogTags::Write && entry.Level>=BreakLevel() );//don't want to break for opc server.
+	Ω breakFor( [[maybe_unused]] ELogLevel level, [[maybe_unused]] ELogTags tags )ι->void{
+		BREAK_IF( BreaksFor(tags) && level>=Logging::BreakLevel() );
 	}
-	α Logging::Log( const Entry& entry, uint32 appPK, uint32 instancePK )ι->void{
-		log( entry, [&](ILogger& l){ l.Write(entry, appPK, instancePK); } );//no BREAK_IF here: this is a forwarded entry from another instance, not this process's own.
+	α Logging::Emit( ELogLevel level, ELogTags tags, SL sl, const FormatView& m, fmt::format_args args )ι->void{
+		BREAK_IF( m.Text.empty() );
+		write( Record{level, tags, sl, m, args} );
+		breakFor( level, tags );
+	}
+	α Logging::Log( const Record& record )ι->void{
+		if( Process::Finalizing() || !ShouldLog(record.Level, record.Tags) )
+			return;
+		write( record );
+		if( !record.AppPK )//a forwarded entry is another instance's, not this process's own.
+			breakFor( record.Level, record.Tags );
 	}
 }

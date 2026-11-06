@@ -95,6 +95,7 @@ local serverApplicationUri = "urn:open62541.server.application";
 		]
 	},
 	logging:{
+		stack:: { default: "Warning" },//open62541's lines (LogStack):  which walk the stack for their file, line and function.
 		spd:{
 			tags:{ default: "Information", uaNet: "Warning", uaClient: "Warning", uaSecure: "Warning", uaSession: "Warning", uaServer: "Warning", uaPubSub: "Information" },
 			sinks:{ console:{}, file:{ path: logsDir, md: false } }

@@ -8,8 +8,7 @@ namespace Jde::App::Client{
 		~RemoteLog();
 		Ω Init( sp<IAppClient> client )ι->void;
 		α Shutdown( bool terminate=false, SRCE )ι->void override;
-		α Write( const Logging::Entry& m )ι->void override;
-		α Write( const Logging::Entry& m, uint32 /*appPK*/, uint32 /*instancePK*/ )ι->void override{ Write(m); }
+		α Write( const Logging::Record& r )ι->void override;
 		α Name()Ι->sv override{ return "RemoteLog"; }
 	private:
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Drop()ι->uint override;

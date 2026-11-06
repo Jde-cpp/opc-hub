@@ -8,7 +8,7 @@ namespace Jde::Access{
 			return;
 		_logged = true;
 		if( auto sv = Format(); sv.size() )
-			Logging::Log( Logging::Entry{_sl, Level(), Tags, Executer, string{sv}, _args} );
+			Logging::Log( Logging::Entry{_sl, Level(), Tags, Executer, FormatName(), _args} );
 		else
 			Logging::Log( Logging::Entry{_sl, Level(), Tags, Executer, string{what()}} );
 	}

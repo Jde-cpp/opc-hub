@@ -47,6 +47,11 @@ namespace Jde{
 		SocketServerRead  = Socket | Server | Read,
 		SocketServerWrite	= Socket | Server | Write
 	};
+	//The framework's tags take the low 32 bits;  from here up are the libraries' own, EOpcLogTags first.
+	constexpr uint LibraryTagBase{ 32 };
+	//A line at the break level traps the debugger unless it carries a library's tag:  open62541's and the OPC code's
+	//warnings are routine.  Decided by bit, on every path, not by the tags' magnitude.
+	constexpr α BreaksFor( ELogTags tags )ι->bool{ return ( std::to_underlying(tags) >> LibraryTagBase )==0; }
 
 	namespace Logging{
 		struct ILogger;
@@ -109,6 +114,14 @@ namespace Logging{
 	Φ AddTagParser( up<ITagParser>&& tagParser )ι->void;
 	Φ ShouldLog( ELogLevel level, ELogTags tags )ι->bool;
 	Φ Tags( bool user=false )ι->flat_map<string,uint>;
+	//A per-tag level object from the settings, over the defaults given, gating something other than a logger's writing:
+	//ProtoLog's /logging/proto/file and /function, LogStack's /logging/stack.  name, static, is what its trace output shows.
+	struct Γ Threshold final : LogTags{
+		Threshold( sv name, const jobject* settings, const jobject& defaults )ι;
+		α Name()Ι->sv override{ return _name; }
+	private:
+		sv _name;
+	};
 }}
 #undef Φ
 #endif

@@ -13,6 +13,7 @@ namespace Jde{
 	constexpr auto _tags{ ELogTags::App };
 	α Process::FreeLibrary( void* p )ι->void{
 		::dlclose( p );
+		Logging::ForgetSourceIds();
 	}
 
 	α Process::LoadLibrary( const fs::path& path )ε->void*{

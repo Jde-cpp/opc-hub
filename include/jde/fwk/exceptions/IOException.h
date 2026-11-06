@@ -34,7 +34,7 @@ namespace Jde::IO{
 				Error = ToIOError( (uint32)code.value() );
 			SetWhat();
 		}
-		template<class... Args> IOException( SL sl, const fs::path& path, ELogLevel level, fmt::format_string<Args...> m, Args&&... args ):Exception( sl, {level, ELogTags::IO}, m, std::forward<Args>(args)... ),_path{ path }{ SetWhat(); }
+		template<class... Args> IOException( SL sl, const fs::path& path, ELogLevel level, Logging::Format<Args...> m, Args&&... args ):Exception( sl, {level, ELogTags::IO}, m, std::forward<Args>(args)... ),_path{ path }{ SetWhat(); }
 
 		α Path()Ι->const fs::path&; α SetPath( const fs::path& x )ι{ _path=x; }
 		α what()const noexcept->const char* override;

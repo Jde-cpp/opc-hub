@@ -31,6 +31,9 @@ namespace Jde::App{
 		//readings is exact to the sampling gap - orders of magnitude finer than the day this resolves to.
 		return Chrono::LocalYMD( ec ? Clock::now() : Chrono::ToClock<Clock, fs::file_time_type::clock>(written), tz );
 	}
+	Ω source( const Logging::Threshold& file, const Logging::Threshold& function, const Logging::Entry& e )ι->LogProto::SourceFields{
+		return { file.ShouldLog(e.Level, e.Tags), function.ShouldLog(e.Level, e.Tags) };
+	}
 	Ω bytesOf( const vector<FileEntry>& records )ι->uint{
 		uint y{};
 		for( let& r : records )
@@ -41,7 +44,9 @@ namespace Jde::App{
 		BufferedLogger{ settings, std::max<uint32>(Json::FindNumber<uint32>(settings, "maxBuffer").value_or(4*1024*1024), _delaySize*4u) },
 		_root{ Json::FindString(settings, "path").value_or((Process::AppDataFolder()/"logs").string()) },
 		_tz{ Json::FindTimeZone(settings, "timeZone", *std::chrono::current_zone()) },
-		_today{ dailyFileDay(DailyFile(), _tz) }{//_root and _tz are declared before _today, so both are live here.
+		_today{ dailyFileDay(DailyFile(), _tz) },//_root and _tz are declared before _today, so both are live here.
+		_fileSource{ "proto.file", Json::FindObject(settings, "file"), jobject{{"default", "Warning"}, {"exception", "Trace"}} },
+		_functionSource{ "proto.function", Json::FindObject(settings, "function"), jobject{{"default", "None"}, {"exception", "Trace"}} }{
 		_file.Path = DailyFile();
 		if( fs::exists(DailyFile()) )
 			_dailyFileStart = TimePoint::min();
@@ -110,15 +115,12 @@ namespace Jde::App{
 		catch( const runtime_error& )
 		{}
 	}
-	α ProtoLog::Write( const Logging::Entry& e )ι->void{
-		if( empty(e.Tags & _tags) )//recursion guard
-			Write( e, LogProto::LogEntryFile(e) );
-	}
-	α ProtoLog::Write( const Logging::Entry& e, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void{
-		if( !appPK || !instancePK || (appPK==_appPK && instancePK==_instancePK) )
-			Write( e );
-		else if( empty(e.Tags & _tags) )//recursion guard
-			Write( e, LogProto::LogEntryFile(e, appPK, instancePK) );//the non-zero app_pk is what marks it forwarded.
+	α ProtoLog::Write( const Logging::Record& r )ι->void{
+		if( !empty(r.Tags & _tags) )//recursion guard
+			return;
+		let& e = r.Entry();
+		let forwarded = r.AppPK && r.InstancePK && ( r.AppPK!=_appPK || r.InstancePK!=_instancePK );
+		Write( e, LogProto::LogEntryFile(e, forwarded ? r.AppPK : 0, forwarded ? r.InstancePK : 0, source(_fileSource, _functionSource, e)) );//the non-zero app_pk is what marks it forwarded.
 	}
 	α ProtoLog::Write( const Logging::Entry& e, App::Log::Proto::LogEntryFile&& entry )ι->void{
 		FileEntry fileEntry;
@@ -129,9 +131,11 @@ namespace Jde::App{
 			_today = day;
 			_needsArchive = true;
 		}
-		AddString( e.Id(), e.Text );
-		AddString( e.FileId(), e.File() );
-		AddString( e.FunctionId(), e.Function() );
+		AddString( e.Id(), e.Text() );
+		if( fileEntry.entry().file_id().size() )//only what the entry keeps:  a String no entry names is dead weight in the file.
+			AddString( e.FileId(), e.File() );
+		if( fileEntry.entry().function_id().size() )
+			AddString( e.FunctionId(), e.Function() );
 		AddArguments( e.Arguments, fileEntry.entry().args() );
 		Add( move(fileEntry) );
 		let firstDrop = Cap();//M5: the buffer grows between retries too, not only on the failures themselves.

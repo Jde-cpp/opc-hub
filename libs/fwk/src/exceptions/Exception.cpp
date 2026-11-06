@@ -29,6 +29,7 @@ namespace Jde{
 		_logged{ from._logged },
 		_inner{ from._inner ? up<runtime_error>{mu<runtime_error>( from._inner->what() )} : nullptr },//a base std::exception copy slices - what() is all consumers read; preserve it.
 		_format{ from._format },
+		_formatId{ from._formatId },
 		_args{ from._args },
 		_sl{ from._sl }{
 		BREAK;//should only be called by rethrow_exception
@@ -40,6 +41,7 @@ namespace Jde{
 		_logged{ from._logged },
 		_inner{ move(from._inner) },
 		_format{ move(from._format) },
+		_formatId{ from._formatId },
 		_args{ move(from._args) },
 		_sl{ from._sl }{
 		from._logged = true;//the source made its log decision at construction - the moved-to object owns any future logging.
@@ -74,6 +76,7 @@ namespace Jde{
 		_what = move(from._what);
 		_inner = move(from._inner);
 		_format = move(from._format);
+		_formatId = from._formatId;
 		_args = move(from._args);
 		_sl = from._sl;
 		return *this;
@@ -96,9 +99,15 @@ namespace Jde{
 			return;
 		_logged = true;
 		if( auto sv = Format(); sv.size() )
-			Logging::Log( Logging::Entry{_sl, Level(), Tags | ELogTags::Exception, string{sv}, _args} );
+			Logging::Log( Logging::Entry{_sl, Level(), Tags | ELogTags::Exception, {}, FormatName(), _args} );
 		else
 			Logging::Log( Logging::Entry{_sl, Level(), Tags | ELogTags::Exception, string{what()}} );
+	}
+
+	α Exception::FormatName()Ι->Logging::SourceName{
+		if( _format.index()==0 && _formatId )
+			return { std::get<sv>(_format), *_formatId };
+		return { string{Format()}, _formatId };
 	}
 
 	α Exception::what()Ι->const char*{

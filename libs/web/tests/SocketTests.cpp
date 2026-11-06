@@ -303,7 +303,7 @@ namespace Jde::Web{
 		vector<Logging::Entry> logs;
 		for( uint i=0; i<100 && logs.empty(); ++i ){
 			logs = Logging::Find( [=](const Logging::Entry& m){
-				return m.Text.contains("exceeded the locally configured limit") && m.Arguments.size()==1 && m.Arguments[0]==Ƒ( "[{:x}]Server::DoRead", sessionId );
+				return m.Text().contains("exceeded the locally configured limit") && m.Arguments.size()==1 && m.Arguments[0]==Ƒ( "[{:x}]Server::DoRead", sessionId );
 			});
 			if( logs.empty() )
 				std::this_thread::sleep_for( 10ms );
@@ -323,11 +323,10 @@ namespace Jde::Web{
 		let sessionId = _clientSession->Id();
 		//extra parens: the comma in BlockAwait<A,B> would otherwise split the macro's argument list.
 		EXPECT_THROW( (BlockAwait<ClientSocketAwait<string>,string>( _clientSession->Echo(string(limit+1024, 'a')) )), Exception );
-		//Text/Arguments, never Entry::Message(): its args are strings, so the `{:x}` here takes the format-error path, which logs
-		//from inside MemoryLog::Find's lock and deadlocks (same trap BlockAwait.cpp:35 documents).
+		//LogRead's "[{:x}.{:x}]{}" stores the id formatted with its spec, so in hex.
 		let serverClosed = [sessionId]{//the base OnClose's own log line is the externally visible proof the session was torn down.
 			return !Logging::Find( [sessionId](const Logging::Entry& m){
-				return m.Arguments.size()==3 && m.Arguments[2]=="ServerSocket::OnClose." && m.Arguments[0]==Ƒ( "{}", sessionId );
+				return m.Arguments.size()==3 && m.Arguments[2]=="ServerSocket::OnClose." && m.Arguments[0]==Ƒ( "{:x}", sessionId );
 			}).empty();
 		};
 		for( uint i=0; i<100 && !serverClosed(); ++i )
@@ -418,7 +417,7 @@ namespace Jde::Web{
 		_clientSession = nullptr;
 		std::this_thread::sleep_for( 1s );
 		auto logs = Logging::Find( [=](const Logging::Entry& m){
-			return m.Text.contains("The WebSocket stream was gracefully closed at both endpoints")
+			return m.Text().contains("The WebSocket stream was gracefully closed at both endpoints")
 				&& m.Arguments.size()==1 && m.Arguments[0]==Ƒ( "[{:x}]Server::DoRead", sessionId );
 		});
 		ASSERT_TRUE( logs.size()>0 );

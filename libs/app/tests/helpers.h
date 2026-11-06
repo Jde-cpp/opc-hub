@@ -19,7 +19,7 @@ namespace Jde::App::Tests{
 	//The strings an entry references:  (kind, id, text) for its template, file, function and each argument.
 	Ξ entryStrings( const Logging::Entry& e )ι->vector<std::tuple<EStringKind,uuid,string>>{
 		vector<std::tuple<EStringKind,uuid,string>> y{
-			{EStringKind::Template, e.Id(), string{e.Text}}, {EStringKind::File, e.FileId(), string{e.File()}}, {EStringKind::Function, e.FunctionId(), string{e.Function()}} };
+			{EStringKind::Template, e.Id(), string{e.Text()}}, {EStringKind::File, e.FileId(), string{e.File()}}, {EStringKind::Function, e.FunctionId(), string{e.Function()}} };
 		for( let& arg : e.Arguments )
 			y.emplace_back( EStringKind::Arg, Logging::Entry::GenerateId(arg), arg );
 		return y;

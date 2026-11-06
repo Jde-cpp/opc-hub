@@ -19,8 +19,10 @@ namespace Jde::App{
 	//Every (kind, id bytes) an entry names:  its template, file, function and each argument.
 	Ξ ForEachStringId( const App::Log::Proto::LogEntryFile& e, auto&& f )->void{
 		f( EStringKind::Template, e.template_id() );
-		f( EStringKind::File, e.file_id() );
-		f( EStringKind::Function, e.function_id() );
+		if( e.file_id().size() )//none when the entry was stored without its source (/logging/proto/file, /function).
+			f( EStringKind::File, e.file_id() );
+		if( e.function_id().size() )
+			f( EStringKind::Function, e.function_id() );
 		for( const auto& arg : e.args() )
 			f( EStringKind::Arg, arg );
 	}

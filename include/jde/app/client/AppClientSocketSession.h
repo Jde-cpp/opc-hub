@@ -33,7 +33,7 @@ namespace Jde::App::Client{
 	private:
 		//Every request this session makes: a fresh id, logged as the first argument of the caller's message, then the await.
 		template<class T, class... Args>
-		α Request( ELogLevel level, ELogTags tags, SL sl, auto&& build, fmt::format_string<string const&, Args const&...>&& m, const Args&... args )ι->await<T>{
+		α Request( ELogLevel level, ELogTags tags, SL sl, auto&& build, Logging::Format<string const&, Args const&...>&& m, const Args&... args )ι->await<T>{
 			const auto requestId = NextRequestId();
 			LOGSL( level, sl, tags, move(m), hex(requestId), args... );
 			return { build(requestId), requestId, shared_from_this(), sl };

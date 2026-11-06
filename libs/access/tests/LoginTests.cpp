@@ -154,7 +154,7 @@ namespace Jde::Access::Tests{
 		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );//a rescan each: the untrusted cert fails the verify, the rescan finds nothing.
 		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
 		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
-		let missing = Logging::Find( [&](const Logging::Entry& e){ return e.Text.contains("does not exist") && e.Message().contains(dir.string()); } );
+		let missing = Logging::Find( [&](const Logging::Entry& e){ return e.Text().contains("does not exist") && e.Message().contains(dir.string()); } );
 		ASSERT_EQ( missing.size(), 3u ) << "one line per rescan";
 		EXPECT_EQ( missing[0].Level, ELogLevel::Warning );
 		EXPECT_EQ( missing[1].Level, ELogLevel::Debug );
@@ -165,7 +165,7 @@ namespace Jde::Access::Tests{
 		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
 		fs::remove_all( dir, ec );
 		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
-		let again = Logging::Find( [&](const Logging::Entry& e){ return e.Text.contains("does not exist") && e.Message().contains(dir.string()); } );
+		let again = Logging::Find( [&](const Logging::Entry& e){ return e.Text().contains("does not exist") && e.Message().contains(dir.string()); } );
 		ASSERT_EQ( again.size(), 1u );
 		EXPECT_EQ( again[0].Level, ELogLevel::Warning );
 	}

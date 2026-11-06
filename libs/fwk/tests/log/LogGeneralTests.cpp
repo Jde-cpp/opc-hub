@@ -12,6 +12,7 @@ namespace Jde::Tests{
 		~LogGeneralTests() override{}
 
 		static constexpr ELogTags MutatedTags{ ELogTags::Scheduler };
+		static constexpr ELogTags LibraryTag{ (ELogTags)(1ull<<LibraryTagBase) };//no library's tag parser is loaded here.
 		α SetUp()->void override{ Logging::ClearMemory(); }
 		α TearDown()->void override{ Logging::GetLogger<Logging::MemoryLog>().ClearLevel( MutatedTags ); }
 
@@ -27,8 +28,7 @@ namespace Jde::Tests{
 	//logger is missing, which is the half that made it hard to find.
 	struct UnbuildableLogger final : Logging::ILogger{
 		UnbuildableLogger( const jobject& o )ε:ILogger{o}{ throw Exception{"this logger cannot be created"}; }
-		α Write( const Logging::Entry& )ι->void override{}
-		α Write( const Logging::Entry&, uint32, uint32 )ι->void override{}
+		α Write( const Logging::Record& )ι->void override{}
 		α Shutdown( bool, SL )ι->void override{}
 		α Name()Ι->sv override{ return "Unbuildable"; }
 	};
@@ -38,7 +38,7 @@ namespace Jde::Tests{
 		Logging::ClearMemory();
 		EXPECT_EQ( Logging::Add<UnbuildableLogger>("l6-probe"), nullptr );
 		Settings::Set( "/logging/l6-probe", jvalue{} );//and gone again:  a null reads as no section.
-		let reported = Logging::Find( [](const Logging::Entry& e){ return e.Level>=ELogLevel::Error && e.Text.contains("could not be created"); } );
+		let reported = Logging::Find( [](const Logging::Entry& e){ return e.Level>=ELogLevel::Error && e.Text().contains("could not be created"); } );
 		EXPECT_FALSE( reported.empty() ) << "a configured logger that did not start said nothing at Error";
 	}
 
@@ -47,8 +47,7 @@ namespace Jde::Tests{
 	//incompatible" in the gateway suite.  This logger takes nothing, so it stays inert for the rest of the run.
 	struct QuietLogger final : Logging::ILogger{
 		QuietLogger():ILogger{ jobject{{"tags", jobject{{"default", "None"}}}} }{}
-		α Write( const Logging::Entry& )ι->void override{}
-		α Write( const Logging::Entry&, uint32, uint32 )ι->void override{}
+		α Write( const Logging::Record& )ι->void override{}
 		α Shutdown( bool, SL )ι->void override{}
 		α Name()Ι->sv override{ return "Quiet"; }
 	};
@@ -145,8 +144,7 @@ namespace Jde::Tests{
 	// The level-resolution engine itself had no test.  fwk-max #3 was MinLevel counting split(tags).size() rather
 	// than the overlap, so the first configured entry sharing any bit won and the answer followed
 	// concurrent_flat_map iteration order; fwk-max #2 was the ctor leaving _minLevel at Information instead of the
-	// parsed default.  Every case here has a strict popcount winner - a tie (http vs client for HttpClientRead)
-	// really would be order-dependent, because the comparison is `iterCount>matches`.
+	// parsed default.  Every case here has a strict popcount winner;  LogTagsTieTakesTheLowerLevel has the ties.
 	TEST_F( LogGeneralTests, LogTagsResolvesBestMatch ){
 		//three single-bit distractors, so the buggy 'first overlapping entry wins' has to draw the one right entry
 		//out of four to look correct.  They are safe for the lookups below: only socket|client|read is asserted
@@ -158,8 +156,24 @@ namespace Jde::Tests{
 		EXPECT_EQ( t.MinLevel(ELogTags::Http), ELogLevel::Trace );//exact match.
 		EXPECT_EQ( t.MinLevel(ELogTags::SocketClientRead), ELogLevel::Debug ) << "socket.client's 2 shared bits must beat every 1-bit entry";
 		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Warning ) << "nothing overlaps sql - it falls back to the default";
+		EXPECT_EQ( t.MinLevel(LibraryTag | ELogTags::Read), ELogLevel::Critical ) << "a library's bit counts toward the overlap, as Opc's IotReadTag";
 		EXPECT_TRUE( t.ShouldLog(ELogLevel::Debug, ELogTags::SocketClientRead) );
 		EXPECT_FALSE( t.ShouldLog(ELogLevel::Trace, ELogTags::SocketClientRead) );
+	}
+
+	//Configured tags sharing as many bits with a line tie, and the lower level wins, as combining loggers does - not
+	//whichever concurrent_flat_map visits first.  Each case has distractors above the winner, so that order would miss it.
+	TEST_F( LogGeneralTests, LogTagsTieTakesTheLowerLevel ){
+		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"http","Critical"},{"client","Trace"},{"read","Error"}}}} };
+		EXPECT_EQ( t.MinLevel(ELogTags::HttpClientRead), ELogLevel::Trace );
+		LogTags silenced{ jobject{{"tags", jobject{{"default","Warning"},{"http","None"},{"client","Error"},{"read","Critical"}}}} };
+		EXPECT_EQ( silenced.MinLevel(ELogTags::HttpClientRead), ELogLevel::Error ) << "None yields to a real level, as in the cumulative";
+		LogTags gateway{ jobject{{"tags", jobject{{"default","Information"},{"socket.client.read","Information"},{"http.client.read","Information"}}}} };
+		gateway.SetLevel( LibraryTag, ELogLevel::Trace );//the gateway's opc: "Trace" against its *.read levels, for IotReadTag.
+		EXPECT_EQ( gateway.MinLevel(LibraryTag | ELogTags::Read), ELogLevel::Trace );
+		let sql = jobject{ {"sql", "Error"} };
+		Logging::Threshold file{ "test", &sql, jobject{{"default", "Warning"}, {"exception", "Trace"}} };
+		EXPECT_TRUE( file.ShouldLog(ELogLevel::Debug, ELogTags::Sql | ELogTags::Exception) ) << "an exception keeps its source whatever its other tags' levels";
 	}
 
 	// MinLevel memoizes its answer into ExtrapolatedTags, so both mutators have to drop the memo as well as the
@@ -259,7 +273,7 @@ namespace Jde::Tests{
 	// never written, and nothing else in the suite reads Entry::UserPK back off the variadic ctors.
 	TEST_F( LogGeneralTests, EntryKeepsUserPK ){
 		constexpr auto userPK = Jde::UserPK{ 42 };
-		Logging::Entry e{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, string{"msg {}"}, 1 };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, "msg {}", 1 };
 		EXPECT_EQ( e.UserPK, userPK );
 		EXPECT_EQ( e.Level, ELogLevel::Debug );
 		EXPECT_EQ( e.Tags, ELogTags::Test );
@@ -267,7 +281,7 @@ namespace Jde::Tests{
 		EXPECT_EQ( e.Arguments[0], "1" );
 		EXPECT_EQ( e.Message(), "msg 1" );
 
-		Logging::Entry anonymous{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, string{"msg {}"}, 1 };
+		Logging::Entry anonymous{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, "msg {}", 1 };
 		EXPECT_EQ( anonymous.UserPK, Jde::UserPK{} ) << "the overload without a user must default it";
 
 		Logging::Entry preformatted{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, string{"msg {}"}, vector<string>{"1"} };
@@ -283,6 +297,47 @@ namespace Jde::Tests{
 	// the DBG both proves that level and memoizes it into the logger's ExtrapolatedTags, and only then is the tag
 	// raised to Trace - which fails unless SetLevel reaches the cumulative (it short-circuits the TRACE before any
 	// logger is consulted) *and* drops that memo.
+	//A Threshold's settings go over its defaults, a logger's `tags` shape (ProtoLog's file and function, LogStack's stack).
+	TEST_F( LogGeneralTests, ThresholdsApplyOverTheDefaults ){
+		let defaults = jobject{ {"default", "Warning"}, {"exception", "Trace"} };
+		let exception = ELogTags::Sql | ELogTags::Exception;
+		Logging::Threshold dflt{ "test", nullptr, defaults };
+		EXPECT_FALSE( dflt.ShouldLog(ELogLevel::Information, ELogTags::App) );
+		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Warning, ELogTags::App) );
+		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Debug, exception) );
+		EXPECT_TRUE( dflt.ShouldLog(ELogLevel::Debug, LibraryTag | ELogTags::Exception) ) << "a library's exception, as a UAException";
+		Logging::Threshold memoized{ "test", nullptr, defaults };
+		for( uint i=0; i<LibraryTagBase; ++i ){//library lines memoized at the default, each sharing the library's bit with the exception.
+			if( let tag = (ELogTags)(1ull<<i); tag!=ELogTags::Exception )
+				memoized.ShouldLog( ELogLevel::Debug, LibraryTag | tag );
+		}
+		EXPECT_TRUE( memoized.ShouldLog(ELogLevel::Debug, LibraryTag | ELogTags::Exception) ) << "matched against an earlier line's memo";
+		let everything = jobject{ {"default", "Trace"} };
+		EXPECT_TRUE( Logging::Threshold("test", &everything, defaults).ShouldLog(ELogLevel::Trace, ELogTags::App) );
+		let noExceptions = jobject{ {"exception", "None"} };
+		Logging::Threshold quiet{ "test", &noExceptions, defaults };
+		EXPECT_FALSE( quiet.ShouldLog(ELogLevel::Error, exception) ) << "exception: None drops it from exceptions";
+		EXPECT_TRUE( quiet.ShouldLog(ELogLevel::Warning, ELogTags::App) ) << "...and leaves the default level in place";
+	}
+
+	//LogStack walks the stack only from /logging/stack's level, Warning as by default here:  below it an entry has no source,
+	//at it the caller's frame.  The first walk pays the symbolizer's one-time start, ~170 ms in a debug build.
+	TEST_F( LogGeneralTests, LogStackWalksFromItsThreshold ){
+		ASSERT_FALSE( Logging::ShouldCaptureStack(ELogLevel::Information, ELogTags::Test) ) << "the suite's config sets /logging/stack";
+		ASSERT_TRUE( Logging::ShouldCaptureStack(ELogLevel::Warning, ELogTags::Test) );
+		Logging::ClearMemory();
+		Logging::LogStack( ELogLevel::Information, ELogTags::Test, 0, "LogStack below its threshold {}", 1 );
+		Logging::LogStack( ELogLevel::Warning, ELogTags::Test, 0, "LogStack at its threshold {}", 1 );
+		let below = Logging::Find( [](let& e){ return e.Text()=="LogStack below its threshold {}"; } );
+		ASSERT_EQ( below.size(), 1u );
+		EXPECT_TRUE( below[0].File().empty() ) << below[0].File();
+		EXPECT_EQ( below[0].Line, 0u );
+		let at = Logging::Find( [](let& e){ return e.Text()=="LogStack at its threshold {}"; } );
+		ASSERT_EQ( at.size(), 1u );
+		EXPECT_TRUE( at[0].File().ends_with("LogGeneralTests.cpp") ) << "not the caller's frame: " << at[0].File();
+		EXPECT_NE( at[0].Line, 0u );
+	}
+
 	//install-issues #7: SpdLog is handed its own /logging/spd object and looked `flushOn` up by a root path, which the jobject
 	//overload (a key, not a path) never resolves - every config's flushOn was ignored and the default stood, Information in a
 	//release build, so a service's text log showed nothing below that until a flush.  The key reads it; the default holds without.
@@ -296,6 +351,30 @@ namespace Jde::Tests{
 		EXPECT_EQ( Logging::SpdLog{settings("Trace")}.FlushLevel(), ELogLevel::Trace );
 		EXPECT_EQ( Logging::SpdLog{settings("Warning")}.FlushLevel(), ELogLevel::Warning );
 		EXPECT_EQ( Logging::SpdLog{settings(nullopt)}.FlushLevel(), _debug ? ELogLevel::Debug : ELogLevel::Information );
+	}
+
+	//SpdLog formats from the call's arguments, in a noexcept Write.  When fmt refuses a value there, it writes the line from
+	//the Entry instead, with the error in that argument's place.
+	TEST_F( LogGeneralTests, SpdLogWritesALineFmtRefuses ){
+		let dir = TestsDir( "spd/refused", true );
+		fs::remove_all( dir );
+		fs::create_directories( dir );
+		const jobject settings{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}}}}} };
+		constexpr Logging::Format<const char*> format{ "refused {}" };
+		let view = format.View();
+		const char* null{};
+		let args = fmt::make_format_args( null );
+		{
+			Logging::SpdLog spd{ settings };
+			spd.Write( Logging::Record{ELogLevel::Warning, ELogTags::Test, SRCE_CUR, view, args} );
+			spd.Shutdown( false, SRCE_CUR );
+		}
+		string text;
+		for( let& entry : fs::directory_iterator(dir) ){
+			std::ifstream is{ entry.path() };
+			text += string{ std::istreambuf_iterator<char>{is}, {} };
+		}
+		EXPECT_NE( text.find("refused <format error: string pointer is null>"), string::npos ) << text;
 	}
 
 	//install-issues #13: a start truncated the text log, so restarting a product after a failure erased the lines that said

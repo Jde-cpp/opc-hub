@@ -199,8 +199,10 @@ namespace Jde::App{
 				auto tags = ToValue( (ELogTags)entry.tags() );//a lone tag comes back bare, but the grid column is string[] (web LogEntry.ts) - always a list.
 				o[name] = tags.is_array() ? move(tags) : jvalue( jarray{move(tags)} );
 			}
-			else if( name=="line" )
-				o[name] = entry.line();
+			else if( name=="line" ){
+				if( entry.line() )//none when the entry was stored without its file:  left out, the web's cell is blank, not 0.
+					o[name] = entry.line();
+			}
 			else if( name=="time" )
 				o[name] = ToIsoString( Protobuf::ToTimePoint(entry.time()) );//ToIsoString already ends in 'Z'.
 			else if( name=="userId" )

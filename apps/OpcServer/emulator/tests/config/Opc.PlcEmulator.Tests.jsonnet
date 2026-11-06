@@ -31,6 +31,7 @@ local applicationUri = "urn:jde:plc-emulator-tests";
 		}
 	},
 	logging:{
+		stack:: { default: "Warning" },//open62541's lines (LogStack):  which walk the stack for their file, line and function.
 		spd:{
 			tags: {
 				default: "Information",

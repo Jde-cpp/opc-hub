@@ -11,12 +11,11 @@ namespace Jde::Tests{
 	//abseil's sink-set lock anywhere else is the reverse order; either way abseil's debug deadlock detector aborts the process.
 	struct LockingLogger final : Logging::ILogger{
 		LockingLogger()ι:ILogger{ jobject{{"tags", jobject{{"default", "Information"}}}} }{}
-		α Write( const Logging::Entry& e )ι->void override{
+		α Write( const Logging::Record& r )ι->void override{
 			ul _{ _mutex };
-			if( e.Text==Trigger )
+			if( r.Entry().Text()==Trigger )
 				ABSL_LOG(ERROR) << "absl under a logger's lock";
 		}
-		α Write( const Logging::Entry& e, uint32, uint32 )ι->void override{ Write( e ); }
 		α Shutdown( bool, SL )ι->void override{}
 		α Name()Ι->sv override{ return "LockingLogger"; }
 		static constexpr sv Trigger{ "abseil sink: log under a logger's lock" };
@@ -37,7 +36,7 @@ namespace Jde::Tests{
 		//the sink queues and a thread of its own logs - FlushLogSinks waits for it.
 		Ω find( sv text )ι->vector<Logging::Entry>{
 			absl::FlushLogSinks();
-			return Logging::Find( [text](let& e){ return e.Text==text; } );
+			return Logging::Find( [text](let& e){ return e.Text()==text; } );
 		}
 	};
 
