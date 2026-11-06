@@ -1,0 +1,53 @@
+<h2 mat-dialog-title>Parameters - {{ data.name }}</h2>
+<mat-dialog-content>
+	<div class="fields">
+		<!--text, not number:  a number input reports a partial entry as blank, which the binding would write back over it-->
+		<mat-form-field subscriptSizing="dynamic" floatLabel="always">
+			<mat-label>Sampling interval</mat-label>
+			<input matInput type="text" inputmode="decimal" [value]="fields().samplingInterval" (input)="set('samplingInterval', $any($event.target).value)" [placeholder]="samplingDefault + ''" matTooltip="How often the server samples the node, in milliseconds.  0 asks its fastest;  the server may revise it.">
+			<span matTextSuffix>ms</span>
+			<mat-hint>Blank is the gateway's {{ samplingDefault }} ms.</mat-hint>
+		</mat-form-field>
+		<mat-form-field subscriptSizing="dynamic" floatLabel="always">
+			<mat-label>Queue size</mat-label>
+			<input matInput type="text" inputmode="numeric" [value]="fields().queueSize" (input)="set('queueSize', $any($event.target).value)" [placeholder]="queueDefault + ''" matTooltip="How many samples the server queues between publishes;  the server may revise it.">
+			<mat-hint>Blank is a queue of {{ queueDefault }}.</mat-hint>
+		</mat-form-field>
+		<mat-form-field subscriptSizing="dynamic" floatLabel="always">
+			<mat-label>Discard</mat-label>
+			<mat-select [value]="fields().discardOldest" (selectionChange)="set('discardOldest', $event.value)" matTooltip="Which sample a full queue drops.">
+				<mat-option value="">Default (oldest)</mat-option>
+				<mat-option value="true">Oldest</mat-option>
+				<mat-option value="false">Newest</mat-option>
+			</mat-select>
+		</mat-form-field>
+		<mat-form-field subscriptSizing="dynamic" floatLabel="always">
+			<mat-label>Trigger</mat-label>
+			<mat-select [value]="fields().trigger" (selectionChange)="set('trigger', $event.value)" matTooltip="What change the server reports:  the status alone, the status or the value, or those and the timestamp.">
+				@for( t of triggers; track t.value ){
+					<mat-option [value]="t.value">{{ t.label }}</mat-option>
+				}
+			</mat-select>
+		</mat-form-field>
+		<mat-form-field subscriptSizing="dynamic" floatLabel="always">
+			<mat-label>Deadband</mat-label>
+			<mat-select [value]="fields().deadbandType" (selectionChange)="set('deadbandType', $event.value)" matTooltip="The change a value has to clear to be reported:  absolute, in the value's units, or a percent of the node's EURange, which the server applies or refuses.">
+				@for( d of deadbands; track d.value ){
+					<mat-option [value]="d.value">{{ d.label }}</mat-option>
+				}
+			</mat-select>
+		</mat-form-field>
+		<mat-form-field subscriptSizing="dynamic" floatLabel="always">
+			<mat-label>Deadband value</mat-label>
+			<input matInput type="text" inputmode="decimal" [value]="fields().deadbandValue" (input)="set('deadbandValue', $any($event.target).value)" [disabled]="deadbandOff" matTooltip="At least 0;  a percent is at most 100.">
+		</mat-form-field>
+	</div>
+	<p class="hint">A node another listener watches shares its item, which takes the strictest of what they ask:  the fastest sampling, the largest queue, the most inclusive trigger and the smallest deadband.  The list shows what the server revised the item to.</p>
+	@if( problem(); as p ){
+		<p class="problem" role="alert">{{ p }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<button matButton="outlined" type="button" (click)="dialogRef.close()">Cancel</button>
+	<button matButton="filled" type="button" (click)="apply()" [disabled]="!!problem()">Apply</button>
+</mat-dialog-actions>

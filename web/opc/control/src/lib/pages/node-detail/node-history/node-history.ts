@@ -346,7 +346,7 @@ export class NodeHistory implements OnDestroy{
 		this.#subscription = this.gateway.subscribe( this.cnnctnSlug, nodes.map( n=>n.nodeId ), this.#owner ).subscribe({
 			next: ( r:SubscriptionResult )=>{
 				const node = byKey.get( r.node.key );
-				if( !node )
+				if( !node || r.revised )//a revised result is what the server runs the node's item at (spec *Watch list*), no reading
 					return;
 				if( r.value instanceof OpcError )//a refused subscription, not a reading
 					return this.snackbar.exception( `Could not subscribe to ${node.name}.`, r.value );

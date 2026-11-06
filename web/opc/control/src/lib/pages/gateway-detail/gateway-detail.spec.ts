@@ -64,15 +64,15 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		return { fixture, go, logTabs, created: ()=>created.mock.calls.map( ([c])=>c ), fail: ( lookup:string )=>down.add( lookup ) };
 	};
 
-	//the tabs:  Connections, Templates, Groups, Endpoint, Logs, Log Settings (#337 put the two historian tabs beside Connections, #388 the endpoint after them)
+	//the tabs:  Connections, Templates, Groups, Endpoint, Watch, Logs, Log Settings (#337 put the two historian tabs beside Connections, #388 the endpoint after them, #419 the watch list's)
 	it( 'builds Log Settings again for the gateway it switched to', async ()=>{
-		const { go, logTabs } = await open( 5 );
+		const { go, logTabs } = await open( 6 );
 		await go( 'B' );
 		expect( logTabs.settings.mock.calls ).toEqual( [[1], [2]] );
 	} );
 
 	it( 'and Logs', async ()=>{
-		const { go, logTabs } = await open( 4 );
+		const { go, logTabs } = await open( 5 );
 		await go( 'B' );
 		expect( logTabs.logs.mock.calls ).toEqual( [[gateways['A']], [gateways['B']]] );
 	} );

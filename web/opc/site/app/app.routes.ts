@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail, NodeResolver, GatewayResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
@@ -132,6 +132,14 @@ export const routes: Routes = [
 				data: { summary: "History group", kind: "groups" },
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
+			},
+			{//the watch list (#419):  rows from any of the gateway's connections, ahead of ':connection', which would take the segment for one
+				path: 'watch',
+				loadComponent: loadGatewayWatch,
+				providers: [ WatchResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "Watch list" },
+				resolve: { pageData: WatchResolver }
 			},
 			{
 				path: ':connection',

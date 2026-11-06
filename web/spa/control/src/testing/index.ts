@@ -61,12 +61,20 @@ export class MockProfileService implements IProfileService{
 	save = vi.fn( async ( key:string, value:string|null )=>{ value==null ? this.rows.delete(key) : this.rows.set(key, value); } );
 }
 //ProfileStore, for a page that loads its settings:  load answers `rows[key]` or the default, a class array is empty, and the
-//writes are recorded.
-export const profileStoreStub = ( rows:Record<string,unknown>={} )=>({
-	load: vi.fn( async <T>( key:string, dflt:T )=>(key in rows ? rows[key] : dflt) as T ),
-	loadArray: vi.fn( async ()=>[] ),
-	save: vi.fn().mockResolvedValue( undefined )
-});
+//writes are recorded - an update's as the save of its result, which `rows[key]` then holds for the next update and load.
+export const profileStoreStub = ( rows:Record<string,unknown>={} )=>{
+	const stub = {
+		load: vi.fn( async <T>( key:string, dflt:T, _fresh?:boolean )=>(key in rows ? rows[key] : dflt) as T ),
+		loadArray: vi.fn( async ()=>[] ),
+		save: vi.fn().mockResolvedValue( undefined ),
+		update: vi.fn( async <T>( key:string, dflt:T, change:( current:T )=>T )=>{
+			const value = change( (key in rows ? rows[key] : dflt) as T );
+			rows[key] = value;
+			await stub.save( key, value );
+		} )
+	};
+	return stub;
+};
 
 //sessionStorage over the Map returned, until vi.unstubAllGlobals().
 export function fakeSessionStorage():Map<string,string>{

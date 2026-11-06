@@ -48,7 +48,10 @@ namespace Jde::Opc::Gateway{
 	α ServerCnnctn::SlugError( sv slug, SL sl )ι->up<Exception>{
 		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
 		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
-		return valid ? nullptr : mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+		if( !valid )
+			return mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+		//the web's route to the gateway's watch list, apps/gateways/<instance>/watch, would shadow the connection's page (419-watch #12)
+		return slug=="watch" ? mu<Exception>( string{"Slug 'watch' is not valid:  it is the url segment of the gateway's watch list."}, ExceptionArgs{EHttpStatus::BadRequest}, sl ) : nullptr;
 	}
 	α ServerCnnctn::SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>{
 		using ClientSecurity::PolicyName;

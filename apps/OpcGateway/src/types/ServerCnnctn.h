@@ -13,6 +13,7 @@ namespace Jde::Opc::Gateway{
 		α ToJson()Ι->jobject;
 		//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
 		//url segment - the one rule the insert (ServerCnnctnMAwait) and testConnection apply;  the web form checks the same (ServerCnnctn.slugPattern).
+		//Not `watch`, the watch list's segment beside the connections'.
 		//Null for a valid slug.
 		Ω SlugError( sv slug, SL sl )ι->up<Exception>;
 		//docs/clients/spec.md *Connection settings*:  what the row says of the channel, checked at every save (ServerCnnctnMAwait, an

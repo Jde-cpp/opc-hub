@@ -78,13 +78,13 @@ describe( 'ServerCnnctn.slug', ()=>{
 		expect( mutation.args.slug ).toBe( "eng-test" );
 	} );
 	it( 'accepts letters, digits, dot, underscore and dash', ()=>{
-		for( const slug of ["local", "eng-test", "Line_1.a", " padded "] ){
+		for( const slug of ["local", "eng-test", "Line_1.a", " padded ", "Watch", "watch1"] ){
 			expect( create(slug).fieldError("slug") ).toBeUndefined();
 			expect( create(slug).canSave ).toBe( true );
 		}
 	} );
 	it( 'refuses anything else, and will not save', ()=>{
-		for( const slug of ["eng test", "eng\\test", "-eng", ".eng", "ëng", "a/b"] ){
+		for( const slug of ["eng test", "eng\\test", "-eng", ".eng", "ëng", "a/b", "watch", " watch "] ){//`watch`:  the watch list's url segment (419-watch #12)
 			expect( create(slug).fieldError("slug") ).toBeDefined();
 			expect( create(slug).canSave ).toBe( false );
 		}

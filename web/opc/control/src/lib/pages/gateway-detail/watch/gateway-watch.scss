@@ -1,0 +1,111 @@
+@use '../../status';
+
+:host{
+	display: block;
+	width: 100%;
+}
+.add-button{
+	margin-inline-end: 8px;
+}
+.table-wrap{
+	margin: auto;
+	text-align: center;
+}
+mat-table{
+	width: 100%;
+}
+mat-header-cell .unit{
+	margin-left: .25rem;
+	color: var(--mat-sys-on-surface-variant);
+}
+/* the connection and the node take the table's slack, as the children table's Name does;  what does not fit ends in an ellipsis */
+.mat-column-connection{
+	flex: .25 .25 160px;
+	min-width: 100px;
+	padding-inline: 5px;
+}
+.mat-column-node{
+	flex: .5 .5 260px;
+	min-width: 150px;
+	gap: 6px;
+	padding-inline: 5px;
+}
+//the folder the node is under, muted beside the name
+mat-cell.mat-column-node > .parent-path{
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}
+mat-cell.mat-column-connection > *, mat-cell.mat-column-node > *{
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mat-column-value{
+	flex: 0 0 200px;
+	min-width: 0;
+	gap: 4px;
+	padding-inline: 5px;
+}
+mat-cell.mat-column-value > .value-text{
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mat-column-sourceTime, .mat-column-serverTime{
+	flex: 0 0 180px;
+	min-width: 0;
+	padding-inline: 5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* what the row asks and what the server revised it to:  numeric, right-aligned, tabular */
+.mat-column-sampling, .mat-column-revisedSampling, .mat-column-queue, .mat-column-revisedQueue{
+	flex: 0 0 110px;
+	padding-inline: 5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+mat-cell.numeric{
+	justify-content: flex-end;
+	text-align: right;
+}
+.mat-column-discard{
+	flex: 0 0 90px;
+	padding-inline: 5px;
+}
+.mat-column-filter{
+	flex: 0 0 220px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+mat-cell.mat-column-filter > span{
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mat-column-actions{
+	flex: 0 0 80px;
+	padding-inline: 0;
+	justify-content: flex-end;
+}
+.row-action{
+	--mat-icon-button-state-layer-size: 32px;
+	--mat-icon-button-icon-size: 18px;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+}
+//a modify the server refused:  the values are what the item still runs at, marked so the request beside them is not mistaken for in force
+.refused{
+	color: var(--mat-sys-error);
+}
+//a value kept from before a Bad reading:  the last one known.  Muted by colour, never opacity
+.stale{
+	color: var(--mat-sys-on-surface-variant);
+	font-style: italic;
+}
+@include status.quality;

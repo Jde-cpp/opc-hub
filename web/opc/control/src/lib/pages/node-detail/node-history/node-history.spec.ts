@@ -282,6 +282,17 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.reads.at( -1 )!.args.limit ).toBe( 2*NodeHistory.pageSize );
 		tab.fixture.destroy();
 	} );
+	//the ack's revised result, and a MonitoredItemModified push's, share the owner's stream with the readings:  each became a Good
+	//point with no value, stamped now (419-watch #1)
+	it( 'takes a revised result on the live tail as no point', async ()=>{
+		const tab = open();
+		await tab.answer( {values: [at(tab.node, 1000)]} );
+		tab.gateway.values.next( {opcId: 'opc', node: tab.node.nodeId, revised: {samplingInterval: 250, queueSize: 2, sc: 0}} as any );
+		expect( tab.tab.values().length ).toBe( 1 );
+		tab.push( new Date(2000) );
+		expect( tab.tab.values().length ).toBe( 2 );
+		tab.fixture.destroy();
+	} );
 	//An edit the server took part of changed the history:  the tab reads it again, and names what was refused once the names
 	//arrive (historian-web-edits #2)
 	it( 'reads again after an edit the server took part of, and names what it refused', async ()=>{

@@ -103,7 +103,7 @@ export class TestGateway extends Gateway{
 
 	acking = false;
 	statusCodes:( number|undefined )[] = [];
-	acked?:{ statusCode?:number, node?:any }[];//the reply as given, node ids and all - in the gateway's order, not the request's
+	acked?:{ statusCode?:number, node?:any, revisedSamplingInterval?:number, revisedQueueSize?:number }[];//the reply as given, node ids and all - in the gateway's order, not the request's
 	rejectWith?:any;
 	sent = vi.fn<( m:any )=>void>();
 	override sendPromise<T>( m:any, log:string ):Promise<T>{

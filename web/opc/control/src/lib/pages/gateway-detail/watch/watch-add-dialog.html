@@ -1,0 +1,61 @@
+<h2 mat-dialog-title>Watch a node</h2>
+<mat-dialog-content>
+	<div class="where">
+		<mat-form-field class="connection">
+			<mat-label>Connection</mat-label>
+			<mat-select [value]="connection()" (selectionChange)="onConnection($event.value)" [disabled]="loading()">
+				@for( c of data.connections; track c.slug ){
+					<mat-option [value]="c.slug">{{ c.name }}</mat-option>
+				}
+			</mat-select>
+			<mat-hint>Where the node is.</mat-hint>
+		</mat-form-field>
+		<mat-form-field class="text">
+			<mat-label>Node id or name</mat-label>
+			<input matInput [value]="text()" (input)="text.set($any($event.target).value)" (keydown.enter)="onEnter()" placeholder="ns=2;i=1001, or a name" [disabled]="loading() || !connection()" cdkFocusInitial>
+			<button matSuffix matIconButton type="button" (click)="search()" [disabled]="!canSearch()" aria-label="Search by name" matTooltip="Search by name"><mat-icon>search</mat-icon></button>
+			<mat-hint>{{ nodeId() ? "A node id:  Add watches it as typed." : "Part of a name searches the connection;  tick the variables to watch." }}</mat-hint>
+		</mat-form-field>
+	</div>
+	<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Searching"></mat-progress-bar>
+	@if( hits().length ){
+		<mat-table [dataSource]="hits()" class="mat-elevation-z2 jde-dense">
+			<ng-container matColumnDef="pick">
+				<mat-header-cell *matHeaderCellDef></mat-header-cell>
+				<mat-cell *matCellDef="let hit">
+					@if( selectable(hit) ){
+						<mat-checkbox [checked]="isPicked(hit)" (click)="$event.stopPropagation()" (change)="toggle(hit)" [aria-label]="'Watch ' + hit.name"></mat-checkbox><!--stopPropagation:  the row's click toggles too-->
+					}
+				</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="name">
+				<mat-header-cell *matHeaderCellDef>Name</mat-header-cell>
+				<mat-cell *matCellDef="let hit">
+					<mat-icon class="kind" aria-hidden="true" [matTooltip]="className(hit)">{{ icon(hit) }}</mat-icon>
+					<span class="leaf" [class.unwatchable]="!selectable(hit)" [matTooltip]="selectable(hit) ? '' : className(hit) + ' - only a variable has a value to watch.'">{{ hit.name }}</span>
+				</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="path">
+				<mat-header-cell *matHeaderCellDef>Path</mat-header-cell>
+				<mat-cell *matCellDef="let hit"><span>{{ displayPath(hit) }}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="node">
+				<mat-header-cell *matHeaderCellDef>Node</mat-header-cell>
+				<mat-cell *matCellDef="let hit"><span>{{ hit.node.uaString() }}</span></mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="displayedColumns"></mat-header-row>
+			<mat-row *matRowDef="let row; columns: displayedColumns" [class.picked]="isPicked(row)" (click)="toggle(row)"></mat-row>
+		</mat-table>
+	}
+	@else if( searched() && !loading() && !error() ){
+		<p class="empty" role="status">No node named like '{{ searched() }}'.</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<span class="picked-count">{{ picks().length ? picks().length + (picks().length==1 ? ' node picked' : ' nodes picked') : '' }}</span>
+	<button matButton="outlined" type="button" (click)="dialogRef.close()">Cancel</button>
+	<button matButton="filled" type="button" (click)="add()" [disabled]="!canAdd()">Add</button>
+</mat-dialog-actions>

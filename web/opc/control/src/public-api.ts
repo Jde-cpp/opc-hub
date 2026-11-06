@@ -1,7 +1,8 @@
 
 export {gatewayTableSettings} from './lib/pages/gateway-detail/gateway-table-settings';
-export {loadClientDetail, loadGatewayDetail, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail} from './lib/pages/opc-pages';
+export {loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail} from './lib/pages/opc-pages';
 export {HistAdminResolver} from './lib/services/resolvers/hist-admin-resolver';
+export {WatchResolver} from './lib/services/resolvers/watch-resolver';
 export {OpcAuthService} from './lib/services/opc-auth-service';
 export {GATEWAY_SERVICE, GatewayService} from './lib/services/gateway-service';
 export {HistoryService} from './lib/services/history-service';

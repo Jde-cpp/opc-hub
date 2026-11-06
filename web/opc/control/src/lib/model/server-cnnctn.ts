@@ -45,7 +45,8 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	override fieldError( field:string ):string|undefined{
 		const slug = this.slug?.trim();
 		if( field=="slug" )
-			return slug && !ServerCnnctn.slugPattern.test( slug ) ? "Letters, digits, '.', '_' and '-' only, starting with a letter or digit." : undefined;
+			return slug && !ServerCnnctn.slugPattern.test( slug ) ? "Letters, digits, '.', '_' and '-' only, starting with a letter or digit."
+				: slug=="watch" ? "Taken by the gateway's watch list, whose url segment it is." : undefined;//as ServerCnnctn::SlugError (419-watch #12)
 		if( (durationNames as readonly string[]).includes(field) ){
 			const ms = ServerCnnctn.toMs( this[field as ConnectionSettingName] );
 			return ms===0 && field!="pingInterval" ? "0 is not allowed:  leave it empty for the default."

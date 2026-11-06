@@ -1,8 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 import { HttpClient, HttpHeaders, HttpResponse } from '@angular/common/http';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { User } from 'jde-spa';
-import { IError } from './proto-service';
+import { IError, ProtoService } from './proto-service';
 import { AuthStore } from './auth-store';
 import { fakeJwt, silence } from 'jde-spa/testing';
 import { stubCodec, TestProtoService } from 'jde-framework/testing';
@@ -200,5 +200,43 @@ describe( 'ProtoService.loginWait', ()=>{
 		await service.loginWait( "graphql?query=x" );
 		expect( sent() ).toEqual( ["a1b2c3d4"] );
 		expect( authStore.user()?.sessionId ).toBe( "a1b2c3d4" );
+	} );
+} );
+
+//Chrome's back/forward cache kept a page left by a full load alive with its socket open:  the gateway kept its subscriptions, and
+//their asks on items other pages share, until the page came back to a socket Chrome closed then (reviews-issue/419-watch.md W1).
+describe( 'ProtoService and the back/forward cache', ()=>{
+	class SocketService extends TestProtoService{
+		socket = new Subject<Uint8Array>();
+		protected override openSocket(){ return this.socket; }
+	}
+	const transition = ( type:'pagehide'|'pageshow', persisted:boolean )=>window.dispatchEvent( Object.assign( new Event(type), {persisted} ) );
+	beforeEach( ()=>silence( 'log' ) );
+	afterEach( ()=>vi.restoreAllMocks() );
+
+	it( 'closes an open socket as the page goes into the cache, and reloads the page it comes back as', ()=>{
+		const reload = vi.spyOn( ProtoService, 'reloadPage' ).mockImplementation( ()=>{} );
+		const service = new SocketService();
+		service.connect();
+		transition( 'pagehide', false );//an unload:  the browser closes the socket itself
+		expect( service.socket.isStopped ).toBe( false );
+		transition( 'pagehide', true );
+		expect( service.socket.isStopped ).toBe( true );
+		transition( 'pageshow', true );
+		expect( reload ).toHaveBeenCalledTimes( 1 );
+	} );
+
+	it( 'keeps the quick return of a page that had no socket open, or one already closed', ()=>{
+		const reload = vi.spyOn( ProtoService, 'reloadPage' ).mockImplementation( ()=>{} );
+		new SocketService();
+		transition( 'pagehide', true );
+		transition( 'pageshow', true );
+		const closed = new SocketService();
+		closed.connect();
+		closed.socket.error( new Error( "lost" ) );
+		transition( 'pagehide', true );
+		transition( 'pageshow', true );
+		transition( 'pageshow', false );//a first load
+		expect( reload ).not.toHaveBeenCalled();
 	} );
 } );

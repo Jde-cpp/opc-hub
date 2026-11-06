@@ -156,6 +156,57 @@ describe( 'ProfileStore', ()=>{
 });
 
 //reviews/m3-closing.md #17:  a returning user whose server session had lapsed was reset to anonymous while their profile loaded,
+//A whole-value save of what one page read dropped what another page or tab wrote since (419-watch #9):  update changes the
+//value the server holds, after the key's queued writes, and caches the result.
+describe( 'ProfileStore.update', ()=>{
+	it( 'changes the value the server holds, not the cached one, and caches the result', async ()=>{
+		const service = new MockProfileService();
+		service.rows.set( 'k', JSON.stringify( ['a'] ) );
+		const store = createStore( service ), other = createStore( service );
+		expect( await store.load<string[]>( 'k', [] ) ).toEqual( ['a'] );
+		await other.save( 'k', ['a', 'b'] );//another tab
+		await store.update<string[]>( 'k', [], v=>[...v, 'c'] );
+		expect( service.rows.get( 'k' ) ).toBe( JSON.stringify( ['a', 'b', 'c'] ) );
+		expect( await store.load<string[]>( 'k', [] ) ).toEqual( ['a', 'b', 'c'] );
+		expect( service.load ).toHaveBeenCalledTimes( 2 );//the cache's first read, then update's:  the last load is the cache's
+	} );
+
+	it( 'applies changes made together one after another', async ()=>{
+		const service = new MockProfileService();
+		const store = createStore( service );
+		await Promise.all( [store.update<string[]>( 'k', [], v=>[...v, 'a'] ), store.save( 'k', ['x'] ), store.update<string[]>( 'k', [], v=>[...v, 'b'] )] );
+		expect( service.rows.get( 'k' ) ).toBe( JSON.stringify( ['x', 'b'] ) );
+		expect( await store.load<string[]>( 'k', [] ) ).toEqual( ['x', 'b'] );
+	} );
+
+	it( 'writes nothing for an unchanged value, and rejects a failed write without caching it', async ()=>{
+		const service = new MockProfileService();
+		service.rows.set( 'k', JSON.stringify( ['a'] ) );
+		const store = createStore( service );
+		await store.update<string[]>( 'k', [], v=>v );
+		expect( service.save ).not.toHaveBeenCalled();
+		service.save.mockRejectedValueOnce( new Error( 'down' ) );
+		await expect( store.update<string[]>( 'k', [], v=>[...v, 'b'] ) ).rejects.toThrow( 'down' );
+		expect( await store.load<string[]>( 'k', [] ) ).toEqual( ['a'] );
+	} );
+
+	it( 'reads past the cache with `fresh`, once the key\'s queued writes are done', async ()=>{
+		const service = new MockProfileService();
+		const store = createStore( service ), other = createStore( service );
+		expect( await store.load<string[]>( 'k', [] ) ).toEqual( [] );
+		await other.save( 'k', ['b'] );//another tab
+		expect( await store.load<string[]>( 'k', [] ) ).toEqual( [] );//the cache's
+		expect( await store.load<string[]>( 'k', [], true ) ).toEqual( ['b'] );
+		let release!:()=>void;
+		service.save.mockImplementationOnce( ( key:string, value:string|null )=>new Promise<void>( r=>{ release = ()=>{ service.rows.set( key, value! ); r(); }; } ) );
+		const saving = store.save( 'k', ['c'] );
+		const loading = store.load<string[]>( 'k', [], true );
+		release();
+		expect( await loading ).toEqual( ['c'] );
+		await saving;
+	} );
+} );
+
 //the anonymous query answered "no row", and load() cached that as known-absent under the real user's key - so after they signed
 //in again the next read hit the cached nothing, and the next star saved the defaults over their favorites.
 describe( 'ProfileStore.load', ()=>{

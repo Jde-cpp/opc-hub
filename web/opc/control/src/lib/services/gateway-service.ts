@@ -23,6 +23,7 @@ import { ExNodeId } from '../model/ex-node-id';
 import { ExtensionObject, Reading, shortestFloat, toReading, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
 import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound } from '../model/hist';
+import { Revised, WatchParameters } from '../model/watch';
 
 type Owner = any;
 
@@ -149,8 +150,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#histSnapshot( requestId, message.histSnapshot );
 				else if( message.histRecords )
 					this.#histRecords( requestId, message.histRecords );
-				else if( message.monitoredItemModified )//a shared item's sampling or queue changed for another listener, or the server refused a modify (spec *Watch list*):  nothing here shows it until the watch list.
-					console.debug( `[Opc]MonitoredItemModified:  ${JSON.stringify(message.monitoredItemModified)}` );
+				else if( message.monitoredItemModified )
+					this.#itemModified( message.monitoredItemModified );
 				else if( message.exception ){
 					const e = message.exception;
 					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
@@ -202,6 +203,30 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			protoNodes.push( proto );
 		}
 		return protoNodes;
+	}
+
+	//the parameters by position, as the gateway reads them:  as many as given, cut to the nodes, each as the model holds it - the
+	//shape is the proto's - with an unset filter left out, and a filter's trigger left out for the server's default
+	private static toProtoParameters( parameters:WatchParameters[], count:number ):FromClient.MonitoringParameters[]{
+		return parameters.slice( 0, count ).map( p=>{
+			const y:FromClient.MonitoringParameters = { samplingInterval: p.samplingInterval, queueSize: p.queueSize, discardOldest: p.discardOldest };
+			if( p.filter )
+				y.filter = { trigger: p.filter.trigger, deadbandType: p.filter.deadbandType, deadbandValue: p.filter.deadbandValue };
+			return y;
+		} );
+	}
+	//A node by id as a watch row describes it (spec *Watch list*):  its class, name and page path, a Variable with the columns the children
+	//table reads - its data type, the enumeration resolved, and the value - none for a node the connection does not have.
+	async nodeById( opcId:CnnctnSlug, id:NodeId ):Promise<{node:UaNode; path:string|null}|undefined>{
+		const json = await super.querySingle<any>( `node( opc: $opc, id: $id ){ ${nodeColumns} path ... on Variable{ ${variableColumns} } }`, {opc: opcId, id: id.toJson()} );
+		if( json==null || json.nodeClass==undefined )
+			return undefined;
+		const node = UaNode.fromJson( json );
+		if( !node )
+			return undefined;
+		if( node instanceof Variable )
+			await this.resolveEnum( opcId, node );
+		return { node, path: typeof json.path=='string' ? json.path : null };
 	}
 
 	//Fetches the names of the codes seen so far.  Public:  a status that arrives on the socket has no REST call behind it to
@@ -362,9 +387,13 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	//unsubscribed the owner's already-live nodes server-side and errored the shared Subject, ending subscriptions that had
 	//nothing to do with the request.  Now only this owner's registration for the FAILED nodes goes, and the failure is
 	//reported the way the server reports a bad reading: an OpcError value on the owner's stream, which stays open.
-	private async _subscribe( opcId:OpcId, nodes:NodeId[], owner:Owner ):Promise<void>{
-		const request:FromClient.Subscribe = { nodes:Gateway.toProto(nodes), opcId:opcId, parameters:[] };//none:  the gateway's defaults for every node (spec *Watch list*).
+	//The parameters, one per node at its position, are what the row asks (spec *Watch list*):  none is the gateway's defaults.  The ack's
+	//revised values - what the item runs at, the strictest of every listener's asks - reach the owner's stream as a `revised` result per
+	//node, where the pages that watch nothing but values ignore them.  `held`:  the nodes the owner had asked for before this call.
+	private async _subscribe( opcId:OpcId, nodes:NodeId[], owner:Owner, parameters:WatchParameters[]=[], held:ReadonlySet<NodeKey>=new Set() ):Promise<void>{
+		const request:FromClient.Subscribe = { nodes:Gateway.toProto(nodes), opcId:opcId, parameters: Gateway.toProtoParameters( parameters, nodes.length ) };
 		const failed = new Array<{node:NodeId, sc:StatusCode}>();
+		const revised = new Array<{node:NodeId, revised:Revised}>();
 		try{
 			const y = await this.sendPromise<FromServer.MonitoredItemCreateResult[]>( {"subscribe":request}, `subscribe opcId: ${opcId}, nodeCount: ${nodes.length}` );
 			//Matched on the node each result names:  the gateway answers in NodeId order, never the request's, so blaming results[i]
@@ -374,9 +403,12 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			const asked = new Map( nodes.map(node=>[node.key, node]) );
 			const single = y.length==1 && nodes.length==1 ? nodes[0] : undefined;
 			for( const result of y ){
-				if( !result.statusCode )
-					continue;
 				const node = result.node ? asked.get( Gateway.toNode(result.node).key ) : single;
+				if( !result.statusCode ){
+					if( node )
+						revised.push( {node, revised: {samplingInterval: result.revisedSamplingInterval, queueSize: result.revisedQueueSize, sc: 0}} );
+					continue;
+				}
 				if( node )
 					failed.push( {node, sc: result.statusCode} );
 				else
@@ -386,12 +418,23 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		catch( e:unknown ){
 			console.error( `subscribe failed - ${errorText(e)}` );
 			const sc = <StatusCode>((<{error?:{sc?:number}}>e)?.error?.sc ?? scBadUnexpectedError);
-			failed.push( ...nodes.map( node=>({node, sc}) ) );//the request never reached the server, so none of THESE is subscribed - the owner's others still are
+			//No item was created or changed:  a node this call registered isn't subscribed - the owner's others still are - and one the
+			//owner held runs on as it was, so it keeps its registration and hears the failure as a `revised` result (419-watch #4)
+			for( const node of nodes ){
+				if( held.has( node.key ) )
+					revised.push( {node, revised: {sc}} );
+				else
+					failed.push( {node, sc} );
+			}
+		}
+		const opcSubscriptions = this.getOpcSubscriptions( opcId );
+		const subject = this.#ownerSubscriptions.get( owner );
+		for( const {node, revised: r} of revised ){
+			if( opcSubscriptions.get( node.key )?.includes( owner ) )//still asked for:  an unsubscribe may have crossed the ack
+				subject?.next( {opcId, node, revised: r} );
 		}
 		if( !failed.length )
 			return;
-		const opcSubscriptions = this.getOpcSubscriptions( opcId );
-		const subject = this.#ownerSubscriptions.get( owner );
 		for( const {node, sc} of failed ){
 			this.clearOwnerNode( opcSubscriptions, node.key, owner );//drops the key only when no owner is left on it
 			const e = new OpcError( sc, "Subscribe", new Error().stack!, undefined );
@@ -412,12 +455,17 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 				this.#nodes.delete(key);
 		});
 	}
-	public addToSubscription( opcId:OpcId, nodes:NodeId[], owner:Owner ){
+	//`parameters` one per node (spec *Watch list*), none the gateway's defaults.  A node this owner already asked for is asked again -
+	//with other parameters, that is how a listener changes what it asks - and the ack's revised values follow on the stream.
+	public addToSubscription( opcId:OpcId, nodes:NodeId[], owner:Owner, parameters?:WatchParameters[] ){
 		let opcSubscriptions = this.getOpcSubscriptions( opcId );
+		const held = new Set<NodeKey>();
 		for( const node of nodes ){
 			if( opcSubscriptions.has(node.key) ){
 				const owners = opcSubscriptions.get( node.key )!;//the outer `let owners:Owner[]` this shadowed was never read - declared, shadowed, dropped
-				if( !owners.includes(owner) )
+				if( owners.includes(owner) )
+					held.add( node.key );
+				else
 					owners.push( owner );
 			}
 			else{
@@ -427,10 +475,13 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		}
 		if( !this.#ownerSubscriptions.has(owner) )
 			this.#ownerSubscriptions.set( owner, new Subject<SubscriptionResult>() );
-		this._subscribe( opcId, nodes, owner );
+		this._subscribe( opcId, nodes, owner, parameters, held );
 	}
-	subscribe( opcId:OpcId, nodes:NodeId[], owner:Owner ):Observable<SubscriptionResult>{
-		this.addToSubscription( opcId, nodes, owner );
+	//An owner's stream:  the readings of every node it asks for, on any connection - addToSubscription adds a connection's nodes
+	//to it - and the `revised` results of the ack and of a MonitoredItemModified push.  Ended by the last observer leaving, which
+	//unsubscribes the owner's every node.
+	subscribe( opcId:OpcId, nodes:NodeId[], owner:Owner, parameters?:WatchParameters[] ):Observable<SubscriptionResult>{
+		this.addToSubscription( opcId, nodes, owner, parameters );
 		let subject = this.#ownerSubscriptions.get( owner )!;
 		return subject.pipe(
 			finalize(() => {//https://stackoverflow.com/questions/62579473/detect-when-a-subject-has-no-more-subscriptions
@@ -595,6 +646,16 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		//the timestamps as the server sent them - ts-proto decodes google.protobuf.Timestamp to a Date, and absent stays undefined
 		opcSubscriptions.get( node.key )?.forEach( owner=>this.#ownerSubscriptions.get(owner)!.next({opcId:nodeValues.opcId!, node:node, value:value, sc:sc, source:nodeValues.source, server:nodeValues.server}) );
 	};
+	//A shared item's sampling or queue changed for another listener's join or leave, or the server refused the modify and the item
+	//stands as it was (spec *Watch list*, Opc.FromServer.proto):  every owner of the node hears what it runs at, as a `revised` result.
+	#itemModified( m:FromServer.MonitoredItemModified ):void{
+		const opcSubscriptions = this.#subscriptions.get( m.opcId );
+		if( !opcSubscriptions || !m.node )
+			return console.debug( `[Opc]MonitoredItemModified for ${m.opcId}, which nothing here watches:  ${JSON.stringify(m)}` );
+		const node = Gateway.toNode( m.node );
+		const revised:Revised = { samplingInterval: m.revisedSamplingInterval, queueSize: m.revisedQueueSize, sc: m.statusCode>>>0 };
+		opcSubscriptions.get( node.key )?.forEach( owner=>this.#ownerSubscriptions.get(owner)?.next( {opcId: m.opcId, node, revised} ) );
+	}
 
 	private clearOwnerNode( opcSubscriptions:Map<NodeKey, Owner[]>,  key:NodeKey, owner:Owner ){
 		let owners = opcSubscriptions.get( key );
@@ -657,7 +718,9 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 }
 //a pushed Reading - Bad keeps the value the server holds, and sc says so.  A subscribe that FAILED is the one OpcError `value`:  a
 //refused request, not a reading.  The Reading's `source`/`server` are what the history trend places a push after its read by.
-export type SubscriptionResult = Reading & {opcId:string, node:NodeId};
+//One with `revised` is no reading:  what the server revised the node's item to, from the ack or a MonitoredItemModified push
+//(spec *Watch list*) - a reader of values alone skips it.
+export type SubscriptionResult = Reading & {opcId:string, node:NodeId, revised?:Revised};
 //A historian subscription's arguments (spec *Subscriptions*):  the group by its id, its nodes, and the time the snapshot starts
 //from - left out, it is now, and the snapshot is each node's value alone.
 export type HistSubscribeArgs = { group:number; nodes:NodeId[]; from?:Date };
