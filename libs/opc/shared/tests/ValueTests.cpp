@@ -499,6 +499,54 @@ namespace Jde::Opc::Tests{
 		EXPECT_TRUE( Value( UA_DataValue{} ).ToJson().is_null() ); //no status, no value: still just null.
 	}
 
+	//DataValueJson (reviews-issue/417-clients-attributes.md #12):  the DataValue whole, the gateway's `dataValue` column - `v` unless Bad or
+	//empty, `sc` always, Good included, and each timestamp the server sent.
+	TEST( ValueTests, DataValueJsonKeepsTheStatusAndTimestamps ){
+		const UA_Double d{ 42.7 };
+		auto good = statusValue( UA_STATUSCODE_GOOD, &d );
+		good.sourceTimestamp = UA_DateTime_fromUnixTime( 1762300000 ); good.hasSourceTimestamp = true;
+		good.serverTimestamp = UA_DateTime_fromUnixTime( 1762300001 ); good.hasServerTimestamp = true;
+		let j = good.DataValueJson();
+		EXPECT_DOUBLE_EQ( j.at("v").to_number<double>(), 42.7 ) << serialize( j );
+		EXPECT_EQ( j.at("sc").to_number<uint32_t>(), 0u ) << "Good is said too";
+		EXPECT_EQ( j.at("source").at("seconds").to_number<int64_t>(), 1762300000 );
+		EXPECT_EQ( j.at("server").at("seconds").to_number<int64_t>(), 1762300001 );
+
+		auto bad = statusValue( UA_STATUSCODE_BADNODEIDUNKNOWN, &d );//a value beside a Bad status is no reading
+		bad.serverTimestamp = UA_DateTime_fromUnixTime( 1762300001 ); bad.hasServerTimestamp = true;
+		let b = bad.DataValueJson();
+		EXPECT_FALSE( b.contains("v") ) << serialize( b );
+		EXPECT_EQ( b.at("sc").to_number<uint32_t>(), UA_STATUSCODE_BADNODEIDUNKNOWN );
+		EXPECT_FALSE( b.contains("source") ) << "only the timestamp the server sent";
+		EXPECT_TRUE( b.contains("server") );
+
+		let uncertain = statusValue( UA_STATUSCODE_UNCERTAIN, &d ).DataValueJson();
+		EXPECT_DOUBLE_EQ( uncertain.at("v").to_number<double>(), 42.7 );
+		EXPECT_EQ( uncertain.at("sc").to_number<uint32_t>(), UA_STATUSCODE_UNCERTAIN );
+
+		let empty = Value( UA_DataValue{} ).DataValueJson();
+		EXPECT_EQ( empty.size(), 1u ) << serialize( empty );
+		EXPECT_EQ( empty.at("sc").to_number<uint32_t>(), 0u ) << "empty Good:  the status alone";
+	}
+	//Set's {locale, text} arm (#12):  a text in a named locale - updateNode's DisplayName and Description - beside the bare string, which
+	//names none.  A text that is no string, or a locale that is neither a string nor null, is refused;  an array takes it per element.
+	TEST( ValueTests, SetTakesALocalizedTextInALocale ){
+		using Text = std::pair<string,string>;
+		auto set = []( const jvalue& j ){ return Value{ j, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT] }; };
+		auto text = []( const Value& v, uint i=0 )->Text{ let& t = v.Get<UA_LocalizedText>( i ); return { string{ToSV(t.locale)}, string{ToSV(t.text)} }; };
+		EXPECT_EQ( text(set(jobject{{"locale", "de"}, {"text", "Pumpe"}})), (Text{"de", "Pumpe"}) );
+		EXPECT_EQ( text(set(jobject{{"locale", nullptr}, {"text", "Pump"}})), (Text{"", "Pump"}) );
+		EXPECT_EQ( text(set(jobject{{"text", "Pump"}})), (Text{"", "Pump"}) );
+		EXPECT_EQ( text(set(jvalue{"Pump"})), (Text{"", "Pump"}) ) << "the bare string";
+		EXPECT_THROW( set(jobject{{"locale", "de"}, {"text", 1}}), Exception );
+		EXPECT_THROW( set(jobject{{"locale", 1}, {"text", "Pump"}}), Exception );
+		EXPECT_THROW( set(jobject{{"locale", "de"}}), Exception ) << "no text";
+		let array = set( jarray{jobject{{"locale", "de"}, {"text", "eins"}}, jobject{{"locale", "en"}, {"text", "one"}}} );
+		ASSERT_FALSE( array.IsScalar() );
+		EXPECT_EQ( text(array, 0), (Text{"de", "eins"}) );
+		EXPECT_EQ( text(array, 1), (Text{"en", "one"}) );
+	}
+
 	//#20: Get<T> reinterprets value.data, it does not convert, so it has to be handed the raw UA type and the wrapper
 	//constructed from that.  Asking Get for a UADateTime read a tick count as a TimePoint instead: a 2001 date came back
 	//as 12644473600s - off by exactly the 1601->1970 offset, 369 years - and a 1500ms Duration as 465431188521 seconds.

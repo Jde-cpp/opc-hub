@@ -17,6 +17,10 @@ namespace Jde::Opc{
 		α IsEmpty()Ι->bool{ return UA_Variant_isEmpty(&value); }
 		α IsScalar()Ι->bool{ return UA_Variant_isScalar( &value ); }
 		α ToJson()Ι->jvalue;
+		//The DataValue whole - {v, sc, source, server}, the shape a push carries (Opc.FromServer.proto NodeValues) - where ToJson is the
+		//reading alone:  `v` unless Bad or empty, `sc` always (0 is Good), each timestamp the server sent.  The attribute reads' `dataValue`
+		//column, the Attributes tab's Value row (clients spec *Attributes*).
+		α DataValueJson()Ι->jobject;
 		Ŧ AsNumber( SRCE )ε->T;
 		α Set( const jvalue& j, SRCE )ε->void;
 		//Whether Set has an arm for the type.  Any other throws "has not been implemented" whatever the json - the conversion's
@@ -24,6 +28,7 @@ namespace Jde::Opc{
 		Ω Settable( const UA_DataType& type )ι->bool;
 		Ŧ Get( uint index )Ι->const T&{ return ((T*)value.data)[index]; };
 	private:
+		α ValueJson()Ι->jvalue;//the reading's elements, which ToJson and DataValueJson wrap;  not for an empty value.
 		Ŧ SetNumber( const jvalue& j, SRCE )ε->void;
 		α SetScalar( const void* p, SL sl )ε->void;
 		α SetArray( const jarray& a, SL sl )ε->void;

@@ -1,5 +1,5 @@
 import Long from "long";
-import { Duration, Guid, ProtoUtils, Timestamp  } from "jde-framework";
+import { DateUtils, Duration, Guid, ProtoUtils, Timestamp  } from "jde-framework";
 import { NodeId } from "./node-id";
 import { ExNodeId } from "./ex-node-id";
 import {OpcError} from "./opc-error";
@@ -72,9 +72,9 @@ export function valueString( value: Value|undefined ):string{
 		return value.toString();
 	else if( value instanceof Uint8Array )
 		return btoa( value.reduce((acc, current) => acc + String.fromCharCode(current), "") );
-	else if( Object.hasOwn(value, "seconds") && Object.hasOwn(value, "nanos") ){
+	else if( Object.hasOwn(value, "seconds") && Object.hasOwn(value, "nanos") ){//local time to the millisecond, as every timestamp column and DateTime editor shows one (NodeView.time) - not UTC (reviews-issue/417-clients-attributes.md W1)
 		const date = ProtoUtils.toDate( <Timestamp>value );
-		return date ? date.toISOString() : "";//unset is seconds==0
+		return date ? DateUtils.toLocalInput( date ).replace( "T", " " ) : "";//unset is seconds==0
 	}
 	else if( value instanceof ExtensionObject )
 		return value.toString();
@@ -117,5 +117,14 @@ export function valueSc( json:any ):StatusCode|undefined{
 export type Reading = { value?:Value, sc?:StatusCode, source?:Date, server?:Date };
 export function toReading( json:any ):Reading{
 	const sc = valueSc( json ) ?? 0;
-	return !Array.isArray(json) && json?.hasOwnProperty('sc') && !json.hasOwnProperty('v') ? {sc} : { value: toValue(json), sc };
+	const y:Reading = !Array.isArray(json) && json?.hasOwnProperty('sc') && !json.hasOwnProperty('v') ? {sc} : { value: toValue(json), sc };
+	//the timestamps a `dataValue` read carries (Value::DataValueJson), as a push does:  the Attributes tab's Value row.  Off the DataValue's
+	//shape alone, which always has `sc`:  a structure's `source` member is the value's (reviews-issue/417-clients-attributes.md #5)
+	if( !Array.isArray(json) && json?.hasOwnProperty('sc') ){
+		if( json.source )
+			y.source = ProtoUtils.toDate( json.source ) ?? undefined;
+		if( json.server )
+			y.server = ProtoUtils.toDate( json.server ) ?? undefined;
+	}
+	return y;
 }

@@ -6,14 +6,18 @@ import { NodeId } from '../../model/node-id';
 import { NodeChildren } from './node-children/node-children';
 import { NodeDetail } from './node-detail';
 import { NodeReferences } from './node-references/node-references';
+import { NodeAttributes } from './node-attributes/node-attributes';
 import { OpcStore } from '../../services/opc-store';
-import { pageTitleStub, provideRoute } from 'jde-spa/testing';
+import { ComponentPageTitle } from 'jde-spa';
+import { pageTitleStub, provideRoute, stable } from 'jde-spa/testing';
 import { variable } from 'jde-opc/testing';
 
-//stubs, not blanked components:  NodeChildren's ngOnInit loads the views and subscribes to the route's data, and NodeReferences reads
-//the gateway
+//stubs, not blanked components:  NodeChildren's ngOnInit loads the views and subscribes to the route's data, and NodeAttributes and
+//NodeReferences read the gateway
 @Component({ selector: 'node-children', template: '' })
 class ChildrenStub{ node = input<UaNode>(); refreshed = output<UaNode[]>(); }
+@Component({ selector: 'node-attributes', template: '' })
+class AttributesStub{ node = input<UaNode>(); pageData = input<unknown>(); renamed = output<string>(); }
 @Component({ selector: 'node-references', template: '' })
 class ReferencesStub{ node = input<UaNode>(); pageData = input<unknown>(); }
 
@@ -27,7 +31,7 @@ describe( 'NodeDetail', ()=>{
 		const route = { node: {id: 85, name: 'Objects', toJson: ()=>({ns: 0, i: 85})}, siblings: [{title: 'Objects'}] };
 		const pageData = { route, nodes: [], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
 		TestBed.configureTestingModule({ providers: [provideRoute( {data: {pageData}} ), pageTitleStub] });
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeReferences]}, add: {imports: [ChildrenStub, ReferencesStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
@@ -50,16 +54,16 @@ describe( 'NodeDetail', ()=>{
 			provideRoute( {data: {pageData}} ),
 			pageTitleStub
 		]});
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeReferences]}, add: {imports: [ChildrenStub, ReferencesStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
 		const tabs = ()=>[...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() );
-		expect( tabs() ).toEqual( ['Children', 'References'] );
+		expect( tabs() ).toEqual( ['Children', 'Attributes', 'References'] );
 
 		fixture.debugElement.query( By.directive(ChildrenStub) ).componentInstance.refreshed.emit( [child( true )] );
 		fixture.detectChanges();
-		expect( tabs() ).toEqual( ['Children', 'References', 'History'] );
+		expect( tabs() ).toEqual( ['Children', 'Attributes', 'References', 'History'] );
 		fixture.destroy();
 	} );
 	//A group's member needn't be one the server historizes (#335):  the tab shows for it, with the group's members among the
@@ -73,13 +77,41 @@ describe( 'NodeDetail', ()=>{
 			provideRoute( {data: {pageData}} ),
 			pageTitleStub
 		]});
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeReferences]}, add: {imports: [ChildrenStub, ReferencesStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
-		expect( [...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() ) ).toEqual( ['Children', 'References', 'History'] );
+		expect( [...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() ) ).toEqual( ['Children', 'Attributes', 'References', 'History'] );
 		expect( fixture.componentInstance.historizable() ).toEqual( [] );
 		expect( fixture.componentInstance.groups().map( g=>[g.id, g.name, g.nodes.map( n=>n.name )] ) ).toEqual( [[3, 'Pumps', ['a']]] );
+		fixture.destroy();
+	} );
+	//reviews-issue/417-clients-attributes.md #7:  a DisplayName written on the Attributes tab kept the old name in the title and the
+	//sidenav until a reload
+	it( 'takes a name the Attributes tab wrote into the title and the sidenav', async ()=>{
+		const node = {id: 5005, name: 'Pump (Manual)', toJson: ()=>({ns: 2, i: 5005})};
+		const route = { node, siblings: [{title: 'Pump (Manual)'}, {title: 'Pump 1'}] };
+		const pageData = { route, nodes: [], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
+		TestBed.configureTestingModule({ providers: [provideRoute( {data: {pageData}} ), pageTitleStub] });
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
+		const fixture = TestBed.createComponent( NodeDetail );
+		fixture.componentRef.setInput( 'sideNav', route );
+		fixture.componentInstance.tabIndex.set( 1 );//the Attributes tab, whose content is lazy
+		await stable( fixture );
+		const store = TestBed.inject( OpcStore );
+		const refresh = vi.spyOn( store, 'refreshRoute' ).mockImplementation( ()=>{ route.siblings = [{title: node.name}, {title: 'Pump 1'}]; } );//what setRoute does with the renamed store node
+		const title = TestBed.inject( ComponentPageTitle );
+		expect( title.title ).toBe( 'c/Pump (Manual)' );
+		fixture.debugElement.query( By.directive(AttributesStub) ).componentInstance.renamed.emit( 'Pump One' );
+		fixture.detectChanges();
+		expect( node.name ).toBe( 'Pump One' );
+		expect( refresh ).toHaveBeenCalled();
+		const shown = fixture.componentInstance.sideNav();
+		expect( shown ).not.toBe( <any>route );
+		expect( shown.siblings!.map( s=>s.title ) ).toEqual( ['Pump One', 'Pump 1'] );
+		expect( title.title ).toBe( 'c/Pump One' );
+		fixture.componentInstance.tabIndex.set( 0 );
+		fixture.detectChanges();
 		fixture.destroy();
 	} );
 } );

@@ -13,7 +13,7 @@
 		<ng-container [ngTemplateOutlet]="center"/>
 	}
 </mat-toolbar>
-<mat-progress-bar class="refresh-bar" [mode]="refreshing() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+<mat-progress-bar class="refresh-bar" [mode]="refreshing() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Refreshing"></mat-progress-bar>
 <ng-template #center>
 	<div class="bar-center"><!--the two icon buttons are equal width, so they bracket the group symmetrically and it lands dead centre-->
 		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="refreshing()" (click)="refresh.emit()">

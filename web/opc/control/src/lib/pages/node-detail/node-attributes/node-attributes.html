@@ -1,0 +1,56 @@
+<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the attributes"></mat-progress-bar>
+@if( error(); as text ){
+	<div class="jde-empty" role="alert">
+		<mat-icon aria-hidden="true">error_outline</mat-icon>
+		<p class="title">Could not read the attributes.</p>
+		<p>{{ text }}</p>
+	</div>
+}
+@else{
+	<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense">
+		<ng-container matColumnDef="attribute">
+			<mat-header-cell *matHeaderCellDef>Attribute</mat-header-cell>
+			<mat-cell *matCellDef="let a">{{ a.label }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="value"><!--an editor where the UserWriteMask has the bit;  the text otherwise, and nothing where the server refused the read - the Status says why-->
+			<mat-header-cell *matHeaderCellDef>Value</mat-header-cell>
+			<mat-cell *matCellDef="let a">
+				@if( a.refused ){
+				}
+				@else if( editor(a)=='boolean' ){
+					<mat-checkbox [checked]="a.value===true" (change)="toggle(a, $event)" [aria-label]="a.label"></mat-checkbox>
+				}
+				@else if( editor(a)=='number' ){
+					<input type="number" [value]="a.text" [attr.aria-label]="a.label" [matTooltip]="a.tooltip" (change)="changeNumber(a, $event)">
+				}
+				@else if( editor(a)=='text' ){
+					<input type="text" [value]="a.text" [attr.aria-label]="a.label" (change)="changeText(a, $event)">
+				}
+				@else{
+					<span class="value-text" [matTooltip]="a.tooltip">{{ a.text }}</span>
+				}
+			</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="status"><!--the reading's quality, as the Children table's Status column shows it-->
+			<mat-header-cell *matHeaderCellDef>Status</mat-header-cell>
+			<mat-cell *matCellDef="let a">
+				@if( status(a); as text ){
+					@if( qualityIcon(a); as icon ){
+						<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
+					}
+					<span class="status-text" [class.status-good]="!a.sc" [matTooltip]="statusTooltip(a)">{{ text }}</span>
+				}
+			</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="sourceTime"><!--the Value's, as the read brought them (the gateway's dataValue)-->
+			<mat-header-cell *matHeaderCellDef>Source Time</mat-header-cell>
+			<mat-cell *matCellDef="let a">{{ time(a.source) }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="serverTime">
+			<mat-header-cell *matHeaderCellDef>Server Time</mat-header-cell>
+			<mat-cell *matCellDef="let a">{{ time(a.server) }}</mat-cell>
+		</ng-container>
+		<mat-header-row *matHeaderRowDef="columns"></mat-header-row>
+		<mat-row *matRowDef="let row; columns: columns"></mat-row>
+	</mat-table>
+}

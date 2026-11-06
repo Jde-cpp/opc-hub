@@ -33,13 +33,21 @@ namespace Jde::Opc{
 		const UA_String s{ (size_t)(end-text)+unit.size(), (UA_Byte*)text };
 		return UA_Variant_setScalarCopy( &output[1], &s, &UA_TYPES[UA_TYPES_STRING] );
 	}
-	α Server::BindPumpMethods( UAServer& ua )ι->void{
+	//The pumps demo after its nodeset loads.  pumpManual.toHertz's callback - a method without one answers BadInternalError (clients spec
+	//*Methods*, #318).  And a WriteMask of DisplayName and Description on pumpManual:  the nodeset declares none and the loader reads none
+	//(open62541-nodeset-loader Nodeset.c), so without it no write to an attribute could pass whatever the user holds - this is the node an
+	//install can try the Attributes tab's edit on, and the one the gateway's WriteTests write (clients spec *Attributes*, #417);  the rights
+	//mask then gates the write on Update (UAAccess::GetUserRightsMask).
+	α Server::ConfigurePumps( UAServer& ua )ι->void{
 		size_t ns{};
 		if( UA_Server_getNamespaceByName(ua.Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) )
 			return;//not loaded here.
 		const NodeId method{ (NsIndex)ns, 6055 };//pumpManual.toHertz, as the nodeset numbers it.
 		if( let sc = UA_Server_setMethodNodeCallback(ua.Ptr(), method, &toHertz); sc )
 			WARNT( ELogTags::App, "Could not bind pumpManual.toHertz ({}):  {}", method.ToString(), UA_StatusCode_name(sc) );
+		const NodeId pumpManual{ (NsIndex)ns, 5005 };
+		if( let sc = UA_Server_writeWriteMask(ua.Ptr(), pumpManual, UA_WRITEMASK_DISPLAYNAME | UA_WRITEMASK_DESCRIPTION); sc )
+			WARNT( ELogTags::App, "Could not set pumpManual's WriteMask ({}):  {}", pumpManual.ToString(), UA_StatusCode_name(sc) );
 	}
 
 	//The nodeset loader files every type it reads through UA_Server_addDataTypeFromDescription, which lands in the server's

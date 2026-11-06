@@ -4,6 +4,7 @@ import { Observable, Subscriber } from 'rxjs';
 import { ETransport } from 'jde-framework';
 import { anonymousAuthStore, qlAnswering } from 'jde-framework/testing';
 import * as FromServer from 'jde-proto/Opc.FromServer';
+import { Attribute } from '../lib/model/attribute';
 import { HistTime, HistValue } from '../lib/model/hist';
 import { UaNode, Variable } from '../lib/model/node';
 import { NodeId, NodeKey } from '../lib/model/node-id';
@@ -52,7 +53,7 @@ export class Feed<T, A=unknown>{
 }
 
 //A Gateway for a page or a resolver to read through:  query/queryArray answer from `answers` as qlAnswering does, querySingle
-//nothing, browseObjectsFolder a node's children in `tree` by its key, references none, and subscribe/histSubscribe
+//nothing, browseObjectsFolder a node's children in `tree` by its key, references and attributes none, and subscribe/histSubscribe
 //open `values`/`histEvents` for the test to feed.  Assign over whatever else a test needs.
 export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tree=new Map<NodeKey,UaNode[]>() ){
 	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>();
@@ -63,6 +64,8 @@ export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tre
 		querySingle: vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>null ),
 		browseObjectsFolder: vi.fn( async ( _opc:string, node:UaNode )=>tree.get( node.key ) ?? [] ),
 		references: vi.fn( async ( _opc:string, _node:NodeId ):Promise<References>=>({rows: [], truncated: false}) ),
+		attributes: vi.fn( async ( _opc:string, _node:UaNode ):Promise<Attribute[]>=>[] ),
+		updateNode: vi.fn( async ( _opc:string, _id:NodeId, _attributes:Record<string,unknown>, _columns:string[] ):Promise<any>=>({}) ),
 		resolveEnum: vi.fn( async ( _opc:string, _v:Variable ):Promise<void>=>{} ),
 		subscribe: vi.fn( ( _opc:string, nodes:NodeId[], _owner?:string )=>values.open( nodes ) ),
 		histSubscribe: vi.fn( ( args:HistSubscribeArgs )=>histEvents.open( args ) ),

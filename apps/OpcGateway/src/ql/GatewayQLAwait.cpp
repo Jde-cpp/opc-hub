@@ -16,6 +16,7 @@
 #include "HistGroupReadQLAwait.h"
 #include "HistGroupInfoQLAwait.h"
 #include "NodeQLAwait.h"
+#include "NodeQLMAwait.h"
 #include "OpcSessionsQLAwait.h"
 #include "SearchQLAwait.h"
 #include "VariableQLAwait.h"
@@ -112,11 +113,13 @@ namespace Jde::Opc::Gateway{
 	//A hist edit with `group` alone is the gateway historian's (HistGroupEditQLAwait), which needs no client.  One that names
 	//both `opc` and `group`, or neither, is this await's to refuse.
 	α GatewayQLMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
-		return m.JsonTableName=="variable" || m.CommandName==CallQLAwait::Command || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
+		return m.JsonTableName=="variable" || m.JsonTableName=="node" || m.CommandName==CallQLAwait::Command || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
 	}
 	α GatewayQLMAwait::Suspend()ι->void{
 		if( let edit = HistQL::FindEdit(_query.CommandName); edit && HistQL::Target(_query)==HistQL::ETarget::Neither )
 			ResumeExp( HistQL::TargetRefused(*edit, _sl) );//before a client is opened for it.
+		else if( _query.JsonTableName=="node" && _query.Type!=QL::EMutationQL::Update )//createNode, deleteNode…:  refused before a connect, too.
+			ResumeExp( Exception{_sl, {}, "Only updateNode is supported."} );
 		else
 			GetClient( this );
 	}
@@ -182,6 +185,8 @@ namespace Jde::Opc::Gateway{
 				y = co_await QL::QLAwait<>( move(_query), UserPK(), _sl );
 			else if( _query.JsonTableName=="variable" )
 				y = co_await VariableQLAwait{ move(_query), RequireSession(), _sl };
+			else if( _query.JsonTableName=="node" )//updateNode:  the attributes a WriteMask allows (clients spec *Attributes*).
+				y = co_await NodeQLMAwait{ move(_query), move(_client), _sl };
 			else if( _query.CommandName==CallQLAwait::Command )//a method call over the caller's client (clients spec *Methods*).
 				y = co_await CallQLAwait{ move(_query), move(_client), _sl };
 			else if( let edit = HistQL::FindEdit(_query.CommandName); edit )//the server's own history, over the caller's session (spec *Pass-through*).

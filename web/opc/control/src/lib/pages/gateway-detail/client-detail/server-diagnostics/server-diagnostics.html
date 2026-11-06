@@ -6,7 +6,7 @@
 		</button>
 	</div>
 </mat-toolbar>
-<mat-progress-bar [mode]="isLoading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+<mat-progress-bar [mode]="isLoading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the diagnostics"></mat-progress-bar>
 <div class="content"><!--below the toolbar, which spans the tab:  the Connection tab's rows, in its column-->
 @if( !slug() ){
 	<p class="empty unsaved">Save the connection to read the server's diagnostics.</p>

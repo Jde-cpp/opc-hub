@@ -34,12 +34,16 @@ export class OpcStore{
 			return;
 		this.#showSystem.set( show );
 		this.#prefs.set( NodeView.collectionName, "systemNodes", show || null );
+		this.refreshRoute();
+	}
+	//the last setRoute's route set again - its siblings and their titles - after a flip, or a node renamed in place
+	refreshRoute():void{
 		if( this.#route )
 			this.setRoute( this.#route.route, this.#route.defaultBrowseNs );
 	}
 	#prefs = new LocalPrefs();//stateless over localStorage, and TestGateway builds the store with `new`, outside an injection context
 	#showSystem = signal<boolean>( this.#prefs.get(NodeView.collectionName, "systemNodes", false) );
-	#route?:{ route:NodeRoute; defaultBrowseNs:Ns|undefined };//the last setRoute's, set again on a flip
+	#route?:{ route:NodeRoute; defaultBrowseNs:Ns|undefined };//the last setRoute's, set again on a flip or a rename
 
 	//Memoized per gateway for the node pages, which share it.  That used to be the whole story, so a describe that succeeded once
 	//answered for the life of the page:  an edited Name or Default Namespace never reached the node pages, and the Connection tab

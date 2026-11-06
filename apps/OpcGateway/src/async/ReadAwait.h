@@ -13,7 +13,8 @@ namespace Jde::Opc::Gateway{
 	//while the read is in flight) - freed-identifier encoding for any string/GUID/bytestring id.
 	struct ReadRequest final : UA_ReadRequest{
 		ReadRequest( const NodeId& nodeId, UA_AttributeId attrib )ι:ReadRequest{nodeId, {attrib}}{}
-		ReadRequest( const NodeId& nodeId, std::initializer_list<UA_AttributeId> attribs )ι;//one UA_ReadValueId per attribute, in order - results[i] answers attribs[i].
+		ReadRequest( const NodeId& nodeId, std::initializer_list<UA_AttributeId> attribs )ι:ReadRequest{nodeId, std::span{attribs.begin(), attribs.size()}}{}//libc++ builds no span from a braced list yet (P2447).
+		ReadRequest( const NodeId& nodeId, std::span<const UA_AttributeId> attribs )ι;//one UA_ReadValueId per attribute, in order - results[i] answers attribs[i];  a vector binds here.
 		ReadRequest( const vector<NodeId>& ids, const QL::TableQL& ql )ι;
 		ReadRequest( const vector<NodeId>& ids, UA_AttributeId attrib )ι;//results[i] answers ids[i].
 		ReadRequest( const vector<NodeId>& ids, std::initializer_list<UA_AttributeId> attribs )ι;//results[i*attribs.size()+j] answers attribs[j] of ids[i].
@@ -23,10 +24,14 @@ namespace Jde::Opc::Gateway{
 		α operator=( ReadRequest&& x )ι->ReadRequest&;
 		α Add( const QL::TableQL& ql, const flat_map<NodeId, jobject>& nodes )ι->void;
 		Ω AttribName( UA_AttributeId id )ι->const string&;
+		Ω FindAttrib( sv jsonName )ι->optional<UA_AttributeId>;//the attribute a column names, as the reads spell them - updateNode's keys too;  `dataValue` is Value's.
 	private:
+		friend struct ReadResponse;
+		α Asked( uint i )Ι->UA_AttributeId{ return _asked[i]; }//what nodesToRead[i] was asked as:  its attribute, or the `dataValue` sentinel (ReadAwait.cpp), which never leaves this class.
 		α Push( const UA_NodeId& nodeId, UA_AttributeId attrib )ι->void;//deep-copies nodeId into a new _readIds entry.
 		α SetNodesToRead()ι->void{ nodesToReadSize=_readIds.size(); nodesToRead=_readIds.data(); }//_readIds may have reallocated.
 		vector<UA_ReadValueId> _readIds;
+		vector<UA_AttributeId> _asked;//one per _readIds entry.
 	};
 	struct ReadResponse final : Owned<UA_ReadResponse, UA_TYPES_READRESPONSE>{
 		ReadResponse()ι=default;

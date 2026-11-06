@@ -9,6 +9,7 @@ import { UaNode, Variable } from '../../model/node';
 import { NodeAccess } from './node-access/node-access';
 import { NodeHistory } from './node-history/node-history';
 import { NodeReferences } from './node-references/node-references';
+import { NodeAttributes } from './node-attributes/node-attributes';
 import { persistedTabIndex } from 'jde-spa';
 import { HistGroupMembers } from '../../model/hist';
 import { OpcStore } from '../../services/opc-store';
@@ -16,7 +17,7 @@ import { OpcStore } from '../../services/opc-store';
 @Component( {
 	templateUrl: './node-detail.html',
 	host: {class:'main-content my-content'},
-	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeHistory, NodeReferences]
+	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeAttributes, NodeHistory, NodeReferences]
 })
 export class NodeDetail implements OnInit{
 	#activatedRoute = inject( ActivatedRoute );
@@ -30,9 +31,8 @@ export class NodeDetail implements OnInit{
 		effect( ()=>{
 			const show = this.#opcStore.showSystem();
 			untracked( ()=>{
-				const route = this.pageData()?.route;
-				if( shown!==undefined && shown!==show && route )
-					this.sideNav.set( Object.assign(Object.create(Object.getPrototypeOf(route)), route) );
+				if( shown!==undefined && shown!==show )
+					this.#repaint();
 				shown = show;
 			} );
 		} );
@@ -42,8 +42,23 @@ export class NodeDetail implements OnInit{
 			this.pageData.set( data["pageData"] );
 			this.nodes.set( this.pageData().nodes );
 			this.sideNav.set( this.pageData().route );
-			this.#componentPageTitle.title = this.server().connection.name + (this.node().isRoot ? '' : `/${this.node().name}`);
+			this.#setTitle();
 		});
+	}
+	//A DisplayName written on the Attributes tab (reviews-issue/417-clients-attributes.md #7):  the stored node takes it, so the title and
+	//the sidenav's siblings show it at once.  The url is the browse name's, so it stands.
+	rename( name:string ){
+		this.node().name = name;
+		this.#opcStore.refreshRoute();
+		this.#repaint();
+		this.#setTitle();
+	}
+	#setTitle(){ this.#componentPageTitle.title = this.server().connection.name + (this.node().isRoot ? '' : `/${this.node().name}`); }
+	//the sidenav a copy of the page's route, whose siblings were set again in place:  ComponentNav repaints only for a new input
+	#repaint(){
+		const route = this.pageData()?.route;
+		if( route )
+			this.sideNav.set( Object.assign(Object.create(Object.getPrototypeOf(route)), route) );
 	}
 
 	node = computed( ()=>this.sideNav().node );
