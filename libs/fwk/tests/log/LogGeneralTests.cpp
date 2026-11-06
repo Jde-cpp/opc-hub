@@ -277,14 +277,14 @@ namespace Jde::Tests{
 		EXPECT_EQ( e.UserPK, userPK );
 		EXPECT_EQ( e.Level, ELogLevel::Debug );
 		EXPECT_EQ( e.Tags, ELogTags::Test );
-		ASSERT_EQ( e.Arguments.size(), 1u ) << "delegating to the vector<string> overload must not cost the args";
-		EXPECT_EQ( e.Arguments[0], "1" );
+		ASSERT_EQ( e.Arguments.size(), 1u ) << "delegating to the stored-arguments overload must not cost the args";
+		EXPECT_EQ( e.Arguments[0], Logging::Argument{int64_t{1}} );
 		EXPECT_EQ( e.Message(), "msg 1" );
 
 		Logging::Entry anonymous{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, "msg {}", 1 };
 		EXPECT_EQ( anonymous.UserPK, Jde::UserPK{} ) << "the overload without a user must default it";
 
-		Logging::Entry preformatted{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, string{"msg {}"}, vector<string>{"1"} };
+		Logging::Entry preformatted{ SRCE_CUR, ELogLevel::Debug, ELogTags::Test, userPK, string{"msg {}"}, vector<Logging::Argument>{"1"} };
 		EXPECT_EQ( preformatted.UserPK, userPK );//the overload the variadic one delegates to.
 		//the stacktrace-frame overloads are deliberately not exercised here: constructing one Entry from a frame
 		//costs ~170ms of one-time symbol-machinery init (even for an empty frame) and their only caller is

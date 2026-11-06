@@ -94,6 +94,10 @@ namespace Client{
 		let kv = _subs.find( id );
 		return kv==_subs.end() ? flat_set<sp<QL::IListener>>{} : kv->second;//_subs never holds an empty set - StopListenRemote erases the key when the last listener goes - so empty means absent.
 	}
+	α AppClientSocketSession::WriteLogs( vector<Logging::Entry>&& entries )ι->void{
+		ul _{ _logMutex };
+		Write( FromClient::LogBatch(_logStrings.Batch(move(entries))) );
+	}
 	α AppClientSocketSession::OnSubscription( const jobject& m, QL::SubscriptionId clientId )ι->void{
 		let listeners = ListenersFor( clientId );
 		if( listeners.empty() ){

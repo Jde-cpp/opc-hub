@@ -17,14 +17,14 @@ namespace Jde::App{
 	enum class EStringKind : uint8{ Template, File, Function, Arg };
 	constexpr std::array<EStringKind,4> StringKinds{ EStringKind::Template, EStringKind::File, EStringKind::Function, EStringKind::Arg };
 	//Every (kind, id bytes) an entry names:  its template, file, function and each argument.
-	Ξ ForEachStringId( const App::Log::Proto::LogEntryFile& e, auto&& f )->void{
+	Ξ ForEachStringId( const Log::Proto::LogEntryFile& e, auto&& f )->void{
 		f( EStringKind::Template, e.template_id() );
 		if( e.file_id().size() )//none when the entry was stored without its source (/logging/proto/file, /function).
 			f( EStringKind::File, e.file_id() );
 		if( e.function_id().size() )
 			f( EStringKind::Function, e.function_id() );
-		for( const auto& arg : e.args() )
-			f( EStringKind::Arg, arg );
+		for( const auto& arg : e.args() | filter(&Log::Proto::Arg::has_string_id) )
+			f( EStringKind::Arg, arg.string_id() );
 	}
 	//The strings of each kind, by id.  std::map, not flat_map:  the Arg table grows with every distinct value logged, and a
 	//sorted vector's insert is linear.
@@ -40,25 +40,26 @@ namespace Jde::App{
 		ArchiveQuery()ι=default;
 		ArchiveQuery( ArchiveQuery&& x )ι=default;
 		explicit ArchiveQuery( flat_set<ProgInstPK> hidden )ι:_hidden{ move(hidden) }{}
-		ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries, flat_set<ProgInstPK> hidden={} )ε;
+		ArchiveQuery( const QL::Filter& q, vector<Log::Proto::FileEntry>&& entries, flat_set<ProgInstPK> hidden={} )ε;
 		α operator=( ArchiveQuery&& x )ι->ArchiveQuery& = default;
 		//The daily file's records, or an archive's:  every string first, then each entry the query keeps.  With the TableQL,
 		//its sub-tables' filters apply too.
-		α Append( const QL::TableQL& q, vector<App::Log::Proto::FileEntry>&& entries )ε->void;
-		α Append( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries )ε->void;
+		α Append( const QL::TableQL& q, vector<Log::Proto::FileEntry>&& entries )ε->void;
+		α Append( const QL::Filter& q, vector<Log::Proto::FileEntry>&& entries )ε->void;
 		α ToJson( const QL::TableQL& ql )Ι->jobject;
 		α IsComplete( const QL::Input& input )Ι->bool;
 		α EntrySize()Ι->uint;
-		α Sort( const vector<std::pair<string,bool>>& orderBy )Ι->vector<App::Log::Proto::LogEntryFile>;
-		std::map<TimePoint,vector<App::Log::Proto::LogEntryFile>> Entries;
+		α Sort( const vector<std::pair<string,bool>>& orderBy )Ι->vector<Log::Proto::LogEntryFile>;
+		std::map<TimePoint,vector<Log::Proto::LogEntryFile>> Entries;
 		StringTable Strings;
 	private:
-		α Visible( const App::Log::Proto::LogEntryFile& entry )Ι->bool{ return !entry.app_pk() || !_hidden.contains( (ProgInstPK)entry.app_instance_pk() ); }
-		α Message( const App::Log::Proto::LogEntryFile& entry )Ι->string;
-		α Test( const QL::TableQL& q, TimePoint time, const App::Log::Proto::LogEntryFile& entry )Ε->bool;
-		α Test( const QL::Filter& filter, TimePoint time, const App::Log::Proto::LogEntryFile& entry )Ι->bool;
-		α Fold( vector<App::Log::Proto::FileEntry>&& entries, const std::function<bool( TimePoint, const App::Log::Proto::LogEntryFile& )>& test )ε->void;
-		α ToEntry( const QL::TableQL& table, const App::Log::Proto::LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject;
+		α Visible( const Log::Proto::LogEntryFile& entry )Ι->bool{ return !entry.app_pk() || !_hidden.contains( (ProgInstPK)entry.app_instance_pk() ); }
+		α Message( const Log::Proto::LogEntryFile& entry )Ι->string;
+		α ArgText( const Log::Proto::Arg& arg )Ι->string;//as the entry rendered it.
+		α Test( const QL::TableQL& q, TimePoint time, const Log::Proto::LogEntryFile& entry )Ε->bool;
+		α Test( const QL::Filter& filter, TimePoint time, const Log::Proto::LogEntryFile& entry )Ι->bool;
+		α Fold( vector<Log::Proto::FileEntry>&& entries, const std::function<bool( TimePoint, const Log::Proto::LogEntryFile& )>& test )ε->void;
+		α ToEntry( const QL::TableQL& table, const Log::Proto::LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject;
 		flat_set<ProgInstPK> _hidden;//instances whose forwarded lines the reader may not see - the AppServer's merged history only.
 	};
 }

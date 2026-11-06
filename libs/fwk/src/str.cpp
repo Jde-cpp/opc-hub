@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <boost/uuid/string_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <fmt/args.h>
 
 #ifdef _MSC_VER
 	#include <jde/fwk/process/os/windows/WindowsUtilities.h>
@@ -79,10 +78,7 @@ namespace Jde{
 		return y;
 	}
 	α Str::Format( sv format, vector<string> args )ε->string{
-    fmt::dynamic_format_arg_store<fmt::format_context> store;
-		for( auto&& arg : args )
-			store.push_back( move(arg) );
-    return fmt::vformat( format, store );
+		return Logging::Vformat( format, vector<Logging::Argument>(std::make_move_iterator(args.begin()), std::make_move_iterator(args.end())) );
 	}
 	α Str::TryFormat( sv format, vector<string> args )ι->string{
 		try{

@@ -10,7 +10,7 @@ const TagSeparator = ".";//logTags.h TagSeparator — how the server spells a co
 
 export type Entry={
 	templateId:Guid;
-	argIds:Guid[];
+	args:string[];//as the entry rendered each:  the server renders a typed one, which JSON can't carry exactly.
 	level:ELogLevel;
 	tags:string[];
 	line:number;
@@ -32,9 +32,6 @@ export class LogEntries{
 			e.fileId = new Guid( <string><any>e.fileId );
 			e.functionId = new Guid( <string><any>e.functionId );
 			e.time = new Date( e.time );
-			e.argIds.forEach( (id, index)=>{
-				e.argIds[index] = new Guid( <string><any>id );
-			});
 		});
 		queryResult.strings.forEach( s=>this.strings.set(s.id, s.value) );
 	}
@@ -48,8 +45,8 @@ export class LogEntries{
 			&& a.templateId.equals(b.templateId)
 			&& a.fileId.equals(b.fileId)
 			&& a.functionId.equals(b.functionId)
-			&& a.argIds.length === b.argIds.length
-			&& a.argIds.every( (id, i)=>id.equals(b.argIds[i]) );
+			&& a.args.length === b.args.length
+			&& a.args.every( (arg, i)=>arg===b.args[i] );
 	}
 	//a combined tag reaches us in ELogTags bit order, which is alphabetical - "read.server.socket".  logTags.h spells
 	//that same tag "socket.client.read": transport, then role, then direction, which is the order that reads.  ranked
@@ -104,7 +101,7 @@ export class LogView extends View{
 			args += ", level:{gt:$level}";
 			vars["level"] = level-1;
 		}
-		const q = `logs( ${args} ){ entries{templateId argIds level tags line time userId fileId functionId} strings{id value} }`;
+		const q = `logs( ${args} ){ entries{templateId args level tags line time userId fileId functionId} strings{id value} }`;
 		return { text: q, vars: vars };
 	}
 	static schema:TableSchema = new TableSchema( {

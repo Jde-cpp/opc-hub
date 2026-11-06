@@ -84,7 +84,7 @@ namespace Jde::App{
 			proto->set_line( m.Line );
 			proto->set_user_pk( m.UserPK.Value );
 			for( let& arg : m.Arguments )
-				proto->add_args( arg );
+				proto->add_args( Logging::ArgText(arg) );
 		});
 	}
 

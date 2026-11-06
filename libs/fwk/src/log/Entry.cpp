@@ -8,14 +8,14 @@
 #define let const auto
 
 namespace Jde::Logging{
-	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, string&& m, vector<string> args, optional<StringMd5> id )ι:
+	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, string&& m, vector<Argument> args, optional<StringMd5> id )ι:
 		Entry( sl, l, tags, {}, move(m), move(args), id )
 	{}
 
-	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, string&& m, vector<string> args, optional<StringMd5> id )ι:
+	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, string&& m, vector<Argument> args, optional<StringMd5> id )ι:
 		Entry( sl, l, tags, userPK, SourceName{move(m), id}, move(args) )
 	{}
-	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, SourceName&& text, vector<string> args )ι:
+	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, SourceName&& text, vector<Argument> args )ι:
 		Arguments{ move(args) },
 		Level{ l },
 		Tags{ tags },
@@ -32,7 +32,7 @@ namespace Jde::Logging{
 	Entry::Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, const FormatView& m, fmt::format_args args )ι:
 		Entry( sl, l, tags, userPK, TemplateName(m), ToArguments(m, args) )
 	{}
-	Entry::Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, uuid messageId, uuid fileId, uuid functionId, vector<string>&& args )ι:
+	Entry::Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, uuid messageId, uuid fileId, uuid functionId, vector<Argument>&& args )ι:
 		Arguments{ move(args) },
 		Level{ l },
 		Tags{ tags },
@@ -43,7 +43,10 @@ namespace Jde::Logging{
 		_file{ fileId },
 		_function{ functionId }
 	{}
-	Entry::Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, string&& text, string&& file, string&& function, vector<string>&& args )ι:
+	Entry::Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, string&& text, string&& file, string&& function, vector<Argument>&& args )ι:
+		Entry( l, tags, line, time, userId, SourceName{move(text)}, SourceName{move(file)}, SourceName{move(function)}, move(args) )
+	{}
+	Entry::Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, SourceName&& text, SourceName&& file, SourceName&& function, vector<Argument>&& args )ι:
 		Arguments{ move(args) },
 		Level{ l },
 		Tags{ tags },
@@ -60,7 +63,7 @@ namespace Jde::Logging{
 	Ω sourceIds()ι->concurrent_flat_map<const char*,StringMd5>&{ static concurrent_flat_map<const char*,StringMd5> ids; return ids; }
 	//What an argument fmt refuses at run time, a null char pointer, is stored as in its place.
 	Ω formatError( const fmt::format_error& e )ι->string{ return string{"<format error: "}+e.what()+'>'; }
-	//An argument as stored:  with its field's spec, then without it if the value can't take the spec at run time, then, if fmt
+	//An argument as text:  with its field's spec, then without it if the value can't take the spec at run time, then, if fmt
 	//still refuses the value (a null char pointer), the error in its place.
 	Ω formatArgument( sv field, fmt::format_args one )ι->string{
 		try{
@@ -77,6 +80,31 @@ namespace Jde::Logging{
 			return formatError( e );
 		}
 	}
+	//A plain {} field's argument, as fmt holds it:  int8_t and uint8_t arrive as int and unsigned, and a 128-bit integer, a
+	//long double, a char and a custom type are text.  A float is the double that renders as it did - 0.1f as 0.1, not
+	//0.10000000149011612 - or its text where no double does:  fmt writes a float in exponent form from 1e7, a double from 1e16.
+	Ω toArgument( const fmt::basic_format_arg<fmt::format_context>& arg )ι->Argument{
+		return arg.visit( [&arg]<class T>( const T& value )->Argument{
+			if constexpr( std::is_same_v<T,bool> || std::is_same_v<T,double> )
+				return value;
+			else if constexpr( std::is_integral_v<T> && !std::is_same_v<T,char> && sizeof(T)<=8 ){
+				if constexpr( std::is_signed_v<T> )
+					return int64_t{ value };
+				else
+					return uint64_t{ value };
+			}
+			else if constexpr( std::is_same_v<T,float> ){
+				auto text = fmt::format( "{}", value );
+				double y{};
+				std::from_chars( text.data(), text.data()+text.size(), y );
+				if( Ƒ("{}", y)==text )
+					return y;
+				return text;
+			}
+			else
+				return formatArgument( "{}", fmt::format_args{&arg, 1} );
+		} );
+	}
 
 	α Record::Entry()Ι->const Logging::Entry&{
 		if( !_entry )
@@ -85,30 +113,27 @@ namespace Jde::Logging{
 	}
 
 	α Entry::SourceLocation()Ι->spdlog::source_loc{
-		return spdlog::source_loc{
-			_file.View().data(),//NUL-terminated either way: a source_location literal, or the owned string's buffer.
-			(int)Line,
-			_function.View().data()
-		};
+		//NUL-terminated either way: a source_location literal, or the owned string's buffer.  A default name's view is null, which
+		//spdlog would strlen whenever the line is set, since its source flags test only the line.
+		auto name = []( const SourceName& n )->const char*{ let view = n.View(); return view.data() ? view.data() : ""; };
+		return spdlog::source_loc{ name(_file), (int)Line, name(_function) };
 	}
 	α Entry::Message()Ι->string{
 		if( _message.size() )
 			return _message;
-    fmt::dynamic_format_arg_store<fmt::format_context> store;
-		for( auto&& arg : Arguments ){
-			store.push_back( arg );
-		}
 		try{
-			_message = Arguments.size()==0 ? string{ Text() } : fmt::vformat( Text(), store );
+			_message = Arguments.size()==0 ? string{ Text() } : Vformat( Text(), Arguments );
 		}
 		catch( const runtime_error& e ){
-			CRITICALT( Tags, "Bad Format: {}, args: '{}', what: '{}'", Text(), Str::Join(Arguments, ", ", true), e.what() );
-			_message = Ƒ( "{}, args: '{}'", Text(), Str::Join(Arguments, ", ", true) );
+			let args = Str::Join( Arguments | std::views::transform(ArgText), ", ", true );
+			CRITICALT( Tags, "Bad Format: {}, args: '{}', what: '{}'", Text(), args, e.what() );
+			_message = Ƒ( "{}, args: '{}'", Text(), args );
 		}
-    return _message;
+		return _message;
 	}
 }
-α Jde::Logging::SourceId( const char* name )ι->StringMd5{
+namespace Jde{
+α Logging::SourceId( const char* name )ι->StringMd5{
 	optional<StringMd5> id;
 	sourceIds().cvisit( name, [&id]( let& x ){ id = x.second; } );
 	if( !id ){
@@ -117,24 +142,34 @@ namespace Jde::Logging{
 	}
 	return *id;
 }
-α Jde::Logging::ForgetSourceIds()ι->void{ sourceIds().clear(); }
-α Jde::Logging::ToArguments( const FormatView& m, fmt::format_args args )ι->vector<string>{
+α Logging::ForgetSourceIds()ι->void{ sourceIds().clear(); }
+α Logging::ToArguments( const FormatView& m, fmt::format_args args )ι->vector<Argument>{
 	vector<sv> fields;//each field as written, "{:x}", only when some field has a spec.
 	if( m.Specs )
 		Internal::ForEachField( m.Text, []( sv ){}, [&fields]( sv field, sv ){ fields.push_back( field ); } );
-	vector<string> y;
+	vector<Argument> y;
 	for( int i=0;; ++i ){
 		const auto arg = args.get( i );
 		if( !arg )
 			break;
-		const fmt::format_args one{ &arg, 1 };
-		const bool spec = i<64 && ((m.Specs >> i) & 1) && i<(int)fields.size();
-		y.push_back( formatArgument(spec ? fields[i] : sv{"{}"}, one) );
+		if( i<64 && ((m.Specs >> i) & 1) && i<(int)fields.size() )
+			y.emplace_back( formatArgument(fields[i], fmt::format_args{&arg, 1}) );
+		else
+			y.push_back( toArgument(arg) );
 	}
 	return y;
 }
+α Logging::ArgText( const Argument& arg )ι->string{
+	return std::visit( []( const auto& value ){ return fmt::format( "{}", value ); }, arg );
+}
+α Logging::Vformat( sv text, const vector<Argument>& args )ε->string{
+	fmt::dynamic_format_arg_store<fmt::format_context> store;
+	for( let& arg : args )
+		std::visit( [&store]( const auto& value ){ store.push_back( value ); }, arg );
+	return fmt::vformat( text, store );
+}
 #ifndef __cpp_lib_stacktrace
-α Jde::Logging::Locate( const boost::stacktrace::frame& frame )ι->FrameLocation{
+α Logging::Locate( const boost::stacktrace::frame& frame )ι->FrameLocation{
 #ifdef BOOST_STACKTRACE_USE_BACKTRACE
 	FrameLocation y;
 	if( !frame )
@@ -175,3 +210,4 @@ namespace Jde::Logging{
 #endif
 }
 #endif
+}

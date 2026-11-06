@@ -46,7 +46,7 @@ message Message{
 		AddSession add_session=2; //called from authenticators like OpcGateway
 		Jde.Proto.Query query=3;
 		Instance instance = 4;
-		Jde.App.Log.Proto.LogEntryClient log_entry = 5;
+		Jde.App.Log.Proto.ClientBatch log_batch = 5;
 		uint32 session_id = 6; //Attach session id for the socket.
 		uint32 session_info = 7; //called from other apps/web page to request information about session TODO graphql
 		Jde.Proto.Exception exception = 8;

@@ -5,7 +5,7 @@ import { LogDataSource } from './log-data-source';
 import { Entry, LogEntries, LogView } from './log-entry';
 
 const guid = ( n:number )=>new Guid( n.toString(16).padStart(32, '0') );
-const entry = ( line:number, template:number ):Entry=>( {templateId: guid(template), argIds: [], level: ELogLevel.Information, tags: [], line, time: new Date(0), userId: 0, fileId: guid(1), functionId: guid(1), hidden: false} );
+const entry = ( line:number, template:number ):Entry=>( {templateId: guid(template), args: [], level: ELogLevel.Information, tags: [], line, time: new Date(0), userId: 0, fileId: guid(1), functionId: guid(1), hidden: false} );
 const noFilter = { messageIds: [], level: ELogLevel.NoLog };
 
 //angular-review #44: filterData's selection-follow was dead code - it paged to 0 whatever was selected, so hiding a message
@@ -84,11 +84,11 @@ describe( 'LogDataSource.addLoadedEntries', ()=>{
 	} );
 
 	it( 'keeps rows one line logs in the same millisecond with other arguments', ()=>{
-		const withArg = ( line:number, second:number, arg:number ):Entry=>( {...at(line, second), argIds: [guid(arg)]} );
+		const withArg = ( line:number, second:number, arg:number ):Entry=>( {...at(line, second), args: [String(arg)]} );
 		const ds = create( 'desc' );
 		ds.addLoadedEntries( {entries: [withArg(1, 30, 100)], strings: new Map()} );
 		ds.addLoadedEntries( {entries: [withArg(1, 30, 100), withArg(1, 30, 101), withArg(1, 30, 102)], strings: new Map()} );
-		expect( ds.allEntries.map(e=>e.argIds[0].toString()) ).toEqual( [100, 101, 102].map(n=>guid(n).toString()) );
+		expect( ds.allEntries.map(e=>e.args[0]) ).toEqual( ['100', '101', '102'] );
 	} );
 
 	it( 'drops repeats under a sort other than time', ()=>{
@@ -164,5 +164,29 @@ describe( 'LogDataSource.selectNext', ()=>{
 
 	it( 'does nothing with no row selected', ()=>{
 		expect( create().ds.selectNext() ).toBe( false );
+	} );
+} );
+
+//reviews-issue/log-pass2.md #6:  the server returns a template with no arguments as it is, so the page does too.  Parsing its
+//braces threw on one stored verbatim, as an exception's what() can be, and the row's message cell failed to render.
+describe( 'LogDataSource.message', ()=>{
+	const message = ( template:string, args:string[] )=>{
+		const ds = new LogDataSource( signal({limit: 10} as unknown as LogView) );
+		ds.strings.set( guid(10).toString(), template );
+		return ds.message( {...entry(1, 10), args} );
+	};
+
+	it( 'returns a template with no arguments as it is', ()=>{
+		expect( message('bad body {"a":1}', []) ).toBe( 'bad body {"a":1}' );
+		expect( message('literal {} and {{', []) ).toBe( 'literal {} and {{' );
+	} );
+
+	it( 'fills the fields of a template with arguments', ()=>{
+		expect( message('{} of {}', ['3', '4']) ).toBe( '3 of 4' );
+	} );
+
+	//reviews-issue/log-pass2.md #17:  "}}" was written as it stands, where fmt collapses it as it does "{{".
+	it( 'collapses both brace escapes in a template with arguments', ()=>{
+		expect( message('{{"id":{}}}', ['7']) ).toBe( '{"id":7}' );
 	} );
 } );

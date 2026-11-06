@@ -2,14 +2,16 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/io/protobuf.h>
+#include <jde/app/proto/LogProto.h>
 
 #define let const auto
 
 namespace Jde::App{
-	using App::Log::Proto::LogEntryFile;
+	using Log::Proto::FileEntry;
+	using Log::Proto::LogEntryFile;
 	using Protobuf::ToGuid;
 
-	ArchiveQuery::ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries, flat_set<ProgInstPK> hidden )ε:
+	ArchiveQuery::ArchiveQuery( const QL::Filter& q, vector<FileEntry>&& entries, flat_set<ProgInstPK> hidden )ε:
 		_hidden{ move(hidden) }{
 		Append( q, move(entries) );
 	}
@@ -35,10 +37,15 @@ namespace Jde::App{
 		let it = map.find( ToGuid(idBytes) );
 		return it==map.end() ? Str::Empty() : it->second;
 	}
+	α ArchiveQuery::ArgText( const Log::Proto::Arg& arg )Ι->string{
+		if( auto typed = LogProto::ArgText(arg) )
+			return move( *typed );
+		return Strings.Find( EStringKind::Arg, arg.string_id() );
+	}
 	α ArchiveQuery::Message( const LogEntryFile& entry )Ι->string{
 		vector<string> args;
-		for( let& argId : entry.args() )
-			args.emplace_back( Strings.Find(EStringKind::Arg, argId) );
+		for( let& arg : entry.args() )
+			args.emplace_back( ArgText(arg) );
 		let fmt = Strings.Find( EStringKind::Template, entry.template_id() );
 		return Str::TryFormat( fmt, args );
 	}
@@ -59,7 +66,7 @@ namespace Jde::App{
 		//Any argument, not every one.  ANDing meant `args:"timeout"` rejected every entry that also had an unrelated
 		//argument, and an entry with *no* arguments passed outright.  any_of fails an empty list; TestF still ANDs the
 		//operators on the column, so `args:{gt:"a", lt:"z"}` asks for one argument satisfying both.
-		return std::any_of( entry.args().begin(), entry.args().end(), [&](let& argId){ return filter.TestF<string>("args", [&](){return Strings.Find(EStringKind::Arg, argId);}); } );
+		return std::any_of( entry.args().begin(), entry.args().end(), [&](let& arg){ return filter.TestF<string>("args", [&](){return ArgText(arg);}); } );
 	}
 	α ArchiveQuery::Test( const QL::TableQL& q, TimePoint time, const LogEntryFile& entry )Ε->bool{
 		let& filter = q.Filter();
@@ -87,7 +94,6 @@ namespace Jde::App{
 		return valid;
 	}
 
-	using App::Log::Proto::FileEntry;
 	α ArchiveQuery::Append( const QL::Filter& filter, vector<FileEntry>&& entries )ε->void{
 		Fold( move(entries), [&]( TimePoint time, const LogEntryFile& entry ){ return Test( filter, time, entry ); } );
 	}
@@ -127,8 +133,8 @@ namespace Jde::App{
 		}
 	}
 
-	α ArchiveQuery::Sort( const vector<std::pair<string,bool>>& orderBy )Ι->vector<App::Log::Proto::LogEntryFile>{
-		vector<App::Log::Proto::LogEntryFile> y;
+	α ArchiveQuery::Sort( const vector<std::pair<string,bool>>& orderBy )Ι->vector<LogEntryFile>{
+		vector<LogEntryFile> y;
 		for( let& [ts,entries] : Entries )
 			y.insert( y.end(), entries.begin(), entries.end() );
 
@@ -174,7 +180,7 @@ namespace Jde::App{
 		} );
 		return y;
 	}
-	α ArchiveQuery::ToEntry( const QL::TableQL& table, const App::Log::Proto::LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject{
+	α ArchiveQuery::ToEntry( const QL::TableQL& table, const LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject{
 		//An id column's value, recording the string it names when the query also asked for strings.
 		auto stringId = [&]( EStringKind kind, sv idBytes )->string{
 			let id = ToGuid( idBytes );
@@ -187,10 +193,10 @@ namespace Jde::App{
 			let& name = col.JsonName;
 			if( name=="templateId" )
 				o[name] = stringId( EStringKind::Template, entry.template_id() );
-			else if( name=="argIds" ){
+			else if( name=="args" ){//as text, a typed one rendered here:  JSON can't carry a 64-bit integer or fmt's double exactly.
 				jarray args;
-				for( auto&& arg : entry.args() )
-					args.push_back( {stringId(EStringKind::Arg, arg)} );
+				for( let& arg : entry.args() )
+					args.emplace_back( ArgText(arg) );
 				o[name] = move( args );
 			}
 			else if( name=="level" )
@@ -219,7 +225,7 @@ namespace Jde::App{
 		}
 		return o;
 	}
-	//logs( limit: $limit, offset: $offset, orderBy: $orderBy ){ entries{templateId argIds level tags line time userId appId appInstanceId fileId functionId} strings{id value} }
+	//logs( limit: $limit, offset: $offset, orderBy: $orderBy ){ entries{templateId args level tags line time userId appId appInstanceId fileId functionId} strings{id value} }
 	α ArchiveQuery::ToJson( const QL::TableQL& ql )Ι->jobject{
 		let entries = Sort( ql.OrderByJson() );
 		jobject o;

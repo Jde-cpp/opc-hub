@@ -106,7 +106,7 @@ namespace Jde::App::Client{
 		auto session = LoadSession();
 		if( !session )
 			return false;//losing the session between the caller's check and here is a race it can lose legitimately
-		session->Write( FromClient::LogEntries(move(entries)) );
+		session->WriteLogs( move(entries) );
 		return true;
 	}
 	α IAppClient::Enroll( const jobject& http, sv certInstance )ε->void{

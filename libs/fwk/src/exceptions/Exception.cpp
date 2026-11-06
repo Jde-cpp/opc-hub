@@ -114,10 +114,10 @@ namespace Jde{
 		if( _what.empty() ){
 			if( auto sv = Format(); sv.size() ){
 				try{
-					_what = _args.size() ? Str::Format( sv, _args ) : string{ sv };
+					_what = _args.size() ? Logging::Vformat( sv, _args ) : string{ sv };
 				}
 				catch( const std::exception& e ){
-					_what = Ƒ( "bad format: {}, args: '{}', what: '{}'", sv, Str::Join(_args, ", ", true), e.what() );
+					_what = Ƒ( "bad format: {}, args: '{}', what: '{}'", sv, Str::Join(_args | std::views::transform(Logging::ArgText), ", ", true), e.what() );
 				}
 			}
 			else if( _inner )

@@ -15,24 +15,57 @@ enum ELogLevel{
 	NoLog = -1;
 }
 
-//The text fields are bytes, not string:  a log argument is whatever the code logged, and proto3 refuses to parse a string
-//field holding invalid UTF-8.  Same wire type, so what was written as string - a poisoned daily file included - parses.
+//What RemoteLog sends the AppServer in one message:  the Strings its entries name that this session hasn't sent yet, then
+//the entries.  reset:  the AppServer forgets the session's Strings first, since the client's table passed its cap and it
+//sends each again as it next names it.
+message ClientBatch{
+	bool reset=1;
+	repeated String strings=2;
+	repeated LogEntryClient entries=3;
+}
+
+//An entry as an app sends it:  its template, file and function by id, as LogEntryFile names them.
 message LogEntryClient{
-	bytes text=1;
-	repeated bytes args=2;
+	bytes template_id=1;
+	repeated ClientArg args=2;
 	ELogLevel level=3;
 	uint64 tags=4;
 	uint32 line=5;
 	google.protobuf.Timestamp time=6;
 	uint32 user_pk=7;
-	bytes file=8;
-	bytes function=9;
+	bytes file_id=8;//none for an entry without a source.
+	bytes function_id=9;
+}
+
+//An argument as an app sends it to the AppServer:  typed as Arg is, otherwise its text, which the AppServer stores by its id.
+//The text is bytes, not string:  a log argument is whatever the code logged, and proto3 refuses to parse a string field
+//holding invalid UTF-8.  Same wire type, so what was written as string - a poisoned daily file included - parses.
+message ClientArg{
+	oneof value{
+		bytes text=1;
+		sint64 integer=2;
+		uint64 unsigned_integer=3;
+		double real=4;
+		bool flag=5;
+	}
+}
+
+//An argument as the file stores it:  typed when the code logged a number or a bool into a plain {} field, otherwise the id
+//of its text, which a String record holds.  Read back, a typed one renders as fmt's {} did when it was logged.
+message Arg{
+	oneof value{
+		bytes string_id=1;
+		sint64 integer=2;
+		uint64 unsigned_integer=3;
+		double real=4;
+		bool flag=5;
+	}
 }
 
 message LogEntryFile{
 	google.protobuf.Timestamp time=1;
 	bytes template_id=2;
-	repeated bytes args=3;
+	repeated Arg args=3;
 	ELogLevel level=4;
 	uint64 tags=5;
 	uint32 line=6;
@@ -45,7 +78,7 @@ message LogEntryFile{
 
 message String{
 	bytes id=1;
-	bytes value=2;//bytes for the reason LogEntryClient's are:  as a string, one invalid UTF-8 argument made the whole daily file unparseable.
+	bytes value=2;//bytes for the reason ClientArg's text is:  as a string, one invalid UTF-8 argument made the whole daily file unparseable.
 }
 
 //The log's record, which its two files hold through the framework's record layer (include/jde/fwk/io/records):  each

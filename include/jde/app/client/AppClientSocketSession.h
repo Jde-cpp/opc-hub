@@ -2,6 +2,7 @@
 #include <jde/app/client/usings.h>
 #include <absl/synchronization/mutex.h>
 #include <jde/app/proto/app.FromClient.h>
+#include <jde/app/proto/LogProto.h>
 #include <jde/access/usings.h>
 #include <jde/ql/types/Subscription.h>
 #include <jde/web/client/socket/ClientSocketAwait.h>
@@ -30,6 +31,7 @@ namespace Jde::App::Client{
 		α StopListenRemote( sp<QL::IListener> listener, vector<QL::SubscriptionId> ids )ι->flat_set<QL::SubscriptionId>;//returns the ids removed - the caller unsubscribes server side, e.g. IQL::Unsubscribe.
 		α ClearSubscriptions()ι->void;//what the close does: the ids died with the socket.  Remembered requests are untouched - that is what a reconnect replays.
 		α OnSubscription( const jobject& m, QL::SubscriptionId clientId )ι->void;
+		α WriteLogs( vector<Logging::Entry>&& entries )ι->void;
 	private:
 		//Every request this session makes: a fresh id, logged as the first argument of the caller's message, then the await.
 		template<class T, class... Args>
@@ -58,6 +60,10 @@ namespace Jde::App::Client{
 		concurrent_flat_map<RequestId, SubscriptionRequest> _subscriptionRequests;
 		mutable absl::Mutex _subsMutex;
 		flat_map<QL::SubscriptionId,flat_set<sp<QL::IListener>>> _subs ABSL_GUARDED_BY(_subsMutex);
+		//Held while a batch is built and queued, so batches reach the socket in the order their Strings were sent:  RemoteLog's
+		//rounds post their writes, which can run at once.
+		absl::Mutex _logMutex;
+		LogProto::SentStrings _logStrings ABSL_GUARDED_BY(_logMutex);
 #ifdef TESTS
 	public:
 		α ProcessTransmissionTest( Proto::FromServer::Transmission&& t, optional<Jde::UserPK> userPK, optional<RequestId> clientRequestId, uint8 depth )ι->void{ ProcessTransmission( move(t), userPK, clientRequestId, depth ); }

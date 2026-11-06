@@ -1,3 +1,5 @@
+#include <spdlog/logger.h>
+#include <spdlog/sinks/ostream_sink.h>
 #include <jde/fwk/log/MemoryLog.h>
 
 #define let const auto
@@ -13,7 +15,7 @@ namespace Jde::Tests{
 	//also the only thing that surfaces the offending template, because Message() memoizes the fallback and every later
 	//caller sees the result rather than the failure.
 	TEST_F( LogEntryTests, MessageSurvivesABadFormat ){
-		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Jde::UserPK{7}, string{"a {} b {}"}, vector<string>{"1"} };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Jde::UserPK{7}, string{"a {} b {}"}, vector<Logging::Argument>{"1"} };
 		string message;
 		ASSERT_NO_THROW( message = e.Message() ) << "one argument for two placeholders is wire data, not a fatal error";
 		EXPECT_NE( message.find("a {} b {}"), string::npos ) << "the unformattable template has to survive into the message: " << message;
@@ -25,12 +27,19 @@ namespace Jde::Tests{
 
 	TEST_F( LogEntryTests, ArgumentsMatchTheConsole ){
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "{} {} {}", true, (uint8_t)5, 1234567.0 };
-		EXPECT_EQ( e.Arguments, (vector<string>{"true", "5", "1234567"}) );
+		EXPECT_EQ( e.Arguments, (vector<Logging::Argument>{true, uint64_t{5}, 1234567.0}) );
 		EXPECT_EQ( e.Message(), fmt::format("{} {} {}", true, (uint8_t)5, 1234567.0) ) << "the stored form renders as spdlog prints the line";
+	}
+	//reviews-issue/log-pass2.md #4:  fmt writes a float in exponent form from 1e7, a double not until 1e16, so a float there
+	//is kept as its text.  Below 1e7 and from 1e16 it is still the double that renders as it did.
+	TEST_F( LogEntryTests, AFloatRendersAsTheConsoleDid ){
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "{} {} {} {}", 12345678.0f, -1e10f, 0.1f, 1e20f };
+		EXPECT_EQ( e.Message(), fmt::format("{} {} {} {}", 12345678.0f, -1e10f, 0.1f, 1e20f) );
+		EXPECT_EQ( e.Arguments, (vector<Logging::Argument>{string{"1.2345678e+07"}, string{"-1e+10"}, 0.1, 1e20}) );
 	}
 
 	TEST_F( LogEntryTests, MessageFormatsAWellFormedEntry ){
-		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Jde::UserPK{}, string{"a {} b {}"}, vector<string>{"1","2"} };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Jde::UserPK{}, string{"a {} b {}"}, vector<Logging::Argument>{"1","2"} };
 		EXPECT_EQ( e.Message(), "a 1 b 2" );
 		Logging::Entry noArgs{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"{ not a placeholder }"} };
 		EXPECT_EQ( noArgs.Message(), "{ not a placeholder }" ) << "no arguments short-circuits vformat, so braces are never parsed";
@@ -40,7 +49,7 @@ namespace Jde::Tests{
 	//it, so the id has to be the md5 of the *template* rather than of the formatted message - otherwise two entries
 	//from one log line key differently and the text is never resolved.
 	TEST_F( LogEntryTests, IdsAreMemoizedMd5sOfTheirText ){
-		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"id {}"}, vector<string>{"1"} };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"id {}"}, vector<Logging::Argument>{"1"} };
 		EXPECT_EQ( e.Id(), Logging::Entry::GenerateId("id {}") ) << "the template, not the formatted message";
 		EXPECT_NE( e.Id(), Logging::Entry::GenerateId(e.Message()) );
 		EXPECT_EQ( e.Id(), e.Id() ) << "memoized";
@@ -72,7 +81,7 @@ namespace Jde::Tests{
 
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "{:x} {:.1f} {{{:>4}}} {}", 255, 3.14159, "ab", 7 };
 		EXPECT_EQ( e.Text(), "{} {} {{{}}} {}" );
-		EXPECT_EQ( e.Arguments, (vector<string>{"ff", "3.1", "  ab", "7"}) );
+		EXPECT_EQ( e.Arguments, (vector<Logging::Argument>{"ff", "3.1", "  ab", int64_t{7}}) );
 		EXPECT_EQ( e.Message(), fmt::format("{:x} {:.1f} {{{:>4}}} {}", 255, 3.14159, "ab", 7) );
 		EXPECT_EQ( e.Id(), format.Id );
 
@@ -94,11 +103,20 @@ namespace Jde::Tests{
 		EXPECT_EQ( spec.Text(), "template view {}" );
 	}
 
+	//Each plain {} argument as fmt saw it, the value a log file stores typed (log.md #11):  int8_t arrives as an int, a float
+	//is the double that renders as it did, and a field with a spec, a char and text are their text.
+	TEST_F( LogEntryTests, ArgumentsAreTypedAsFmtSawThem ){
+		const int8_t small{ -3 };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "{} {} {} {} {} {} {} {:x} {} {}", small, -4, 5u, uint64_t{6}, 0.5, 0.1f, true, 255, 'c', "text" };
+		EXPECT_EQ( e.Arguments, (vector<Logging::Argument>{int64_t{-3}, int64_t{-4}, uint64_t{5}, uint64_t{6}, 0.5, 0.1, true, "ff", "c", "text"}) ) << "0.1f as a double is 0.10000000149011612";
+		EXPECT_EQ( e.Message(), "-3 -4 5 6 0.5 0.1 true ff c text" );
+	}
+
 	//fmt has no formatter for boost::json::string, so a log line couldn't take one;  fwk's formats it as its text, specs and all.
 	TEST_F( LogEntryTests, AJsonStringIsItsText ){
 		const boost::json::string text{ "text" }, spec{ "spec" };
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "json {} {:>6}", text, spec };
-		EXPECT_EQ( e.Arguments, (vector<string>{"text", "  spec"}) );
+		EXPECT_EQ( e.Arguments, (vector<Logging::Argument>{"text", "  spec"}) );
 		EXPECT_EQ( e.Message(), "json text   spec" );
 	}
 
@@ -131,9 +149,9 @@ namespace Jde::Tests{
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "refused {} {:>4} {}", null, null, 1 };
 		const string nullError{ "<format error: string pointer is null>" };
 		ASSERT_EQ( e.Arguments.size(), 3u );
-		EXPECT_EQ( e.Arguments[0], nullError );
-		EXPECT_EQ( e.Arguments[1], nullError ) << "without its spec, it still fails";
-		EXPECT_EQ( e.Arguments[2], "1" );
+		EXPECT_EQ( e.Arguments[0], Logging::Argument{nullError} );
+		EXPECT_EQ( e.Arguments[1], Logging::Argument{nullError} ) << "without its spec, it still fails";
+		EXPECT_EQ( e.Arguments[2], Logging::Argument{int64_t{1}} );
 		EXPECT_EQ( e.Message(), Ƒ("refused {} {} 1", nullError, nullError) );
 	}
 
@@ -149,12 +167,25 @@ namespace Jde::Tests{
 		EXPECT_EQ( Logging::SourceId(name), Logging::GenerateId("other name") ) << "forgotten, then hashed again";
 		Logging::ForgetSourceIds();//a stack address, which later frames reuse.
 	}
+	//reviews-issue/log-pass2.md #2:  an entry off the wire with a line but no file or function gives spdlog empty names, not the
+	//null pointers its source flags would strlen.
+	TEST_F( LogEntryTests, ASourcelessEntryGivesSpdlogEmptyNames ){
+		Logging::Entry e{ ELogLevel::Information, ELogTags::Test, 12, TimePoint{}, Jde::UserPK{}, Logging::SourceName{string{"no source"}}, {}, {}, {} };
+		let source = e.SourceLocation();
+		ASSERT_NE( source.filename, nullptr );
+		ASSERT_NE( source.funcname, nullptr );
+		std::ostringstream os;
+		spdlog::logger spd{ "sourceless", std::make_shared<spdlog::sinks::ostream_sink_st>(os) };
+		spd.set_pattern( "[%g][%s][%!][%@] %v" );
+		spd.log( source, spdlog::level::info, e.Message() );
+		EXPECT_EQ( os.str(), "[][][][:12] no source\n" );
+	}
 
 	//the overload the wire path uses: entries received from another instance are already built, so they arrive through
 	//Log(const Entry&) rather than the variadic Log, and it is this one that has to route them to every logger - and
 	//to apply each logger's own level, which the cumulative check before it does not.
 	TEST_F( LogEntryTests, LogEntryReachesTheLoggers ){
-		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"entry to the loggers {}"}, vector<string>{"1"} };
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"entry to the loggers {}"}, vector<Logging::Argument>{"1"} };
 		Logging::Log( e );
 		let found = Logging::Find( e.Id() );
 		ASSERT_EQ( found.size(), 1u );

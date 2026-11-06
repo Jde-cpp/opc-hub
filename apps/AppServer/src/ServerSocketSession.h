@@ -5,6 +5,7 @@
 #include <jde/web/client/usings.h>
 #include <jde/web/server/IWebsocketSession.h>
 #include <jde/web/server/Sessions.h>
+#include <jde/app/proto/LogProto.h>
 #include "appStartup.h"
 #include "awaits/AddSessionAwait.h"
 #include "awaits/ForwardExecutionAwait.h"
@@ -46,7 +47,7 @@ namespace Jde::App::Server{
 		α Execute( string&& bytes, optional<Jde::UserPK> userPK, RequestId clientRequestId, uint8 depth )ι->void;
 		α ForwardExecution( Proto::FromClient::ForwardExecution&& clientMsg, bool anonymous, RequestId clientRequestId, SRCE )ι->ForwardExecutionAwait::Task;
 		α GraphQL( string&& query, jobject variables, bool returnRaw, RequestId requestId, optional<Jde::UserPK> executer )ι->QL::QLAwait<jvalue>::Task;
-		α SaveLogEntry( Log::Proto::LogEntryClient logEntry, RequestId requestId )ι->void;
+		α SaveLogBatch( Log::Proto::ClientBatch&& batch, RequestId requestId )ι->uint;//the entries logged.
 		α SendAck( uint32 id )ι->void override;
 		α SessionInfo( SessionPK sessionId, RequestId requestId )ι->void;
 		α SetSessionId( SessionPK sessionId, RequestId requestId )->Web::Server::Sessions::UpsertAwait::Task;
@@ -58,5 +59,6 @@ namespace Jde::App::Server{
 		mutable mutex _registrationMutex;//guards _instance and _pks together: AddInstance publishes both on this session's strand while _sessions visitors read them from other threads.
 		SessionPK _instanceSessionId{};//the web session kInstance adopted - removed in OnClose.
 		uint8 _failedAdoptions{};
+		LogProto::ReceivedStrings _logStrings;//read on this session's strand only, as its transmissions are.
 	};
 }

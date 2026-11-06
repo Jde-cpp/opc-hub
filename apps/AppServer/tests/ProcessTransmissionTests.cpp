@@ -28,7 +28,7 @@ namespace Jde::App::Server::Tests{
 			EXPECT_TRUE( reply->exception().what().contains("SessionId not set") ) << reply->exception().what();
 		}
 		Ω ArgumentContains( const Logging::Entry& m, sv text )->bool{
-			return std::ranges::any_of( m.Arguments, [&](let& a){ return a.contains(text); } );
+			return std::ranges::any_of( m.Arguments, [&](let& a){ return Logging::ArgText(a).contains(text); } );
 		}
 		Ω Logged( sv text )->bool{ return WaitUntil( [=]{ return !Logging::Find([=](let& m){ return ArgumentContains(m, text); }).empty(); } ); }
 		//wraps inner in `levels` kExecuteAnonymous envelopes, all carrying requestId.

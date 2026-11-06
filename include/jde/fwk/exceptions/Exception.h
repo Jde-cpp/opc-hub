@@ -95,7 +95,7 @@ namespace Jde{
 		up<exception> _inner;
 		variant<sv,string> _format;
 		optional<StringMd5> _formatId;//the template's, from its Format:  what its log entry is stored under.
-		vector<string> _args;
+		vector<Logging::Argument> _args;
 	private:
 		α operator=( Exception&& from )ι->Exception&;
 	public:
@@ -130,8 +130,8 @@ namespace Jde{
 		_inner{ ToExceptionPtr(move(inner)) }, //preserves derived message/type; mu<runtime_error> would slice.
 		_format{ m.Specs ? decltype(_format){m.Template()} : decltype(_format){m.Text()} },
 		_formatId{ m.Id },
+		_args{ Logging::ToArguments(m.View(), fmt::make_format_args(sargs...)) },
 		_sl{ sl }{
-		_args = Logging::ToArguments( m.View(), fmt::make_format_args(sargs...) );
 		BreakLog();
 	}
 
@@ -140,8 +140,8 @@ namespace Jde{
 		ExceptionArgs{ args },
 		_format{ m.Specs ? decltype(_format){m.Template()} : decltype(_format){m.Text()} },
 		_formatId{ m.Id },
+		_args{ Logging::ToArguments(m.View(), fmt::make_format_args(sargs...)) },
 		_sl{ sl }{
-		_args = Logging::ToArguments( m.View(), fmt::make_format_args(sargs...) );
 		BreakLog();
 	}
 

@@ -65,9 +65,13 @@ namespace Jde::Logging{
 		uint64_t Specs;//bit i:  field i has a spec.
 		StringMd5 Id;
 	};
-	//Each argument as a stored entry keeps it, a log line's and an exception's alike:  formatted with its field's spec,
-	//otherwise as fmt's {}.
-	Γ α ToArguments( const FormatView& m, fmt::format_args args )ι->vector<string>;
+	//An argument as a stored entry keeps it, a log line's and an exception's alike, and as Log.proto's Arg stores it:  the
+	//value when fmt said a plain {} field's argument was a number or a bool, otherwise its text, formatted with its field's
+	//spec or as fmt's {}.
+	using Argument = variant<string,int64_t,uint64_t,double,bool>;
+	Γ α ToArguments( const FormatView& m, fmt::format_args args )ι->vector<Argument>;
+	Γ α ArgText( const Argument& arg )ι->string;//as fmt's {} renders it, which is how the entry's message shows it.
+	Γ α Vformat( sv text, const vector<Argument>& args )ε->string;//text, with a plain {} for each argument.
 
 	//A log call's or an exception's format string:  fmt's checked format_string, and the id its entries are stored under -
 	//the md5 of the template with its specs stripped - both settled by the compiler at the call site, so a line never hashes

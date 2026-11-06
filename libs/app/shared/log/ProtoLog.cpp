@@ -314,10 +314,12 @@ namespace Jde::App{
 		*fileEntry.mutable_str() = LogProto::ToString( id, string{str} );
 		Add( move(fileEntry) );
 	}
-	α ProtoLog::AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void{
-		ASSERTX( args.size()==(uint)ids.size() );
-		for( uint i=0; i<args.size(); ++i )
-			AddString( ToGuid(ids.Get((int)i)), args[i], _cache.Args );
+	α ProtoLog::AddArguments( const vector<Logging::Argument>& args, const ::google::protobuf::RepeatedPtrField<App::Log::Proto::Arg>& stored )ι->void{
+		ASSERTX( args.size()==(uint)stored.size() );
+		for( uint i=0; i<args.size(); ++i ){
+			if( let text = std::get_if<string>(&args[i]) )//a typed argument is its own value, with no String.
+				AddString( ToGuid(stored.Get((int)i).string_id()), *text, _cache.Args );
+		}
 	}
 
 	α ProtoLogCache::Touch( flat_set<uuid>& cache, uuid id )ι->bool{

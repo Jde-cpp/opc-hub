@@ -47,7 +47,7 @@ namespace Jde::App{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Add( App::Log::FileEntry&& record )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str, flat_set<uuid>& cache )ι->void;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void;//L2: by reference - it was copying the whole field per entry.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddArguments( const vector<Logging::Argument>& args, const ::google::protobuf::RepeatedPtrField<App::Log::Proto::Arg>& stored )ι->void;//L2: by reference - it was copying the whole field per entry.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Drop()ι->uint override;//whole records, down to half the cap; returns the bytes dropped.
 		ABSL_UNLOCK_FUNCTION(_mutex) α Flush()ι->void override{ Save(); }
 		ABSL_UNLOCK_FUNCTION(_mutex) α Save()ι->VoidAwait::Task;//releases _mutex before its first suspend.

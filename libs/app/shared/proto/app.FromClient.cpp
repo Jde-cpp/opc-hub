@@ -81,11 +81,9 @@ namespace Jde::App{
 				u.add_request_ids( id );
 		});
 	}
-	α FromClient::LogEntries( vector<Logging::Entry>&& entries )ι->PFromClient::Transmission{
+	α FromClient::LogBatch( Log::Proto::ClientBatch&& batch )ι->PFromClient::Transmission{
 		PFromClient::Transmission t;
-		for( auto&& entry : entries ){
-			*t.add_messages()->mutable_log_entry() = LogProto::LogEntryClient( move(entry) );
-		}
+		*t.add_messages()->mutable_log_batch() = move( batch );
 		return t;
 	}
 }
