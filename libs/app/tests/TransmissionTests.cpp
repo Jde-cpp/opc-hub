@@ -128,15 +128,15 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( t.messages(0).exception().status_code(), 409u ); //Duplicate -> conflict.
 	}
 
-	//Log traffic is unsolicited:  one message per entry, no request to answer.
-	TEST( FromClientTests, LogEntries ){
-		vector<Logging::Entry> entries{ entry(tp(0), ELogLevel::Information, 1, "a"), entry(tp(1), ELogLevel::Error, 2, "b") };
-		let t = FromClient::LogEntries( move(entries) );
-		ASSERT_EQ( t.messages_size(), 2 );
+	//Log traffic is unsolicited:  one message per batch, no request to answer.
+	TEST( FromClientTests, LogBatch ){
+		LogProto::SentStrings sent;
+		let t = FromClient::LogBatch( sent.Batch({entry(tp(0), ELogLevel::Information, 1, "a"), entry(tp(1), ELogLevel::Error, 2, "b")}) );
+		ASSERT_EQ( t.messages_size(), 1 );
 		EXPECT_EQ( t.messages(0).request_id(), 0u );
-		ASSERT_EQ( t.messages(0).value_case(), CMessage::kLogEntry );
-		EXPECT_EQ( t.messages(0).log_entry().text(), "a" );
-		EXPECT_EQ( t.messages(1).log_entry().line(), 2u );
+		ASSERT_EQ( t.messages(0).value_case(), CMessage::kLogBatch );
+		ASSERT_EQ( t.messages(0).log_batch().entries_size(), 2 );
+		EXPECT_EQ( t.messages(0).log_batch().entries(1).line(), 2u );
 	}
 
 	TEST( FromServerTests, Ack ){

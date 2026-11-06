@@ -163,30 +163,22 @@ export class LogDataSource extends DataSource<Entry>{
 	function( entry:Entry ):string|undefined{ return this.strings.get( entry.functionId.toString() ); }
 	message( entry:Entry ):string{
 		let template = this.strings.get( entry.templateId.toString() ) ?? "";
+		if( entry.args.length==0 )
+			return template;//as the server's Entry::Message:  one with no arguments is stored verbatim, braces and all.
 		let text = "";
 		let argIndex = 0;
 		for( let i=0; i<template.length; ++i ){
 			let ch = template[i];
-			if( ch!='{' || i+1>=template.length || (ch=='{' && template[i+1]=='{') ){
+			if( (ch=='{' || ch=='}') && template[i+1]==ch ){//"{{" and "}}" escapes collapse to one brace, as fmt's do.
 				text += ch;
-				if( ch=='{' && i+1<template.length )
-					++i;//"{{" escape: emitted one "{" above, skip the second so it collapses to "{" (was `text += template[++i]` → doubled)
-				continue;
+				++i;
 			}
-			let next = template[++i];
-			if( next=='}' || i+1==template.length ){
-				text += this.strings.get( entry.argIds[argIndex++].toString() );
-				verify( next=='}' );
-				continue;
+			else if( ch!='{' || i+1>=template.length )
+				text += ch;
+			else{
+				verify( template[++i]=='}' );//every field is a plain {}:  the server strips specs from the template it stores (Format.h StripSpecs).
+				text += entry.args[argIndex++] ?? "";
 			}
-			verify( next==':' );
-			let type = template[++i];
-			if( type=='x' ){
-				text += ( +this.strings.get( entry.argIds[argIndex++].toString())! ).toString(16);
-				verify( template[++i]=='}' );
-			}
-			else
-				verify( false, `Unknown format type '${type}' in template '${template}'` );
 		}
 		return text;
 	}

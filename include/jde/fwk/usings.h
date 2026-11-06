@@ -48,6 +48,7 @@ namespace Jde{
 	using std::ranges::find_if;
 	using std::ranges::for_each;
 	using std::variant;
+	using std::views::filter;
 	using std::move;
 	using std::optional;
 	using std::chrono::duration_cast;

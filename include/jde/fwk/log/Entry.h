@@ -61,15 +61,16 @@ namespace Jde::Logging{
 		template<class... Args> Entry( const boost::stacktrace::frame& sl, ELogLevel l, ELogTags tags, FormatString&& m, ARGS... args )ι;
 		template<class... Args> Entry( const boost::stacktrace::frame& sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, FormatString&& m, ARGS... args )ι;
 #endif
-		Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, SourceName&& text, vector<string> args )ι;
+		Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, SourceName&& text, vector<Argument> args )ι;
 		//What Emit builds:  the template stored as Format left it, and each argument with its field's spec (ToArguments).
 		Entry( SL sl, ELogLevel l, ELogTags tags, const FormatView& m, fmt::format_args args )ι;
 		Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, const FormatView& m, fmt::format_args args )ι;
 		//id:  the template's, when the caller has it - an Exception's Format.
-		Entry( SL sl, ELogLevel l, ELogTags tags, string&& m, vector<string> args={}, optional<StringMd5> id={} )ι;
-		Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, string&& m, vector<string> args={}, optional<StringMd5> id={} )ι;
-		Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, uuid messageId, uuid fileId, uuid functionId, vector<string>&& args )ι;
-		Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, string&& text, string&& file, string&& function, vector<string>&& args )ι;
+		Entry( SL sl, ELogLevel l, ELogTags tags, string&& m, vector<Argument> args={}, optional<StringMd5> id={} )ι;
+		Entry( SL sl, ELogLevel l, ELogTags tags, Jde::UserPK userPK, string&& m, vector<Argument> args={}, optional<StringMd5> id={} )ι;
+		Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, uuid messageId, uuid fileId, uuid functionId, vector<Argument>&& args )ι;
+		Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, string&& text, string&& file, string&& function, vector<Argument>&& args )ι;
+		Entry( ELogLevel l, ELogTags tags, uint32_t line, TimePoint time, Jde::UserPK userId, SourceName&& text, SourceName&& file, SourceName&& function, vector<Argument>&& args )ι;//off the wire, with the ids it came with.
 
 		Ω GenerateId( sv text )ι->StringMd5{ return Logging::GenerateId( text ); }
 
@@ -84,7 +85,7 @@ namespace Jde::Logging{
 		α FunctionId()Ι->StringMd5{ return _function.Id(); }
 		α Message()Ι->string;
 		α SourceLocation()Ι->spdlog::source_loc;
-		vector<string> Arguments;
+		vector<Argument> Arguments;
 		ELogLevel Level;
 		ELogTags Tags;
 		uint32_t Line;

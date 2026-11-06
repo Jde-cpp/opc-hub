@@ -170,4 +170,4 @@ export class Widget extends SlugRow<Widget>{
 
 //A log entry as the logs query answers it, `line` seconds before 2026-01-01 - newest first, as the default view sorts.
 export const logTemplate = '00000000000000000000000000000001';
-export const logEntry = ( line:number, extra:object={} )=>({ templateId: logTemplate, argIds: [], level: 'Information', tags: [], line, time: new Date(Date.UTC(2026, 0, 1)-line*1000).toISOString(), userId: 0, fileId: logTemplate, functionId: logTemplate, ...extra });
+export const logEntry = ( line:number, extra:object={} )=>({ templateId: logTemplate, args: [], level: 'Information', tags: [], line, time: new Date(Date.UTC(2026, 0, 1)-line*1000).toISOString(), userId: 0, fileId: logTemplate, functionId: logTemplate, ...extra });

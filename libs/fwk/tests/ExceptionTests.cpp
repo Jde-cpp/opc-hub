@@ -44,6 +44,17 @@ namespace Jde::Tests{
 		EXPECT_EQ( string{e.what()}, "true 5 -3 1234567 0.30000000000000004 c literal view json   spec" ) << "shortest round trip, not six digits";
 	}
 
+	//An exception's entry keeps its arguments as fmt saw them, as a log line's does, so its file stores them typed.
+	TEST( ExceptionTests, LogsItsArgumentsTyped ){
+		Logging::ClearMemory();
+		{
+			Exception e{ SRCE_CUR, ELogLevel::Debug, "exception kinds {} {}", 7u, "text" };
+		}
+		let logged = Logging::GetLogger<Logging::MemoryLog>().Find( "exception kinds 7 text" );
+		ASSERT_EQ( logged.size(), 1u );
+		EXPECT_EQ( logged[0].Arguments, (vector<Logging::Argument>{uint64_t{7}, "text"}) );
+	}
+
 	TEST( ExceptionTests, ArgumentsMatchFmt ){
 		Exception e{ SRCE_CUR, ELogLevel::Debug, "{} {} {}", true, (uint8_t)5, 1234567.0 };
 		EXPECT_EQ( string{e.what()}, fmt::format("{} {} {}", true, (uint8_t)5, 1234567.0) );
@@ -196,7 +207,7 @@ namespace Jde::Tests{
 		ASSERT_EQ( logged.size(), 1u );
 		EXPECT_EQ( logged[0].Id(), Logging::GenerateId("exception id {}") );
 		EXPECT_EQ( logged[0].Text().data(), format ) << "the template was copied";
-		EXPECT_EQ( logged[0].Arguments, vector<string>{"1"} );
+		EXPECT_EQ( logged[0].Arguments, vector<Logging::Argument>{int64_t{1}} );
 	}
 
 	//LogsOnce's other half, the path every shipped config takes:  an exception below BreakLevel, with the exception tag above

@@ -12,16 +12,18 @@
 namespace Jde::App::Tests{
 	Ξ tp( uint seconds )ι->TimePoint{ return Clock::from_time_t( 1'700'000'000 )+std::chrono::seconds{seconds}; }
 
-	Ξ entry( TimePoint time, ELogLevel level, uint32_t line, string text, vector<string> args={}, string file="src/x.cpp", string function="Fn", ELogTags tags=ELogTags::Test, UserPK user=UserPK{7} )ι->Logging::Entry{
+	Ξ entry( TimePoint time, ELogLevel level, uint32_t line, string text, vector<Logging::Argument> args={}, string file="src/x.cpp", string function="Fn", ELogTags tags=ELogTags::Test, UserPK user=UserPK{7} )ι->Logging::Entry{
 		return Logging::Entry{ level, tags, line, time, user, move(text), move(file), move(function), move(args) };
 	}
 
-	//The strings an entry references:  (kind, id, text) for its template, file, function and each argument.
+	//The strings an entry references:  (kind, id, text) for its template, file, function and each text argument.
 	Ξ entryStrings( const Logging::Entry& e )ι->vector<std::tuple<EStringKind,uuid,string>>{
 		vector<std::tuple<EStringKind,uuid,string>> y{
 			{EStringKind::Template, e.Id(), string{e.Text()}}, {EStringKind::File, e.FileId(), string{e.File()}}, {EStringKind::Function, e.FunctionId(), string{e.Function()}} };
-		for( let& arg : e.Arguments )
-			y.emplace_back( EStringKind::Arg, Logging::Entry::GenerateId(arg), arg );
+		for( let& arg : e.Arguments ){
+			if( let text = std::get_if<string>(&arg) )
+				y.emplace_back( EStringKind::Arg, Logging::Entry::GenerateId(*text), *text );
+		}
 		return y;
 	}
 	//An archived day's records, as a round writes them:  each string once, then the entries.

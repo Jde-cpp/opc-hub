@@ -501,7 +501,7 @@ namespace Jde::App::Tests{
 		const string start{ ToIsoString(eHour.Time+1s) };
 		TRACE( "filter: time: {}, id: {}", start, Jde::ToString(eNow.Id()) );
 		Log().Write( eNow );
-		constexpr auto q = "logs( time: {gt: $start} ){ entries{templateId argIds level tags line time userId fileId functionId} strings{id value} }";
+		constexpr auto q = "logs( time: {gt: $start} ){ entries{templateId args level tags line time userId fileId functionId} strings{id value} }";
 		jobject vars{ {"start", start} };
 		let logs = BlockAwait( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
 		optional<jobject> jNow;

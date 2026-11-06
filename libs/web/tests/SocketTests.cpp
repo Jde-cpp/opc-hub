@@ -303,7 +303,7 @@ namespace Jde::Web{
 		vector<Logging::Entry> logs;
 		for( uint i=0; i<100 && logs.empty(); ++i ){
 			logs = Logging::Find( [=](const Logging::Entry& m){
-				return m.Text().contains("exceeded the locally configured limit") && m.Arguments.size()==1 && m.Arguments[0]==Ƒ( "[{:x}]Server::DoRead", sessionId );
+				return m.Text().contains("exceeded the locally configured limit") && m.Arguments.size()==1 && Logging::ArgText(m.Arguments[0])==Ƒ( "[{:x}]Server::DoRead", sessionId );
 			});
 			if( logs.empty() )
 				std::this_thread::sleep_for( 10ms );
@@ -326,7 +326,7 @@ namespace Jde::Web{
 		//LogRead's "[{:x}.{:x}]{}" stores the id formatted with its spec, so in hex.
 		let serverClosed = [sessionId]{//the base OnClose's own log line is the externally visible proof the session was torn down.
 			return !Logging::Find( [sessionId](const Logging::Entry& m){
-				return m.Arguments.size()==3 && m.Arguments[2]=="ServerSocket::OnClose." && m.Arguments[0]==Ƒ( "{:x}", sessionId );
+				return m.Arguments.size()==3 && Logging::ArgText(m.Arguments[2])=="ServerSocket::OnClose." && Logging::ArgText(m.Arguments[0])==Ƒ( "{:x}", sessionId );
 			}).empty();
 		};
 		for( uint i=0; i<100 && !serverClosed(); ++i )
@@ -357,7 +357,7 @@ namespace Jde::Web{
 		//the log and this test opens the only socket, so the marker alone is unambiguous.
 		let serverClosed = []{
 			return !Logging::Find( [](const Logging::Entry& m){
-				return m.Arguments.size()==3 && m.Arguments[2]=="ServerSocket::OnClose.";
+				return m.Arguments.size()==3 && Logging::ArgText(m.Arguments[2])=="ServerSocket::OnClose.";
 			}).empty();
 		};
 		for( uint i=0; i<100 && !serverClosed(); ++i )
@@ -418,7 +418,7 @@ namespace Jde::Web{
 		std::this_thread::sleep_for( 1s );
 		auto logs = Logging::Find( [=](const Logging::Entry& m){
 			return m.Text().contains("The WebSocket stream was gracefully closed at both endpoints")
-				&& m.Arguments.size()==1 && m.Arguments[0]==Ƒ( "[{:x}]Server::DoRead", sessionId );
+				&& m.Arguments.size()==1 && Logging::ArgText(m.Arguments[0])==Ƒ( "[{:x}]Server::DoRead", sessionId );
 		});
 		ASSERT_TRUE( logs.size()>0 );
 		std::this_thread::sleep_for( 100ms );

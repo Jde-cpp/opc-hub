@@ -117,14 +117,25 @@ namespace Jde::App::Server{
 		return QLPtr();
 	}
 
-	α ServerSocketSession::SaveLogEntry( Log::Proto::LogEntryClient entry, RequestId requestId )ι->void{
+	α ServerSocketSession::SaveLogBatch( Log::Proto::ClientBatch&& batch, RequestId requestId )ι->uint{
+		LogProto::ReceivedStrings::Entries read;
+		try{
+			read = _logStrings.Read( move(batch) );//first:  a later batch can name the Strings this one sent.
+		}
+		catch( runtime_error& e ){
+			WriteException( move(e), requestId );
+			return 0;
+		}
+		if( read.Unresolved )
+			WARNT( ELogTags::SocketServerRead, "[{:x}]Dropped {} log entries naming strings this session wasn't sent.", Id(), read.Unresolved );
 		let pks = Pks();
 		if( !pks.Program || !pks.Instance ){
 			WriteException( Exception{"ApplicationId or InstanceId not set.", ELogLevel::Warning}, requestId );
-			return;
+			return 0;
 		}
-		Logging::Entry y{ LogProto::FromLogEntry(move(entry)) };
-		Logging::Log( {y, pks.Program, pks.Instance} );
+		for( let& entry : read.Built )
+			Logging::Log( {entry, pks.Program, pks.Instance} );
+		return read.Built.size();
 	}
 	α ServerSocketSession::SendAck( uint32 id )ι->void{
 		Write( FromServer::Ack(id) );
@@ -296,9 +307,8 @@ namespace Jde::App::Server{
 				case kQueryResult:
 					QueryClientResults( move(*m.mutable_query_result()), requestId );
 					break;
-				[[likely]]case kLogEntry:
-					++cLog;
-					SaveLogEntry( move(*m.mutable_log_entry()), requestId );
+				[[likely]]case kLogBatch:
+					cLog += SaveLogBatch( move(*m.mutable_log_batch()), requestId );
 					break;
 				case kRequestType:
 					if( m.request_type()==Proto::FromClient::ERequestType::Jwt )

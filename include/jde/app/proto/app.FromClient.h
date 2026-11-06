@@ -20,5 +20,5 @@ namespace Jde::App::FromClient{
 	α Session( SessionPK sessionId, RequestId requestId )ι->PFromClient::Transmission;
 	α Subscription( string&& query, jobject variables, RequestId requestId )ι->PFromClient::Transmission;
 	α Unsubscription( const vector<QL::SubscriptionId>& ids, RequestId requestId )ι->PFromClient::Transmission;
-	α LogEntries( vector<Logging::Entry>&& entries )ι->PFromClient::Transmission;
+	α LogBatch( Log::Proto::ClientBatch&& batch )ι->PFromClient::Transmission;
 }

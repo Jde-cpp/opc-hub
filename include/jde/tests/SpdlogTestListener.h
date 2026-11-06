@@ -22,7 +22,7 @@ namespace Jde{
 		α OnTestSuiteStart( const ::testing::TestSuite& suite )->void override{
 			INFOT( ELogTags::Test, "[----------] {} tests from {}", suite.test_to_run_count(), suite.name() );
 		}
-		Ω toEntry( const ::testing::TestInfo& info, ELogLevel level, sv format, vector<string>&& args )->Logging::Entry{
+		Ω toEntry( const ::testing::TestInfo& info, ELogLevel level, sv format, vector<Logging::Argument>&& args )->Logging::Entry{
 			return Logging::Entry{ level, ELogTags::Test, (uint32_t)info.line(), Clock::now(), {0}, string{format}, info.file(), info.name(), move(args) };
 		}
 		α OnTestStart( const ::testing::TestInfo& info )->void override{
@@ -43,7 +43,7 @@ namespace Jde{
 		}
 		α OnTestEnd( const ::testing::TestInfo& info )->void override{
 			_currentTest.clear();
-			let ms = std::to_string( info.result()->elapsed_time() );
+			let ms = ( int64_t )info.result()->elapsed_time();
 			auto level = ELogLevel::Information;
 			sv format = "[       OK ] {}.{} ({} ms)";
 			if( info.result()->Skipped() ){

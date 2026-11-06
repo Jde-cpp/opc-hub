@@ -108,6 +108,21 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( af.Entries.begin()->second.front().line(), 2u );//args resolve through Args, which the entry pass fills.
 	}
 
+	//A typed argument (log.md #11) reads back as the entry rendered it:  in the args column, the message and the args filter.
+	TEST( ArchiveQueryTests, TypedArgumentsReadAsLogged ){
+		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "typed {} {} {} {} {}", -3, std::numeric_limits<uint64_t>::max(), 1e-7, true, "text" };
+		auto ql = table( "logs", R"({args: "1e-07"})" );
+		addTable( ql, "entries", {"args"} );
+		let af = load( {e}, ql );
+		ASSERT_EQ( af.EntrySize(), 1u ) << "the args filter tests the rendered text";
+		jarray expected;
+		for( let& arg : e.Arguments )
+			expected.emplace_back( Logging::ArgText(arg) );
+		EXPECT_EQ( af.ToJson(ql).at("entries").as_array().at(0).as_object().at("args").as_array(), expected );
+		auto byMessage = table( "logs", Ƒ(R"({{message: "{}"}})", e.Message()) );
+		EXPECT_EQ( load({e}, byMessage).EntrySize(), 1u ) << e.Message();
+	}
+
 	TEST( ArchiveQueryTests, FileEntriesFilterOnArgs ){
 		let entries = vector<Logging::Entry>{ entry(tp(0), ELogLevel::Information, 1, "a {}", {"keep"}), entry(tp(1), ELogLevel::Information, 2, "b {}", {"drop"}) };
 		auto ql = table( "logs", R"({args: "keep"})" );
@@ -369,7 +384,7 @@ namespace Jde::App::Tests{
 		let af = load( {e} );
 
 		auto ql = table( "logs" );
-		addTable( ql, "entries", {"templateId","argIds","level","tags","line","time","userId","fileId","functionId"} );
+		addTable( ql, "entries", {"templateId","args","level","tags","line","time","userId","fileId","functionId"} );
 		let o = af.ToJson( ql );
 		let& jentries = o.at( "entries" ).as_array();
 		ASSERT_EQ( jentries.size(), 1u );
@@ -384,9 +399,9 @@ namespace Jde::App::Tests{
 		let& tags = j.at( "tags" ).as_array();
 		ASSERT_EQ( tags.size(), 1u );
 		EXPECT_EQ( tags[0].as_string(), "test" );
-		let& args = j.at( "argIds" ).as_array();
+		let& args = j.at( "args" ).as_array();
 		ASSERT_EQ( args.size(), 1u );
-		EXPECT_EQ( args[0].as_string(), to_string(Logging::Entry::GenerateId("9")) );
+		EXPECT_EQ( args[0].as_string(), "9" );
 	}
 
 	//Only the columns the query asked for are emitted - the web client trims on what it requested.
@@ -418,24 +433,23 @@ namespace Jde::App::Tests{
 	}
 
 	//`strings` is the id->text side table the client joins the ids against.  It is filled by the id columns that were
-	//asked for, so a query with no id column gets an empty one.
+	//asked for, so a query with no id column gets an empty one.  `args` is text, so it adds none.
 	TEST( ArchiveQueryTests, ToJsonStringsTable ){
 		let e = entry( tp(0), ELogLevel::Error, 42, "boom {}", {"9"}, "src/x.cpp", "Fn" );
 		let af = load( {e} );
 
 		auto ql = table( "logs" );
-		addTable( ql, "entries", {"templateId","argIds","fileId","functionId"} );
+		addTable( ql, "entries", {"templateId","args","fileId","functionId"} );
 		addTable( ql, "strings", {"id","value"} );
 		let o = af.ToJson( ql );
 		flat_map<string,string> strings;
 		for( let& s : o.at("strings").as_array() )
 			strings.emplace( string{s.as_object().at("id").as_string()}, string{s.as_object().at("value").as_string()} );
 
-		ASSERT_EQ( strings.size(), 4u );
+		ASSERT_EQ( strings.size(), 3u );
 		EXPECT_EQ( strings.at(to_string(e.Id())), "boom {}" );          //the template, not the formatted message.
 		EXPECT_EQ( strings.at(to_string(e.FileId())), "src/x.cpp" );
 		EXPECT_EQ( strings.at(to_string(e.FunctionId())), "Fn" );
-		EXPECT_EQ( strings.at(to_string(Logging::Entry::GenerateId("9"))), "9" );
 	}
 
 	TEST( ArchiveQueryTests, ToJsonSubTables ){

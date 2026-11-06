@@ -177,7 +177,7 @@ namespace Jde::Web::Server{
 					&& filter.Test( "message", m.Message() )
 					&& filter.Test( "appPK", appPK )
 					&& filter.Test( "appConnectionPK", connectionPK )
-					&& ( !filter.ColumnFilters.contains("args") || std::ranges::all_of(m.Arguments, [&]( let& arg ){ return filter.Test("args", arg); }) );
+					&& ( !filter.ColumnFilters.contains("args") || std::ranges::any_of(m.Arguments, [&]( let& arg ){ return filter.Test("args", Logging::ArgText(arg)); }) );//any argument, as ArchiveQuery::Test.
 				if( valid )
 					matches.push_back( s );
 			}
