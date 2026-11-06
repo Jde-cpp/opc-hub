@@ -12,6 +12,7 @@ import { EAccess, ETypes } from '../../../model/types';
 import { MethodCallDialog } from './method-call-dialog';
 import { NodeChildren } from './node-children';
 import { OpcStore } from '../../../services/opc-store';
+import { WatchStore } from '../../../services/watch-store';
 import { flush, pageTitleStub, provideRoute, silence, screenSize } from 'jde-spa/testing';
 import { snackbarStub } from 'jde-framework/testing';
 import { fakeGateway, TestGateway, variable } from 'jde-opc/testing';
@@ -433,6 +434,61 @@ describe( 'NodeChildren subscription values', ()=>{
 } );
 
 //A Refresh assigns pageData.nodes, which NodeDetail's History tab gate never saw (historian-web-trend #10):  it hands them up.
+//Clients 6b (#419, spec *Watch list*):  a Variable row's menu adds it to the gateway's watch list, and a `revised` result on the
+//stream - what the server runs the node's item at - is the watch list's to show, no reading for the row.
+describe( 'NodeChildren watch', ()=>{
+	const create = ( added=true )=>{
+		const gateway = Object.assign( fakeGateway( 'gw' ), { addToSubscription: vi.fn(), unsubscribe: vi.fn( async ()=>{} ) } );
+		const snackbar = snackbarStub();
+		const add = vi.fn( async ( _gateway:string, _opc:string, _node:NodeId )=>added );
+		TestBed.configureTestingModule( {providers: [
+			screenSize(),
+			provideRoute(),
+			{ provide: GATEWAY_SERVICE, useValue: {} },
+			{ provide: SnackbarService, useValue: snackbar },
+			{ provide: WatchStore, useValue: {add} },
+			pageTitleStub
+		]} );
+		const page = TestBed.createComponent( NodeChildren ).componentInstance;
+		vi.spyOn( TestBed.inject( ProfileStore ), 'save' ).mockResolvedValue();
+		page.pageData = { gateway, route: {profileKey: 'k'}, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
+		page.profile = { subscriptions: [] } as any;
+		return { page, gateway, snackbar, add };
+	};
+
+	it( 'adds the row to the gateway\'s watch list and says so', async ()=>{
+		const { page, snackbar, add } = create();
+		await page.watch( X );
+		expect( add.mock.calls ).toEqual( [['gw', 'local', X.nodeId]] );
+		expect( snackbar.info ).toHaveBeenCalledWith( 'Watching x.' );
+		expect( page.watchLink ).toEqual( ['/apps', 'gateways', 'gw', 'watch'] );
+	} );
+
+	it( 'says when the row is on the list already', async ()=>{
+		const { page, snackbar } = create( false );
+		await page.watch( X );
+		expect( snackbar.info ).toHaveBeenCalledWith( 'x is on the watch list already.' );
+	} );
+
+	it( 'takes a revised result as no reading', async ()=>{
+		const { page, gateway } = create();
+		(<any>page).setNodes( [X], true );
+		page.selections.select( X );
+		await flush();
+		gateway.values.next( {opcId: 'local', node: X.nodeId, value: 7} as any );
+		expect( X.value ).toBe( 7 );
+		gateway.values.next( {opcId: 'local', node: X.nodeId, revised: {samplingInterval: 250, queueSize: 2, sc: 0}} as any );
+		expect( X.value ).toBe( 7 );
+		expect( X.sc ).toBe( 0 );
+	} );
+
+	it( 'shows the row menu last, whatever the view', ()=>{
+		const { page } = create();
+		page.viewSet.reset( [NodeView.default()] );
+		expect( page.displayedColumns().at( -1 ) ).toBe( 'menu' );
+	} );
+} );
+
 describe( 'NodeChildren refresh', ()=>{
 	it( 'hands the refreshed nodes up', async ()=>{
 		const fresh = [ variable( 3, "z" ) ];

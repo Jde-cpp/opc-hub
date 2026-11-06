@@ -1,5 +1,7 @@
 import { Component, OnInit, signal, model, inject } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterModule } from '@angular/router';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
 import { ComponentPageTitle, persistedTabIndex } from 'jde-spa';
 import { AppService, errorMessage, InstanceTab, InstanceTabs, QLList, QLListData } from 'jde-framework';
 import { RouteItem } from 'jde-spa';
@@ -11,7 +13,7 @@ import { GatewayHistList } from './hist-admin/gateway-hist-list';
 @Component( {
 		templateUrl: './gateway-detail.html',
 		host: {class:'main-content my-content'},
-		imports: [InstanceTab, InstanceTabs, QLList, GatewayHistList, GatewayEndpoint]
+		imports: [RouterModule, MatButtonModule, MatIconModule, InstanceTab, InstanceTabs, QLList, GatewayHistList, GatewayEndpoint]
 })
 export class GatewayDetail implements OnInit{
 	#route = inject( ActivatedRoute );

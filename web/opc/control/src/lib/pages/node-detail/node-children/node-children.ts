@@ -5,6 +5,7 @@ import {MatCheckboxChange, MatCheckboxModule} from '@angular/material/checkbox';
 import {MatChipsModule} from '@angular/material/chips';
 import {MatDialog} from '@angular/material/dialog';
 import {MatIconModule} from '@angular/material/icon';
+import {MatMenuModule} from '@angular/material/menu';
 import {MatSelectChange, MatSelectModule} from '@angular/material/select';
 import {MatSlideToggleModule} from '@angular/material/slide-toggle';
 import { MatSortModule, Sort } from "@angular/material/sort";
@@ -18,6 +19,7 @@ import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { OpcStore } from '../../../services/opc-store';
+import { WatchStore } from '../../../services/watch-store';
 import { numberValue, Reading, Value, valueString } from '../../../model/value';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
@@ -31,7 +33,7 @@ import { NodeId } from '../../../model/node-id';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -193,6 +195,8 @@ export class NodeChildren implements OnInit, OnDestroy {
 				if( !this.subscription){
 					this.subscription = this._iot.subscribe( this.cnnctnSlug, nodes, this.Key ).subscribe({
 						next:(value: SubscriptionResult) =>{
+							if( value.revised )//what the server revised the node's item to (spec *Watch list*):  the watch list's to show, no reading
+								return;
 							const row = this.variables.find( (r)=>r.nodeId.equals(value.node) );
 							if( !row )
 								return console.debug( `subscription value for '${value.node}', which is no longer a row on this page.` );
@@ -308,6 +312,17 @@ export class NodeChildren implements OnInit, OnDestroy {
 			}
 		} );
 	}
+	//a Variable row's Watch (clients spec *Watch list*, #419):  added to the gateway's watch list with the defaults, where its parameters are set
+	async watch( n:Variable ){
+		try{
+			const added = await this.#watchStore.add( this._iot.slug, this.cnnctnSlug, n.nodeId );
+			this.#snackbar.info( added ? `Watching ${n.name}.` : `${n.name} is on the watch list already.` );
+		}
+		catch( e ){
+			this.#snackbar.exception( `Could not watch ${n.name}.`, e );
+		}
+	}
+	get watchLink():string[]{ return ['/apps', 'gateways', this._iot.slug, 'watch']; }
 	routerLink(n:UaNode):string[]{
 		return [ `./${n.browseFQ(this.server.connection.defaultBrowseNs, this.nodes(), !!this.pageData.route.node?.isRoot)}` ];//the route's node, as isSelf's
 	}
@@ -362,7 +377,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	//every row the view would show is a system node the toggle hides - the Types folder's, by default:  the empty state says so, not
 	//that the view matches nothing (reviews-issue/416-address-space.md #12)
 	hiddenBySystem = computed<boolean>( ()=>!this.showSystem() && !this.rows().length && !!this.view() && this.view().apply( this.nodes() ).length>0 );
-	displayedColumns = computed<string[]>( ()=>this.view()?.displayedColumns ?? [] );
+	displayedColumns = computed<string[]>( ()=>[...(this.view()?.displayedColumns ?? []), 'menu'] );//the row menu last, whatever the view shows
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
 	snapshotShown = computed<boolean>( ()=>this.displayedColumns().includes("snapshot") );//a Method row's Call is in the Snapshot cell, and in its Name cell where the view hides that (reviews-issue/318-opc-calls.md #6)
 	get variables():Variable[]{ return <Variable[]>this.nodes().filter((x)=>x.nodeClass==ENodeClass.Variable); }
@@ -379,6 +394,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 
 	#profileStore = inject( ProfileStore );
 	#opcStore = inject( OpcStore );
+	#watchStore = inject( WatchStore );
 	#dialog = inject( MatDialog );
 }
 //per node (keyed by profileKey):  the subscriptions.  The tab index used to live here too, but is LocalPrefs' now;  the columns and sort are the view's now, shared by every node.

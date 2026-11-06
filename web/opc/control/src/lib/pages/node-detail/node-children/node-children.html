@@ -4,6 +4,7 @@
 	} @else {
 		<view-toolbar [views]="viewSet" [refreshing]="isRefreshing()" [count]="rows().length" (viewChange)="onChangeView($event)" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--the browse carries every value, so Refresh is the only reader-->
 			<mat-slide-toggle left class="system-toggle" [checked]="showSystem()" (change)="setShowSystem($event.checked)" matTooltip="Show the nodes of the OPC UA standard's own namespace - the Server object and the type trees">System nodes</mat-slide-toggle>
+			<a left matIconButton [routerLink]="watchLink" aria-label="Open the watch list" matTooltip="Watch list - the variables watched from any connection of this gateway, with their sampling"><mat-icon aria-hidden="true" fontIcon="visibility"></mat-icon></a>
 		</view-toolbar>
 		<div style="align-content: center; margin: auto; text-align: center">
 			<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange rather than sorting the table in place-->
@@ -146,6 +147,14 @@
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Description </mat-header-cell>
 					<mat-cell mat-cell *matCellDef="let r">{{r.description?.text}}</mat-cell>
 				</ng-container>
+				<ng-container matColumnDef="menu"><!--the row's menu (clients spec *Watch list*):  a Variable's Watch adds it to the gateway's watch list-->
+					<mat-header-cell *matHeaderCellDef></mat-header-cell>
+					<mat-cell *matCellDef="let r">
+						@if( r.isVariable && !readDenied(r) ){
+							<button matIconButton type="button" class="row-menu" [matMenuTriggerFor]="rowMenu" [matMenuTriggerData]="{row: r}" [attr.aria-label]="'More for ' + r.name"><mat-icon aria-hidden="true" fontIcon="more_vert"></mat-icon></button>
+						}
+					</mat-cell>
+				</ng-container>
 				<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
 				<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
 			</mat-table>
@@ -165,3 +174,8 @@
 		}
 	}
 }
+<mat-menu #rowMenu="matMenu">
+	<ng-template matMenuContent let-row="row">
+		<button mat-menu-item type="button" (click)="watch(row)"><mat-icon aria-hidden="true" fontIcon="visibility"></mat-icon>Watch</button>
+	</ng-template>
+</mat-menu>

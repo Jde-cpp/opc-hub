@@ -18,7 +18,7 @@ The installer's layout: the application server and the gateway run as one proces
 
 ### OpcHub
 
-The **OpcHub** card comes first. It is the process this site is served by. Its page has seven tabs: **Connections**, the OPC UA servers the hub talks to, **Templates** and **Groups**, its historian's, and **Endpoint**, its own OPC UA endpoint and the sessions on it, described under [Gateways](/help/gateways) and [Historian groups and templates](/help/gateways/groups), then [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions). There is no application server card beside it: the hub's log and log levels are the application server's as well.
+The **OpcHub** card comes first. It is the process this site is served by. Its page has eight tabs: **Connections**, the OPC UA servers the hub talks to, **Templates** and **Groups**, its historian's, **Endpoint**, its own OPC UA endpoint and the sessions on it, and **Watch**, which opens the watch list, described under [Gateways](/help/gateways), [Historian groups and templates](/help/gateways/groups) and [Watching](/help/gateways#watching), then [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions). There is no application server card beside it: the hub's log and log levels are the application server's as well.
 
 ## Distributed
 
@@ -30,7 +30,7 @@ An application server instance's page has three tabs, [Logs](#logs), [Log Settin
 
 ### Gateways
 
-A gateway instance's page has the [hub's six tabs](#opchub).
+A gateway instance's page has the [hub's eight tabs](#opchub).
 
 ### OPC servers
 

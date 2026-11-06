@@ -144,3 +144,16 @@ be held wider by a long description. */
 mat-cell.mat-column-name > .self{
 	font-weight: 500;
 }
+//the row menu, last:  sized to the dense row, as the Call icon is
+.mat-column-menu{
+	flex: 0 0 40px;
+	padding-inline: 0;
+	justify-content: center;
+}
+.row-menu{
+	--mat-icon-button-state-layer-size: 32px;
+	--mat-icon-button-icon-size: 18px;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+}

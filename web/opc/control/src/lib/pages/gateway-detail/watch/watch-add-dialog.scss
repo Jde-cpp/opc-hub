@@ -1,0 +1,64 @@
+@use '../../status';
+
+/* after hist-admin-shared.scss in styleUrls, which has the refresh bar, the table and the empty and refused states */
+:host{
+	display: block;
+}
+.where{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 .75rem;
+	.connection{
+		flex: 1 1 200px;
+	}
+	.text{
+		flex: 2 1 320px;
+	}
+}
+.mat-column-pick{
+	flex: 0 0 48px;
+	padding-inline: 0;
+}
+.mat-column-name{
+	flex: 2 1 220px;
+	min-width: 0;
+	gap: 4px;
+	.kind{
+		flex: 0 0 auto;
+		@include status.icon-size;
+		color: var(--mat-sys-on-surface-variant);
+	}
+	.leaf{
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.unwatchable{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+.mat-column-path, .mat-column-node{
+	flex: 2 1 200px;
+	min-width: 0;
+	color: var(--mat-sys-on-surface-variant);
+	span{
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+}
+.mat-column-node{
+	flex: 1 1 140px;
+}
+mat-row.picked{
+	background: var(--mat-sys-surface-container);
+}
+mat-dialog-actions{
+	justify-content: flex-end;
+	gap: 8px;
+	.picked-count{
+		flex: 1 1 auto;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+}

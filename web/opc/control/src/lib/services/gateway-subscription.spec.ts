@@ -53,11 +53,13 @@ describe( 'Gateway subscribe failures', ()=>{
 		expect( await stillRegistered(gateway, A, "owner1") ).toBe( true );
 	} );
 
+	//a `revised` result - the ack's answer for a node that was taken (spec *Watch list*) - is no reading:  these tests read the readings
+	const readings = ( results:SubscriptionResult[] )=>results.filter( r=>!r.revised );
 	it( 'reports the failed node on the stream as a bad reading', async ()=>{
 		const gateway = new AckingGateway();
 		const results:SubscriptionResult[] = [];
 		gateway.statusCodes = [undefined];
-		gateway.subscribe( opcId, [A], "owner1" ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
+		gateway.subscribe( opcId, [A], "owner1" ).subscribe( {next: r=>{ if( !r.revised ) results.push(r); }, error: ()=>{}} );
 		await flush();
 		gateway.rejectWith = { error: {requestId: 1, message: "Connection lost."} };
 		gateway.addToSubscription( opcId, [B], "owner1" );
@@ -78,7 +80,8 @@ describe( 'Gateway subscribe failures', ()=>{
 		gateway.acked = [ {node: {namespaceIndex: 2, numeric: 1}}, {node: {namespaceIndex: 2, numeric: 2}, statusCode: 0x80340000}, {node: {namespaceIndex: 2, numeric: 3}} ];
 		gateway.subscribe( opcId, [B, C, A], "owner1" ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
 		await flush();
-		expect( results.map(r=>r.node.key) ).toEqual( [B.key] );
+		expect( readings( results ).map(r=>r.node.key) ).toEqual( [B.key] );
+		expect( results.filter( r=>r.revised ).map( r=>r.node.key ) ).toEqual( [A.key, C.key] );//the taken nodes' revised values, in the ack's order
 		expect( await stillRegistered(gateway, C, "owner1") ).toBe( true );
 		expect( await stillRegistered(gateway, B, "owner1") ).toBe( false );
 	} );
@@ -116,7 +119,7 @@ describe( 'Gateway readings', ()=>{
 		const gateway = new AckingGateway();
 		const results:SubscriptionResult[] = [];
 		gateway.statusCodes = [undefined];
-		gateway.subscribe( opcId, [A], "owner1" ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
+		gateway.subscribe( opcId, [A], "owner1" ).subscribe( {next: r=>{ if( !r.revised ) results.push(r); }, error: ()=>{}} );//the readings:  the ack's revised result is the watch list's (spec *Watch list*)
 		await flush();
 		const push = ( value:object|undefined, sc?:number )=>(gateway as any).nodeValues( {opcId, node: {namespaceIndex: 2, numeric: 1}, value, sc} );
 		return { gateway, results, push };
@@ -252,6 +255,112 @@ describe( 'Gateway readings', ()=>{
 		new OpcError( 0x80AD0000, "OpcError", "", undefined );
 		gateway.get = ()=>Promise.reject( new Error("offline") );
 		await expect( gateway.updateErrorCodes() ).resolves.toBeUndefined();
+	} );
+} );
+
+//Clients 6b (#419, spec *Watch list*):  the parameters a watch row asks go on the wire at the node's position, the ack's revised
+//values and a MonitoredItemModified push reach the stream as `revised` results, and subscribing a node again is how a listener
+//changes what it asks.
+describe( 'Gateway watch parameters', ()=>{
+	const owner = "watch/gw";
+	const subscribes = ( gateway:AckingGateway )=>gateway.sent.mock.calls.map( ([m])=>m ).filter( m=>m.subscribe ).map( m=>m.subscribe );
+	//a gateway subscribed to A and B for `owner`, with the parameters given, and the results the stream delivered
+	const watching = async ( parameters?:any[], acked?:any[] )=>{
+		const gateway = new AckingGateway();
+		const results:SubscriptionResult[] = [];
+		gateway.acked = acked ?? [ {node: {namespaceIndex: 2, numeric: 1}, revisedSamplingInterval: 250, revisedQueueSize: 2}, {node: {namespaceIndex: 2, numeric: 2}, revisedSamplingInterval: 500, revisedQueueSize: 1} ];
+		gateway.subscribe( opcId, [A, B], owner, parameters ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
+		await flush();
+		return { gateway, results };
+	};
+
+	it( 'sends each node\'s parameters at its position, and none for the defaults', async ()=>{
+		const { gateway } = await watching( [ {samplingInterval: 100, queueSize: 5, discardOldest: false, filter: {trigger: 2, deadbandType: 1, deadbandValue: 0.5}}, {} ] );
+		const [sent] = subscribes( gateway );
+		expect( sent.nodes ).toHaveLength( 2 );
+		expect( sent.parameters ).toEqual( [ {samplingInterval: 100, queueSize: 5, discardOldest: false, filter: {trigger: 2, deadbandType: 1, deadbandValue: 0.5}}, {samplingInterval: undefined, queueSize: undefined, discardOldest: undefined} ] );
+		const defaults = new AckingGateway();
+		defaults.subscribe( opcId, [A], "page" ).subscribe( {next: ()=>{}, error: ()=>{}} );
+		await flush();
+		expect( subscribes( defaults )[0].parameters ).toEqual( [] );//a node page asks nothing:  the gateway's defaults
+	} );
+
+	it( 'leaves a filter\'s trigger out for the server\'s default', async ()=>{
+		const { gateway } = await watching( [ {filter: {deadbandType: 2, deadbandValue: 10}} ] );
+		expect( subscribes( gateway )[0].parameters[0].filter ).toEqual( {trigger: undefined, deadbandType: 2, deadbandValue: 10} );
+	} );
+
+	it( 'merges the ack\'s revised values into the stream, one revised result per node', async ()=>{
+		const { results } = await watching( [ {samplingInterval: 100}, {} ] );
+		expect( results ).toHaveLength( 2 );
+		expect( results.map( r=>r.node.key ) ).toEqual( [A.key, B.key] );
+		expect( results[0].revised ).toEqual( {samplingInterval: 250, queueSize: 2, sc: 0} );
+		expect( results[1].revised ).toEqual( {samplingInterval: 500, queueSize: 1, sc: 0} );
+		expect( results[0].value ).toBeUndefined();//no reading:  a reader of values alone skips it
+	} );
+
+	it( 'reports a refused node as a bad reading and the other as revised', async ()=>{
+		const { results } = await watching( undefined, [ {node: {namespaceIndex: 2, numeric: 1}, statusCode: 0x80340000}, {node: {namespaceIndex: 2, numeric: 2}, revisedSamplingInterval: 500, revisedQueueSize: 1} ] );
+		expect( results.find( r=>r.node.equals(B) )?.revised ).toEqual( {samplingInterval: 500, queueSize: 1, sc: 0} );
+		const refused = results.find( r=>r.node.equals(A) )!;
+		expect( refused.revised ).toBeUndefined();
+		expect( refused.value ).toBeInstanceOf( OpcError );
+		expect( refused.sc ).toBe( 0x80340000 );
+	} );
+
+	it( 'delivers a MonitoredItemModified push to every owner of the node as a revised result', async ()=>{
+		const { gateway, results } = await watching();
+		const other:SubscriptionResult[] = [];
+		gateway.acked = [ {node: {namespaceIndex: 2, numeric: 1}, revisedSamplingInterval: 250, revisedQueueSize: 2} ];
+		gateway.subscribe( opcId, [A], "page" ).subscribe( {next: r=>other.push(r), error: ()=>{}} );
+		await flush();
+		results.length = other.length = 0;
+		gateway.receive( {monitoredItemModified: {opcId, node: {namespaceIndex: 2, numeric: 1}, revisedSamplingInterval: 100, revisedQueueSize: 4}} );
+		expect( results ).toMatchObject( [{opcId, revised: {samplingInterval: 100, queueSize: 4, sc: 0}}] );
+		expect( results[0].node.equals(A) ).toBe( true );
+		expect( other ).toMatchObject( [{revised: {samplingInterval: 100, queueSize: 4, sc: 0}}] );
+		//a modify the server refused:  the item stands as it was, at the values given, and the status says why
+		gateway.receive( {monitoredItemModified: {opcId, node: {namespaceIndex: 2, numeric: 1}, revisedSamplingInterval: 250, revisedQueueSize: 2, statusCode: 0x80AF0000}} );
+		expect( results[1].revised ).toEqual( {samplingInterval: 250, queueSize: 2, sc: 0x80AF0000} );
+	} );
+
+	it( 'ignores a push for a node nothing here watches, without an error', async ()=>{
+		const { gateway, results } = await watching();
+		const error = silence( 'error' ), debug = vi.spyOn( console, 'debug' ).mockImplementation( ()=>{} );
+		try{
+			gateway.receive( {monitoredItemModified: {opcId: "other", node: {namespaceIndex: 2, numeric: 1}, revisedSamplingInterval: 100, revisedQueueSize: 4}} );
+			gateway.receive( {monitoredItemModified: {opcId, node: {namespaceIndex: 2, numeric: 9}, revisedSamplingInterval: 100, revisedQueueSize: 4}} );
+			expect( error ).not.toHaveBeenCalled();
+		}
+		finally{
+			error.mockRestore();
+			debug.mockRestore();
+		}
+		expect( results.filter( r=>r.revised?.samplingInterval==100 ) ).toHaveLength( 0 );
+	} );
+
+	it( 'subscribes a node again with other parameters, and the ack revises the row', async ()=>{
+		const { gateway, results } = await watching( [ {samplingInterval: 100}, {} ] );
+		gateway.acked = [ {node: {namespaceIndex: 2, numeric: 1}, revisedSamplingInterval: 1000, revisedQueueSize: 10} ];
+		gateway.addToSubscription( opcId, [A], owner, [ {samplingInterval: 1000, queueSize: 10} ] );
+		await flush();
+		expect( subscribes( gateway ) ).toHaveLength( 2 );
+		expect( subscribes( gateway )[1].parameters ).toEqual( [ {samplingInterval: 1000, queueSize: 10, discardOldest: undefined} ] );
+		expect( results.at( -1 )?.revised ).toEqual( {samplingInterval: 1000, queueSize: 10, sc: 0} );
+		expect( await stillRegistered( gateway, A, owner ) ).toBe( true );//still one registration:  asked again, not added twice
+		expect( await stillRegistered( gateway, A, owner ) ).toBe( false );
+	} );
+
+	it( 'drops the ack\'s revised result for a node unsubscribed while the ack was out', async ()=>{
+		const gateway = new AckingGateway();
+		const results:SubscriptionResult[] = [];
+		let answer:( y:unknown )=>void = ()=>{};
+		gateway.sendPromise = <T>( m:any, _log:string ):Promise<T>=>{ gateway.sent( m ); return m.subscribe ? new Promise<T>( r=>answer = r as any ) : Promise.resolve( undefined as T ); };
+		gateway.subscribe( opcId, [A], owner, [ {} ] ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
+		await gateway.unsubscribe( opcId, [A], owner );
+		answer( [ {node: {namespaceIndex: 2, numeric: 1}, revisedSamplingInterval: 250, revisedQueueSize: 2} ] );
+		await flush();
+		expect( results ).toHaveLength( 0 );
 	} );
 } );
 

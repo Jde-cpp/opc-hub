@@ -22,6 +22,14 @@
 					<gateway-endpoint [gateway]=g!></gateway-endpoint>
 				}
 			</ng-template>
+			<ng-template instanceTab="Watch" instanceTabHelp="watching"><!--the watch list is a page of its own under this one (#419), with a Trend tab to come:  the tab opens it-->
+				<div class="jde-empty" role="note">
+					<mat-icon aria-hidden="true">visibility</mat-icon>
+					<p class="title">The watch list</p>
+					<p>Live values of variables from any connection of this gateway, each sampled as its row asks, kept for you between visits.</p>
+					<div class="actions"><a matButton="filled" [routerLink]="['./watch']">Open the watch list</a></div>
+				</div>
+			</ng-template>
 		</instance-tabs>
 	}
 }
