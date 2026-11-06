@@ -1,6 +1,6 @@
 //Server-free Jde.Opc coverage - the uatypes wrappers and their round trips.  No dbServers block: nothing here opens a
 //data source, so addJdeTest's `-include=args/sqlite -arg path=:memory:` is inert (there is no args/ dir to import).
-//The opc/browse tag names resolve through Opc::UALogParser, which main.cpp registers before Process::Startup.
+//The opc/browse tag names resolve through Opc::TagNames, which main.cpp registers with Logging::AddTags before Process::Startup.
 local logsDir = std.extVar("logsDir");
 {
 	testing:{

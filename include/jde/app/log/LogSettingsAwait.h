@@ -7,9 +7,13 @@ namespace Jde::App{
 	struct IApp;
 	//The loggers an instance's levels address, by the column naming them in logSetting and instanceTagLevel:  text, binary,
 	//appServer.  `tags` is null for a logger this process does not run - the AppServer and the hub have no appServer log.
-	α ForEachLogTarget( const function<void(sv column, LogTags* tags)>& f )ε->void;
-	α SetLogTarget( sv column, LogTags*(*find)()ι )ι->void;//RemoteLog::Init plugs in `appServer`, which the shared library cannot name.
+	α ForEachLogTarget( const function<void(sv column, LogLevels* tags)>& f )ε->void;
+	α SetLogTarget( sv column, LogLevels*(*find)()ι )ι->void;//RemoteLog::Init plugs in `appServer`, which the shared library cannot name.
 	α ValidateTagKeys( const jobject& args )ε->void;
+	//The two wire shapes that carry tags as values, flattened to the tag->level map LogLevels::SetLevels and the config file use:
+	α ToTagLevels( const jobject& levelTags )ι->jobject;//instanceTagLevel's answer - {"Debug":["sql",["socket","client","read"]]}
+	α ToTagLevels( const jarray& tagLevels )ι->jobject;//updateInstanceTagLevel's argument - [{tags:["socket","client","read"],level:"Debug"}]
+	α ToTagLevelArray( const jobject& tagLevels )ι->jarray;//and back the other way, for a caller holding the flat map.
 
 	//logSetting{ text binary appServer tags }:  this process's live loggers, so there is nothing to wait for.
 	α LogSettings( const QL::TableQL& ql )ι->jobject;

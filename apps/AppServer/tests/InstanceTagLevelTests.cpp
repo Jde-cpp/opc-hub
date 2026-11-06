@@ -37,9 +37,8 @@ namespace Jde::App::Server::Tests{
 			return y;
 		}
 		Ω FindConfigured( ELogTags tags )->optional<ELogLevel>{
-			optional<ELogLevel> y;
-			TextLogger().ConfiguredTags().cvisit( tags, [&](let& kv){ y = kv.second; } );
-			return y;
+			let& levels = TextLogger().Effective().Levels;
+			return levels.contains( tags ) ? optional<ELogLevel>{ levels.at(tags) } : nullopt;
 		}
 	};
 

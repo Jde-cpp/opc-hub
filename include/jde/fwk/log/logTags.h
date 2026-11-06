@@ -1,6 +1,7 @@
 ﻿#pragma once
 #ifndef LOG_TAGS_H
 #define LOG_TAGS_H
+#include <span>
 
 namespace Jde{
 	#define Φ Γ auto
@@ -47,81 +48,55 @@ namespace Jde{
 		SocketServerRead  = Socket | Server | Read,
 		SocketServerWrite	= Socket | Server | Write
 	};
+	//A tag's name in config keys, the ui and the wire, bound to its bit rather than to a place in a list.
+	struct TagName{ sv Name; ELogTags Tag; };
+	//Whether names[i] is bit firstBit+i for every i - the static_assert each table makes, so a gap, a repeat, a composite
+	//or an entry out of bit order fails to compile.  ToValue spells a tag set in table order.
+	constexpr α NamesBitsFrom( std::span<const TagName> names, uint firstBit )ι->bool{
+		for( uint i=0; i<names.size(); ++i ){
+			if( underlying(names[i].Tag)!=1ull<<(firstBit+i) )
+				return false;
+		}
+		return true;
+	}
+	//A new tag takes the bit after Write, and its name goes last here.
+	constexpr array<TagName,27> FwkTags{{
+		{"access", ELogTags::Access}, {"app", ELogTags::App}, {"cache", ELogTags::Cache}, {"client", ELogTags::Client},
+		{"crypto", ELogTags::Crypto}, {"dbDriver", ELogTags::DBDriver}, {"exception", ELogTags::Exception},
+		{"externalLogger", ELogTags::ExternalLogger}, {"http", ELogTags::Http}, {"io", ELogTags::IO}, {"locks", ELogTags::Locks},
+		{"parsing", ELogTags::Parsing}, {"pedantic", ELogTags::Pedantic}, {"ql", ELogTags::QL}, {"read", ELogTags::Read},
+		{"scheduler", ELogTags::Scheduler}, {"server", ELogTags::Server}, {"sessions", ELogTags::Sessions},
+		{"settings", ELogTags::Settings}, {"shutdown", ELogTags::Shutdown}, {"socket", ELogTags::Socket}, {"sql", ELogTags::Sql},
+		{"startup", ELogTags::Startup}, {"subscription", ELogTags::Subscription}, {"test", ELogTags::Test},
+		{"threads", ELogTags::Threads}, {"write", ELogTags::Write}
+	}};
+	static_assert( NamesBitsFrom(FwkTags, 0), "FwkTags names Access to Write, one bit each, in bit order" );
+	//The combined tags the ui offers as rows of their own, beside the single ones:  Logging::Tags( true ).
+	constexpr array<ELogTags,11> CompositeTags{
+		ELogTags::HttpClientRead, ELogTags::HttpClientWrite, ELogTags::HttpClientSessions,
+		ELogTags::HttpServerRead, ELogTags::HttpServerWrite,
+		ELogTags::SocketClientRead, ELogTags::SocketClientReadSub,
+		ELogTags::SocketClientWrite, ELogTags::SocketClientWriteSub,
+		ELogTags::SocketServerRead, ELogTags::SocketServerWrite
+	};
 	//The framework's tags take the low 32 bits;  from here up are the libraries' own, EOpcLogTags first.
 	constexpr uint LibraryTagBase{ 32 };
 	//A line at the break level traps the debugger unless it carries a library's tag:  open62541's and the OPC code's
 	//warnings are routine.  Decided by bit, on every path, not by the tags' magnitude.
-	constexpr α BreaksFor( ELogTags tags )ι->bool{ return ( std::to_underlying(tags) >> LibraryTagBase )==0; }
-
-	namespace Logging{
-		struct ILogger;
-		Φ UpdateCumulative( const vector<Logging::ILogger*>& loggers )ι->void;
-	}
-	struct Γ LogTags{
-		LogTags( ELogLevel defaultLevel=ELogLevel::Information ):_minLevel{defaultLevel},_defaultLevel{defaultLevel},_settingsDefault{defaultLevel}{}
-		LogTags( const jobject& o )ι;
-		LogTags( const LogTags& x )ι;
-		α operator+=( const LogTags& other )ι->LogTags&;
-		α operator==( const LogTags& other )Ι->bool;//the levels and both maps - not ExtrapolatedTags, MinLevel's memo of them.
-		//settings: the map is the configuration (Logging::Init's /logging/memory/tags), remembered as what a cleared override
-		//falls back to.  Otherwise the map is overrides - the instance_tag_levels rows at start (IApp::LoadLogSettings) - which
-		//sit on top of the settings and can be cleared back off.
-		α SetLevels( const jobject& tagLevels, bool settings=false )ι->void;
-		β Name()Ι->sv{ return "Cumulative"; }
-		α DefaultLevel()Ι->ELogLevel{ return _defaultLevel; }
-		α SetDefaultLevel( ELogLevel level )ι->void{ _defaultLevel = level; ExtrapolatedTags = _configuredTags; }
-		α ClearDefaultLevel()ι->void{ SetDefaultLevel( _settingsDefault ); }//the default override deleted: back to the settings' default.
-		β MinLevel()Ι->ELogLevel{ return _minLevel; }
-		β MinLevel( ELogTags tags )Ι->ELogLevel;
-		β SetMinLevel( ELogLevel level )ι->void{ _minLevel = level; }
-		α SetLevel( ELogTags tags, ELogLevel level )ι->void;
-		//drops the override - the runtime twin of deleting the instance_tag_levels row - so the tag goes back to the level the
-		//settings gave it, or to _defaultLevel when they gave none.  Erasing the entry outright lost the settings level until a
-		//restart (install-issues #21).
-		α ClearLevel( ELogTags tags )ι->void;
-		β ShouldLog( ELogLevel level, ELogTags tags )Ι->bool;
-		β ToString()ι->string;
-		α ConfiguredTags()Ι->const concurrent_flat_map<ELogTags,ELogLevel>&{ return _configuredTags; }//the levels in force: the settings' with the overrides on top.
-	protected:
-		concurrent_flat_map<ELogTags,ELogLevel> _configuredTags;
-		concurrent_flat_map<ELogTags,ELogLevel> _settingsTags;//the levels as configured, before any override - what ClearLevel restores.
-		mutable concurrent_flat_map<ELogTags,ELogLevel> ExtrapolatedTags;
-		ELogLevel	_minLevel;
-		ELogLevel _defaultLevel;
-		ELogLevel _settingsDefault;
-		friend α Logging::UpdateCumulative( const vector<Logging::ILogger*>& loggers )ι->void;
-	};
+	constexpr α BreaksFor( ELogTags tags )ι->bool{ return ( underlying(tags) >> LibraryTagBase )==0; }
 
 	constexpr ELogTags DefaultTag=ELogTags::App;
 	constexpr sv TagSeparator{ "." };//how a combined tag is spelled as one name: "socket.client.read" - config keys, ui rows and the joined form of the wire's tag array.
-	Φ ShouldTrace( ELogTags tags )ι->bool;
-	Φ ToString( ELogTags tags, bool outputArray=true )ι->string;
+	Φ ToName( ELogTags tags )ι->string;//one name, the parts joined with TagSeparator in bit order:  config keys, ui rows and log text.
 	Φ ToValue( ELogTags tags )ι->jvalue;
 	Φ ToLogTags( sv name )ι->ELogTags;
 	Φ ToLogTags( jvalue v )ι->ELogTags;
-	Φ ToTagName( const jvalue& tags )ι->string;//["socket","client","read"] | "sql" -> "socket.client.read" | "sql" - the TagSeparator spelling ToLogTags splits.
-	//The two wire shapes that carry tags as values, flattened to the tag->level map SetLevels and the config file use:
-	Φ ToTagLevels( const jobject& levelTags )ι->jobject;//instanceTagLevel's answer - {"Debug":["sql",["socket","client","read"]]}
-	Φ ToTagLevels( const jarray& tagLevels )ι->jobject;//updateInstanceTagLevel's argument - [{tags:["socket","client","read"],level:"Debug"}]
-	Φ ToTagLevelArray( const jobject& tagLevels )ι->jarray;//and back the other way, for a caller holding the flat map.
 namespace Logging{
-	struct ITagParser{
-		virtual ~ITagParser()=default;
-		β ToTag( str tagName )Ι->ELogTags=0;
-		β ToString( ELogTags tags )Ι->string=0;
-		β Tags()Ι->flat_map<string,uint> = 0;
-	};
-	Φ AddTagParser( up<ITagParser>&& tagParser )ι->void;
-	Φ ShouldLog( ELogLevel level, ELogTags tags )ι->bool;
+	//A library's names for its tags, a table whose own static_assert puts it above LibraryTagBase:  before Init, which parses
+	//the settings' tag names, as nothing locks the table once lines are being logged.  A bit or name already registered is a
+	//logic_error, thrown before anything is added - before Init there is no logger to say so.
+	Φ AddTags( std::span<const TagName> tags )ε->void;
 	Φ Tags( bool user=false )ι->flat_map<string,uint>;
-	//A per-tag level object from the settings, over the defaults given, gating something other than a logger's writing:
-	//ProtoLog's /logging/proto/file and /function, LogStack's /logging/stack.  name, static, is what its trace output shows.
-	struct Γ Threshold final : LogTags{
-		Threshold( sv name, const jobject* settings, const jobject& defaults )ι;
-		α Name()Ι->sv override{ return _name; }
-	private:
-		sv _name;
-	};
 }}
 #undef Φ
 #endif

@@ -31,9 +31,7 @@ namespace Jde::App{
 		α DailyFileStart()Ι->TimePoint{ ul _{_mutex}; return _dailyFileStart; }
 		α Entries()Ε->vector<App::Log::Proto::FileEntry>;//the buffer *and* whatever is in flight - see the definition (L1).
 		α BufferSize()Ι->uint{ ul _{_mutex}; return _toSaveBytes; }//what M5's cap bounds - the unflushed buffer alone, not _inFlight.
-		α Name()Ι->sv override{ return "ProtoLog"; }
 		α Root()Ι->const fs::path&{ return _root; }
-		α SetMinLevel( ELogLevel /*level*/ )ι->void override{}
 		α SetAppPKs( App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void{ _appPK = appPK; _instancePK = instancePK; }
 		α TimeZone()Ι->const std::chrono::time_zone&{ return _tz; }
 		α Today()Ι->std::chrono::year_month_day{ ul _{_mutex}; return _today; }

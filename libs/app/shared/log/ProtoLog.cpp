@@ -41,7 +41,7 @@ namespace Jde::App{
 		return y;
 	}
 	ProtoLog::ProtoLog( const jobject& settings )ε:
-		BufferedLogger{ settings, std::max<uint32>(Json::FindNumber<uint32>(settings, "maxBuffer").value_or(4*1024*1024), _delaySize*4u) },
+		BufferedLogger{ "ProtoLog", settings, std::max<uint32>(Json::FindNumber<uint32>(settings, "maxBuffer").value_or(4*1024*1024), _delaySize*4u) },
 		_root{ Json::FindString(settings, "path").value_or((Process::AppDataFolder()/"logs").string()) },
 		_tz{ Json::FindTimeZone(settings, "timeZone", *std::chrono::current_zone()) },
 		_today{ dailyFileDay(DailyFile(), _tz) },//_root and _tz are declared before _today, so both are live here.

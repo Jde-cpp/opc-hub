@@ -14,7 +14,7 @@
 	if( !Jde::Process::CheckCpu() )
 		return EXIT_FAILURE;
 	using namespace Jde;
-	Logging::AddTagParser( mu<Opc::UALogParser>() );//the gateway's ua* tag names, before the settings' tag levels are parsed.
+	Logging::AddTags( Opc::TagNames );//the gateway's ua* tag names, before the settings' tag levels are parsed.
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.OpcHub", "Jde OPC hub - AppServer + OpcGateway in one process." );

@@ -15,7 +15,7 @@ namespace Jde{
 	α Process::ProductName()ι->sv{ return "Tests.Opc.PlcEmulator"; }
 #endif
 	Ω startup( int argc, char **argv )ε->void{
-		Logging::AddTagParser( mu<Opc::UALogParser>() );//before Startup: the jsonnet names opc tags.
+		Logging::AddTags( Opc::TagNames );//before Startup: the jsonnet names opc tags.
 		Process::Startup( argc, argv, "Tests.Opc.PlcEmulator", "PLC emulator unit tests", true );
 		Logging::Init();
 	}

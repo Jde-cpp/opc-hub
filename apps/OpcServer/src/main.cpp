@@ -14,7 +14,7 @@ std::optional<int> _exitCode;
 	if( !Jde::Process::CheckCpu() )
 		return EXIT_FAILURE;
 	using namespace Jde;
-	Logging::AddTagParser( mu<Opc::UALogParser>() );
+	Logging::AddTags( Opc::TagNames );
 	int exitCode;
 	try{
 		Process::Startup( argc, argv, "Jde.OpcServer", "OpcServer" );

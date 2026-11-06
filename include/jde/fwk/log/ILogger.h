@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "logTags.h"
+#include "LogLevels.h"
 #include "../settings.h"
 #include "../process/process.h"
 
@@ -15,8 +15,8 @@ namespace Jde::Logging{
 	Φ Init()ι->void;
 
 	struct Record;
-	struct Γ ILogger : LogTags, IShutdown{
-		ILogger( const jobject& o ): LogTags( o ){}
+	struct Γ ILogger : LogLevels, IShutdown{
+		ILogger( sv name, const jobject& o ): LogLevels( name, o ){}//name, static, for the level trace.
 		virtual ~ILogger(){} //important
 		//Every line, one way (Record):  SpdLog formats from the call's arguments when it has them, and every other logger reads
 		//record.Entry(), built once for the line;  a forwarded entry's origin is on the record.  Copy the Entry to keep it.

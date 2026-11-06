@@ -15,7 +15,7 @@
 	if( !Jde::Process::CheckCpu() )
 		return EXIT_FAILURE;
 	using namespace Jde;
-	Logging::AddTagParser( mu<Opc::UALogParser>() );
+	Logging::AddTags( Opc::TagNames );
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.OpcGateway", "Jde OPC gateway - the website's OPC UA client sessions." );

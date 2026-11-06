@@ -7,7 +7,7 @@ namespace Jde::App{
 	//ProtoLog and RemoteLog: a buffer drained by a timer round, capped while nothing drains it, and a destructor that outlasts the
 	//round.  The final class owns the buffer and says how to flush and trim it.
 	struct BufferedLogger : Logging::ILogger, noncopyable{
-		BufferedLogger( const jobject& settings, uint maxSize )ε;
+		BufferedLogger( sv name, const jobject& settings, uint maxSize )ε;
 	protected:
 		//Held as a local by every frame that resumes into `this`, so the count falls when the frame is destroyed however it exits.
 		//An atomic rather than a _mutex-guarded field: these frames drop and retake _mutex around their awaits, so a destructor that

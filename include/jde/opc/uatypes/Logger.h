@@ -27,7 +27,18 @@ namespace Jde::Opc{
 		ProcessingLoop= 1ull << (UaLogTagBase+12)
 	};
 	static_assert( underlying(EOpcLogTags::Monitoring)==1ull<<(UaLogTagBase+(uint)UA_LOGCATEGORY_DISCOVERY+1),
-		"a UA_LogCategory was added - move Monitoring/Browse/ProcessingLoop up and add its name to EOpcLogTagstrings" );
+		"a UA_LogCategory was added - move Monitoring/Browse/ProcessingLoop up and add its name to TagNames" );
+	//What config keys, the ui and the wire call each bit, registered by every main with Logging::AddTags before Startup.
+	constexpr array<TagName,14> TagNames{{
+		{"opc", (ELogTags)EOpcLogTags::Opc},
+		{"uaNet", (ELogTags)EOpcLogTags::Net}, {"uaSecure", (ELogTags)EOpcLogTags::Secure}, {"uaSession", (ELogTags)EOpcLogTags::Session},
+		{"uaServer", (ELogTags)EOpcLogTags::Server}, {"uaClient", (ELogTags)EOpcLogTags::Client}, {"uaUser", (ELogTags)EOpcLogTags::User},
+		{"uaSecurity", (ELogTags)EOpcLogTags::Security}, {"uaEvent", (ELogTags)EOpcLogTags::EventLoop},
+		{"uaPubSub", (ELogTags)EOpcLogTags::PubSub}, {"uaDiscovery", (ELogTags)EOpcLogTags::Discovery},
+		{"monitoring", (ELogTags)EOpcLogTags::Monitoring}, {"browse", (ELogTags)EOpcLogTags::Browse},
+		{"processingLoop", (ELogTags)EOpcLogTags::ProcessingLoop}
+	}};
+	static_assert( NamesBitsFrom(TagNames, OpcLogTagBase), "TagNames names Opc, every UA_LogCategory, then Monitoring/Browse/ProcessingLoop, in bit order" );
 
 	constexpr ELogTags IotReadTag{ ELogTags::Read | (ELogTags)EOpcLogTags::Opc };
 	constexpr ELogTags MonitoringTag{ (ELogTags)EOpcLogTags::Monitoring };
@@ -36,11 +47,6 @@ namespace Jde::Opc{
 
 	α Format( const char* format, va_list args )->string;
 
-	struct UALogParser final : Logging::ITagParser{
-		α ToTag( str tagName )Ι->ELogTags override;
-		α ToString( ELogTags tags )Ι->string override;
-		α Tags()Ι->flat_map<string,uint> override;
-	};
 	struct Logger : UA_Logger{
 		Logger( Handle context=0 )ι;
 		Ω Log( void* context, UA_LogLevel level, UA_LogCategory category, const char* message, va_list args )ι->void;//to Logging::LogStack, tagged by category.

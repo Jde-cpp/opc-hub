@@ -8,7 +8,7 @@
 
 namespace Jde::App::Client{
 	RemoteLog::RemoteLog( const jobject& settings, sp<IAppClient> client )ι:
-		BufferedLogger{ settings, Json::FindNumber<uint32>(settings, "maxEntries").value_or(10'000) },
+		BufferedLogger{ "RemoteLog", settings, Json::FindNumber<uint32>(settings, "maxEntries").value_or(10'000) },
 		_client{ move(client) },
 		_maxBatch{ Json::FindNumber<uint32>(settings, "maxBatch").value_or(100) }{//#14: ~2 orders of magnitude under the server's 1 MB socket cap at any plausible entry size.
 		Process::AddShutdown( this );
@@ -28,7 +28,7 @@ namespace Jde::App::Client{
 		_client = nullptr;
 	}
 	α RemoteLog::Init( sp<IAppClient> client )ι->void{
-		SetLogTarget( "appServer", []()ι->LogTags*{ return Logging::FindLogger<RemoteLog>(); } );
+		SetLogTarget( "appServer", []()ι->LogLevels*{ return Logging::FindLogger<RemoteLog>(); } );
 		Logging::Add<RemoteLog>( "remote", move(client) );
 	}
 

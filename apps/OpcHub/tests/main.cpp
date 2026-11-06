@@ -17,7 +17,7 @@ namespace Jde{
 	α Process::ProductName()ι->sv{ return "Tests.OpcHub"; }
 #endif
 	Ω startup( int argc, char **argv )ε->void{
-		Logging::AddTagParser( mu<Opc::UALogParser>() );
+		Logging::AddTags( Opc::TagNames );
 		Process::Startup( argc, argv, "Tests.OpcHub", "OpcHub tests", true );
 		App::Server::InitLogging();//as the hub: the AppServer's - the one Logging::Init in the process.
 		let embedded = Settings::FindBool( "/testing/embeddedOpcServer" ).value_or( true );

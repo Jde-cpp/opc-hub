@@ -97,7 +97,7 @@ namespace Jde::Web::Server{
 
 	thread_local bool _writing{};
 	SubscribeLog::SubscribeLog( jobject settings, const uint32& appPK, const App::ConnectionPK& connectionPK, Gate gate )ε:
-		ILogger{ move(settings) },
+		ILogger{ "SubscribeLog", move(settings) },
 		_appPK( appPK ),
 		_connectionPK( connectionPK ),
 		_gate{ move(gate) },
@@ -142,8 +142,9 @@ namespace Jde::Web::Server{
 			auto s = ms<SessionSubscription>( session, move(request), mayRead );
 			if( let prior = MinLevel(s->Sub.Tags); s->Sub.MinLevel<prior ){
 				if( !_loweredTags.contains(s->Sub.Tags) ){//O1: remember what to put back, once, before the first lowering overwrites it.
-					optional<ELogLevel> priorOverride;
-					ConfiguredTags().cvisit( s->Sub.Tags, [&priorOverride](auto& kv){ priorOverride = kv.second; } );
+					optional<ELogLevel> priorOverride;//an override only:  without one, the restore's ClearLevel lets the settings' level show through.
+					if( let overrides = Overrides(); overrides.Levels.contains(s->Sub.Tags) )
+						priorOverride = overrides.Levels.at( s->Sub.Tags );
 					_loweredTags.emplace( s->Sub.Tags, LoweredTag{prior, priorOverride} );
 				}
 				SetLevel( s->Sub.Tags, s->Sub.MinLevel );

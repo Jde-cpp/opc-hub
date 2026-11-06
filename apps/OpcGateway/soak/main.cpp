@@ -45,7 +45,7 @@ namespace Jde::Opc::Gateway::Soak{
 		return EXIT_FAILURE;
 	using namespace Jde;
 	using namespace Jde::Opc::Gateway;
-	Logging::AddTagParser( mu<Opc::UALogParser>() );
+	Logging::AddTags( Opc::TagNames );
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.Opc.Soak", "OpcGateway soak driver" );

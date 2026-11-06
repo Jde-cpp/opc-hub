@@ -3,6 +3,7 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/access/Authorize.h>
 #include <jde/app/usings.h>
+#include <jde/app/log/LogSettingsAwait.h>
 #include "../LocalClient.h"
 #include "../appStartup.h"
 #include "jde/fwk/log/break.h"
