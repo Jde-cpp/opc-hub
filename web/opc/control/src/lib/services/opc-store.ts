@@ -171,6 +171,8 @@ export class OpcStore{
 	cnnctnName( gateway:GatewaySlug, cnnctn:CnnctnSlug ):string{
 		return this.#connections.get( gateway )?.get( cnnctn )?.connection.name ?? cnnctn;
 	}
+	//the connections described for the node pages so far:  what a page refused the gateway's list knows of them
+	cnnctnSlugs( gateway:GatewaySlug ):CnnctnSlug[]{ return [...(this.#connections.get( gateway )?.keys() ?? [])]; }
 	//ComponentNav renders each sibling as parent.path + '/' + sibling.path, so the parent must be the absolute url and the
 	//siblings bare browse names.  Both used to be full paths, so every link resolved relative to the sidenav route
 	//('/gateways/Debug/local/2~DeviceSet/local/2~DeviceSet/2~DeviceFeatures') - no sibling matched the current url and the

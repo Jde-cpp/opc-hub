@@ -62,7 +62,7 @@ export class WatchView extends View{
 		switch( column ){
 			case "connection":      return names( row.opc );
 			case "node":            return row.name;
-			case "value":           return typeof row.value=="number" ? row.value : row.value===undefined ? undefined : valueString( <any>row.value );
+			case "value":           return row.valueName ?? (typeof row.value=="number" ? row.value : row.value===undefined ? undefined : valueString( <any>row.value ));
 			case "status":          return row.error ? row.error : row.sc==undefined ? undefined : OpcError.text( row.sc );
 			case "sourceTime":      return NodeView.time( row.sourceTime );
 			case "serverTime":      return NodeView.time( row.serverTime );

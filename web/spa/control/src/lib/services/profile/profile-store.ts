@@ -6,12 +6,16 @@ import { IPROFILE_SERVICE } from './profile-service';
 @Injectable( { providedIn: 'root' } )
 export class ProfileStore{
 	#profileService = inject( IPROFILE_SERVICE, {optional: true} );
-	async load<T>( key:string, defaultValue:T ): Promise<T>{
+	//`fresh`:  read past the cache, once the key's queued writes are done - for a value another tab may have written since this
+	//one cached it
+	async load<T>( key:string, defaultValue:T, fresh=false ): Promise<T>{
 		const userKey = this.#profileService?.userKey();
 		if( !this.#profileService || !userKey )
 			return defaultValue;
 		const cacheKey = ProfileStore.cacheKey( userKey, key );
-		let json = this.cacheGet( cacheKey );
+		if( fresh )
+			await this.#writes.get( cacheKey )?.catch( ()=>{} );
+		let json = fresh ? undefined : this.cacheGet( cacheKey );
 		if( json===undefined ){
 			try{
 				json = await this.#profileService.load( key );
@@ -60,6 +64,40 @@ export class ProfileStore{
 		}
 		finally{
 			if( this.#writes.get(cacheKey)===write )
+				this.#writes.delete( cacheKey );
+		}
+	}
+	//A change made to the value the server holds now, and written back:  for a key more than one page or tab writes, where saving
+	//what one page read drops what another wrote since - a watch list a node page appends to (419-watch #9).  Queued behind the
+	//key's writes and read past the cache;  another browser's write between the read and the write still loses.  Logged out, or
+	//signed in as someone else by the time the read returns, it writes nothing.  THROWS on a failed read or write.
+	async update<T>( key:string, defaultValue:T, change:( current:T )=>T ):Promise<void>{
+		const service = this.#profileService, userKey = service?.userKey();
+		if( !service || !userKey )
+			return;
+		const cacheKey = ProfileStore.cacheKey( userKey, key );
+		const previous = this.#writes.get( cacheKey );
+		const write:Promise<void> = (previous ? previous.catch( ()=>{} ) : Promise.resolve()).then( async ()=>{
+			const held = await service.load( key );
+			if( service.userKey()!=userKey )
+				return;
+			const json = ProfileStore.json( change( held==null ? defaultValue : JSON.parse( held ) as T ) );
+			if( json!==held )
+				await service.save( key, json );
+			if( this.#writes.get( cacheKey )===write )//a later save has cached its own value already
+				this.cacheSet( cacheKey, json );
+		} );
+		this.#writes.set( cacheKey, write );
+		try{
+			await write;
+		}
+		catch( e ){
+			if( this.#writes.get( cacheKey )===write )
+				this.cache.delete( cacheKey );
+			throw e;
+		}
+		finally{
+			if( this.#writes.get( cacheKey )===write )
 				this.#writes.delete( cacheKey );
 		}
 	}

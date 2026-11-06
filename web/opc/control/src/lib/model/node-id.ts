@@ -44,7 +44,16 @@ export class NodeId implements INodeId{
 		else
 			console.error( `NodeId - unrecognized json: ${JSON.stringify(json)}` );//was `debugger;` — froze the app whenever a debugger (DevTools/automation) was attached
 	}
-	public equals( rhs: NodeId ):boolean{ return this.ns==rhs.ns && this.id===rhs.id; }
+	//by value:  a Guid or ByteString id is a fresh object in every message (Gateway.toNode), and by identity no push of one found
+	//its row (419-watch #3)
+	public equals( rhs: NodeId ):boolean{ return this.ns==rhs.ns && NodeId.idEquals( this.id, rhs.id ); }
+	private static idEquals( a:NodeIdentifier, b:NodeIdentifier ):boolean{
+		if( a instanceof Guid )
+			return b instanceof Guid && a.equals( b );
+		if( a instanceof Uint8Array )
+			return b instanceof Uint8Array && a.length==b.length && a.every( (byte, i)=>byte==b[i] );
+		return a===b;
+	}
 	static objectsFolder = new NodeId( { ns: 0, i: 85 } );
 	toJson():NodeIdJson{
 		let json:NodeIdJson = {};

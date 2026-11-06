@@ -351,6 +351,23 @@ describe( 'Gateway watch parameters', ()=>{
 		expect( await stillRegistered( gateway, A, owner ) ).toBe( false );
 	} );
 
+	//a request that failed cost the owner a node it already held:  the item ran on at the old parameters, its pushes found no
+	//owner, and nothing unsubscribed it (419-watch #4)
+	it( 'keeps a node it held when asking it again fails, and says so as a revised result', async ()=>{
+		const { gateway, results } = await watching( [ {samplingInterval: 100}, {} ] );
+		const C = new NodeId( {ns: 2, i: 3} );
+		gateway.rejectWith = { error: {requestId: 2, message: "Connection lost.", sc: 0x80AE0000} };
+		gateway.addToSubscription( opcId, [A, C], owner, [ {samplingInterval: 1000}, {} ] );
+		await flush();
+		const [a, c] = results.slice( -2 );
+		expect( a.node.key ).toBe( A.key );
+		expect( a.revised ).toEqual( {sc: 0x80AE0000} );
+		expect( c.node.key ).toBe( C.key );
+		expect( c.value ).toBeInstanceOf( OpcError );//never held, so not subscribed
+		expect( await stillRegistered( gateway, A, owner ) ).toBe( true );
+		expect( await stillRegistered( gateway, C, owner ) ).toBe( false );
+	} );
+
 	it( 'drops the ack\'s revised result for a node unsubscribed while the ack was out', async ()=>{
 		const gateway = new AckingGateway();
 		const results:SubscriptionResult[] = [];

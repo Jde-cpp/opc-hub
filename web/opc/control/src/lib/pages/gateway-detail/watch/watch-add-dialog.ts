@@ -10,7 +10,6 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorMessage } from 'jde-framework';
-import { HistConnection } from '../../../model/hist-admin';
 import { ENodeClass } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { CnnctnSlug } from '../../../model/server-cnnctn';
@@ -18,7 +17,8 @@ import { Gateway } from '../../../services/gateway-service';
 import { NodeSearchProvider } from '../../../services/node-search-provider';
 
 export type WatchPick = { opc:CnnctnSlug; node:NodeId };
-export type WatchAddDialogData = { gateway:Gateway; connections:HistConnection[]; opc?:CnnctnSlug };
+export type WatchConnection = { slug:CnnctnSlug; name:string };
+export type WatchAddDialogData = { gateway:Gateway; connections:WatchConnection[]; opc?:CnnctnSlug };
 //a hit of the gateway's search, with the node's id on it (SearchQLAwait writes the id's keys onto the row)
 type Hit = { node:NodeId; name:string; path:string; nodeClass:ENodeClass };
 

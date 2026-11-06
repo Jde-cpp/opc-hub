@@ -47,6 +47,7 @@ export function parametersOf( f:WatchParameterFields ):WatchParameters{
 @Component({
 	templateUrl: './watch-parameters-dialog.html',
 	styles: `
+		mat-dialog-content{ container-type: inline-size; }//the host is the dialog's \`display: contents\`, which no query can ask
 		.fields{
 			display: grid;
 			grid-template-columns: repeat( 2, minmax(0, 1fr) );
@@ -55,7 +56,7 @@ export function parametersOf( f:WatchParameterFields ):WatchParameters{
 		}
 		.hint{ margin: .75rem 0 0; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-medium); }
 		.problem{ color: var(--mat-sys-error); margin: .5rem 0 0; }
-		@media (width < 480px){ .fields{ grid-template-columns: minmax(0, 1fr); } }`,
+		@container (width < 412px){ .fields{ grid-template-columns: minmax(0, 1fr); } }//room for two 200px fields and the gap, not the viewport (419-watch #14)`,
 	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatInputModule, MatSelectModule, MatTooltipModule]
 })
 export class WatchParametersDialog{

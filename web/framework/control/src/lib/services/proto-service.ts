@@ -1,5 +1,5 @@
-import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
-import { firstValueFrom } from 'rxjs';
+import { webSocket } from 'rxjs/webSocket';
+import { firstValueFrom, Subject } from 'rxjs';
 import { HttpClient, HttpErrorResponse, HttpEvent, HttpResponse } from '@angular/common/http';
 import { FieldKind } from '../model/ql/schema/field';
 import { fromIsoDuration, verify } from '../utils/utils';
@@ -65,9 +65,44 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	{}
 
 	connect():void{
-		this.#socket = webSocket<Uint8Array>( {url: this.socketUrl, deserializer: msg => this.onMessage(msg), serializer: msg=>msg, binaryType:"arraybuffer"} );
+		ProtoService.#listenToPageCache();
+		this.#socket = this.openSocket();
+		ProtoService.#open.add( this );
 		this.#socket.subscribe( {error: err=>this.socketDown( err ), complete: ()=>this.socketDown( "the server closed the connection" )} );//the deserializer handles each message;  a clean close strands pending requests exactly like an error does
 	}
+	//the websocket, each message to onMessage - a spec's is a Subject of its own
+	protected openSocket():Subject<Uint8Array>{
+		return webSocket<Uint8Array>( {url: this.socketUrl, deserializer: msg => this.onMessage(msg), serializer: msg=>msg, binaryType:"arraybuffer"} );
+	}
+	//Chrome's back/forward cache kept a page left by a full load alive with its socket open:  the server kept the page's subscriptions,
+	//and their asks on items other pages share, until the page came back - to a socket Chrome closed then, and rows that no longer
+	//updated (reviews-issue/419-watch.md W1).  So a page going into the cache closes its sockets, and comes back as a reload.  An
+	//unload needs neither:  the browser closes the sockets itself.  A page with no socket open keeps the cache's quick return.
+	static #listenToPageCache():void{
+		if( ProtoService.#listening )
+			return;
+		ProtoService.#listening = true;
+		window.addEventListener( 'pagehide', ( e:PageTransitionEvent )=>{
+			if( e.persisted )
+				[...ProtoService.#open].forEach( s=>s.#leaveForCache() );
+		} );
+		window.addEventListener( 'pageshow', ( e:PageTransitionEvent )=>{
+			const closed = ProtoService.#closedForCache;
+			ProtoService.#closedForCache = false;
+			if( e.persisted && closed )
+				ProtoService.reloadPage();
+		} );
+	}
+	#leaveForCache():void{
+		if( !this.#socket )
+			return;
+		ProtoService.#closedForCache = true;
+		this.#socket.complete();//a close frame:  the server's OnClose drops what it holds for this socket
+	}
+	static reloadPage = ()=>location.reload();//a spec's spy stands in
+	static #listening = false;
+	static #closedForCache = false;
+	static #open = new Set<ProtoService<unknown,unknown>>();//the services with a socket
 
 	toCollectionName( collectionDisplay:string ):string{ return collectionDisplay; }
 	subQueries( typeName: string, id: number ):string[]{ return []; }
@@ -93,6 +128,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	private socketDown( why:unknown ):void{
 		console.log( "No longer connected to Server.", why );
 		this.#socket = undefined;//drop the dead socket so the next send reconnects
+		ProtoService.#open.delete( this );
 		this.#socketId = 0;//NOT setSocketId(0): that flushes the backlog, and with the socket already dropped every queued transmission would go to `#socket?.next` and vanish
 		this.rejectPending();
 		this.handleConnectionError( why );
@@ -554,7 +590,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	#loginCallbacks:{target:string, resolve:(result:any)=>void, reject:( e:unknown )=>void}[]=[];
 
 	//abstract get queryId():number;
-	#socket:WebSocketSubject<Uint8Array>|undefined;
+	#socket:Subject<Uint8Array>|undefined;
 	protected _callbacks = new Map<number, RequestPromise<ResultMessage>>();
 	#tables = new Map<string,TableSchema>();
 	private get url(){

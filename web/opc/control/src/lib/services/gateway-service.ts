@@ -389,8 +389,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	//reported the way the server reports a bad reading: an OpcError value on the owner's stream, which stays open.
 	//The parameters, one per node at its position, are what the row asks (spec *Watch list*):  none is the gateway's defaults.  The ack's
 	//revised values - what the item runs at, the strictest of every listener's asks - reach the owner's stream as a `revised` result per
-	//node, where the pages that watch nothing but values ignore them.
-	private async _subscribe( opcId:OpcId, nodes:NodeId[], owner:Owner, parameters:WatchParameters[]=[] ):Promise<void>{
+	//node, where the pages that watch nothing but values ignore them.  `held`:  the nodes the owner had asked for before this call.
+	private async _subscribe( opcId:OpcId, nodes:NodeId[], owner:Owner, parameters:WatchParameters[]=[], held:ReadonlySet<NodeKey>=new Set() ):Promise<void>{
 		const request:FromClient.Subscribe = { nodes:Gateway.toProto(nodes), opcId:opcId, parameters: Gateway.toProtoParameters( parameters, nodes.length ) };
 		const failed = new Array<{node:NodeId, sc:StatusCode}>();
 		const revised = new Array<{node:NodeId, revised:Revised}>();
@@ -418,7 +418,14 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		catch( e:unknown ){
 			console.error( `subscribe failed - ${errorText(e)}` );
 			const sc = <StatusCode>((<{error?:{sc?:number}}>e)?.error?.sc ?? scBadUnexpectedError);
-			failed.push( ...nodes.map( node=>({node, sc}) ) );//the request never reached the server, so none of THESE is subscribed - the owner's others still are
+			//No item was created or changed:  a node this call registered isn't subscribed - the owner's others still are - and one the
+			//owner held runs on as it was, so it keeps its registration and hears the failure as a `revised` result (419-watch #4)
+			for( const node of nodes ){
+				if( held.has( node.key ) )
+					revised.push( {node, revised: {sc}} );
+				else
+					failed.push( {node, sc} );
+			}
 		}
 		const opcSubscriptions = this.getOpcSubscriptions( opcId );
 		const subject = this.#ownerSubscriptions.get( owner );
@@ -452,10 +459,13 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	//with other parameters, that is how a listener changes what it asks - and the ack's revised values follow on the stream.
 	public addToSubscription( opcId:OpcId, nodes:NodeId[], owner:Owner, parameters?:WatchParameters[] ){
 		let opcSubscriptions = this.getOpcSubscriptions( opcId );
+		const held = new Set<NodeKey>();
 		for( const node of nodes ){
 			if( opcSubscriptions.has(node.key) ){
 				const owners = opcSubscriptions.get( node.key )!;//the outer `let owners:Owner[]` this shadowed was never read - declared, shadowed, dropped
-				if( !owners.includes(owner) )
+				if( owners.includes(owner) )
+					held.add( node.key );
+				else
 					owners.push( owner );
 			}
 			else{
@@ -465,7 +475,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		}
 		if( !this.#ownerSubscriptions.has(owner) )
 			this.#ownerSubscriptions.set( owner, new Subject<SubscriptionResult>() );
-		this._subscribe( opcId, nodes, owner, parameters );
+		this._subscribe( opcId, nodes, owner, parameters, held );
 	}
 	//An owner's stream:  the readings of every node it asks for, on any connection - addToSubscription adds a connection's nodes
 	//to it - and the `revised` results of the ack and of a MonitoredItemModified push.  Ended by the last observer leaving, which

@@ -4,7 +4,7 @@
 		<mat-form-field class="connection">
 			<mat-label>Connection</mat-label>
 			<mat-select [value]="connection()" (selectionChange)="onConnection($event.value)" [disabled]="loading()">
-				@for( c of data.connections; track c.id ){
+				@for( c of data.connections; track c.slug ){
 					<mat-option [value]="c.slug">{{ c.name }}</mat-option>
 				}
 			</mat-select>

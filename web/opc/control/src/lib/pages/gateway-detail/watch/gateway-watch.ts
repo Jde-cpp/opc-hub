@@ -23,7 +23,7 @@ import { CnnctnSlug } from '../../../model/server-cnnctn';
 import { valueString } from '../../../model/value';
 import { discardText, filterText, queueText, samplingText, WatchParameters, WatchRow } from '../../../model/watch';
 import { WatchView } from '../../../model/watch-view';
-import { WatchAddDialog, WatchPick } from './watch-add-dialog';
+import { WatchAddDialog, WatchConnection, WatchPick } from './watch-add-dialog';
 import { WatchParametersDialog } from './watch-parameters-dialog';
 
 //The watch list (clients spec *Watch list*, #419):  rows from any of the gateway's connections, each watched under the parameters it
@@ -54,6 +54,8 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		this.#route.data.subscribe( async data=>{
 			const pageData = <WatchPageData>data['pageData'];
 			this.subscription = undefined;//the router reuses the page from one gateway to the next
+			clearTimeout( this.#retry );
+			this.#down = false;
 			this.rows.set( [] );
 			this.gateway = pageData.gateway;
 			this.sideNav.set( pageData.routing );
@@ -62,23 +64,30 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		} );
 	}
 	ngOnDestroy(){
+		this.#destroyed = true;
 		clearTimeout( this.#retry );
 		this.subscription = undefined;
 	}
+	//still the page `gateway`'s load or add began on:  a describe out when the page was left, or moved to another gateway, would
+	//subscribe rows for a page that no longer shows them - and a subscription nothing ends (419-watch #2)
+	#isCurrent( gateway:Gateway ):boolean{ return !this.#destroyed && gateway==this.gateway; }
+	#destroyed = false;
 	//the persisted rows, each described by its connection, then watched
 	async load():Promise<void>{
 		const gateway = this.gateway;
 		this.isLoading.set( true );
 		this.error.set( undefined );
 		try{
-			this.#loadConnections();
+			this.#connectionsRead = this.#loadConnections();
 			const items = await this.#store.load( gateway.slug );
-			if( gateway!=this.gateway )
+			if( !this.#isCurrent( gateway ) )
 				return;
 			const rows = items.map( i=>WatchRow.fromJson( i ) );
 			this.rows.set( rows );
 			await this.#describe( rows );
-			this.#subscribeAll();
+			if( !this.#isCurrent( gateway ) )
+				return;
+			this.#watch( this.rows() );
 		}
 		catch( e ){
 			this.error.set( errorMessage( e, "Could not load the watch list." ) );
@@ -100,6 +109,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 			console.warn( "Could not list the connections.", e );
 		}
 	}
+	#connectionsRead = Promise.resolve();
 	cnnctnName( slug:CnnctnSlug ):string{
 		return this.connections().find( c=>c.slug==slug )?.name ?? this.#opcStore.cnnctnName( this.gateway.slug, slug );
 	}
@@ -121,10 +131,14 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		await gateway.updateErrorCodes();
 		this.#repaint();
 	}
+	//the descriptions read again, and a row that had none and now has one is watched (419-watch #5)
 	async onRefresh(){
+		const gateway = this.gateway, unwatched = this.rows().filter( r=>r.error );
 		this.isRefreshing.set( true );
 		try{
 			await this.#describe( this.rows() );
+			if( this.#isCurrent( gateway ) )
+				this.#watch( unwatched );
 		}
 		finally{
 			this.isRefreshing.set( false );
@@ -133,9 +147,9 @@ export class GatewayWatch implements OnInit, OnDestroy{
 
 	//One Subscribe per connection, the rows' parameters by position:  the first opens the owner's stream, the others add to it.  Only
 	//rows with a variable to watch;  the rest show why they have none.
-	#subscribeAll():void{
-		for( const [opc, rows] of this.#byConnection( this.rows().filter( r=>!r.error ) ) )
-			this.#send( opc, rows );
+	#watch( rows:WatchRow[] ):void{
+		for( const [opc, byOpc] of this.#byConnection( rows.filter( r=>!r.error ) ) )
+			this.#send( opc, byOpc );
 	}
 	#byConnection( rows:WatchRow[] ):Map<CnnctnSlug,WatchRow[]>{
 		const y = new Map<CnnctnSlug,WatchRow[]>();
@@ -157,9 +171,11 @@ export class GatewayWatch implements OnInit, OnDestroy{
 					//as the owner's stream carried them all
 					error: ( e:Error )=>{
 						this.subscription = undefined;
-						this.#snackbar.exception( "The watch subscription ended.", e );
+						if( !this.#down )//once an outage:  each retry while the gateway is down errors the stream again (419-watch #8)
+							this.#snackbar.exception( "The watch subscription ended.", e );
+						this.#down = true;
 						clearTimeout( this.#retry );
-						this.#retry = setTimeout( ()=>this.#subscribeAll(), Gateway.histRetryDelay );
+						this.#retry = setTimeout( ()=>this.#watch( this.rows() ), Gateway.histRetryDelay );
 					},
 					complete: ()=>{ this.subscription = undefined; }
 				} );
@@ -170,9 +186,11 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		}
 	}
 	#retry:ReturnType<typeof setTimeout>|undefined;
+	#down = false;//the stream errored, and no result has come since
 	//a push is the row's reading;  a `revised` result is what the server runs the item at - the ack's answer, or a later modify's.
 	//Only a CHANGE of code asks for its name, as the children table does.
 	#onResult( r:SubscriptionResult ):void{
+		this.#down = false;
 		const row = this.rows().find( x=>x.opc==r.opcId && x.node.equals( r.node ) );
 		if( !row )
 			return console.debug( `watch value for '${r.node}' on ${r.opcId}, which is no longer a row.` );
@@ -189,16 +207,33 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		}
 		this.#repaint();
 	}
-	//the cells bind to plain fields on the rows:  zoneless runs no pass of its own for a push
-	#repaint(){ this.#cdRef.markForCheck(); }
+	//the cells bind to plain fields on the rows:  zoneless runs no pass of its own for a push.  `shown` reads #changes, so its sort
+	//and filters follow what changed in place (419-watch #7);  it is computed once a pass, however many pushes came.
+	#repaint(){
+		this.#changes.update( n=>n+1 );
+		this.#cdRef.markForCheck();
+	}
+	#changes = signal( 0 );
 
 	//rows picked in the dialog - by id, or from the search - each with the defaults:  described, watched and saved
+	//- on a connection of the list once it is read, or, where it is refused, one the rows or the node pages know (419-watch #11)
 	async onAdd(){
-		const picks = await WatchAddDialog.open( this.#dialog, {gateway: this.gateway, connections: this.connections()} );
+		await this.#connectionsRead;
+		const connections = this.#addChoices();
+		if( !connections.length )
+			return this.#snackbar.warn( "No connection of this gateway could be read to add from." );
+		const picks = await WatchAddDialog.open( this.#dialog, {gateway: this.gateway, connections} );
 		if( picks?.length )
 			await this.add( picks );
 	}
+	#addChoices():WatchConnection[]{
+		if( this.connections().length )
+			return this.connections();
+		const slugs = new Set( [...this.rows().map( r=>r.opc ), ...this.#opcStore.cnnctnSlugs( this.gateway.slug )] );
+		return [...slugs].map( slug=>({slug, name: this.cnnctnName( slug )}) );
+	}
 	async add( picks:WatchPick[] ):Promise<void>{
+		const gateway = this.gateway;
 		const fresh:WatchRow[] = [];
 		for( const pick of picks ){
 			const key = WatchRow.keyOf( pick.opc, pick.node );
@@ -208,14 +243,14 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		if( !fresh.length )
 			return this.#snackbar.info( "Already on the list." );
 		this.rows.update( rows=>[...rows, ...fresh] );
-		this.#save();
+		this.#saving( this.#store.append( gateway.slug, fresh.map( r=>r.toJson() ) ) );
 		await this.#describe( fresh );
-		for( const [opc, rows] of this.#byConnection( fresh.filter( r=>!r.error ) ) )
-			this.#send( opc, rows );
+		if( this.#isCurrent( gateway ) )
+			this.#watch( fresh );
 	}
 	async remove( row:WatchRow ){
 		this.rows.update( rows=>rows.filter( r=>r!==row ) );
-		this.#save();
+		this.#saving( this.#store.remove( this.gateway.slug, row.opc, row.node ) );
 		if( !this.rows().some( r=>!r.error ) )
 			this.subscription = undefined;//the last watched row:  the stream ends, which unsubscribes the owner's nodes
 		else if( !row.error ){
@@ -228,7 +263,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		}
 	}
 	//the row's parameters, edited:  the node is subscribed again with them, which is how a listener changes what it asks (spec *Watch
-	//list*), and the ack's revised values replace the row's
+	//list*), and the ack's revised values replace the row's - what the item runs at until then, and after a request that fails
 	async onParameters( row:WatchRow ){
 		const parameters = await WatchParametersDialog.open( this.#dialog, {name: row.name, parameters: row.parameters} );
 		if( parameters )
@@ -236,14 +271,14 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	}
 	async setParameters( row:WatchRow, parameters:WatchParameters ):Promise<void>{
 		row.parameters = parameters;
-		row.revised = undefined;
-		this.#save();
+		this.#saving( this.#store.setParameters( this.gateway.slug, row.opc, row.node, parameters ) );
 		if( !row.error )
 			this.#send( row.opc, [row] );
 		this.#repaint();
 	}
-	#save(){
-		this.#store.save( this.gateway.slug, this.rows().map( r=>r.toJson() ) ).catch( e=>this.#snackbar.exception( "Could not save the watch list.", e ) );
+	//each change goes to the list as the server holds it, not this page's rows written whole (419-watch #9)
+	#saving( write:Promise<unknown> ){
+		write.catch( e=>this.#snackbar.exception( "Could not save the watch list.", e ) );
 	}
 
 	//The view group and settings panel, as the children table has them
@@ -264,21 +299,12 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	//the cells
 	readonly names = ( slug:CnnctnSlug )=>this.cnnctnName( slug );
 	cell( row:WatchRow, column:string ):string{ return WatchView.cellValue( row, column, this.names )?.toString() ?? ""; }
-	//the value as text:  an enumeration of the server's own by the name of its value, once resolved
-	valueText( row:WatchRow ):string{
-		const custom = row.variable?.customDataType;
-		if( custom && "enumValues" in custom && typeof row.value=="number" ){
-			const named = custom.enumValues.find( v=>v.id==row.value );
-			if( named )
-				return named.name;
-		}
-		return valueString( <any>row.value );
-	}
+	valueText( row:WatchRow ):string{ return row.valueName ?? valueString( <any>row.value ); }
 	status( row:WatchRow ):string{ return row.error ? row.error : row.sc==undefined ? "" : OpcError.text( row.sc ); }
 	statusTooltip( row:WatchRow ):string{ return row.sc ? `${scHex( row.sc )} - ${OpcError.text( row.sc )}` : ""; }
 	qualityIcon( row:WatchRow ){ return row.error ? "error" : statusIcon( row.sc ); }
 	//the revised values beside the request:  a modify the server refused keeps the item as it was, and the cell says so
-	revisedTooltip( row:WatchRow ):string{ return row.revised?.sc ? `The server refused the last change (${scHex( row.revised.sc )} ${OpcError.text( row.revised.sc )}):  the item runs as it was.` : ""; }
+	revisedTooltip( row:WatchRow ):string{ return row.revised?.sc ? `The last change failed (${scHex( row.revised.sc )} ${OpcError.text( row.revised.sc )}):  the item runs as it was.` : ""; }
 	sampling( row:WatchRow ):string{ return samplingText( row.parameters ); }
 	queue( row:WatchRow ):string{ return queueText( row.parameters ); }
 	discard( row:WatchRow ):string{ return discardText( row.parameters ); }
@@ -305,7 +331,10 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	viewCopy = computed<WatchView>( ()=>WatchView.copy( this.view() ) );
 	columns = WatchView.columns;
 	schema = WatchView.schema;
-	shown = computed<WatchRow[]>( ()=>this.view() ? this.view().apply( this.rows(), this.names ) : [] );
+	shown = computed<WatchRow[]>( ()=>{
+		this.#changes();
+		return this.view() ? this.view().apply( this.rows(), this.names ) : [];
+	} );
 	displayedColumns = computed<string[]>( ()=>[...(this.view()?.displayedColumns ?? []), 'actions'] );
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes( "status" ) );
 	get sort():Sort{ return this.view().sort[0] ?? {active: "connection", direction: "asc"}; }
