@@ -10,12 +10,10 @@ namespace Jde::Logging{
 	Φ Find( function<bool(const Logging::Entry&)> f )ι->vector<Logging::Entry>;
 
 	struct Γ MemoryLog final : ILogger{
-		MemoryLog()ι:ILogger{ jobject{{"tags",jobject{{"default", "Trace"}}}} }{}
+		MemoryLog()ι:ILogger{ "MemoryLog", jobject{{"tags",jobject{{"default", "Trace"}}}} }{}
 		α Shutdown( bool /*terminate*/, SL )ι->void override{ _entries.clear(); }
 		α Write( const Record& r )ι->void override;
 		α Write( ILogger& logger )ι->void;
-		α Name()Ι->sv override{ return "MemoryLog"; }
-		α SetMinLevel( ELogLevel /*level*/ )ι->void override{}
 		α Clear()ι->void{ _entries.clear(); }
 		α Find( StringMd5 id )ι->vector<Entry>;
 		α Find( string text )ι->vector<Entry>; //the whole class is Γ now - a dllexport member of a dllexport class is an error.

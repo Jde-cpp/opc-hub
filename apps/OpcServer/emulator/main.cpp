@@ -31,7 +31,7 @@
 		return EXIT_FAILURE;
 	using namespace Jde;
 	using namespace Jde::Opc;
-	Logging::AddTagParser( mu<Opc::UALogParser>() );
+	Logging::AddTags( Opc::TagNames );
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.Opc.PlcEmulator", "PLC emulator for the Jde OpcServer" );

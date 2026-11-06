@@ -7,53 +7,113 @@
 #define let const auto
 
 namespace Jde{
-	struct LogTarget{ sv Column; std::atomic<LogTags*(*)()ι> Find; };
+	Ω toTagName( const jvalue& tags )ι->string{//["socket","client","read"] | "sql" -> "socket.client.read" | "sql" - the TagSeparator spelling ToLogTags splits.
+		string y;
+		if( let s = tags.try_as_string(); s )
+			y = string{ (sv)*s };
+		else if( let parts = tags.try_as_array(); parts ){
+			for( let& part : *parts ){
+				if( let p = part.try_as_string(); p ){
+					if( !y.empty() )
+						y += TagSeparator;
+					y += (sv)*p;
+				}
+			}
+		}
+		return y;
+	}
+
+	//A combined tag can only be spelled as an array, and an array is no object key - so the wire carries tags as *values*,
+	//both in the instanceTagLevel answer (grouped under the level) and in the updateInstanceTagLevel argument (a record per
+	//override).  SetLevels and the config file key on the tag, so these flatten.  Lossless: the array joins back with the
+	//'.' ToLogTags splits on, and "default" passes through untouched.
+	α App::ToTagLevels( const jobject& levelTags )ι->jobject{
+		jobject y;
+		for( let& [level, tags] : levelTags ){
+			let array = tags.try_as_array();
+			if( !array )
+				continue;
+			for( let& tag : *array ){
+				if( let name = toTagName(tag); !name.empty() )
+					y[name] = jstring{ level };
+			}
+		}
+		return y;
+	}
+	α App::ToTagLevels( const jarray& tagLevels )ι->jobject{
+		jobject y;
+		for( let& entry : tagLevels ){
+			let o = entry.try_as_object();
+			if( !o )
+				continue;
+			let tags = o->if_contains( "tags" );
+			let name = tags ? toTagName( *tags ) : string{};
+			if( name.empty() )
+				continue;
+			let level = o->if_contains( "level" );
+			y[name] = level ? *level : jvalue{};//no level at all reads as null - the same "remove this override" a null does.
+		}
+		return y;
+	}
+	α App::ToTagLevelArray( const jobject& tagLevels )ι->jarray{
+		jarray y;
+		for( let& [name, level] : tagLevels ){
+			jarray tags;
+			for( let& part : Str::Split(name, TagSeparator) )
+				tags.push_back( jstring{part} );
+			jobject entry;
+			entry["tags"] = move( tags );
+			entry["level"] = level;
+			y.push_back( move(entry) );
+		}
+		return y;
+	}
+
+	struct LogTarget{ sv Column; std::atomic<LogLevels*(*)()ι> Find; };
 	std::array<LogTarget,3> _targets{{
-		{ "text", +[]()ι->LogTags*{ return Logging::FindLogger<Logging::SpdLog>(); } },
-		{ "binary", +[]()ι->LogTags*{ return Logging::FindLogger<App::ProtoLog>(); } },
+		{ "text", +[]()ι->LogLevels*{ return Logging::FindLogger<Logging::SpdLog>(); } },
+		{ "binary", +[]()ι->LogLevels*{ return Logging::FindLogger<App::ProtoLog>(); } },
 		{ "appServer", nullptr }
 	}};
-	α toJson( const LogTags& logger )ι->jobject{
+	α toJson( const LogLevels& logger )ι->jobject{
+		let& levels = logger.Effective();
 		jobject y;
-		y["default"] = ToString( logger.DefaultLevel() );
-		logger.ConfiguredTags().cvisit_all( [&](let& kv){
-			y[Jde::ToString( kv.first, false )] = Jde::ToString( kv.second );
-		});
+		y["default"] = ToString( levels.DefaultLevel() );
+		for( let& [tags, level] : levels.Levels )
+			y[ToName( tags )] = Jde::ToString( level );
 		return y;
 	}
 	//args[column] is tag->level, `default` and the break tag included; null clears an override.
-	α updateRuntime( const jobject& args, sv column, LogTags& logger )ε->void{
+	α updateRuntime( const jobject& args, sv column, LogLevels& logger )ε->void{
 		let loggerArgs = args.if_contains( column );
 		if( !loggerArgs || !loggerArgs->is_object() )
 			return;
-		bool defaultChanged{};
-		for( auto&& [key, value] : loggerArgs->as_object() ){
-			if( key==Logging::BreakTag )//process-local trap level, not a tag - and ToLogTags would fold it into None, silently overwriting the default level.
-				continue;
-			if( key=="default" ){
+		logger.Edit( [&]( TagLevels& overrides ){//one publish for the whole batch.
+			for( auto&& [key, value] : loggerArgs->as_object() ){
+				if( key==Logging::BreakTag )//process-local trap level, not a tag - and ToLogTags would fold it into None, silently overwriting the default level.
+					continue;
+				if( key=="default" ){
+					if( value.is_string() )
+						overrides.Default = ToLogLevel( value.as_string() );
+					else
+						overrides.Default.reset();//null deletes the row: back to the settings' default, which the logger remembers (install-issues #21).
+					continue;
+				}
+				let tags = ToLogTags( string{key} );
 				if( value.is_string() )
-					logger.SetDefaultLevel( ToLogLevel(value.as_string()) );
+					overrides.Levels.insert_or_assign( tags, ToLogLevel(value.as_string()) );
 				else
-					logger.ClearDefaultLevel();//null deletes the row: back to the settings' default, which the logger remembers (install-issues #21).
-				defaultChanged = true;
-				continue;
+					overrides.Levels.erase( tags );//null: the override was deleted, fall back to the level the settings gave the tag, or the default.
 			}
-			let tags = ToLogTags( string{key} );
-			if( value.is_string() )
-				logger.SetLevel( tags, ToLogLevel(value.as_string()) );
-			else
-				logger.ClearLevel( tags );//null: the override was deleted, fall back to the level the settings gave the tag, or the default.
-		}
-		if( defaultChanged )//SetLevel/ClearLevel refresh the cumulative filter themselves, SetDefaultLevel does not.
-			Logging::UpdateCumulative( Logging::Loggers() );
+		} );
 	}
-	α App::ForEachLogTarget( const function<void(sv column, LogTags* tags)>& f )ε->void{
+	α App::ForEachLogTarget( const function<void(sv column, LogLevels* tags)>& f )ε->void{
 		for( let& target : _targets ){
 			let find = target.Find.load();
 			f( target.Column, find ? find() : nullptr );
 		}
 	}
-	α App::SetLogTarget( sv column, LogTags*(*find)()ι )ι->void{
+	α App::SetLogTarget( sv column, LogLevels*(*find)()ι )ι->void{
 		let target = std::ranges::find( _targets, column, &LogTarget::Column );
 		ASSERT( target!=_targets.end() );
 		if( target!=_targets.end() )
@@ -63,14 +123,13 @@ namespace App{
 	α IApp::LoadLogSettings( SL sl )ι->void{
 		try{
 			string columns;
-			ForEachLogTarget( [&](sv column, LogTags*){ columns += Ƒ(" {}", column); } );
+			ForEachLogTarget( [&](sv column, LogLevels*){ columns += Ƒ(" {}", column); } );
 			let settings = QuerySync( Ƒ("instanceTagLevel(id:$id){{{} }}", columns), {{"id",InstancePK()}}, true, sl );
 			//instanceTagLevel groups the tags under their level; SetLevels keys on the tag.
-			ForEachLogTarget( [&](sv column, LogTags* tags){
+			ForEachLogTarget( [&](sv column, LogLevels* tags){
 				if( let levels = settings.if_contains(column); tags && levels && levels->is_object() )
 					tags->SetLevels( ToTagLevels(levels->get_object()) );
 			});
-			Logging::UpdateCumulative( Logging::Loggers() );
 			Logging::Log( ELogLevel::Trace, ELogTags::Settings, sl, "Loaded log settings." );
 		}
 		catch( Exception& e ){
@@ -88,7 +147,7 @@ namespace App{
 	//resolved to a plain socket override, wider than what was asked for, with nothing to say so.
 	α App::ValidateTagKeys( const jobject& args )ε->void{
 		let catalogue = Logging::Tags( true );//the catalogue the logSetting query answers with - a name the ui was offered must not then be refused.
-		ForEachLogTarget( [&](sv column, LogTags*){
+		ForEachLogTarget( [&](sv column, LogLevels*){
 			let group = args.if_contains( column );
 			if( !group || !group->is_object() )
 				return;
@@ -109,7 +168,7 @@ namespace App{
 namespace App{
 	α LogSettings( const QL::TableQL& ql )ι->jobject{
 		jobject y;
-		ForEachLogTarget( [&](sv column, LogTags* tags){
+		ForEachLogTarget( [&](sv column, LogLevels* tags){
 			if( ql.FindColumn(column) )
 				y[column] = tags ? toJson( *tags ) : jobject{};//asked of a logger this process does not run: an empty object, no `default`.
 		});
@@ -132,7 +191,7 @@ namespace App{
 	α LogSettingsMAwait::Update( jobject&& args )ι->void{
 		try{
 			ValidateTagKeys( args );
-			ForEachLogTarget( [&](sv column, LogTags* tags){
+			ForEachLogTarget( [&](sv column, LogLevels* tags){
 				if( tags )
 					updateRuntime( args, column, *tags );
 			});
@@ -147,7 +206,7 @@ namespace App{
 			m.Args.erase( "persist" );
 			//updateLogSetting takes tag->level; updateInstanceTagLevel takes a record per override, since a combined tag is
 			//no object key there.  Convert on the way out or the app server sees an object where it wants a list.
-			ForEachLogTarget( [&](sv column, LogTags*){
+			ForEachLogTarget( [&](sv column, LogLevels*){
 				if( auto group = m.Args.if_contains(column); group && group->is_object() )
 					*group = ToTagLevelArray( group->get_object() );
 			});

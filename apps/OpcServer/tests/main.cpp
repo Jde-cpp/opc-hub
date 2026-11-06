@@ -13,7 +13,7 @@ namespace Jde{
 	α Process::ProductName()ι->sv{ return "Tests.OpcServer"; }
 #endif
 	Ω startup( int argc, char **argv )ε->void{
-		Logging::AddTagParser( mu<Opc::UALogParser>() );
+		Logging::AddTags( Opc::TagNames );
 		Process::Startup( argc, argv, "Tests.OpcServer", "OpcServer tests", true );
 		Opc::Server::AppClient()->InitLogging( Opc::Server::AppClient() );
 		if( Settings::FindBool("/testing/embeddedAppServer").value_or(true) )//the fresh db enrolls the client cert every run: /access/trustedCertDirs anchors its dir, Opc::Server::Startup ensures the cert, and TrustVerify rescans - no pre-anchoring of the CLIENT cert here.  The other direction (client trusts each embedded server's cert) is covered by Web::Server::Start's self-anchor.

@@ -17,7 +17,7 @@ namespace Jde{
 	α Process::ProductName()ι->sv{ return "Tests.Opc.Lib"; }
 #endif
 	Ω startup( int argc, char **argv )ε->void{
-		Logging::AddTagParser( mu<Opc::UALogParser>() ); //before Startup:  the jsonnet names opc tags, and UALogParserTests asserts they resolve.
+		Logging::AddTags( Opc::TagNames ); //before Startup:  the jsonnet names opc tags, and OpcLoggerTests asserts they resolve.
 		Process::Startup( argc, argv, "Tests.Opc.Lib", "Jde.Opc uatypes unit tests", true );
 		Logging::Init();
 	}

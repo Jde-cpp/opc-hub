@@ -175,7 +175,7 @@ namespace Jde::App{
 		string result = Ƒ( "[{}.{}.{}] {} user_pk: {} {{",
 			guidToString( f.template_id() ),
 			ToString( (Jde::ELogLevel)f.level() ),
-			ToString( (ELogTags)f.tags() ),
+			ToName( (ELogTags)f.tags() ),
 			Chrono::LocalTimeMilli( Protobuf::ToTimePoint(f.time()) ),
 			//guidToString( f.file_id() ),
 			//f.line(),

@@ -53,11 +53,7 @@ namespace Jde::App::Tests{
 	//T8: the per-tag overrides, which are as process-wide as the default level and were not being put back - `ql` at Critical
 	//outlived UpdateSetsATagLevel and every later suite ran under it.  Snapshotted rather than remembered by name: any test
 	//here can set any tag, and one that is added later would otherwise leak silently.
-	Ω tagLevels( const LogTags& logger )ι->flat_map<ELogTags,ELogLevel>{
-		flat_map<ELogTags,ELogLevel> y;
-		logger.ConfiguredTags().cvisit_all( [&](let& kv){ y.emplace(kv.first, kv.second); } );
-		return y;
-	}
+	Ω tagLevels( const LogLevels& logger )ι->flat_map<ELogTags,ELogLevel>{ return logger.Effective().Levels; }
 
 	struct LogSettingsTests : ::testing::Test{
 	protected:
@@ -75,11 +71,10 @@ namespace Jde::App::Tests{
 			_text->SetDefaultLevel( _textDefault );
 			_binary->SetDefaultLevel( _binaryDefault );
 			restore( *_text, _textTags );
-			restore( *_binary, _binaryTags );
-			Logging::UpdateCumulative( Logging::Loggers() );//half of T8: SetDefaultLevel restores the logger, but the cumulative filter is computed across all of them and nothing else recomputes it, so later suites ran under whatever the last mutation left.
+			restore( *_binary, _binaryTags );//half of T8 was the cumulative filter left at the last mutation's levels:  every edit republishes it now.
 		}
 		//Both directions: a tag the test added has to go, and one it overwrote has to go back to what it was.
-		Ω restore( LogTags& logger, const flat_map<ELogTags,ELogLevel>& original )ι->void{
+		Ω restore( LogLevels& logger, const flat_map<ELogTags,ELogLevel>& original )ι->void{
 			for( let& [tag, _] : tagLevels(logger) ){
 				if( !original.contains(tag) )
 					logger.ClearLevel( tag );
@@ -132,7 +127,7 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( tags.at("test").to_number<uint>(), (uint)ELogTags::Test );
 		//a catalogue name the ui cannot save is worse than no name: it must be the spelling ToLogTags reads and the one
 		//the logSetting/instanceTagLevel answers carry, which is ToString's - bit order, not the config's reading order.
-		let composite = Jde::ToString( ELogTags::HttpServerRead, false );
+		let composite = ToName( ELogTags::HttpServerRead );
 		EXPECT_EQ( tags.at(composite).to_number<uint>(), (uint)ELogTags::HttpServerRead ) << "composite tags have to reach the UI";
 		EXPECT_EQ( ToLogTags(sv{composite}), ELogTags::HttpServerRead ) << "and have to come back";
 		for( let& [name, id] : tags )
@@ -140,7 +135,7 @@ namespace Jde::App::Tests{
 	}
 
 	//The ported round trip:  flip the default, read it back through the query, for each logger in turn - and then the gate, not just
-	//the stored field (T1).  MinLevel memoizes per tag into ExtrapolatedTags and consults _defaultLevel only on a miss, so reading
+	//the stored field (T1).  MinLevel memoizes per tag into the logger's Gate and consults the default only on a miss, so reading
 	//the value back says nothing about whether any entry is admitted differently:  that is exactly how #6 stayed green while the Log
 	//Settings page's default control was inert for every tag already logged.  Sql is configured on neither logger
 	//([`App.Tests.jsonnet`] sets app/exception/test/settings/externalLogger), so it always falls through to the default.
@@ -150,7 +145,7 @@ namespace Jde::App::Tests{
 		let setDefault = [&]( sv logger, ELogLevel level ){
 			updateLogSettings( Ƒ("{{{}: {{default: $default}}}}", logger), jobject{{"default", ToString(level)}}, app );
 		};
-		let testUpdate = [&]( sv name, LogTags& logger, ELogLevel current ){
+		let testUpdate = [&]( sv name, LogLevels& logger, ELogLevel current ){
 			let updated = current==ELogLevel::Information ? ELogLevel::Warning : ELogLevel::Information;
 			setDefault( name, updated );
 			EXPECT_EQ( defaultLevel(name), updated ) << name;
@@ -230,7 +225,7 @@ namespace Jde::App::Tests{
 		EXPECT_THROW( updateLogSettings(R"({text: {"socket.bogus": "Critical"}})", {}, app), Exception );
 		EXPECT_FALSE( logSettings({"text"}).at("text").as_object().contains("socket") ) << "the recognised half of the key was applied on its own";
 		//…and the composite spellings the catalogue does offer still go through - by ToString, which is the spelling it offers.
-		let composite = Jde::ToString( ELogTags::SocketClientRead, false );
+		let composite = ToName( ELogTags::SocketClientRead );
 		updateLogSettings( Ƒ(R"({{text: {{"{}": "Critical"}}}})", composite), {}, app );
 		EXPECT_EQ( logSettings({"text"}).at("text").as_object().at(composite).as_string(), "Critical" );
 	}
@@ -245,6 +240,42 @@ namespace Jde::App::Tests{
 		let text = logSettings( {"text"} ).at( "text" ).as_object();//held: if_contains returns a pointer into it, and the query result is a temporary.
 		let ql = text.if_contains( "ql" );
 		EXPECT_TRUE( !ql || ql->as_string()!="Trace" ) << "the good group was applied before the bad one was read";
+	}
+
+	//instanceTagLevel groups the tags under their level, since a combined tag is only spellable as an array and an array
+	//is no object key; SetLevels and the config file key on the tag.  The flip between them has to be lossless, or an
+	//instance silently drops at startup the overrides the app server just handed it.
+	TEST_F( LogSettingsTests, ToTagLevelsFlipsTheGrouping ){
+		jobject grouped;
+		grouped["Debug"] = jarray{ ToValue(ELogTags::Sql), ToValue(ELogTags::SocketClientRead) };
+		grouped["Warning"] = jarray{ jstring{"default"} };
+		let flat = ToTagLevels( grouped );
+		ASSERT_EQ( flat.size(), 3u );
+		EXPECT_EQ( flat.at("sql").as_string(), "Debug" );
+		EXPECT_EQ( flat.at("default").as_string(), "Warning" ) << "the default level rides as the 'default' tag - parseTags looks for that exact spelling";
+		auto found = false;//the combined tag joins back with the separator ToLogTags splits on, whatever order the bits came out in.
+		for( let& kv : flat )
+			found |= kv.key()!="sql" && kv.key()!="default" && ToLogTags(sv{kv.key()})==ELogTags::SocketClientRead;
+		EXPECT_TRUE( found );
+	}
+
+	//updateInstanceTagLevel takes a record per override for the same reason: `tags` is a value, so a combined tag can be
+	//an array there too.  Either spelling of it arrives - the parts, or the joined name - and both flatten the same.
+	TEST_F( LogSettingsTests, ToTagLevelsReadsTheMutationArgument ){
+		let flat = ToTagLevels( jarray{
+			jobject{ {"tags", jarray{jstring{"socket"},jstring{"client"},jstring{"read"}}}, {"level", "Debug"} },
+			jobject{ {"tags", jarray{jstring{"socket.client.write"}}}, {"level", "Error"} },
+			jobject{ {"tags", jarray{jstring{"crypto"}}}, {"level", nullptr} },
+			jobject{ {"tags", jarray{jstring{"parsing"}}} }//no level at all - the same "remove this override" a null is.
+		} );
+		ASSERT_EQ( flat.size(), 4u );
+		EXPECT_TRUE( flat.contains("socket.client.read") ) << "the parts join with the separator ToLogTags splits on";
+		EXPECT_EQ( flat.at("socket.client.write").as_string(), "Error" );
+		EXPECT_TRUE( flat.at("crypto").is_null() );
+		EXPECT_TRUE( flat.at("parsing").is_null() );
+
+		let roundTrip = ToTagLevels( ToTagLevelArray(flat) );//and back out to the wire and in again.
+		EXPECT_EQ( serialize(roundTrip), serialize(flat) );
 	}
 
 	TEST_F( LogSettingsTests, IsApplicable ){
@@ -262,7 +293,7 @@ namespace Jde::App::Tests{
 	TEST_F( LogSettingsTests, TearDownRestoresTagLevels ){
 		let text = logSettings( {"text"} ).at( "text" ).as_object();
 		EXPECT_FALSE( text.contains("ql") ) << "UpdateSetsATagLevel's override outlived its test";
-		EXPECT_FALSE( text.contains(Jde::ToString(ELogTags::SocketClientRead, false)) ) << "UpdateRejectsAnUnknownTagInACombinedKey's override outlived its test";
+		EXPECT_FALSE( text.contains(ToName(ELogTags::SocketClientRead)) ) << "UpdateRejectsAnUnknownTagInACombinedKey's override outlived its test";
 		EXPECT_EQ( text.at("app").as_string(), "Trace" ) << "…and what the settings did configure is still configured";
 		EXPECT_EQ( text.at("settings").as_string(), "Debug" );
 	}

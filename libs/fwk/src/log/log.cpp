@@ -121,7 +121,7 @@ namespace Jde{
 			install( move(list) );
 		}
 		else
-		 	Loggers().front()->SetLevels( *memory, true );//settings, not overrides: what a cleared override on the memory logger falls back to.
+		 	Loggers().front()->SetSettings( *memory );//settings, not overrides: what a cleared override on the memory logger falls back to.
 		Logging::UpdateCumulative( Loggers() );
 		AddAbseilSink();
 	}

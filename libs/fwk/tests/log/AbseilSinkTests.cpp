@@ -10,14 +10,13 @@ namespace Jde::Tests{
 	//invalid UTF-8.  A sink that called the loggers from Send re-locked that mutex on the same thread, and taking it under
 	//abseil's sink-set lock anywhere else is the reverse order; either way abseil's debug deadlock detector aborts the process.
 	struct LockingLogger final : Logging::ILogger{
-		LockingLogger()ι:ILogger{ jobject{{"tags", jobject{{"default", "Information"}}}} }{}
+		LockingLogger()ι:ILogger{ "LockingLogger", jobject{{"tags", jobject{{"default", "Information"}}}} }{}
 		α Write( const Logging::Record& r )ι->void override{
 			ul _{ _mutex };
 			if( r.Entry().Text()==Trigger )
 				ABSL_LOG(ERROR) << "absl under a logger's lock";
 		}
 		α Shutdown( bool, SL )ι->void override{}
-		α Name()Ι->sv override{ return "LockingLogger"; }
 		static constexpr sv Trigger{ "abseil sink: log under a logger's lock" };
 	private:
 		absl::Mutex _mutex;

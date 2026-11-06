@@ -12,13 +12,13 @@ namespace Jde::Tests{
 		~LogGeneralTests() override{}
 
 		static constexpr ELogTags MutatedTags{ ELogTags::Scheduler };
-		static constexpr ELogTags LibraryTag{ (ELogTags)(1ull<<LibraryTagBase) };//no library's tag parser is loaded here.
+		static constexpr ELogTags LibraryTag{ (ELogTags)(1ull<<LibraryTagBase) };//no library registers its tag names here.
 		α SetUp()->void override{ Logging::ClearMemory(); }
 		α TearDown()->void override{ Logging::GetLogger<Logging::MemoryLog>().ClearLevel( MutatedTags ); }
 
 		α ExpectConfiguredLevel()->void{
 			auto& logger = Logging::GetLogger<Logging::MemoryLog>();
-			EXPECT_EQ( logger.MinLevel(MutatedTags), logger.DefaultLevel() ) << "an earlier test left an override on " << ToString( MutatedTags, false );
+			EXPECT_EQ( logger.MinLevel(MutatedTags), logger.DefaultLevel() ) << "an earlier test left an override on " << ToName( MutatedTags );
 		}
 	};
 
@@ -27,10 +27,9 @@ namespace Jde::Tests{
 	//it, no answers from it, and nothing saying why.  The exception self-logs on destruction, but at Debug and without naming which
 	//logger is missing, which is the half that made it hard to find.
 	struct UnbuildableLogger final : Logging::ILogger{
-		UnbuildableLogger( const jobject& o )ε:ILogger{o}{ throw Exception{"this logger cannot be created"}; }
+		UnbuildableLogger( const jobject& o )ε:ILogger{"Unbuildable", o}{ throw Exception{"this logger cannot be created"}; }
 		α Write( const Logging::Record& )ι->void override{}
 		α Shutdown( bool, SL )ι->void override{}
-		α Name()Ι->sv override{ return "Unbuildable"; }
 	};
 
 	TEST_F( LogGeneralTests, AConfiguredLoggerThatCannotBeCreatedSaysSo ){
@@ -46,10 +45,9 @@ namespace Jde::Tests{
 	//replaces, unchanged, for a reader mid-walk.  A push_back into the one list moved it under such a walk - "vector iterators
 	//incompatible" in the gateway suite.  This logger takes nothing, so it stays inert for the rest of the run.
 	struct QuietLogger final : Logging::ILogger{
-		QuietLogger():ILogger{ jobject{{"tags", jobject{{"default", "None"}}}} }{}
+		QuietLogger():ILogger{ "Quiet", jobject{{"tags", jobject{{"default", "None"}}}} }{}
 		α Write( const Logging::Record& )ι->void override{}
 		α Shutdown( bool, SL )ι->void override{}
-		α Name()Ι->sv override{ return "Quiet"; }
 	};
 	TEST_F( LogGeneralTests, AddLoggerPublishesANewListAndKeepsTheOld ){
 		const auto& before = Logging::Loggers();
@@ -65,17 +63,21 @@ namespace Jde::Tests{
 	}
 
 	//ELogTags is a 64-bit space that libraries extend above fwk's own 27 bits - Jde::Opc registers 32-45 through
-	//AddTagParser - so All has to span the whole underlying type.  Spelled ~0ul it stopped at bit 31 under the windows
+	//AddTags - so All has to span the whole underlying type.  Spelled ~0ul it stopped at bit 31 under the windows
 	//ABI, where unsigned long is 32-bit, and silently dropped every extension tag from an All-based subscription.
 	static_assert( (uint)ELogTags::All==~std::underlying_type_t<ELogTags>{} );
 	static_assert( ((uint)ELogTags::All & (1ull<<32))!=0 );//the bit range that actually went missing.
 
-	//AddTagParser takes ownership as up<ITagParser>, so every parser is destroyed through a base pointer.  Without a
-	//virtual destructor on the base that is undefined behaviour, and in practice the derived destructor never runs - it
-	//goes unnoticed only because the one implementation, Jde::Opc::UALogParser, holds no state to leak.
-	static_assert( std::has_virtual_destructor_v<Logging::ITagParser> );
+	//Two libraries naming one bit would each read the other's lines under its own name, so AddTags takes a table whole or
+	//not at all, never over a bit or a name already registered.  It runs before Init, with no logger to say so:  it throws.
+	TEST_F( LogGeneralTests, AddTagsRefusesATakenBitOrName ){
+		EXPECT_THROW( Logging::AddTags(array{TagName{"library", LibraryTag}, TagName{"sqlAgain", ELogTags::Sql}}), std::logic_error );
+		EXPECT_THROW( Logging::AddTags(array{TagName{"sql", LibraryTag}}), std::logic_error );
+		EXPECT_FALSE( Logging::Tags().contains("library") ) << "the refused table's free entry was not added either";
+		EXPECT_TRUE( ToValue(LibraryTag).is_null() ) << "nor its bit named";
+	}
 
-	//config keys are split on TagSeparator and each part looked up in ELogTagStrings, so an unrecognised part is simply
+	//config keys are split on TagSeparator and each part looked up by name, so an unrecognised part is simply
 	//dropped and the key silently collapses onto a shorter one's mask - where parseTags' insert_or_assign overwrites it.
 	TEST_F( LogGeneralTests, CompositeTagNamesResolveDistinctly ){
 		let tags = []( sv name ){ return ToLogTags( name ); };//sv, not a literal - ToLogTags(sv)/ToLogTags(jvalue) are ambiguous for const char*.
@@ -93,95 +95,73 @@ namespace Jde::Tests{
 
 	//tags travel as a json *value*: one tag is the bare string, several are an array, and ToLogTags reads either back.
 	//`jvalue{tagString}` does not spell the first one - value's initializer_list constructor wins over the string one and
-	//wraps it in an array - so a single tag came back as ELogTagStrings[0], "none", whatever tag it actually was.
+	//wraps it in an array - so a single tag came back as "none", whatever tag it actually was.
 	TEST_F( LogGeneralTests, ToValueSpellsOneTagBare ){
 		EXPECT_EQ( ToValue(ELogTags::Sql).as_string(), "sql" );
-		EXPECT_EQ( ToString(ELogTags::Sql, false), "sql" );
+		EXPECT_EQ( ToName(ELogTags::Sql), "sql" );
+		EXPECT_EQ( ToName(ELogTags::SocketClientRead), "client.read.socket" ) << "the parts in bit order, joined with TagSeparator";
+		EXPECT_EQ( ToName(ELogTags::None), "none" );
+		EXPECT_EQ( ToName(LibraryTag), "" ) << "a bit no table names has no name";
 		EXPECT_EQ( ToValue(ELogTags::None).as_string(), "none" );
 		let multi = ToValue( ELogTags::SocketClientRead );
 		ASSERT_TRUE( multi.is_array() );
-		EXPECT_EQ( multi.as_array().size(), 3u );//no tag parsers here, so socket|client|read is exactly its three fwk names.
+		EXPECT_EQ( multi.as_array().size(), 3u );//no library tags here, so socket|client|read is exactly its three fwk names.
 		EXPECT_EQ( ToLogTags(multi), ELogTags::SocketClientRead );
 		EXPECT_EQ( ToLogTags(ToValue(ELogTags::Sql)), ELogTags::Sql );
 	}
 
-	//instanceTagLevel groups the tags under their level, since a combined tag is only spellable as an array and an array
-	//is no object key; SetLevels and the config file key on the tag.  The flip between them has to be lossless, or an
-	//instance silently drops at startup the overrides the app server just handed it.
-	TEST_F( LogGeneralTests, ToTagLevelsFlipsTheGrouping ){
-		jobject grouped;
-		grouped["Debug"] = jarray{ ToValue(ELogTags::Sql), ToValue(ELogTags::SocketClientRead) };
-		grouped["Warning"] = jarray{ jstring{"default"} };
-		let flat = ToTagLevels( grouped );
-		ASSERT_EQ( flat.size(), 3u );
-		EXPECT_EQ( flat.at("sql").as_string(), "Debug" );
-		EXPECT_EQ( flat.at("default").as_string(), "Warning" ) << "the default level rides as the 'default' tag - parseTags looks for that exact spelling";
-		auto found = false;//the combined tag joins back with the separator ToLogTags splits on, whatever order the bits came out in.
-		for( let& kv : flat )
-			found |= kv.key()!="sql" && kv.key()!="default" && ToLogTags(sv{kv.key()})==ELogTags::SocketClientRead;
-		EXPECT_TRUE( found );
-	}
-
-	//updateInstanceTagLevel takes a record per override for the same reason: `tags` is a value, so a combined tag can be
-	//an array there too.  Either spelling of it arrives - the parts, or the joined name - and both flatten the same.
-	TEST_F( LogGeneralTests, ToTagLevelsReadsTheMutationArgument ){
-		let flat = ToTagLevels( jarray{
-			jobject{ {"tags", jarray{jstring{"socket"},jstring{"client"},jstring{"read"}}}, {"level", "Debug"} },
-			jobject{ {"tags", jarray{jstring{"socket.client.write"}}}, {"level", "Error"} },
-			jobject{ {"tags", jarray{jstring{"crypto"}}}, {"level", nullptr} },
-			jobject{ {"tags", jarray{jstring{"parsing"}}} }//no level at all - the same "remove this override" a null is.
-		} );
-		ASSERT_EQ( flat.size(), 4u );
-		EXPECT_TRUE( flat.contains("socket.client.read") ) << "the parts join with the separator ToLogTags splits on";
-		EXPECT_EQ( flat.at("socket.client.write").as_string(), "Error" );
-		EXPECT_TRUE( flat.at("crypto").is_null() );
-		EXPECT_TRUE( flat.at("parsing").is_null() );
-
-		let roundTrip = ToTagLevels( ToTagLevelArray(flat) );//and back out to the wire and in again.
-		EXPECT_EQ( serialize(roundTrip), serialize(flat) );
-	}
-
 	// The level-resolution engine itself had no test.  fwk-max #3 was MinLevel counting split(tags).size() rather
 	// than the overlap, so the first configured entry sharing any bit won and the answer followed
-	// concurrent_flat_map iteration order; fwk-max #2 was the ctor leaving _minLevel at Information instead of the
-	// parsed default.  Every case here has a strict popcount winner;  LogTagsTieTakesTheLowerLevel has the ties.
+	// concurrent_flat_map iteration order; fwk-max #2 was the ctor leaving the default at Information instead of the
+	// parsed one.  Every case here has a strict popcount winner;  LogTagsTieTakesTheLowerLevel has the ties.
 	TEST_F( LogGeneralTests, LogTagsResolvesBestMatch ){
 		//three single-bit distractors, so the buggy 'first overlapping entry wins' has to draw the one right entry
 		//out of four to look correct.  They are safe for the lookups below: only socket|client|read is asserted
 		//against them, and there its 2-bit entry beats each of them outright.
-		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"socket.client","Debug"},{"http","Trace"},
-			{"socket","Information"},{"client","Error"},{"read","Critical"}}}} };
+		let t = TagLevels::Parse( jobject{{"default","Warning"},{"socket.client","Debug"},{"http","Trace"},
+			{"socket","Information"},{"client","Error"},{"read","Critical"}} );
 		EXPECT_EQ( t.DefaultLevel(), ELogLevel::Warning );
-		EXPECT_EQ( t.MinLevel(), ELogLevel::Warning ) << "the ctor must carry the parsed default into _minLevel";
-		EXPECT_EQ( t.MinLevel(ELogTags::Http), ELogLevel::Trace );//exact match.
-		EXPECT_EQ( t.MinLevel(ELogTags::SocketClientRead), ELogLevel::Debug ) << "socket.client's 2 shared bits must beat every 1-bit entry";
-		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Warning ) << "nothing overlaps sql - it falls back to the default";
-		EXPECT_EQ( t.MinLevel(LibraryTag | ELogTags::Read), ELogLevel::Critical ) << "a library's bit counts toward the overlap, as Opc's IotReadTag";
-		EXPECT_TRUE( t.ShouldLog(ELogLevel::Debug, ELogTags::SocketClientRead) );
-		EXPECT_FALSE( t.ShouldLog(ELogLevel::Trace, ELogTags::SocketClientRead) );
+		EXPECT_EQ( t.Resolve(ELogTags::Http), ELogLevel::Trace );//exact match.
+		EXPECT_EQ( t.Resolve(ELogTags::SocketClientRead), ELogLevel::Debug ) << "socket.client, 2 bits the line carries, must beat every 1-bit entry";
+		EXPECT_EQ( t.Resolve(ELogTags::Sql), ELogLevel::Warning ) << "nothing configured is part of sql - it falls back to the default";
+		EXPECT_EQ( t.Resolve(LibraryTag | ELogTags::Read), ELogLevel::Critical ) << "read is all there beside a library's bit, as in Opc's IotReadTag";
+		Logging::Gate gate{ "test", t };
+		EXPECT_TRUE( gate.ShouldLog(ELogLevel::Debug, ELogTags::SocketClientRead) );
+		EXPECT_FALSE( gate.ShouldLog(ELogLevel::Trace, ELogTags::SocketClientRead) );
 	}
 
-	//Configured tags sharing as many bits with a line tie, and the lower level wins, as combining loggers does - not
-	//whichever concurrent_flat_map visits first.  Each case has distractors above the winner, so that order would miss it.
+	//Entries the line carries all of, with as many bits each, tie, and the lower level wins, as combining loggers does - not
+	//whichever entry comes first.  Each case has distractors above the winner, so that order would miss it.
 	TEST_F( LogGeneralTests, LogTagsTieTakesTheLowerLevel ){
-		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"http","Critical"},{"client","Trace"},{"read","Error"}}}} };
-		EXPECT_EQ( t.MinLevel(ELogTags::HttpClientRead), ELogLevel::Trace );
-		LogTags silenced{ jobject{{"tags", jobject{{"default","Warning"},{"http","None"},{"client","Error"},{"read","Critical"}}}} };
-		EXPECT_EQ( silenced.MinLevel(ELogTags::HttpClientRead), ELogLevel::Error ) << "None yields to a real level, as in the cumulative";
-		LogTags gateway{ jobject{{"tags", jobject{{"default","Information"},{"socket.client.read","Information"},{"http.client.read","Information"}}}} };
-		gateway.SetLevel( LibraryTag, ELogLevel::Trace );//the gateway's opc: "Trace" against its *.read levels, for IotReadTag.
-		EXPECT_EQ( gateway.MinLevel(LibraryTag | ELogTags::Read), ELogLevel::Trace );
+		EXPECT_EQ( TagLevels::Parse(jobject{{"default","Warning"},{"http","Critical"},{"client","Trace"},{"read","Error"}}).Resolve(ELogTags::HttpClientRead), ELogLevel::Trace );
+		EXPECT_EQ( TagLevels::Parse(jobject{{"default","Warning"},{"http","None"},{"client","Error"},{"read","Critical"}}).Resolve(ELogTags::HttpClientRead), ELogLevel::Error ) << "None yields to a real level, as in the cumulative";
+		auto gateway = TagLevels::Parse( jobject{{"default","Information"},{"socket.client.read","Information"},{"http.client.read","Information"}} );
+		gateway.Levels.insert_or_assign( LibraryTag, ELogLevel::Trace );//the gateway's opc: "Trace" against its *.read levels, for IotReadTag.
+		EXPECT_EQ( gateway.Resolve(LibraryTag | ELogTags::Read), ELogLevel::Trace );
 		let sql = jobject{ {"sql", "Error"} };
 		Logging::Threshold file{ "test", &sql, jobject{{"default", "Warning"}, {"exception", "Trace"}} };
 		EXPECT_TRUE( file.ShouldLog(ELogLevel::Debug, ELogTags::Sql | ELogTags::Exception) ) << "an exception keeps its source whatever its other tags' levels";
 	}
 
-	// MinLevel memoizes its answer into ExtrapolatedTags, so both mutators have to drop the memo as well as the
-	// configuration - otherwise a cleared or re-set tag keeps resolving to whatever it was when first asked.
+	//reviews-issue/logTags.md #8, ruled 2026-11-06:  an entry applies to a line only when the line carries every tag in it.  Counting
+	//any shared bit, http.client.read put opc's read lines at Trace, sharing only `read`, and socket.client.read.subscription
+	//turned on every plain socket.client.read line, its 3 shared bits beating any 1-bit entry.
+	TEST_F( LogGeneralTests, ACombinedTagAppliesOnlyToLinesCarryingAllOfIt ){
+		auto levels = TagLevels::Parse( jobject{{"default","Information"},{"http.client.read","Trace"},{"socket.client.read.subscription","Trace"},{"read","Debug"}} );
+		EXPECT_EQ( levels.Resolve(LibraryTag | ELogTags::Read), ELogLevel::Debug ) << "read is all there;  http.client.read is not";
+		EXPECT_EQ( levels.Resolve(ELogTags::SocketClientRead), ELogLevel::Debug ) << "the subscription set is not all there";
+		EXPECT_EQ( levels.Resolve(ELogTags::SocketClientReadSub), ELogLevel::Trace ) << "and is when it is";
+		EXPECT_EQ( levels.Resolve(ELogTags::HttpClientRead | ELogTags::Sessions), ELogLevel::Trace ) << "a line with more than an entry still takes it, the most bits winning";
+		levels.Levels.erase( ELogTags::Read );
+		EXPECT_EQ( levels.Resolve(LibraryTag | ELogTags::Read), ELogLevel::Information ) << "nothing all there:  the default";
+	}
+
+	// MinLevel memoizes into the logger's Gate, so every edit has to publish a new one - otherwise a cleared or re-set tag
+	// keeps resolving to whatever it was when first asked.
 	TEST_F( LogGeneralTests, LogTagsMutatorsDropTheMemo ){
-		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"client","Error"}}}} };
-		//an override, not a configured level: ClearLevel puts a configured level back (install-issues #21), and the point here
-		//is the best match moving to the next entry once the cleared one is gone.
+		LogLevels t{ "test", jobject{{"tags", jobject{{"default","Warning"},{"client","Error"}}}} };
+		//an override, not a configured level: ClearLevel lets a configured level show through (install-issues #21), and the
+		//point here is the best match moving to the next entry once the cleared one is gone.
 		t.SetLevel( ToLogTags(sv{"socket.client"}), ELogLevel::Debug );
 		ASSERT_EQ( t.MinLevel(ELogTags::SocketClientRead), ELogLevel::Debug );//memoizes socket|client|read -> Debug
 		ASSERT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Warning );//and sql -> the default
@@ -194,11 +174,39 @@ namespace Jde::Tests{
 		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Trace ) << "the memoized default survived SetLevels";
 	}
 
+	//reviews-issue/logTags.md #2:  each edit reset a logger's memo while lines resolved into it on other threads, so an
+	//answer computed from the old levels could land in the fresh memo and stay there.  A Gate is never edited:  a change
+	//publishes another, and a reader still in the old one gets the old answers, consistently.
+	TEST_F( LogGeneralTests, AnEditPublishesANewGate ){
+		LogLevels t{ "test", jobject{{"tags", jobject{{"default","Warning"}}}} };
+		let& before = t.Levels();
+		ASSERT_EQ( before.MinLevel(ELogTags::Sql), ELogLevel::Warning );//memoized in the first Gate.
+		t.SetLevel( ELogTags::Sql, ELogLevel::Debug );
+		EXPECT_NE( &t.Levels(), &before );
+		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Debug );
+		EXPECT_EQ( before.MinLevel(ELogTags::Sql), ELogLevel::Warning ) << "the replaced Gate is unchanged, memo and all";
+		let& current = t.Levels();
+		t.SetLevel( ELogTags::Sql, ELogLevel::Debug );
+		EXPECT_EQ( &t.Levels(), &current ) << "an edit that moves nothing publishes nothing";
+	}
+
+	//#3:  SetLevel and ClearLevel republished the cumulative filter and SetDefaultLevel did not, so a default edited at run
+	//time reached a logger's own Gate but not the test every line passes first.  Every edit publishes both now.
+	TEST_F( LogGeneralTests, ADefaultEditReachesTheCumulative ){
+		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
+		ExpectConfiguredLevel();
+		ASSERT_FALSE( Logging::ShouldLog(ELogLevel::Trace, MutatedTags) ) << "the config's lowest default is the memory logger's Debug";
+		memory.SetDefaultLevel( ELogLevel::Trace );
+		EXPECT_TRUE( Logging::ShouldLog(ELogLevel::Trace, MutatedTags) );
+		memory.ClearDefaultLevel();
+		EXPECT_FALSE( Logging::ShouldLog(ELogLevel::Trace, MutatedTags) ) << "cleared back to the settings' default";
+	}
+
 	// install-issues #21: ClearLevel erased the tag outright, so an override on a tag the settings had configured fell to the
 	// default instead of back to the configured level - and stayed there until a restart, since nothing at runtime knew what
-	// the settings had said.  The settings' levels are remembered apart from the overrides that sit on them.
+	// the settings had said.  The settings' levels are kept apart from the overrides that sit on them.
 	TEST_F( LogGeneralTests, ClearLevelRestoresTheSettingsLevel ){
-		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"sql","Trace"}}}} };
+		LogLevels t{ "test", jobject{{"tags", jobject{{"default","Warning"},{"sql","Trace"}}}} };
 		t.SetLevel( ELogTags::Sql, ELogLevel::Critical );
 		ASSERT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Critical );
 		t.ClearLevel( ELogTags::Sql );
@@ -221,52 +229,63 @@ namespace Jde::Tests{
 		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Trace ) << "…so clearing one reaches the settings underneath, not the row";
 		EXPECT_EQ( t.DefaultLevel(), ELogLevel::Warning );
 
-		t.SetLevels( jobject{{"sql","Error"}}, true );//…where a map given as settings is what a later clear falls back to.
+		t.SetSettings( jobject{{"sql","Error"}} );//…where a map given as settings is what a later clear falls back to.
 		t.SetLevel( ELogTags::Sql, ELogLevel::NoLog );
 		t.ClearLevel( ELogTags::Sql );
 		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Error );
+		EXPECT_TRUE( t.Overrides()==TagLevels{} ) << "every override cleared";
 	}
 
 	// Logging::min is not std::min: NoLog is -1, below every real level, so a plain minimum would let one logger
 	// that wants nothing silence every other logger through the cumulative.
 	TEST_F( LogGeneralTests, CumulativeNoLogYieldsToARealLevel ){
-		LogTags quiet{ ELogLevel::NoLog };
-		quiet.SetLevel( ELogTags::Sql, ELogLevel::NoLog );
-		LogTags loud{ jobject{{"tags", jobject{{"default","Debug"},{"sql","Debug"}}}} };
-		quiet += loud;
+		TagLevels quiet{ ELogLevel::NoLog, {{ELogTags::Sql, ELogLevel::NoLog}} };
+		quiet += TagLevels::Parse( jobject{{"default","Debug"},{"sql","Debug"}} );
 		EXPECT_EQ( quiet.DefaultLevel(), ELogLevel::Debug );
-		EXPECT_EQ( quiet.MinLevel(), ELogLevel::Debug );
-		EXPECT_EQ( quiet.MinLevel(ELogTags::Sql), ELogLevel::Debug ) << "a configured NoLog must yield to the other side's level too";
-		EXPECT_TRUE( quiet.ShouldLog(ELogLevel::Debug, ELogTags::Sql) );
+		EXPECT_EQ( quiet.Resolve(ELogTags::Sql), ELogLevel::Debug ) << "a configured NoLog must yield to the other side's level too";
+		EXPECT_TRUE( Logging::Gate("test", quiet).ShouldLog(ELogLevel::Debug, ELogTags::Sql) );
 	}
 
 	//"None", the off value of every shipped config's externalLogger and of the UI, parses to 6, the wire's LogLevelNone - an
 	//index past Critical, not the -1 above, which no config produces.  It silences its tag by lying past Critical, and yields
 	//in the cumulative because the minimum of it and a real level is that level.
 	TEST_F( LogGeneralTests, ConfiguredNoneSilencesATagAndYieldsInTheCumulative ){
-		LogTags quiet{ jobject{{"tags", jobject{{"default","Debug"},{"externalLogger","None"}}}} };
-		EXPECT_FALSE( quiet.ShouldLog(ELogLevel::Critical, ELogTags::ExternalLogger) ) << "None is off, whatever it parses to";
-		EXPECT_EQ( Jde::ToString(quiet.MinLevel(ELogTags::ExternalLogger)), "None" );
-		EXPECT_TRUE( quiet.ShouldLog(ELogLevel::Debug, ELogTags::Sql) ) << "and the other tags are untouched";
-		LogTags loud{ jobject{{"tags", jobject{{"default","Debug"},{"externalLogger","Debug"}}}} };
-		quiet += loud;
-		EXPECT_EQ( quiet.MinLevel(ELogTags::ExternalLogger), ELogLevel::Debug ) << "a configured None yields to the other logger's level";
+		let quiet = TagLevels::Parse( jobject{{"default","Debug"},{"externalLogger","None"}} );
+		Logging::Gate gate{ "test", quiet };
+		EXPECT_FALSE( gate.ShouldLog(ELogLevel::Critical, ELogTags::ExternalLogger) ) << "None is off, whatever it parses to";
+		EXPECT_EQ( Jde::ToString(gate.MinLevel(ELogTags::ExternalLogger)), "None" );
+		EXPECT_TRUE( gate.ShouldLog(ELogLevel::Debug, ELogTags::Sql) ) << "and the other tags are untouched";
+		auto combined = quiet;
+		combined += TagLevels::Parse( jobject{{"default","Debug"},{"externalLogger","Debug"}} );
+		EXPECT_EQ( combined.Resolve(ELogTags::ExternalLogger), ELogLevel::Debug ) << "a configured None yields to the other logger's level";
 	}
 
-	// opcserver-refactor-review #5:  UpdateCumulative keeps every copy it publishes, so it publishes only one that differs from
-	// the current - and what MinLevel memoizes is no difference, or a copy that had answered a lookup would never match.
+	//#6:  no tag set resolves below the default or the lowest configured level, so a line under that is refused before any lookup.
+	TEST_F( LogGeneralTests, AGateRefusesBelowItsFloor ){
+		EXPECT_EQ( Logging::Gate("test", TagLevels::Parse(jobject{{"default","Warning"},{"sql","Debug"},{"http","None"}})).Floor(), ELogLevel::Debug ) << "None lies past Critical, and lowers nothing";
+		EXPECT_EQ( Logging::Gate("test", TagLevels::Parse(jobject{{"default","Information"}})).Floor(), ELogLevel::Information );
+		Logging::Gate gate{ "test", TagLevels{ELogLevel::NoLog, {{ELogTags::Sql, ELogLevel::Trace}}} };
+		EXPECT_EQ( gate.Floor(), ELogLevel::Trace ) << "NoLog yields, as in the cumulative";
+		EXPECT_TRUE( gate.ShouldLog(ELogLevel::Trace, ELogTags::Sql) );
+		EXPECT_FALSE( gate.ShouldLog(ELogLevel::Critical, ELogTags::App) ) << "the default is still NoLog";
+	}
+
+	// opcserver-refactor-review #5:  UpdateCumulative keeps every Gate it publishes, so it publishes only one whose levels differ
+	// from the current - and what MinLevel memoizes is no difference, or a Gate that had answered a lookup would never match.
 	TEST_F( LogGeneralTests, LogTagsEqualityIgnoresTheMemo ){
 		const jobject settings{{"tags", jobject{{"default","Warning"},{"sql","Trace"}}}};
-		LogTags a{ settings }, b{ settings };
-		ASSERT_EQ( a.MinLevel(ELogTags::SocketClientRead), ELogLevel::Warning );//memoized in a, not in b.
-		EXPECT_TRUE( a==b ) << "a memoized lookup made equal levels unequal";
+		LogLevels a{ "a", settings }, b{ "b", settings };
+		ASSERT_EQ( a.MinLevel(ELogTags::SocketClientRead), ELogLevel::Warning );//memoized in a's Gate, not in b's.
+		EXPECT_TRUE( a.Effective()==b.Effective() ) << "a memoized lookup made equal levels unequal";
 		b.SetLevel( ELogTags::Sql, ELogLevel::Error );
-		EXPECT_FALSE( a==b );
+		EXPECT_FALSE( a.Effective()==b.Effective() );
 		b.ClearLevel( ELogTags::Sql );
-		EXPECT_TRUE( a==b ) << "cleared back to the settings' level";
+		EXPECT_TRUE( a.Effective()==b.Effective() ) << "cleared back to the settings' level";
 		b.SetDefaultLevel( ELogLevel::Debug );
-		EXPECT_FALSE( a==b );
+		EXPECT_FALSE( a.Effective()==b.Effective() );
 	}
+	//#5:  the Gate every line passes, and each logger's, is called directly:  nothing on the level path is virtual.
+	static_assert( !std::is_polymorphic_v<LogLevels> && !std::is_polymorphic_v<Logging::Gate> );
 
 	// fwk-max #16 was the UserPK-taking variadic ctor delegating to the overload without one, so every entry built
 	// for a user came out anonymous.  fwk-review2 cites a regression test named exactly this for it; the test was
@@ -294,7 +313,7 @@ namespace Jde::Tests{
 	// The level asked for has to be one the tag does not already have, or the test proves nothing: the old version
 	// set Debug, which /logging/memory/tags/default already grants, so its assertion passed with the SetLevel line
 	// deleted.  Here Debug is established explicitly (so no prior test's leftover level can decide the outcome),
-	// the DBG both proves that level and memoizes it into the logger's ExtrapolatedTags, and only then is the tag
+	// the DBG both proves that level and memoizes it into the logger's Gate, and only then is the tag
 	// raised to Trace - which fails unless SetLevel reaches the cumulative (it short-circuits the TRACE before any
 	// logger is consulted) *and* drops that memo.
 	//A Threshold's settings go over its defaults, a logger's `tags` shape (ProtoLog's file and function, LogStack's stack).

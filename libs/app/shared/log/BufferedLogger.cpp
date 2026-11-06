@@ -5,8 +5,8 @@
 #define let const auto
 
 namespace Jde::App{
-	BufferedLogger::BufferedLogger( const jobject& settings, uint maxSize )ε:
-		ILogger{ settings },
+	BufferedLogger::BufferedLogger( sv name, const jobject& settings, uint maxSize )ε:
+		ILogger{ name, settings },
 		_delay{ std::max<Duration>(Json::FindDuration(settings, "delay", ELogLevel::Error).value_or(1min), Duration::zero()) },//negative: the timer completes inline, under the caller's lock.
 		_maxSize{ maxSize }{
 		Executor();//locks up if started in a round.

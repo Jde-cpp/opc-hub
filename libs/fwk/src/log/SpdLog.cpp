@@ -128,7 +128,7 @@ namespace Jde::Logging{
 	}
 
 	SpdLog::SpdLog( const jobject& settings )ι:
-		ILogger{ settings },
+		ILogger{ "SpdLog", settings },
 		_logger{ logger(settings) }{
 		INFOT( ELogTags::Settings, "{} minLevel='{}' default='{}' flushOn='{}' {}", Name(),
 			Jde::ToString( (ELogLevel)_logger.level() ),
