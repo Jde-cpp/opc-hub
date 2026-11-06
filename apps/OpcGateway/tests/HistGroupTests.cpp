@@ -452,7 +452,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//turn that takes the node, ahead of the run_iterate that would read its create's answer.
 	Ω holdOnceTaken( sp<UAClient> client, HistGroupPK groupId, NodeId node, double sampling, sp<std::atomic<EHold>> state, steady_clock::time_point until )ι->void{
 		client->PostStrand( [=]()mutable{
-			if( auto host = HistHost::Instance().Find(groupId); host && host->ItemParameters(node, client->PublishingInterval()).SamplingInterval==sampling ){
+			if( auto host = HistHost::Instance().Find(groupId); host && host->ItemParameters(client->Slug(), node, client->PublishingInterval()).SamplingInterval==sampling ){
 				if( !client->CreatedSubscriptionResponse() )
 					*state = EHold::Unstaged;
 				else{

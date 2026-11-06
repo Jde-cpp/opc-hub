@@ -9,6 +9,7 @@
 #include "hist/HistSubscriber.h"
 #include "ql/GatewayQLAwait.h"
 #include <jde/opc/proto/opc.Common.h>
+#include "types/proto/opc.FromClient.h"
 #include "types/proto/opc.FromServer.h"
 
 #define let const auto
@@ -42,6 +43,18 @@ namespace Jde::Opc::Gateway{
 
 	α GatewaySocketSession::SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value )ι->void{
 		return Write( MessageTrans(FromServer::ToProto(opcNK, node, value, 0), 0) );
+	}
+	α GatewaySocketSession::ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration )Ι->MonitoringParameters{
+		lg _{ _parametersMutex };
+		if( auto p = _parameters.find(opcNK); p!=_parameters.end() ){
+			if( auto pNode = p->second.find(node); pNode!=p->second.end() )
+				return pNode->second;
+		}
+		return {};
+	}
+	α GatewaySocketSession::ItemModified( const ServerCnnctnNK& opcNK, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void{
+		LogWrite( Ƒ("MonitoredItemModified: opcId: '{}', node: {}, sampling: {}, queue: {}", opcNK, node.ToString(), revisedSamplingInterval, revisedQueueSize), 0 );
+		Write( FromServer::ItemModifiedTrans(opcNK, node, revisedSamplingInterval, revisedQueueSize) );
 	}
 
 	α GatewaySocketSession::SetSessionId( str strSessionId, RequestId requestId )->Sessions::UpsertAwait::Task{
@@ -138,6 +151,13 @@ namespace Jde::Opc::Gateway{
 				successes.emplace( node );
 				remaining.erase( node );
 			}
+			if( successes.size() ){
+				lg _{ _parametersMutex };
+				if( auto p = _parameters.find(opcId); p!=_parameters.end() ){
+					for( let& node : successes )
+						p->second.erase( node );
+				}
+			}
 			if( anyClient )
 				Write( FromServer::UnsubscribeTrans(requestId, move(successes), move(remaining)) );
 			else
@@ -178,7 +198,17 @@ namespace Jde::Opc::Gateway{
 				break;
 			case kSubscribe:{
 				auto& s = *m.mutable_subscribe();
-				Subscribe( move(*s.mutable_opc_id()), ProtoUtils::ToNodeIds(move(*s.mutable_nodes())), requestId );
+				flat_set<NodeId> nodes;
+				{//the parameters first:  the create asks ItemParameters on the strand, which this message's subscribe may reach before this loop ends.
+					lg _{ _parametersMutex };
+					auto& parameters = _parameters[s.opc_id()];
+					for( int i=0; i<s.nodes_size(); ++i ){
+						auto node = ProtoUtils::ToNodeId( s.nodes(i) );
+						parameters.insert_or_assign( node, i<s.parameters_size() ? FromClientUtils::ToParameters(s.parameters(i)) : MonitoringParameters{} );
+						nodes.emplace( move(node) );
+					}
+				}
+				Subscribe( move(*s.mutable_opc_id()), move(nodes), requestId );
 				break;}
 			case kQuery:
 				GraphQL( move(*m.mutable_query()), requestId );

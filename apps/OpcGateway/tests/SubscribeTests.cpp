@@ -12,6 +12,7 @@
 #include "../src/types/UAClientException.h"
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
+#include "utils/Pumps.h"
 #include "../src/types/proto/opc.FromServer.h"
 #include <jde/opc/proto/opc.Common.h>
 #include <jde/opc/uatypes/DateTime.h>
@@ -51,6 +52,28 @@ namespace Jde::Opc::Gateway::Tests{
 		private:
 			SubscribeTests* _tests;
 		};
+		//A watch list's listener (#418):  the last value pushed, as a number, the pushes counted, and the MonitoredItemModified
+		//pushes with the last one's revised values.
+		struct WatchListener final : IListener{
+			α OnData( string, NodeId nodeId, const Proto::Value& value )ι->void override{
+				try{
+					Value = Opc::Value{ ProtoUtils::ToVariant(value) }.AsNumber<double>();
+				}
+				catch( const std::exception& e ){
+					WARN( "OnData: could not convert value for {}: {}", nodeId.ToString(), e.what() );
+				}
+				++Pushes;
+			}
+			α OnModified( const FromServer::MonitoredItemModified& modified )ι->void override{
+				lg _{ Mutex };
+				RevisedSamplingInterval = modified.revised_sampling_interval();
+				RevisedQueueSize = modified.revised_queue_size();
+				++Modified;
+			}
+			atomic<double> Value{};
+			atomic<uint> Pushes{}, Modified{};
+			mutex Mutex; double RevisedSamplingInterval{}; uint32 RevisedQueueSize{};
+		};
 		α SetUp()ι->void{
 			_listener = ms<Listener>( this );
 		}
@@ -63,6 +86,11 @@ namespace Jde::Opc::Gateway::Tests{
 		α SubscribeAndPush( const NodeId& nodeId, Duration timeout=6s )ε->void;//subscribe and wait for the initial push: the subscription is live when this returns.
 		α WriteAndPush( const NodeId& nodeId, Duration timeout=10s )ε->uint;//write the next value through the gateway, check what it echoes back, and wait for the data change it must trigger; returns the value written.
 		α UnsubscribeAndDrain( const NodeId& nodeId, uint remaining=0, Duration timeout=10s )ε->void;//unsubscribe and wait until only `remaining` items are left on the client - the delete runs a DeleteMonitoring timer behind the ack.
+		//The watch tests' (#418):  a socket subscribe with the node's parameters, whose ack has to say Good;  a Double written
+		//through the gateway, as WriteAndPush writes;  and the wait for a listener to hold a value.
+		α Watch( const NodeId& nodeId, const MonitoringParameters& parameters, sp<WatchListener> listener )ε->FromServer::SubscriptionAck;
+		α WriteDouble( const NodeId& nodeId, double value )ε->void;
+		Ω WaitValue( const sp<WatchListener>& listener, double value, Duration timeout=5s )ε->void;
 		atomic<uint> _value;
 		atomic<bool> _hasSource, _hasServer;//the last push's timestamps
 		sp<Listener> _listener;
@@ -106,6 +134,23 @@ namespace Jde::Opc::Gateway::Tests{
 		THROW_IF( ack.successes_size()!=1, "the unsubscribe dropped {} node(s), not the 1 it was given", ack.successes_size() );
 		Stopwatch sw;//the item goes a DeleteMonitoring timer (1s) after the ack, so poll rather than fixed-sleep.
 		while( _client->MonitoredNodes().Count()!=remaining )
+			sw.CheckTimeout( timeout, 1ms );
+	}
+	α SubscribeTests::Watch( const NodeId& nodeId, const MonitoringParameters& parameters, sp<WatchListener> listener )ε->FromServer::SubscriptionAck{
+		auto ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( Socket().Subscribe(OpcServerSlug, {nodeId}, {parameters}, move(listener)) );
+		THROW_IF( ack.results_size()!=1, "the ack answered {} node(s), not the 1 asked", ack.results_size() );
+		THROW_IF( ack.results(0).status_code(), "'{}' refused the item:  {}", nodeId.ToString(), UAException::Message(ack.results(0).status_code()) );
+		return ack;
+	}
+	α SubscribeTests::WriteDouble( const NodeId& nodeId, double value )ε->void{
+		string q = "updateVariable( opc: $opc, id: $id, value: $value ){ value }";
+		const jobject vars{ {"opc", OpcServerSlug}, {"id", nodeId.ToJson()}, {"value", value} };
+		let json = Socket().QuerySync( move(q), vars );
+		THROW_IF( json.as_object().at("value").to_number<double>()!=value, "the write echoed back {}, not the {} it was given", serialize(json), value );
+	}
+	α SubscribeTests::WaitValue( const sp<WatchListener>& listener, double value, Duration timeout )ε->void{
+		Stopwatch sw;
+		while( listener->Value!=value )
 			sw.CheckTimeout( timeout, 1ms );
 	}
 	TEST_F( SubscribeTests, Basic ){
@@ -410,12 +455,16 @@ namespace Jde::Opc::Gateway::Tests{
 		α ConnectionRestored( const ServerCnnctnNK& opcId, const flat_set<NodeId>& nodes )ι->void override{
 			lg _{ Mutex }; RestoredOpc = opcId; RestoredNodes = nodes; ++Restored;
 		}
-		α ItemParameters( const NodeId&, Duration )Ι->MonitoringParameters override{ return Parameters; }
+		α ItemParameters( const ServerCnnctnNK&, const NodeId&, Duration )Ι->MonitoringParameters override{ return Parameters; }
 		α RunsAt( Duration publishingInterval )ι->void override{ RanAt = publishingInterval; }
+		α ItemModified( const ServerCnnctnNK&, const NodeId&, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void override{
+			RevisedSamplingInterval = revisedSamplingInterval; RevisedQueueSize = revisedQueueSize; ++Modified;
+		}
 		α to_string()Ι->string override{ return "SubscribeTests.StateListener"; }
 		MonitoringParameters Parameters;
 		std::atomic<Duration> RanAt{};
-		atomic<uint> PushesWhileLost, PushesAfterRestore, Lost, Restored;
+		atomic<uint> PushesWhileLost, PushesAfterRestore, Lost, Restored, Modified;
+		atomic<double> RevisedSamplingInterval{}; atomic<uint32> RevisedQueueSize{};
 		mutex Mutex; string LostOpc, RestoredOpc; flat_set<NodeId> LostNodes, RestoredNodes; TimePoint LostAt;
 	};
 	Ω drainListener( const sp<UAClient>& client, const sp<StateListener>& listener, uint remaining )->void{//off the client, and its item gone - the DeleteMonitoring timer runs a second behind the unsubscribe.
@@ -599,6 +648,105 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( BlockAwait(DataChangeAwait{{Intensity}, joiner, _client}) );
 		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "the joiner made no item";
 		EXPECT_EQ( joiner->RanAt.load(), 2s );
+	}
+
+	//#418 (spec *Watch list*):  a Subscribe's per-node parameters reach the item through the session's ItemParameters.  An absolute
+	//deadband on pumpManual's rpm, a Double:  the server suppresses a change under it and reports one over it, each measured from
+	//the last value it reported.
+	TEST_F( SubscribeTests, AnAbsoluteDeadbandFiltersTheStream ){
+		let before = _client->MonitoredNodes().Count();
+		const NodeId rpm{ PumpsNs(), RpmManual };
+		ASSERT_NO_THROW( WriteDouble(rpm, 1000) );
+		auto listener = ms<WatchListener>();
+		ASSERT_NO_THROW( Watch(rpm, {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=10}}, listener) );
+		ASSERT_NO_THROW( WaitValue(listener, 1000) );
+		std::this_thread::sleep_for( 500ms );//the item's first notification lands behind the read's push.
+		let pushes = listener->Pushes.load();
+		ASSERT_NO_THROW( WriteDouble(rpm, 1005) );
+		std::this_thread::sleep_for( 1s );//a sampling interval and a publish, well past when a reported change arrives.
+		EXPECT_EQ( listener->Pushes.load(), pushes ) << "a change under the deadband was pushed";
+		ASSERT_NO_THROW( WriteDouble(rpm, 1020) );
+		ASSERT_NO_THROW( WaitValue(listener, 1020) ) << "a change over the deadband wasn't pushed";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(rpm, before) );
+	}
+	//A percent deadband is the server's to apply against the node's EURange, which open62541 does under UA_ENABLE_DA:  pump3's is
+	//0-3000 (pumps.NodeSet2.xml), so 1 % is 30 rpm.
+	TEST_F( SubscribeTests, APercentDeadbandFiltersAgainstTheRange ){
+		let before = _client->MonitoredNodes().Count();
+		const NodeId rpm{ PumpsNs(), Rpm3 };
+		ASSERT_NO_THROW( WriteDouble(rpm, 1000) );
+		auto listener = ms<WatchListener>();
+		ASSERT_NO_THROW( Watch(rpm, {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_PERCENT, .DeadbandValue=1}}, listener) );
+		ASSERT_NO_THROW( WaitValue(listener, 1000) );
+		std::this_thread::sleep_for( 500ms );
+		let pushes = listener->Pushes.load();
+		ASSERT_NO_THROW( WriteDouble(rpm, 1020) );
+		std::this_thread::sleep_for( 1s );
+		EXPECT_EQ( listener->Pushes.load(), pushes ) << "a change under 1 % of the range was pushed";
+		ASSERT_NO_THROW( WriteDouble(rpm, 1040) );
+		ASSERT_NO_THROW( WaitValue(listener, 1040) ) << "a change over 1 % of the range wasn't pushed";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(rpm, before) );
+	}
+	//Two listeners on one node share its item, which takes the strictest of what they ask:  the first, through the socket, asks
+	//1 s and a queue of 2, which its ack carries revised;  a second asking 250 ms modifies the item, and every listener hears what
+	//the server revised it to - the first by the MonitoredItemModified push, the joiner by ItemModified, since its ack answered
+	//first - and the second's unsubscribe restores the first's rate.
+	TEST_F( SubscribeTests, AJoinModifiesTheSharedItemAndALeaveRestoresIt ){
+		let before = _client->MonitoredNodes().Count();
+		auto watcher = ms<WatchListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = Watch(Intensity, {.SamplingInterval=1000.0, .QueueSize=2}, watcher) );
+		EXPECT_EQ( ack.results(0).revised_sampling_interval(), 1000.0 ) << "the ack's revised sampling interval";
+		EXPECT_EQ( ack.results(0).revised_queue_size(), 2u ) << "the ack's revised queue size";
+		auto joiner = ms<StateListener>();
+		joiner->Parameters = { .SamplingInterval=250.0, .QueueSize=1 };
+		let joined = BlockAwait( DataChangeAwait{{Intensity}, joiner, _client} );
+		ASSERT_EQ( joined.results_size(), 1 );
+		EXPECT_EQ( joined.results(0).status_code(), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "the joiner made no item";
+		Stopwatch sw;
+		while( watcher->Modified.load()<1 )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the first listener never heard the modify";
+		{
+			lg _{ watcher->Mutex };
+			EXPECT_EQ( watcher->RevisedSamplingInterval, 250.0 ) << "the fastest sampling";
+			EXPECT_EQ( watcher->RevisedQueueSize, 2u ) << "the largest queue";
+		}
+		sw.Reset();
+		while( joiner->Modified.load()<1 )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the joiner never heard the modify its join made";
+		EXPECT_EQ( joiner->RevisedSamplingInterval.load(), 250.0 );
+		EXPECT_EQ( joiner->RevisedQueueSize.load(), 2u );
+		UAClient::Unsubscribe( joiner );
+		sw.Reset();
+		while( watcher->Modified.load()<2 )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the leave never restored the first's rate";
+		{
+			lg _{ watcher->Mutex };
+			EXPECT_EQ( watcher->RevisedSamplingInterval, 1000.0 );
+			EXPECT_EQ( watcher->RevisedQueueSize, 2u );
+		}
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "the leave took the item the first still listens on";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity, before) );
+	}
+	//A listener that asks a deadband on a node another watches unfiltered gets the unfiltered stream - more than it asked, never
+	//less - and its join modifies nothing, since a filter stands only when every listener asks one.
+	TEST_F( SubscribeTests, AFilteredListenerJoiningAnUnfilteredItemGetsTheUnfilteredStream ){
+		let before = _client->MonitoredNodes().Count();
+		const NodeId rpm{ PumpsNs(), RpmManual };
+		ASSERT_NO_THROW( WriteDouble(rpm, 1000) );
+		auto first = ms<StateListener>();
+		ASSERT_NO_THROW( SubscribeCounting(_client, first, {rpm}) );
+		auto watcher = ms<WatchListener>();
+		ASSERT_NO_THROW( Watch(rpm, {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=10}}, watcher) );
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "the join made an item";
+		ASSERT_NO_THROW( WaitValue(watcher, 1000) );
+		ASSERT_NO_THROW( WriteDouble(rpm, 1005) );
+		ASSERT_NO_THROW( WaitValue(watcher, 1005) ) << "the unfiltered stream didn't reach the filtered listener";
+		EXPECT_EQ( watcher->Modified.load(), 0u ) << "the join modified the item";
+		EXPECT_EQ( first->Modified.load(), 0u );
+		ASSERT_NO_THROW( UnsubscribeAndDrain(rpm, before+1) );
+		drainListener( _client, first, before );
 	}
 
 	//subscription-disconnect #5: a client dying with a create in flight resumed that subscribe with an ack of zero results for its

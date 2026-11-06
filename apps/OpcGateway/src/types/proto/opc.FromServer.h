@@ -10,6 +10,7 @@ namespace Jde::Opc::Gateway::FromServer{
 	α ReadValuesTrans( string opcId, flat_map<NodeId, Opc::Value>&& values, RequestId requestId )ι->FromServer::Transmission;
 	α SubscribeAckTrans( FromServer::SubscriptionAck&& ack, RequestId requestId )ι->FromServer::Transmission;
 	α UnsubscribeTrans( uint32 id, flat_set<NodeId>&& successes, flat_set<NodeId>&& failures )ι->FromServer::Transmission;
+	α ItemModifiedTrans( const ServerCnnctnNK& opcId, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->FromServer::Transmission;//a MonitoredItemModified push (spec *Watch list*), under request id 0 as a NodeValues is.
 	α QueryTrans( string&& result, RequestId requestId )ι->FromServer::Transmission;
 	//A historian subscription's messages (spec *Subscriptions*), each under its HistSubscribe's request id.
 	α HistSubscribeAckTrans( FromServer::HistSubscribeAck&& ack, RequestId requestId )ι->FromServer::Transmission;

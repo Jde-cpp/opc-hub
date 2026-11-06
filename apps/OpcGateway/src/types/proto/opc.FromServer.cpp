@@ -82,6 +82,15 @@ namespace Jde::Opc::Gateway{
 		return t;
 	}
 
+	α FromServer::ItemModifiedTrans( const ServerCnnctnNK& opcId, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->FromServer::Transmission{
+		return set( 0, [&](FromServer::Message& m){
+			auto& modified = *m.mutable_monitored_item_modified();
+			modified.set_opc_id( opcId );
+			*modified.mutable_node() = ProtoUtils::ToNodeId( node );
+			modified.set_revised_sampling_interval( revisedSamplingInterval );
+			modified.set_revised_queue_size( revisedQueueSize );
+		});
+	}
 	α FromServer::ToProto( const ServerCnnctnNK& opcId, const NodeId& node, const Opc::Value& v, RequestId requestId )ι->FromServer::Message{
 		auto nv = mu<FromServer::NodeValues>();
 		*nv->mutable_node() = ProtoUtils::ToNodeId( node );

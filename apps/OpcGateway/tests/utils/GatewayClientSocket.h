@@ -9,11 +9,13 @@
 #include "Opc.FromClient.pb.h"
 #include "Opc.FromServer.pb.h"
 #include <jde/app/proto/Common.pb.h>
+#include "../../src/uatypes/MonitoringParameters.h"
 
 namespace Jde::Opc::Gateway::Tests{
 	struct IListener{
 		β OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void=0;
 		β OnPush( const FromServer::NodeValues& /*push*/ )ι->void{}//the whole push, before OnData:  its quality and timestamps too
+		β OnModified( const FromServer::MonitoredItemModified& /*modified*/ )ι->void{}//the node's item was modified for a join or a leave (spec *Watch list*).
 	};
 	//A historian subscription's listener (spec *Subscriptions*), as the web's will be:  a HistSubscribe's ack resumes its
 	//await, and what follows it, the HistSnapshot pages and then the HistRecords pushes, comes here under the HistSubscribe's
@@ -52,6 +54,8 @@ namespace Jde::Opc::Gateway::Tests{
 		α Query( string&& query, jobject variables, bool returnRaw, SRCE )ι->await<jvalue> override;
 		α QuerySync( string&& query, jobject variables={}, bool returnRaw=true )ε->jvalue;
 		α Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, sp<IListener> listener, SRCE )ε->await<FromServer::SubscriptionAck>;
+		//With each node's parameters, by position (spec *Watch list*) - fewer than nodes leaves the rest the defaults.
+		α Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, const vector<MonitoringParameters>& parameters, sp<IListener> listener, SRCE )ε->await<FromServer::SubscriptionAck>;
 		α Subscribe( string&& /*query*/, jobject /*variables*/, sp<QL::IListener> /*listener*/, SL )ε->await<jarray> override{ ASSERT(false); throw "noimpl"; }
 		α Unsubscribe( vector<QL::SubscriptionId>&&, SL )ι->void override{ ASSERT(false); }
 
@@ -77,6 +81,7 @@ namespace Jde::Opc::Gateway::Tests{
 		α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode;
 		α onUnsubscribeAck( RequestId requestId )ι->void;//the acked nodes' listeners go with the subscription - see _unsubscribeRequests.
 		α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void;
+		α onModified( const FromServer::MonitoredItemModified& modified )ι->void;//to the node's listeners, as a push goes.
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
 		α OnAck( uint32 ack )ι->void;

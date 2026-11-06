@@ -17,6 +17,9 @@ namespace Jde::Opc::Gateway{
 		GatewaySocketSession( sp<IRestStream> stream, beast::flat_buffer&& buffer, TRequestType&& request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι;
 		α OnRead( FromClient::Transmission&& transmission )ι->void override;
 		α SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value )ι->void override;
+		//What the last Subscribe asked for the node on the connection, the defaults when it named none (spec *Watch list*).
+		α ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;
+		α ItemModified( const ServerCnnctnNK& opcNK, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void override;//the MonitoredItemModified push.
 		α to_string()Ι->string override{ return Ƒ( "{:x}", Id() ); }
 		α UserPK()Ι->Jde::UserPK override{ return Session() ? Session()->UserPK : Jde::UserPK{}; }
 		α WriteException( runtime_error&& e, Jde::RequestId requestId, SRCE )ι->void override;
@@ -59,5 +62,9 @@ namespace Jde::Opc::Gateway{
 		mutable std::mutex _histMutex;
 		flat_map<Jde::RequestId,sp<HistSubscriber>> _histSubscriptions;//by the HistSubscribe's request id.
 		bool _closed{};
+		//Per connection and node, what each Subscribe asked (ItemParameters) - set before the subscribe reaches the strand, the
+		//defaults for a node it named none for, and kept until the node is unsubscribed.
+		mutable std::mutex _parametersMutex;
+		flat_map<ServerCnnctnNK,flat_map<NodeId,MonitoringParameters>> _parameters;
 	};
 }

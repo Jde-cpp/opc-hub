@@ -10,12 +10,18 @@ namespace Jde::Opc{
 	α Gateway::CreateSubscriptionRequest()ι->UA_CreateSubscriptionRequest{
 		auto request = UA_CreateSubscriptionRequest_default();
 		request.requestedPublishingInterval = std::chrono::duration<double,std::milli>{ _publishingInterval }.count();
+		request.requestedLifetimeCount = _lifetimeCount;
+		request.requestedMaxKeepAliveCount = _maxKeepAliveCount;
+		request.maxNotificationsPerPublish = _maxNotificationsPerPublish;
+		request.priority = _priority;
 		return request;
 	}
 }
 namespace Jde::Opc::Gateway{
 	static ELogTags _tags{ (ELogTags)(EOpcLogTags::Monitoring) };
 	Duration _publishingInterval{ 500ms };
+	uint32 _lifetimeCount{ 10000 }, _maxKeepAliveCount{ 10 }, _maxNotificationsPerPublish{};
+	uint8 _priority{};
 	//Bad_Timeout:  the server let the subscription's lifetime run out - no Publish reached it, as in an outage its session
 	//outlived.  Good_SubscriptionTransferred:  another session took it.  Either way its items push nothing more here, and nothing
 	//else notices - the session is the same one, so RecordSession sees no change - so it is rebuilt as a session loss is.

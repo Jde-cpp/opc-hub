@@ -28,6 +28,14 @@ message UnsubscribeAck{
 	repeated Jde.Opc.Proto.NodeId successes=1;
 	repeated Jde.Opc.Proto.NodeId failures=2;
 }
+//A node's item was modified for a listener's join or leave (spec *Watch list*):  every listener of the node hears what the server
+//revised it to, since a SubscriptionAck answers one Subscribe alone.  Under request_id 0, as NodeValues is.
+message MonitoredItemModified{
+	string opc_id=1;
+	Jde.Opc.Proto.NodeId node=2;
+	double revised_sampling_interval=3;
+	uint32 revised_queue_size=4;
+}
 
 //A historian record (spec *Record format*), as a subscription's pages and pushes carry it:  a value that passed the
 //compression test, a heartbeat, which repeats the value before it, or a Bad_DataLost marker, which holds none.  node is the
@@ -80,6 +88,7 @@ message Message{
 		HistSubscribeAck hist_subscribe_ack = 8; //a HistSubscribe's, then its HistSnapshot pages and its HistRecords, every message under its request_id.  No Value completes a HistUnsubscribe, as it does a session_id.
 		HistSnapshot hist_snapshot = 9;
 		HistRecords hist_records = 10;
+		MonitoredItemModified monitored_item_modified = 11;
 	}
 }
 

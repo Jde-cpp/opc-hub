@@ -4,9 +4,30 @@ import "Opc.Common.proto";
 import "Common.proto";
 import "google/protobuf/timestamp.proto";
 
+//Part 4's DataChangeFilter, as a Subscribe asks it per node (spec *Watch list*):  when the item reports - 0 Status, 1 StatusValue,
+//2 StatusValueTimestamp - and the deadband a value change has to clear, 0 None, 1 Absolute in the value's units, 2 Percent of
+//the node's EURange, which the server applies or refuses with the status the ack carries.
+message DataChangeFilter{
+	uint32 trigger=1;
+	uint32 deadband_type=2;
+	double deadband_value=3;
+}
+//What a node's item asks its server for.  Unset:  the gateway's defaults, 500 ms, a queue of one, discard oldest, no filter.
+message MonitoringParameters{
+	optional double sampling_interval=1;//ms;  0 is the server's fastest.
+	optional uint32 queue_size=2;
+	optional bool discard_oldest=3;
+	DataChangeFilter filter=4;
+}
+//Nodes to watch on a connection, each with the parameters at its position in `parameters` - fewer than nodes, or none, means
+//the defaults for the rest.  A node another listener of the connection watches shares its item, which takes the strictest of
+//what they ask (spec *Watch list*):  the ack carries the item's revised values as they are when it answers, and a
+//MonitoredItemModified push what a later join or leave changes them to.  Subscribing a node again, with other parameters,
+//is how a listener changes what it asks.
 message Subscribe{
 	string opc_id=1;
 	repeated Jde.Opc.Proto.NodeId nodes=2;
+	repeated MonitoringParameters parameters=3;
 }
 
 message Unsubscribe{

@@ -7,6 +7,7 @@
 #include "../uatypes/MonitoredItemCreateResult.h"
 #include "../uatypes/MonitoringParameters.h"
 #include "../async/DataChanges.h"
+#include "../async/MonitoredItems.h"
 #include "../async/Subscriptions.h"
 #include "../usings.h"
 
@@ -29,17 +30,25 @@ namespace Jde::Opc::Gateway{
 		//one the server refused:  the rebuild's log line says so, and the node stays lost.  A listener that has to keep its nodes
 		//asks for them again itself, as the historian's collector does once they have been lost too long (HistGroupHost::Check).
 		β ConnectionRestored( const ServerCnnctnNK& /*opcId*/, const flat_set<NodeId>& /*nodes*/ )ι->void{}
-		//What this listener's items are created with - per node, so the historian samples at each node's MinTimeInterval, and
-		//with the interval the client's subscription runs at (UAClient::PublishingInterval), which sizes a queue.  Asked
-		//at every create, a rebuild's included;  a change to an item that exists goes through ModifyMonitoredItemsAwait.  A node
-		//another listener already monitors keeps that item's parameters - the collector's clients are its own for that reason
-		//(Credential::Collector).  Called on the client's strand with the monitoring lock held exclusively (MonitoredItemsRequest),
-		//as SendDataChange is with it shared:  neither may call into UAClient or its monitored nodes, nor wait on a lock that is
-		//held across such a call - an unsubscribe under the listener's own lock would deadlock the strand.
-		β ItemParameters( const NodeId&, Duration /*publishingInterval*/ )Ι->MonitoringParameters{ return {}; }
-		//The interval the subscription runs at, told at every request this listener registers on one - before any ItemParameters, and
-		//also when every node joins an existing item, which asks none.  Called as ItemParameters is.
+		//What this listener asks of a node's item - per node on the connection named, since one session listens on every connection
+		//it subscribes to, so the historian samples at each node's MinTimeInterval and a watch list's row carries its own - and
+		//with the interval the client's subscription runs at (UAClient::PublishingInterval), which sizes a queue.  Asked at every
+		//create, a rebuild's included, at every join of an item that exists, and again at ParametersChanged.  A node several
+		//listeners watch has one item, which takes the strictest of what they ask (UAMonitoringNodes, spec *Watch list*):  a
+		//listener that asks a deadband on a node another watches unfiltered gets the unfiltered stream.  The collector's clients
+		//are its own (Credential::Collector), so its items take its parameters alone.  Called with the monitoring lock held
+		//exclusively - on the client's strand from a create, on the caller's from ParametersChanged - as SendDataChange is with it
+		//shared:  neither may call into UAClient or its monitored nodes, nor wait on a lock that is held across such a call - an
+		//unsubscribe under the listener's own lock would deadlock the strand.
+		β ItemParameters( const ServerCnnctnNK& /*opcId*/, const NodeId&, Duration /*publishingInterval*/ )Ι->MonitoringParameters{ return {}; }
+		//The interval the subscription runs at, told at every request this listener registers on one - before any ItemParameters.
+		//Called as ItemParameters is.
 		β RunsAt( Duration /*publishingInterval*/ )ι->void{}
+		//The node's item was modified - for another listener's join or leave, or this one's ParametersChanged - to what the server
+		//revised it to.  Every listener of the node hears it, the one whose join caused it included, since its ack answered before
+		//the modify did.  Called off the monitoring lock, on the client's strand, as ConnectionLost is.  A refused modify is logged
+		//and reaches nobody:  the item stands as it was.
+		β ItemModified( const ServerCnnctnNK& /*opcId*/, const NodeId&, double /*revisedSamplingInterval*/, uint32 /*revisedQueueSize*/ )ι->void{}
 		β to_string()Ι->string=0;
 	};
 
@@ -58,6 +67,10 @@ namespace Jde::Opc::Gateway{
 		α MonitoredItemsRequest( sp<IDataChange>&& dataChange, flat_set<NodeId>&& nodes, Handle& requestId )ι->optional<CreateMonitoredItemsRequest>;
 		α Unsubscribe( flat_set<NodeId>&& nodes, sp<IDataChange> dataChange )ι->tuple<flat_set<NodeId>,flat_set<NodeId>>;
 		α Unsubscribe( sp<IDataChange> )ι->void;
+		//The listener's ItemParameters changed for these nodes - a threshold edit (HistGroupHost::SetNodeThresholds) - so each
+		//item of its is asked again and the merge recomputed:  the one modify path a join and a leave take (spec *Watch list*).
+		//A node the listener has no item for is skipped;  a create still out asks ItemParameters when it answers.
+		α ParametersChanged( const sp<IDataChange>& listener, const flat_set<NodeId>& nodes )ι->void;
 		α SendDataChange( Handle h, const Value&& value )ι->uint;
 		α OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void;
 		α GetResult( Handle requestId, StatusCode status )ι->FromServer::SubscriptionAck;
@@ -69,21 +82,35 @@ namespace Jde::Opc::Gateway{
 		α TakeForResubscribe()ι->flat_map<sp<IDataChange>,flat_set<NodeId>>;
 		α Count()ι->uint{ rl _{_mutex}; return _subscriptions.size(); }
 	private:
+		//An item:  its node, the server's answer with the revised values, each listener with what it asked (ItemParameters), and
+		//what the item was last asked for - the merge of those - which a join, a leave or a ParametersChanged compares its new
+		//merge to, so a server's revision never looks like a change to ask again.
 		struct Subscription{
-			Subscription( NodeId node, MonitoredItemCreateResult result, sp<IDataChange> clientCall )ι: Node{ move(node) }, Result{ move(result) }, ClientCalls{ move(clientCall) }{}
+			Subscription( NodeId node, MonitoredItemCreateResult result, sp<IDataChange> listener, MonitoringParameters parameters )ι: Node{ move(node) }, Result{ move(result) }, Requested{ parameters }{ Listeners.emplace( move(listener), move(parameters) ); }
 			NodeId Node;
 			MonitoredItemCreateResult Result;
-			flat_set<sp<IDataChange>> ClientCalls;
+			flat_map<sp<IDataChange>,MonitoringParameters> Listeners;
+			MonitoringParameters Requested;
+			//The merge recomputed after a listener joined, left or changed its ask:  the parameters to modify the item to when they
+			//differ from Requested, which they replace.  None means the item stands.
+			α Remerge()ι->optional<MonitoringParameters>;
 		};
+		//A create in flight:  the new nodes asked for - in the order the server answers them, so never edited - the listener, the
+		//parameters it asked per node, which its answer attaches, and the nodes that listener unsubscribed while the create was
+		//out (either Unsubscribe), which its answer must not attach.
+		struct Call{ flat_set<NodeId> Nodes; sp<IDataChange> Listener; flat_map<NodeId,MonitoringParameters> Parameters; flat_set<NodeId> Cancelled; };
 		α GetClient()ι->sp<UAClient>;
 		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α FindNode( const NodeId& node )ι->tuple<MonitorHandle,Subscription*>;//the pointer is good until the next insert into _subscriptions.
 		α DeleteMonitoring( sp<UAClient> ua, Handle uaHandle, flat_map<SubscriptionId,flat_set<MonitorId>> requested )ι->VoidTask;//sp: it has to outlive the wait, and it owns `this`.
+		//The ModifyMonitoredItems for items whose merge changed, posted onto the strand - never run under _mutex, nor inline in the
+		//strand handler that found the change:  a submission can run the processing loop in place.  Each listener of an item the
+		//server modified hears ItemModified, off the lock;  a refusal is logged.  sp, as DeleteMonitoring takes it:  the client owns `this`.
+		α Modify( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> nodes )ι->void;
+		α Modifying( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> nodes )ι->ModifyMonitoredItemsAwait::Task;
 
 		atomic<RequestId> _requestId{};
 		flat_map<MonitorHandle,flat_set<NodeId>> _requests ABSL_GUARDED_BY(_mutex);
-		//the creates in flight:  the new nodes asked for - in the order the server answers them, so never edited - the listener, and the
-		//nodes that listener unsubscribed while the create was out (either Unsubscribe), which its answer must not attach.
-		flat_map<MonitorHandle,tuple<flat_set<NodeId>,sp<IDataChange>,flat_set<NodeId>>> _calls ABSL_GUARDED_BY(_mutex);
+		flat_map<MonitorHandle,Call> _calls ABSL_GUARDED_BY(_mutex);
 		flat_map<MonitorHandle,flat_map<NodeId,StatusCode>> _errors ABSL_GUARDED_BY(_mutex);
 		flat_set<MonitorHandle> _takenCalls ABSL_GUARDED_BY(_mutex);//in-flight creates TakeForResubscribe dropped from _calls - their late answers are expected, not errors.  Until GetResult.
 		absl::Mutex _mutex;
