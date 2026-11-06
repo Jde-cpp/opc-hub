@@ -3,15 +3,15 @@ import { MatIconModule } from '@angular/material/icon';
 import { RouterLink } from '@angular/router';
 import type Highcharts from 'highcharts/esm/highstock';
 import { HistValue } from '../../../model/hist';
-import { Variable } from '../../../model/node';
 import { NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { statusIcon } from '../../../model/status-code';
-import { badColor, toTrendPoints, TrendFlag, trendPalette, TrendPoint } from './hist-trend-data';
+import { badColor, toTrendPoints, TrendFlag, trendKey, trendPalette, TrendPoint, TrendSeries } from './hist-trend-data';
 import { HighchartsLoader } from './highcharts-loader';
 
-//The trend:  one line per node, stepped by default, a gap where a reading is Bad and a flag naming its status, a
-//triangle on an Uncertain one.  A time axis that pans into more pages:  reaching the left edge asks the owner for the page before.
+//The trend:  one line per series - the History tab's nodes, the watch list's rows (#420) - stepped by default, a gap where a reading
+//is Bad and a flag naming its status, a triangle on an Uncertain one.  A time axis that pans into more pages:  reaching the left
+//edge asks the owner for the page before, where it has one.
 //The chart is Highcharts' own object, driven directly:  points arrive one a second per node on the live tail, which is addPoint
 //work, not a rebuild of an options object.  Highcharts itself is an add-on the install never carries, imported by URL on first use
 //(HighchartsLoader, #302):  the plot is drawn once it has loaded, and until the load settles nothing stands in its place.  Absent,
@@ -42,6 +42,11 @@ export class HistTrend implements OnDestroy{
 			OpcError.namesVersion();//a status name arriving re-renders the flags' text, which #draw reads untracked
 			untracked( ()=>this.#draw(values, series, stepped) );
 		} );
+		//the range button pressed for the chart, once it stands:  the watch list's trend moves it with its window (#420), and holds it again
+		effect( ()=>{
+			const range = this.range();
+			untracked( ()=>{ this.#following = this.follow(); this.#press( range ); } );
+		} );
 		//the chart, in the plot once it is laid out:  Highcharts sizes itself from it
 		afterRenderEffect( ()=>{
 			const plot = this.plot()?.nativeElement;
@@ -55,69 +60,142 @@ export class HistTrend implements OnDestroy{
 		this.#chart = undefined;
 	}
 
-	values = input.required<HistValue[]>();//in source-time order - NodeHistory merges them so
-	series = input.required<Variable[]>();//the nodes drawn, in palette order
+	values = input.required<HistValue[]>();//each series' in source-time order - NodeHistory merges them so, and the watch list's buffer keeps each row's so
+	series = input.required<TrendSeries[]>();//the lines drawn, in palette order
 	stepped = input( true );
 	loading = input( false );
 	hasEarlier = input( true );
+	range = input( 4 );//the range selector's button pressed:  1m, 10m, 1h, 1d or All - the History tab opens on All, the watch list's trend on its window
+	//The watch list's trend (420 #3):  `range` is held, not only pressed.  Highcharts drops a button wider than the data, and one under
+	//five times the closest points' gap, and nothing pressed it again;  so it is pressed again once the data spans it, until the user
+	//picks another view - pressing `range` itself resumes it - and the axis' minRange is a second, so a sparse row disables no button.
+	follow = input( false );
+	//The watch list's trend (420 #4):  each line's last value is drawn on to the newest time of any line, by a linked `<id>/hold`
+	//series, so the line's own data keeps the append path.  A row reports on change:  a quiet row's line ended at its last push.  The
+	//hold ends in a dot, the value now:  a row whose pushes all fall within a pixel - two on subscribe, 1 ms apart - drew nothing (420 W1).
+	holdLast = input( false );
+	//the chart's name to a screen reader and what it says it shows:  there is no visible title, so the accessibility module's stand-in for one.
+	//Not `title`:  a static attribute of that name is written to the host as well, a native tooltip over the whole chart (420 #1).
+	chartTitle = input( 'History trend' );
+	description = input( 'Historical values of the selected nodes over time.  A Bad reading is a gap in its line, flagged with its status;  an Uncertain one keeps its value under a triangle;  a ring marks a heartbeat, a stored repeat of the value before it.' );
 	loadEarlier = output<void>();
 	plot = viewChild<ElementRef<HTMLDivElement>>( 'plot' );//once Highcharts has loaded
 	state = inject( HighchartsLoader ).state;
 
-	#draw( values:HistValue[], series:Variable[], stepped:boolean ){
+	#draw( values:HistValue[], series:TrendSeries[], stepped:boolean ){
 		const chart = this.#chart;
 		if( !chart )
 			return;
 		const keep = new Set<string>();
 		const step = stepped ? 'left' : undefined;
-		const byNode = new Map<NodeKey, HistValue[]>();//one pass, not one per series
+		const byKey = new Map<NodeKey, HistValue[]>();//one pass, not one per series
 		for( const v of values ){
-			const list = byNode.get( v.node.key );
+			const key = trendKey( v ), list = byKey.get( key );
 			if( list )
 				list.push( v );
 			else
-				byNode.set( v.node.key, [v] );
+				byKey.set( key, [v] );
 		}
-		series.forEach( (node, i)=>{
-			const id = node.nodeId.uaString(), flagsId = `${id}/flags`;//Highcharts ids are strings;  NodeId.key is a Symbol
-			keep.add( id ); keep.add( flagsId );
+		const drawn = series.map( (s, i)=>{
 			const color = trendPalette[Math.min( i, trendPalette.length-1 )];
-			const {points, flags} = toTrendPoints( byNode.get(node.key) ?? [], node.nodeId, stepped, color );
+			return { s, color, ...toTrendPoints( byKey.get(s.key) ?? [], s, stepped, color ) };
+		} );
+		const holdTo = this.holdLast() ? Math.max( ...drawn.map( d=><number|undefined>d.points.at(-1)?.x ?? Number.NEGATIVE_INFINITY ) ) : undefined;
+		drawn.forEach( ({s, color, points, flags})=>{
+			const id = s.id, flagsId = `${id}/flags`;
+			keep.add( id ); keep.add( flagsId );
 			const line = <Highcharts.Series|undefined>chart.get( id );
 			if( !line )
-				chart.addSeries( {type: 'line', id, name: node.name, color, step, data: points}, false );
+				chart.addSeries( {type: 'line', id, name: s.name, color, step, data: points}, false );
 			else{
 				const options = <Highcharts.SeriesLineOptions>line.options;
-				if( options.step!=step || options.color!=color ){//a rebuild:  a heartbeat's ring carries the line's colour in its own marker
-					line.update( {type: 'line', step, color}, false );
+				//a rebuild:  a heartbeat's ring carries the line's colour in its own marker.  A name changes with the series' - a watch
+				//row's carries its connection only while the ticked rows span several (#420), a node's a DisplayName written.
+				if( options.step!=step || options.color!=color || options.name!=s.name ){
+					line.update( {type: 'line', step, color, name: s.name}, false );
 					line.setData( points, false, false, false );
 				}
 				else
 					HistTrend.setData( line, points );
 			}
-			const flagSeries = <Highcharts.Series|undefined>chart.get( flagsId );
+			const flagSeries = <Highcharts.Series|undefined>chart.get( flagsId ), flagsName = `${s.name} status`;
 			if( !flagSeries )
-				chart.addSeries( {type: 'flags', id: flagsId, name: `${node.name} status`, onSeries: id, linkedTo: id, color: badColor, fillColor: badColor, style: {color: '#ffffff'}, shape: 'circlepin', width: 14, y: -28, data: flags, showInLegend: false}, false );
-			else
+				chart.addSeries( {type: 'flags', id: flagsId, name: flagsName, onSeries: id, linkedTo: id, color: badColor, fillColor: badColor, style: {color: '#ffffff'}, shape: 'circlepin', width: 14, y: -28, data: flags, showInLegend: false}, false );
+			else{
+				if( flagSeries.options.name!=flagsName )
+					flagSeries.update( {type: 'flags', name: flagsName}, false );
 				HistTrend.setData( flagSeries, flags );
+			}
+			if( holdTo!==undefined ){
+				const holdId = `${id}/hold`, last = points.at( -1 ), lastX = <number|undefined>last?.x;
+				keep.add( holdId );
+				const now = {x: holdTo, y: last?.y, marker: {enabled: true}};
+				const held = !last || last.y==null ? [] : lastX!<holdTo ? [{x: lastX, y: last.y}, now] : [now];//none after a Bad:  its gap goes on
+				const holdSeries = <Highcharts.Series|undefined>chart.get( holdId );
+				if( !holdSeries )
+					chart.addSeries( {type: 'line', id: holdId, linkedTo: id, color, data: held, marker: {enabled: false}, enableMouseTracking: false, showInNavigator: false, accessibility: {enabled: false}}, false );
+				else{
+					if( (<Highcharts.SeriesLineOptions>holdSeries.options).color!=color )
+						holdSeries.update( {type: 'line', color}, false );
+					holdSeries.setData( held, false, false, false );
+				}
+			}
 		} );
-		//a node unticked takes its series with it;  the navigator's own series have highcharts- ids.  The ids first, then the removes:
+		//a series unticked takes its line with it;  the navigator's own series have highcharts- ids.  The ids first, then the removes:
 		//removing a line destroys its navigator series, later in chart.series, so a walk that removes as it goes reaches a dead one.
 		const drop = chart.series.map( s=>s.options.id ).filter( (id):id is string=>!!id && !id.startsWith('highcharts-') && !keep.has(id) );
 		for( const id of drop )
 			(<Highcharts.Series|undefined>chart.get( id ))?.remove( false );
-		chart.update( {legend: {enabled: series.length>1}, lang: {accessibility: {defaultChartTitle: HistTrend.title( series )}}}, false );
+		const legend = series.length>1, title = this.#title( series );
+		if( chart.options.legend?.enabled!==legend || chart.options.lang?.accessibility?.defaultChartTitle!==title )//not on every push (420 #5)
+			chart.update( {legend: {enabled: legend}, lang: {accessibility: {defaultChartTitle: title}}}, false );
 		chart.redraw( false );
+		this.#keepRange();
 	}
-	//the chart's name to a screen reader:  there is no visible title, so the accessibility module's stand-in for one
-	private static title( series:Variable[] ):string{ return `History trend of ${series.map( s=>s.name ).join( ", " ) || "no nodes"}`; }
+	//pressed again where it was dropped, or where the view no longer ends at the newest data - a row unticked that held it, which leaves
+	//the view past what is left, and Highcharts scrolls only a view that ends at the newest (420 W2).  Data short of the window is
+	//shown whole, as All, until it spans the window.
+	#keepRange(){
+		const selector = (<any>this.#chart)?.rangeSelector, range = this.range();
+		if( !this.#following || !selector )
+			return;
+		const { max, dataMin, dataMax } = this.#chart!.xAxis[0].getExtremes(), width = selector.buttonOptions[range]?._range;
+		if( dataMin!=null && dataMax!=null && width && (max!==dataMax || (dataMax-dataMin>=width && selector.selected!==range)) )
+			this.#press( range );
+	}
+	//A press of ours, which #onAfterSetExtremes tells from the user's by #pressing:  the extremes are set and announced within the press.
+	//Held, the press is ours, from the newest data on the chart's own axis:  Highcharts' clickButton keeps the view's right edge, and
+	//reads the navigator's extremes, which a lone point's next push left short - All drew the old point alone (420 W2).  Data short of
+	//the window is All, as Highcharts presses it.
+	#press( range:number ){
+		const chart = this.#chart, selector = (<any>chart)?.rangeSelector;
+		if( !chart || !selector )
+			return;
+		this.#pressing = true;
+		try{
+			const axis = chart.xAxis[0], { dataMin, dataMax } = axis.getExtremes(), width:number|undefined = selector.buttonOptions[range]?._range;
+			if( this.#following && dataMin!=null && dataMax!=null ){
+				const whole = !width || dataMax-dataMin<width;
+				selector.setSelected( whole ? selector.buttonOptions.findIndex( (b:{type:string})=>b.type=='all' ) : range );
+				(<any>chart).setFixedRange( whole ? undefined : width );
+				axis.setExtremes( whole ? dataMin : dataMax-width!, dataMax, true, false );
+			}
+			else
+				selector.clickButton( range, true );
+		}
+		finally{
+			this.#pressing = false;
+		}
+	}
+	#title( series:TrendSeries[] ):string{ return `${this.chartTitle()} of ${series.map( s=>s.name ).join( ", " ) || "no nodes"}`; }
 	//The live tail appends:  a point a second per node, each a setData of every point held is what a chart stutters on, so a tail
 	//that only grew is added point by point.  Anything else - a page loaded before the first value, a late push merged into the
 	//middle, a line shape change - is a rebuild.
 	private static setData( s:Highcharts.Series, data:(TrendPoint|TrendFlag)[] ){
 		const prev = <(TrendPoint|TrendFlag)[]|undefined>(<Highcharts.SeriesLineOptions>s.options).data;
 		const same = ( a:TrendPoint|TrendFlag, b:TrendPoint|TrendFlag )=>a.x===b.x && (<TrendPoint>a).y===(<TrendPoint>b).y && a.custom?.status===b.custom?.status
-			&& (<TrendPoint>a).custom?.heartbeat===(<TrendPoint>b).custom?.heartbeat && (<TrendFlag>a).text===(<TrendFlag>b).text;
+			&& (<TrendPoint>a).custom?.heartbeat===(<TrendPoint>b).custom?.heartbeat && (<TrendFlag>a).text===(<TrendFlag>b).text
+			&& (<TrendPoint>a).marker?.enabled===(<TrendPoint>b).marker?.enabled;//a lone point's marker goes once a neighbour comes (420 #4)
 		if( prev?.length && data.length>prev.length && same(prev[0], data[0]) && same(prev[prev.length-1], data[prev.length-1]) ){
 			for( let i=prev.length; i<data.length; ++i )
 				s.addPoint( data[i], false );
@@ -128,6 +206,8 @@ export class HistTrend implements OnDestroy{
 	//the user reached the left edge of what is loaded:  ask for the page before.  Only a user's move (e.trigger) - a redraw after a
 	//load sets the extremes too, and would ask again on its own.
 	#onAfterSetExtremes( e:Highcharts.AxisSetExtremesEventObject ){
+		if( e.trigger && !this.#pressing && this.follow() )
+			this.#following = e.trigger=='rangeSelectorButton' && (<any>this.#chart)?.rangeSelector?.buttonOptions.indexOf( (<any>e).rangeSelectorButton )===this.range();
 		const axis = this.#chart?.xAxis[0];
 		if( !axis || !e.trigger || this.loading() || !this.hasEarlier() )
 			return;
@@ -145,20 +225,20 @@ export class HistTrend implements OnDestroy{
 		const self = this;
 		return {
 			chart: { backgroundColor: 'transparent', style: {fontFamily: 'inherit'}, animation: false, zooming: {type: 'x'}, panning: {enabled: true, type: 'x'}, panKey: 'shift', spacing: [8, 8, 8, 8] },
-			lang: { accessibility: {defaultChartTitle: HistTrend.title( this.series() )} },
-			accessibility: { description: 'Historical values of the selected nodes over time.  A Bad reading is a gap in its line, flagged with its status;  an Uncertain one keeps its value under a triangle;  a ring marks a heartbeat, a stored repeat of the value before it.' },
+			lang: { accessibility: {defaultChartTitle: this.#title( this.series() )} },
+			accessibility: { description: this.description() },
 			title: { text: undefined },
 			credits: { style: {color: muted} },
 			time: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
 			rangeSelector: {
 				buttons: [{type: 'minute', count: 1, text: '1m'}, {type: 'minute', count: 10, text: '10m'}, {type: 'hour', count: 1, text: '1h'}, {type: 'day', count: 1, text: '1d'}, {type: 'all', text: 'All'}],
-				selected: 4, inputEnabled: false, labelStyle: {color: muted},
+				selected: this.range(), inputEnabled: false, labelStyle: {color: muted},
 				buttonTheme: { fill: 'transparent', stroke: grid, 'stroke-width': 1, style: {color: text}, states: {hover: {fill: surface}, select: {fill: surface, style: {color: text, fontWeight: 'bold'}}} }
 			},
 			navigator: { height: 30, margin: 12, outlineColor: grid, maskFill: 'rgba(42,120,214,0.12)', handles: {backgroundColor: surface, borderColor: muted}, xAxis: {gridLineColor: grid, labels: {style: {color: muted}}} },
 			scrollbar: { enabled: false },
 			legend: { enabled: false, itemStyle: {color: text}, itemHoverStyle: {color: text}, itemHiddenStyle: {color: muted} },
-			xAxis: { type: 'datetime', ordinal: false, gridLineWidth: 1, gridLineColor: grid, lineColor: grid, tickColor: grid, labels: {style: {color: muted}}, crosshair: {color: muted, dashStyle: 'Dot'}, events: {afterSetExtremes: e=>self.#onAfterSetExtremes( e )} },
+			xAxis: { type: 'datetime', ordinal: false, ...(this.follow() ? {minRange: 1000} : {}), gridLineWidth: 1, gridLineColor: grid, lineColor: grid, tickColor: grid, labels: {style: {color: muted}}, crosshair: {color: muted, dashStyle: 'Dot'}, events: {afterSetExtremes: e=>self.#onAfterSetExtremes( e )} },
 			yAxis: { opposite: false, gridLineColor: grid, labels: {style: {color: muted}, align: 'right', x: -4}, title: {text: null}, showLastLabel: true },
 			tooltip: {
 				backgroundColor: surface, borderColor: grid, style: {color: text}, xDateFormat: '%Y-%m-%d %H:%M:%S.%L', shared: false, split: false,
@@ -180,4 +260,6 @@ export class HistTrend implements OnDestroy{
 	#host = inject<ElementRef<HTMLElement>>( ElementRef );
 	#loader = inject( HighchartsLoader );
 	#chart:Highcharts.Chart|undefined;
+	#following = false;//`range` is held (follow), until the user picks another view
+	#pressing = false;
 }

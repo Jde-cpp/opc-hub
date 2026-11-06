@@ -22,6 +22,14 @@ describe( 'toTrendPoints', ()=>{
 		expect( points.map(p=>[p.x, p.y]) ).toEqual( [[1000, 1], [3000, 3]] );
 		expect( flags ).toEqual( [] );
 	} );
+	//a setpoint's one push was a point with no segment and no marker:  nothing on the chart (420 #4)
+	it( 'marks a point with no drawn neighbour', ()=>{
+		expect( toTrendPoints( [at(1000, 1)], A, true ).points[0].marker ).toEqual( {enabled: true} );
+		const {points} = toTrendPoints( [at(1000, 1), at(2000, 2), at(3000, undefined, Bad), at(4000, 4), at(5000, undefined, Bad)], A, false );
+		expect( points.map( p=>p.marker?.enabled ) ).toEqual( [undefined, undefined, undefined, true, undefined] );
+		const stepped = toTrendPoints( [at(1000, 1), at(2000, undefined, Bad)], A, true ).points;//the hold before the gap is its neighbour
+		expect( stepped[0].marker ).toBeUndefined();
+	} );
 	it( 'skips a value with no time or no number', ()=>{
 		const {points} = toTrendPoints( [at(null, 1), at(1000, "x"), at(2000, 2)], A, false );
 		expect( points.map(p=>p.x) ).toEqual( [2000] );

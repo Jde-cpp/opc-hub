@@ -1,0 +1,18 @@
+:host{
+	display: block;
+	width: 100%;
+}
+/* the toolbar is a list's (.jde-list-toolbar), as the History tab's is:  the window at the left, the line shape at the right */
+.jde-list-toolbar{
+	flex-wrap: wrap;
+}
+.bar-left{
+	flex: 1 1 200px;
+}
+.bar-right{
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+hist-trend{
+	margin: .5rem 0;
+}

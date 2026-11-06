@@ -12,8 +12,20 @@ import { References } from '../lib/model/reference';
 import { Value } from '../lib/model/value';
 import { Gateway, HistEvent, HistSubscribeArgs, SubscriptionResult } from '../lib/services/gateway-service';
 import { OpcStore } from '../lib/services/opc-store';
+import { HighchartsLoader } from '../lib/pages/node-detail/node-history/highcharts-loader';
 
 export const nodeA = new NodeId( {ns:2, i:1} ), nodeB = new NodeId( {ns:2, i:2} );
+//The trend's add-on, which the installed site serves by URL, here the package itself:  bundled into the test alone.  jsdom lays out
+//no SVG and has no getBBox, so Highcharts measured every label as NaN:  a plot NaN wide, which a chart of one point turned into a
+//NaN tick interval and a RangeError on its next draw (420-clients-live-trend N1).  A box by the text's length stands in.
+export class BundledHighcharts extends HighchartsLoader{
+	constructor(){
+		super();
+		const svg = <any>SVGElement.prototype;
+		svg.getBBox ??= function( this:SVGElement ){ return { x: 0, y: 0, width: 7*(this.textContent?.length ?? 0), height: 12 }; };
+	}
+	protected override importFile( file:string ){ return file=='highstock.js' ? import('highcharts/esm/highstock') : import('highcharts/esm/modules/accessibility'); }
+}
 //A Variable as a browse answers it:  ns 2, browsed by `name`, with `json` on top.
 export const variable = ( i:number, name:string, json:object={} )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}, ...json} );
 

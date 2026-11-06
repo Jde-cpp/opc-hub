@@ -26,6 +26,7 @@ import { HistEditDialog, HistEditPreset } from './hist-edit-dialog';
 import { HistThresholdsDialog } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
+import { nodeSeries, TrendSeries } from './hist-trend-data';
 import { HighchartsLoader } from './highcharts-loader';
 
 //what the tab shows:  the values, trended and listed, or the modifications made to them, listed with their ModificationInfo
@@ -92,6 +93,7 @@ export class NodeHistory implements OnDestroy{
 	//the first eight by default:  the trend's palette has eight slots, assigned in order and never cycled
 	selectedKeys = linkedSignal<Set<NodeKey>>( ()=>new Set( this.nodes().slice(0, NodeHistory.maxSeries).map(v=>v.key) ) );
 	selected = computed<Variable[]>( ()=>this.nodes().filter( v=>this.selectedKeys().has(v.key) ) );
+	trendSeries = computed<TrendSeries[]>( ()=>this.selected().map( nodeSeries ) );
 	//a group's capabilities, asked when the tab opens on it (historyCapabilities):  its aggregates, and whether this user may edit it
 	capabilities = linkedSignal<string, HistCapabilities|undefined>( {source: this.sourceKey, computation: ()=>undefined} );
 	//what the edits are gated by:  on a server each node's HistoryWrite bit stands for both (writable);  on a group, Update and

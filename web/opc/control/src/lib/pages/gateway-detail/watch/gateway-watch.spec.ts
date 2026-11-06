@@ -5,6 +5,7 @@ import { ProfileStore, RouteItem } from 'jde-spa';
 import { SnackbarService } from 'jde-framework';
 import { NodeId } from '../../../model/node-id';
 import { Variable } from '../../../model/node';
+import { OpcError } from '../../../model/opc-error';
 import { WatchItemJson, WatchRow } from '../../../model/watch';
 import { WatchParameters } from '../../../model/watch';
 import { HistAdminService } from '../../../services/hist-admin-service';
@@ -301,6 +302,89 @@ describe( 'GatewayWatch', ()=>{
 		expect( page.shown().map( r=>r.name ) ).toEqual( ['alpha', 'zeta'] );
 		values.next( {opcId: 'local', node: A, value: 3, sc: 0} );
 		expect( page.shown().map( r=>r.name ) ).toEqual( ['zeta', 'alpha'] );
+	} );
+
+	//Clients 7 (#420, spec *Live trend*):  every push goes to the trend's buffer under the row's own series, a revised result and a
+	//refused subscribe's OpcError are no readings, and a row removed takes its pushes and its tick
+	it( "buffers each push for the trend, and forgets a removed row's", async ()=>{
+		const { page, values, row } = await create( [item( 'local', A ), item( 'plc', B )], pumps() );
+		const a = row( 'local', A ), b = row( 'plc', B );
+		values.next( {opcId: 'local', node: A, value: 1, sc: 0, source: new Date( 1000 )} );
+		values.next( {opcId: 'local', node: A, revised: {samplingInterval: 500, queueSize: 1, sc: 0}} );
+		values.next( {opcId: 'local', node: A, value: 2, sc: 0, server: new Date( 2000 )} );//no source time:  the server's
+		values.next( {opcId: 'plc', node: B, value: new OpcError( 0x80340000, "Subscribe", "", undefined ), sc: 0x80340000} );
+		expect( page.buffer.values( [a.key] ).map( v=>[v.source!.getTime(), v.value, v.series] ) ).toEqual( [[1000, 1, a.trendKey], [2000, 2, a.trendKey]] );
+		expect( page.buffer.size( b.key ) ).toBe( 0 );
+		page.toggleTick( a );
+		expect( page.tickedRows() ).toEqual( [a] );
+		await page.remove( a );
+		expect( page.buffer.size( a.key ) ).toBe( 0 );
+		expect( page.tickedRows() ).toEqual( [] );
+	} );
+	it( 'ticks rows for the trend, up to eight, none without a value, in list order', async ()=>{
+		const described = pumps();
+		const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9].map( i=>new NodeId( {ns: 4, i} ) );
+		ids.forEach( (id, i)=>described.set( `local/${id.uaString()}`, {node: variable( 10+i, `v${i+1}` ), path: null} ) );
+		described.set( `plc/${B.uaString()}`, undefined );
+		const { page, row } = await create( [item( 'plc', B ), ...ids.map( id=>item( 'local', id ) )], described );
+		expect( page.canTick( row( 'plc', B ) ) ).toBe( false );
+		page.toggleTick( row( 'plc', B ) );
+		expect( page.tickedRows() ).toEqual( [] );
+		for( const id of [...ids].reverse() )
+			page.toggleTick( row( 'local', id ) );
+		expect( page.tickedRows().map( r=>r.name ) ).toEqual( ['v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'] );//the ninth tick, v1's, was refused
+		expect( page.canTick( row( 'local', ids[0] ) ) ).toBe( false );
+		expect( page.tickTooltip( row( 'local', ids[0] ) ) ).toContain( `${GatewayWatch.maxSeries} rows` );
+		page.toggleTick( row( 'local', ids[8] ) );//unticked, there is room again
+		expect( page.canTick( row( 'local', ids[0] ) ) ).toBe( true );
+		page.toggleTick( row( 'local', ids[0] ) );
+		expect( page.tickedRows().map( r=>r.name ) ).toEqual( ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] );
+		expect( page.displayedColumns()[0] ).toBe( 'trend' );
+	} );
+	//a refused subscribe's reading goes to no buffer, and a tick drew an empty line in one of the eight slots (420 #7)
+	it( "doesn't tick a row whose subscribe was refused", async ()=>{
+		const { page, values, row } = await create( [item( 'plc', B )], pumps() );
+		values.next( {opcId: 'plc', node: B, value: new OpcError( 0x80340000, "Subscribe", "", undefined ), sc: 0x80340000} );
+		expect( page.canTick( row( 'plc', B ) ) ).toBe( false );
+		expect( page.tickTooltip( row( 'plc', B ) ) ).toMatch( /^No value to trend:  / );
+		values.next( {opcId: 'plc', node: B, value: 2, sc: 0, source: new Date( 1000 )} );//a value at last
+		expect( page.canTick( row( 'plc', B ) ) ).toBe( true );
+	} );
+	//the ticked rows are session state:  a page reopened on Trend showed none (420 #9)
+	it( 'opens on the list, and again for the next gateway', async ()=>{
+		localStorage.setItem( 'gatewayWatch/tabIndex', '1' );
+		const { page, gatewayOf, open } = await create( [item( 'local', A )], pumps() );
+		expect( page.tabIndex() ).toBe( 0 );
+		page.tabIndex.set( 1 );
+		open( gatewayOf( 'h' ) );
+		await flush( 3 );
+		expect( page.tabIndex() ).toBe( 0 );
+		localStorage.removeItem( 'gatewayWatch/tabIndex' );
+	} );
+	//the checkbox of a ticked row that a Refresh failed to describe was disabled, so the row could not be unticked (420 #2)
+	it( 'unticks a ticked row that errors later', async ()=>{
+		const described = pumps();
+		const { page, row } = await create( [item( 'local', A )], described );
+		page.toggleTick( row( 'local', A ) );
+		described.set( `local/${A.uaString()}`, undefined );
+		await page.onRefresh();
+		expect( row( 'local', A ).error ).toBeDefined();
+		expect( page.canTick( row( 'local', A ) ) ).toBe( true );
+		page.toggleTick( row( 'local', A ) );
+		expect( page.tickedRows() ).toEqual( [] );
+		expect( page.canTick( row( 'local', A ) ) ).toBe( false );//once unticked, it is a row without a value again
+		expect( page.tickTooltip( row( 'local', A ) ) ).toBe( 'No value to trend.' );
+	} );
+	it( "keeps the window picked for the trend, and the buffer's", async ()=>{
+		const { page } = await create( [item( 'local', A )], pumps() );
+		expect( page.trendWindow() ).toBe( 10 );
+		page.setTrendWindow( 60 );
+		expect( page.buffer.window ).toBe( 3_600_000 );
+		expect( localStorage.getItem( 'gatewayWatch/trendWindow' ) ).toBe( '60' );
+		page.setTrendWindow( 10 );
+		expect( localStorage.getItem( 'gatewayWatch/trendWindow' ) ).toBeNull();
+		expect( page.buffer.window ).toBe( 600_000 );
+		expect( GatewayWatch.windowOf( 7 ) ).toBe( 10 );//a value saved by hand that is no window offered
 	} );
 
 	it( 'names an enumeration\'s value and spells the cells', async ()=>{

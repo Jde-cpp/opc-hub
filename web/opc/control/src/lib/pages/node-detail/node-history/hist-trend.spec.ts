@@ -4,15 +4,11 @@ import type Highcharts from 'highcharts/esm/highstock';
 import { Variable } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { HistTrend } from './hist-trend';
-import { TrendPoint, trendPalette } from './hist-trend-data';
+import { nodeSeries, TrendPoint, trendPalette } from './hist-trend-data';
 import { HighchartsLoader } from './highcharts-loader';
 import { silence, stable } from 'jde-spa/testing';
-import { fetchAnswer, histValue, stubFetch, variable } from 'jde-opc/testing';
+import { BundledHighcharts, fetchAnswer, histValue, stubFetch, variable } from 'jde-opc/testing';
 
-//The add-on the installed site serves by URL, here the package itself:  bundled into the test alone
-class BundledHighcharts extends HighchartsLoader{
-	protected override importFile( file:string ){ return file=='highstock.js' ? import('highcharts/esm/highstock') : import('highcharts/esm/modules/accessibility'); }
-}
 //No add-on to import:  the answer to the fetch the loader makes then, stubbed, says why
 class UnloadedHighcharts extends HighchartsLoader{
 	protected override importFile():Promise<any>{ return Promise.reject( new TypeError( 'Failed to fetch dynamically imported module' ) ); }
@@ -25,7 +21,7 @@ const draw = async ()=>{
 	const A = variable( 1, 'A' ), B = variable( 2, 'B' );
 	const fixture = TestBed.createComponent( HistTrend );
 	fixture.componentRef.setInput( 'values', [histValue(A, 1000, 1), histValue(B, 1000, 2), histValue(A, 2000, 3), histValue(B, 2000, 4)] );
-	fixture.componentRef.setInput( 'series', [A, B] );
+	fixture.componentRef.setInput( 'series', [A, B].map( nodeSeries ) );
 	const H = <typeof Highcharts>(await import('highcharts/esm/highstock')).default;
 	await import( 'highcharts/esm/modules/accessibility' );//loaded here, so the loader's imports are a known number of turns
 	await stable( fixture );
@@ -61,7 +57,7 @@ describe( 'HistTrend', ()=>{
 		expect( ys(b) ).toEqual( [2, 4] );
 		expect( chart!.options.legend?.enabled ).toBe( true );
 
-		fixture.componentRef.setInput( 'series', [A] );
+		fixture.componentRef.setInput( 'series', [nodeSeries( A )] );
 		fixture.detectChanges();
 		expect( ids() ).toEqual( [a, `${a}/flags`] );
 		expect( chart!.options.legend?.enabled ).toBe( false );
@@ -78,7 +74,7 @@ describe( 'HistTrend', ()=>{
 		fixture.detectChanges();
 		expect( rings(chart, B) ).toEqual( [undefined, trendPalette[1]] );
 
-		fixture.componentRef.setInput( 'series', [B] );
+		fixture.componentRef.setInput( 'series', [nodeSeries( B )] );
 		fixture.detectChanges();
 		expect( (<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( B.nodeId.uaString() )).options).color ).toBe( trendPalette[0] );
 		expect( rings(chart, B) ).toEqual( [undefined, trendPalette[0]] );
@@ -128,9 +124,21 @@ describe( 'HistTrend', ()=>{
 		const { A, fixture, plot } = await draw();
 		expect( plot.getAttribute('role') ).toBe( 'region' );
 		expect( plot.getAttribute('aria-label') ).toBe( 'History trend of A, B. Highcharts interactive chart.' );
-		fixture.componentRef.setInput( 'series', [A] );
+		fixture.componentRef.setInput( 'series', [nodeSeries( A )] );
 		fixture.detectChanges();
 		expect( plot.getAttribute('aria-label') ).toBe( 'History trend of A. Highcharts interactive chart.' );
+		fixture.destroy();
+	} );
+	//The History tab opens on All;  the watch list's live trend presses its window's button (#420), and moves it with the window.
+	it( 'presses the range button given, and the one it changes to', async ()=>{
+		const { A, fixture, chart } = await draw();
+		const selector = (<any>chart).rangeSelector;
+		expect( selector.selected ).toBe( 4 );
+		fixture.componentRef.setInput( 'values', [histValue(A, 1000, 1), histValue(A, 2000, 3), histValue(A, 130_000, 5)] );//over a minute, else the 1m button is off
+		fixture.componentRef.setInput( 'range', 0 );
+		fixture.detectChanges();
+		expect( selector.selected ).toBe( 0 );
+		expect( chart.xAxis[0].getExtremes().max-chart.xAxis[0].getExtremes().min ).toBe( 60_000 );
 		fixture.destroy();
 	} );
 	//The accessibility module composes the range selector's keyboard handling only when the RangeSelector is defined as it runs

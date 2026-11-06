@@ -4,9 +4,18 @@ import { Service, WritableSignal, effect, inject, signal } from '@angular/core';
 //`<owner>/<name>` in localStorage, as JSON.  What follows the user between browsers is ProfileStore's.
 @Service()
 export class LocalPrefs{
+	//the default for a value that isn't JSON - one edited by hand, or written by something else - not a throw that fails the page (420 #13)
 	get<T>( owner:string, name:string, defaultValue:T ):T{
 		const item = localStorage.getItem( this.#key(owner, name) );
-		return item==null ? defaultValue : JSON.parse( item ) as T;
+		if( item==null )
+			return defaultValue;
+		try{
+			return JSON.parse( item ) as T;
+		}
+		catch{
+			console.warn( `localStorage '${this.#key(owner, name)}' is not JSON:  the default is used.` );
+			return defaultValue;
+		}
 	}
 	//null removes it
 	set<T>( owner:string, name:string, value:T|null ):void{
