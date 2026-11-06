@@ -149,6 +149,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#histSnapshot( requestId, message.histSnapshot );
 				else if( message.histRecords )
 					this.#histRecords( requestId, message.histRecords );
+				else if( message.monitoredItemModified )//a shared item's sampling or queue changed for another listener, or the server refused a modify (spec *Watch list*):  nothing here shows it until the watch list.
+					console.debug( `[Opc]MonitoredItemModified:  ${JSON.stringify(message.monitoredItemModified)}` );
 				else if( message.exception ){
 					const e = message.exception;
 					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
@@ -361,7 +363,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	//nothing to do with the request.  Now only this owner's registration for the FAILED nodes goes, and the failure is
 	//reported the way the server reports a bad reading: an OpcError value on the owner's stream, which stays open.
 	private async _subscribe( opcId:OpcId, nodes:NodeId[], owner:Owner ):Promise<void>{
-		const request:FromClient.Subscribe = { nodes:Gateway.toProto(nodes), opcId:opcId };
+		const request:FromClient.Subscribe = { nodes:Gateway.toProto(nodes), opcId:opcId, parameters:[] };//none:  the gateway's defaults for every node (spec *Watch list*).
 		const failed = new Array<{node:NodeId, sc:StatusCode}>();
 		try{
 			const y = await this.sendPromise<FromServer.MonitoredItemCreateResult[]>( {"subscribe":request}, `subscribe opcId: ${opcId}, nodeCount: ${nodes.length}` );

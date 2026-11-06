@@ -17,9 +17,10 @@ namespace Jde::Opc::Gateway{
 		GatewaySocketSession( sp<IRestStream> stream, beast::flat_buffer&& buffer, TRequestType&& request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι;
 		α OnRead( FromClient::Transmission&& transmission )ι->void override;
 		α SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value )ι->void override;
-		//What the last Subscribe asked for the node on the connection, the defaults when it named none (spec *Watch list*).
+		//What the last Subscribe asked for the node on the connection, the defaults when it named none (spec *Watch list*), and a
+		//negative sampling interval, which asks the publishing interval, as that interval in ms, so the merge can order it.
 		α ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;
-		α ItemModified( const ServerCnnctnNK& opcNK, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void override;//the MonitoredItemModified push.
+		α ItemModified( const ServerCnnctnNK& opcNK, const NodeId& node, const MonitoredItemModifyResult& result, const optional<AskReverted>& reverted )ι->void override;//the MonitoredItemModified push, and a refused ask put back.
 		α to_string()Ι->string override{ return Ƒ( "{:x}", Id() ); }
 		α UserPK()Ι->Jde::UserPK override{ return Session() ? Session()->UserPK : Jde::UserPK{}; }
 		α WriteException( runtime_error&& e, Jde::RequestId requestId, SRCE )ι->void override;
@@ -30,7 +31,10 @@ namespace Jde::Opc::Gateway{
 		//under its id, unless a HistUnsubscribe or the close ended it first.
 		α HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void;
 	private:
-		α CreateSubscription( sp<UAClient> client, flat_set<NodeId> nodes, RequestId requestId )ι->VoidAwait::Task;
+		α CreateSubscription( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> asked, flat_map<NodeId,optional<MonitoringParameters>> prior, RequestId requestId )ι->VoidAwait::Task;
+		//The asks a Subscribe kept for nodes its create refused, put back to what each had before, or gone with nothing before -
+		//unless a later Subscribe has asked the node since (418-watch-items #9).
+		α Unstore( const ServerCnnctnNK& slug, const flat_set<NodeId>& refused, const flat_map<NodeId,MonitoringParameters>& asked, const flat_map<NodeId,optional<MonitoringParameters>>& prior )ι->void;
 		α LocalQL()Ι->sp<QL::IQL> override{ return QLPtr(); }
 		α OnClose()ι->void override;
 		α ProcessTransmission( FromClient::Transmission&& transmission )ι->void;
@@ -39,7 +43,7 @@ namespace Jde::Opc::Gateway{
 		α SharedFromThis()ι->sp<GatewaySocketSession>{ return std::dynamic_pointer_cast<GatewaySocketSession>(shared_from_this()); }
 
 		α GraphQL( Jde::Proto::Query&& q, uint requestId )ι->TAwait<jvalue>::Task;
-		α Subscribe( ServerCnnctnNK&& opcId, flat_set<NodeId> nodes, uint32 requestId )ι->TAwait<sp<UAClient>>::Task;
+		α Subscribe( ServerCnnctnNK opcId, flat_map<NodeId,MonitoringParameters> asked, uint32 requestId )ι->TAwait<sp<UAClient>>::Task;//by value:  a coroutine keeps a reference parameter as one, and the transmission it names is gone once the connect suspends.
 		α Unsubscribe( ServerCnnctnNK&& opcId, flat_set<NodeId> nodes, uint32 requestId )ι->void;
 		//A historian subscription (spec *Subscriptions*), defined in hist/HistSubscriber.cpp:  the group's Read gate, the ack
 		//with each node's status, the snapshot's pages, then every record as it is stored, until HistUnsubscribe or the close.
@@ -62,8 +66,9 @@ namespace Jde::Opc::Gateway{
 		mutable std::mutex _histMutex;
 		flat_map<Jde::RequestId,sp<HistSubscriber>> _histSubscriptions;//by the HistSubscribe's request id.
 		bool _closed{};
-		//Per connection and node, what each Subscribe asked (ItemParameters) - set before the subscribe reaches the strand, the
-		//defaults for a node it named none for, and kept until the node is unsubscribed.
+		//Per connection and node, what each Subscribe asked (ItemParameters) - by the client's slug, set once the connect found the
+		//client and before the create, the defaults for a node it named none for, and kept until the node is unsubscribed.  An
+		//ask the server refused is put back:  the create's in Unstore, a modify's in ItemModified.
 		mutable std::mutex _parametersMutex;
 		flat_map<ServerCnnctnNK,flat_map<NodeId,MonitoringParameters>> _parameters;
 	};

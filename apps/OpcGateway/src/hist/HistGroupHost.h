@@ -107,7 +107,7 @@ namespace Jde::Opc::Gateway{
 		α ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void override;
 		α ItemParameters( const ServerCnnctnNK&, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;//the connection is this host's own, so the slug goes unread.
 		α RunsAt( Duration publishingInterval )ι->void override;//keeps the interval for the other Parameters callers, and gives the group its heartbeat hold.
-		α ItemModified( const ServerCnnctnNK&, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void override;//logged:  the collector's clients are its own, so every modify is its own edit's.
+		α ItemModified( const ServerCnnctnNK&, const NodeId& node, const MonitoredItemModifyResult& result, const optional<AskReverted>& )ι->void override;//a refusal logged with the group's guid - the collector's clients are its own, so every modify is its own edit's - and a success left to the map's line.  A reverted ask is the map's:  ItemParameters answers from the thresholds.
 		α to_string()Ι->string override{ return Ƒ( "HistGroup({})", _guid ); }
 		//What the collector asks of a node's item (spec *Collector contract*):  sampling at its MinTimeInterval, or at 0, the
 		//server's fastest, when it has none, and a publishing interval's samples queued - `publishing`, the interval the

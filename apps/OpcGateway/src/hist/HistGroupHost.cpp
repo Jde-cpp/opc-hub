@@ -874,8 +874,9 @@ namespace Jde::Opc::Gateway{
 		if( auto p = client ? client->TryMonitoredNodes() : nullptr; p )
 			p->ParametersChanged( shared_from_this(), nodes );
 	}
-	α HistGroupHost::ItemModified( const ServerCnnctnNK&, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void{
-		DBG( "[{}]Item for '{}' modified:  sampling {}ms, queue {}.", _guid, node.ToString(), revisedSamplingInterval, revisedQueueSize );
+	α HistGroupHost::ItemModified( const ServerCnnctnNK&, const NodeId& node, const MonitoredItemModifyResult& result, const optional<AskReverted>& )ι->void{
+		if( result.Status )//a success is the map's line (UAMonitoringNodes::Modifying);  a refusal is this group's edit, so it names the group.
+			WARN( "[{}]'{}' refused to modify the item for '{}':  {}.  It still samples at {}ms.", _guid, _slug, node.ToString(), UAException::Message(result.Status), result.RevisedSamplingInterval );
 	}
 	α HistGroupHost::FindNode( const NodeId& node )ι->std::pair<HistGroupNodePK,Node*>{
 		let p = _byNode.find( node );

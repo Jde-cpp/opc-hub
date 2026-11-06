@@ -36,17 +36,31 @@ namespace Jde::Opc::Gateway{
 				*s.add_parameters() = ToProto( p );
 		});
 	}
-	α FromClientUtils::ToParameters( const FromClient::MonitoringParameters& proto )ι->MonitoringParameters{
+	α FromClientUtils::ToParameters( const FromClient::MonitoringParameters& proto, const NodeId& node, SL sl )ε->MonitoringParameters{
+		let refuse = [&]( string&& why ){ throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "'{}' asks {}.", node.ToString(), why }; };
 		MonitoringParameters y;
-		if( proto.has_sampling_interval() )
+		if( proto.has_sampling_interval() ){
+			if( !std::isfinite(proto.sampling_interval()) )
+				refuse( Ƒ("a sampling_interval of {}, which is not a number of ms", proto.sampling_interval()) );
 			y.SamplingInterval = proto.sampling_interval();
+		}
 		if( proto.has_queue_size() )
 			y.QueueSize = proto.queue_size();
 		if( proto.has_discard_oldest() )
 			y.DiscardOldest = proto.discard_oldest();
 		if( proto.has_filter() ){
 			let& f = proto.filter();
-			y.Filter = DataChangeFilter{ .Trigger=(UA_DataChangeTrigger)f.trigger(), .DeadbandType=(UA_DeadbandType)f.deadband_type(), .DeadbandValue=f.deadband_value() };
+			if( f.has_trigger() && f.trigger()>UA_DATACHANGETRIGGER_STATUSVALUETIMESTAMP )
+				refuse( Ƒ("a trigger of {}, not 0 Status, 1 StatusValue or 2 StatusValueTimestamp", f.trigger()) );
+			if( f.deadband_type()>UA_DEADBANDTYPE_PERCENT )
+				refuse( Ƒ("a deadband_type of {}, not 0 None, 1 Absolute or 2 Percent", f.deadband_type()) );
+			if( !std::isfinite(f.deadband_value()) || f.deadband_value()<0 )
+				refuse( Ƒ("a deadband_value of {}, which is not a number of at least 0", f.deadband_value()) );
+			if( f.deadband_type()==UA_DEADBANDTYPE_PERCENT && f.deadband_value()>100 )
+				refuse( Ƒ("a percent deadband_value of {}, over 100", f.deadband_value()) );
+			auto& filter = y.Filter.emplace( DataChangeFilter{.DeadbandType=(UA_DeadbandType)f.deadband_type(), .DeadbandValue=f.deadband_value()} );
+			if( f.has_trigger() )
+				filter.Trigger = (UA_DataChangeTrigger)f.trigger();
 		}
 		return y;
 	}

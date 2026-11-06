@@ -29,12 +29,15 @@ message UnsubscribeAck{
 	repeated Jde.Opc.Proto.NodeId failures=2;
 }
 //A node's item was modified for a listener's join or leave (spec *Watch list*):  every listener of the node hears what the server
-//revised it to, since a SubscriptionAck answers one Subscribe alone.  Under request_id 0, as NodeValues is.
+//revised it to, since a SubscriptionAck answers one Subscribe alone.  Or the server refused the modify - status_code says why -
+//and the item stands as it was, the revised values what it still runs at;  the next join, leave or Subscribe of the node asks
+//again.  Under request_id 0, as NodeValues is.
 message MonitoredItemModified{
 	string opc_id=1;
 	Jde.Opc.Proto.NodeId node=2;
 	double revised_sampling_interval=3;
 	uint32 revised_queue_size=4;
+	uint32 status_code=5;
 }
 
 //A historian record (spec *Record format*), as a subscription's pages and pushes carry it:  a value that passed the

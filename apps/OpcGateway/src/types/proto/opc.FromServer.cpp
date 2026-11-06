@@ -4,6 +4,7 @@
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include <jde/opc/proto/opc.Common.h>
+#include "../../async/MonitoredItems.h"
 DISABLE_WARNINGS
 #include <jde/historian/proto/Hist.Records.pb.h>
 ENABLE_WARNINGS
@@ -82,13 +83,14 @@ namespace Jde::Opc::Gateway{
 		return t;
 	}
 
-	α FromServer::ItemModifiedTrans( const ServerCnnctnNK& opcId, const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->FromServer::Transmission{
+	α FromServer::ItemModifiedTrans( const ServerCnnctnNK& opcId, const NodeId& node, const MonitoredItemModifyResult& result )ι->FromServer::Transmission{
 		return set( 0, [&](FromServer::Message& m){
 			auto& modified = *m.mutable_monitored_item_modified();
 			modified.set_opc_id( opcId );
 			*modified.mutable_node() = ProtoUtils::ToNodeId( node );
-			modified.set_revised_sampling_interval( revisedSamplingInterval );
-			modified.set_revised_queue_size( revisedQueueSize );
+			modified.set_revised_sampling_interval( result.RevisedSamplingInterval );
+			modified.set_revised_queue_size( result.RevisedQueueSize );
+			modified.set_status_code( result.Status );
 		});
 	}
 	α FromServer::ToProto( const ServerCnnctnNK& opcId, const NodeId& node, const Opc::Value& v, RequestId requestId )ι->FromServer::Message{

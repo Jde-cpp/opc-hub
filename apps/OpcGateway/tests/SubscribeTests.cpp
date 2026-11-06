@@ -8,11 +8,13 @@
 #include "../src/async/Subscriptions.h"
 #include "../src/async/MonitoredItems.h"
 #include "../src/async/UAStrandAwait.h"
+#include "../src/ql/GatewayQL.h"
 #include "../src/UAClient.h"
 #include "../src/types/UAClientException.h"
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
 #include "utils/Pumps.h"
+#include "../src/types/proto/opc.FromClient.h"
 #include "../src/types/proto/opc.FromServer.h"
 #include <jde/opc/proto/opc.Common.h>
 #include <jde/opc/uatypes/DateTime.h>
@@ -52,12 +54,15 @@ namespace Jde::Opc::Gateway::Tests{
 		private:
 			SubscribeTests* _tests;
 		};
-		//A watch list's listener (#418):  the last value pushed, as a number, the pushes counted, and the MonitoredItemModified
-		//pushes with the last one's revised values.
+		//A watch list's listener (#418):  the last value pushed, as a number, every one in order, the pushes counted, and the
+		//MonitoredItemModified pushes with the last one's revised values and status.
 		struct WatchListener final : IListener{
 			α OnData( string, NodeId nodeId, const Proto::Value& value )ι->void override{
 				try{
-					Value = Opc::Value{ ProtoUtils::ToVariant(value) }.AsNumber<double>();
+					let v = Opc::Value{ ProtoUtils::ToVariant(value) }.AsNumber<double>();
+					Value = v;
+					lg _{ Mutex };
+					Values.push_back( v );
 				}
 				catch( const std::exception& e ){
 					WARN( "OnData: could not convert value for {}: {}", nodeId.ToString(), e.what() );
@@ -68,11 +73,13 @@ namespace Jde::Opc::Gateway::Tests{
 				lg _{ Mutex };
 				RevisedSamplingInterval = modified.revised_sampling_interval();
 				RevisedQueueSize = modified.revised_queue_size();
+				Status = modified.status_code();
 				++Modified;
 			}
 			atomic<double> Value{};
 			atomic<uint> Pushes{}, Modified{};
-			mutex Mutex; double RevisedSamplingInterval{}; uint32 RevisedQueueSize{};
+			α Saw( double v )ι->bool{ lg _{ Mutex }; return std::ranges::find( Values, v )!=Values.end(); }
+			mutex Mutex; double RevisedSamplingInterval{}; uint32 RevisedQueueSize{}; StatusCode Status{}; vector<double> Values;
 		};
 		α SetUp()ι->void{
 			_listener = ms<Listener>( this );
@@ -457,8 +464,8 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		α ItemParameters( const ServerCnnctnNK&, const NodeId&, Duration )Ι->MonitoringParameters override{ return Parameters; }
 		α RunsAt( Duration publishingInterval )ι->void override{ RanAt = publishingInterval; }
-		α ItemModified( const ServerCnnctnNK&, const NodeId&, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void override{
-			RevisedSamplingInterval = revisedSamplingInterval; RevisedQueueSize = revisedQueueSize; ++Modified;
+		α ItemModified( const ServerCnnctnNK&, const NodeId&, const MonitoredItemModifyResult& result, const optional<AskReverted>& )ι->void override{
+			RevisedSamplingInterval = result.RevisedSamplingInterval; RevisedQueueSize = result.RevisedQueueSize; ++Modified;
 		}
 		α to_string()Ι->string override{ return "SubscribeTests.StateListener"; }
 		MonitoringParameters Parameters;
@@ -652,39 +659,35 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//#418 (spec *Watch list*):  a Subscribe's per-node parameters reach the item through the session's ItemParameters.  An absolute
 	//deadband on pumpManual's rpm, a Double:  the server suppresses a change under it and reports one over it, each measured from
-	//the last value it reported.
+	//the last value it reported.  Every write is sampled - an interval of 0 samples on the write - and queued, so a change the
+	//filter let through would arrive, in order, before the one after it (418-watch-items #11:  a fixed sleep either side, which a
+	//slow publish failed or passed without proving anything).
 	TEST_F( SubscribeTests, AnAbsoluteDeadbandFiltersTheStream ){
 		let before = _client->MonitoredNodes().Count();
 		const NodeId rpm{ PumpsNs(), RpmManual };
 		ASSERT_NO_THROW( WriteDouble(rpm, 1000) );
 		auto listener = ms<WatchListener>();
-		ASSERT_NO_THROW( Watch(rpm, {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=10}}, listener) );
+		ASSERT_NO_THROW( Watch(rpm, {.SamplingInterval=0, .QueueSize=10, .Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=10}}, listener) );
 		ASSERT_NO_THROW( WaitValue(listener, 1000) );
-		std::this_thread::sleep_for( 500ms );//the item's first notification lands behind the read's push.
-		let pushes = listener->Pushes.load();
 		ASSERT_NO_THROW( WriteDouble(rpm, 1005) );
-		std::this_thread::sleep_for( 1s );//a sampling interval and a publish, well past when a reported change arrives.
-		EXPECT_EQ( listener->Pushes.load(), pushes ) << "a change under the deadband was pushed";
 		ASSERT_NO_THROW( WriteDouble(rpm, 1020) );
 		ASSERT_NO_THROW( WaitValue(listener, 1020) ) << "a change over the deadband wasn't pushed";
+		EXPECT_FALSE( listener->Saw(1005) ) << "a change under the deadband was pushed";
 		ASSERT_NO_THROW( UnsubscribeAndDrain(rpm, before) );
 	}
 	//A percent deadband is the server's to apply against the node's EURange, which open62541 does under UA_ENABLE_DA:  pump3's is
-	//0-3000 (pumps.NodeSet2.xml), so 1 % is 30 rpm.
+	//0-3000 (pumps.NodeSet2.xml), so 1 % is 30 rpm.  Sampled and queued as above.
 	TEST_F( SubscribeTests, APercentDeadbandFiltersAgainstTheRange ){
 		let before = _client->MonitoredNodes().Count();
 		const NodeId rpm{ PumpsNs(), Rpm3 };
 		ASSERT_NO_THROW( WriteDouble(rpm, 1000) );
 		auto listener = ms<WatchListener>();
-		ASSERT_NO_THROW( Watch(rpm, {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_PERCENT, .DeadbandValue=1}}, listener) );
+		ASSERT_NO_THROW( Watch(rpm, {.SamplingInterval=0, .QueueSize=10, .Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_PERCENT, .DeadbandValue=1}}, listener) );
 		ASSERT_NO_THROW( WaitValue(listener, 1000) );
-		std::this_thread::sleep_for( 500ms );
-		let pushes = listener->Pushes.load();
 		ASSERT_NO_THROW( WriteDouble(rpm, 1020) );
-		std::this_thread::sleep_for( 1s );
-		EXPECT_EQ( listener->Pushes.load(), pushes ) << "a change under 1 % of the range was pushed";
 		ASSERT_NO_THROW( WriteDouble(rpm, 1040) );
 		ASSERT_NO_THROW( WaitValue(listener, 1040) ) << "a change over 1 % of the range wasn't pushed";
+		EXPECT_FALSE( listener->Saw(1020) ) << "a change under 1 % of the range was pushed";
 		ASSERT_NO_THROW( UnsubscribeAndDrain(rpm, before) );
 	}
 	//Two listeners on one node share its item, which takes the strictest of what they ask:  the first, through the socket, asks
@@ -730,7 +733,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity, before) );
 	}
 	//A listener that asks a deadband on a node another watches unfiltered gets the unfiltered stream - more than it asked, never
-	//less - and its join modifies nothing, since a filter stands only when every listener asks one.
+	//less - and its join modifies nothing:  the unfiltered listener asks the server's default, which lifts the deadband.
 	TEST_F( SubscribeTests, AFilteredListenerJoiningAnUnfilteredItemGetsTheUnfilteredStream ){
 		let before = _client->MonitoredNodes().Count();
 		const NodeId rpm{ PumpsNs(), RpmManual };
@@ -747,6 +750,182 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( first->Modified.load(), 0u );
 		ASSERT_NO_THROW( UnsubscribeAndDrain(rpm, before+1) );
 		drainListener( _client, first, before );
+	}
+	//418-watch-items #1:  the unfiltered listener's default lifts a deadband but not a trigger.  The first, through the socket,
+	//asks StatusValueTimestamp;  an unfiltered joiner leaves the item as it is, so a write of the same value, which the server
+	//stamps with a new source time, still reaches the first.  The merge used to drop the whole filter.
+	TEST_F( SubscribeTests, AnUnfilteredJoinKeepsATimestampTrigger ){
+		let before = _client->MonitoredNodes().Count();
+		const NodeId rpm{ PumpsNs(), RpmManual };
+		ASSERT_NO_THROW( WriteDouble(rpm, 1000) );
+		auto watcher = ms<WatchListener>();
+		ASSERT_NO_THROW( Watch(rpm, {.Filter=DataChangeFilter{.Trigger=UA_DATACHANGETRIGGER_STATUSVALUETIMESTAMP}}, watcher) );
+		Stopwatch sw;
+		while( watcher->Pushes.load()<2 )//the read's push and the item's first notification.
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the watch's first values never came";
+		auto joiner = ms<StateListener>();
+		let joined = BlockAwait( DataChangeAwait{{rpm}, joiner, _client} );
+		ASSERT_EQ( joined.results_size(), 1 );
+		EXPECT_EQ( joined.results(0).status_code(), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "the joiner made an item";
+		let pushes = watcher->Pushes.load();
+		ASSERT_NO_THROW( WriteDouble(rpm, 1000) );//behind any modify the join posted:  one client, so the server takes them in order.
+		sw.Reset();
+		while( watcher->Pushes.load()==pushes )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the unfiltered join dropped the timestamp trigger";
+		EXPECT_EQ( watcher->Modified.load(), 0u ) << "the join modified the item";
+		UAClient::Unsubscribe( joiner );
+		ASSERT_NO_THROW( UnsubscribeAndDrain(rpm, before) );
+	}
+	//418-watch-items #2:  a filter sent for its deadband alone - as a protobufjs or ts-proto client sends it - leaves the trigger
+	//unset, which is StatusValue, the server's default.  It was proto3's zero, Status, and the item reported no value change.
+	TEST_F( SubscribeTests, AnUnsetTriggerIsStatusValue ){
+		FromClient::MonitoringParameters proto;
+		auto& f = *proto.mutable_filter();
+		f.set_deadband_type( UA_DEADBANDTYPE_ABSOLUTE );
+		f.set_deadband_value( 10 );
+		let parameters = FromClientUtils::ToParameters( proto, Intensity );
+		ASSERT_TRUE( parameters.Filter );
+		EXPECT_EQ( parameters.Filter->Trigger, UA_DATACHANGETRIGGER_STATUSVALUE );
+		EXPECT_EQ( parameters.Filter->DeadbandType, UA_DEADBANDTYPE_ABSOLUTE );
+		EXPECT_EQ( parameters.Filter->DeadbandValue, 10 );
+		f.set_trigger( UA_DATACHANGETRIGGER_STATUS );
+		EXPECT_EQ( FromClientUtils::ToParameters(proto, Intensity).Filter->Trigger, UA_DATACHANGETRIGGER_STATUS ) << "a trigger sent as 0 is Status";
+	}
+	//418-watch-items #5:  a parameter the server would misread or the merge couldn't order refuses the whole Subscribe, naming the
+	//node and the field, before anything is stored or asked - here the second node's, so the first, good, isn't subscribed
+	//either.  The gateway passed them on:  a trigger of 3 aborted a debug OpcServer at its first sample (UA_assert in
+	//ua_subscription_datachange.c), and a NaN interval made every merge look changed.
+	TEST_F( SubscribeTests, ABadParameterRefusesTheSubscribe ){
+		let before = _client->MonitoredNodes().Count();
+		const NodeId rpm{ PumpsNs(), RpmManual };
+		let nan = std::numeric_limits<double>::quiet_NaN();
+		const vector<std::pair<MonitoringParameters,string>> bad{
+			{ {.SamplingInterval=nan}, "sampling_interval" },
+			{ {.Filter=DataChangeFilter{.Trigger=(UA_DataChangeTrigger)3}}, "trigger" },
+			{ {.Filter=DataChangeFilter{.DeadbandType=(UA_DeadbandType)3}}, "deadband_type" },
+			{ {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=-5}}, "deadband_value" },
+			{ {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=nan}}, "deadband_value" },
+			{ {.Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_PERCENT, .DeadbandValue=150}}, "percent" }
+		};
+		for( let& [parameters, field] : bad ){
+			auto watcher = ms<WatchListener>();
+			try{
+				BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( Socket().Subscribe(OpcServerSlug, {Intensity, rpm}, {{}, parameters}, watcher) );
+				ADD_FAILURE() << "a Subscribe asking a bad " << field << " was taken";
+			}
+			catch( const std::exception& e ){
+				EXPECT_NE( string{e.what()}.find(field), string::npos ) << e.what();
+				EXPECT_NE( string{e.what()}.find(rpm.ToString()), string::npos ) << "the refusal doesn't name the node:  " << e.what();
+			}
+		}
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before ) << "a refused Subscribe made an item";
+	}
+	//418-watch-items #4:  a negative sampling interval asks the publishing interval, so it is ordered as that interval - the suite's
+	//100 ms - not as the fastest.  A joiner asking 60 ms is faster, so its join modifies the item to 60, and its leave puts the
+	//watcher's 100 back.  The merge took -1 for the fastest:  the join changed nothing, and the server sampled at 100.
+	TEST_F( SubscribeTests, ANegativeSamplingIntervalIsThePublishingInterval ){
+		let before = _client->MonitoredNodes().Count();
+		let publishing = std::chrono::duration<double,std::milli>{ _client->PublishingInterval() }.count();
+		auto watcher = ms<WatchListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = Watch(Intensity, {.SamplingInterval=-1}, watcher) );
+		EXPECT_EQ( ack.results(0).revised_sampling_interval(), publishing );
+		auto joiner = ms<StateListener>();
+		joiner->Parameters = { .SamplingInterval=60.0 };
+		let joined = BlockAwait( DataChangeAwait{{Intensity}, joiner, _client} );
+		ASSERT_EQ( joined.results_size(), 1 );
+		Stopwatch sw;
+		while( watcher->Modified.load()<1 )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the faster joiner modified nothing";
+		{
+			lg _{ watcher->Mutex };
+			EXPECT_EQ( watcher->RevisedSamplingInterval, 60.0 ) << "the joiner's, the faster";
+		}
+		UAClient::Unsubscribe( joiner );
+		sw.Reset();
+		while( watcher->Modified.load()<2 )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the leave never restored the publishing interval";
+		{
+			lg _{ watcher->Mutex };
+			EXPECT_EQ( watcher->RevisedSamplingInterval, publishing );
+		}
+		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity, before) );
+	}
+	//418-watch-items #6:  a Subscribe to "", the default connection, keeps its parameters under the slug the connect resolves "" to,
+	//which the create asks ItemParameters by.  They were kept under "", so every node was created with the defaults:  here the
+	//ack's revised sampling was 500, not the 1 s asked.  And the connect takes the session's credential for the slug, so the item
+	//is on _client, the one a Subscribe by slug reaches (418-watch-items N2:  it took the credential for "", a token of its own).
+	TEST_F( SubscribeTests, TheDefaultConnectionKeepsItsParameters ){
+		let before = _client->MonitoredNodes().Count();
+		let id = GetConnection( OpcServerSlug ).Id;
+		QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, isDefault:true )", id), {}, {UserPK::System} );
+		absl::Cleanup notDefault = [id]{ QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, isDefault:false )", id), {}, {UserPK::System} ); };
+		auto watcher = ms<WatchListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( (ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>(Socket().Subscribe("", {Intensity}, {{.SamplingInterval=1000.0}}, watcher))) );
+		ASSERT_EQ( ack.results_size(), 1 );
+		EXPECT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( ack.results(0).revised_sampling_interval(), 1000.0 ) << "the default connection's Subscribe was created with the defaults";
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "\"\" connected with another credential, on another client";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity, before) );
+		Stopwatch sw;//and any other client's item goes - one N2 made:  a later WaitRevived would take a client of the slug monitoring a node for the revival.
+		for( let& client : UAClient::LiveClients() ){
+			while( client->Slug()==OpcServerSlug && client!=_client && client->MonitoredNodes().Count() )
+				ASSERT_NO_THROW( sw.CheckTimeout(10s, 10ms) ) << "the other client's item never went";
+		}
+	}
+	//418-watch-items #9:  a re-subscribe the server refuses as a modify puts the session's ask back to the one the server granted,
+	//so a rebuild re-creates the item as it stood.  The refused ask - an absolute deadband on the server's ProductName, a String
+	//- was kept, and the rebuild's create was refused with it:  the node was lost.
+	TEST_F( SubscribeTests, ARefusedAskIsntRebuilt ){
+		let before = _client->MonitoredNodes().Count();
+		const NodeId productName{ 0, 2261 };//Server_ServerStatus_BuildInfo_ProductName
+		auto watcher = ms<WatchListener>();
+		ASSERT_NO_THROW( Watch(productName, {.SamplingInterval=1000.0}, watcher) );
+		ASSERT_NO_THROW( Watch(productName, {.SamplingInterval=1000.0, .Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=1}}, watcher) );
+		Stopwatch sw;
+		while( watcher->Modified.load()<1 )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the refusal never came";
+		{
+			lg _{ watcher->Mutex };
+			ASSERT_EQ( watcher->Status, UA_STATUSCODE_BADFILTERNOTALLOWED );
+		}
+		let lost = _client->Handle();
+		UAClient::ConnectionLost( sp<UAClient>{_client} );
+		let revived = WaitRevived( lost, OpcServerSlug );
+		if( !revived )
+			Reconnect();//the suite shares _client.
+		ASSERT_TRUE( revived ) << "no replacement client monitors anything:  the rebuild lost the node, re-creating the refused ask";
+		_client = revived;
+		sw.Reset();
+		while( _client->MonitoredNodes().Handles({productName}).empty() )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 10ms) ) << "the rebuild lost the node:  it re-created the refused ask";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(productName, before) );
+	}
+	//418-watch-items #3:  a modify the server refuses reaches every listener of the node, with the status and what the item still
+	//runs at, and the next ask tries again.  An absolute deadband on the server's ProductName, a String, which open62541 refuses
+	//(checkAdjustMonitoredItemParams), asked twice is refused twice.  The merge was kept as asked before the answer, so the
+	//refusal reached no one and the second Subscribe posted nothing.
+	TEST_F( SubscribeTests, ARefusedModifyIsToldAndAskedAgain ){
+		let before = _client->MonitoredNodes().Count();
+		const NodeId productName{ 0, 2261 };//Server_ServerStatus_BuildInfo_ProductName
+		auto watcher = ms<WatchListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = Watch(productName, {}, watcher) );
+		let sampling = ack.results(0).revised_sampling_interval();
+		const MonitoringParameters refused{ .Filter=DataChangeFilter{.DeadbandType=UA_DEADBANDTYPE_ABSOLUTE, .DeadbandValue=1} };
+		for( uint i=1; i<=2; ++i ){
+			ASSERT_NO_THROW( Watch(productName, refused, watcher) ) << "the ack, which answers before the modify, said the item failed";
+			Stopwatch sw;
+			while( watcher->Modified.load()<i )
+				ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "refusal " << i << " never reached the listener";
+			lg _{ watcher->Mutex };
+			EXPECT_EQ( watcher->Status, UA_STATUSCODE_BADFILTERNOTALLOWED ) << "refusal " << i;
+			EXPECT_EQ( watcher->RevisedSamplingInterval, sampling ) << "the item still runs at what it had";
+		}
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "a refused modify made or took an item";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(productName, before) );
 	}
 
 	//subscription-disconnect #5: a client dying with a create in flight resumed that subscribe with an ack of zero results for its
@@ -1210,6 +1389,30 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( listener->Pushes.load(), 0u ) << "the closed listener is being sent data changes";
 		EXPECT_EQ( _client->MonitoredNodes().Count(), 0u ) << "the answer attached the node its listener had closed";
 		EXPECT_EQ( listener.use_count(), 1 ) << "the client still holds the listener";
+	}
+	//418-watch-items #7:  a ParametersChanged while the listener's create is out reaches the item the answer makes.  The create asks
+	//1 s and is held unread;  the listener changes to 250 ms and says so;  the answer's item is modified to 250, which the listener
+	//hears.  ParametersChanged skipped a node with no item yet, so the item kept the 1 s the create sent.
+	TEST_F( SubscribeTests, AnAskChangedWhileTheCreateIsOutReachesTheItem ){
+		if( _client->MonitoredNodes().Count() )
+			GTEST_SKIP() << "an earlier test left items monitored";
+		ASSERT_NO_THROW( BlockAwait(SubscribeAwait{_client}) );
+		auto listener = ms<StateListener>();
+		listener->Parameters = { .SamplingInterval=1000.0 };
+		HeldCreate create{ _client, Intensity, listener };
+		if( _client->MonitoredNodes().Count() )
+			GTEST_SKIP() << "the create answered before the strand was held - nothing was in flight to change";
+		listener->Parameters = { .SamplingInterval=250.0 };
+		_client->MonitoredNodes().ParametersChanged( listener, {Intensity} );
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = create.Ack() );
+		ASSERT_EQ( ack.results_size(), 1 );
+		EXPECT_EQ( ack.results(0).revised_sampling_interval(), 1000.0 ) << "the ack is the create's, sent before the change";
+		Stopwatch sw;
+		while( listener->Modified.load()<1 )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "the change never reached the item";
+		EXPECT_EQ( listener->RevisedSamplingInterval.load(), 250.0 );
+		drainListener( _client, listener, 0 );
 	}
 
 	//And a rebuild's create, where both of the by-node unsubscribe's steps now find the node:  the create drops it, and the rebuild

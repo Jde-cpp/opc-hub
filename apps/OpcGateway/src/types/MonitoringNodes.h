@@ -5,7 +5,6 @@
 #include <jde/fwk/co/Timer.h>
 #include <jde/fwk/utils/HiLow.h>
 #include "../uatypes/MonitoredItemCreateResult.h"
-#include "../uatypes/MonitoringParameters.h"
 #include "../async/DataChanges.h"
 #include "../async/MonitoredItems.h"
 #include "../async/Subscriptions.h"
@@ -16,6 +15,9 @@ namespace Jde::Opc::Gateway{
 	struct UAClient;
 	struct CreateMonitoredItemsRequest;
 
+	//A listener's ask on a node's item that the server refused, put back to the last one it granted (418-watch-items #9):  a rebuild
+	//re-creates the item with what the listener asks then, so a refused ask kept would be refused again and the node lost.
+	struct AskReverted final{ MonitoringParameters Refused; MonitoringParameters Restored; };
 	struct IDataChange{
 		β SendDataChange( const ServerCnnctnNK& opcId, const NodeId& node, const Value& value )ι->void=0;
 		//The subscription these nodes were on is gone - the connection failed, or the server dropped the session or the
@@ -45,10 +47,12 @@ namespace Jde::Opc::Gateway{
 		//Called as ItemParameters is.
 		β RunsAt( Duration /*publishingInterval*/ )ι->void{}
 		//The node's item was modified - for another listener's join or leave, or this one's ParametersChanged - to what the server
-		//revised it to.  Every listener of the node hears it, the one whose join caused it included, since its ack answered before
-		//the modify did.  Called off the monitoring lock, on the client's strand, as ConnectionLost is.  A refused modify is logged
-		//and reaches nobody:  the item stands as it was.
-		β ItemModified( const ServerCnnctnNK& /*opcId*/, const NodeId&, double /*revisedSamplingInterval*/, uint32 /*revisedQueueSize*/ )ι->void{}
+		//revised it to.  Or the server refused the modify:  the status says why, the item stands as it was and the revised values
+		//are what it still runs at, and the next join, leave or ask tries again.  Every listener of the node hears it, the one whose
+		//join caused it included, since its ack answered before the modify did.  A refused ask still this listener's own is put back
+		//to the last the server granted it - `reverted` - which ItemParameters answers from here, unless it has asked again since.
+		//Called off the monitoring lock, on the client's strand, as ConnectionLost is.
+		β ItemModified( const ServerCnnctnNK& /*opcId*/, const NodeId&, const MonitoredItemModifyResult&, const optional<AskReverted>& /*reverted*/ )ι->void{}
 		β to_string()Ι->string=0;
 	};
 
@@ -69,7 +73,8 @@ namespace Jde::Opc::Gateway{
 		α Unsubscribe( sp<IDataChange> )ι->void;
 		//The listener's ItemParameters changed for these nodes - a threshold edit (HistGroupHost::SetNodeThresholds) - so each
 		//item of its is asked again and the merge recomputed:  the one modify path a join and a leave take (spec *Watch list*).
-		//A node the listener has no item for is skipped;  a create still out asks ItemParameters when it answers.
+		//A create of its still out is asked again too, and its answer modifies the item it attaches to when the ask changed since
+		//the create was sent (418-watch-items #7).  A node with neither is skipped:  its next create asks ItemParameters.
 		α ParametersChanged( const sp<IDataChange>& listener, const flat_set<NodeId>& nodes )ι->void;
 		α SendDataChange( Handle h, const Value&& value )ι->uint;
 		α OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void;
@@ -84,29 +89,36 @@ namespace Jde::Opc::Gateway{
 	private:
 		//An item:  its node, the server's answer with the revised values, each listener with what it asked (ItemParameters), and
 		//what the item was last asked for - the merge of those - which a join, a leave or a ParametersChanged compares its new
-		//merge to, so a server's revision never looks like a change to ask again.
+		//merge to, so a server's revision never looks like a change to ask again.  None once the server refused a modify:  what
+		//it holds is unknown here, so the next merge asks whatever it is.  Granted:  each listener's ask the server last accepted
+		//- the create's, one a Good modify carried, or every ask when a merge changes nothing and no modify is out (Pending) -
+		//which a refused modify puts back (418-watch-items #9).
+		struct Change{ MonitoringParameters Merged; flat_map<sp<IDataChange>,MonitoringParameters> Asks; };//a modify posted, and the asks it merged.
 		struct Subscription{
-			Subscription( NodeId node, MonitoredItemCreateResult result, sp<IDataChange> listener, MonitoringParameters parameters )ι: Node{ move(node) }, Result{ move(result) }, Requested{ parameters }{ Listeners.emplace( move(listener), move(parameters) ); }
+			Subscription( NodeId node, MonitoredItemCreateResult result, sp<IDataChange> listener, MonitoringParameters parameters )ι: Node{ move(node) }, Result{ move(result) }, Requested{ parameters }{ Listeners.emplace( listener, parameters ); Granted.emplace( move(listener), move(parameters) ); }
 			NodeId Node;
 			MonitoredItemCreateResult Result;
 			flat_map<sp<IDataChange>,MonitoringParameters> Listeners;
-			MonitoringParameters Requested;
+			optional<MonitoringParameters> Requested;
+			flat_map<sp<IDataChange>,MonitoringParameters> Granted;
+			uint Pending{};//modifies posted and not yet answered.
 			//The merge recomputed after a listener joined, left or changed its ask:  the parameters to modify the item to when they
-			//differ from Requested, which they replace.  None means the item stands.
-			α Remerge()ι->optional<MonitoringParameters>;
+			//differ from Requested, which they replace, with the asks merged.  None means the item stands.
+			α Remerge()ι->optional<Change>;
 		};
 		//A create in flight:  the new nodes asked for - in the order the server answers them, so never edited - the listener, the
-		//parameters it asked per node, which its answer attaches, and the nodes that listener unsubscribed while the create was
-		//out (either Unsubscribe), which its answer must not attach.
-		struct Call{ flat_set<NodeId> Nodes; sp<IDataChange> Listener; flat_map<NodeId,MonitoringParameters> Parameters; flat_set<NodeId> Cancelled; };
+		//parameters it asked per node, which the create sent, the nodes that listener unsubscribed while the create was out
+		//(either Unsubscribe), which its answer must not attach, and those it asked again meanwhile (ParametersChanged), which
+		//its answer attaches instead of what was sent.
+		struct Call{ flat_set<NodeId> Nodes; sp<IDataChange> Listener; flat_map<NodeId,MonitoringParameters> Parameters; flat_set<NodeId> Cancelled; flat_map<NodeId,MonitoringParameters> Refreshed; };
 		α GetClient()ι->sp<UAClient>;
 		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α FindNode( const NodeId& node )ι->tuple<MonitorHandle,Subscription*>;//the pointer is good until the next insert into _subscriptions.
 		α DeleteMonitoring( sp<UAClient> ua, Handle uaHandle, flat_map<SubscriptionId,flat_set<MonitorId>> requested )ι->VoidTask;//sp: it has to outlive the wait, and it owns `this`.
 		//The ModifyMonitoredItems for items whose merge changed, posted onto the strand - never run under _mutex, nor inline in the
-		//strand handler that found the change:  a submission can run the processing loop in place.  Each listener of an item the
-		//server modified hears ItemModified, off the lock;  a refusal is logged.  sp, as DeleteMonitoring takes it:  the client owns `this`.
-		α Modify( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> nodes )ι->void;
-		α Modifying( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> nodes )ι->ModifyMonitoredItemsAwait::Task;
+		//strand handler that found the change:  a submission can run the processing loop in place.  Each listener of an item asked
+		//hears ItemModified, off the lock, a refusal included.  sp, as DeleteMonitoring takes it:  the client owns `this`.
+		α Modify( sp<UAClient> client, flat_map<NodeId,Change> nodes )ι->void;
+		α Modifying( sp<UAClient> client, flat_map<NodeId,Change> changes )ι->ModifyMonitoredItemsAwait::Task;
 
 		atomic<RequestId> _requestId{};
 		flat_map<MonitorHandle,flat_set<NodeId>> _requests ABSL_GUARDED_BY(_mutex);

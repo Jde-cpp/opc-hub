@@ -28,9 +28,10 @@ namespace Jde::Opc::Gateway{
 	}
 
 	//The one item a node's listeners share (spec *Watch list*, strictest wins):  the fastest sampling, the largest queue, discard
-	//oldest unless every listener keeps the oldest, and a filter only when every listener asks one - its most inclusive trigger,
-	//and the smallest deadband when every deadband is of one type, else none, since an absolute one and a percentage of a
-	//range the gateway hasn't read can't be ordered.  More than any one asked, never less.
+	//oldest unless every listener keeps the oldest, and the filter's most inclusive trigger, with the smallest deadband when every
+	//deadband is of one type, else none, since an absolute one and a percentage of a range the gateway hasn't read can't be
+	//ordered.  A listener with no filter asks the server's default, StatusValue and no deadband:  it lifts a deadband, never a
+	//trigger another asked (418-watch-items #1).  More than any one asked, never less.
 	Ω merge( const flat_map<sp<IDataChange>,MonitoringParameters>& listeners )ι->MonitoringParameters{
 		ASSERT( listeners.size() );
 		optional<MonitoringParameters> y;
@@ -42,26 +43,32 @@ namespace Jde::Opc::Gateway{
 			y->SamplingInterval = std::min( y->SamplingInterval, p.SamplingInterval );
 			y->QueueSize = std::max( y->QueueSize, p.QueueSize );
 			y->DiscardOldest = y->DiscardOldest || p.DiscardOldest;
-			if( !y->Filter || !p.Filter )
-				y->Filter.reset();
-			else{
-				y->Filter->Trigger = std::max( y->Filter->Trigger, p.Filter->Trigger );
-				if( y->Filter->DeadbandType!=p.Filter->DeadbandType ){
-					y->Filter->DeadbandType = UA_DEADBANDTYPE_NONE;
-					y->Filter->DeadbandValue = 0;
-				}
-				else
-					y->Filter->DeadbandValue = std::min( y->Filter->DeadbandValue, p.Filter->DeadbandValue );
+			if( !y->Filter && !p.Filter )
+				continue;
+			auto& filter = y->Filter ? *y->Filter : y->Filter.emplace();
+			let asked = p.Filter.value_or( DataChangeFilter{} );
+			filter.Trigger = std::max( filter.Trigger, asked.Trigger );
+			if( filter.DeadbandType!=asked.DeadbandType ){
+				filter.DeadbandType = UA_DEADBANDTYPE_NONE;
+				filter.DeadbandValue = 0;
 			}
+			else
+				filter.DeadbandValue = std::min( filter.DeadbandValue, asked.DeadbandValue );
 		}
+		if( y && y->Filter==DataChangeFilter{} )//a plain item is sent with none.
+			y->Filter.reset();
 		return y.value_or( MonitoringParameters{} );
 	}
-	α UAMonitoringNodes::Subscription::Remerge()ι->optional<MonitoringParameters>{
+	α UAMonitoringNodes::Subscription::Remerge()ι->optional<Change>{
 		auto merged = merge( Listeners );
-		if( merged==Requested )
+		if( Requested && merged==*Requested ){
+			if( !Pending )//the server holds what it was last asked, which meets every ask now (418-watch-items #9).
+				Granted = Listeners;
 			return nullopt;
+		}
 		Requested = merged;
-		return merged;
+		++Pending;
+		return Change{ move(merged), Listeners };
 	}
 
 	α UAMonitoringNodes::FindNode( const NodeId& node )ι->tuple<MonitorHandle,Subscription*>{
@@ -100,11 +107,11 @@ namespace Jde::Opc::Gateway{
 		let publishingInterval = client->PublishingInterval();//the server's revised one, once a subscription exists.
 		if( subscriptionId )
 			dataChange->RunsAt( publishingInterval );
-		flat_map<NodeId,MonitoringParameters> modify;//joins that changed an item's merge (spec *Watch list*).
+		flat_map<NodeId,Change> modify;//joins that changed an item's merge (spec *Watch list*).
 		for( auto pSubscription : existing ){
 			pSubscription->Listeners.insert_or_assign( dataChange, dataChange->ItemParameters(client->Slug(), pSubscription->Node, publishingInterval) );
 			if( auto merged = pSubscription->Remerge(); merged )
-				modify.emplace( pSubscription->Node, *merged );
+				modify.emplace( pSubscription->Node, move(*merged) );
 		}
 		_requests.emplace( requestId, move(nodes) );
 		optional<CreateMonitoredItemsRequest> y;
@@ -139,13 +146,14 @@ namespace Jde::Opc::Gateway{
 		MonitorHandle requestHandle{ requestId };
 		let client = _client.lock();
 		flat_map<SubscriptionId,flat_set<MonitorId>> surplus;//items this answer created that nothing wants:  duplicates, and nodes unsubscribed while the create was out.
-		flat_map<NodeId,MonitoringParameters> modify;//items this listener joined whose merge it changed.
+		flat_map<NodeId,Change> modify;//items this listener joined whose merge it changed.
 		{
 			ul _{ _mutex };
 			if( auto pCall = _calls.find(requestId); pCall!=_calls.end() ){
 				auto& nodes = pCall->second.Nodes;
 				auto& dataChange = pCall->second.Listener;
 				let& parameters = pCall->second.Parameters;
+				let& refreshed = pCall->second.Refreshed;
 				let& cancelled = pCall->second.Cancelled;
 				ASSERT( nodes.size()==response->resultsSize );
 				uint i{};
@@ -166,15 +174,16 @@ namespace Jde::Opc::Gateway{
 						TRACE( "[{}.{}]'{}' was unsubscribed while its create was out - deleting the item.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
 						_errors.try_emplace( {requestId} ).first->second.try_emplace( move(*pNode), UA_STATUSCODE_BADREQUESTCANCELLEDBYCLIENT );
 					}
-					else if( auto pExisting = get<1>(FindNode(*pNode)); pExisting ){
+					else if( auto existing = get<1>(FindNode(*pNode)); existing ){
 						//Another create for this node answered first.  MonitoredItemsRequest only finds nodes already monitored, so two creates
 						//in flight at once - a rebuild restoring a node while its session subscribes to it again, or two sessions subscribing a
 						//new node together - made two monitored items for one node:  every change was pushed twice, and an unsubscribe by node
 						//removed only one (subscription-disconnect #15).  This listener joins the item that exists, whose result the ack
 						//reports, and the new item is deleted.
-						pExisting->Listeners.insert_or_assign( dataChange, parameters.at(*pNode) );
-						if( auto merged = pExisting->Remerge(); merged )
-							modify.emplace( *pNode, *merged );
+						let refreshedNode = refreshed.find( *pNode );
+						existing->Listeners.insert_or_assign( dataChange, refreshedNode==refreshed.end() ? parameters.at(*pNode) : refreshedNode->second );
+						if( auto merged = existing->Remerge(); merged )
+							modify.emplace( *pNode, move(*merged) );
 						surplus.try_emplace( requestHandle.SubId() ).first->second.emplace( result.monitoredItemId );
 						TRACE( "[{}.{}]Monitoring '{}' already - joined the existing item, deleting the duplicate.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
 					}
@@ -182,8 +191,13 @@ namespace Jde::Opc::Gateway{
 						let h = MonitorHandle{ requestHandle.SubId(), result.monitoredItemId };
 						TRACE( "[{}.{}]Monitoring '{}'", hex(client->Handle()), hex((Handle)h), pNode->ToString() );
 						_byNode.insert_or_assign( *pNode, h );//FindNode found nothing, so any entry already here is stale.
-						let& asked = parameters.at( *pNode );
-						_subscriptions.emplace( h, Subscription{move(*pNode), move(result), dataChange, asked} );
+						let& sent = parameters.at( *pNode );
+						auto& subscription = _subscriptions.emplace( h, Subscription{move(*pNode), move(result), dataChange, sent} ).first->second;
+						if( auto p = refreshed.find(subscription.Node); p!=refreshed.end() ){//asked again while the create was out (418-watch-items #7).
+							subscription.Listeners.insert_or_assign( dataChange, p->second );
+							if( auto merged = subscription.Remerge(); merged )
+								modify.emplace( subscription.Node, move(*merged) );
+						}
 						if( _subscriptions.size()==1 )
 							client->ProcessDataSubscriptions();
 					}
@@ -290,7 +304,7 @@ namespace Jde::Opc::Gateway{
 	α UAMonitoringNodes::Unsubscribe( sp<IDataChange> dataChange )ι->void{
 		DBG( "[{}]UAMonitoringNodes::Unsubscribe()", dataChange->to_string() );
 		auto client = _client.lock();
-		flat_map<NodeId,MonitoringParameters> modify;//items left to others whose merge the leave changed.
+		flat_map<NodeId,Change> modify;//items left to others whose merge the leave changed.
 		{
 			ul _{ _mutex };
 			//The creates still out are cancelled node by node, as the by-node overload does:  their answer deletes what they made and
@@ -304,10 +318,11 @@ namespace Jde::Opc::Gateway{
 			for( auto&& [h,subscription] : _subscriptions ){
 				if( !subscription.Listeners.erase(dataChange) )
 					continue;
+				subscription.Granted.erase( dataChange );
 				if( subscription.Listeners.empty() )
 					toDelete.try_emplace( h.SubId() ).first->second.emplace( h.MonitorId() );
 				else if( auto merged = subscription.Remerge(); merged )
-					modify.emplace( subscription.Node, *merged );
+					modify.emplace( subscription.Node, move(*merged) );
 			}
 			if( client && toDelete.size() )
 				DeleteMonitoring( client, client->Handle(), toDelete );
@@ -320,16 +335,18 @@ namespace Jde::Opc::Gateway{
 		flat_map<SubscriptionId,flat_set<MonitorId>> toDelete;
 		tuple<flat_set<NodeId>,flat_set<NodeId>> successFailures;
 		auto client = _client.lock();
-		flat_map<NodeId,MonitoringParameters> modify;//items left to others whose merge the leave changed.
+		flat_map<NodeId,Change> modify;//items left to others whose merge the leave changed.
 		absl::ReleasableMutexLock lock{ _mutex };
 		for( auto& node : nodes ){
 			auto [id,pSubscription] = FindNode( node );
 			bool dropped = pSubscription && pSubscription->Listeners.erase( dataChange );
+			if( dropped )
+				pSubscription->Granted.erase( dataChange );
 			if( dropped && pSubscription->Listeners.empty() )
 				toDelete.try_emplace( id.SubId() ).first->second.emplace( id.MonitorId() );
 			else if( dropped ){
 				if( auto merged = pSubscription->Remerge(); merged )
-					modify.emplace( node, *merged );
+					modify.emplace( node, move(*merged) );
 			}
 			//And the creates still out.  FindNode sees _subscriptions alone, and a node is not there until its create answers, so an
 			//unsubscribe inside that round trip - a view opened and closed at once - found nothing, reported a failure, and the
@@ -359,54 +376,86 @@ namespace Jde::Opc::Gateway{
 		auto client = _client.lock();
 		if( !client )
 			return;
-		flat_map<NodeId,MonitoringParameters> modify;
+		flat_map<NodeId,Change> modify;
 		{
 			ul _{ _mutex };
 			let publishingInterval = client->PublishingInterval();
 			for( let& node : nodes ){
-				auto pSubscription = get<1>( FindNode(node) );
-				if( !pSubscription )
-					continue;
-				auto p = pSubscription->Listeners.find( listener );
-				if( p==pSubscription->Listeners.end() )
-					continue;
-				p->second = listener->ItemParameters( client->Slug(), node, publishingInterval );
-				if( auto merged = pSubscription->Remerge(); merged )
-					modify.emplace( node, *merged );
+				let asked = listener->ItemParameters( client->Slug(), node, publishingInterval );
+				if( auto sub = get<1>(FindNode(node)); sub ){
+					if( auto p = sub->Listeners.find(listener); p!=sub->Listeners.end() ){
+						p->second = asked;
+						if( auto merged = sub->Remerge(); merged )
+							modify.emplace( node, move(*merged) );
+						continue;
+					}
+				}
+				for( auto&& [_,call] : _calls ){
+					if( call.Listener==listener && call.Nodes.contains(node) && !call.Cancelled.contains(node) )
+						call.Refreshed.insert_or_assign( node, asked );
+				}
 			}
 		}
 		Modify( move(client), move(modify) );
 	}
-	α UAMonitoringNodes::Modify( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> nodes )ι->void{
+	α UAMonitoringNodes::Modify( sp<UAClient> client, flat_map<NodeId,Change> nodes )ι->void{
 		if( nodes.empty() )
 			return;
 		client->PostStrand( [this, client, nodes=move(nodes)]()mutable{ Modifying( client, move(nodes) ); } );
 	}
-	α UAMonitoringNodes::Modifying( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> nodes )ι->ModifyMonitoredItemsAwait::Task{
+	α UAMonitoringNodes::Modifying( sp<UAClient> client, flat_map<NodeId,Change> changes )ι->ModifyMonitoredItemsAwait::Task{
+		flat_map<NodeId,MonitoringParameters> merged;
+		for( let& [node,change] : changes )
+			merged.emplace( node, change.Merged );
 		flat_map<NodeId,MonitoredItemModifyResult> results;
 		try{
-			results = co_await ModifyMonitoredItemsAwait{ move(nodes), client };
+			results = co_await ModifyMonitoredItemsAwait{ merged, client };
 		}
 		catch( const runtime_error& e ){
 			WARN( "[{}]Could not modify the items on '{}':  {}", hex(client->Handle()), client->Slug(), e.what() );
-			co_return;
+			for( let& [node,_] : merged )
+				results.emplace( node, MonitoredItemModifyResult{UA_STATUSCODE_BADUNEXPECTEDERROR} );
 		}
-		for( let& [node,result] : results ){
-			if( result.Status ){//braced:  the log macros expand to a bare `if`.
-				WARN( "[{}]'{}' refused to modify the item for '{}':  {}.", hex(client->Handle()), client->Slug(), node.ToString(), UAException::Message(result.Status) );
-				continue;
-			}
-			vector<sp<IDataChange>> listeners;//a snapshot:  told off the lock, as ConnectionLost is.
-			{
-				rl _{ _mutex };
-				if( auto pSubscription = get<1>(FindNode(node)); pSubscription ){
-					for( let& [listener,_] : pSubscription->Listeners )
-						listeners.push_back( listener );
+		struct Told{ NodeId Node; MonitoredItemModifyResult Result; vector<std::pair<sp<IDataChange>,optional<AskReverted>>> Listeners; };
+		vector<Told> told;//a snapshot:  told off the lock, as ConnectionLost is.
+		{
+			ul _{ _mutex };
+			for( auto&& [node,result] : results ){
+				auto sub = get<1>( FindNode(node) );
+				auto change = changes.find( node );
+				if( !sub || change==changes.end() )
+					continue;
+				if( sub->Pending )
+					--sub->Pending;
+				flat_map<sp<IDataChange>,AskReverted> reverted;
+				for( let& [listener,ask] : change->second.Asks ){
+					auto current = sub->Listeners.find( listener );
+					if( current==sub->Listeners.end() || current->second!=ask )
+						continue;//left, or asked again since:  this answer isn't about its ask.
+					if( !result.Status )
+						sub->Granted.insert_or_assign( listener, ask );
+					else if( auto granted = sub->Granted.find(listener); granted!=sub->Granted.end() && granted->second!=ask ){
+						current->second = granted->second;//the item stands at what was granted, and a rebuild re-creates what this asks (418-watch-items #9).
+						reverted.emplace( listener, AskReverted{ask, granted->second} );
+					}
 				}
+				if( result.Status ){//the item stands as it was, so the next merge has to ask again (418-watch-items #3).
+					sub->Requested.reset();
+					result.RevisedSamplingInterval = sub->Result.revisedSamplingInterval;
+					result.RevisedQueueSize = sub->Result.revisedQueueSize;
+				}
+				Told t{ node, result, {} };
+				for( let& [listener,_] : sub->Listeners ){
+					auto r = reverted.find( listener );
+					t.Listeners.emplace_back( listener, r==reverted.end() ? nullopt : optional<AskReverted>{r->second} );
+				}
+				told.push_back( move(t) );
 			}
-			DBG( "[{}]Item for '{}' modified:  sampling {}ms, queue {} - {} listener(s) told.", hex(client->Handle()), node.ToString(), result.RevisedSamplingInterval, result.RevisedQueueSize, listeners.size() );
-			for( let& listener : listeners )
-				listener->ItemModified( client->Slug(), node, result.RevisedSamplingInterval, result.RevisedQueueSize );
+		}
+		for( let& t : told ){
+			DBG( "[{}]Item for '{}' {}:  sampling {}ms, queue {} - {} listener(s) told.", hex(client->Handle()), t.Node.ToString(), t.Result.Status ? Ƒ("not modified, {}", UAException::Message(t.Result.Status)) : "modified", t.Result.RevisedSamplingInterval, t.Result.RevisedQueueSize, t.Listeners.size() );
+			for( let& [listener,revert] : t.Listeners )
+				listener->ItemModified( client->Slug(), t.Node, t.Result, revert );
 		}
 	}
 

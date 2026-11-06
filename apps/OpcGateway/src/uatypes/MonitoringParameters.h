@@ -4,7 +4,8 @@
 namespace Jde::Opc::Gateway{
 	//Part 4's DataChangeFilter (spec *Watch list*):  when an item reports - a status change, a value change, a timestamp change -
 	//and the deadband a value change has to clear, absolute in the value's units, or a percentage of the node's EURange, which is
-	//the server's to apply:  one that can't refuses the create or the modify with the status the ack carries.
+	//the server's to apply:  one that can't refuses the create with the status the ack carries, or the modify with the one the
+	//MonitoredItemModified push carries.
 	struct DataChangeFilter final{
 		UA_DataChangeTrigger Trigger{ UA_DATACHANGETRIGGER_STATUSVALUE };
 		UA_DeadbandType DeadbandType{ UA_DEADBANDTYPE_NONE };
@@ -17,11 +18,12 @@ namespace Jde::Opc::Gateway{
 	//(IDataChange::ItemParameters), so a rebuild re-creates its items as it has them now, and ModifyMonitoredItemsAwait changes
 	//them in place.
 	struct MonitoringParameters final{
-		double SamplingInterval{ 500.0 };//ms;  0 is the server's fastest.
+		double SamplingInterval{ 500.0 };//ms;  0 is the server's fastest, negative the publishing interval, which a session gives in ms (GatewaySocketSession::ItemParameters).
 		uint32 QueueSize{ 1 };
 		bool DiscardOldest{ true };
-		optional<DataChangeFilter> Filter;//none:  the server's default, a report on a status or value change, no deadband.
-		α operator==( const MonitoringParameters& )Ι->bool=default;
+		optional<DataChangeFilter> Filter;//none:  the server's default, DataChangeFilter{} - a report on a status or value change, no deadband.
+		//None and DataChangeFilter{} are one ask, so an item asked either way is no change to modify.
+		α operator==( const MonitoringParameters& x )Ι->bool{ return SamplingInterval==x.SamplingInterval && QueueSize==x.QueueSize && DiscardOldest==x.DiscardOldest && Filter.value_or(DataChangeFilter{})==x.Filter.value_or(DataChangeFilter{}); }
 		//Into a create's or a modify's requestedParameters - the three fields, and the filter as a UA_DataChangeFilter when there is one.
 		α Set( UA_MonitoringParameters& ua )Ι->void;
 	};

@@ -29,6 +29,7 @@ namespace Jde::Opc::Gateway{
 		string _opcSlug;
 		Credential _cred;
 		SessionPK _sessionId{};//non-zero only on the web-session ctors: a successful connect is recorded in _sessions so opcSessions counts it.
+		UserPK _user{};//the web session's, for the credential ResolveDefault looks up again once "" is a slug.
 		sp<UAClient> _result;
 	};
 }
