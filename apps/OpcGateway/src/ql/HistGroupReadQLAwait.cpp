@@ -3,6 +3,7 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/opc/UAException.h>
 #include "../hist/HistHost.h"
+#include "../UAClient.h"
 #include "HistQL.h"
 #include "../async/ExecutorAwait.h"
 
@@ -65,7 +66,10 @@ namespace Jde::Opc::Gateway{
 				if( page.Continuation.size() )
 					continuation = Str::Encode64( page.Continuation, true );
 			}
-			Resume( HistQL::ToJson(_query, HistQL::NodesJson(args.Nodes), move(values), continuation, statuses) );
+			//Each stored body decodes by the connection's registry as it is (clients spec *Structures*):  a file read has no client, and a
+			//record older than a renumbering of the source's namespaces decodes by the index it carries, or not at all.
+			let types = UAClient::FindTypes( host->Slug() );
+			Resume( HistQL::ToJson(_query, HistQL::NodesJson(args.Nodes), move(values), continuation, statuses, types.get()) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

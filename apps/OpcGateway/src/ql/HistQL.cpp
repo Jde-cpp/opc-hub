@@ -309,7 +309,7 @@ namespace HistQL{
 		default: return "Unknown";
 		}
 	}
-	α HistQL::ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue{
+	α HistQL::ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses, const ITypes* types )ι->jvalue{
 		jobject y;
 		if( ql.FindColumn("continuation") )
 			y["continuation"] = continuation.size() ? jvalue{ continuation } : jvalue{};
@@ -330,7 +330,7 @@ namespace HistQL{
 				if( wantStatus )
 					row["status"] = v.Data.hasStatus ? v.Data.status : UA_STATUSCODE_GOOD;
 				if( wantValue )
-					row["value"] = v.Data.ToJson();
+					row["value"] = v.Data.ToJson( types );
 				if( wantBound )
 					row["bound"] = v.Bound;
 				if( wantHeartbeat )
@@ -353,8 +353,8 @@ namespace HistQL{
 			y["nodes"] = nodesJson( *nodesQL, nodes, statuses );
 		return y;
 	}
-	α HistQL::ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue{
-		return ToJson( ql, NodesJson(nodes), move(values), continuation, statuses );
+	α HistQL::ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses, const ITypes* types )ι->jvalue{
+		return ToJson( ql, NodesJson(nodes), move(values), continuation, statuses, types );
 	}
 	α HistQL::EditRows( const EditArgs& args, const vector<std::span<const StatusCode>>& operations, const vector<StatusCode>& statuses )ι->vector<EditResult>{
 		let count = statuses.size();

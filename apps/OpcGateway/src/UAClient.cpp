@@ -19,6 +19,10 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	absl::Mutex _clientsMutex;
 	flat_map<ServerCnnctnNK,flat_map<Credential,sp<UAClient>>> _clients ABSL_GUARDED_BY(_clientsMutex);
+	//Each slug's structure types (TypeRegistry), beside the clients and outliving them:  its own mutex, since a client takes its registry
+	//as it is built, before any registration, and a historian read looks one up with no client at all.
+	absl::Mutex _typesMutex;
+	flat_map<ServerCnnctnNK,sp<TypeRegistry>> _typeRegistries ABSL_GUARDED_BY(_typesMutex);
 	//An edit reaches only registered clients, and a connect is in no registry until its session activates (#353 review #5).  So each
 	//edit is numbered, and each row keeps its last one under the key the edit came with;  a connect takes the count before it reads
 	//its row, and what it builds is stale once that row's number is past it.  Under _clientsMutex, which AnswerConnect registers in.
@@ -264,6 +268,35 @@ namespace Jde::Opc::Gateway{
 	α UAClient::LiveClients()ι->vector<sp<UAClient>>{
 		return registered( []( const UAClient& client )->bool { return client.IsConnected(); } );
 	}
+	α UAClient::Types( const ServerCnnctn& row )ι->sp<TypeRegistry>{
+		ul _{ _typesMutex };
+		auto& entry = _typeRegistries[row.Slug];
+		if( !entry || (row.Id && entry->Row()!=row.Id) )//none, or a row made again under the slug:  a registry of its own, the old one going with its clients.
+			entry = ms<TypeRegistry>( row.Slug, row.Id );
+		return entry;
+	}
+	α UAClient::FindTypes( const ServerCnnctnNK& slug )ι->sp<TypeRegistry>{
+		rl _{ _typesMutex };
+		let p = _typeRegistries.find( slug );
+		return p==_typeRegistries.end() ? sp<TypeRegistry>{} : p->second;
+	}
+	α UAClient::DropTypes( const DB::Key& connection )ι->uint{
+		ul _{ _typesMutex };
+		return std::erase_if( _typeRegistries, [&]( let& entry ){ return connection.IsPK() ? entry.second->Row()==connection.PK() : entry.first==connection.NK(); } );
+	}
+	α UAClient::RechainTypes( const TypeRegistry& registry )ι->void{
+		for( auto& client : registered([&]( const UAClient& c ){ return c._types.get()==&registry; }) )
+			client->PostUA( [ua=client->UAPointer(), head=const_cast<UA_DataTypeArray*>(registry.Chain())]{ UA_Client_getConfig( ua )->customDataTypes = head; } );//PostUA holds the client, and so the registry.
+	}
+	α UAClient::FindAny( const TypeRegistry& registry )ι->sp<UAClient>{
+		sp<UAClient> y;
+		walkClients( [&]( const sp<UAClient>& client ){
+			if( client->IsConnected() && client->_types.get()==&registry )
+				y = client;
+			return !y;
+		} );
+		return y;
+	}
 	//A client copies its row once, at construction, and ConnectAwait hands back the registered client - so an edit reached no live
 	//client, and one holding a subscription never idles out:  a Certificate URI pasted in for Sign & Encrypt left the traffic on
 	//None/None indefinitely, for every credential on the slug (reviews/m3-closing.md #4).  Edited:  ConnectionLost, the path a
@@ -276,6 +309,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAClient::ConnectionEdited( const DB::Key& connection, bool removed )ι->uint{
 		recordEdit( connection );//before BuiltFrom:  a connect registers first, for it to find, or sees the edit.
+		DropTypes( connection );//before the reconnect's client is built:  it starts a registry of its own, fetched on the row as it now is.
 		auto clients = BuiltFrom( connection );
 		for( auto& client : clients ){
 			INFO( "[{}]Connection '{}' was {} - {}.", hex(client->Handle()), client->Slug(), removed ? "removed" : "edited", removed ? "closing its client" : "reconnecting on its new settings" );
@@ -353,6 +387,7 @@ namespace Jde::Opc::Gateway{
 	UAClient::UAClient( ServerCnnctn&& opcServer, Gateway::Credential cred )ε:
 		_credential{ move(cred) },
 		_opcServer{ move(opcServer) },
+		_types{ Types(_opcServer) },
 		_handle{ createHandle(_opcServer) },
 		_logger{ _handle },
 		_ptr{ Create() }{
@@ -580,8 +615,10 @@ namespace Jde::Opc::Gateway{
 			let broke = client->_brokeAt.load();//before Resubscribe takes it:  a break this activation ends is a reconnect for ClientDiagnostics.
 			client->ClearRequest( ConnectRequestId );
 			client->ReleaseParked();
-			if( client->RecordSession() )
+			if( client->RecordSession() ){
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
+				Post( [client]()ι->void{ client->_types->Fetch( client ); } );//a reconnect in place:  the server may be back with structures the registry lacks, as the chain's new client would fetch.
+			}
 			client->_brokeAt = TimePoint{};//the same session back, or the rebuild has taken it:  a later loss is a new break.
 			if( broke!=TimePoint{} ){
 				client->_lastBreak = broke;
@@ -773,6 +810,7 @@ namespace Jde::Opc::Gateway{
 			}
 			ClearConnectError( client->Slug() );//a reachable slug - whatever the previous attempt failed on no longer applies.
 			notifyChange( client->Slug(), ConnectionChange::EKind::Activated );
+			Post( [client]()ι->void{ client->_types->Fetch( client ); } );//the server's structures the registry lacks (clients spec *Structures*):  off this callback, behind the namespace read open62541 fires first.
 			Post( [client]()ι->void {
 				ConnectAwait::Resume( move(client) );
 			});
@@ -896,6 +934,9 @@ namespace Jde::Opc::Gateway{
 
 		UA_ConnectionManager *udpCM = UA_ConnectionManager_new_POSIX_UDP( "udp connection manager"_uv );
 		_config.eventLoop->registerEventSource( _config.eventLoop, (UA_EventSource*)udpCM );
+		//The connection's structure types as fetched so far (TypeRegistry), which every message decodes by from the first:  the registry's
+		//own arrays, cleanup false on each, so the config's clear frees none of them;  RechainTypes re-points this after each fetch.
+		_config.customDataTypes = const_cast<UA_DataTypeArray*>( _types->Chain() );
 		auto ua = UA_Client_newWithConfig( &_config );
 		UA_Client_getConfig( ua )->eventLoop->logger = _config.logging;
 

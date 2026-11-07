@@ -63,8 +63,8 @@ namespace Jde::Opc::Gateway{
 		auto& node = _nodes[slot];
 		if( !TakeHeader(slot, result, result.statusCode!=UA_STATUSCODE_GOODNODATA || !node.Last) )//Good_NoData is a node's that returned nothing this call:  not an empty last page's.
 			return;
-		UA_DataValue* values{}; size_t count{};
-		const UA_ModificationInfo* modifications{}; size_t modificationCount{};
+		UA_DataValue* values{}; uint count{};
+		const UA_ModificationInfo* modifications{}; uint modificationCount{};
 		if( result.historyData.encoding==UA_EXTENSIONOBJECT_DECODED || result.historyData.encoding==UA_EXTENSIONOBJECT_DECODED_NODELETE ){
 			let type = result.historyData.content.decoded.type;
 			let data = result.historyData.content.decoded.data;

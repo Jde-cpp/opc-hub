@@ -89,7 +89,7 @@ namespace Jde{
 			addStopEvent();
 	}
 
-	α Process::MemorySize()ι->size_t{
+	α Process::MemorySize()ι->uint{
 		PROCESS_MEMORY_COUNTERS memCounter;
 		::GetProcessMemoryInfo( ::GetCurrentProcess(), &memCounter, sizeof(memCounter) );
 		return memCounter.WorkingSetSize;

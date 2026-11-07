@@ -56,13 +56,13 @@ namespace Jde{
 	}
 	const string _companyName{ "Jde-Cpp" }; string _productName{ "productName" };
 	α Process::CompanyName()ι->string{ return _companyName; }
-	α Process::MemorySize()ι->size_t{//https://stackoverflow.com/questions/669438/how-to-get-memory-usage-at-runtime-using-c
+	α Process::MemorySize()ι->uint{//https://stackoverflow.com/questions/669438/how-to-get-memory-usage-at-runtime-using-c
 		uint size = 0;
 		FILE* fp = fopen( "/proc/self/statm", "r" );
 		if( fp!=nullptr ){
 			long rss = 0L;
 			if( fscanf( fp, "%*s%ld", &rss ) == 1 )
-				size = (size_t)rss * (size_t)sysconf( _SC_PAGESIZE);
+				size = (uint)rss * (uint)sysconf( _SC_PAGESIZE);
 			fclose( fp );
 		}
 		return size;

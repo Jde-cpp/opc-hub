@@ -1,6 +1,7 @@
 #include "HistGroupHost.h"
 #include <jde/fwk/settings.h>
 #include <jde/opc/UAException.h>
+#include <jde/opc/uatypes/Variant.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../async/ConnectAwait.h"
 #include "../async/DataChanges.h"
@@ -703,15 +704,23 @@ namespace Jde::Opc::Gateway{
 		_listener.swap( listener );//the one it replaces goes with the argument, off the lock.
 	}
 	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void{
+		//A structure of the server's own, decoded by the registry's type (clients spec *Structures*), is kept past this call - the group's
+		//buffer and the endpoint's mirror - and a row edit drops the registry, so it goes on as the ExtensionObject it travelled as.
+		auto encoded = Variant::WithBuiltInTypes( value.value );
+		Value kept{ value };
+		if( encoded ){
+			UA_Variant_clear( &kept.value );
+			kept.value = encoded->Move();
+		}
 		ul _{ _mutex };
 		let [pk, n] = FindNode( node );
 		if( !n || _closed )//one that left, still on its way.
 			return;
 		n->Fed = true;
 		if( _verifying )
-			_held.emplace_back( pk, value );
+			_held.emplace_back( pk, kept );
 		else
-			Deliver( pk, value );
+			Deliver( pk, kept );
 	}
 	α HistGroupHost::ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void{
 		let now = _clock.Now();

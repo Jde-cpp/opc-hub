@@ -36,7 +36,7 @@ namespace Jde::Opc::Gateway{
 			vector<StatusCode> statuses; statuses.reserve( NodeCount() );
 			for( uint i=0; i<NodeCount(); ++i )
 				statuses.push_back( State(i).Status );
-			y = HistQL::ToJson( _query, _args->Nodes, move(page), continuation, statuses );
+			y = HistQL::ToJson( _query, _args->Nodes, move(page), continuation, statuses, _client->Types().get() );
 		}
 		catch( runtime_error& ){//a round that fails leaves the points the rounds before took, which the release below frees.
 			failed = std::current_exception();

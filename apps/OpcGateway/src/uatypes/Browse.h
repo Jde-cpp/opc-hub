@@ -49,6 +49,7 @@ namespace Browse{
 		Ω Properties( NodeId&& id, const QL::TableQL& ql )ι->Request;//the same by the sub-query's columns - a Variable page's `properties` (NodeQLAwait).
 		Ω References( NodeId&& id, UA_UInt32 maxReferences )ι->Request;//BOTH directions over References (subtypes included), every class, every result field, at most `maxReferences` - a node page's `references` (NodeQLAwait).
 		Ω Supertype( NodeId&& id )ι->Request;//INVERSE HasSubtype (no subtypes), data types only - one step of a DataType's walk up to namespace 0 (BaseTypeCache).
+		Ω Subtypes( vector<NodeId>&& ids )ι->Request;//forward HasSubtype (no subtypes), data types only, the target alone - one level of the Structure subtree, every type still walking in one round trip (TypeRegistry).  PerNode.
 		Ω Parents( vector<NodeId>&& ids )ι->Request;//INVERSE HierarchicalReferences (subtypes included), every class, browse name + class - one step of the walk up to the Objects folder or Root for every node still walking, in one round trip (ParentPathsAwait).  PerNode.
 		bool PerNode{};//a bad results[i].statusCode is the caller's to read - one unbrowsable node does not fail the request.  Set by the request, so a caller cannot forget it.
 	};

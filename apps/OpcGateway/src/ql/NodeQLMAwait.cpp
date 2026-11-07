@@ -65,7 +65,7 @@ namespace Jde::Opc::Gateway{
 			if( auto& ql = _mutation.ResultRequest; ql ){
 				ReadAwait read{ {{nodeId}, *ql}, _client };
 				auto response = co_await Any( read );
-				y = response.ToJson( *ql );
+				y = response.ToJson( *ql, _client->Types().get() );
 			}
 			Resume( move(y) );
 		}

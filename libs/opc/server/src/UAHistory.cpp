@@ -32,7 +32,7 @@ namespace Jde::Opc::Server{
 	//A read mode's callback:  its details and data types, the member that serves it, and whether its values are computed.
 	template<class TDetails, class TData, auto Member, bool Computed=false>
 	Ω historyRead( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const TDetails* details,
-		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, TData* const* const data )ι->void{
+		UA_TimestampsToReturn timestamps, UA_Boolean release, uint count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, TData* const* const data )ι->void{
 		if( !refused(*response, timestamps, Computed) )
 			(static_cast<UAHistory*>( context )->*Member)( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
 	}
@@ -93,7 +93,7 @@ namespace Jde::Opc::Server{
 		//A page's values into HistoryRead's result, as toUA has them, then in the server's namespaces by the host's remap of the
 		//page:  the dataValues a raw and a modified read both have.
 		struct Served final{ const UA_NodeId& Node; IHistoryHost& Host; };
-		Ω dataValues( UA_DataValue*& values, size_t& valuesSize, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range, const Served& served )ι->UA_StatusCode{
+		Ω dataValues( UA_DataValue*& values, uint& valuesSize, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range, const Served& served )ι->UA_StatusCode{
 			let size = page.Values.size();
 			if( !size )
 				return UA_STATUSCODE_GOOD;
@@ -149,11 +149,11 @@ namespace Jde::Opc::Server{
 			}
 			if( !v.data || rank<UA_VALUERANK_SCALAR_OR_ONE_DIMENSION || rank==UA_VALUERANK_ANY )
 				return true;
-			let dimensions = UA_Variant_isScalar( &v ) ? 0 : std::max<size_t>( v.arrayDimensionsSize, 1 );
+			let dimensions = UA_Variant_isScalar( &v ) ? 0 : std::max<uint>( v.arrayDimensionsSize, 1 );
 			return rank==UA_VALUERANK_SCALAR_OR_ONE_DIMENSION ? dimensions<=1
 				: rank==UA_VALUERANK_SCALAR ? dimensions==0
 				: rank==UA_VALUERANK_ONE_OR_MORE_DIMENSIONS ? dimensions>=1
-				: dimensions==(size_t)rank;
+				: dimensions==(uint)rank;
 		}
 		//Why a node the group doesn't hold has no history to read or edit:  it isn't there, or it isn't historized.
 		Ω unhistorized( UA_Server& ua, const UA_NodeId& node )ι->UA_StatusCode{

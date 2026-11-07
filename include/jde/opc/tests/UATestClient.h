@@ -136,7 +136,7 @@ namespace Jde::Opc::Tests{
 			auto status = response.responseHeader.serviceResult;
 			if( !status && response.resultsSize==1 ){
 				status = response.results[0].statusCode;
-				for( size_t i=0; !status && i<response.results[0].referencesSize; ++i ){
+				for( uint i=0; !status && i<response.results[0].referencesSize; ++i ){
 					const auto& reference = response.results[0].references[i];
 					y.push_back( {ToString(reference.browseName.name), NodeId{reference.nodeId.nodeId}} );
 				}
@@ -153,7 +153,7 @@ namespace Jde::Opc::Tests{
 			UA_NodeId_copy( &start, &browsePath.startingNode );
 			browsePath.relativePath.elementsSize = path.size();
 			browsePath.relativePath.elements = (UA_RelativePathElement*)UA_Array_new( path.size(), &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT] );
-			for( size_t i=0; i<path.size(); ++i ){
+			for( uint i=0; i<path.size(); ++i ){
 				auto& element = browsePath.relativePath.elements[i];
 				element.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
 				element.includeSubtypes = true;

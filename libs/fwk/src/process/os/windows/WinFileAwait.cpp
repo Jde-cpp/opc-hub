@@ -210,7 +210,7 @@ namespace Jde::IO{
 				return;
 			auto& op = chunk->Op;
 			TRACE( "({}){} chunk {}: offset {}, {} bytes.", op->Path.string(), op->IsRead ? "Reading" : "Writing", chunk->Index, chunk->Offset, chunk->Bytes );
-			auto handler = [h, chunk]( const boost::system::error_code& ec, size_t bytes ){ onChunk( h, chunk, ec, (uint)bytes ); };
+			auto handler = [h, chunk]( const boost::system::error_code& ec, uint bytes ){ onChunk( h, chunk, ec, (uint)bytes ); };
 			if( op->IsRead )
 				h->async_read_some_at( chunk->Offset, asio::buffer(op->Data()+chunk->Start, chunk->Bytes), move(handler) );
 			else

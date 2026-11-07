@@ -377,7 +377,7 @@ namespace Jde::DB::Sqlite::Tests{
 	Ω placeholders( str sql )ι->uint{ return (uint)std::ranges::count( sql, '?' ); }
 	Ω countOf( str haystack, sv needle )ι->uint{
 		uint n{};
-		for( size_t i=haystack.find(needle); i!=string::npos; i=haystack.find(needle, i+1) )
+		for( uint i=haystack.find(needle); i!=string::npos; i=haystack.find(needle, i+1) )
 			++n;
 		return n;
 	}

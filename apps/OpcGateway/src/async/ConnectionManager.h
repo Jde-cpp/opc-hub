@@ -42,7 +42,7 @@ namespace Jde::Opc::Gateway{
 		Ω OpenConnection( UA_ConnectionManager* cm, const UA_KeyValueMap* params, void* application, void* context, UA_ConnectionManager_connectionCallback callback )ι->UA_StatusCode;
 		Ω SendWithConnection( UA_ConnectionManager* cm, uintptr_t connectionId, const UA_KeyValueMap* params, UA_ByteString* buf )ι->UA_StatusCode;
 		Ω CloseConnection( UA_ConnectionManager* cm, uintptr_t connectionId )ι->UA_StatusCode;
-		Ω AllocNetworkBuffer( UA_ConnectionManager* cm, uintptr_t connectionId, UA_ByteString* buf, size_t bufSize )ι->UA_StatusCode;
+		Ω AllocNetworkBuffer( UA_ConnectionManager* cm, uintptr_t connectionId, UA_ByteString* buf, uint bufSize )ι->UA_StatusCode;
 		Ω FreeNetworkBuffer( UA_ConnectionManager* cm, uintptr_t connectionId, UA_ByteString* buf )ι->void;
 		Ω Start( UA_EventSource* es )ι->UA_StatusCode;
 		Ω Stop( UA_EventSource* es )ι->void;

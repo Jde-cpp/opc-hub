@@ -26,7 +26,7 @@ namespace Jde::IO{
 			DirEntry( path, GetInfo(path) )
 		{}
 		DirEntry( const fs::path& path, const WIN32_FILE_ATTRIBUTE_DATA& fInfo ):
-			IDirEntry{ (EFileFlags)fInfo.dwFileAttributes, path, static_cast<size_t>(fInfo.nFileSizeHigh) <<32 | fInfo.nFileSizeLow }
+			IDirEntry{ (EFileFlags)fInfo.dwFileAttributes, path, static_cast<uint>(fInfo.nFileSizeHigh) <<32 | fInfo.nFileSizeLow }
 		{
 			SYSTEMTIME systemTime;
 			FileTimeToSystemTime( &fInfo.ftCreationTime, &systemTime );

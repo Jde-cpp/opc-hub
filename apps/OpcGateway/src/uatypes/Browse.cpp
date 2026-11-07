@@ -32,7 +32,7 @@ namespace Jde::Opc::Gateway{
 namespace Jde::Opc{
 	α Gateway::PathPrefixes( sv path, bool parents, NsIndex defaultNs, const NodeId& start )ι->BrowsePathSet{
 		let segments = Str::Split( path, '/' );
-		let count = parents ? std::max<size_t>( segments.size(), 1 ) : 1;//Split skips empty segments, so "" and "/" have none:  one empty path, which the server refuses BadNothingToDo, as it refused none at all.
+		let count = parents ? std::max<uint>( segments.size(), 1 ) : 1;//Split skips empty segments, so "" and "/" have none:  one empty path, which the server refuses BadNothingToDo, as it refused none at all.
 		BrowsePathSet y;
 		y.Paths.reserve( count ); y.Requests.reserve( count );
 		for( uint i=0; i<count; ++i ){
@@ -56,7 +56,7 @@ namespace Gateway{
 			{ segments.size(), (UA_RelativePathElement*)UA_Array_new(segments.size(), &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT]) }
 		} }{
 		UA_NodeId_copy( &start, &startingNode );//deep copy - clear() owns it.
-		for( size_t i=0; i<segments.size(); ++i ){
+		for( uint i=0; i<segments.size(); ++i ){
 			auto elem = &relativePath.elements[i];
 			elem->referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
 			elem->includeSubtypes = true;
@@ -184,6 +184,18 @@ namespace Browse{
 		return y;
 	}
 
+	α Request::Subtypes( vector<NodeId>&& ids )ι->Request{
+		Request y{ move(ids), UA_BROWSERESULTMASK_NONE };//the reference's target is all a level needs.
+		y.PerNode = true;//a type that won't browse is skipped, not the fetch.
+		for( uint i=0; i<y.nodesToBrowseSize; ++i ){
+			auto& d = y.nodesToBrowse[i];
+			d.browseDirection = UA_BROWSEDIRECTION_FORWARD;
+			d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HASSUBTYPE );
+			d.includeSubtypes = false;
+			d.nodeClassMask = UA_NODECLASS_DATATYPE;
+		}
+		return y;
+	}
 	α Request::Supertype( NodeId&& id )ι->Request{
 		Request y{ move(id), UA_BROWSERESULTMASK_NONE };//the reference's target is all a step needs
 		auto& d = y.nodesToBrowse[0];
@@ -200,7 +212,7 @@ namespace Browse{
 			return true;
 		}
 		bool returnedFalse{};
-		for( size_t j = 0; j < results[resultsIndex].referencesSize; ++j ){
+		for( uint j = 0; j < results[resultsIndex].referencesSize; ++j ){
 			returnedFalse = !f( results[resultsIndex].references[j] );
 			if( returnedFalse )
 				break;

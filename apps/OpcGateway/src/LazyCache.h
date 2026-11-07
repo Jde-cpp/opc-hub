@@ -33,7 +33,7 @@ namespace Jde::Opc::Gateway{
 			auto p = _slots.find( id );
 			return p!=_slots.end() && p->second.State()==Slot::EState::Ready ? p->second.Value() : Ptr{};
 		}
-		α Size()Ι->size_t{ rl _{_mutex}; return _slots.size(); }
+		α Size()Ι->uint{ rl _{_mutex}; return _slots.size(); }
 	protected:
 		using Slot = LazySlot<Ptr>;
 		~LazyCache()=default;

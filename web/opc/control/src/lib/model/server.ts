@@ -71,9 +71,10 @@ export const trustServerMutation = "mutation trustServer( opc:$opc, thumbprint:$
 
 //The Server tab (docs/clients/spec.md *Diagnostics*, #427):  four namespace-0 structures read by id - ServerStatus, the
 //ServerDiagnosticsSummary, and the SessionDiagnosticsArray and SubscriptionDiagnosticsArray under ServerDiagnostics, which a server may
-//leave empty.  The gateway decodes them as open62541's json encoder writes them, so a member is named as its type names it, a DateTime
-//is an ISO string, an enum a number or `Name_Value`, a LocalizedText its text or {Locale, Text}, a NodeId a string or {Id, Namespace}:
-//the tab reads them loosely (server-diagnostics.ts).  The rows come back in id order, not the order asked, so they are matched by id.
+//leave empty.  The gateway walks each by its type's member list (docs/clients/spec.md *Structures*, #421), so a member is named as its
+//type names it, a DateTime is {seconds, nanos}, an enum a number, a LocalizedText its text, a NodeId {ns, i|s|g|b};  an older gateway
+//wrote open62541's json encoding, an ISO string, `Name_Value`, {Locale, Text} and a string or {Id, Namespace}:  the tab reads both
+//loosely (server-diagnostics.ts).  The rows come back in id order, not the order asked, so they are matched by id.
 export const serverStatusId = 2256, serverDiagnosticsSummaryId = 2275, sessionDiagnosticsArrayId = 3707, subscriptionDiagnosticsArrayId = 2290;
 export const serverDiagnosticsIds = [serverStatusId, serverDiagnosticsSummaryId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId].map( i=>({ns: 0, i}) );
 export const serverDiagnosticsQuery = "nodes( opc:$opc, id:$id ){ id value }";

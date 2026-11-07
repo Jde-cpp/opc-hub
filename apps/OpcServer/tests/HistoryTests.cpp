@@ -374,7 +374,7 @@ namespace Jde::Opc::Server::Tests{
 			return UA_Client_Service_historyRead( *_client, request );
 		}
 		//A HistoryRead of one node's service result, and how many results came with it.
-		Ω Service( void* details, uint type, const NodeId& node, UA_TimestampsToReturn timestamps )ι->std::pair<UA_StatusCode,size_t>{
+		Ω Service( void* details, uint type, const NodeId& node, UA_TimestampsToReturn timestamps )ι->std::pair<UA_StatusCode,uint>{
 			UA_HistoryReadValueId id; UA_HistoryReadValueId_init( &id );
 			id.nodeId = node;//shallow
 			auto response = Send( details, type, {&id, 1}, timestamps );
@@ -824,7 +824,7 @@ namespace Jde::Opc::Server::Tests{
 			processed.aggregateConfiguration.useServerCapabilitiesDefaults = true;
 			struct Mode final{ void* Details; uint Type; bool Computed; };
 			for( let& mode : {Mode{&raw, UA_TYPES_READRAWMODIFIEDDETAILS, false}, Mode{&modified, UA_TYPES_READRAWMODIFIEDDETAILS, false}, Mode{&atTime, UA_TYPES_READATTIMEDETAILS, true}, Mode{&processed, UA_TYPES_READPROCESSEDDETAILS, true}} ){
-				const std::pair<UA_StatusCode,size_t> refused{ UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID, 0 }, served{ UA_STATUSCODE_GOOD, 1 };
+				const std::pair<UA_StatusCode,uint> refused{ UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID, 0 }, served{ UA_STATUSCODE_GOOD, 1 };
 				EXPECT_EQ( Service(mode.Details, mode.Type, Node(Rpm4), UA_TIMESTAMPSTORETURN_NEITHER), refused ) << mode.Type;
 				EXPECT_EQ( Service(mode.Details, mode.Type, Node(Rpm4), UA_TIMESTAMPSTORETURN_SERVER), mode.Computed ? refused : served ) << mode.Type;
 			}

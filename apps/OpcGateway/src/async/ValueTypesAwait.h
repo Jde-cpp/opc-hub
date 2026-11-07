@@ -5,8 +5,8 @@
 namespace Jde::Opc::Gateway{
 	struct UAClient;
 	//The type a value written to each node takes, read from the server for updateVariable and the hist edits:  its DataType's
-	//where that settles one (BuiltIn), else the type of the node's value, whatever that value's status, since a node whose
-	//source is down still holds its type.  A node with neither has no type, so a value's json implies one (Value::Set).  A node
+	//where that settles one (BuiltIn), else the connection's registry's for a structure the server defines (TypeRegistry), else the
+	//type of the node's value, whatever that value's status, since a node whose source is down still holds its type.  A node with neither has no type, so a value's json implies one (Value::Set).  A node
 	//whose DataType read is refused has that read's status, and no type.
 	struct ValueTypes final{
 		//A DataType's built-in type for one of namespace 0, Int32 for an enumeration, as one is encoded.  None for one of another

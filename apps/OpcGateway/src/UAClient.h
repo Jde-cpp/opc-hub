@@ -19,6 +19,7 @@
 #include "DisplayNameCache.h"
 #include "MethodArguments.h"
 #include "AggregateFunctions.h"
+#include "TypeRegistry.h"
 
 namespace Jde::Opc{ 	struct Value; }
 namespace Jde::Opc::Gateway{
@@ -106,7 +107,13 @@ namespace Jde::Opc::Gateway{
 		}
 		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;//a submission was refused with sc (UACε):  ConnectionLost when that means the connection went.  Strand-only.
 		Ω LiveClients()ι->vector<sp<UAClient>>;//snapshot of the live clients - the `search` fan-out, which must never connect.
-		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed;  a connect still in flight starts over (ConnectAgain).  Returns how many.  ServerCnnctnMAwait.
+		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed;  a connect still in flight starts over (ConnectAgain) - and the row's type registry goes, a reconnect's client making a new one.  Returns how many.  ServerCnnctnMAwait.
+		//The slug's type registry (clients spec *Structures*, #421), kept beside the client map and outliving the clients:  the row's, made
+		//on first use and again for a row made anew under the slug (by Id), which every client built from the row shares and decodes by.
+		Ω Types( const ServerCnnctn& row )ι->sp<TypeRegistry>;
+		Ω FindTypes( const ServerCnnctnNK& slug )ι->sp<TypeRegistry>;//the slug's, or null:  the historian's reads, which have no client, decode by it as it is.
+		Ω RechainTypes( const TypeRegistry& registry )ι->void;//every registered client of `registry` takes its chain, on its strand - the registry's, after a fetch.
+		Ω FindAny( const TypeRegistry& registry )ι->sp<UAClient>;//a connected client of `registry` to fetch through, or null - its Missing's.
 		//A ping_interval or ttl edit alone (ServerCnnctnMAwait):  the two the gateway reads live (PingInterval, Ttl), so every client built from
 		//the row takes them on its strand, from its next ping and idle check, without the reconnect ConnectionEdited makes.  An unset
 		//outer optional leaves that one as it is;  an empty inner one clears it.  Returns how many.
@@ -194,6 +201,7 @@ namespace Jde::Opc::Gateway{
 		α BaseTypes()ι->BaseTypeCache&{ return _baseTypes; }//each DataType of the server's own to its first namespace-0 supertype, what a method argument is encoded by;  dies with the client.
 		α Methods()ι->MethodArgumentCache&{ return _methods; }//a method's InputArguments and OutputArguments for `call` and `method(opc,id)`, read on first use;  dies with the client.
 		α Aggregates()ι->AggregateFunctions&{ return _aggregates; }//the server's AggregateFunctions folder for an aggregate `history`, read on first use;  dies with the client.
+		α Types()Ι->const sp<TypeRegistry>&{ return _types; }//the connection's structure types, which outlive the client (Types(row)):  what its reads decode by.
 		α Url()Ι->str{ return _opcServer.Url; }
 		α ConnectUrl()Ι->str{ return _connectUrl.empty() ? _opcServer.Url : _connectUrl; }//what Connect() handed open62541 - Url(), or ReachableUrl's substitute for it.
 		α ApplicationUri()Ι->string;//the endpoint filter open62541 matches against the server's ApplicationUri - not clientDescription's.
@@ -231,6 +239,7 @@ namespace Jde::Opc::Gateway{
 		Ω BuiltFrom( const DB::Key& connection )ι->vector<sp<UAClient>>;//the registered clients of that server_connections row:  by its id when that is the key, else by slug.
 		Ω StashPending( const sp<UAClient>& client, bool edited )ι->void;//ConnectionLost's:  parks what the client monitored, then clears connected - defined beside the rebuild it feeds.
 		Ω Deregister( sp<UAClient>&& client )ι->bool;//the stop-and-erase RemoveClient and ConnectionLost share.
+		Ω DropTypes( const DB::Key& connection )ι->uint;//ConnectionEdited's:  the row's registry leaves the map, by id or slug as the key is;  the clients holding it keep it until they go.  Returns how many.
 		Ω StateCallback( UA_Client *ua, UA_SecureChannelState channelState, UA_SessionState sessionState, StatusCode connectStatus )ι->void;
 		Ω SetConnectError( const ServerCnnctnNK& slug, string message )ι->void;
 		Ω ClearConnectError( const ServerCnnctnNK& slug )ι->void;//clears the slug's rejected thumbprint too:  a reachable slug has no standing server-certificate rejection.
@@ -272,6 +281,7 @@ namespace Jde::Opc::Gateway{
 		std::atomic<bool> _sessionUp{};
 		std::atomic<bool> _discarded{};
 		ServerCnnctn _opcServer;
+		sp<TypeRegistry> _types;//Types(_opcServer):  before _ptr, whose Create chains it.
 		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.
 		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  strand-only after it - see TakeTestResult.
 		uint _editsAtRead{};//Edits() when ConnectAwait read the row, set before Connect.

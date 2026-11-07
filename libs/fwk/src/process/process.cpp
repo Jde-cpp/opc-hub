@@ -313,7 +313,7 @@ namespace Jde{
 		optional<string> y;
 #ifdef _WIN32
 		char* env = nullptr;
-		size_t size = 0;
+		uint size = 0;
 		if( _dupenv_s(&env, &size, variable.c_str()) == 0 && env ){
 			y = string{ env };
 			free( env );

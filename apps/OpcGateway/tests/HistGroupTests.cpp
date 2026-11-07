@@ -671,7 +671,7 @@ namespace Jde::Opc::Gateway::Tests{
 		UAε( UA_Server_readValue(Server::FindUAServer()->Ptr(), UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SESSIONSDIAGNOSTICSSUMMARY_SESSIONDIAGNOSTICSARRAY), &v) );
 		uint y{};
 		if( v.type==&UA_TYPES[UA_TYPES_SESSIONDIAGNOSTICSDATATYPE] ){
-			for( size_t i=0; i<v.arrayLength; ++i )
+			for( uint i=0; i<v.arrayLength; ++i )
 				y += ((UA_SessionDiagnosticsDataType*)v.data)[i].modifyMonitoredItemsCount.totalCount;
 		}
 		UA_Variant_clear( &v );

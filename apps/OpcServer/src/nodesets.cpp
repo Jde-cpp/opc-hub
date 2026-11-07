@@ -2,6 +2,7 @@
 #include <charconv>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/opc/uatypes/NodeId.h>
+#include <jde/opc/uatypes/Value.h>
 #include <jde/opc/server/UAServer.h>
 #include <NodesetLoader/backendOpen62541.h>
 
@@ -18,7 +19,7 @@ namespace Jde::Opc{
 	//the gateway's CallTests call - `rpm` Double in, `hertz` Double and `text` String out.  It has no side effects.  The server has type-checked the inputs against InputArguments by here, so the shape check is
 	//a guard, not the rule.  Nothing in it throws - an exception would unwind through the server's C frames - so the text is
 	//spelled in place, as std::format would spell it, with no allocation but the copy open62541 makes.
-	Ω toHertz( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t inputSize, const UA_Variant* input, size_t outputSize, UA_Variant* output )ι->UA_StatusCode{
+	Ω toHertz( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, uint inputSize, const UA_Variant* input, uint outputSize, UA_Variant* output )ι->UA_StatusCode{
 		if( inputSize!=1 || outputSize!=2 || !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_DOUBLE]) )
 			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		const UA_Double hertz = *(const UA_Double*)input[0].data/60;
@@ -30,7 +31,7 @@ namespace Jde::Opc{
 		if( ec!=std::errc{} )
 			return UA_STATUSCODE_BADINTERNALERROR;
 		std::copy( unit.begin(), unit.end(), end );
-		const UA_String s{ (size_t)(end-text)+unit.size(), (UA_Byte*)text };
+		const UA_String s{ (uint)(end-text)+unit.size(), (UA_Byte*)text };
 		return UA_Variant_setScalarCopy( &output[1], &s, &UA_TYPES[UA_TYPES_STRING] );
 	}
 	//The pumps demo after its nodeset loads.  pumpManual.toHertz's callback - a method without one answers BadInternalError (clients spec
@@ -39,7 +40,7 @@ namespace Jde::Opc{
 	//install can try the Attributes tab's edit on, and the one the gateway's WriteTests write (clients spec *Attributes*, #417);  the rights
 	//mask then gates the write on Update (UAAccess::GetUserRightsMask).
 	α Server::ConfigurePumps( UAServer& ua )ι->void{
-		size_t ns{};
+		uint ns{};
 		if( UA_Server_getNamespaceByName(ua.Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) )
 			return;//not loaded here.
 		const NodeId method{ (NsIndex)ns, 6055 };//pumpManual.toHertz, as the nodeset numbers it.
@@ -48,6 +49,23 @@ namespace Jde::Opc{
 		const NodeId pumpManual{ (NsIndex)ns, 5005 };
 		if( let sc = UA_Server_writeWriteMask(ua.Ptr(), pumpManual, UA_WRITEMASK_DISPLAYNAME | UA_WRITEMASK_DESCRIPTION); sc )
 			WARNT( ELogTags::App, "Could not set pumpManual's WriteMask ({}):  {}", pumpManual.ToString(), UA_StatusCode_name(sc) );
+		//pumpManual._Test.sample's value, a PumpSampleType (clients spec *Structures*, #421):  the type as the loader filed it, its members
+		//from json as a gateway write would set them (Value::Set).  The nodeset carries no value - the loader's xml decode stops short of a
+		//structure of the nodeset's own.
+		const NodeId sampleType{ (NsIndex)ns, 3001 }, sample{ (NsIndex)ns, 6061 };
+		let type = UA_Server_findDataType( ua.Ptr(), &sampleType );
+		if( !type )
+			WARNT( ELogTags::App, "The pumps' PumpSampleType ({}) is not among the server's types - _Test.sample stays empty.", sampleType.ToString() );
+		if( type ){//not `else`:  the log macros expand to their own `if`.
+			try{
+				const Value value{ parse(R"({"Rpm":1480.5,"Running":true,"Label":"sample","Limits":{"Low":0,"High":3000},"History":[1470,1475,1480.5]})"), type };
+				if( let sc = UA_Server_writeValue(ua.Ptr(), sample, value.value); sc )
+					WARNT( ELogTags::App, "Could not write _Test.sample ({}):  {}", sample.ToString(), UA_StatusCode_name(sc) );
+			}
+			catch( const std::exception& e ){
+				WARNT( ELogTags::App, "Could not build _Test.sample's value:  {}", e.what() );
+			}
+		}
 	}
 
 	//The nodeset loader files every type it reads through UA_Server_addDataTypeFromDescription, which lands in the server's

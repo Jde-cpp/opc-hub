@@ -94,9 +94,9 @@ namespace Jde::Opc::Server{
 		if( rootEnforced ){//MayBrowse opens the type nodes the root resource would refuse - known here, not read per call.
 			UA_BrowseDescription bd{ UA_NODEID_NUMERIC(0, UA_NS0ID_TYPESFOLDER), UA_BROWSEDIRECTION_FORWARD, UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES), UA_TRUE,
 				UA_NODECLASS_OBJECTTYPE | UA_NODECLASS_VARIABLETYPE | UA_NODECLASS_DATATYPE | UA_NODECLASS_REFERENCETYPE, 0 };
-			size_t size{}; UA_ExpandedNodeId* found{};
+			uint size{}; UA_ExpandedNodeId* found{};
 			if( let sc = UA_Server_browseRecursive(&server, &bd, &size, &found); !sc ){
-				for( size_t i=0; i<size; ++i ){
+				for( uint i=0; i<size; ++i ){
 					if( found[i].nodeId.namespaceIndex )
 						walk.TypeNodes.emplace( found[i].nodeId );
 				}

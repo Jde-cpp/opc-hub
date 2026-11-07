@@ -40,7 +40,7 @@ namespace Jde {
 			case Values:{
 				const auto& values = get<vector<DB::Value>>(o);
 				string s( "(" ); s.reserve( values.size()*2 + 1 );
-				for( size_t i=0; i<values.size(); ++i )
+				for( uint i=0; i<values.size(); ++i )
 					s += i ? ",?" : "?";
 				s += ')';
 				return s;

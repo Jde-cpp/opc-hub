@@ -110,9 +110,10 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( status.is_object() ) << serialize( status );
 		let state = Member( status, "State" );
 		ASSERT_TRUE( state ) << serialize( status );
-		EXPECT_TRUE( (state->is_number() && state->to_number<int>()==0) || (state->is_string() && state->as_string().starts_with("Running")) ) << "Running expected:  " << serialize( *state );//reversibly a number, else Name_Value
-		EXPECT_TRUE( Member(status, "StartTime") && Member(status, "StartTime")->is_string() ) << serialize( status );
-		EXPECT_TRUE( Member(status, "CurrentTime") && Member(status, "CurrentTime")->is_string() ) << serialize( status );
+		EXPECT_TRUE( (state->is_number() && state->to_number<int>()==0) || (state->is_string() && state->as_string().starts_with("Running")) ) << "Running expected:  " << serialize( *state );//an enumeration's value, as the member walk writes it
+		let time = []( const jvalue* v ){ return v && v->is_object() && v->as_object().contains("seconds"); };//a DateTime member in the gateway's own shape, {seconds, nanos}, as the member walk writes it (clients spec *Structures*, #421).
+		EXPECT_TRUE( time(Member(status, "StartTime")) ) << serialize( status );
+		EXPECT_TRUE( time(Member(status, "CurrentTime")) ) << serialize( status );
 		EXPECT_TRUE( Member(status, "BuildInfo/ProductName") ) << serialize( status );
 
 		let& summary = rows[1].at( "value" );//ServerDiagnosticsSummaryDataType

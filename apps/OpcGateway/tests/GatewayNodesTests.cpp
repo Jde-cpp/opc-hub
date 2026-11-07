@@ -122,7 +122,7 @@ namespace Jde::Opc::Gateway::Tests{
 			return y;
 		};
 		let shape = [&]()->optional<std::pair<UA_Int32,vector<UA_UInt32>>> {
-			UA_Int32 rank{}; size_t size{}; UA_UInt32* dimensions{};
+			UA_Int32 rank{}; uint size{}; UA_UInt32* dimensions{};
 			if( UA_Client_readValueRankAttribute(*client, *node, &rank) || UA_Client_readArrayDimensionsAttribute(*client, *node, &size, &dimensions) )
 				return nullopt;//between the re-add's delete and its add.
 			vector<UA_UInt32> y{ dimensions, dimensions+size };

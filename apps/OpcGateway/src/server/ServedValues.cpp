@@ -236,7 +236,7 @@ namespace Jde::Opc::Gateway{
 		else
 			++unmapped;
 	}
-	Ω remapData( void* data, const UA_DataType& type, size_t count, Mapping map, uint& unmapped )ι->void;
+	Ω remapData( void* data, const UA_DataType& type, uint count, Mapping map, uint& unmapped )ι->void;
 	//An encoded structure of namespace 0's, decoded in place so its members are walked:  the historian keeps every structure encoded,
 	//and a history page's come back so.  False for a source's own type, which stays encoded, or a body that won't decode.
 	Ω decode( UA_ExtensionObject& o )ι->bool{
@@ -245,7 +245,7 @@ namespace Jde::Opc::Gateway{
 			return false;
 		static const absl::flat_hash_map<UA_UInt32,const UA_DataType*> types = []{//by DefaultBinary id.
 			absl::flat_hash_map<UA_UInt32,const UA_DataType*> y;
-			for( size_t i=0; i<UA_TYPES_COUNT; ++i ){
+			for( uint i=0; i<UA_TYPES_COUNT; ++i ){
 				if( let& encoding = UA_TYPES[i].binaryEncodingId; !encoding.namespaceIndex && encoding.identifierType==UA_NODEIDTYPE_NUMERIC && encoding.identifier.numeric )
 					y.emplace( encoding.identifier.numeric, &UA_TYPES[i] );
 			}
@@ -269,7 +269,7 @@ namespace Jde::Opc::Gateway{
 	//its padding from the start.
 	Ω remapMembers( void* p, const UA_DataType& type, Mapping map, uint& unmapped )ι->void{
 		auto ptr = reinterpret_cast<uintptr_t>( p );
-		let array = [&]( const UA_DataTypeMember& m ){ remapData( *reinterpret_cast<void**>(ptr+sizeof(size_t)), *m.memberType, *reinterpret_cast<size_t*>(ptr), map, unmapped ); };
+		let array = [&]( const UA_DataTypeMember& m ){ remapData( *reinterpret_cast<void**>(ptr+sizeof(uint)), *m.memberType, *reinterpret_cast<uint*>(ptr), map, unmapped ); };
 		if( type.typeKind==UA_DATATYPEKIND_UNION ){
 			let selection = *reinterpret_cast<UA_UInt32*>( ptr );
 			if( !selection || selection>type.membersSize )
@@ -282,12 +282,12 @@ namespace Jde::Opc::Gateway{
 				remapData( reinterpret_cast<void*>(ptr), *m.memberType, 1, map, unmapped );
 			return;
 		}
-		for( size_t i=0; i<type.membersSize; ++i ){
+		for( uint i=0; i<type.membersSize; ++i ){
 			let& m = type.members[i];
 			ptr += m.padding;
 			if( m.isArray ){
 				array( m );
-				ptr += sizeof(size_t) + sizeof(void*);
+				ptr += sizeof(uint) + sizeof(void*);
 			}
 			else if( m.isOptional ){
 				remapData( *reinterpret_cast<void**>(ptr), *m.memberType, 1, map, unmapped );
@@ -300,7 +300,7 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 	//`count` values of `type` at `data`, walked only for a kind that can hold an index.
-	Ω remapData( void* data, const UA_DataType& type, size_t count, Mapping map, uint& unmapped )ι->void{
+	Ω remapData( void* data, const UA_DataType& type, uint count, Mapping map, uint& unmapped )ι->void{
 		switch( type.typeKind ){
 		case UA_DATATYPEKIND_NODEID: case UA_DATATYPEKIND_EXPANDEDNODEID: case UA_DATATYPEKIND_QUALIFIEDNAME: case UA_DATATYPEKIND_EXTENSIONOBJECT:
 		case UA_DATATYPEKIND_VARIANT: case UA_DATATYPEKIND_DATAVALUE: case UA_DATATYPEKIND_STRUCTURE: case UA_DATATYPEKIND_OPTSTRUCT: case UA_DATATYPEKIND_UNION:
@@ -310,7 +310,7 @@ namespace Jde::Opc::Gateway{
 		}
 		if( !data || data==UA_EMPTY_ARRAY_SENTINEL )
 			return;
-		for( size_t i=0; i<count; ++i ){
+		for( uint i=0; i<count; ++i ){
 			void* p = static_cast<UA_Byte*>( data ) + i*type.memSize;
 			switch( type.typeKind ){
 			case UA_DATATYPEKIND_NODEID:

@@ -135,7 +135,7 @@ namespace Jde::Opc::Server::Tests{
 		//NodesetLoader_loadFile reports success whatever its node adds did, so a load that dropped every node passed
 		//(open62541-1.5.9 review #5).  Load the models the file requires first, each from the UA-Nodeset tree, then check that
 		//every node it declares outside namespace 0 is in the server - all but `knownDrops`, the nodes open62541 refuses today.
-		Ω LoadWithDependencies( fs::path file, size_t knownDrops=0 )ε->void{
+		Ω LoadWithDependencies( fs::path file, uint knownDrops=0 )ε->void{
 			file = Path()/file;
 			auto& ua = GetUAServer();
 			flat_set<fs::path> seen; vector<fs::path> order;
@@ -152,7 +152,7 @@ namespace Jde::Opc::Server::Tests{
 			}
 			EXPECT_EQ( missing.size(), knownDrops ) << missing.size() << " of the " << declared.size() << " nodes " << file.filename().string() << " declares are not in the server, where "
 				<< knownDrops << " are known to be refused - a change either way is news;  update the count once it is understood.  e.g. "
-				<< Str::Join( std::span{missing}.first(std::min<size_t>(missing.size(), 5)), ", " );
+				<< Str::Join( std::span{missing}.first(std::min<uint>(missing.size(), 5)), ", " );
 		}
 	};
 

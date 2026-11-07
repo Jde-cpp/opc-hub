@@ -8,7 +8,7 @@ namespace Jde::Opc::Gateway{
 	using tcp = asio::ip::tcp;
 	using boost::system::error_code;
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Net };
-	constexpr size_t rxSize{ 1<<16 };//the stock manager's recv-bufsize.
+	constexpr uint rxSize{ 1<<16 };//the stock manager's recv-bufsize.
 	constexpr char tcpName[]{ "tcp" };
 	constexpr uint resolverThreads{ 4 };//getaddrinfo blocks:  a nameserver that never answers holds one for ~10 s.
 	constexpr sv esName{ "asio tcp connection manager" };
@@ -150,7 +150,7 @@ namespace Jde::Opc::Gateway{
 				return;
 			}
 			++Inflight;
-			Socket.async_read_some( asio::buffer(Rx), [self=shared_from_this()]( const error_code& ec, size_t n ){
+			Socket.async_read_some( asio::buffer(Rx), [self=shared_from_this()]( const error_code& ec, uint n ){
 				--self->Inflight;
 				if( ec || self->State!=EState::Established ){
 					self->Fail( ec, "read" );
@@ -172,7 +172,7 @@ namespace Jde::Opc::Gateway{
 		α WriteNext()ι->void{
 			Writing = true;
 			++Inflight;
-			asio::async_write( Socket, asio::buffer(Tx.front().data, Tx.front().length), [self=shared_from_this()]( const error_code& ec, size_t ){
+			asio::async_write( Socket, asio::buffer(Tx.front().data, Tx.front().length), [self=shared_from_this()]( const error_code& ec, uint ){
 				--self->Inflight;
 				self->Writing = false;
 				UA_ByteString_clear( &self->Tx.front() );
@@ -274,7 +274,7 @@ namespace Jde::Opc::Gateway{
 		tcp::socket Socket;
 		EState State{ EState::Resolving };
 		std::array<UA_Byte,rxSize> Rx;
-		size_t RxLength{};
+		uint RxLength{};
 		std::deque<UA_ByteString> Tx;
 		bool Writing{};
 		uint Inflight{};//resolve, connect, read and write outstanding
@@ -412,7 +412,7 @@ namespace Jde::Opc::Gateway{
 		connection->Post( &Connection::RequestClose );
 		return UA_STATUSCODE_GOOD;
 	}
-	α AsioConnectionManager::AllocNetworkBuffer( UA_ConnectionManager*, uintptr_t, UA_ByteString* buf, size_t bufSize )ι->UA_StatusCode{
+	α AsioConnectionManager::AllocNetworkBuffer( UA_ConnectionManager*, uintptr_t, UA_ByteString* buf, uint bufSize )ι->UA_StatusCode{
 		return UA_ByteString_allocBuffer( buf, bufSize );
 	}
 	α AsioConnectionManager::FreeNetworkBuffer( UA_ConnectionManager*, uintptr_t, UA_ByteString* buf )ι->void{
