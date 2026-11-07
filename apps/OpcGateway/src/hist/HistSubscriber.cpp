@@ -79,9 +79,10 @@ namespace Jde::Opc::Gateway{
 			session->HistEnded( shared_from_this(), why );
 	}
 	α HistSubscriber::Send( vector<Hist::Proto::HistoryRecord>&& records )ι->void{
-		auto session = _session.lock();
-		if( !session )
-			return;
+		if( auto session = _session.lock(); session )
+			session->WriteHist( shared_from_this(), move(records) );
+	}
+	α HistSubscriber::Records( const vector<Hist::Proto::HistoryRecord>& records )Ι->FromServer::Transmission{
 		FromServer::HistRecords y;
 		let types = Types();
 		for( let& r : records ){
@@ -92,7 +93,7 @@ namespace Jde::Opc::Gateway{
 			else if( let slot = Slot(r.value().node_index()); slot )
 				*y.add_values() = FromServer::ToProto( r.value(), *slot, false, types.get() );
 		}
-		session->WriteHist( shared_from_this(), FromServer::HistRecordsTrans(move(y), _requestId) );
+		return FromServer::HistRecordsTrans( move(y), _requestId );
 	}
 
 	α GatewaySocketSession::HistSubscribe( FromClient::HistSubscribe&& request, Jde::RequestId requestId )ι->void{
@@ -161,6 +162,12 @@ namespace Jde::Opc::Gateway{
 		Dispatch( [this, self=SharedFromThis(), subscriber=move(subscriber), message=move(message)]()mutable{
 			if( !subscriber->Ended() )
 				Write( move(message) );
+		} );
+	}
+	α GatewaySocketSession::WriteHist( sp<HistSubscriber> subscriber, vector<Hist::Proto::HistoryRecord>&& records )ι->void{
+		Dispatch( [this, self=SharedFromThis(), subscriber=move(subscriber), records=move(records)]{
+			if( !subscriber->Ended() )
+				Write( subscriber->Records(records) );
 		} );
 	}
 	α GatewaySocketSession::HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void{

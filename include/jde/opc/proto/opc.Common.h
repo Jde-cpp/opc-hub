@@ -20,7 +20,8 @@ namespace Jde::Opc::ProtoUtils{
 	//explains kept as extension_object and noted with `types` (ITypes::Missing).  The socket's pushes and pages go Decoded.
 	enum class EStructures : uint8{ Encoded, Decoded };
 	//A scalar is its oneof member, an array is `array`, and an empty variant sets nothing.  Aliases go by kind (UtcTime is
-	//a date, an enum an int32), a structure goes as `structures` says, and DataValue/DiagnosticInfo throw BadNotSupported.
+	//a date, an enum an int32), a structure goes as `structures` says, and DataValue/DiagnosticInfo throw BadNotSupported.  Decoded,
+	//text that isn't UTF-8 throws BadEncodingError, and a structure with a member either refuses goes as its body, as Encoded sends it.
 	α ToValue( const UA_Variant& v, EStructures structures=EStructures::Encoded, const ITypes* types=nullptr )ε->Proto::Value;
 	α ToValue( const void* element, const UA_DataType& type, EStructures structures=EStructures::Encoded, const ITypes* types=nullptr )ε->Proto::Value;//one element, e.g. of an array.
 	//Every extension_object in `v` - the value, or an element of its array - whose body a type explains, as its `structure`:  a

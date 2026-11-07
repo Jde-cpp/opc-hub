@@ -588,7 +588,8 @@ describe( 'NodeChildren a Method\'s Call button', ()=>{
 } );
 
 //the #421 walk's W1:  every value of a type of the server's own took the enumeration's select, so a structure showed an empty one;  with
-//8b (#422) a structure is a table of its members, nested where they are, and a body no type explains says it is undecoded
+//8b (#422) a structure is a table of its members, nested where they are, and a body no type explains says it is undecoded - whatever the
+//DataType says, a BaseDataType variable's too, and an array of structures a table each (reviews-issue/422-structures.md #9)
 describe( 'NodeChildren a value of the server\'s own type', ()=>{
 	it( 'offers an enumeration\'s values and shows a structure as a table of its members', ()=>{
 		TestBed.configureTestingModule({ providers: [screenSize(), provideRoute(), { provide: GATEWAY_SERVICE, useValue: {} }, { provide: SnackbarService, useValue: snackbarStub() }, pageTitleStub] });
@@ -598,10 +599,12 @@ describe( 'NodeChildren a value of the server\'s own type', ()=>{
 		health.customDataType = new Enum( new NodeId({ns: 2, i: 3002}), <any>{name: "Health", enumValues: [{id: 1, name: "OK"}]} );
 		const sample = variable( 2, "sample", {dataType: {ns: 2, i: 3001}, value: {Rpm: 1480.5, Running: true, Limits: {Low: 0, High: 3000}}} );
 		const opaque = variable( 3, "legacy", {dataType: {ns: 2, i: 3009}, value: {typeId: {ns: 2, i: 3010}, body: "AAAA"}} );
+		const any = variable( 4, "any", {dataType: {i: ETypes.BaseDataType}, value: {Rpm: 7}} );
+		const args = variable( 5, "args", {dataType: {i: 296}, valueRank: 1, value: [{Name: "a"}, {Name: "b"}]} );
 		page.pageData = { gateway: fakeGateway( 'local' ), route: {profileKey: 'k'}, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
 		page.profile = { subscriptions: [] } as any;
 		fixture.componentRef.setInput( 'node', new OpcObject(<any>{ns: 2, i: 5010, name: '_Test', browse: {ns: 2, name: '_Test'}}) );
-		(<any>page).setNodes( [health, sample, opaque], false );
+		(<any>page).setNodes( [health, sample, opaque, any, args], false );
 		page.isLoading.set( false );//the route's load, which provideRoute() leaves out
 		page.viewSet.reset( [NodeView.default()] );
 		fixture.detectChanges();
@@ -614,8 +617,12 @@ describe( 'NodeChildren a value of the server\'s own type', ()=>{
 		expect( table ).not.toBeNull();
 		expect( rows(table) ).toEqual( [['Rpm', '1480.5'], ['Running', 'true'], ['Limits', 'Low0High3000']] );//the nested table's text, run together
 		expect( rows(table.querySelector('structure-table > table')!) ).toEqual( [['Low', '0'], ['High', '3000']] );//nested
-		expect( snapshot('legacy').querySelector('structure-table') ).toBeNull();
-		expect( snapshot('legacy').textContent!.trim() ).toBe( 'undecoded ns=2;i=3010' );
+		expect( snapshot('legacy').querySelector('structure-table table') ).toBeNull();
+		expect( snapshot('legacy').querySelector('.undecoded')!.textContent!.trim() ).toBe( 'undecoded ns=2;i=3010' );
+		expect( snapshot('legacy').querySelector('.undecoded')!.getAttribute('tabindex') ).toBe( '0' );//the reason a keyboard's too
+		expect( rows(snapshot('any').querySelector('structure-table > table')!) ).toEqual( [['Rpm', '7']] );
+		const elements = [...snapshot('args').querySelectorAll( 'structure-table > structure-table > table' )];
+		expect( elements.map( t=>rows(t) ) ).toEqual( [[['Name', 'a']], [['Name', 'b']]] );
 	} );
 } );
 

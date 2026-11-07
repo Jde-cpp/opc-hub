@@ -715,7 +715,7 @@ namespace Jde::Opc::Gateway{
 		ul _{ _mutex };
 		_listener.swap( listener );//the one it replaces goes with the argument, off the lock.
 	}
-	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void{
+	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value, const ITypes* )ι->void{
 		auto keep = kept( Value{value} );
 		ul _{ _mutex };
 		let [pk, n] = FindNode( node );

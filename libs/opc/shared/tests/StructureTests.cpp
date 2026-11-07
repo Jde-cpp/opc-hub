@@ -386,4 +386,107 @@ namespace Jde::Opc::Tests{
 		auto two = selected; auto& v = *two.mutable_structure()->add_members(); v.set_name( "V" ); v.mutable_value()->set_string_value( "x" );
 		EXPECT_THROW( ProtoUtils::ToVariant(two, &more), UAException ) << "one of its members, not two";
 	}
+	//What a member's kind asks of the two forms (reviews-issue/422-structures.md #1-#5, #12):  a structure with a member of no proto form,
+	//or text that isn't UTF-8, goes as its body - the nearest structure holding it alone - where it used to end the process;  a null array
+	//member, a BaseDataType member, a Structure member and a Structure[] of two types come back as they went;  a value of another kind the
+	//size of the member's is refused.
+	TEST( StructureTests, ProtoMembersOfEveryKind ){
+		using enum ProtoUtils::EStructures;
+		UA_StatusResult result; UA_StatusResult_init( &result );
+		result.statusCode = UA_STATUSCODE_BADINTERNALERROR;
+		let unsupported = ProtoUtils::ToValue( &result, UA_TYPES[UA_TYPES_STATUSRESULT], Decoded );
+		ASSERT_TRUE( unsupported.has_extension_object() ) << "a DiagnosticInfo member has no proto form:  the body";
+		EXPECT_EQ( ProtoUtils::ToNodeId(unsupported.extension_object().type_id()), NodeId{UA_TYPES[UA_TYPES_STATUSRESULT].binaryEncodingId} );
+		const vector<UA_StructureField> resultFields{ field("Count", UA_NS0ID_INT32), field("Result", UA_NS0ID_STATUSRESULT) };
+		const vector<UA_StructureField> readingFields{ field("Reading", UA_NS0ID_DATAVALUE) };
+		Registry registry{ {description(3009, "ResultHolder", resultFields), description(3011, "ReadingHolder", readingFields)} };
+		for( uint i : {0, 1} ){
+			let& type = registry.Type( i );
+			auto p = UA_new( &type );
+			let proto = ProtoUtils::ToValue( p, type, Decoded, &registry );
+			UA_delete( p, &type );
+			if( i==0 ){
+				ASSERT_TRUE( proto.has_structure() ) << "the structure around it stays decoded";
+				EXPECT_TRUE( member(proto.structure(), "Result")->has_extension_object() );
+			}
+			else
+				EXPECT_TRUE( proto.has_extension_object() ) << "a DataValue member";
+		}
+
+		UA_KeyValuePair pair; UA_KeyValuePair_init( &pair );
+		pair.key = UA_QUALIFIEDNAME( 1, (char*)"speed" );
+		const UA_Double speed{ 3.5 };
+		UA_Variant_setScalar( &pair.value, (void*)&speed, &UA_TYPES[UA_TYPES_DOUBLE] );
+		let pairProto = ProtoUtils::ToValue( &pair, UA_TYPES[UA_TYPES_KEYVALUEPAIR], Decoded );
+		ASSERT_TRUE( pairProto.has_structure() );
+		EXPECT_EQ( member(pairProto.structure(), "Value")->double_value(), 3.5 ) << "a BaseDataType member goes as what it holds";
+		let pairBack = ProtoUtils::ToVariant( pairProto );
+		ASSERT_EQ( pairBack.type, &UA_TYPES[UA_TYPES_KEYVALUEPAIR] );
+		let& backPair = *(const UA_KeyValuePair*)pairBack.data;
+		ASSERT_EQ( backPair.value.type, &UA_TYPES[UA_TYPES_DOUBLE] ) << "back in its Variant";
+		EXPECT_EQ( *(const UA_Double*)backPair.value.data, 3.5 );
+		UA_Variant_init( &pair.value );
+		let emptyBack = ProtoUtils::ToVariant( ProtoUtils::ToValue(&pair, UA_TYPES[UA_TYPES_KEYVALUEPAIR], Decoded) );
+		EXPECT_TRUE( UA_Variant_isEmpty(&((const UA_KeyValuePair*)emptyBack.data)->value) ) << "an empty one too";
+
+		UA_Argument argument; UA_Argument_init( &argument );
+		argument.name = UA_STRING( (char*)"rate" );
+		argument.dataType = UA_NODEID_NUMERIC( 0, UA_NS0ID_DOUBLE );
+		argument.valueRank = UA_VALUERANK_SCALAR;
+		let argumentProto = ProtoUtils::ToValue( &argument, UA_TYPES[UA_TYPES_ARGUMENT], Decoded );
+		ASSERT_TRUE( member(argumentProto.structure(), "ArrayDimensions")->array().is_null() );
+		let argumentBack = ProtoUtils::ToVariant( argumentProto );
+		ASSERT_EQ( argumentBack.type, &UA_TYPES[UA_TYPES_ARGUMENT] ) << "a null array member, as a server sends one it never set";
+		EXPECT_EQ( ((const UA_Argument*)argumentBack.data)->arrayDimensions, nullptr );
+		auto guid = argumentProto; guid.mutable_structure()->mutable_members(0)->mutable_value()->set_guid( string(16, '\x01') );
+		EXPECT_THROW( ProtoUtils::ToVariant(guid), UAException ) << "a Guid is a String's size, not a String";
+		auto qualified = argumentProto; qualified.mutable_structure()->mutable_members(1)->mutable_value()->mutable_qualified_name()->set_name( "x" );
+		EXPECT_THROW( ProtoUtils::ToVariant(qualified), UAException ) << "a QualifiedName is a NodeId's size, not a NodeId";
+		const UA_Range range{ 0, 1500 };
+		auto int64 = ProtoUtils::ToValue( &range, UA_TYPES[UA_TYPES_RANGE], Decoded );
+		int64.mutable_structure()->mutable_members(0)->mutable_value()->set_int64( 7 );
+		EXPECT_THROW( ProtoUtils::ToVariant(int64), UAException ) << "an Int64 is a Double's size, not a Double";
+		const char bad[]{ "\xff\xfe" };
+		argument.name = UA_String{ 2, (UA_Byte*)bad };
+		EXPECT_TRUE( ProtoUtils::ToValue(&argument, UA_TYPES[UA_TYPES_ARGUMENT], Decoded).has_extension_object() ) << "text that isn't UTF-8 goes in the body's bytes";
+		EXPECT_THROW( ProtoUtils::ToValue(&argument.name, UA_TYPES[UA_TYPES_STRING], Decoded), UAException ) << "refused, as the historian stores it";
+		EXPECT_EQ( ProtoUtils::ToValue(&argument.name, UA_TYPES[UA_TYPES_STRING]).string_value().size(), 2u ) << "Encoded:  the historian's to check";
+
+		UA_DataChangeFilter filter; UA_DataChangeFilter_init( &filter );
+		filter.trigger = UA_DATACHANGETRIGGER_STATUSVALUE;
+		filter.deadbandType = UA_DEADBANDTYPE_ABSOLUTE;
+		filter.deadbandValue = 0.5;
+		UA_MonitoringParameters parameters; UA_MonitoringParameters_init( &parameters );
+		parameters.samplingInterval = 250;
+		parameters.queueSize = 4;
+		UA_ExtensionObject_setValueNoDelete( &parameters.filter, &filter, &UA_TYPES[UA_TYPES_DATACHANGEFILTER] );
+		let parametersProto = ProtoUtils::ToValue( &parameters, UA_TYPES[UA_TYPES_MONITORINGPARAMETERS], Decoded );
+		ASSERT_TRUE( member(parametersProto.structure(), "Filter")->has_structure() ) << "a Structure member goes as the structure it holds";
+		let parametersBack = ProtoUtils::ToVariant( parametersProto );
+		ASSERT_EQ( parametersBack.type, &UA_TYPES[UA_TYPES_MONITORINGPARAMETERS] );
+		let& backFilter = ((const UA_MonitoringParameters*)parametersBack.data)->filter;
+		ASSERT_EQ( backFilter.encoding, UA_EXTENSIONOBJECT_DECODED ) << "back in its ExtensionObject";
+		ASSERT_EQ( backFilter.content.decoded.type, &UA_TYPES[UA_TYPES_DATACHANGEFILTER] );
+		EXPECT_EQ( ((const UA_DataChangeFilter*)backFilter.content.decoded.data)->deadbandValue, 0.5 );
+		EXPECT_EQ( ((const UA_DataChangeFilter*)backFilter.content.decoded.data)->trigger, UA_DATACHANGETRIGGER_STATUSVALUE ) << "an enum member from its Int32";
+
+		UA_ElementOperand element{ 1 };
+		UA_LiteralOperand literal; UA_LiteralOperand_init( &literal );
+		const UA_Double limit{ 3.5 };
+		UA_Variant_setScalar( &literal.value, (void*)&limit, &UA_TYPES[UA_TYPES_DOUBLE] );
+		UA_ExtensionObject operands[2];
+		UA_ExtensionObject_setValueNoDelete( &operands[0], &element, &UA_TYPES[UA_TYPES_ELEMENTOPERAND] );
+		UA_ExtensionObject_setValueNoDelete( &operands[1], &literal, &UA_TYPES[UA_TYPES_LITERALOPERAND] );
+		UA_ContentFilterElement where; UA_ContentFilterElement_init( &where );
+		where.filterOperator = UA_FILTEROPERATOR_GREATERTHAN;
+		where.filterOperandsSize = 2;
+		where.filterOperands = operands;
+		let whereBack = ProtoUtils::ToVariant( ProtoUtils::ToValue(&where, UA_TYPES[UA_TYPES_CONTENTFILTERELEMENT], Decoded) );
+		ASSERT_EQ( whereBack.type, &UA_TYPES[UA_TYPES_CONTENTFILTERELEMENT] ) << "a Structure[] of two types";
+		let& backWhere = *(const UA_ContentFilterElement*)whereBack.data;
+		ASSERT_EQ( backWhere.filterOperandsSize, 2u );
+		EXPECT_EQ( backWhere.filterOperands[0].content.decoded.type, &UA_TYPES[UA_TYPES_ELEMENTOPERAND] );
+		ASSERT_EQ( backWhere.filterOperands[1].content.decoded.type, &UA_TYPES[UA_TYPES_LITERALOPERAND] );
+		EXPECT_EQ( *(const UA_Double*)((const UA_LiteralOperand*)backWhere.filterOperands[1].content.decoded.data)->value.data, 3.5 );
+	}
 }

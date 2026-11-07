@@ -12,7 +12,7 @@ import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
-import { ExtensionObject, isStructure, Structure, valueString } from '../../../model/value';
+import { valueString } from '../../../model/value';
 import { StructureTable } from '../../structure-table/structure-table';
 
 //The table:  every value loaded, newest first, with both timestamps and the status, paged.  The read opens with
@@ -59,8 +59,7 @@ export class HistTable{
 	statusTooltip( v:HistValue ):string{ return v.status ? `${scHex( v.status )} - ${this.status( v )}` : ""; }
 	qualityIcon( v:HistValue ){ return statusIcon( v.status ); }
 	valueText( v:HistValue ):string{ return valueString( v.value ); }
-	structure( v:HistValue ):Structure|undefined{ return isStructure( v.value ) ? v.value : undefined; }//a structure decoded by member:  the cell's table (clients spec *Structures*)
-	undecoded( v:HistValue ):string|undefined{ return v.value instanceof ExtensionObject ? v.value.tooltip : undefined; }//a body no type explains:  why the cell says so
+	readonly structured = StructureTable.shows;//a value the cell's StructureTable shows (clients spec *Structures*)
 	//what a value is besides a reading:  a bound returnBounds asked for, a group's heartbeat, or an edit's record in modified mode
 	flags( v:HistValue ):string[]{
 		const y:string[] = [];

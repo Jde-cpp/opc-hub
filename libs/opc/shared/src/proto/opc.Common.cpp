@@ -184,8 +184,9 @@ namespace Jde::Opc{
 		} );
 		return y;
 	}
-	//Decoded:  the structure it holds, or the one its body decodes to by its encoding id (DecodeBody), each as `structure`;  a body no
-	//type explains, or a decoded value of no structure kind, as the ExtensionObject it is.
+	//Decoded:  the structure it holds, or the one its body decodes to by its encoding id (DecodeBody), as ToValue converts a structure -
+	//`structure`, or its body when a member won't convert;  a body no type explains as the ExtensionObject it is.  A decoded value of
+	//another kind converts as that kind, which ToValue may refuse, as it would at the top.
 	Ω decodedExtensionObject( const UA_ExtensionObject& eo, const ITypes* types )ε->Proto::Value{
 		if( eo.encoding>=UA_EXTENSIONOBJECT_DECODED ){
 			let& decoded = eo.content.decoded;
@@ -200,9 +201,15 @@ namespace Jde::Opc{
 		return y;
 	}
 
+	Ω utf8( const void* p, const UA_DataType& type )ι->bool;
 	#define CASE(kind, T, setter) case UA_DATATYPEKIND_##kind: y.set_##setter( *(const T*)p ); break;
 	#define STR_CASE(kind, setter) case UA_DATATYPEKIND_##kind: y.set_##setter( ToSV(*(const UA_String*)p) ); break;
 	α ProtoUtils::ToValue( const void* p, const UA_DataType& type, EStructures structures, const ITypes* types )ε->Proto::Value{
+		//Decoded, text goes into `string` fields, which protobuf's parse refuses whole when one isn't UTF-8 - in Encoded a structure's is in
+		//its body's bytes, and the historian checks its own (Utf8).  So the reading is refused as the historian stores it, and a structure
+		//holding the text is sent Encoded.  A Variant's elements and a structure's members are checked as they convert.
+		if( structures==EStructures::Decoded && type.typeKind!=UA_DATATYPEKIND_VARIANT && !IsStructure(type) && !utf8(p, type) )
+			throw UAException{ UA_STATUSCODE_BADENCODINGERROR, Ƒ("A '{}' value has text that isn't UTF-8.", type.typeName) };
 		Proto::Value y;
 		switch( type.typeKind ){
 		CASE( BOOLEAN, UA_Boolean, boolean )
@@ -265,8 +272,13 @@ namespace Jde::Opc{
 		case UA_DATATYPEKIND_OPTSTRUCT:
 		case UA_DATATYPEKIND_UNION:
 			if( structures==EStructures::Decoded ){
-				*y.mutable_structure() = toStructure( p, type, types );
-				break;
+				try{
+					*y.mutable_structure() = toStructure( p, type, types );
+					break;
+				}
+				catch( const Exception& e ){//a member with no proto form - a DataValue, a DiagnosticInfo - or text that isn't UTF-8:  the body, as Encoded sends it.
+					TRACET( ELogTags::Parsing, "A '{}' goes encoded - {}", type.typeName, e.what() );
+				}
 			}
 			[[fallthrough]];
 		case UA_DATATYPEKIND_DECIMAL:
@@ -391,8 +403,64 @@ namespace Jde::Opc{
 		return scalar( &v, type );
 	}
 
+	//`x` in a box of the member's type `want` where ToValue sends what the box holds:  a BaseDataType member's Variant around the value,
+	//an empty one included;  a Structure member's ExtensionObject around the decoded structure.  Anything else as it is.
+	Ω boxed( Variant&& x, const UA_DataType& want )ε->Variant{
+		if( x.type==&want )
+			return move( x );
+		UA_Variant y{};
+		if( want.typeKind==UA_DATATYPEKIND_VARIANT ){
+			auto box = (UA_Variant*)UA_new( &want );
+			if( !box )
+				throw UAException{ UA_STATUSCODE_BADOUTOFMEMORY };
+			*box = x.Move();
+			UA_Variant_setScalar( &y, box, &want );
+		}
+		else if( want.typeKind==UA_DATATYPEKIND_EXTENSIONOBJECT && x.type && IsStructure(*x.type) && x.IsScalar() ){
+			auto box = (UA_ExtensionObject*)UA_new( &want );
+			if( !box )
+				throw UAException{ UA_STATUSCODE_BADOUTOFMEMORY };
+			box->encoding = UA_EXTENSIONOBJECT_DECODED;
+			box->content.decoded.type = x.type;
+			box->content.decoded.data = x.data;//the structure's box, now the ExtensionObject's.
+			UA_Variant_init( &x );
+			UA_Variant_setScalar( &y, box, &want );
+		}
+		else
+			return move( x );
+		return Variant{ move(y) };
+	}
+	//A Structure[] member:  each element in its ExtensionObject (boxed), since the structures in it may be of different types, which
+	//toArray refuses.
+	Ω extensionObjects( const Proto::Array& a, const ITypes* types )ε->Variant{
+		let& type = UA_TYPES[UA_TYPES_EXTENSIONOBJECT];
+		UA_Variant y{};
+		if( a.is_null() ){
+			if( a.values_size() )
+				throw UAException{ UA_STATUSCODE_BADDECODINGERROR, Ƒ("A null array holds {} values.", a.values_size()) };
+			UA_Variant_setArray( &y, nullptr, 0, &type );
+			return Variant{ move(y) };
+		}
+		vector<Variant> elements; elements.reserve( a.values_size() );
+		for( let& v : a.values() ){
+			elements.push_back( boxed(ProtoUtils::ToVariant(v, types), type) );
+			if( elements.back().type!=&type || !elements.back().IsScalar() )
+				throw UAException{ UA_STATUSCODE_BADDECODINGERROR, Ƒ("A Structure array holds a '{}'.", elements.back().type ? elements.back().type->typeName : "empty value") };
+		}
+		auto data = (UA_ExtensionObject*)UA_Array_new( elements.size(), &type );
+		if( !data )
+			throw UAException{ UA_STATUSCODE_BADOUTOFMEMORY };
+		for( uint i=0; i<elements.size(); ++i ){
+			auto& e = elements[i];
+			::memcpy( data+i, e.data, sizeof(UA_ExtensionObject) );
+			UA_free( e.data );//the box, not what it points at - that moved into the slot.
+			UA_Variant_init( &e );
+		}
+		UA_Variant_setArray( &y, data, elements.size(), &type );
+		return Variant{ move(y) };
+	}
 	//A `structure` as a value of `type` (FillMembers):  each member by name through ToVariant, a nested structure as the member's type, so
-	//a member's type_id need not be read;  a name the type has no member of is refused.
+	//a member's type_id need not be read, and a BaseDataType or Structure member in its box;  a name the type has no member of is refused.
 	Ω fromStructure( const Proto::Structure& s, const UA_DataType& type, const ITypes* types )ε->Variant{
 		let find = [&]( sv name )->const Proto::StructureMember*{
 			for( let& m : s.members() ){
@@ -414,9 +482,14 @@ namespace Jde::Opc{
 				let member = find( m.memberName );
 				if( !member || !member->has_value() )
 					return nullopt;
-				if( member->value().has_structure() && m.memberType && IsStructure(*m.memberType) )
-					return fromStructure( member->value().structure(), *m.memberType, types );
-				return ProtoUtils::ToVariant( member->value(), types );
+				let& value = member->value();
+				let& memberType = *m.memberType;
+				if( value.has_structure() && IsStructure(memberType) )
+					return fromStructure( value.structure(), memberType, types );
+				if( m.isArray && memberType.typeKind==UA_DATATYPEKIND_EXTENSIONOBJECT && value.has_array() )
+					return extensionObjects( value.array(), types );
+				auto x = ProtoUtils::ToVariant( value, types );
+				return m.isArray ? move( x ) : boxed( move(x), memberType );
 			}, SRCE_CUR );
 		}
 		catch( const UAException& ){

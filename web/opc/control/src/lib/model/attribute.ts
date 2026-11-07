@@ -1,9 +1,8 @@
 import { ENodeClass } from './node';
-import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
 import { isBad } from './status-code';
 import { ETypes, StatusCode } from './types';
-import { toReading, Value, valueString } from './value';
+import { isPlain, toReading, Value, valueString } from './value';
 
 //The WriteMask's bits (OPC 10000-3 §8.60), as a node's WriteMask and UserWriteMask attributes carry them:  the Attributes tab's edit gate
 //(clients spec *Attributes*, #417).
@@ -62,25 +61,6 @@ export const attributeDefs:readonly AttributeDef[] = [
 //the attributes of a class, in order:  what the tab reads in one `node( opc, id ){ … }`
 export function attributesOf( nodeClass:ENodeClass ):AttributeDef[]{ return attributeDefs.filter( d=>d.classes & nodeClass ); }
 
-const isPlain = ( v:unknown ):v is Record<string,unknown>=>typeof v=='object' && v!==null && !Array.isArray( v ) && Object.getPrototypeOf( v )===Object.prototype;
-const only = ( o:object, keys:string[] )=>Object.keys( o ).every( k=>keys.includes(k) );
-//A value as text:  a DateTime, a browse name and a node id as valueString and the standard spell them - known by their whole shape, so a
-//structure with a `name` or an `i` member stays a structure, and an ExpandedNodeId keeps its uri - and any other structure as its json
-//(reviews-issue/417-clients-attributes.md #4).
-function valueText( v:unknown ):string{
-	if( Array.isArray(v) )
-		return v.map( valueText ).join( ', ' );
-	if( !isPlain(v) )
-		return valueString( <Value>v );
-	if( 'seconds' in v && 'nanos' in v && only(v, ['seconds', 'nanos']) )
-		return valueString( <Value><unknown>v );
-	if( typeof v['name']=='string' && only(v, ['ns', 'name']) )
-		return `${v['ns'] ?? 0}:${v['name']}`;
-	if( only(v, ['ns', 'i', 's', 'g', 'b']) && ['i', 's', 'g', 'b'].filter( k=>k in v ).length==1 )
-		return new NodeId( v ).uaString();
-	return JSON.stringify( v );
-}
-
 //One attribute of a node as read:  its value where the server answered it, else the status it refused it with - and, the Value, its
 //status and both timestamps beside the reading (the gateway's `dataValue`).
 export class Attribute{
@@ -102,7 +82,9 @@ export class Attribute{
 	get key():string{ return this.def.key; }
 	get label():string{ return this.def.label; }
 	get refused():boolean{ return isBad( this.sc ); }//the server would not answer it:  the status is all there is
-	//the value as text:  a class or a namespace-0 data type by name, anything else as valueText spells it
+	//the value as text:  a class or a namespace-0 data type by name, anything else as valueString spells it - a DateTime, a browse name and
+	//a node id by their whole shape (jsonShape), so a structure with a `name` or an `i` member stays a structure, an ExpandedNodeId keeps
+	//its uri, and any other structure as its json (reviews-issue/417-clients-attributes.md #4)
 	get text():string{
 		const v:unknown = this.value;
 		if( v==null )
@@ -111,7 +93,7 @@ export class Attribute{
 			return ENodeClass[v] ?? `${v}`;
 		if( this.key=='dataType' && isPlain(v) && !v['ns'] && typeof v['i']=='number' && ETypes[v['i']] )
 			return ETypes[v['i']];
-		return valueText( v );
+		return valueString( <Value>v );
 	}
 	//a mask's attributes by name, as the cell's tooltip
 	get tooltip():string{ return (this.key=='writeMask' || this.key=='userWriteMask') && typeof this.value=='number' ? writeMaskNames( this.value ).join( ', ' ) || 'none' : ''; }

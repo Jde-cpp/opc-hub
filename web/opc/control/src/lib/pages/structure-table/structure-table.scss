@@ -6,6 +6,12 @@ has it whole. */
 	min-width: 0;
 	max-width: 100%;
 }
+/* the cell's own:  it takes the cell's width - a flex row's - and the row grows to it */
+:host(.top){
+	flex: 1 1 auto;
+	padding-block: 4px;
+	text-align: start;
+}
 table.structure{
 	border-collapse: collapse;
 	width: 100%;
@@ -39,10 +45,16 @@ table.structure td > .member-text{
 table.structure td > structure-table{
 	margin-inline-start: 4px;
 }
-table.structure td > structure-table + structure-table{
+structure-table + structure-table{
 	border-top: 1px solid var(--mat-sys-outline-variant);
 }
+/* not the stale reading's muted italic:  the text says undecoded, and the dotted underline that a tooltip has more to say */
 .undecoded{
-	color: var(--mat-sys-on-surface-variant);
-	font-style: italic;
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+	cursor: help;
 }

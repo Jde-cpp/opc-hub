@@ -101,7 +101,7 @@ namespace Jde::Opc::Gateway{
 		α Redescribe()ι->void;
 
 		//Into the group, on the connection's strand:  Group::Enqueue only buffers.  Held while a rebuild's namespaces are checked.
-		α SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void override;
+		α SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value, const ITypes* )ι->void override;
 		α ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void override;
 		//On the strand, before the new subscription's first value:  the check of the server's namespaces starts here.
 		α ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void override;

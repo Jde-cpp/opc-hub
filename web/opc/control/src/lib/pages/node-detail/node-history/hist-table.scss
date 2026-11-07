@@ -37,17 +37,6 @@ mat-cell.mat-column-value > .value-text{
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-/* a structure's table takes the cell's width, and the row grows past the dense height to it */
-mat-cell.mat-column-value > structure-table{
-	flex: 1 1 auto;
-	min-width: 0;
-	padding-block: 4px;
-	text-align: start;
-}
-.undecoded{
-	color: var(--mat-sys-on-surface-variant);
-	font-style: italic;
-}
 .mat-column-flags{
 	flex: 0 0 220px;
 	padding-inline: 5px;

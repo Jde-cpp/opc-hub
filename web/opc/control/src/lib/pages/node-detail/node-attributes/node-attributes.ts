@@ -10,7 +10,7 @@ import { UaNode } from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
-import { ExtensionObject, isStructure, numberValue, Structure, Value } from '../../../model/value';
+import { ExtensionObject, numberValue, Value } from '../../../model/value';
 import { StructureTable } from '../../structure-table/structure-table';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 
@@ -67,8 +67,9 @@ export class NodeAttributes{
 		this.userWriteMask.set( typeof mask=='number' ? mask : undefined );
 	}
 	editor( a:Attribute ):AttributeEditor|undefined{ return a.editor( this.userWriteMask() ); }
-	structure( a:Attribute ):Structure|undefined{ return a.key=='dataValue' && isStructure( a.value ) ? a.value : undefined; }//a structure Value, decoded by member:  the row's table (clients spec *Structures*).  The Value alone:  a RolePermissions or DataTypeDefinition stays its text
-	undecoded( a:Attribute ):string|undefined{ return a.value instanceof ExtensionObject ? a.value.tooltip : undefined; }//a body no type explains:  why the row says so
+	//the row's StructureTable (clients spec *Structures*):  the Value's structures, and any attribute's body no type explains - a
+	//RolePermissions or DataTypeDefinition stays its text
+	structured( a:Attribute ):boolean{ return a.key=='dataValue' ? StructureTable.shows( a.value ) : a.value instanceof ExtensionObject; }
 	//the quality the server gave - the Value's reading always has one, Good included;  another attribute's shows only where it refused
 	status( a:Attribute ):string{ return a.sc || (a.key=='dataValue' && a.value!==undefined) ? OpcError.text( a.sc ) : ""; }
 	statusTooltip( a:Attribute ):string{ return a.sc ? `${scHex( a.sc )} - ${this.status( a )}` : ""; }

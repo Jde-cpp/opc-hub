@@ -24,7 +24,7 @@ import { OpcError } from '../../../model/opc-error';
 import { PushBuffer } from '../../../model/push-buffer';
 import { isBad, scHex, statusIcon } from '../../../model/status-code';
 import { CnnctnSlug } from '../../../model/server-cnnctn';
-import { ExtensionObject, isStructure, Structure, valueString } from '../../../model/value';
+import { valueString } from '../../../model/value';
 import { discardText, filterText, queueText, samplingText, WatchParameters, WatchRow } from '../../../model/watch';
 import { WatchView } from '../../../model/watch-view';
 import { trendPalette } from '../../node-detail/node-history/hist-trend-data';
@@ -345,8 +345,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	readonly names = ( slug:CnnctnSlug )=>this.cnnctnName( slug );
 	cell( row:WatchRow, column:string ):string{ return WatchView.cellValue( row, column, this.names )?.toString() ?? ""; }
 	valueText( row:WatchRow ):string{ return row.valueName ?? valueString( <any>row.value ); }
-	structure( row:WatchRow ):Structure|undefined{ return isStructure( row.value ) ? row.value : undefined; }//a structure decoded by member:  the cell's table (clients spec *Structures*)
-	undecoded( row:WatchRow ):string|undefined{ return row.value instanceof ExtensionObject ? row.value.tooltip : undefined; }//a body no type explains:  why the cell says so
+	readonly structured = StructureTable.shows;//a value the cell's StructureTable shows (clients spec *Structures*)
 	status( row:WatchRow ):string{ return row.error ? row.error : row.sc==undefined ? "" : OpcError.text( row.sc ); }
 	statusTooltip( row:WatchRow ):string{ return row.sc ? `${scHex( row.sc )} - ${OpcError.text( row.sc )}` : ""; }
 	qualityIcon( row:WatchRow ){ return row.error ? "error" : statusIcon( row.sc ); }

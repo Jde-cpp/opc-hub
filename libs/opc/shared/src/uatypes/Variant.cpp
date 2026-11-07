@@ -301,6 +301,14 @@ namespace Jde{
 	α Opc::FindDataType( const UA_NodeId& typeId, const ITypes* types )ι->const UA_DataType*{
 		return UA_findDataTypeWithCustom( &typeId, types ? types->Chain() : nullptr );
 	}
+	//The first body of an encoding id that won't decode, of any connection:  a server that redefined a type would otherwise log once for
+	//each stored record of it every page and push carries, for each subscriber.
+	Ω firstFailure( const UA_NodeId& encodingId )ι->bool{
+		static std::mutex mutex;
+		static flat_set<Opc::NodeId> failed;
+		lg _{ mutex };
+		return failed.emplace( encodingId ).second;
+	}
 	α Opc::DecodeBody( const UA_ExtensionObject& eo, const ITypes* types )ι->DecodedBody{
 		if( eo.encoding!=UA_EXTENSIONOBJECT_ENCODED_BYTESTRING )
 			return {};
@@ -320,7 +328,7 @@ namespace Jde{
 		options.customTypes = types ? types->Chain() : nullptr;
 		if( let sc = UA_decodeBinary(&enc.body, data, type, &options); sc ){
 			UA_delete( data, type );
-			WARNT( ELogTags::Parsing, "Could not decode a '{}' body of {} bytes - {}.  Kept as it came.", type->typeName, enc.body.length, UAException::Message(sc) );
+			LOG( firstFailure(enc.typeId) ? ELogLevel::Warning : ELogLevel::Trace, ELogTags::Parsing, "Could not decode a '{}' body of {} bytes - {}.  Kept as it came.", type->typeName, enc.body.length, UAException::Message(sc) );
 			return {};
 		}
 		return { data, type };

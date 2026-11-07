@@ -107,7 +107,7 @@ namespace Jde::Opc::Gateway{
 		}
 		catch( const UAException& e ){//the whole reading, as the historian refuses it - a Variant array's good elements alone would pass for the array.
 			WARNT( IotReadTag, "{} - {}", node.ToString(), e.what() );
-			sc = (StatusCode)e.Code();//BadNotSupported for a DataValue or DiagnosticInfo, with no value, as the historian stores it.  A status_code value read as a StatusCode reading.
+			sc = (StatusCode)e.Code();//BadNotSupported for a DataValue or DiagnosticInfo, BadEncodingError for text that isn't UTF-8, with no value, as the historian stores each.  A status_code value read as a StatusCode reading.
 		}
 		nv->set_sc( sc );
 		FromServer::Message m;

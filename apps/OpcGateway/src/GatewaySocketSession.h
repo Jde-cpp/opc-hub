@@ -7,7 +7,7 @@
 
 namespace Jde::Proto{ class Query; }
 namespace Jde::Opc{ struct NodeId; }
-namespace Jde::Opc::Hist{ enum class ESubscriptionEnd : uint8; }
+namespace Jde::Opc::Hist{ enum class ESubscriptionEnd : uint8; namespace Proto{ class HistoryRecord; } }
 namespace Jde::Opc::Gateway{
 	struct HistSubscriber;
 	using namespace Jde::Web::Server;
@@ -16,7 +16,7 @@ namespace Jde::Opc::Gateway{
 		using base = TWebsocketSession<FromServer::Transmission,FromClient::Transmission>;
 		GatewaySocketSession( sp<IRestStream> stream, beast::flat_buffer&& buffer, TRequestType&& request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι;
 		α OnRead( FromClient::Transmission&& transmission )ι->void override;
-		α SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value )ι->void override;
+		α SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value, const ITypes* types )ι->void override;
 		//What the last Subscribe asked for the node on the connection, the defaults when it named none (spec *Watch list*), and a
 		//negative sampling interval, which asks the publishing interval, as that interval in ms, so the merge can order it.
 		α ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;
@@ -27,6 +27,9 @@ namespace Jde::Opc::Gateway{
 		//A historian subscription's page or push, written on the strand unless it has ended by then:  HistUnsubscribe ends it
 		//there before writing its completion, so nothing of it follows that.
 		α WriteHist( sp<HistSubscriber> subscriber, FromServer::Transmission&& message )ι->void;
+		//A push's records, the same, converted there (HistSubscriber::Records):  decoding a stored structure's body is no work for the
+		//thread that stored it.
+		α WriteHist( sp<HistSubscriber> subscriber, vector<Hist::Proto::HistoryRecord>&& records )ι->void;
 		//The group ended a historian subscription, removed or stopping:  on the strand, out of the map and the client told
 		//under its id, unless a HistUnsubscribe or the close ended it first.
 		α HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void;

@@ -29,8 +29,8 @@ describe( 'HistTable', ()=>{
 		const value = ( row:number )=>t.fixture.nativeElement.querySelectorAll( 'mat-row' )[row].querySelector( '.mat-column-value' );
 		expect( [...value( 1 ).querySelectorAll( 'structure-table > table > tbody > tr > th' )].map( (h:Element)=>h.textContent ) ).toEqual( ['Rpm', 'Limits', 'Low', 'High'] );//the members, the nested Range's after its row
 		expect( value( 1 ).querySelector( 'structure-table structure-table' ) ).not.toBeNull();//Limits, nested
-		expect( value( 0 ).querySelector( 'structure-table' ) ).toBeNull();
-		expect( value( 0 ).textContent.trim() ).toBe( 'undecoded ns=2;i=3010' );
+		expect( value( 0 ).querySelector( 'structure-table table' ) ).toBeNull();
+		expect( value( 0 ).querySelector( '.undecoded' ).textContent.trim() ).toBe( 'undecoded ns=2;i=3010' );
 	} );
 	it( 'lists the values newest first with the flags column, and no actions without editable nodes', ()=>{
 		const t = render( [at(A, 1000, 1), at(B, 2000, 2, {bound: true})] );

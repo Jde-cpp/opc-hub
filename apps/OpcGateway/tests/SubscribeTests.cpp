@@ -496,7 +496,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//with the time the subscription went, ConnectionRestored once the rebuild has the nodes back and before the new subscription
 	//delivers a value - and the per-node item parameters a listener answers (IDataChange::ItemParameters).
 	struct StateListener final : PushCount{
-		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value& )ι->void override{
+		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value&, const ITypes* )ι->void override{
 			if( Lost && !Restored )
 				++PushesWhileLost;//nothing was in flight at either staged loss, so one of these is the new item delivering before ConnectionRestored.
 			if( Restored )

@@ -44,11 +44,8 @@
 								<ng-container matColumnDef="value">
 									<mat-header-cell mat-sort-header *matHeaderCellDef> Value </mat-header-cell>
 									<mat-cell *matCellDef="let r">
-										@if( structure(r); as members ){<!--a structure decoded by member (clients spec *Structures*):  a table of them-->
-											<structure-table [members]="members" [label]="r.name" [class.stale]="r.sc && qualityIcon(r)=='error'"></structure-table>
-										}
-										@else if( undecoded(r); as reason ){
-											<span class="value-text undecoded" [class.stale]="r.sc && qualityIcon(r)=='error'" [matTooltip]="reason">{{ valueText(r) }}</span>
+										@if( structured(r.value) ){<!--a structure decoded by member, an array of them, or a body no type explains (clients spec *Structures*)-->
+											<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.sc && qualityIcon(r)=='error'"></structure-table>
 										}
 										@else{
 											<span class="value-text" [class.stale]="r.sc && qualityIcon(r)=='error'">{{ valueText(r) }}</span>
