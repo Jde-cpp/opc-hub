@@ -1,5 +1,5 @@
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/tests/WaitUntil.h>
 #include <atomic>
@@ -89,10 +89,9 @@ namespace Jde::Tests{
 	//2026-08-07 gateway stall.  The wait still never gives up; past /workers/blockStallWarning (200ms in this suite's config,
 	//30s in production) it just says what it is waiting on.  reviews/gateway-review.md #36.
 	TEST_F( BlockAwaitTests, WarnsWhileStalled ){
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		EXPECT_EQ( BlockAwait(SlowInt{700ms}), 9 ) << "the warning must not disturb the result";
-		let warnings = logger.Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
+		let warnings = Logging::Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
 		ASSERT_GE( warnings.size(), 2u ) << "700ms over a 200ms interval should say so more than once";
 		EXPECT_EQ( warnings[0].Level, ELogLevel::Warning ) << "the first interval warns";
 		EXPECT_EQ( warnings[1].Level, ELogLevel::Critical ) << "the ones after it are critical";
@@ -102,10 +101,9 @@ namespace Jde::Tests{
 	//hub not up yet - read like a hang: a warning at 30 s, criticals after.  The caller caps the level; the lines still come,
 	//one per interval, so a reader sees the wait, at the level the caller chose.
 	TEST_F( BlockAwaitTests, StallLevelCapped ){
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		EXPECT_EQ( BlockAwait(SlowInt{700ms}, ELogLevel::Information), 9 );
-		let lines = logger.Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
+		let lines = Logging::Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
 		ASSERT_GE( lines.size(), 2u ) << "700ms over a 200ms interval should say so more than once";
 		for( let& line : lines )
 			EXPECT_EQ( line.Level, ELogLevel::Information ) << line.Message();

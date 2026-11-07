@@ -1,13 +1,12 @@
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 
 #define let const auto
 namespace Jde::Tests{
 	struct LogEntryTests : public ::testing::Test{
 	protected:
 		α SetUp()->void override{ Logging::ClearMemory(); }
-		Ω logger()ι->Logging::MemoryLog&{ return Logging::GetLogger<Logging::MemoryLog>(); }
 	};
 
 	//An entry off the wire is rebuilt from Text + Arguments and formatted lazily here, so a mismatched pair is data,
@@ -22,7 +21,7 @@ namespace Jde::Tests{
 		EXPECT_NE( message.find('1'), string::npos ) << "...and so do the arguments that did arrive: " << message;
 		EXPECT_EQ( e.UserPK, Jde::UserPK{7} );
 		EXPECT_EQ( e.Message(), message ) << "memoized - the fallback is computed once";
-		EXPECT_FALSE( logger().Find([](let& x){ return x.Text().starts_with("Bad Format"); }).empty() ) << "nothing logged the template that could not be formatted";
+		EXPECT_FALSE( Logging::Find([](let& x){ return x.Text().starts_with("Bad Format"); }).empty() ) << "nothing logged the template that could not be formatted";
 	}
 
 	TEST_F( LogEntryTests, ArgumentsMatchTheConsole ){
@@ -66,7 +65,7 @@ namespace Jde::Tests{
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "format id {}", 1 };
 		EXPECT_EQ( e.Id(), format.Id ) << "an entry built from a format";
 		INFOT( ELogTags::Test, "format id {}", 2 );
-		let logged = logger().Find( "format id 2" );
+		let logged = Logging::Find( "format id 2" );
 		ASSERT_EQ( logged.size(), 1u );
 		EXPECT_EQ( logged[0].Id(), format.Id ) << "a logged line";
 	}
@@ -86,12 +85,12 @@ namespace Jde::Tests{
 		EXPECT_EQ( e.Id(), format.Id );
 
 		INFOT( ELogTags::Test, "logged with a spec {:x}", 255 );
-		EXPECT_EQ( logger().Find("logged with a spec ff").size(), 1u ) << "the memory log renders it as the console does";
-		EXPECT_TRUE( logger().Find([](let& x){ return x.Text().starts_with("Bad Format"); }).empty() );
+		EXPECT_EQ( Logging::Find("logged with a spec ff").size(), 1u ) << "the capture renders it as the console does";
+		EXPECT_TRUE( Logging::Find([](let& x){ return x.Text().starts_with("Bad Format"); }).empty() );
 	}
 
-	//A template is a view of its Format's literal, so the copy a queueing logger takes owns nothing of it.  One with a spec
-	//is stripped into a copy.
+	//A template is a view of its Format's literal, and a copy of the entry views it too, so copying costs nothing until a
+	//logger keeps one past the line and calls OwnNames.  One with a spec is stripped into a copy.
 	TEST_F( LogEntryTests, TheTemplateIsAViewOfTheLiteral ){
 		static constexpr char literal[]{ "template view {}" };
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, literal, 1 };
@@ -193,14 +192,31 @@ namespace Jde::Tests{
 		EXPECT_EQ( found[0].Level, ELogLevel::Information );
 		EXPECT_EQ( found[0].Tags, ELogTags::Test );
 
-		//the memory logger is configured Debug while the spd logger takes test at Trace, so the cumulative admits this
+		//the suite's capture is configured Debug while the spd logger takes test at Trace, so the cumulative admits this
 		//and the per-logger check is the only thing that can keep it out.
 		Logging::ClearMemory();
-		Logging::Entry belowThisLogger{ SRCE_CUR, ELogLevel::Trace, ELogTags::Test, string{"entry below the memory logger"} };
+		Logging::Entry belowThisLogger{ SRCE_CUR, ELogLevel::Trace, ELogTags::Test, string{"entry below the capture"} };
 		ASSERT_TRUE( Logging::ShouldLog(ELogLevel::Trace, ELogTags::Test) ) << "the cumulative must admit it, or the per-logger pin proves nothing";
-		ASSERT_FALSE( logger().ShouldLog(ELogLevel::Trace, ELogTags::Test) ) << "the memory logger must refuse it, or a failure here is the config, not the library";
+		ASSERT_FALSE( Logging::Captures(ELogLevel::Trace, ELogTags::Test) ) << "the capture must refuse it, or a failure here is the config, not the library";
 		Logging::Log( belowThisLogger );
 		EXPECT_TRUE( Logging::Find(belowThisLogger.Id()).empty() ) << "Log(Entry) skipped the per-logger level and wrote a Trace into a Debug logger";
+	}
+
+	//reviews-issue/MemoryLog.md #2:  Find ran its predicate under the capture's lock, so a predicate that logged waited on
+	//itself, and Message() logs a template its arguments do not fit.  The capture renders an entry as it keeps it now.
+	TEST_F( LogEntryTests, AFindPredicateMayLog ){
+		Logging::Log( Logging::Entry{SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"predicate target {} {}"}, vector<Logging::Argument>{"1"}} );
+		let badFormats = []{ return Logging::Find( [](let& e){ return e.Text().starts_with("Bad Format"); } ).size(); };
+		let rendered = badFormats();
+		EXPECT_GT( rendered, 0u ) << "the capture did not render the entry as it kept it";
+		let found = Logging::Find( [](let& e){
+			if( e.Text()=="predicate target {} {}" )
+				INFOT( ELogTags::Test, "logged from a predicate" );
+			return e.Message().starts_with( "predicate target" );
+		});
+		EXPECT_EQ( found.size(), 1u );
+		EXPECT_EQ( Logging::Find([](let& e){ return e.Text()=="logged from a predicate"; }).size(), 1u ) << "the predicate's line was not kept";
+		EXPECT_EQ( badFormats(), rendered ) << "a predicate's Message() rendered a kept entry again";
 	}
 
 	//LogOnce is `if( gate && MarkLogged(format.Id) ) Emit(...)`, the template's md5, and _loggedEntries is process-global with no clear - so
@@ -221,7 +237,7 @@ namespace Jde::Tests{
 		Logging::MarkLogged( Logging::Entry::GenerateId(text) );//claim it here, so the call below has to stay silent on every pass.
 		Logging::ClearMemory();
 		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce suppressed" );
-		EXPECT_TRUE( logger().Find(string{text}).empty() ) << "LogOnce logged an id that was already marked";
+		EXPECT_TRUE( Logging::Find(string{text}).empty() ) << "LogOnce logged an id that was already marked";
 	}
 
 	//LogOnce gates before it claims the id, so a line below every logger's level stays unclaimed and logs the first time it
@@ -250,7 +266,7 @@ namespace Jde::Tests{
 		constexpr sv text{ "LogEntryTests LogOnce emitted" };
 		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce emitted" );
 		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce emitted" );
-		EXPECT_EQ( logger().Find(string{text}).size(), pass==1 ? 1u : 0u ) << "one entry on the pass that claims the id, none after";
+		EXPECT_EQ( Logging::Find(string{text}).size(), pass==1 ? 1u : 0u ) << "one entry on the pass that claims the id, none after";
 		EXPECT_FALSE( Logging::MarkLogged(Logging::Entry::GenerateId(text)) ) << "LogOnce did not mark the id it logged";
 	}
 }

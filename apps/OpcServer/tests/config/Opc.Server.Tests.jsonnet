@@ -104,7 +104,7 @@ local appPort = 2067;
 				file:{ path: logsDir, md: false }
 			}
 		},
-		memory:{ //kept past Init only with a level under `tags` (log.cpp) - `default` at this depth was dropped at startup.  TrustListTests reads it (Logging::Find).
+		memory:{ //the suite's capture (jde/tests/Capture.h), read only under `tags`.  TrustListTests reads it (Logging::Find).
 			tags: { default: "Debug" }
 		}
 	},

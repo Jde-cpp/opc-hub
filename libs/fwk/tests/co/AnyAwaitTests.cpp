@@ -2,7 +2,7 @@
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/tests/WaitUntil.h>
 #include <atomic>
 #include <latch>
@@ -231,12 +231,11 @@ namespace Jde::Tests{
 		co_return;
 	}
 	TEST_F( AnyAwaitTests, UnhandledExceptionLogsCriticalAndSurvives ){
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		auto reached = ms<std::atomic<bool>>();
 		escapingTask( reached );
 		EXPECT_TRUE( reached->load() );
-		let critical = logger.Find( function<bool(const Logging::Entry&)>{[]( const Logging::Entry& e ){
+		let critical = Logging::Find( function<bool(const Logging::Entry&)>{[]( const Logging::Entry& e ){
 			return e.Level==ELogLevel::Critical && e.Message().contains( "escaped-from-coroutine" );
 		}} );
 		EXPECT_EQ( critical.size(), 1u ) << "the escaping exception must be logged Critical, not swallowed";

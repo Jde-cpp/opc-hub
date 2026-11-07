@@ -2,7 +2,7 @@
 #include <jde/fwk/exceptions/CodeException.h>
 #include <jde/fwk/exceptions/ExternalException.h>
 #include <jde/fwk/exceptions/IOException.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/log/SpdLog.h>
 
 #define let const auto
@@ -24,7 +24,7 @@ namespace Jde::Tests{
 			Exception e{ SRCE_CUR, ELogLevel::Debug, "exception spec {:x}", 10 };
 			EXPECT_EQ( string{e.what()}, "exception spec a" );
 		}
-		let logged = Logging::GetLogger<Logging::MemoryLog>().Find( "exception spec a" );
+		let logged = Logging::Find( "exception spec a" );
 		ASSERT_EQ( logged.size(), 1u );
 		EXPECT_EQ( logged[0].Text(), "exception spec {}" );
 		EXPECT_EQ( logged[0].Id(), Logging::GenerateId("exception spec {}") );
@@ -50,7 +50,7 @@ namespace Jde::Tests{
 		{
 			Exception e{ SRCE_CUR, ELogLevel::Debug, "exception kinds {} {}", 7u, "text" };
 		}
-		let logged = Logging::GetLogger<Logging::MemoryLog>().Find( "exception kinds 7 text" );
+		let logged = Logging::Find( "exception kinds 7 text" );
 		ASSERT_EQ( logged.size(), 1u );
 		EXPECT_EQ( logged[0].Arguments, (vector<Logging::Argument>{uint64_t{7}, "text"}) );
 	}
@@ -182,7 +182,6 @@ namespace Jde::Tests{
 	//log once, wherever it happens: at construction when the level warrants it, otherwise at destruction.  Move
 	//hands the decision to the target - a double line at every Move()/Throw() would be a visible regression.
 	TEST( ExceptionTests, LogsOnce ){
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		constexpr auto message = "logs-once message";
 		{
@@ -190,23 +189,37 @@ namespace Jde::Tests{
 			let moved = e.Move();
 			let movedAgain = moved->Move();
 		}//all three destroyed here.
-		EXPECT_EQ( logger.Find(message).size(), 1u ) << "the message logged once per Move, not once per object";
+		EXPECT_EQ( Logging::Find(message).size(), 1u ) << "the message logged once per Move, not once per object";
 	}
+
+	//The template of a line's entry as every logger is handed it:  the capture keeps a copy that owns its names.
+	struct TemplateLogger final : Logging::ILogger{
+		TemplateLogger( sv text )ι:ILogger{ "Template", jobject{{"tags", jobject{{"default", "Information"}}}} }, _text{ text }{}
+		α Write( const Logging::Record& r )ι->void override{
+			if( let& e = r.Entry(); e.Text()==_text )
+				Address = e.Text().data();
+		}
+		α Shutdown( bool, SL )ι->void override{}
+		std::atomic<const char*> Address{};
+	private:
+		const sv _text;
+	};
 
 	//An exception's entry is stored under its format's id, the compiler's (Logging::Format), as a log line's is, with a view
 	//of the literal for its template, and a Move keeps both.
 	TEST( ExceptionTests, LogsUnderItsFormatsId ){
 		static constexpr char format[]{ "exception id {}" };
-		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
+		static auto& handed = *static_cast<TemplateLogger*>( Logging::AddLogger(mu<TemplateLogger>(format)) );
+		handed.Address = nullptr;
 		Logging::ClearMemory();
 		{
 			Exception e{ SRCE_CUR, ELogLevel::Information, format, 1 };
 			let moved = e.Move();
 		}
-		let logged = memory.Find( "exception id 1" );
+		let logged = Logging::Find( "exception id 1" );
 		ASSERT_EQ( logged.size(), 1u );
 		EXPECT_EQ( logged[0].Id(), Logging::GenerateId("exception id {}") );
-		EXPECT_EQ( logged[0].Text().data(), format ) << "the template was copied";
+		EXPECT_EQ( handed.Address.load(), format ) << "the template was copied";
 		EXPECT_EQ( logged[0].Arguments, vector<Logging::Argument>{int64_t{1}} );
 	}
 
@@ -221,13 +234,12 @@ namespace Jde::Tests{
 #ifndef NDEBUG
 		ASSERT_GT( Logging::BreakLevel(), ELogLevel::Information ) << "an Information exception would log at construction";
 #endif
-		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		{
 			Exception e{ "deferred to the destructor", {ELogLevel::Information} };
-			EXPECT_TRUE( memory.Find("deferred to the destructor").empty() ) << "below BreakLevel and no Trace:  silent at construction";
+			EXPECT_TRUE( Logging::Find("deferred to the destructor").empty() ) << "below BreakLevel and no Trace:  silent at construction";
 		}
-		EXPECT_EQ( memory.Find("deferred to the destructor").size(), 1u ) << "logged by the destructor";
+		EXPECT_EQ( Logging::Find("deferred to the destructor").size(), 1u ) << "logged by the destructor";
 	}
 
 	//Code() is lazy: unset until asked, then memoized, and derived from the *format* so the same message shares one

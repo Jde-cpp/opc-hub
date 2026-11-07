@@ -5,7 +5,7 @@
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/crypto/TrustStore.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 

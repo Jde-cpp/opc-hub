@@ -3,7 +3,7 @@
 //answered, applied by raw reads and served by modified reads; and the start values that edits and late records keep
 //current:  each node's newest record, the walk back for a file made after its day, and the later files' preambles.
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/opc/UAException.h>
 #include "reads.h"
 
@@ -622,8 +622,7 @@ namespace Jde::Opc::Hist::Tests{
 			f.write( "\0\0\0\0\0", 5 );
 		}
 		Pump = Rejoin( name, members );
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture warnings{ ELogLevel::Warning };
 		Logging::ClearMemory();
 		vector<uint> pages;
 		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth), .Limit=1}, &pages)), (vector<double>{1, 1.5, 2}) );

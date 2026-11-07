@@ -3,7 +3,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/log/Entry.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/db/db.h>
 #include <jde/db/DBException.h>
 #include <jde/db/IDataSource.h>
@@ -128,8 +128,6 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( ds.ScalerSync<string>({Ƒ("select color from {} where name='w1'", table)}), "red" ); //a default is for the rows to come - the ones there keep theirs.
 		EXPECT_EQ( ds.ScalerSync<uint>({Ƒ("select count(*) from {} where name='w1' and flag=0 and created is null", table)}), 1u );
 
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
 		Logging::ClearMemory();
 		let v3 = sync( metaPath, metaText("blue", true, 2, true, R"(c'\\td)") ); //unchanged: a no-op, and the table is still there with its rows.
 		for( let& e : Logging::Find([](const Logging::Entry& e){ return e.Message().starts_with("Set the default"); }) )

@@ -28,7 +28,8 @@ namespace Jde::Logging{
 
 	//A name as an Entry carries it - its template, file and function: a view of static storage (a source_location's names,
 	//a Format's literal) or owned text, off the wire or stripped of specs, plus its id hashed at most once.  A view of a
-	//library's storage dangles once Process::FreeLibrary unloads it, as an entry a MemoryLog keeps from it would.
+	//library's storage dangles once Process::FreeLibrary unloads it, so an entry kept past the line - RemoteLog's queue, a
+	//test's capture - calls Entry::OwnNames first.
 	struct SourceName{
 		SourceName()ι=default;
 		explicit SourceName( const char* name )ι:_text{ sv{name} }, _static{ name }{}//a source_location's file_name() or function_name().
@@ -84,6 +85,8 @@ namespace Jde::Logging{
 		α FunctionString()ι->string&{ return _function.Str(); }
 		α FunctionId()Ι->StringMd5{ return _function.Id(); }
 		α Message()Ι->string;
+		α FillCaches()Ι->void;//the three ids and the message:  a const Entry shared between threads is then read-only.
+		α OwnNames()ι->void;//the three ids, then copies of the names:  nothing left points into the library that logged it.
 		α SourceLocation()Ι->spdlog::source_loc;
 		vector<Argument> Arguments;
 		ELogLevel Level;
@@ -95,7 +98,7 @@ namespace Jde::Logging{
 		SourceName _text;
 		SourceName _file;
 		SourceName _function;
-		mutable string _message;
+		mutable optional<string> _message;//set once rendered, even when empty.
 	};
 	//A line as each logger gets it (ILogger::Write), for that call only.  Emit's carries the call's format and erased arguments
 	//and builds its Entry the first time a logger asks;  the rest wrap an Entry already built - an exception's, a stack

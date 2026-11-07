@@ -4,7 +4,7 @@
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/io/file.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
 #include <jde/ql/ql.h>
 #include <jde/ql/QLAwait.h>

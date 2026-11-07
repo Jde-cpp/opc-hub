@@ -55,7 +55,7 @@ local logsDir = args.logsDir;
 			}
 		},
 		memory:{
-			tags:{ default: "Trace" }//Init() reads /logging/memory/tags - a bare `default` silently drops the memory logger and Logging::Find/ClearMemory throw.
+			tags:{ default: "Trace" }//the suite's capture (jde/tests/Capture.h) reads /logging/memory/tags alone:  a bare `default` is not read.
 		},
 		subscribe:{}//as App.Server.jsonnet:  without it there is no SubscribeLog, and a `logs` subscription is refused (LogSubscriptionTests).
 	},

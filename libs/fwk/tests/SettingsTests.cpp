@@ -1,6 +1,6 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/process/process.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/log/SpdLog.h>
 #include <cstdlib>
 #ifdef _WIN32 //CommandLineToArgvW, to round-trip ServiceCommandLine through the parser that reads it back.

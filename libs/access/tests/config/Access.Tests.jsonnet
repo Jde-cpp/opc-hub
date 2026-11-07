@@ -40,7 +40,7 @@ local logsDir = args.logsDir;
 				file:{ path: logsDir, md: false }
 			}
 		},
-		memory:{ //kept past Init only with a level under `tags` - LoginTests reads it (Logging::Find).
+		memory:{ //the suite's capture (jde/tests/Capture.h), read only under `tags` - LoginTests reads it (Logging::Find).
 			tags: { default: "Debug" }
 		}
 	},

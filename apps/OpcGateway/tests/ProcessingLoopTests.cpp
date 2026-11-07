@@ -1,7 +1,7 @@
 #include <thread>
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include "utils/helpers.h"
 #include "utils/ITest.h"
 #include "utils/Subscribing.h"
@@ -13,30 +13,17 @@
 namespace Jde::Opc::Gateway::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
 	//#526's acceptance:  the processing loop calls run_iterate for an event - a response, a Publish, the loop's own housekeeping
-	//timer - and not on a timer of its own.  Counted from the loop's trace line, which the memory logger takes at Trace for the
-	//loop's tag alone.
+	//timer - and not on a timer of its own.  Counted from the loop's trace line, which the capture takes at Trace for the loop's
+	//tag alone.
 	class ProcessingLoopTests : public ITest{
 	protected:
-		α SetUp()ι->void override{
-			if( !Logging::FindLogger<Logging::MemoryLog>() )
-				Logging::AddLogger( mu<Logging::MemoryLog>() );
-			auto& memory = Logging::GetLogger<Logging::MemoryLog>();
-			_memoryDefault = memory.DefaultLevel();
-			memory.SetDefaultLevel( ELogLevel::Information );
-			memory.SetLevel( (ELogTags)EOpcLogTags::ProcessingLoop, ELogLevel::Trace );
-		}
-		α TearDown()ι->void override{
-			auto& memory = Logging::GetLogger<Logging::MemoryLog>();
-			memory.ClearLevel( (ELogTags)EOpcLogTags::ProcessingLoop );
-			memory.SetDefaultLevel( _memoryDefault );
-		}
-		//The suite client's run_iterate calls logged so far.
-		Ω Iterations()ι->uint{
+		//The suite client's run_iterate calls logged since the test began, or since Clear.
+		α Iterations()ι->uint{
 			let prefix = Ƒ( "[{:x}]run_iterate: requestCount", _client->Handle() );
-			return Logging::Find( [&](const Logging::Entry& e){ return e.Message().starts_with(prefix); } ).size();
+			return _loop.Find( [&](const Logging::Entry& e){ return e.Message().starts_with(prefix); } ).size();
 		}
-		Ω Clear()ι->void{ Logging::GetLogger<Logging::MemoryLog>().Clear(); }
-		ELogLevel _memoryDefault;
+		α Clear()ι->void{ _loop.Restart(); }
+		Logging::Capture _loop{ (ELogTags)EOpcLogTags::ProcessingLoop, ELogLevel::Trace };
 	};
 
 	//A subscribed client with nothing else outstanding:  the server's keep-alive Publish responses - one a second at the suite's

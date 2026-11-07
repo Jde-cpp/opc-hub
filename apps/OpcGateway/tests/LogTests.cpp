@@ -1,6 +1,6 @@
 //The log tests that need a live gateway.  Everything that needed only Jde.App.Shared and a filesystem - the daily
 //file, the archive rounds and the QL read-back - moved to libs/app/tests/LogTests.cpp.
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/str.h>
 #include <jde/web/client/socket/ClientSocketAwait.h>
@@ -16,8 +16,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//What RemoteLog sends, the AppServer this process hosts logs again, rebuilt from the session's Strings (log.md #6).
 	TEST_F( LogTests, Remote ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )//Logging::Find reads it:  run alone, no earlier suite has added one.
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture forwarded{ ELogTags::Test, ELogLevel::Information };
 		App::Client::RemoteLog remote{ {{"delay", "PT0.001S"}}, AppClient() };
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, "Remote test message {}", 7 };
 		remote.Write( e );

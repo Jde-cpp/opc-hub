@@ -6,7 +6,7 @@
 //logged, not posted;  a write on the unenforced group as it ships, and on an enforced one granted Read alone, is refused;  and a write
 //whose connection is down, its source never having given the node's id, is answered Bad_NoCommunication, not Good.
 #include <absl/cleanup/cleanup.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include "../src/hist/HistRows.h"
 #include "utils/EndpointFixture.h"
@@ -250,8 +250,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//source answers the first, its audit line says the operation was cancelled, and a third write reaches the source with only the
 	//first before it.
 	TEST_F( GatewayWritesTests, ACancelledWriteIsNeverSent ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture answers{ ELogLevel::Information };
 		auto& source = AddHeldVariable();
 		let itemsBefore = Items();
 		Answered answered;
@@ -280,8 +279,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//A forward still out when the endpoint stops is answered after its server is gone (spec *Writes*):  the source holds the write
 	//while the endpoint stops, then answers it, and the answer is logged, never posted to the stopped server.  The endpoint restarts.
 	TEST_F( GatewayWritesTests, AWriteOutAtStopIsLoggedNotPosted ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture answers{ ELogLevel::Information };
 		AddHeldVariable();
 		let itemsBefore = Items();
 		Answered answered;

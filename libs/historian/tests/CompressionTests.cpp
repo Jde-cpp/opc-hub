@@ -1,7 +1,7 @@
 //What a node's thresholds store of what it delivers:  the deviation band, MinTimeInterval's pending value, the
 //heartbeat, and the comparison that judges a node's first value after a break.
 #include "dayFiles.h"
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 
 #define let const auto
 
@@ -818,8 +818,7 @@ namespace Jde::Opc::Hist::Tests{
 	//An earlier one means the source's clock or state went backwards:  the marker alone, and the node reads Bad until
 	//its next change, which is stored whatever the band says.
 	TEST_F( Compression, GapWithAnEarlierValue ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture warnings{ ELogLevel::Warning };
 		Logging::ClearMemory();
 		let speed = Join( *Pump, "Pump1.Speed", {.ExceptionDeviation=100} );
 		let first = Time->Now();
