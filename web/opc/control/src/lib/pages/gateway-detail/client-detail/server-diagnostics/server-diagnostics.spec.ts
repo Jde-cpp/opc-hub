@@ -66,6 +66,22 @@ describe( 'ServerDiagnostics', ()=>{
 		expect( page.querySelector("table.sessions caption .row-count")?.textContent ).toBe( "(1)" );
 	} );
 
+	//the gateway's own shapes since its member walk (docs/clients/spec.md *Structures*, #421):  a DateTime {seconds, nanos}, a NodeId {ns, g}
+	it( 'renders the gateway\'s own DateTime and NodeId shapes', async ()=>{
+		const started = { seconds: 1762219991, nanos: 617000000 };
+		const own = { ...status, StartTime: started, CurrentTime: { seconds: 1762219994, nanos: 0 } };
+		const ownSession = { ...session, SessionId: { ns: 1, g: "883e3c6c-0a1b-4c2d-9e3f-405162738495" }, SessionName: "ns=1;g=883e3c6c-0a1b-4c2d-9e3f-405162738495", ClientConnectionTime: started };
+		const ownSubscription = { ...subscription, SessionId: { ns: 1, g: "883e3c6c-0a1b-4c2d-9e3f-405162738495" } };
+		const { fixture } = create( {status: own, sessions: [ownSession], subscriptions: [ownSubscription]} );
+		const page = await render( fixture );
+		const date = new Date( started.seconds*1000+617 );
+		expect( field(page, "section.status", "Start time") ).toBe( fixture.componentInstance["statusFields"]().find( f=>f.label=="Start time" )!.value );
+		expect( field(page, "section.status", "Start time") ).toContain( String(date.getFullYear()) );
+		expect( cells(page, "sessions")[0][0] ).toBe( "ns=1;g=883e3c6c-0a1b-4c2d-9e3f-405162738495" );
+		expect( cells(page, "sessions")[0][3] ).toContain( String(date.getFullYear()) );
+		expect( cells(page, "subscriptions")[0][1] ).toBe( "ns=1;g=883e3c6c-0a1b-4c2d-9e3f-405162738495" );
+	} );
+
 	//a server may leave the arrays empty, and the tab says so - without naming the EnabledFlag, which does not decide it
 	it( 'explains an empty session or subscription array as the server\'s', async ()=>{
 		const page = await render( create().fixture );
@@ -305,6 +321,9 @@ describe( 'ServerDiagnostics decoding', ()=>{
 	} );
 	it( 'renders a NodeId from its string or object form', ()=>{
 		expect( nodeIdText( "ns=1;g=abc" ) ).toBe( "ns=1;g=abc" );
+		expect( nodeIdText( {ns: 1, g: "72962b91-fa75-4ae6-8d28-b404dc7daf63"} ) ).toBe( "ns=1;g=72962b91-fa75-4ae6-8d28-b404dc7daf63" );//the gateway's own shape (docs/clients/spec.md *Structures*)
+		expect( nodeIdText( {i: 7} ) ).toBe( "i=7" );
+		expect( nodeIdText( {ns: 3, s: "tag"} ) ).toBe( "ns=3;s=tag" );
 		expect( nodeIdText( {Id: 5, Namespace: 2} ) ).toBe( "ns=2;i=5" );
 		expect( nodeIdText( {Id: "abc", IdType: 1} ) ).toBe( "s=abc" );
 		expect( nodeIdText( {Id: 7} ) ).toBe( "i=7" );

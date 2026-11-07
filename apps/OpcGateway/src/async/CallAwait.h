@@ -14,8 +14,8 @@ namespace Jde::Opc::Gateway{
 		//argument with, for one the gateway could not type (CallQLAwait).
 		CallResult( StatusCode sc, const vector<StatusCode>& inputResults )ι;
 		//{statusCode, inputArgumentResults:[…], outputArguments:[…]} - the statuses as numbers, the outputs as Value::ToJson gives them
-		//(clients spec *Methods*) - the members `q` names, every one without a query.
-		α ToJson( const QL::TableQL* q )Ι->jobject;
+		//(clients spec *Methods*), a structure by `types`, the connection's registry - the members `q` names, every one without a query.
+		α ToJson( const QL::TableQL* q, const ITypes* types=nullptr )Ι->jobject;
 	};
 	//UA_Client_call_async for one method on one object, on the client's strand:  the request borrows the ids and the arguments until
 	//the submit has encoded it.  The result is the server's whatever its status - a refused call is an answer, with its argument

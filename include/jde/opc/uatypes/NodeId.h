@@ -55,7 +55,7 @@ namespace Jde::Opc{
 	//Transparent, so a container keyed by NodeId finds a UA_NodeId without copying it.
 	struct NodeHash final{
 		using is_transparent = void;
-		α operator()( const UA_NodeId& node )Ι->size_t{ return UA_NodeId_hash( &node ); }
+		α operator()( const UA_NodeId& node )Ι->uint{ return UA_NodeId_hash( &node ); }
 	};
 	struct NodeEqual final{
 		using is_transparent = void;

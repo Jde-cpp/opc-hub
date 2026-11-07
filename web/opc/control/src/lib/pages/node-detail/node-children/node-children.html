@@ -86,12 +86,15 @@
 						@else if( [ETypes.DateTime, ETypes.UtcTime].includes(r.dataType) && !r.isArray ){<!--date and time, local, to the millisecond-->
 							<input #box type="datetime-local" step="0.001" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (blur)="changeDate(r,$event);" (keydown.enter)="box.blur();">
 						}
-						@else if( r.customDataType && !r.isArray ){
+						@else if( isEnum(r) && !r.isArray ){
 							<mat-select [value]=r.value (selectionChange)="changeEnum(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale" [aria-label]="r.name">
 								@for( option of r.customDataType.enumValues; track option.id ){
 									<mat-option [value]=option.id>{{option.name}}</mat-option>
 								}
 							</mat-select>
+						}
+						@else if( r.customDataType ){<!--a structure, or an enumeration whose values could not be read:  the value as text, read-only until the cell edits a structure by member (clients plan 8b, #422)-->
+							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
 						}
 						<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the
 								Gateways help promise, and against a server that reports the node read-only the box simply reverted.  A disabled control

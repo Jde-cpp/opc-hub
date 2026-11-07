@@ -88,9 +88,10 @@ namespace Jde::Opc::Gateway::HistQL{
 	};
 	//values{ node source server status value bound heartbeat modification{ time type user } } in the read's order,
 	//continuation for the next page, null on the last, and nodes{ node status } with each node's status as the server
-	//answered it, Good for a group's.  Only the columns the query names.  A node is spelled as the read named it.
-	α ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue;
-	α ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue;
+	//answered it, Good for a group's.  Only the columns the query names.  A node is spelled as the read named it.  `types`:  the
+	//connection's structure types a value decodes by (clients spec *Structures*) - a group's as the registry holds them, with no client.
+	α ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses, const ITypes* types )ι->jvalue;
+	α ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses, const ITypes* types )ι->jvalue;
 	Ŧ NodesJson( const vector<T>& nodes )ι->vector<jvalue>{
 		vector<jvalue> y; y.reserve( nodes.size() );
 		for( const auto& node : nodes )

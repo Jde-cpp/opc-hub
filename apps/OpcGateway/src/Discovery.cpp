@@ -75,7 +75,7 @@ namespace Jde::Opc::Gateway{
 		UAArray( const UA_DataType& type )ι:_type{type}{}
 		~UAArray(){ UA_Array_delete( Data, Size, &_type ); }
 		α Span()Ι->std::span<const T>{ return { Data, Size }; }
-		T* Data{}; size_t Size{};
+		T* Data{}; uint Size{};
 	private:
 		const UA_DataType& _type;
 	};

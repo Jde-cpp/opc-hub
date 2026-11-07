@@ -195,8 +195,8 @@ namespace Jde::Opc::Gateway{
 		THROW_IFX( responseHeader.serviceResult, UAClientException(responseHeader.serviceResult, uahandle, "UA_Client_Service_read().", sl) );
 	}
 
-	α ReadResponse::ToJson( const QL::TableQL& ql )ι->jvalue{
-		auto nodeJson = GetJson();
+	α ReadResponse::ToJson( const QL::TableQL& ql, const ITypes* types )ι->jvalue{
+		auto nodeJson = GetJson( types );
 		jarray y;
 		for( auto&& [nodeId, j] : nodeJson ){
 			if( ql.FindColumn("id") )
@@ -206,7 +206,7 @@ namespace Jde::Opc::Gateway{
 		return ql.IsPlural() ? jvalue{ move(y) } : ( y.size() ? jvalue{move(y[0])} : jobject{} );
 	}
 
-	α ReadResponse::SetJson( flat_map<NodeId, jobject>& nodes )ι->void{
+	α ReadResponse::SetJson( flat_map<NodeId, jobject>& nodes, const ITypes* types )ι->void{
 		for( uint i=0; i<Request->nodesToReadSize; ++i ){
 			UA_ReadValueId& attribReq = Request->nodesToRead[i];
 			const NodeId nodeId{ attribReq.nodeId };
@@ -218,7 +218,7 @@ namespace Jde::Opc::Gateway{
 			//Now Bad → {"sc":…}, a non-zero code with a reading → {"v":…,"sc":…}, and Int64s go out in the Long form
 			//the SPA's toValue() was written for.  `dataValue` keeps the status and the timestamps beside the reading.
 			const Value value = i<resultsSize ? Value{ move(results[i]) } : Value{ UA_STATUSCODE_BADUNEXPECTEDERROR };//a short response:  that entry was never answered
-			j[ReadRequest::AttribName( attrib )] = attrib==DataValueAttrib ? jvalue{ value.DataValueJson() } : value.ToJson();
+			j[ReadRequest::AttribName( attrib )] = attrib==DataValueAttrib ? jvalue{ value.DataValueJson(types) } : value.ToJson( types );
 		}
 	}
 

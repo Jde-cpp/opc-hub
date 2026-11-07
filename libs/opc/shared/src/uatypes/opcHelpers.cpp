@@ -5,7 +5,7 @@
 
 namespace Jde{
 	α Opc::NamespaceIndex( UA_Server& server, sv uri, SL sl )ε->NsIndex{
-		size_t index{};
+		uint index{};
 		if( const auto sc = UA_Server_getNamespaceByName( &server, ToUV(uri), &index ); sc )
 			throw UAException{ sc, Ƒ("namespace '{}' is not loaded", uri), {}, sl };
 		return (NsIndex)index;

@@ -73,6 +73,12 @@ describe( 'valueString', ()=>{
 		expect( valueString(new ExtensionObject(typeId, "<Range/>")) ).toBe( "ns=2;i=5001 <Range/>" );
 		expect( valueString(new ExtensionObject(typeId)) ).toBe( "ns=2;i=5001" );
 	} );
+	//the #421 walk's W1:  a structure decoded by member read "unknown type object"
+	it( 'shows a structure as its members, a 64-bit one exact', ()=>{
+		const big = Long.fromString( "9007199254740993" );
+		const structure = { Rpm: 1480.5, Limits: {Low: 0, High: 3000}, Count: {low: big.low, high: big.high, unsigned: false}, Total: big };
+		expect( valueString(<any>structure) ).toBe( '{"Rpm":1480.5,"Limits":{"Low":0,"High":3000},"Count":"9007199254740993","Total":"9007199254740993"}' );
+	} );
 } );
 
 //#195 review #3:  valueJson is the write side, and fell through to the instance - a NodeId with methods and a Uint8Array body.

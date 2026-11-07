@@ -342,6 +342,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	//were not given is unknown, not a denial - the editor stays live and the server's own refusal is the answer, which is a
 	//status the user can see rather than a dimmed box that says nothing.
 	readOnly( r:Variable ):boolean{ return r.stale || (r.userAccessLevel!=undefined && !(r.userAccessLevel & EAccess.Write)); }//a stale value is the last one known, not one to edit
+	isEnum( r:Variable ):boolean{ return !!r.customDataType && "enumValues" in r.customDataType; }//a type of the server's own the select can offer the values of:  a structure, or an enumeration not yet read, is no Enum
 	//why an editor is locked - the tooltip and aria-label on the cell.  #35: a disabled box with no explanation is what cost
 	//the walk the afternoon;  the level is spelled out so an operator can tell "the server says read-only" from "the value is
 	//stale" without the log.

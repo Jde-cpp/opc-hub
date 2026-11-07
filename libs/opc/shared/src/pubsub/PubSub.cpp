@@ -64,7 +64,7 @@ namespace Jde::Opc::PubSub{
 		y.name = AllocUAString( DataSetName );
 		y.fieldsSize = Fields.size();
 		y.fields = (UA_FieldMetaData*)UA_Array_new( Fields.size(), &UA_TYPES[UA_TYPES_FIELDMETADATA] );
-		for( size_t i=0; i<Fields.size(); ++i ){
+		for( uint i=0; i<Fields.size(); ++i ){
 			auto& f = y.fields[i];
 			UA_FieldMetaData_init( &f );
 			f.name = AllocUAString( Fields[i].Name );
@@ -155,7 +155,7 @@ namespace Jde::Opc::PubSub{
 
 		let size = c.Fields.size();
 		auto targets = (UA_FieldTargetDataType*)UA_Array_new( size, &UA_TYPES[UA_TYPES_FIELDTARGETDATATYPE] );
-		for( size_t i=0; i<size; ++i ){
+		for( uint i=0; i<size; ++i ){
 			targets[i].attributeId = UA_ATTRIBUTEID_VALUE;
 			UA_NodeId_copy( &c.Fields[i].Node, &targets[i].targetNodeId );
 		}

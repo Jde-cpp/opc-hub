@@ -106,7 +106,7 @@ namespace Jde::Opc::Gateway{
 						request.Add( *parentsQL, jParents );
 					ReadAwait read{ move(request), _client };
 					auto resp = co_await Any( read );
-					auto json = resp.GetJson();
+					auto json = resp.GetJson( _client->Types().get() );
 					if( auto p = json.find(target->nodeId); p!=json.end() )
 						jReqNode = move( p->second );
 					for( auto&& [id, jParent] : jParents ){
@@ -197,7 +197,7 @@ namespace Jde::Opc::Gateway{
 				browseResp.SetJson( jChildren, subQL.FindColumn("id") );
 				ReadAwait read{ move(browseResp), move(subQL), _client };
 				auto resp = co_await Any( read );
-				resp.SetJson( jChildren );
+				resp.SetJson( jChildren, _client->Types().get() );
 				jarray a;
 				for( auto&& [id, j] : jChildren )
 					a.emplace_back( move(j) );
@@ -296,7 +296,7 @@ namespace Jde::Opc::Gateway{
 					if( request.nodesToReadSize ){
 						ReadAwait read{ move(request), _client };
 						auto resp = co_await Any( read );
-						nodes = resp.GetJson();
+						nodes = resp.GetJson( _client->Types().get() );
 					}
 					jarray rows;
 					for( let& id : nodeIds ){
@@ -313,7 +313,7 @@ namespace Jde::Opc::Gateway{
 				else{
 					ReadAwait read{ move(request), _client };
 					auto resp = co_await Any( read );
-					y = resp.ToJson( _query );
+					y = resp.ToJson( _query, _client->Types().get() );
 				}
 			}
 			Resume( _query.ReturnRaw ? move(y) : jobject{{key, move(y)}} );

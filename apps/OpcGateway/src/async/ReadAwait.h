@@ -4,6 +4,7 @@
 #include "UAAwait.h"
 
 namespace Jde::QL{ struct TableQL; }
+namespace Jde::Opc{ struct ITypes; }
 namespace Jde::Opc::Gateway{
 	namespace Browse{ struct Response; }
 	struct UAClient;
@@ -38,9 +39,10 @@ namespace Jde::Opc::Gateway{
 		ReadResponse( UA_ReadResponse&& x, ReadRequest&& request )ι:Owned{ move(x) }, Request{ move(request) }{}
 		α ScalerDataType()ι->UA_DataType*;
 		α Validate( Handle uahandle, SL sl )ε->void;
-		α GetJson()ι{ flat_map<NodeId, jobject> nodes; SetJson(nodes); return nodes; }
-		α SetJson( flat_map<NodeId, jobject>& nodes )ι->void;
-		α ToJson( const QL::TableQL& ql )ι->jvalue;
+		//`types`:  the connection's structure types a value decodes by (UAClient::Types, clients spec *Structures*).
+		α GetJson( const ITypes* types )ι{ flat_map<NodeId, jobject> nodes; SetJson(nodes, types); return nodes; }
+		α SetJson( flat_map<NodeId, jobject>& nodes, const ITypes* types )ι->void;
+		α ToJson( const QL::TableQL& ql, const ITypes* types )ι->jvalue;
 	private:
 		optional<ReadRequest> Request;
 	};

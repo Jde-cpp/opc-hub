@@ -5,7 +5,6 @@
 #include <jde/opc/uatypes/Variant.h>
 #include "../Discovery.h"
 #include "../GatewayAppClient.h"
-#include "../async/DataTypesAwait.h"
 #include "../async/NamespacesAwait.h"
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
@@ -31,6 +30,8 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω dataTypeJson( const UA_DataType& dt, const QL::TableQL& q )ι->jobject{
 		jobject j;
+		if( q.FindColumn("name") )
+			j["name"] = dt.typeName;//open62541's:  a server's own type by its browse name, qualified, `5:PumpSampleType`.
 		if( q.FindColumn("typeId") )
 			j["typeId"] = NodeId{ dt.typeId }.ToJson();
 		if( q.FindColumn("binaryEncodingId") )
@@ -50,6 +51,8 @@ namespace Jde::Opc::Gateway{
 			for( uint m=0; m<dt.membersSize; ++m ){
 				let member = &dt.members[m];
 				jobject jMember;
+				if( memberQL->FindColumn("name") )
+					jMember["name"] = member->memberName;
 				if( memberQL->FindColumn("padding") )
 					jMember["padding"] = member->padding;
 				if( memberQL->FindColumn("isArray") )
@@ -64,11 +67,15 @@ namespace Jde::Opc::Gateway{
 		}
 		return j;
 	}
-	//`dataType`:  the server's definitions of the ids asked for.
-	Ω dataTypesJson( const UA_DataTypeArray* types, const QL::TableQL& ql )ι->jvalue{
+	//`dataType`:  the structure definitions of the ids asked for, from the connection's registry (clients spec *Structures*, #421) -
+	//open62541's own and the server's as fetched - in the order asked;  an id neither holds, or that is no structure, is left out.
+	Ω dataTypesJson( const TypeRegistry& registry, const vector<NodeId>& ids, const QL::TableQL& ql )ι->jvalue{
 		jarray y;
-		for( uint i=0; types && i<types->typesSize; ++i )
-			y.push_back( dataTypeJson(types->types[i], ql) );
+		for( let& id : ids ){
+			let type = registry.Find( id );
+			if( type && (type->typeKind==UA_DATATYPEKIND_STRUCTURE || type->typeKind==UA_DATATYPEKIND_OPTSTRUCT || type->typeKind==UA_DATATYPEKIND_UNION) )
+				y.push_back( dataTypeJson(*type, ql) );
+		}
 		return ql.TransformResult( move(y) );
 	}
 
@@ -133,13 +140,24 @@ namespace Jde::Opc::Gateway{
 		try{
 			jvalue y;
 			_query.ReturnRaw = true;
+			let readsValues = _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") || _query.JsonName=="history";
+			if( readsValues )//the registry's fetch running - a cold connect's - waited out, so its structures read as fields (#7).  AnyVoidAwait.
+				co_await _client->Types()->Settled( _sl );
 			if( _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") )
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
-			else if( _query.JsonName.starts_with("dataType") ){
+			else if( _query.JsonName.starts_with("dataType") ){//from the registry, after a walk when it lacks one asked for:  what it still lacks after that is no structure the server defines, and never walked for again.
 				auto nodeIds = NodeId::ParseQL( _query );
 				THROW_IF( nodeIds.empty(), "No nodeIds specified." );
-				let types = co_await Any( DataTypesAwait{move(nodeIds), _client, _sl} );
-				y = dataTypesJson( types.get(), _query );
+				auto& registry = *_client->Types();
+				let lacks = [&]( let& id ){ return !registry.Find(id) && !registry.Unexplained(id); };
+				if( std::ranges::any_of(nodeIds, lacks) ){
+					co_await registry.Fetched( _client, _sl );//AnyVoidAwait - legal from this TAwait<jvalue>::Task.
+					for( let& id : nodeIds ){
+						if( lacks(id) )
+							registry.NoteUnexplained( id );
+					}
+				}
+				y = dataTypesJson( registry, nodeIds, _query );
 			}
 			else if( _query.JsonName=="history" ){//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here (HistGroupReadQLAwait).
 				if( HistQL::Mode(_query)==HistQL::EMode::Raw )
@@ -218,7 +236,7 @@ namespace Jde::Opc::Gateway{
 			j["discoveryProfileUri"] = ToString( desc->discoveryProfileUri );
 		if( q.FindColumn("discoveryUrls") ){
 			jarray discoveryUrls;
-			for( size_t i=0; i<desc->discoveryUrlsSize; ++i )
+			for( uint i=0; i<desc->discoveryUrlsSize; ++i )
 				discoveryUrls.emplace_back( ToString(desc->discoveryUrls[i]) );
 			j["discoveryUrls"] = discoveryUrls;
 		}

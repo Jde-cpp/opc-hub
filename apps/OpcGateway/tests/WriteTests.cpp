@@ -265,7 +265,7 @@ namespace Jde::Opc::Gateway::Tests{
 		UAε( UA_Variant_setScalarCopy(&rr.results[0].value, &name, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]) );
 		rr.results[0].hasValue = true;
 		ReadResponse response{ move(rr), ReadRequest{_node, {UA_ATTRIBUTEID_DISPLAYNAME, UA_ATTRIBUTEID_DESCRIPTION}} };
-		let nodes = response.GetJson();
+		let nodes = response.GetJson( nullptr );//no registry:  a name, not a structure.
 		ASSERT_EQ( nodes.size(), 1u );
 		let& j = nodes.begin()->second;
 		EXPECT_EQ( j.at("name"), jvalue{"Pump"} ) << serialize( j );

@@ -59,7 +59,7 @@ namespace Jde{
 		if( let hr = (*pGetThreadDescription)( ::GetCurrentThread(), &pszThreadDescription ); SUCCEEDED(hr) ){
 			let size = wcslen( pszThreadDescription );
 			auto pDescription = std::make_unique<char[]>( size+1 );
-			size_t converted;
+			uint converted;
 			wcstombs_s( &converted, pDescription.get(), size+1, pszThreadDescription, size );
 			::LocalFree( pszThreadDescription );
 			y = pDescription.get();

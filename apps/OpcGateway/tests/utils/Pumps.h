@@ -21,12 +21,16 @@ namespace Jde::Opc::Gateway::Tests{
 	//OpcServer after the load (Server::ConfigurePumps), which also gives PumpManual - and no other pump - a WriteMask of DisplayName and
 	//Description, the one WriteTests write (#417).
 	constexpr UA_UInt32 ToHertz{ 6055 };
+	//pumpManual._Test (clients plan, phases 8a and 9):  PumpSampleType, a structure of the server's own - Rpm Double, Running Boolean, Label
+	//String, Limits Range, History Double[] - and `sample` (TestSample), the variable of it the OpcServer writes after the load (ConfigurePumps), which
+	//StructureTests read as fields, write back and read from the historian (#421).
+	constexpr UA_UInt32 TestObject{ 5010 }, SampleType{ 3001 }, SampleEncoding{ 3002 }, TestSample{ 6061 };
 	//The pumps' namespace on the embedded OpcServer;  0 without one.
 	Ξ PumpsNs()ε->NsIndex{
 		const auto ua = Server::FindUAServer();
 		if( !ua )
 			return 0;
-		size_t ns{};
+		uint ns{};
 		UAε( UA_Server_getNamespaceByName(ua->Ptr(), UA_STRING((char*)PumpsUri.data()), &ns) );
 		return (NsIndex)ns;
 	}

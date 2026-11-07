@@ -6,7 +6,7 @@ namespace Jde::QL{
 	//EMutationQL - one table, so the two spellings cannot drift.  Execute has no participle: nothing publishes an execute.
 	struct MutationQLName{ sv Verb; sv Participle; };
 	constexpr array<MutationQLName,10> MutationQLNames{{ {"create","Created"}, {"update","Updated"}, {"delete","Deleted"}, {"restore","Restored"}, {"purge","Purged"}, {"add","Added"}, {"remove","Removed"}, {"start","Started"}, {"stop","Stopped"}, {"execute",{}} }};
-	static_assert( MutationQLNames.size()==(size_t)underlying(EMutationQL::Execute)+1, "one row per EMutationQL value" );
+	static_assert( MutationQLNames.size()==(uint)underlying(EMutationQL::Execute)+1, "one row per EMutationQL value" );
 	using ListenerId = uint32;
 	using SubscriptionId = uint32;
 

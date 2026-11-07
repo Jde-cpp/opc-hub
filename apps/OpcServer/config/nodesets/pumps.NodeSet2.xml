@@ -21,6 +21,12 @@
   and what the gateway's CallTests call - a Double in, a Double and a String out.  A nodeset declares no callback, so the
   OpcServer binds one after the load (nodesets.cpp BindPumpMethods).  The emulator binds none and grants no Execute, so a
   call there is refused (BadUserAccessDenied).
+
+  pumpManual._Test holds what the gateway's suites need of types the pumps have none of (clients plan, phases 8a and 9):
+  PumpSampleType, a structure of the server's own - a Double, a Boolean, a String, a Range and a Double array - and the
+  `sample` variable of it, whose value the OpcServer writes after the load (nodesets.cpp ConfigurePumps), since a
+  nodeset's xml value of a type of its own is more than the loader decodes.  The type's DefaultBinary encoding object is
+  what the loader reads its binary encoding id from.
 -->
 <UANodeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
   <NamespaceUris>
@@ -46,7 +52,30 @@
     <Alias Alias="HasSubtype">i=45</Alias>
     <Alias Alias="HasComponent">i=47</Alias>
     <Alias Alias="Argument">i=296</Alias>
+    <Alias Alias="HasEncoding">i=38</Alias>
   </Aliases>
+  <UADataType NodeId="ns=1;i=3001" BrowseName="1:PumpSampleType">
+    <DisplayName>PumpSampleType</DisplayName>
+    <Description Locale="en">A sample of a pump: its speed, whether it runs, a label, its speed range and the last few speeds.</Description>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=22</Reference>
+      <Reference ReferenceType="HasEncoding">ns=1;i=3002</Reference>
+    </References>
+    <Definition Name="1:PumpSampleType">
+      <Field Name="Rpm" DataType="Double" />
+      <Field Name="Running" DataType="Boolean" />
+      <Field Name="Label" DataType="String" />
+      <Field Name="Limits" DataType="Range" />
+      <Field Name="History" DataType="Double" ValueRank="1" />
+    </Definition>
+  </UADataType>
+  <UAObject NodeId="ns=1;i=3002" BrowseName="Default Binary" SymbolicName="PumpSampleType_Encoding_DefaultBinary">
+    <DisplayName>Default Binary</DisplayName>
+    <References>
+      <Reference ReferenceType="HasEncoding" IsForward="false">ns=1;i=3001</Reference>
+      <Reference ReferenceType="HasTypeDefinition">i=76</Reference>
+    </References>
+  </UAObject>
   <UAObjectType NodeId="ns=1;i=1001" BrowseName="1:PumpType">
     <DisplayName>PumpType</DisplayName>
     <Description Locale="en">A pump: status is the run command, motorRpm the measured motor speed.</Description>
@@ -435,8 +464,26 @@
       <Reference ReferenceType="HasComponent">ns=1;i=6053</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6054</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6055</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=5010</Reference>
     </References>
   </UAObject>
+  <UAObject NodeId="ns=1;i=5010" BrowseName="1:_Test" ParentNodeId="ns=1;i=5005">
+    <DisplayName>_Test</DisplayName>
+    <Description Locale="en">Variables of types the pumps have none of, for the gateway's suites.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=58</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6061</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=6061" BrowseName="1:sample" ParentNodeId="ns=1;i=5010" DataType="ns=1;i=3001" AccessLevel="3">
+    <DisplayName>sample</DisplayName>
+    <Description Locale="en">A PumpSampleType, written by the server after the load.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+  </UAVariable>
   <UAVariable NodeId="ns=1;i=6051" BrowseName="1:manufacturerName" ParentNodeId="ns=1;i=5005" DataType="String" AccessLevel="1">
     <DisplayName>manufacturerName</DisplayName>
     <References>

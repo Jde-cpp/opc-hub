@@ -110,7 +110,7 @@ namespace Jde::Opc::Gateway{
 
 	α EnumTypeCache::FromDefinition( const UA_EnumDefinition& def )ι->vector<EnumField>{
 		vector<EnumField> y; y.reserve( def.fieldsSize );
-		for( size_t i=0; i<def.fieldsSize; ++i ){
+		for( uint i=0; i<def.fieldsSize; ++i ){
 			let& f = def.fields[i];
 			string name = Opc::ToString( f.name );
 			if( name.empty() )
@@ -122,7 +122,7 @@ namespace Jde::Opc::Gateway{
 	α EnumTypeCache::FromEnumValues( const UA_Variant& v )ε->vector<EnumField>{
 		THROW_IF( v.type!=&UA_TYPES[UA_TYPES_ENUMVALUETYPE] || UA_Variant_isScalar(&v), "EnumValues is a '{}' {}, not an EnumValueType array.", v.type ? v.type->typeName : "null", UA_Variant_isScalar(&v) ? "scalar" : "array" );
 		vector<EnumField> y; y.reserve( v.arrayLength );
-		for( size_t i=0; i<v.arrayLength; ++i ){
+		for( uint i=0; i<v.arrayLength; ++i ){
 			let& e = ((UA_EnumValueType*)v.data)[i];
 			y.push_back( EnumField{ e.value, Opc::ToString(e.displayName.text), Opc::ToString(e.description.text) } );
 		}
@@ -131,7 +131,7 @@ namespace Jde::Opc::Gateway{
 	α EnumTypeCache::FromEnumStrings( const UA_Variant& v )ε->vector<EnumField>{
 		THROW_IF( v.type!=&UA_TYPES[UA_TYPES_LOCALIZEDTEXT] || UA_Variant_isScalar(&v), "EnumStrings is a '{}' {}, not a LocalizedText array.", v.type ? v.type->typeName : "null", UA_Variant_isScalar(&v) ? "scalar" : "array" );
 		vector<EnumField> y; y.reserve( v.arrayLength );
-		for( size_t i=0; i<v.arrayLength; ++i )
+		for( uint i=0; i<v.arrayLength; ++i )
 			y.push_back( EnumField{ (_int)i, Opc::ToString(((UA_LocalizedText*)v.data)[i].text), {} } );
 		return y;
 	}

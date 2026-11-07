@@ -28,6 +28,7 @@ namespace Jde{
 	using std::atomic;
 	using std::atomic_flag;
 	using std::byte;
+	using std::exchange;
 	using std::runtime_error;
 	using std::function;
 	using namespace std::literals;

@@ -42,7 +42,7 @@ namespace Jde::Opc::Emulator::Tests{
 		Ω serverUrls( const PlcServer& plc )ι->vector<string>{
 			vector<string> y;
 			let& config = *UA_Server_getConfig( plc.Ptr() );
-			for( size_t i=0; i<config.serverUrlsSize; ++i )
+			for( uint i=0; i<config.serverUrlsSize; ++i )
 				y.push_back( ToString(config.serverUrls[i]) );
 			return y;
 		}

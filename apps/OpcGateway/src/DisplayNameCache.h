@@ -25,7 +25,7 @@ namespace Jde::Opc::Gateway{
 		α Get( sp<UAClient> client, vector<NodeId> ids, SRCE )ι->GetAwait{ return GetAwait{*this, move(client), move(ids), sl}; }
 		α Find( const vector<NodeId>& ids, vector<NodeId>* missing=nullptr )Ι->DisplayNames;//the names held of `ids`;  `missing` takes the rest, in order.
 		α Erase( const NodeId& id )ι->void;//a name this client wrote (NodeQLMAwait):  read again on next use.  Another client's write is never seen.
-		α Size()Ι->size_t{ rl _{_mutex}; return _names.size(); }
+		α Size()Ι->uint{ rl _{_mutex}; return _names.size(); }
 	private:
 		α Add( DisplayNames&& names )ι->void;
 		mutable absl::Mutex _mutex;

@@ -17,23 +17,23 @@ namespace Jde{
 	//moves:  All() returns it by guaranteed elision, and the awaiting frame keeps it for the co_await.
 	Τ struct AllGlueTask{ using type = VoidTask; };//Any family:  no ::Task, any coroutine may await it.
 	Τ requires requires{ typename T::Task; } struct AllGlueTask<T>{ using type = typename T::Task; };//IAwait family:  the pairing rule.
-	template<size_t I, class... Ts> using AllGlue = typename AllGlueTask<std::remove_reference_t<std::tuple_element_t<I,tuple<Ts...>>>>::type;
+	template<uint I, class... Ts> using AllGlue = typename AllGlueTask<std::remove_reference_t<std::tuple_element_t<I,tuple<Ts...>>>>::type;
 
 	template<class... Ts> struct AllAwait;
-	template<size_t I, class... Ts> Ξ AllAwaitExecute( AllAwait<Ts...>& a )ι->AllGlue<I,Ts...>;
+	template<uint I, class... Ts> Ξ AllAwaitExecute( AllAwait<Ts...>& a )ι->AllGlue<I,Ts...>;
 
 	template<class... Ts>
 	struct AllAwait final : AnyAwait<tuple<AwaitValue<Ts>...>>{
 		static_assert( sizeof...(Ts)>0, "All() needs an awaitable." );
 		using TResult = tuple<AwaitValue<Ts>...>;
 		using base = AnyAwait<TResult>;
-		template<size_t I> using TInner = std::remove_reference_t<std::tuple_element_t<I,tuple<Ts...>>>;
+		template<uint I> using TInner = std::remove_reference_t<std::tuple_element_t<I,tuple<Ts...>>>;
 		AllAwait( Ts&&... inners )ι: base{ FirstSource(inners...) }, _inners{ FWD(inners)... }{}
-		template<size_t I> α Inner()ι->TInner<I>&{ return std::get<I>( _inners ); }
+		template<uint I> α Inner()ι->TInner<I>&{ return std::get<I>( _inners ); }
 		//A glue's one hand-off:  record, then count down.  The call that brings the count to zero finishes the await and may destroy this,
 		//so it is the glue's last use of `a`;  for every other slot the fetch_sub inside is - another slot may be finishing concurrently.
-		template<size_t I> α Settle( AwaitValue<std::tuple_element_t<I,tuple<Ts...>>>&& v )ι->void{ std::get<I>(_values) = move(v); Settled(); }
-		template<size_t I> α SettleExp( up<Exception>&& e )ι->void{ _errors[I] = move(e); Settled(); }
+		template<uint I> α Settle( AwaitValue<std::tuple_element_t<I,tuple<Ts...>>>&& v )ι->void{ std::get<I>(_values) = move(v); Settled(); }
+		template<uint I> α SettleExp( up<Exception>&& e )ι->void{ _errors[I] = move(e); Settled(); }
 	protected:
 		α Suspend()ι->void override{ Launch( std::index_sequence_for<Ts...>{} ); }
 	private:
@@ -41,7 +41,7 @@ namespace Jde{
 		//Left to right.  The count reaches zero only once the last slot is launched, so `this` is alive for every launch;  the last may
 		//destroy it - inline when every slot completes synchronously, as sqlite's selects do, or from another thread the moment it returns -
 		//so nothing follows the fold.
-		template<size_t... Is> α Launch( std::index_sequence<Is...> )ι->void{ ( AllAwaitExecute<Is>(*this), ... ); }
+		template<uint... Is> α Launch( std::index_sequence<Is...> )ι->void{ ( AllAwaitExecute<Is>(*this), ... ); }
 		α Settled()ι->void{
 			if( _remaining.fetch_sub(1, std::memory_order_acq_rel)!=1 )//acq_rel:  the last sees every slot's write.
 				return;
@@ -54,7 +54,7 @@ namespace Jde{
 			}
 			base::Resume( Collect(std::index_sequence_for<Ts...>{}) );
 		}
-		template<size_t... Is> α Collect( std::index_sequence<Is...> )ι->TResult{ return TResult{ move(*std::get<Is>(_values))... }; }
+		template<uint... Is> α Collect( std::index_sequence<Is...> )ι->TResult{ return TResult{ move(*std::get<Is>(_values))... }; }
 		tuple<Ts...> _inners;
 		tuple<optional<AwaitValue<Ts>>...> _values;
 		std::array<up<Exception>,sizeof...(Ts)> _errors;
@@ -63,7 +63,7 @@ namespace Jde{
 
 	template<class... Ts> α All( Ts&&... inners )ι->AllAwait<Ts...>{ return AllAwait<Ts...>{ FWD(inners)... }; }
 
-	template<size_t I, class... Ts>
+	template<uint I, class... Ts>
 	Ξ AllAwaitExecute( AllAwait<Ts...>& a )ι->AllGlue<I,Ts...>{
 		using R = AwaitResult<typename AllAwait<Ts...>::template TInner<I>>;
 		//Settle/SettleExp is the last use of `a` on every path, and nothing may escape - as AnyAdapterExecute.

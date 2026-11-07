@@ -496,7 +496,7 @@ namespace Jde::Opc::Gateway{
 			description.includeSubtypes = true;
 			auto found = UA_Server_browse( &ua, 0, &description );
 			vector<NodeId> next;
-			for( size_t r=0; r<found.referencesSize; ++r )
+			for( uint r=0; r<found.referencesSize; ++r )
 				next.emplace_back( found.references[r].nodeId.nodeId );
 			UA_BrowseResult_clear( &found );
 			std::ranges::move( next, std::back_inserter(y) );
@@ -506,7 +506,7 @@ namespace Jde::Opc::Gateway{
 	//How a node hangs off its parent:  a served variable's component, as on the source, else organized by a folder.
 	Ω reference( bool underVariable )ι->UA_NodeId{ return UA_NODEID_NUMERIC( 0, underVariable ? UA_NS0ID_HASCOMPONENT : UA_NS0ID_ORGANIZES ); }
 	//The node's forward HierarchicalReferences, or the browse's status:  BadNodeIdUnknown for one never made.
-	Ω children( UA_Server& ua, const NodeId& node )ι->std::expected<size_t,UA_StatusCode>{
+	Ω children( UA_Server& ua, const NodeId& node )ι->std::expected<uint,UA_StatusCode>{
 		UA_BrowseDescription description; UA_BrowseDescription_init( &description );
 		description.nodeId = node;//a view:  not cleared.
 		description.browseDirection = UA_BROWSEDIRECTION_FORWARD;
@@ -516,7 +516,7 @@ namespace Jde::Opc::Gateway{
 		let status = found.statusCode;
 		let size = found.referencesSize;
 		UA_BrowseResult_clear( &found );
-		return status ? std::expected<size_t,UA_StatusCode>{ std::unexpect, status } : size;
+		return status ? std::expected<uint,UA_StatusCode>{ std::unexpect, status } : size;
 	}
 	//The identifier alone, `i=6042`, for a node its source hasn't described:  its browse and display name until the path comes.
 	Ω identifier( const NodeId& node )ι->string{

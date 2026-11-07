@@ -30,7 +30,9 @@ namespace Jde::Opc::Gateway{
 					let id = dataTypeId( dataTypes.results[i] );
 					if( id )
 						y.DataTypes[i] = NodeId{ *id };
-					if( !(y.Types[i] = ValueTypes::BuiltIn(id)) ){
+					//A built-in's, else the connection's registry's for a structure of the server's own (clients spec *Structures*) - never for a
+					//namespace-0 type, whose answer BuiltIn's is, an abstract one's none - else the value's.
+					if( !(y.Types[i] = ValueTypes::BuiltIn(id)) && !(y.Types[i] = id && id->namespaceIndex ? _client->Types()->Find(*id) : nullptr) ){
 						untyped.push_back( _nodes[i] );
 						slots.push_back( i );
 					}

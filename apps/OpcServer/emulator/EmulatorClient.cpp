@@ -49,7 +49,7 @@ namespace Jde::Opc::Emulator{
 		//values.  The gateway's, anchored on this app's own list, /emulator/trustedCertDirs - see jde/opc/ServerTrust.h.
 		ClientSecurity::Configure( *config, {.Certificate=certificate, .Secure=true, .ServerUri=_serverApplicationUri, .AdvertisedUri=_applicationUri, .TrustRoot="/emulator"}, (Jde::Handle)(uint)_ptr, _url, sl );//the client pointer is the id StateCallback logs, so the verifier's lines and the connect failure line up.
 		vector<string> policyUris;
-		for( size_t i=0; i<config->securityPoliciesSize; ++i )
+		for( uint i=0; i<config->securityPoliciesSize; ++i )
 			policyUris.emplace_back( ToString(config->securityPolicies[i].policyUri) );
 		INFO( "Client security policies: {}, applicationUri filter: '{}', advertised applicationUri: '{}'.", Str::Join(policyUris), ToString(config->applicationUri), ToString(config->clientDescription.applicationUri) );
 	}

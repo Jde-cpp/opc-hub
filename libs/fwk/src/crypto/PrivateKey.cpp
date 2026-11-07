@@ -47,7 +47,7 @@ namespace Jde::Crypto{
 	α PrivateKey::Sign( sv content, SL sl )Ε->Signature{
 		const MDCtxPtr ctx{ ::EVP_MD_CTX_new(), ::EVP_MD_CTX_free }; OSSL_CHECK( ctx, sl );
 		OSSL_CALL( ::EVP_DigestSignInit(ctx.get(), nullptr, ::EVP_sha256(), nullptr, _key.get()), sl );
-		size_t length{};
+		uint length{};
 		OSSL_CALL( ::EVP_DigestSign(ctx.get(), nullptr, &length, (const unsigned char*)content.data(), content.size()), sl );
 		Signature y( length );
 		OSSL_CALL( ::EVP_DigestSign(ctx.get(), (unsigned char*)y.data(), &length, (const unsigned char*)content.data(), content.size()), sl );

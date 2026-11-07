@@ -5,14 +5,17 @@ import { MatIcon } from '@angular/material/icon';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
-import { IGraphQL, SnackbarService, errorMessage, isRefusal } from 'jde-framework';
+import { IGraphQL, ProtoUtils, SnackbarService, Timestamp, errorMessage, isRefusal } from 'jde-framework';
 import { ClientDiagnostics, clientDiagnosticsQuery, serverDiagnosticsIds, serverDiagnosticsQuery, ServerDiagnosticsRow, serverDiagnosticsSummaryId, serverStatusId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId, UaStructure } from '../../../../model/server';
+import { NodeId } from '../../../../model/node-id';
 import { nameKey, statusText } from '../../../../model/status-code';
 
 export const refusedClientText = "You may not read the gateway's session telemetry.";
 export const serverStates = ["Running", "Failed", "No configuration", "Suspended", "Shutdown", "Test", "Communication fault", "Unknown"];//ServerState, Part 5
 
-//The members as the gateway hands them over - open62541's json encoding, reversible or not - read loosely:
+//The members as the gateway hands them over - its own shapes since the member walk (docs/clients/spec.md *Structures*, #421):  a DateTime
+//{seconds, nanos}, a NodeId {ns, i|s|g|b}, an enum its number, a LocalizedText its text - and open62541's json encoding, reversible or
+//not, as an older gateway wrote them - read loosely:
 //a structure member by its name
 export const member = ( s:unknown, name:string ):unknown=>( s && typeof s=='object' && !Array.isArray(s) ) ? (s as UaStructure)[name] : undefined;
 //an enum:  a number, or `Name_Value` in the non-reversible form - named from `names` by its value, else the name it came with
@@ -27,10 +30,12 @@ export const enumName = ( v:unknown, names:string[] ):string=>{
 };
 //a LocalizedText:  its text, or {Locale, Text}
 export const localizedText = ( v:unknown ):string=>typeof v=='string' ? v : String( member(v, "Text") ?? "" );
-//a NodeId:  a string, or {Id, Namespace, IdType} - rendered as its ns=…;i=… form
+//a NodeId:  a string, the gateway's {ns, i|s|g|b}, or {Id, Namespace, IdType} - rendered as its ns=…;i=… form
 export const nodeIdText = ( v:unknown ):string=>{
 	if( typeof v=='string' )
 		return v;
+	if( v && typeof v=='object' && !Array.isArray(v) && ["i", "s", "g", "b"].some(k=>k in v) )
+		return new NodeId( v ).uaString();
 	const id = member( v, "Id" );
 	if( id===undefined )
 		return v==null ? "" : String( v );
@@ -223,8 +228,12 @@ export class ServerDiagnostics{
 		];
 	} );
 	//a DateTime member as the viewer's locale shows it - the Endpoint tab's `date:'medium'`, applied here since the rows are computed
-	//- blank for none, the text as it came for one that is no date
+	//- from the gateway's {seconds, nanos} or an ISO string;  blank for none, the text as it came for one that is no date
 	#time( v:unknown ):string{
+		if( v && typeof v=='object' && typeof (v as {seconds?:unknown}).seconds=='number' ){
+			const d = ProtoUtils.toDate( { nanos: 0, ...v } as Timestamp );
+			return d ? this.#date.transform( d, 'medium' ) ?? "" : "";
+		}
 		if( typeof v!='string' || !v )
 			return "";
 		const d = new Date( v );

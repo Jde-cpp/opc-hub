@@ -21,7 +21,7 @@ namespace Jde::Opc::Gateway{
 			y["valueRank"] = valueRank;
 		if( q.FindColumn("arrayDimensions") ){
 			jarray dimensions;
-			for( size_t i=0; i<arrayDimensionsSize; ++i )
+			for( uint i=0; i<arrayDimensionsSize; ++i )
 				dimensions.push_back( arrayDimensions[i] );
 			y["arrayDimensions"] = move( dimensions );
 		}
@@ -70,7 +70,7 @@ namespace Jde::Opc::Gateway{
 		THROW_IF( variant.type!=&UA_TYPES[UA_TYPES_ARGUMENT], "{} of '{}' is a '{}', not an Argument array.", propertyName, method.ToString(), variant.type ? variant.type->typeName : "null" );
 		let count = UA_Variant_isScalar( &variant ) ? 1 : variant.arrayLength;
 		y.reserve( count );
-		for( size_t i=0; i<count; ++i )
+		for( uint i=0; i<count; ++i )
 			y.emplace_back( ((const UA_Argument*)variant.data)[i] );
 		return y;
 	}

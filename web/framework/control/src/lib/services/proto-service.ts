@@ -134,7 +134,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		this.handleConnectionError( why );
 	}
 	protected rejectPending():void{
-		const message = `Connection to '${this.socketUrl}' was lost.`;
+		const message = `Connection to ${this.instances?.length ? `'${this.socketUrl}'` : "the server"} was lost.`;//socketUrl throws with no instances, and this runs in the socket's complete:  an uncaught throw there
 		this.backlog.length = 0;//sendPromise registers its callback whether or not the message actually went out, so the backlog's promises are in _callbacks and reject below - resending them after a reconnect would arrive with no callback left to take the answer
 		const pending = [...this._callbacks];
 		this._callbacks.clear();//clear before rejecting: a reject handler may send again and register new callbacks

@@ -20,7 +20,8 @@ namespace Jde::Opc::Gateway{
 		auto pClient = UAClient::TryFind(ua); if(!pClient) return;
 		Value value{ move(*uaValue) };
 		let h = MonitorHandle{ subId, monId };
-		TRACET( DataChangesTag, "[{}.{}] DataChangesCallback - {}", hex((uint)ua), hex((Handle)h), serialize(value.ToJson()) );
+		TRACET( DataChangesTag, "[{}.{}] DataChangesCallback - {}", hex((uint)ua), hex((Handle)h), serialize(value.ToJson(pClient->Types().get())) );
+		NoteMissingTypes( value.value, *pClient->Types() );//a structure the registry has no type for, a type added since its fetch:  noted here, fetched off this callback (clients spec *Structures*).
 		if( !pClient->MonitoredNodes().SendDataChange(h, move(value)) )
 			DBGT( DataChangesTag, "[{}.{}]Could not find node monitored item.", hex((uint)ua), hex((Handle)MonitorHandle{subId, monId}) );
 	}

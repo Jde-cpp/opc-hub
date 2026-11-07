@@ -81,7 +81,7 @@ namespace Jde::Logging{
 				//used to erase the lines that said why (reviews/install-issues.md #13).  With truncate, a start rolls the file
 				//aside rather than emptying it; it also rolls at maxSize (bytes, 10 MB).  Absent or 0: one file, as before.
 				let keep = Json::FindNumber<uint32>( sink, "/keep" ).value_or( 0 );
-				let maxSize = Json::FindNumber<size_t>( sink, "/maxSize" ).value_or( 10*1024*1024 );
+				let maxSize = Json::FindNumber<uint>( sink, "/maxSize" ).value_or( 10*1024*1024 );
 				additional = Ƒ( " truncate='{}' keep='{}' path='{}'{}", truncate, keep, path.string(), live ? " - in use by another process, appending" : "" );
 				try{
 					if( keep )

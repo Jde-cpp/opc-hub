@@ -22,7 +22,7 @@ namespace Jde{
 		α Set( K key, sp<const V> value, optional<steady_clock::duration> ttl={}, optional<uint> ticket={} )ι->sp<const V>;
 		α Set( K key, V value, optional<steady_clock::duration> ttl={}, optional<uint> ticket={} )ι->sp<const V>{ return Set( move(key), sp<const V>{ms<const V>(move(value))}, ttl, ticket ); }
 		α Clear( const K& key )ι->bool;//true when there was a value, expired or not.
-		α Size()Ι->size_t{ rl _{ _mutex }; return _entries.size(); }//expired entries and Clear's markers included, until a Set drops them.
+		α Size()Ι->uint{ rl _{ _mutex }; return _entries.size(); }//expired entries and Clear's markers included, until a Set drops them.
 	private:
 		struct Entry{ sp<const V> Value; steady_clock::time_point Deadline; uint Ticket; };//Value is null in Clear's marker.
 		Ω deadline( steady_clock::duration ttl, steady_clock::time_point now )ι->steady_clock::time_point{ return ttl==Forever ? steady_clock::time_point::max() : now+ttl; }
@@ -30,7 +30,7 @@ namespace Jde{
 		std::atomic<uint> _sequence{};
 		mutable absl::Mutex _mutex;
 		flat_map<K,Entry> _entries ABSL_GUARDED_BY(_mutex);
-		size_t _dropAt ABSL_GUARDED_BY(_mutex) = 16;//the size at which Set next drops the expired entries.
+		uint _dropAt ABSL_GUARDED_BY(_mutex) = 16;//the size at which Set next drops the expired entries.
 	};
 
 	ẗ Cache<K,V>::Get( const K& key )Ι->sp<const V>{
@@ -51,7 +51,7 @@ namespace Jde{
 			ul _{ _mutex };
 			if( _entries.size()>=_dropAt ){
 				std::erase_if( _entries, [&]( let& e ){ return e.second.Deadline<=now; } );//one pass:  an erase at a time shifts the rest each time.
-				_dropAt = std::max<size_t>( 16, _entries.size()*2 );
+				_dropAt = std::max<uint>( 16, _entries.size()*2 );
 			}
 			let issued = ticket ? *ticket : Ticket();
 			let p = _entries.find( key );

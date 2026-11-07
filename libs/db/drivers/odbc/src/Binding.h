@@ -84,9 +84,9 @@ struct Binding{
 
 	//SQL Server nchar/nvarchar/ntext (SQL_WCHAR -8, SQL_WVARCHAR -9, SQL_WLONGVARCHAR -10) arrive as UTF-16LE.
 	//Decode to UTF-8 rather than binding SQL_C_CHAR (which transcodes to the ANSI code page and turns non-ANSI into '?').
-	Ξ Utf16ToUtf8( const char16_t* p, size_t n )->string{
+	Ξ Utf16ToUtf8( const char16_t* p, uint n )->string{
 		string out; out.reserve( n );
-		for( size_t i=0; i<n; ++i ){
+		for( uint i=0; i<n; ++i ){
 			char32_t cp = p[i];
 			if( cp>=0xD800 && cp<=0xDBFF && i+1<n ){//high surrogate + low surrogate => astral code point
 				char32_t lo = p[i+1];
@@ -128,7 +128,7 @@ struct Binding{
 			let allocBytes = _charCapacity*(SQLLEN)sizeof(char16_t);
 			let dataBytes = output==SQL_NO_TOTAL || output>=allocBytes//truncated => we hold (_charCapacity-1) code units.
 				? std::max<SQLLEN>( (_charCapacity-1)*(SQLLEN)sizeof(char16_t), 0 ) : output;
-			return Utf16ToUtf8( _buffer.get(), (size_t)(dataBytes/(SQLLEN)sizeof(char16_t)) );
+			return Utf16ToUtf8( _buffer.get(), (uint)(dataBytes/(SQLLEN)sizeof(char16_t)) );
 		}
 		α BufferLength()Ι->SQLLEN override{ return std::max<SQLLEN>( GetOutput(), 0 ); }
 		α Size()Ι->SQLULEN override{ return (SQLULEN)BufferLength(); }
@@ -150,7 +150,7 @@ struct Binding{
 				return Value{};
 			let& bytes = _value.get_bytes();
 			let indicator = GetOutput(); //driver-written fetched length for this row; SQL_NO_TOTAL(<0) => unknown, take the whole buffer.
-			let count = indicator<0 || (SQLULEN)indicator>bytes.size() ? bytes.size() : (size_t)indicator;
+			let count = indicator<0 || (SQLULEN)indicator>bytes.size() ? bytes.size() : (uint)indicator;
 			return count==bytes.size() ? _value : Value{ vector<uint8_t>{ bytes.begin(), bytes.begin()+count } }; //truncate off the column-max padding / stale bytes from a longer prior row.
 		}
 		α GetOutput()Ι->SQLLEN override{ return Size()==0 ? SQL_NULL_DATA : Binding::GetOutput(); }

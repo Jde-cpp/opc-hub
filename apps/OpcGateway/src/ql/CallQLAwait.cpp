@@ -24,7 +24,7 @@ namespace Jde::Opc::Gateway{
 					refused = true;
 					values.emplace_back( UA_Variant{} );
 				};
-				if( type && !Value::Settable(*type) )//a NodeId, a ByteString, a structure:  the gateway's limit, which no value typed would get past - not the user's mistake.
+				if( type && !Value::Settable(*type) )//a NodeId, a ByteString, a structure holding one (an Argument):  the gateway's limit, which no value typed would get past - not the user's mistake.
 					refuse( UA_STATUSCODE_BADNOTSUPPORTED, Ƒ("is a {}, which the gateway cannot send.", type->typeName) );
 				else{
 					try{
@@ -37,10 +37,10 @@ namespace Jde::Opc::Gateway{
 			}
 			const QL::TableQL* request = _mutation.ResultRequest ? &*_mutation.ResultRequest : nullptr;
 			if( refused )
-				Resume( CallResult{UA_STATUSCODE_BADINVALIDARGUMENT, results}.ToJson(request) );
+				Resume( CallResult{UA_STATUSCODE_BADINVALIDARGUMENT, results}.ToJson(request, _client->Types().get()) );
 			else{
 				let result = co_await CallAwait{ move(object), move(method), move(values), _client, _sl };
-				Resume( result.ToJson(request) );
+				Resume( result.ToJson(request, _client->Types().get()) );
 			}
 		}
 		catch( runtime_error& e ){

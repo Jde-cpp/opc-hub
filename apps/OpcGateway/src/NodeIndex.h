@@ -40,7 +40,7 @@ namespace Jde::Opc::Gateway{
 		α Start( sp<UAClient> client, bool refresh )ι->void{ StartLocked( move(client), refresh, nullptr ); }	//kicks off a crawl if one is needed, without waiting - a fan-out starts every connection's crawl, then awaits each.
 		α Search( sv textLower, uint limit )Ι->vector<Entry>;	//sorted (Rank, Depth, Name), at most `limit` (0 = all).
 		α State()Ι->EState{ rl _{_mutex}; return _slot.State(); }
-		α Size()Ι->size_t{ rl _{_mutex}; return _entries.size(); }
+		α Size()Ι->uint{ rl _{_mutex}; return _entries.size(); }
 		α Truncated()Ι->bool{ rl _{_mutex}; return _truncated; }
 	private:
 		α StartLocked( sp<UAClient>&& client, bool refresh, AnyVoidAwait* waiter )ι->void;

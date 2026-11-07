@@ -82,7 +82,7 @@ namespace Jde::Opc::Gateway::Soak{
 		if( latencies.empty() )
 			return 0;
 		auto v = latencies;
-		let i = std::min( v.size()-1, (size_t)(p*v.size()) );
+		let i = std::min( v.size()-1, (uint)(p*v.size()) );
 		std::nth_element( v.begin(), v.begin()+i, v.end() );
 		return v[i];
 	}

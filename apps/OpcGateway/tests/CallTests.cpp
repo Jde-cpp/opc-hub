@@ -77,7 +77,7 @@ namespace Jde::Opc::Gateway::Tests{
 		const UA_NodeId id = UA_NODEID_STRING( PumpsNs(), (char*)"CallTests.nodeIdArgument" );
 		const NodeId method{ id };//copied:  from the prvalue it would take the literal, and free it.
 		ASSERT_EQ( UA_Server_addMethodNode(ua.Ptr(), method, _object, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(PumpsNs(), (char*)"nodeIdArgument"), attributes,
-			[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t, const UA_Variant*, size_t, UA_Variant* )->UA_StatusCode{ return UA_STATUSCODE_GOOD; },
+			[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, uint, const UA_Variant*, uint, UA_Variant* )->UA_StatusCode{ return UA_STATUSCODE_GOOD; },
 			1, &argument, 0, nullptr, nullptr, nullptr), UA_STATUSCODE_GOOD );
 		absl::Cleanup remove = [&]{ UA_Server_deleteNode( ua.Ptr(), method, true ); };
 		let y = Call( _object, method, {"ns=2;i=5"} );
@@ -91,7 +91,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//types and the methods are added to the embedded server for the test, under pumpManual;  the callbacks answer Good unread.
 	TEST_F( CallTests, AnArgumentOfTheServersOwnTypeGoesAsItsBase ){
 		auto& ua = Server::GetUAServer();
-		size_t di{};
+		uint di{};
 		ASSERT_EQ( UA_Server_getNamespaceByName(ua.Ptr(), UA_STRING((char*)"http://opcfoundation.org/UA/DI/"), &di), UA_STATUSCODE_GOOD ) << "the embedded server loads DI";
 		vector<NodeId> added;
 		absl::Cleanup remove = [&]{
@@ -116,7 +116,7 @@ namespace Jde::Opc::Gateway::Tests{
 			attributes.executable = attributes.userExecutable = true;
 			let method = id( name );
 			ASSERT_EQ( UA_Server_addMethodNode(ua.Ptr(), method, _object, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(PumpsNs(), (char*)name), attributes,
-				[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, size_t, const UA_Variant*, size_t, UA_Variant* )->UA_StatusCode{ return UA_STATUSCODE_GOOD; },
+				[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, uint, const UA_Variant*, uint, UA_Variant* )->UA_StatusCode{ return UA_STATUSCODE_GOOD; },
 				arguments.size(), arguments.data(), 0, nullptr, nullptr, nullptr), UA_STATUSCODE_GOOD ) << name;
 			added.push_back( method );
 		};

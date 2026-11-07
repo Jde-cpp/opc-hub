@@ -3,6 +3,7 @@
 #include "../async/WriteAwait.h"
 #include "../async/ConnectAwait.h"
 #include "../async/ValueTypesAwait.h"
+#include "../UAClient.h"
 
 #define let const auto
 
@@ -22,7 +23,7 @@ namespace Jde::Opc::Gateway{
 				if( auto& ql = _mutation.ResultRequest; ql ){
 					ReadAwait read{ {{nodeId}, *ql}, client };
 					auto response = co_await Any( read );
-					y = response.ToJson( *ql );
+					y = response.ToJson( *ql, client->Types().get() );//the structure written back as fields reads back as them (clients spec *Structures*).
 				}
 				Resume( move(y) );
 			}

@@ -299,7 +299,7 @@ namespace Jde::IO{
 		}
 		_armed = true;
 		boost::asio::async_read( *_eventSd, boost::asio::buffer(&_eventCount, sizeof(_eventCount)),
-			[tags]( const boost::system::error_code& ec, size_t ){
+			[tags]( const boost::system::error_code& ec, uint ){
 				if( ec )
 					return;//cancelled at shutdown
 				PostIO( [tags](){

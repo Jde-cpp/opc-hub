@@ -1,6 +1,7 @@
 #include "HistGroupHost.h"
 #include <jde/fwk/settings.h>
 #include <jde/opc/UAException.h>
+#include <jde/opc/uatypes/Variant.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../async/ConnectAwait.h"
 #include "../async/DataChanges.h"
@@ -179,8 +180,8 @@ namespace Jde::Opc::Gateway{
 			ul _{ _mutex };
 			_closed = true;
 			listener = move( _listener );
-			retry = std::exchange( _retry, 0 );
-			watch = std::exchange( _watch, 0 );
+			retry = exchange( _retry, 0 );
+			watch = exchange( _watch, 0 );
 			_verifying = false;
 			_held.clear();
 			for( auto&& [_,node] : _nodes )
@@ -245,7 +246,7 @@ namespace Jde::Opc::Gateway{
 					if( !node.Id ){
 						node.Id = namespaces.ToNodeId( node.Ex );
 						if( !node.Id ){
-							if( !std::exchange(node.Warned, true) )
+							if( !exchange(node.Warned, true) )
 								WARN( "[{}]Node {} '{}' names a namespace '{}' doesn't have - no item until it does.", _guid, index, node.Ex.ToString(), _slug );
 							retry = true;
 							continue;
@@ -290,7 +291,7 @@ namespace Jde::Opc::Gateway{
 						let n = FindNode( node ).second;
 						if( result.status_code() ){
 							retry = true;
-							if( !n || !std::exchange(n->Warned, true) ){//braced:  the log macros expand to a bare `if`.
+							if( !n || !exchange(n->Warned, true) ){//braced:  the log macros expand to a bare `if`.
 								WARN( "[{}]'{}' refused an item for '{}':  {}.", _guid, _slug, node.ToString(), UAException::Message(result.status_code()) );
 							}
 							else{
@@ -298,9 +299,9 @@ namespace Jde::Opc::Gateway{
 							}
 							continue;
 						}
-						if( n && !std::exchange(n->Subscribed, true) ){
+						if( n && !exchange(n->Subscribed, true) ){
 							n->Lost.reset();
-							if( std::exchange(n->Stale, false) )
+							if( exchange(n->Stale, false) )
 								stale.emplace( node );
 							if( existing.contains(node) )
 								joined.emplace( node );
@@ -325,22 +326,34 @@ namespace Jde::Opc::Gateway{
 		{
 			ul _{ _mutex };
 			_subscribing = false;
-			again = std::exchange( _again, false );
+			again = exchange( _again, false );
 		}
 		if( again )//a member that joined meanwhile is asked for now, not a RetryInterval on:  that pass schedules the retry itself.
 			Subscribe();
 		else if( retry )
 			Retry();
 	}
+	//A value the group's buffer and the endpoint's mirror keep:  a structure of the server's own, decoded by the registry's type (clients
+	//spec *Structures*), goes on as the ExtensionObject it travelled as, since a row edit drops the registry.  Every value the client
+	//hands over passes here, SendDataChange's and ReadJoined's alike.
+	Ω kept( Value&& value )ι->Value{
+		if( auto encoded = Variant::WithBuiltInTypes( value.value ); encoded ){
+			UA_Variant_clear( &value.value );
+			value.value = encoded->Move();
+		}
+		return move( value );
+	}
 	α HistGroupHost::ReadJoined( sp<UAClient> client, flat_set<NodeId> nodes )ι->VoidTask{
 		auto self = shared_from_this();
 		let count = nodes.size();
 		try{
 			auto values = co_await Any( ReadValueAwait{move(nodes), client, UA_TIMESTAMPSTORETURN_BOTH} );
+			for( auto&& [_,value] : values )
+				value = kept( move(value) );
 			ul _{ _mutex };
 			for( auto&& [node,value] : values ){
 				let [pk, n] = FindNode( node );
-				if( !n || _closed || std::exchange(n->Fed, true) )//a value came first:  the read would repeat it.
+				if( !n || _closed || exchange(n->Fed, true) )//a value came first:  the read would repeat it.
 					continue;
 				if( _verifying )
 					_held.emplace_back( pk, move(value) );
@@ -667,7 +680,7 @@ namespace Jde::Opc::Gateway{
 				co_return;
 			}
 			client = move( next );
-			nodes = std::exchange( _toDescribe, {} );
+			nodes = exchange( _toDescribe, {} );
 			again = _describeAgain;
 		}
 	}
@@ -703,22 +716,23 @@ namespace Jde::Opc::Gateway{
 		_listener.swap( listener );//the one it replaces goes with the argument, off the lock.
 	}
 	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void{
+		auto keep = kept( Value{value} );
 		ul _{ _mutex };
 		let [pk, n] = FindNode( node );
 		if( !n || _closed )//one that left, still on its way.
 			return;
 		n->Fed = true;
 		if( _verifying )
-			_held.emplace_back( pk, value );
+			_held.emplace_back( pk, move(keep) );
 		else
-			Deliver( pk, value );
+			Deliver( pk, keep );
 	}
 	α HistGroupHost::ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void{
 		let now = _clock.Now();
 		ul _{ _mutex };
 		_group->Disconnected( when );
 		++_epoch;//a check still out decides nothing:  this break stands.
-		if( std::exchange(_verifying, false) )//from the items this break took, before their namespaces were checked:  inside its gap.
+		if( exchange(_verifying, false) )//from the items this break took, before their namespaces were checked:  inside its gap.
 			_held.clear();
 		vector<HistGroupNodePK> lost;
 		for( let& id : nodes ){
@@ -862,7 +876,7 @@ namespace Jde::Opc::Gateway{
 			if( _closed )
 				return;
 			for( auto&& [_,node] : _nodes ){
-				if( node.Subscribed && !node.Lost && std::exchange(node.Undescribed, false) )
+				if( node.Subscribed && !node.Lost && exchange(node.Undescribed, false) )
 					nodes.emplace( *node.Id );
 			}
 		}

@@ -4,14 +4,16 @@ The gateway keeps the history of the nodes in its **groups**. A group is on one 
 
 A template is a named node set, as browse paths from a root - `Motor/Speed`, say - so one template makes a group for each pump, on whichever connection hosts it.
 
-Both are edited from the gateway's page under [Applications](/apps), on its **Templates** and **Groups** tabs. A group's history shows on the node pages' **History** tab, as [Browsing](/help/gateways#browsing) describes.
+Both are edited from the gateway's page under [Applications](/apps), on its **Templates** and **Groups** tabs.
+
+A group's history shows on the node pages' **History** tab, as [Browsing](/help/gateways#browsing) describes.
 
 ## Templates
 
-Press **Add** on the Templates tab, name the template and save it; its tabs then open.
+Press **Add** on the Templates tab, name the template and save it. Its **Members** and **Groups** tabs then open.
 
-- **Members** lists its paths with the thresholds each sets - a column left blank leaves a group's node to inherit the group's. The edit button on a member changes the thresholds it sets.
-- **Add members** browses a connection's tree, a page per folder, from a root of your choosing: pick the connection, type the root or open a folder and press **Use as root**, then tick the variables. Each ticked variable's path from that root becomes a member, named by namespace URI rather than index, so the template applies on any server that hosts the same model.
+- **Members** lists its paths with the thresholds each sets. A column left blank leaves a group's node to inherit the group's. The edit button on a member changes the thresholds it sets.
+- **Add members**, on the Members tab, browses a connection's tree, a page per folder, from a root of your choosing. Pick the connection, type the root or open a folder and press **Use as root**, then tick the variables and press **Add**. Set the root first: a new root, or **Use as root**, clears the ticks. Each ticked variable's path from that root becomes a member, named by namespace URI rather than index, so the template applies on any server that hosts the same model.
 - **Groups** lists the groups made from it, the deleted ones marked.
 
 Adding a member resolves it in every group made from the template at once. Removing one takes its node out of each, deleted groups included, so a group restored later comes back without it.
@@ -31,6 +33,7 @@ The source is fixed once the group is saved. To change it, purge the group and m
 
 Once the group is saved, **Members** lists its nodes, each with:
 
+- its node's NodeId. Hover it for the node by namespace URI and its row number, its index in the group's files.
 - its name and the type the gateway serves it with, as its server gives them - read once the collector has the node's item, so a node just added says *unread* until then. Behind the name are its path, where the endpoint serves it with its NodeId there, and its description.
 - the template member it came from, or *added by hand*
 - the threshold columns its own row sets
@@ -38,6 +41,8 @@ Once the group is saved, **Members** lists its nodes, each with:
 **Add nodes** picks nodes on the connection, from the root. A node already in another group on the connection is refused, and the refusal names that group, since a node belongs to one group per server.
 
 Removing a node takes it out of the group. Its history stays on disk, and another group may take it.
+
+A node from a template member keeps its member, so the next **Resolve** adds it again. To drop it for good, remove the member on the template's **Members** tab, which takes its node out of every group made from the template.
 
 **Thresholds** opens the dialog [Browsing](/help/gateways#browsing) describes under the History tab: every member's effective values, where each comes from, and the overrides.
 
@@ -50,7 +55,16 @@ The `hist_groups` table's resource, switched on the [Resources](/access/resource
 - Until it is enforced, no grant is checked for any group. Anyone signed in reads the history and may press **Resolve**, which is configuration and passes as the tables' edits do. Every history edit - an insert, replacement, correction or purge - is refused, since those need a grant on an enforced resource, whatever a group's own row says.
 - Once it is, a group answers to its own resource where it has one that is enforced, else to the table's grants.
 
-The grid grants roles **Read** (the trend, the table and a live subscription), **Update** (inserts, replacements, corrections and Resolve), **Delete** (purges) and **Administer** on the group's own resource; press **Save** to apply the ticks. While the table's resource governs the group, a role's **Inherited** box is ticked where it holds a grant on the table's resource, and its tooltip says which rights - what it holds on the group until the group's own resource takes over.
+The grid grants roles rights on the group's own resource:
+
+- **Read** - the trend, the table and a live subscription
+- **Update** - inserts, replacements, corrections and Resolve
+- **Delete** - purges
+- **Administer** - changing these grants, once the group's own resource governs it
+
+Press **Save** to apply the ticks.
+
+While the table's resource governs the group, a role's **Inherited** box is ticked where it holds a grant on the table's resource. Its tooltip says which rights. That is what the role holds on the group until the group's own resource takes over.
 
 Administer is what changing these grants takes once the group's own resource governs it, and no other page grants it there. A group with no resource of its own gets one from the first grant saved, enforced from that moment. So once the table's resource is enforced, only the roles granted here get through, and only those with Administer change the grants - grant a role you hold Read and Administer in that first save, or the grants can't be changed again until **Stop enforcing**.
 

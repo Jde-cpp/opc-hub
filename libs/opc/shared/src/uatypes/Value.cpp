@@ -23,7 +23,7 @@ namespace Jde::Opc{
 		return y;
 	}
 
-	α Value::ToJson()Ι->jvalue{
+	α Value::ToJson( const ITypes* types )Ι->jvalue{
 		//Severity, not "non-zero".  Only a Bad code means the reading is unusable; an Uncertain one (0x4xxxxxxx) still
 		//carries a value per OPC-UA - UNCERTAINLASTUSABLEVALUE with a last reading of 42.7 used to serialize as {"sc":…}
 		//and blank the tag in the UI for a node that was still reporting.
@@ -31,15 +31,15 @@ namespace Jde::Opc{
 			return UAException::ToJson( status );
 		if( IsEmpty() )
 			return hasStatus ? UAException::ToJson( status ) : jvalue{};//nothing to show, so say why if we were told.
-		auto j = ValueJson();
+		auto j = ValueJson( types );
 		//A non-zero code rides along with the reading - {"v":…,"sc":…} - rather than replacing it.  Uncertain is the
 		//motivating case, but an informative Good sub-code (GoodClamped) is reported too: the rule is "never drop a status".
 		return status ? jvalue{ jobject{ {"v", move(j)}, {"sc", status} } } : move(j);
 	}
-	α Value::DataValueJson()Ι->jobject{
+	α Value::DataValueJson( const ITypes* types )Ι->jobject{
 		jobject y;
 		if( !UA_StatusCode_isBad(status) && !IsEmpty() )
-			y["v"] = ValueJson();
+			y["v"] = ValueJson( types );
 		y["sc"] = status;
 		if( hasSourceTimestamp )
 			y["source"] = UADateTime{ sourceTimestamp }.ToJson();
@@ -47,7 +47,7 @@ namespace Jde::Opc{
 			y["server"] = UADateTime{ serverTimestamp }.ToJson();
 		return y;
 	}
-	α Value::ValueJson()Ι->jvalue{
+	α Value::ValueJson( const ITypes* types )Ι->jvalue{
 		let scalar = IsScalar();
 		let& type = *value.type;
 		jvalue j{ scalar ? jvalue{} : jarray{} };
@@ -58,7 +58,7 @@ namespace Jde::Opc{
 			//than taking the process down: both callers are noexcept, one of them an open62541 C callback.
 			jvalue element;
 			try{
-				element = Variant::ElementToJson( (const UA_Byte*)value.data + i*type.memSize, type );
+				element = Variant::ElementToJson( (const UA_Byte*)value.data + i*type.memSize, type, types );
 			}
 			catch( const runtime_error& e ){
 				ERRT( ELogTags::Parsing, "Could not encode element {} of '{}' - {}.  Serializing it as a status instead.", i, type.typeName, e.what() );
@@ -72,15 +72,37 @@ namespace Jde::Opc{
 		return j;
 	}
 
-	α Value::Settable( const UA_DataType& type )ι->bool{
+	//`type` on Set's arms, a structure by every member's:  `walking`, the structures this one is a member of, so a type holding
+	//itself (by an array or optional member) is not walked again.
+	Ω settable( const UA_DataType& type, vector<const UA_DataType*>& walking )ι->bool{
 		switch( type.typeKind ){//Set's arms
 		case UA_DATATYPEKIND_BOOLEAN: case UA_DATATYPEKIND_BYTE: case UA_DATATYPEKIND_SBYTE: case UA_DATATYPEKIND_INT16: case UA_DATATYPEKIND_UINT16:
 		case UA_DATATYPEKIND_INT32: case UA_DATATYPEKIND_UINT32: case UA_DATATYPEKIND_INT64: case UA_DATATYPEKIND_UINT64: case UA_DATATYPEKIND_DOUBLE:
 		case UA_DATATYPEKIND_FLOAT: case UA_DATATYPEKIND_STRING: case UA_DATATYPEKIND_LOCALIZEDTEXT: case UA_DATATYPEKIND_DATETIME:
+		case UA_DATATYPEKIND_ENUM:
 			return true;
+		case UA_DATATYPEKIND_STRUCTURE: case UA_DATATYPEKIND_OPTSTRUCT: case UA_DATATYPEKIND_UNION:{
+			if( std::ranges::find(walking, &type)!=walking.end() )
+				return true;
+			walking.push_back( &type );
+			let y = std::ranges::all_of( std::span{type.members, type.membersSize}, [&]( const UA_DataTypeMember& m ){ return m.memberType && settable(*m.memberType, walking); } );
+			walking.pop_back();
+			return y;}
 		default:
 			return false;
 		}
+	}
+	α Value::Settable( const UA_DataType& type )ι->bool{
+		vector<const UA_DataType*> walking;
+		return settable( type, walking );
+	}
+	Ω isStructure( const UA_DataType* type )ι->bool{ return type && (type->typeKind==UA_DATATYPEKIND_STRUCTURE || type->typeKind==UA_DATATYPEKIND_OPTSTRUCT || type->typeKind==UA_DATATYPEKIND_UNION); }
+	Ω hasMember( const UA_DataType& type, sv name )ι->bool{
+		for( uint i=0; i<type.membersSize; ++i ){
+			if( name==type.members[i].memberName )
+				return true;
+		}
+		return false;
 	}
 
 	α Value::Set( const jvalue& j, SL sl )ε->void{
@@ -90,10 +112,11 @@ namespace Jde::Opc{
 		//unsigned} - what the SPA builds a Long from, and what a Long serializes back to, long.js having no toJSON.
 		//Unwrapped here rather than per arm so the typeless path gets them too.  {seconds,nanos} is left alone: that is
 		//DATETIME/DURATION's own spelling, and its arms read it.
-		if( let* o = j.if_object(); o ){
+		//Not for a structure's own object:  one with a member named `v` is the structure, and no structure is a Long.
+		if( let* o = j.if_object(); o && !(isStructure(value.type) && hasMember(*value.type, "v")) ){
 			if( o->contains("v") )
 				return Set( o->at("v"), sl );//the status is the server's to report, not the writer's to send back.
-			if( o->contains("high") && o->contains("low") )
+			if( o->contains("high") && o->contains("low") && !isStructure(value.type) )
 				return Set( FromLong(*o, sl), sl );
 		}
 		auto& type = value.type;
@@ -140,6 +163,7 @@ namespace Jde::Opc{
 		case UA_DATATYPEKIND_UINT16: SetNumber<UA_UInt16>( j, sl ); break;
 		case UA_DATATYPEKIND_INT32: SetNumber<UA_Int32>( j, sl ); break;
 		case UA_DATATYPEKIND_UINT32: SetNumber<UA_UInt32>( j, sl ); break;
+		case UA_DATATYPEKIND_ENUM: SetNumber<UA_Int32>( j, sl ); break;//its value, as ToJson writes it (Variant::ElementToJson), typed as the enumeration.
 		case UA_DATATYPEKIND_INT64: SetNumber<UA_Int64>( j, sl ); break;
 		case UA_DATATYPEKIND_UINT64: SetNumber<UA_UInt64>( j, sl ); break;
 		//One arm for both:  UA_Duration *is* UA_Double, a count of milliseconds - the same kind - and either can arrive in
@@ -187,9 +211,105 @@ namespace Jde::Opc{
 			let v = UADateTime{j}.UA();//SetScalar, not SetNumber: that takes a jvalue, so the int64 was boxed into json
 			SetScalar( &v, sl );//and parsed straight back out.
 			break;}
+		case UA_DATATYPEKIND_STRUCTURE:
+		case UA_DATATYPEKIND_OPTSTRUCT:
+		case UA_DATATYPEKIND_UNION:
+			SetStructure( j, sl );
+			break;
 		default://an arm added here goes in Settable too - ValueTests.SettableListsSetsArms holds them together.
 			THROW( "Setting type '{}' has not been implemented - {}", type->typeName, serialize(j) );
 		}
+	}
+
+	//Each member from the object by its name through Value - so a member takes the arm its kind has, a nested structure this one again -
+	//its box then moved into the slot as SetArray moves an element's:  memcpy'd in place for a scalar, pointed to for an optional one,
+	//its count and pointer for an array.  The layout is structureToJson's (Variant.cpp).  A required member missing, a union naming none or
+	//more than one of its members, a member of a kind Set has no arm for:  refused, naming the member.  `p` is zeroed by UA_new, so what
+	//a throw leaves half filled clears cleanly.
+	Ω fillStructure( void* p, const UA_DataType& type, const jobject& o, SL sl )ε->void{
+		auto ptr = reinterpret_cast<uintptr_t>( p );
+		let member = [&]( const UA_DataTypeMember& m )->const jvalue*{ let v = o.if_contains( m.memberName ); return v && !v->is_null() ? v : nullptr; };
+		//The member's value in a box Value made, the box released to the caller:  ~Value then frees nothing.
+		let box = [&]( const UA_DataTypeMember& m, const jvalue& j )ε->std::pair<void*,uint>{
+			try{
+				Value element{ j, m.memberType, sl };
+				THROW_IFSL( !element.value.data, "'{}' produced no value.", m.memberName );
+				std::pair<void*,uint> y{ element.value.data, element.value.arrayLength };
+				UA_Variant_init( &element.value );
+				return y;
+			}
+			catch( const Exception& e ){
+				throw Exception{ sl, ELogLevel::Debug, "'{}'.{}:  {}", type.typeName, m.memberName, e.what() };
+			}
+		};
+		let scalar = [&]( const UA_DataTypeMember& m, const jvalue& j, uintptr_t at )ε->void{
+			THROW_IFSL( j.is_array(), "'{}'.{} is a scalar - '{}'.", type.typeName, m.memberName, serialize(j) );
+			let [data, _] = box( m, j );
+			::memcpy( reinterpret_cast<void*>(at), data, m.memberType->memSize );
+			UA_free( data );
+		};
+		let array = [&]( const UA_DataTypeMember& m, const jvalue& j, uintptr_t at )ε->void{
+			THROW_IFSL( !j.is_array(), "'{}'.{} is an array - '{}'.", type.typeName, m.memberName, serialize(j) );
+			let [data, count] = box( m, j );
+			*reinterpret_cast<uint*>( at ) = count;
+			*reinterpret_cast<void**>( at+sizeof(uint) ) = data;
+		};
+		if( type.typeKind==UA_DATATYPEKIND_UNION ){
+			THROW_IFSL( o.size()>1, "A '{}' is one of its members, not {} - '{}'.", type.typeName, o.size(), serialize(o) );
+			if( o.empty() )
+				return;//none selected.
+			let& name = o.begin()->key();
+			for( UA_UInt32 i=0; i<type.membersSize; ++i ){
+				let& m = type.members[i];
+				if( name!=m.memberName )
+					continue;
+				*reinterpret_cast<UA_UInt32*>( ptr ) = i+1;
+				if( m.isArray )
+					array( m, o.begin()->value(), ptr+m.padding );
+				else
+					scalar( m, o.begin()->value(), ptr+m.padding );
+				return;
+			}
+			throw Exception{ sl, ELogLevel::Debug, "A '{}' has no member '{}'.", type.typeName, name };
+		}
+		for( uint i=0; i<type.membersSize; ++i ){
+			let& m = type.members[i];
+			ptr += m.padding;
+			let j = member( m );
+			if( m.isArray ){
+				if( j )
+					array( m, *j, ptr );
+				else
+					THROW_IFSL( !m.isOptional, "'{}'.{} is missing - '{}'.", type.typeName, m.memberName, serialize(o) );
+				ptr += sizeof(uint)+sizeof(void*);
+			}
+			else if( m.isOptional ){
+				if( j ){
+					THROW_IFSL( j->is_array(), "'{}'.{} is a scalar - '{}'.", type.typeName, m.memberName, serialize(*j) );
+					*reinterpret_cast<void**>( ptr ) = box( m, *j ).first;
+				}
+				ptr += sizeof(void*);
+			}
+			else{
+				THROW_IFSL( !j, "'{}'.{} is missing - '{}'.", type.typeName, m.memberName, serialize(o) );
+				scalar( m, *j, ptr );
+				ptr += m.memberType->memSize;
+			}
+		}
+	}
+	α Value::SetStructure( const jvalue& j, SL sl )ε->void{
+		let type = value.type;
+		THROW_IFSL( !j.is_object(), "Expected a '{}' object - '{}'.", type->typeName, serialize(j) );
+		void* data = UA_new( type );
+		THROW_IFSL( !data, "Could not allocate a '{}'.", type->typeName );
+		try{
+			fillStructure( data, *type, j.get_object(), sl );
+		}
+		catch( ... ){
+			UA_delete( data, type );
+			throw;
+		}
+		UA_Variant_setScalar( &value, data, type );
 	}
 
 	//Each element goes through Set itself, so the array covers exactly the types the scalar arms do - the Long form and

@@ -27,7 +27,7 @@ namespace Jde::Opc{
 		THROW_IFSL( segments.empty(), "Empty browse path" );
 		relativePath.elementsSize = segments.size();
 		relativePath.elements = (UA_RelativePathElement*)UA_Array_new( segments.size(), &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT] );
-		for( size_t i=0; i<segments.size(); ++i ){
+		for( uint i=0; i<segments.size(); ++i ){
 			auto& elem = relativePath.elements[i];
 			elem.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
 			elem.includeSubtypes = true;
@@ -38,7 +38,7 @@ namespace Jde::Opc{
 
 	α BrowsePath::ToString()Ι->string{
 		string y;
-		for( size_t i=0; i<relativePath.elementsSize; ++i ){
+		for( uint i=0; i<relativePath.elementsSize; ++i ){
 			let& target = relativePath.elements[i].targetName;
 			y += Ƒ( "{}{}~{}", i ? "/" : "", target.namespaceIndex, ToSV(target.name) );
 		}

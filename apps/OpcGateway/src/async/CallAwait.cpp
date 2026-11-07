@@ -17,21 +17,21 @@ namespace Jde::Opc::Gateway{
 		inputArgumentResultsSize = inputResults.size();
 		std::ranges::copy( inputResults, inputArgumentResults );
 	}
-	α CallResult::ToJson( const QL::TableQL* q )Ι->jobject{
+	α CallResult::ToJson( const QL::TableQL* q, const ITypes* types )Ι->jobject{
 		jobject y;
 		if( !q || q->FindColumn("statusCode") )
 			y["statusCode"] = statusCode;
 		if( !q || q->FindColumn("inputArgumentResults") ){
 			jarray results; results.reserve( inputArgumentResultsSize );
-			for( size_t i=0; i<inputArgumentResultsSize; ++i )
+			for( uint i=0; i<inputArgumentResultsSize; ++i )
 				results.push_back( inputArgumentResults[i] );
 			y["inputArgumentResults"] = move( results );
 		}
 		if( !q || q->FindColumn("outputArguments") ){
 			jarray outputs; outputs.reserve( outputArgumentsSize );
-			for( size_t i=0; i<outputArgumentsSize; ++i ){
+			for( uint i=0; i<outputArgumentsSize; ++i ){
 				const UA_DataValue output{ .value=outputArguments[i], .hasValue=true };//an lvalue, so Value copies it:  from a temporary it would take the variant the result still owns.
-				outputs.push_back( Value{output}.ToJson() );
+				outputs.push_back( Value{output}.ToJson(types) );
 			}
 			y["outputArguments"] = move( outputs );
 		}

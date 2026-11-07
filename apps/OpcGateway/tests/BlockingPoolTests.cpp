@@ -60,7 +60,7 @@ namespace Jde::Opc::Gateway::Tests{
 	private:
 		α Polled( function<bool()> pred, Duration timeout )ι->bool{ return WaitUntil( [&]{ _ctx.poll(); return pred(); }, timeout ); }
 		α Read()ι->void{
-			_peer.async_read_some( boost::asio::buffer(_buffer), [this]( const boost::system::error_code& ec, std::size_t ){
+			_peer.async_read_some( boost::asio::buffer(_buffer), [this]( const boost::system::error_code& ec, uint ){
 				if( ec )
 					_closed.test_and_set();
 				else
