@@ -15,7 +15,7 @@
 #include <jde/fwk/co/BlockAwait.h>
 #include "../src/accessInternal.h"
 #include "globals.h"
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/ql/IQL.h>
 #include <jde/ql/LocalSubscriptions.h>
 

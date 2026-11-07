@@ -1,6 +1,6 @@
 #include <open62541/client_config_default.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/tests/WaitUntil.h>
 #include "utils/ClientFixture.h"
 #include "utils/Subscribing.h"
@@ -65,8 +65,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//BadConnectionRejected - BadConnectionClosed would say the OPENING came late, BadTimeout that the CLOSING never came.  The
 	//reason is the manager's Warning.
 	TEST_F( ConnectionManagerTests, ARefusedConnectIsRejectedAtOnce ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture capture{ ELogLevel::Warning };
 		let refusal = Ƒ( "connect 127.0.0.1:{} failed:  ", underlying(Port) );
 		let warnings = [&]{ return Logging::Find( [&]( const Logging::Entry& e ){ return e.Level==ELogLevel::Warning && e.Message().contains( refusal ); } ).size(); };
 		let before = warnings();
@@ -190,8 +189,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//A subscribed client's close:  the server answers the Publishes still out after its CloseSession reply, and a chunk read before
 	//the close reached a channel already CLOSING, which open62541 refused with BadInvalidState, logging an error.
 	TEST_F( ConnectionManagerTests, NothingReachesTheClientAfterItsClose ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture warnings{ ELogLevel::Warning };//open62541 logs the refusal at Error.
 		optional<TestUaServer> server;
 		ASSERT_NO_THROW( server.emplace(Port, Configure) );
 		GetConnection( Slug, Url(Port), "" );

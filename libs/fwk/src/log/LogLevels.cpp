@@ -87,33 +87,45 @@ namespace Jde{
 		}
 		return level;
 	}
+	α TagLevels::DefaultLevel()Ι->ELogLevel{
+		auto y = Default.value_or( ELogLevel::Information );
+		for( let& part : Parts )
+			y = Logging::min( y, part.DefaultLevel() );
+		return y;
+	}
+	α TagLevels::Resolve( ELogTags tags )Ι->ELogLevel{
+		auto y = Find( tags ).value_or( Default.value_or(ELogLevel::Information) );
+		for( let& part : Parts )
+			y = Logging::min( y, part.Resolve(tags) );
+		return y;
+	}
+	α TagLevels::Floor()Ι->ELogLevel{
+		auto y = Default.value_or( ELogLevel::Information );
+		for( let& [_, level] : Levels )
+			y = Logging::min( y, level );//NoLog yields:  a map of nothing but NoLog has no floor to test.
+		for( let& part : Parts )
+			y = Logging::min( y, part.Floor() );
+		return y;
+	}
 	α TagLevels::Over( const TagLevels& base )Ι->TagLevels{
 		auto y = base;
 		if( Default )
 			y.Default = Default;
 		for( let& [tags, level] : Levels )
 			y.Levels.insert_or_assign( tags, level );
+		y.Parts.insert( y.Parts.end(), Parts.begin(), Parts.end() );
 		return y;
 	}
 	α TagLevels::operator+=( const TagLevels& x )ι->TagLevels&{
-		if( x.Default )
-			Default = Default ? Logging::min( *Default, *x.Default ) : *x.Default;
-		for( let& [tags, level] : x.Levels ){
-			if( auto existing = Levels.find(tags); existing!=Levels.end() )
-				existing->second = Logging::min( existing->second, level );
-			else
-				Levels.emplace( tags, level );
-		}
+		Parts.push_back( x );
 		return *this;
 	}
 
 	Logging::Gate::Gate( sv name, TagLevels levels )ι:
 		_name{ name },
 		_levels{ move(levels) },
-		_floor{ _levels.DefaultLevel() }{
-		for( let& [_, level] : _levels.Levels )
-			_floor = Logging::min( _floor, level );//NoLog yields:  a gate with nothing but NoLog has no floor to test.
-	}
+		_floor{ _levels.Floor() }
+	{}
 	α Logging::Gate::ShouldLog( ELogLevel level, ELogTags tags )Ι->bool{
 		if( level==ELogLevel::NoLog || level<_floor )
 			return false;
@@ -125,22 +137,27 @@ namespace Jde{
 		if( _memo.cvisit(tags, [&](let& kv){ level = kv.second; }) )
 			return *level;
 		let configured = _levels.Find( tags );
-		level = configured.value_or( _levels.DefaultLevel() );
+		level = _levels.Resolve( tags );
 		_memo.emplace( tags, *level );
 		//Settings at Trace, asked of the cumulative unless this is it, resolving Settings - which would only ask itself again.
 		let all = cumulative();
 		let settings = all==this && tags==ELogTags::Settings ? *level : all ? all->MinLevel( ELogTags::Settings ) : ELogLevel::NoLog;
 		if( settings==ELogLevel::Trace ){
-			let levelString = configured ? Jde::ToString( *configured ) : Ƒ( "unset - {}", Jde::ToString(*level) );
+			let levelString = configured==level ? Jde::ToString( *level ) : Ƒ( "{} - {}", configured ? Jde::ToString(*configured) : "unset", Jde::ToString(*level) );
 			Logging::Log( ELogLevel::Trace, ELogTags::Settings, SRCE_CUR, "[{}]tag: {}, minLevel: {}", _name, ToName(tags), levelString );
 		}
 		return *level;
 	}
 	α Logging::Gate::ToString()Ι->string{
 		string y = Ƒ( "default: {}\n", Jde::ToString(_levels.DefaultLevel()) ); y.reserve( 1024 );
-		flat_map<ELogLevel, vector<string>> configured, memoized;//one line per level, its tags joined:  the configured, then the memoized.
-		for( let& [tags, level] : _levels.Levels )
-			configured[level].push_back( ToName(tags) );
+		flat_map<ELogLevel, vector<string>> configured, memoized;//one line per level, its tags joined:  the configured, every part's too, then the memoized.
+		function<void(const TagLevels&)> add = [&]( const TagLevels& levels ){
+			for( let& [tags, level] : levels.Levels )
+				configured[level].push_back( ToName(tags) );
+			for( let& part : levels.Parts )
+				add( part );
+		};
+		add( _levels );
 		_memo.cvisit_all( [&](let& kv){ memoized[kv.second].push_back( ToName(kv.first) ); } );
 		for( let levels : {&configured, &memoized} ){
 			for( let& [level, names] : *levels )

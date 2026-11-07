@@ -5,7 +5,7 @@
 //through a connection drop that the group marks as a gap and the server, which never lost a value, doesn't.
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include "utils/HistGroupFixture.h"
 #include "../src/ql/HistGroupInfoQLAwait.h"
 
@@ -222,8 +222,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//A namespace the server registers at the end moves no member's index:  neither the pass that sees it, here a member's join,
 	//nor a rebuild's check makes the group's items again (spec *Collector contract*).
 	TEST_F( HistCollectorTests, AnAppendedNamespaceMovesNothing ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture capture{ ELogLevel::Information };
 		let itemsBefore = Items();
 		let group = CreateGroup( "appended" );
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
@@ -417,20 +416,10 @@ namespace Jde::Opc::Gateway::Tests{
 	//as a read spells it back, among the groups the caller may read, and historyCapabilities what the caller may do with one -
 	//the library's aggregates, and the edits, which need a grant on an enforced resource as the edits themselves do.
 	TEST_F( HistCollectorTests, GroupsAndCapabilities ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
 		//A capability the caller lacks used to log an AccessException, at Debug under Access|Exception, which the config's
-		//loggers leave out.  The memory logger takes that tag alone, Information otherwise:  at its own default, Trace, the
-		//recomputed filter would log every exception as it is made, before the code under test could silence it.
-		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
-		let denial = ELogTags::Access | ELogTags::Exception;
-		let memoryDefault = memory.DefaultLevel();
-		memory.SetDefaultLevel( ELogLevel::Information );
-		memory.SetLevel( denial, ELogLevel::Debug );
-		absl::Cleanup restoreMemory = [&]{//the clear recomputes the filter with the memory logger at Information, and its default goes back without one.
-			memory.ClearLevel( denial );
-			memory.SetDefaultLevel( memoryDefault );
-		};
+		//loggers leave out.  The capture takes that tag alone:  at Trace, the filter would log every exception as it is made,
+		//before the code under test could silence it.
+		Logging::Capture denied{ ELogTags::Access | ELogTags::Exception, ELogLevel::Debug };
 		let itemsBefore = Items();
 		let group = CreateGroup( "gate" );
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };

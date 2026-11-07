@@ -4,7 +4,7 @@
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/Table.h>
 #include <jde/fwk/log/Entry.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include "../../../src/meta/IServerMeta.h"
 #include "../../../src/meta/ddl/ColumnDdl.h"
 #include "../src/SqliteDdl.h"
@@ -74,8 +74,7 @@ namespace Jde::DB::Sqlite::Tests{
 	//rolls the transaction back itself.  writable_schema isn't transactional - the catch has to turn it off - and the
 	//transaction is already gone, so there is no rollback to fail.
 	TEST_P( DdlTests, SetDefaultFailureResetsWritableSchema ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture errors{ ELogLevel::Error };
 		_ds->ExecuteSync( DB::Sql{"drop table if exists zz_241"} );
 		_ds->ExecuteSync( DB::Sql{"create table zz_241( name varchar not null, color varchar null default 'red', PRIMARY KEY( name ) )"} );
 		let sql = _ds->ScalerSync<string>( DB::Sql{"select sql from sqlite_master where name='zz_241'"} );

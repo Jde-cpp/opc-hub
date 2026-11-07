@@ -5,7 +5,7 @@
 #include <fstream>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/fwk/io/crc.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../src/io/Records.h"
 
@@ -241,8 +241,7 @@ namespace Jde::Opc::Hist::Tests{
 	//A value ToValue can't encode, a decoded ExtensionObject with nothing decoded, is stored without it either way, but
 	//only the flush's conversion warns:  the subscribers' copy is taken under the group's lock, where Enqueue never logs.
 	TEST( RecordTests, OnlyTheFlushWarns ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture capture{ ELogLevel::Warning };
 		let warnings = []{
 			return Logging::Find( []( const Logging::Entry& e ){ return e.Level==ELogLevel::Warning && e.Message().contains("node_index 3's 'ExtensionObject' value is stored without it"); } ).size();
 		};

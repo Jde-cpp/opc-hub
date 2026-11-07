@@ -63,6 +63,28 @@ namespace Jde::App::Tests{
 		sp<MockAppClient> _client;
 	};
 
+	//reviews-issue/MemoryLog.md, after #5:  the queue kept a copy of each entry, and a copy views its template, file and
+	//function.  A FreeLibrary before the send - of the library that logged it - left the send reading unmapped memory.
+	TEST_F( RemoteLogTests, QueuedEntriesOwnTheirNames ){
+		static constexpr char literal[]{ "queued view {}" };
+		auto log = Make();
+		const Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, literal, 1 };
+		ASSERT_EQ( e.Text().data(), literal );
+		log->Write( e );
+		_client->SetConnected( true );
+		Flush( *log );
+		ASSERT_EQ( _client->Count(), 1u );
+		let& sent = _client->Received.front();
+		EXPECT_NE( sent.Text().data(), literal ) << "the queued template still views the literal";
+		EXPECT_NE( sent.File().data(), e.File().data() ) << "the queued file still views the source_location";
+		EXPECT_NE( sent.Function().data(), e.Function().data() ) << "the queued function still views the source_location";
+		EXPECT_EQ( sent.Text(), e.Text() );
+		EXPECT_EQ( sent.Id(), e.Id() );
+		EXPECT_EQ( sent.FileId(), e.FileId() );
+		EXPECT_EQ( sent.FunctionId(), e.FunctionId() );
+		EXPECT_EQ( sent.Arguments, e.Arguments );
+	}
+
 	//#14: entries went in whenever the process logged and only came out when the app server was reachable, so with it down
 	//nothing bounded the buffer - overnight it grew until OOM.  Cap of 10, 15 entries written: the oldest half goes when
 	//the cap is first hit, so what survives is 6..15 rather than 1..10.

@@ -11,7 +11,7 @@
 #include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/utils/mathUtils.h>
 #include <jde/fwk/utils/Stopwatch.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/process/execution.h>
 #include "mocks/ClientSocketSession.h"
 #include <jde/web/server/IHttpRequestAwait.h>

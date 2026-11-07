@@ -5,7 +5,7 @@
 #include <future>
 #include <thread>
 #include <jde/fwk/io/crc.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #ifndef _WIN32
 	#include <fcntl.h>
 	#include <sys/stat.h>
@@ -65,8 +65,7 @@ namespace Jde::Opc::Hist::Tests{
 	//Another historian on the same hist.path, a second gateway or an OpcServer whose path collides:  it runs without its
 	//historian, saying so at Critical, and the one that holds the lock is untouched.
 	TEST_F( GatewayFiles, HeldLockDisables ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture criticals{ ELogLevel::Critical };
 		Logging::ClearMemory();
 		EXPECT_TRUE( Library->Enabled() );
 		{
@@ -589,8 +588,7 @@ namespace Jde::Opc::Hist::Tests{
 	//Passing maxBuffer trims on the clock's zero-delay hop, not in Enqueue, and to an eighth below the cap, so the next
 	//value doesn't trim again.  A group that drops is warned of once a streak, which another group's flush doesn't end.
 	TEST_F( GatewayFiles, TrimOffTheCollectionPath ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture capture{ ELogLevel::Warning };
 		auto config = Config( 1min );
 		config.MaxBuffer = 4'000;
 		Restart( move(config) );
@@ -740,8 +738,7 @@ namespace Jde::Opc::Hist::Tests{
 #ifdef _WIN32
 		GTEST_SKIP() << "No FIFO to hold the flush.";
 #else
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture errors{ ELogLevel::Error };
 		auto config = Config( 1min );
 		config.StopLimit = 200ms;
 		Restart( move(config) );
@@ -795,8 +792,7 @@ namespace Jde::Opc::Hist::Tests{
 	//A day whose file couldn't be opened isn't opened again until its `delay` is up, as Prepare doesn't open it:  the flushes
 	//at 8 KB meanwhile, which today's file lets run, leave it alone, and the one at `delay` opens and writes it.
 	TEST_F( GatewayFiles, FailingDayWaitsOutItsDelay ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture io{ ELogTags::IO, ELogLevel::Information }, exceptions{ ELogTags::Exception, ELogLevel::Trace };//the config's levels for both.
 		auto group = AddGroup();
 		let speed = Join( *group, "Pump1.Speed" );
 		let file = File( *group, March8 );
@@ -882,8 +878,7 @@ namespace Jde::Opc::Hist::Tests{
 	}
 	//The once-per-node warning of a value with no file form is said once, though its day fails and is retried.
 	TEST_F( GatewayFiles, NoFileFormWarnedOnceThoughRetried ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture warnings{ ELogLevel::Warning };
 		auto group = AddGroup();
 		let speed = Join( *group, "Pump1.Speed" );
 		Block();

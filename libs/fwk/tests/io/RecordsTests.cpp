@@ -11,7 +11,7 @@
 #include <jde/fwk/io/records/Flushed.h>
 #include <jde/fwk/io/durable.h>
 #include <jde/fwk/io/crc.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/process/execution.h>
 #ifdef _MSC_VER
 	#include <jde/fwk/process/os/windows/WindowsHandle.h>
@@ -570,8 +570,6 @@ namespace Jde::IO::Records::Tests{
 	//A scan that keeps less than the whole file logs it once, read or not:  at Warning for a torn flush, which the first
 	//append drops, and at Error for what must be kept.  A whole file logs nothing.
 	TEST_F( ScanTests, LogsWhatItLeavesOut ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
 		let logged = [this]( sv bytes ){
 			Write( bytes );
 			Logging::ClearMemory();
@@ -1183,8 +1181,6 @@ namespace Jde::IO::Records::Tests{
 	}
 
 	TEST_F( FlushedTests, NoValidSlot ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
 		for( let& bytes : {string{}, string(32, '\0'), string(32, 'x'), Slot(Time, 1).substr(0, 9)} ){
 			save( File, bytes );
 			Logging::ClearMemory();

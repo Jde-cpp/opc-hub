@@ -1,7 +1,7 @@
 #include <absl/log/absl_log.h>//ABSL_LOG only - absl/log/log.h's LOG collides with log.h's.
 #include <absl/log/globals.h>
 #include <absl/log/log_sink_registry.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 
 #define let const auto
 
@@ -31,7 +31,6 @@ namespace Jde::Tests{
 	struct AbseilSinkTests : ::testing::Test{
 	protected:
 		α SetUp()->void override{ Logging::ClearMemory(); }
-		Ω logger()ι->Logging::MemoryLog&{ return Logging::GetLogger<Logging::MemoryLog>(); }
 		//the sink queues and a thread of its own logs - FlushLogSinks waits for it.
 		Ω find( sv text )ι->vector<Logging::Entry>{
 			absl::FlushLogSinks();
@@ -59,14 +58,15 @@ namespace Jde::Tests{
 	}
 
 	TEST_F( AbseilSinkTests, VerbosityMapsToDebugAndTrace ){
-		logger().SetLevel( ELogTags::App, ELogLevel::Trace );//memory's default is Debug.
-		let previous = absl::SetGlobalVLogLevel( 2 );
-		ABSL_VLOG(1) << "absl vlog 1";
-		ABSL_VLOG(2) << "absl vlog 2";
-		ABSL_LOG(WARNING).WithVerbosity( 2 ) << "absl verbose warning";
-		absl::SetGlobalVLogLevel( previous );
-		absl::FlushLogSinks();//before ClearLevel: the drain thread filters again, in Logging::Log.
-		logger().ClearLevel( ELogTags::App );
+		{
+			Logging::Capture trace{ ELogTags::App, ELogLevel::Trace };//the suite's is Debug.
+			let previous = absl::SetGlobalVLogLevel( 2 );
+			ABSL_VLOG(1) << "absl vlog 1";
+			ABSL_VLOG(2) << "absl vlog 2";
+			ABSL_LOG(WARNING).WithVerbosity( 2 ) << "absl verbose warning";
+			absl::SetGlobalVLogLevel( previous );
+			absl::FlushLogSinks();//inside the capture:  the drain thread filters again, in Logging::Log.
+		}
 
 		let levelOf = []( sv text )->optional<ELogLevel>{ let found = find( text ); return found.size()==1 ? optional{found[0].Level} : optional<ELogLevel>{}; };
 		EXPECT_EQ( levelOf("absl vlog 1"), ELogLevel::Debug );

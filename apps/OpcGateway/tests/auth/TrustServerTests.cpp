@@ -10,7 +10,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <open62541/plugin/accesscontrol_default.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/Certificate.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
@@ -238,9 +238,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}};
 		GetConnection( Slug, Url(Port), advertised );//certificateUri = the advertised applicationUri, so the endpoint filter matches.
 
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
-		Logging::GetLogger<Logging::MemoryLog>().Clear();
+		Logging::Capture warnings{ ELogLevel::Warning };
 
 		if( auto cached = UAClient::Find(Slug, Credential{}); cached )
 			UAClient::RemoveClient( move(cached) );

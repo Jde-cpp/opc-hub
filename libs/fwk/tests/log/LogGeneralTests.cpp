@@ -1,11 +1,17 @@
 #include "jde/fwk/log/ILogger.h"
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/log/SpdLog.h>
 #include <fstream>
 #include "../testsDir.h"
 #define let const auto
 
 namespace Jde::Tests{
+	//A logger whose levels a test edits, which writes nothing.  At the suite capture's Debug, it widens nothing until edited.
+	struct EditedLogger final : Logging::ILogger{
+		EditedLogger()ι:ILogger{ "Edited", jobject{{"tags", jobject{{"default", "Debug"}}}} }{}
+		α Write( const Logging::Record& )ι->void override{}
+		α Shutdown( bool, SL )ι->void override{}
+	};
 	struct LogGeneralTests : public ::testing::Test{
 	protected:
 		LogGeneralTests() {}
@@ -14,11 +20,14 @@ namespace Jde::Tests{
 		static constexpr ELogTags MutatedTags{ ELogTags::Scheduler };
 		static constexpr ELogTags LibraryTag{ (ELogTags)(1ull<<LibraryTagBase) };//no library registers its tag names here.
 		α SetUp()->void override{ Logging::ClearMemory(); }
-		α TearDown()->void override{ Logging::GetLogger<Logging::MemoryLog>().ClearLevel( MutatedTags ); }
-
+		α TearDown()->void override{ Edited().ClearLevel( MutatedTags ); }
+		Ω Edited()ι->EditedLogger&{
+			static auto& edited = *static_cast<EditedLogger*>( Logging::AddLogger(mu<EditedLogger>()) );
+			return edited;
+		}
 		α ExpectConfiguredLevel()->void{
-			auto& logger = Logging::GetLogger<Logging::MemoryLog>();
-			EXPECT_EQ( logger.MinLevel(MutatedTags), logger.DefaultLevel() ) << "an earlier test left an override on " << ToName( MutatedTags );
+			EXPECT_EQ( Edited().MinLevel(MutatedTags), Edited().DefaultLevel() ) << "an earlier test left an override on " << ToName( MutatedTags );
+			EXPECT_FALSE( Logging::Captures(ELogLevel::Trace, MutatedTags) ) << "a capture of " << ToName( MutatedTags ) << " at Trace outlived its test";
 		}
 	};
 
@@ -193,12 +202,12 @@ namespace Jde::Tests{
 	//#3:  SetLevel and ClearLevel republished the cumulative filter and SetDefaultLevel did not, so a default edited at run
 	//time reached a logger's own Gate but not the test every line passes first.  Every edit publishes both now.
 	TEST_F( LogGeneralTests, ADefaultEditReachesTheCumulative ){
-		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
+		auto& edited = Edited();
 		ExpectConfiguredLevel();
-		ASSERT_FALSE( Logging::ShouldLog(ELogLevel::Trace, MutatedTags) ) << "the config's lowest default is the memory logger's Debug";
-		memory.SetDefaultLevel( ELogLevel::Trace );
+		ASSERT_FALSE( Logging::ShouldLog(ELogLevel::Trace, MutatedTags) ) << "the config's lowest default is Debug, the suite capture's and this logger's";
+		edited.SetDefaultLevel( ELogLevel::Trace );
 		EXPECT_TRUE( Logging::ShouldLog(ELogLevel::Trace, MutatedTags) );
-		memory.ClearDefaultLevel();
+		edited.ClearDefaultLevel();
 		EXPECT_FALSE( Logging::ShouldLog(ELogLevel::Trace, MutatedTags) ) << "cleared back to the settings' default";
 	}
 
@@ -244,6 +253,30 @@ namespace Jde::Tests{
 		EXPECT_EQ( quiet.DefaultLevel(), ELogLevel::Debug );
 		EXPECT_EQ( quiet.Resolve(ELogTags::Sql), ELogLevel::Debug ) << "a configured NoLog must yield to the other side's level too";
 		EXPECT_TRUE( Logging::Gate("test", quiet).ShouldLog(ELogLevel::Debug, ELogTags::Sql) );
+	}
+
+	//reviews-issue/MemoryLog.md #8:  += kept a tag only one side named at that side's level, so spd's sql at Information capped
+	//sql in the cumulative for proto, whose default is Debug, and the binary log never had sql's Debug lines.  A merged map
+	//can't hold every line's lower level either:  an entry for a set shadows a lower level for a tag in it.
+	TEST_F( LogGeneralTests, CombiningNeverNarrowsAPart ){
+		auto combined = TagLevels::Parse( jobject{{"default","Information"},{"sql","Information"},{"http.client.read","Information"}} );//spd's shape
+		combined += TagLevels::Parse( jobject{{"default","Debug"}} );//proto's
+		EXPECT_EQ( combined.Resolve(ELogTags::Sql), ELogLevel::Debug ) << "a tag one part names capped the other's default";
+		EXPECT_EQ( combined.Resolve(ELogTags::HttpClientRead), ELogLevel::Debug );
+		EXPECT_EQ( combined.Resolve(ELogTags::App), ELogLevel::Debug );
+		EXPECT_EQ( combined.Floor(), ELogLevel::Debug );
+		EXPECT_TRUE( Logging::Gate("test", combined).ShouldLog(ELogLevel::Debug, ELogTags::Sql) );
+
+		auto shadow = TagLevels::Parse( jobject{{"default","Warning"},{"http.client","Warning"}} );
+		shadow += TagLevels::Parse( jobject{{"default","Warning"},{"read","Trace"}} );
+		EXPECT_EQ( shadow.Resolve(ELogTags::HttpClientRead), ELogLevel::Trace ) << "http.client's entry shadowed read's, which the other part names lower";
+		EXPECT_EQ( shadow.Resolve(ELogTags::Http | ELogTags::Client), ELogLevel::Warning );
+	}
+	//...and as this suite's config has it:  spd names io at Information, and the suite's capture takes everything at Debug.
+	TEST_F( LogGeneralTests, TheCumulativeTakesEachLoggersLevel ){
+		ASSERT_FALSE( Logging::FindLogger<Logging::SpdLog>()->ShouldLog(ELogLevel::Debug, ELogTags::IO) ) << "spd takes io at Information";
+		ASSERT_TRUE( Logging::Captures(ELogLevel::Debug, ELogTags::IO) ) << "the suite's capture takes Debug";
+		EXPECT_TRUE( Logging::ShouldLog(ELogLevel::Debug, ELogTags::IO) ) << "spd's io capped the capture's Debug in the cumulative";
 	}
 
 	//"None", the off value of every shipped config's externalLogger and of the UI, parses to 6, the wire's LogLevelNone - an
@@ -462,29 +495,26 @@ namespace Jde::Tests{
 	}
 #endif
 	TEST_F( LogGeneralTests, CachedTags ){
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
-
 		let _tags = MutatedTags;
 		ExpectConfiguredLevel();
-		Logging::ClearMemory();
 		constexpr auto logMessage = "scheduler msg";
 		constexpr auto debugMessage = "scheduler dbg";
-		logger.SetLevel( _tags, ELogLevel::Debug );
+		{
+			Logging::Capture debug{ _tags, ELogLevel::Debug };
+			TRACE( logMessage );
+			ASSERT_TRUE( debug.Find(logMessage).empty() ) << "Debug must not admit Trace";
+			DBG( debugMessage );
+			ASSERT_FALSE( debug.Find(debugMessage).empty() );
+		}
+		Logging::Capture trace{ _tags, ELogLevel::Trace };
 		TRACE( logMessage );
-		ASSERT_TRUE( logger.Find(logMessage).empty() ) << "Debug must not admit Trace";
-		DBG( debugMessage );
-		ASSERT_FALSE( logger.Find(debugMessage).empty() );
-
-		logger.SetLevel( _tags, ELogLevel::Trace );
-		TRACE( logMessage );
-		EXPECT_FALSE( logger.Find(logMessage).empty() ) << "SetLevel did not reach the cumulative, or the memoized tag level survived it";
+		EXPECT_FALSE( trace.Find(logMessage).empty() ) << "the capture's level did not reach the cumulative, or the memoized tag level survived it";
 	}
 
 	TEST_F( LogGeneralTests, ArgsNotCalled ){
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		let unConfiguredTags = MutatedTags;
 		ExpectConfiguredLevel();
-		logger.SetLevel( unConfiguredTags, ELogLevel::Error );
+		Edited().SetLevel( unConfiguredTags, ELogLevel::Error );
 		auto arg = []()->string {
 			throw std::runtime_error("should not be called");
 		};

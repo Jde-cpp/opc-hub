@@ -119,8 +119,8 @@ namespace Jde::Logging{
 		return spdlog::source_loc{ name(_file), (int)Line, name(_function) };
 	}
 	α Entry::Message()Ι->string{
-		if( _message.size() )
-			return _message;
+		if( _message )
+			return *_message;
 		try{
 			_message = Arguments.size()==0 ? string{ Text() } : Vformat( Text(), Arguments );
 		}
@@ -129,7 +129,19 @@ namespace Jde::Logging{
 			CRITICALT( Tags, "Bad Format: {}, args: '{}', what: '{}'", Text(), args, e.what() );
 			_message = Ƒ( "{}, args: '{}'", Text(), args );
 		}
-		return _message;
+		return *_message;
+	}
+	α Entry::FillCaches()Ι->void{
+		Id();
+		FileId();
+		FunctionId();
+		Message();
+	}
+	//The ids first:  one not yet hashed reads its name through the static pointer, which Str keeps, and FreeLibrary forgets
+	//the cached source ids.
+	α Entry::OwnNames()ι->void{
+		Id(); FileId(); FunctionId();
+		TextString(); FileString(); FunctionString();
 	}
 }
 namespace Jde{

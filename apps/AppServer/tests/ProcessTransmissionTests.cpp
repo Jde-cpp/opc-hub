@@ -1,5 +1,5 @@
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/access/usings.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/QLAwait.h>

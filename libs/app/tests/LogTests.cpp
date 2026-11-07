@@ -13,7 +13,7 @@
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/io/records/Scan.h>
 #include <jde/fwk/io/protobuf.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/str.h>
 #include <jde/ql/ql.h>
 #include <jde/app/log/ArchiveQuery.h>
@@ -667,8 +667,7 @@ namespace Jde::App::Tests{
 			second.Add( move(r) );
 		let torn = bytes.substr( 0, bytes.size()-3 );//inside e3, the append's last record, before its checkpoint.
 		save( File(), torn );
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture warnings{ ELogLevel::Warning };
 		Logging::ClearMemory();
 
 		let log = Make( "PT0.2S" );
@@ -822,8 +821,7 @@ namespace Jde::App::Tests{
 		let six = App::ArchiveDayFile( _root, {std::chrono::year{2025}, std::chrono::month{3}, std::chrono::day{6}} );
 		fs::create_directories( five.parent_path() );
 		save( five, "not a protobuf" );
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture errors{ ELogLevel::Error };
 		Logging::ClearMemory();
 		let log = Make( "PT0.2S" );
 		let e5 = entry( Chrono::ToTimePoint(2025, 3, 5, 12), ELogLevel::Information, 5, "day five" );
@@ -854,8 +852,7 @@ namespace Jde::App::Tests{
 		merged.mutable_merged()->set_daily( 1 );
 		archive.Add( move(merged) );
 		save( five, bytes+"not a protobuf" );
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture errors{ ELogLevel::Error };
 		Logging::ClearMemory();
 		let log = Make( "PT0.2S" );
 		log->Write( entry(Chrono::ToTimePoint(2025, 3, 5, 12), ELogLevel::Information, 5, "day five") );

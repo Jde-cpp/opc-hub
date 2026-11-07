@@ -43,9 +43,6 @@ namespace Jde::Internal{
 		for( uint i=1; !_done.WaitForNotificationWithTimeout(absl::FromChrono(interval)); ++i ){
 			if( Process::Finalizing() )//the loggers are gone by then; a stall during finalize is the shutdown watchdog's problem.
 				continue;
-			//"{}" and a pre-formatted string, not "{:.1f}" and a double: Logging::Entry stringifies its arguments, so a spec
-			//that only applies to a number makes Entry::Message() take its format-error path - which logs, from inside
-			//MemoryLog::Find's write lock.
 			//stallLevel (Await.h) caps the level for a wait the caller knows to be long; a real hang still climbs to Critical.
 			LOGSL( std::min(i==1 ? ELogLevel::Warning : ELogLevel::Critical, stallLevel), sl, _tags, "BlockAwait has been waiting {}s for its result.", Ƒ("{:.1f}", std::chrono::duration<double>(interval*static_cast<Duration::rep>(i)).count()) );
 		}

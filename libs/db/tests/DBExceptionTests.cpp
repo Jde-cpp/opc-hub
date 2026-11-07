@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <jde/db/DBException.h>
 #include <jde/db/generators/Sql.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/log/Entry.h>
 
 #define let const auto
@@ -10,8 +10,7 @@ namespace Jde::DB::Tests{
 	//#12: DBException::Log must honor the base _logged protocol - a moved-from / already-logged exception must not re-log
 	//(before the fix, the moved-from source logged a junk "sqle: " with its emptied Sql, and a BreakLog'd exception double-logged).
 	TEST( DBExceptionTests, LogsOnce ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() ); //captures every level; self-contained, no shared-config change.
+		Logging::Capture errors{ ELogLevel::Error };
 		let countSqle = []{ return Logging::Find( [](const Logging::Entry& e){ return e.Message().starts_with("sqle:"); } ).size(); };
 
 		Logging::ClearMemory();
@@ -46,8 +45,7 @@ namespace Jde::DB::Tests{
 	//#10: what() is the exception text - the statement with its placeholders. Bound values belong to the log, which
 	//DB::Log appends via EmbedParams; keeping them out of what() also keeps them out of whatever wraps or forwards it.
 	TEST( DBExceptionTests, ParamValuesReachLogNotWhat ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::Capture errors{ ELogLevel::Error };
 		Logging::ClearMemory();
 		{
 			DB::Sql sql; sql.Text = "insert into t( secret ) values( ? )"; sql.Params.push_back( Value{string{"hunter2"}} );

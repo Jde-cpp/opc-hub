@@ -3,20 +3,25 @@
 
 namespace Jde{
 	#define Φ Γ auto
-	//A tag->level map and its default:  a logger's settings, its overrides, or the two together.  A plain value.
+	//A tag->level map and its default:  a logger's settings, its overrides, or the two together, and the parts += combined in.
+	//A plain value.
 	struct Γ TagLevels{
 		Ω Parse( const jobject& tagLevels )ι->TagLevels;//the config file's flat map, "default" included;  a level that is not a string is skipped.
-		α DefaultLevel()Ι->ELogLevel{ return Default.value_or( ELogLevel::Information ); }
-		//The configured level for tags:  its own entry, else, for a combined set, the most specific entry the line carries all of,
-		//a tie taking the lower level.  nullopt:  the default applies.
+		α DefaultLevel()Ι->ELogLevel;//a line's level when nothing names its tags:  the default, or a part's lower one.
+		//The configured level for tags, in this map:  its own entry, else, for a combined set, the most specific entry the line
+		//carries all of, a tie taking the lower level.  nullopt:  the default applies.
 		α Find( ELogTags tags )Ι->optional<ELogLevel>;
-		α Resolve( ELogTags tags )Ι->ELogLevel{ return Find( tags ).value_or( DefaultLevel() ); }
+		α Resolve( ELogTags tags )Ι->ELogLevel;//this map's level for tags, or a part's lower one.
+		α Floor()Ι->ELogLevel;//no tag set resolves below it.
 		α Over( const TagLevels& base )Ι->TagLevels;//these on top of base.
-		α operator+=( const TagLevels& x )ι->TagLevels&;//combining loggers:  the lower level wins, and NoLog yields to any.
+		α operator+=( const TagLevels& x )ι->TagLevels&;//combining loggers:  each line takes the lower level, and NoLog yields to any.
 		α operator==( const TagLevels& x )Ι->bool=default;
 
 		optional<ELogLevel> Default;
 		flat_map<ELogTags,ELogLevel> Levels;
+		//What += combined in, each kept whole:  merged into Levels, an entry for a set would shadow a lower one for a tag in it
+		//(reviews-issue/MemoryLog.md #8).
+		vector<TagLevels> Parts;
 	};
 namespace Logging{
 	struct ILogger;

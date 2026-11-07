@@ -2,7 +2,7 @@
 #include <latch>
 #include <jde/fwk/io/durable.h>
 #include <jde/fwk/io/file.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/co/CoMutex.h>
 #include <jde/fwk/process/execution.h>
@@ -422,15 +422,14 @@ namespace Jde::IO::Tests{
 			std::ofstream os{ file, std::ios::binary };
 			os << "not-a-guid\n";
 		}
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		auto readValues = ms<Vector<uuid>>();
 		read( file, readValues );
-		let parseFailure = [&]{ return !logger.Find( function<bool(const Logging::Entry&)>{[](const Logging::Entry& e){
+		let parseFailure = [&]{ return !Logging::Find( function<bool(const Logging::Entry&)>{[](const Logging::Entry& e){
 			return e.Message().contains( "Failed to parse GUID" );
 		}} ).empty(); };
 		ASSERT_TRUE( WaitUntil(parseFailure, 10s, 5ms) ) << "the parse failure never reached the log";
-		EXPECT_TRUE( logger.Find("unknown exception").empty() ) << "the exception was sliced on its way to the promise";
+		EXPECT_TRUE( Logging::Find("unknown exception").empty() ) << "the exception was sliced on its way to the promise";
 		EXPECT_TRUE( readValues->empty() );
 	}
 
@@ -607,10 +606,9 @@ namespace Jde::IO::Tests{
 	TEST_F( FileTests, NoCreateMakesNoDirectories ){
 		let root = Tests::file( 1010 ).parent_path()/"noCreate";
 		fs::remove_all( root );
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
-		let createdDirs = [&logger]()->uint{
-			return logger.Find( function<bool(const Logging::Entry&)>{[](const Logging::Entry& e){ return e.Message().contains( "Created dir" ); }} ).size();
+		let createdDirs = []()->uint{
+			return Logging::Find( function<bool(const Logging::Entry&)>{[](const Logging::Entry& e){ return e.Message().contains( "Created dir" ); }} ).size();
 		};
 		let failedAtOpen = []( str failure )->bool{ return failure.contains( "- open path=" ) && !failure.contains( "create_directories" ); };
 
@@ -747,7 +745,7 @@ namespace Jde::IO::Tests{
 
 	//The directory syncs logged for a synced write to file, since ClearMemory.
 	Ω dirSyncs( const fs::path& file )->uint{
-		return Logging::GetLogger<Logging::MemoryLog>().Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
+		return Logging::Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
 			let message = e.Message();
 			return message.contains( "Syncing directory" ) && message.contains( file.string() );
 		}} ).size();
@@ -914,13 +912,12 @@ namespace Jde::IO::Tests{
 		let file = Tests::file( 1012 );
 		fs::remove( file );
 		ASSERT_EQ( writeNow(file, "content", {.Create=true}), "" );
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		auto content = ms<string>(); auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
 		readRaw( file, content, done, error, {.Tags=ELogTags::Test} );
 		ASSERT_EQ( waitError(done, error), "" );
 		EXPECT_EQ( *content, "content" );
-		let suspends = logger.Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
+		let suspends = Logging::Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
 			return e.Tags==ELogTags::Test && e.Message().contains( "ReadAwait::Suspend" ) && e.Message().contains( file.string() );
 		}} );
 		EXPECT_EQ( suspends.size(), 1u ) << "the read did not log under the tag it was given";
@@ -928,10 +925,9 @@ namespace Jde::IO::Tests{
 	TEST_F( FileTests, WriteLogsUnderItsTags ){
 		let file = Tests::file( 1013 );
 		fs::remove( file );
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
 		ASSERT_EQ( writeNow(file, "content", {.Create=true, .Tags=ELogTags::Test}), "" );
-		let suspends = logger.Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
+		let suspends = Logging::Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
 			return e.Tags==ELogTags::Test && e.Message().contains( "WriteAwait::Suspend" ) && e.Message().contains( file.string() );
 		}} );
 		EXPECT_EQ( suspends.size(), 1u ) << "the write did not log under the tag it was given";

@@ -5,7 +5,7 @@
 //is "" and a Subscription built with that name matches the same key; findId returns early with no pk, so nothing opens a
 //data source; Listen/OnMutation/StopListen are static.
 #include <gtest/gtest.h>
-#include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/Capture.h>
 #include <jde/ql/LocalSubscriptions.h>
 #include "NullQL.h"
 #include "RecordingListener.h"
@@ -87,10 +87,7 @@ namespace Jde::QL::Tests{
 	//The catch is per listener, inside the loop - not the outer one, which would have taken the rest of the fan-out with it.
 	//And it is not silent (ql-refactor B7): the listener's name and what it threw are logged.
 	TEST_F( SubscriptionsTests, AThrowingListenerDoesNotCostTheNextOneItsNotification ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() ); //captures every level; self-contained, no shared-config change.
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
-		Logging::ClearMemory();
+		Logging::Capture capture{ ELogLevel::Warning };
 		auto bad = Listener( "bad" );
 		auto good = Listener( "good" );
 		bad->Throws = true;
@@ -101,7 +98,7 @@ namespace Jde::QL::Tests{
 
 		EXPECT_EQ( bad->Changes.size(), 1u ); //it was called, and it threw.
 		EXPECT_EQ( good->Changes.size(), 1u ); //and the next one still heard about it.
-		let warnings = logger.Find( [](let& entry){ return entry.Message().find("listener threw")!=string::npos; } );
+		let warnings = capture.Find( [](let& entry){ return entry.Message().find("listener threw")!=string::npos; } );
 		ASSERT_EQ( warnings.size(), 1u ) << "the refusal was swallowed";
 		EXPECT_EQ( warnings[0].Level, ELogLevel::Warning );
 	}
