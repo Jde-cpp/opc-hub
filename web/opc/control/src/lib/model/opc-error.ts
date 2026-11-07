@@ -4,7 +4,7 @@ import { StatusCode } from "./types";
 
 export class OpcError implements Error{
 	constructor( public sc:StatusCode, public name:string, public stack:string, public cause:string|undefined ){
-		if( !OpcError.messages.has(nameKey(sc)) )
+		if( nameKey(sc) && !OpcError.messages.has(nameKey(sc)) )//Good needs no name, as text() says - a {sc: 0} reading made one and asked /ErrorCodes for 0
 			OpcError.messages.set( nameKey(sc), null );//null = "pending fetch" sentinel that emptyMessages() collects; undefined would be skipped and never fetched from /ErrorCodes
 	}
 	get message(){ return OpcError.messages.get( nameKey(this.sc) ) ?? `sc=${this.sc}`; }
@@ -20,7 +20,7 @@ export class OpcError implements Error{
 	//the server's name for the code, less its flags - the map is keyed by nameKey, so every InfoBits variant of a code shares one fetch
 	static statusCodeText( sc:StatusCode ):string|undefined{
 		const y = OpcError.messages.get( nameKey(sc) );
-		if( !y )
+		if( !y && nameKey(sc) )
 			OpcError.messages.set( nameKey(sc), null );
 		return y ?? undefined;
 	}

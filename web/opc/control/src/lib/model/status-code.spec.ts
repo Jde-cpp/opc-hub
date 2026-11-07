@@ -106,6 +106,8 @@ describe( 'OpcError status names', ()=>{
 
 	it( 'never asks for Good', ()=>{
 		expect( OpcError.text(0x00000480) ).toBe( "Good+Overflow" );
+		new OpcError( 0, "OpcError", "", undefined );//a {sc: 0} reading's (toValue):  it failed this only when server-diagnostics.spec ran first
+		OpcError.statusCodeText( 0x00000480 );
 		expect( OpcError.emptyMessages() ).not.toContain( 0 );
 	} );
 
