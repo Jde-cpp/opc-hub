@@ -1,0 +1,25 @@
+<table class="structure" [attr.aria-label]="label() ? label() + ' members' : 'Structure members'">
+	<tbody>
+		@for( r of rows(); track r.name ){
+			<tr>
+				<th scope="row">{{ r.name }}</th>
+				<td>
+					@if( r.structure ){
+						<structure-table [members]="r.structure" [label]="r.name"></structure-table>
+					}
+					@else if( r.structures ){
+						@for( s of r.structures; track $index ){
+							<structure-table [members]="s" [label]="r.name + ' ' + $index"></structure-table>
+						}
+					}
+					@else if( r.tooltip ){<!--a member no type explains:  said, not shown as bytes-->
+						<span class="undecoded" [matTooltip]="r.tooltip">{{ r.text }}</span>
+					}
+					@else{
+						<span class="member-text" [title]="r.text">{{ r.text }}</span>
+					}
+				</td>
+			</tr>
+		}
+	</tbody>
+</table>

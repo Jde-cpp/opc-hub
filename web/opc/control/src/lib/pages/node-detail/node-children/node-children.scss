@@ -70,6 +70,16 @@ width. */
 mat-cell.mat-column-snapshot > input{
 	min-width: 0;
 }
+/* a structure's table takes the cell's width, and the row grows to it */
+mat-cell.mat-column-snapshot > structure-table{
+	flex: 1 1 auto;
+	min-width: 0;
+	padding-block: 4px;
+}
+.undecoded{
+	color: var(--mat-sys-on-surface-variant);
+	font-style: italic;
+}
 /* the cell itself stays flex-start:  it holds whatever editor the value type needs (number, text, date-time, select),
 and those keep their left edges lined up down the column.  A lone checkbox is the one that reads as adrift under the
 centred header - an auto inline margin centres just that flex item, the way .mat-column-select centres a checkbox-only

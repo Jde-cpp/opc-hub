@@ -5,6 +5,7 @@
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../GatewayAppClient.h"
+#include "../UAClient.h"
 #include "../types/proto/opc.FromServer.h"
 #include "HistHost.h"
 #include "../async/ExecutorAwait.h"
@@ -42,11 +43,16 @@ namespace Jde::Opc::Gateway{
 		auto p = _slots.find( index );
 		return p==_slots.end() ? optional<uint32>{} : p->second;
 	}
+	α HistSubscriber::Types()Ι->sp<TypeRegistry>{
+		auto host = _host.lock();
+		return host ? UAClient::FindTypes( host->Slug() ) : nullptr;
+	}
 	α HistSubscriber::Page( Hist::ReadResult&& result, bool more )Ι->FromServer::HistSnapshot{
 		FromServer::HistSnapshot y;
+		let types = Types();
 		for( let& v : result.Values ){
 			if( let slot = Slot(v.Value.node_index()); slot )
-				*y.add_values() = FromServer::ToProto( v.Value, *slot, v.Bound );
+				*y.add_values() = FromServer::ToProto( v.Value, *slot, v.Bound, types.get() );
 		}
 		y.set_more( more );
 		return y;
@@ -77,13 +83,14 @@ namespace Jde::Opc::Gateway{
 		if( !session )
 			return;
 		FromServer::HistRecords y;
+		let types = Types();
 		for( let& r : records ){
 			if( r.has_modification() ){
 				if( let slot = Slot(r.modification().node_index()); slot )
-					*y.add_modifications() = FromServer::ToProto( r.modification(), *slot );
+					*y.add_modifications() = FromServer::ToProto( r.modification(), *slot, types.get() );
 			}
 			else if( let slot = Slot(r.value().node_index()); slot )
-				*y.add_values() = FromServer::ToProto( r.value(), *slot, false );
+				*y.add_values() = FromServer::ToProto( r.value(), *slot, false, types.get() );
 		}
 		session->WriteHist( shared_from_this(), FromServer::HistRecordsTrans(move(y), _requestId) );
 	}

@@ -20,7 +20,7 @@ import { Attribute, attributesOf } from '../model/attribute';
 import { CallResult, MethodArguments, toCallResult } from '../model/method';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
-import { ExtensionObject, Reading, shortestFloat, toReading, Value, valueJson } from '../model/value';
+import { ExtensionObject, Reading, shortestFloat, Structure, toReading, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
 import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound } from '../model/hist';
 import { Revised, WatchParameters } from '../model/watch';
@@ -633,7 +633,16 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			return new ExtensionObject( Gateway.toNode(x.typeId ?? Common.NodeId.create()), x.binary ?? x.xml );
 		}
 		if( proto.array!=undefined )        return proto.array.values.map( v=>Gateway.toValue(v) );
+		if( proto.structure!=undefined )    return Gateway.toStructure( proto.structure );
 		return undefined!;
+	}
+	//a structure's members by name, nested where they are (clients spec *Structures*):  the shape the REST json gives, so the cells share a
+	//renderer;  an absent optional member is null, as the json has it
+	private static toStructure( proto:Common.Structure ):Structure{
+		const y:Structure = {};
+		for( const m of proto.members )
+			y[m.name] = m.value ? Gateway.toValue( m.value ) : null;
+		return y;
 	}
 	private nodeValues( nodeValues:FromServer.NodeValues ):void{
 		let opcSubscriptions = this.#subscriptions.get( nodeValues.opcId! ); if( !opcSubscriptions ){ return console.error(`Could not find opc ${nodeValues.opcId}`);}

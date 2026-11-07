@@ -5,27 +5,11 @@
 //and a type added through the embedded server at runtime, which the activation's fetch could not know, opaque until the fetch its first
 //read posts fills it.
 #include <absl/cleanup/cleanup.h>
-#include <jde/tests/WaitUntil.h>
 #include "utils/HistGroupFixture.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
 	struct StructureTests : HistGroupFixture{
-		Ω SampleDataType()ε->const UA_DataType&{
-			let id = Node( SampleType );
-			let type = UA_Server_findDataType( Server::GetUAServer().Ptr(), &id );
-			THROW_IF( !type, "PumpSampleType ({}) is not among the server's types.", Node(SampleType).ToString() );
-			return *type;
-		}
-		//The sample as Value::ToJson writes it and Value::Set reads it back:  `rpm` and `label` the test's, the rest fixed.
-		Ω SampleJson( double rpm, sv label, bool running=true )ι->jobject{
-			return { {"Rpm", rpm}, {"Running", running}, {"Label", label}, {"Limits", jobject{{"Low", 0.0}, {"High", 3000.0}}}, {"History", jarray{1470.0, 1475.0, rpm}} };
-		}
-		//The sample written on the server itself, as the source would, with the time the source gave it.
-		Ω WriteSample( const jobject& j, TimePoint source )ε->void{
-			const Value v{ j, &SampleDataType() };
-			Write( TestSample, v.value.data, SampleDataType(), source );
-		}
 		//Every registry a client of the slug decodes by:  a row made again under the slug (ServerCnnctnDBTests' purge) leaves the clients
 		//built before it on the old row's, where FindTypes answers the new row's - the socket's client may be either.
 		Ω Registries()ι->vector<sp<TypeRegistry>>{
@@ -50,11 +34,6 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		Ω Decoded( const jvalue& v, sv member="Rpm" )ι->bool{ return v.is_object() && v.as_object().contains(member); }
 		Ω Opaque( const jvalue& v )ι->bool{ return v.is_object() && v.as_object().contains("typeId") && v.as_object().contains("body"); }
-		//The registry holds the sample's type:  the activation's fetch, which the socket's first query starts, has landed.
-		Ω WaitSampleType()ε->void{
-			ReadQL( Node(TestSample) );//the connect, and with it the fetch.
-			ASSERT_TRUE( WaitUntil([&]{ return Registry()->Find( Node(SampleType) )!=nullptr; }, 15s) ) << "the registry never held PumpSampleType:  " << Registry()->Count() << " type(s), " << Registry()->Fetches() << " fetch(es)";
-		}
 	};
 
 	//`node( opc, id ){ value }` of the sample answers an object of its members by name, each in the gateway's own shape - the Range nested,

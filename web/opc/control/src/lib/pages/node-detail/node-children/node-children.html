@@ -93,7 +93,13 @@
 								}
 							</mat-select>
 						}
-						@else if( r.customDataType ){<!--a structure, or an enumeration whose values could not be read:  the value as text, read-only until the cell edits a structure by member (clients plan 8b, #422)-->
+						@else if( structure(r); as members ){<!--a structure the gateway decoded by member (clients spec *Structures*):  a table of them, read-only until the write dialog edits it member by member (clients plan, Phase 9)-->
+							<structure-table [members]="members" [label]="r.name" [class.stale]="r.stale"></structure-table>
+						}
+						@else if( undecoded(r); as reason ){<!--a body no type explains - a server with no DataTypeDefinition for it:  said, not shown as bytes-->
+							<span class="undecoded" [class.stale]="r.stale" [matTooltip]="reason">{{toString(r.value)}}</span>
+						}
+						@else if( r.customDataType ){<!--an enumeration whose values could not be read:  the value as text-->
 							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
 						}
 						<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the

@@ -3,7 +3,7 @@
 #include "../GatewaySocketSession.h"
 
 namespace Jde::Opc::Gateway{
-	struct HistGroupHost;
+	struct HistGroupHost; struct TypeRegistry;
 	//One HistSubscribe on the gateway's socket (spec *Subscriptions*):  the group's registration and snapshot, and what the
 	//group pushes, queued until the snapshot's pages are written and sent at once after.  The group delivers on the thread that
 	//stored the record, so OnRecords only converts and hands the message to the socket's strand.  The page reads and the end
@@ -19,6 +19,7 @@ namespace Jde::Opc::Gateway{
 		α Ended()Ι->bool{ return _ended; }
 		α Request()Ι->Jde::RequestId{ return _requestId; }
 		α Host( SL sl )Ε->sp<HistGroupHost>;
+		α Types()Ι->sp<TypeRegistry>;//the connection's registry as it stands, which a page's and a push's stored bodies decode by (clients spec *Structures*);  none once the group is gone.
 		//The node's place in the HistSubscribe's nodes:  none for one the subscription doesn't name, which the group never sends.
 		α Slot( Hist::NodeIndex index )Ι->optional<uint32>;
 		α Page( Hist::ReadResult&& result, bool more )Ι->FromServer::HistSnapshot;

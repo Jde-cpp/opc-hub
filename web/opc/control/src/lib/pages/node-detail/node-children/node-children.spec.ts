@@ -587,19 +587,21 @@ describe( 'NodeChildren a Method\'s Call button', ()=>{
 	} );
 } );
 
-//the #421 walk's W1:  every value of a type of the server's own took the enumeration's select, so a structure showed an empty one
+//the #421 walk's W1:  every value of a type of the server's own took the enumeration's select, so a structure showed an empty one;  with
+//8b (#422) a structure is a table of its members, nested where they are, and a body no type explains says it is undecoded
 describe( 'NodeChildren a value of the server\'s own type', ()=>{
-	it( 'offers an enumeration\'s values and shows a structure as text', ()=>{
+	it( 'offers an enumeration\'s values and shows a structure as a table of its members', ()=>{
 		TestBed.configureTestingModule({ providers: [screenSize(), provideRoute(), { provide: GATEWAY_SERVICE, useValue: {} }, { provide: SnackbarService, useValue: snackbarStub() }, pageTitleStub] });
 		const fixture = TestBed.createComponent( NodeChildren );
 		const page = fixture.componentInstance;
 		const health = variable( 1, "health", {dataType: {ns: 2, i: 3002}, value: 1} );
 		health.customDataType = new Enum( new NodeId({ns: 2, i: 3002}), <any>{name: "Health", enumValues: [{id: 1, name: "OK"}]} );
-		const sample = variable( 2, "sample", {dataType: {ns: 2, i: 3001}, value: {Rpm: 1480.5, Running: true}} );
+		const sample = variable( 2, "sample", {dataType: {ns: 2, i: 3001}, value: {Rpm: 1480.5, Running: true, Limits: {Low: 0, High: 3000}}} );
+		const opaque = variable( 3, "legacy", {dataType: {ns: 2, i: 3009}, value: {typeId: {ns: 2, i: 3010}, body: "AAAA"}} );
 		page.pageData = { gateway: fakeGateway( 'local' ), route: {profileKey: 'k'}, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
 		page.profile = { subscriptions: [] } as any;
 		fixture.componentRef.setInput( 'node', new OpcObject(<any>{ns: 2, i: 5010, name: '_Test', browse: {ns: 2, name: '_Test'}}) );
-		(<any>page).setNodes( [health, sample], false );
+		(<any>page).setNodes( [health, sample, opaque], false );
 		page.isLoading.set( false );//the route's load, which provideRoute() leaves out
 		page.viewSet.reset( [NodeView.default()] );
 		fixture.detectChanges();
@@ -607,7 +609,13 @@ describe( 'NodeChildren a value of the server\'s own type', ()=>{
 			.find( (r:Element)=>r.querySelector('.mat-column-name')?.textContent?.trim()==name )!.querySelector( '.mat-column-snapshot' )!;
 		expect( snapshot('health').querySelector('mat-select') ).not.toBeNull();
 		expect( snapshot('sample').querySelector('mat-select') ).toBeNull();
-		expect( snapshot('sample').textContent!.trim() ).toBe( '{"Rpm":1480.5,"Running":true}' );
+		const rows = ( table:Element )=>[...table.querySelectorAll( ':scope > tbody > tr' )].map( r=>[r.querySelector('th')!.textContent!.trim(), r.querySelector(':scope > td')!.textContent!.trim().replace( /\s+/g, ' ' )] );
+		const table = snapshot('sample').querySelector( 'structure-table > table' )!;
+		expect( table ).not.toBeNull();
+		expect( rows(table) ).toEqual( [['Rpm', '1480.5'], ['Running', 'true'], ['Limits', 'Low0High3000']] );//the nested table's text, run together
+		expect( rows(table.querySelector('structure-table > table')!) ).toEqual( [['Low', '0'], ['High', '3000']] );//nested
+		expect( snapshot('legacy').querySelector('structure-table') ).toBeNull();
+		expect( snapshot('legacy').textContent!.trim() ).toBe( 'undecoded ns=2;i=3010' );
 	} );
 } );
 

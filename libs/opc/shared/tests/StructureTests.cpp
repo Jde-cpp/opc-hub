@@ -6,6 +6,7 @@
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include <jde/opc/uatypes/Variant.h>
+#include <jde/opc/proto/opc.Common.h>
 #include "helpers.h"
 #define let const auto
 
@@ -259,5 +260,130 @@ namespace Jde::Opc::Tests{
 		NoteMissingTypes( array.value, registry );
 		ASSERT_EQ( registry.Noted.size(), 2u ) << "the callback's note reaches a Variant element";
 		EXPECT_EQ( registry.Noted[1], (NodeId{_ns, 888}) );
+	}
+
+	//The proto's two forms of a structure (Opc.Common.proto, clients plan 8b):  Encoded, the ExtensionObject it travels as, which the
+	//historian stores;  Decoded, its members by name as `structure`, nested where the members are, an array member an array - a namespace-0
+	//structure with no registry, a registry's by the registry, decoded or encoded - and ToVariant rebuilds either, the structure member by
+	//member as the type its id names.
+	Ω member( const Proto::Structure& s, sv name )->const Proto::Value*{
+		for( let& m : s.members() ){
+			if( m.name()==name )
+				return m.has_value() ? &m.value() : nullptr;
+		}
+		ADD_FAILURE() << "no member " << name;
+		return nullptr;
+	}
+	Ω names( const Proto::Structure& s )->vector<string>{ vector<string> y; for( let& m : s.members() ) y.push_back( m.name() ); return y; }
+	TEST( StructureTests, ProtoCarriesAStructureAsItsMembers ){
+		using enum ProtoUtils::EStructures;
+		const UA_Range range{ 0, 1500 };
+		const Value v = dataValue( &range, UA_TYPES[UA_TYPES_RANGE] );
+		EXPECT_TRUE( ProtoUtils::ToValue(v.value).has_extension_object() ) << "Encoded by default:  what the historian stores";
+		let decoded = ProtoUtils::ToValue( v.value, Decoded );
+		ASSERT_TRUE( decoded.has_structure() );
+		EXPECT_EQ( ProtoUtils::ToNodeId(decoded.structure().type_id()), (NodeId{0, UA_NS0ID_RANGE}) ) << "the DataType's id";
+		EXPECT_EQ( names(decoded.structure()), (vector<string>{"Low", "High"}) );
+		EXPECT_EQ( member(decoded.structure(), "High")->double_value(), 1500 );
+		let back = ProtoUtils::ToVariant( decoded );
+		ASSERT_EQ( back.type, &UA_TYPES[UA_TYPES_RANGE] ) << "rebuilt as a Range, not an ExtensionObject";
+		EXPECT_EQ( ((const UA_Range*)back.data)->high, 1500 );
+		EXPECT_EQ( ProtoUtils::ToValue(back, Decoded).SerializeAsString(), decoded.SerializeAsString() );
+
+		Registry registry{ {description(3001, "PumpSampleType", _sampleFields), description(3003, "NestedType", _nestedFields)} };
+		let& sample = registry.Type( 0 );
+		Value s{ sampleJson(), &sample };
+		let proto = ProtoUtils::ToValue( s.value, Decoded, &registry );
+		ASSERT_TRUE( proto.has_structure() );
+		EXPECT_EQ( ProtoUtils::ToNodeId(proto.structure().type_id()), (NodeId{_ns, 3001}) );
+		EXPECT_EQ( names(proto.structure()), (vector<string>{"Rpm", "Running", "Label", "Limits", "History"}) );
+		EXPECT_EQ( member(proto.structure(), "Rpm")->double_value(), 1480.5 );
+		EXPECT_EQ( member(proto.structure(), "Label")->string_value(), "sample" );
+		ASSERT_TRUE( member(proto.structure(), "Limits")->has_structure() ) << "a namespace-0 member, nested";
+		EXPECT_EQ( member(member(proto.structure(), "Limits")->structure(), "High")->double_value(), 3000 );
+		ASSERT_TRUE( member(proto.structure(), "History")->has_array() );
+		EXPECT_EQ( member(proto.structure(), "History")->array().values_size(), 3 );
+		EXPECT_EQ( member(proto.structure(), "History")->array().type(), UA_DATATYPEKIND_DOUBLE+1 );
+		EXPECT_EQ( ProtoUtils::ToValue(s.value, Decoded).SerializeAsString(), proto.SerializeAsString() ) << "a decoded value walks by the type it holds:  the registry is for an encoded body";
+		EXPECT_EQ( ProtoUtils::ToValue(encoded(s.value.data, sample).value, Decoded, &registry).SerializeAsString(), proto.SerializeAsString() ) << "an encoded body, by the registry";
+		let stored = ProtoUtils::ToValue( s.value );
+		ASSERT_TRUE( stored.has_extension_object() ) << "Encoded:  as the historian stores it";
+		EXPECT_EQ( ProtoUtils::ToNodeId(stored.extension_object().type_id()), (NodeId{_ns, 3002}) ) << "the DefaultBinary id";
+		auto onto = stored;
+		ProtoUtils::DecodeStructures( onto, &registry );
+		EXPECT_EQ( onto.SerializeAsString(), proto.SerializeAsString() ) << "a stored body onto the socket";
+		auto unknown = stored;
+		ProtoUtils::DecodeStructures( unknown, nullptr );
+		EXPECT_TRUE( unknown.has_extension_object() ) << "no registry:  kept as it came";
+		EXPECT_THROW( ProtoUtils::ToVariant(proto), UAException ) << "no registry explains the type";
+		let rebuilt = ProtoUtils::ToVariant( proto, &registry );
+		ASSERT_EQ( rebuilt.type, &sample );
+		EXPECT_EQ( Value{Variant{rebuilt}.Move()}.ToJson(&registry), sampleJson() ) << "member by member, the nested Range and the array included";
+		//An array of structures goes as an array of them, its elements' type the ExtensionObject they travel as.
+		Value array{ parse(Ƒ("[{},{}]", serialize(sampleJson()), serialize(sampleJson()))), &sample };
+		let elements = ProtoUtils::ToValue( array.value, Decoded, &registry );
+		ASSERT_TRUE( elements.has_array() );
+		EXPECT_EQ( elements.array().type(), UA_DATATYPEKIND_EXTENSIONOBJECT+1 );
+		EXPECT_TRUE( elements.array().values(1).has_structure() );
+		let arrayBack = ProtoUtils::ToVariant( elements, &registry );
+		EXPECT_EQ( arrayBack.type, &sample );
+		EXPECT_EQ( arrayBack.arrayLength, 2u );
+		//A type nesting another of the registry's.
+		let nested = parse( R"({"Sample":{"Rpm":1E0,"Running":false,"Label":"n","Limits":{"Low":0E0,"High":1E0},"History":[]},"Count":7})" );
+		Value n{ nested, &registry.Type(1) };
+		let nestedProto = ProtoUtils::ToValue( n.value, Decoded, &registry );
+		ASSERT_TRUE( member(nestedProto.structure(), "Sample")->has_structure() );
+		EXPECT_EQ( Value{Variant{ProtoUtils::ToVariant(nestedProto, &registry)}.Move()}.ToJson(&registry), nested );
+	}
+	//A body no type explains stays an extension_object, noted with the registry;  a structure whose member is missing, misnamed or of the
+	//wrong kind is refused on the way back;  an absent optional member goes with no value and comes back absent, and a union as its one
+	//selected member.
+	TEST( StructureTests, ProtoOpaqueOptionalAndUnion ){
+		using enum ProtoUtils::EStructures;
+		Registry registry{ {description(3001, "PumpSampleType", _sampleFields)} };
+		let& sample = registry.Type( 0 );
+		UA_DataType unknown = UA_TYPES[UA_TYPES_RANGE];
+		unknown.binaryEncodingId = UA_NODEID_NUMERIC( _ns, 777 );
+		const UA_Range range{ 0, 1500 };
+		let opaque = ProtoUtils::ToValue( encoded(&range, unknown).value, Decoded, &registry );
+		ASSERT_TRUE( opaque.has_extension_object() );
+		EXPECT_EQ( ProtoUtils::ToNodeId(opaque.extension_object().type_id()), (NodeId{_ns, 777}) );
+		ASSERT_EQ( registry.Noted.size(), 1u );
+		EXPECT_EQ( registry.Noted[0], (NodeId{_ns, 777}) );
+		EXPECT_EQ( ProtoUtils::ToVariant(opaque, &registry).type, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] ) << "back as it came";
+
+		Value s{ sampleJson(), &sample };
+		let proto = ProtoUtils::ToValue( s.value, Decoded, &registry );
+		auto missing = proto; missing.mutable_structure()->mutable_members()->DeleteSubrange( 2, 1 );
+		EXPECT_THROW( ProtoUtils::ToVariant(missing, &registry), UAException ) << "Label missing";
+		auto misnamed = proto; misnamed.mutable_structure()->mutable_members(2)->set_name( "Labelled" );
+		EXPECT_THROW( ProtoUtils::ToVariant(misnamed, &registry), UAException );
+		auto wrong = proto; wrong.mutable_structure()->mutable_members(0)->mutable_value()->set_string_value( "fast" );
+		EXPECT_THROW( ProtoUtils::ToVariant(wrong, &registry), UAException ) << "Rpm is a Double";
+		auto scalar = proto; scalar.mutable_structure()->mutable_members(4)->mutable_value()->set_double_value( 1 );
+		EXPECT_THROW( ProtoUtils::ToVariant(scalar, &registry), UAException ) << "History is an array";
+		try{ ProtoUtils::ToVariant( wrong, &registry ); }
+		catch( const UAException& e ){ EXPECT_NE( string{e.what()}.find("Rpm"), string::npos ) << e.what(); }
+
+		const vector<UA_StructureField> optFields{ field("A", UA_NS0ID_DOUBLE), field("B", UA_NS0ID_STRING, false, true), field("C", UA_NS0ID_INT32, true, true) };
+		const vector<UA_StructureField> unionFields{ field("U", UA_NS0ID_DOUBLE), field("V", UA_NS0ID_STRING), field("W", UA_NS0ID_INT32, true) };
+		Registry more{ {description(3005, "OptType", optFields, UA_STRUCTURETYPE_STRUCTUREWITHOPTIONALFIELDS), description(3007, "UnionType", unionFields, UA_STRUCTURETYPE_UNION)} };
+		let& opt = more.Type( 0 ); let& u = more.Type( 1 );
+		let partial = ProtoUtils::ToValue( Value(parse(R"({"A":1E0})"), &opt).value, Decoded, &more );
+		ASSERT_TRUE( partial.has_structure() );
+		EXPECT_EQ( names(partial.structure()), (vector<string>{"A", "B", "C"}) );
+		EXPECT_FALSE( partial.structure().members(1).has_value() ) << "absent:  no value";
+		EXPECT_FALSE( partial.structure().members(2).has_value() );
+		EXPECT_EQ( serialize(Value{Variant{ProtoUtils::ToVariant(partial, &more)}.Move()}.ToJson()), R"({"A":1E0,"B":null,"C":null})" );
+		let full = parse( R"({"A":1E0,"B":"b","C":[1,2]})" );
+		EXPECT_EQ( Value{Variant{ProtoUtils::ToVariant(ProtoUtils::ToValue(Value(full, &opt).value, Decoded, &more), &more)}.Move()}.ToJson(), full );
+		let selected = ProtoUtils::ToValue( Value(parse(R"({"W":[3]})"), &u).value, Decoded, &more );
+		EXPECT_EQ( names(selected.structure()), vector<string>{"W"} ) << "the selected member alone";
+		EXPECT_EQ( serialize(Value{Variant{ProtoUtils::ToVariant(selected, &more)}.Move()}.ToJson()), R"({"W":[3]})" );
+		let none = ProtoUtils::ToValue( Value(parse("{}"), &u).value, Decoded, &more );
+		EXPECT_TRUE( none.structure().members().empty() );
+		EXPECT_EQ( serialize(Value{Variant{ProtoUtils::ToVariant(none, &more)}.Move()}.ToJson()), "{}" );
+		auto two = selected; auto& v = *two.mutable_structure()->add_members(); v.set_name( "V" ); v.mutable_value()->set_string_value( "x" );
+		EXPECT_THROW( ProtoUtils::ToVariant(two, &more), UAException ) << "one of its members, not two";
 	}
 }

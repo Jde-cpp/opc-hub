@@ -26,6 +26,12 @@
 				@else if( editor(a)=='text' ){
 					<input type="text" [value]="a.text" [attr.aria-label]="a.label" (change)="changeText(a, $event)">
 				}
+				@else if( structure(a); as members ){<!--the Value of a structure variable, decoded by member (clients spec *Structures*):  a table of them-->
+					<structure-table [members]="members" [label]="a.label"></structure-table>
+				}
+				@else if( undecoded(a); as reason ){
+					<span class="value-text undecoded" [matTooltip]="reason">{{ a.text }}</span>
+				}
 				@else{
 					<span class="value-text" [matTooltip]="a.tooltip">{{ a.text }}</span>
 				}

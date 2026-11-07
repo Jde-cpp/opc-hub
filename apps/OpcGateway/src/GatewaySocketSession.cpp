@@ -43,7 +43,8 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α GatewaySocketSession::SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value )ι->void{
-		return Write( MessageTrans(FromServer::ToProto(opcNK, node, value, 0), 0) );
+		let types = UAClient::FindTypes( opcNK );//the connection's registry as it stands:  a value decoded by its client walks by the type it holds, and a body that client's chain lacked may decode by a fetch since.
+		return Write( MessageTrans(FromServer::ToProto(opcNK, node, value, 0, types.get()), 0) );
 	}
 	α GatewaySocketSession::ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters{
 		MonitoringParameters y;
@@ -138,7 +139,7 @@ namespace Jde::Opc::Gateway{
 			Write( FromServer::SubscribeAckTrans(move(ack), requestId) );
 			ReadValueAwait read{ move(nodes), client, UA_TIMESTAMPSTORETURN_BOTH };//the first push:  its timestamps as a data change's
 			auto values = co_await Any( read );
-			Write( FromServer::ReadValuesTrans(client->Slug(), move(values), requestId) );
+			Write( FromServer::ReadValuesTrans(client->Slug(), move(values), requestId, client->Types().get()) );
 		}
 		catch( runtime_error& e ){
 			if( !acked )

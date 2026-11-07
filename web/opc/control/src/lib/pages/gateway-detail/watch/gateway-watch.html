@@ -44,7 +44,15 @@
 								<ng-container matColumnDef="value">
 									<mat-header-cell mat-sort-header *matHeaderCellDef> Value </mat-header-cell>
 									<mat-cell *matCellDef="let r">
-										<span class="value-text" [class.stale]="r.sc && qualityIcon(r)=='error'">{{ valueText(r) }}</span>
+										@if( structure(r); as members ){<!--a structure decoded by member (clients spec *Structures*):  a table of them-->
+											<structure-table [members]="members" [label]="r.name" [class.stale]="r.sc && qualityIcon(r)=='error'"></structure-table>
+										}
+										@else if( undecoded(r); as reason ){
+											<span class="value-text undecoded" [class.stale]="r.sc && qualityIcon(r)=='error'" [matTooltip]="reason">{{ valueText(r) }}</span>
+										}
+										@else{
+											<span class="value-text" [class.stale]="r.sc && qualityIcon(r)=='error'">{{ valueText(r) }}</span>
+										}
 										<!--the reading's quality beside the value where the view hides the Status column, which says it better:  a shape per severity and a label, so the colour is never the only signal-->
 										@if( !statusShown() && qualityIcon(r); as icon ){
 											<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="status(r)" [matTooltip]="statusTooltip(r) || status(r)" [fontIcon]="icon"></mat-icon>

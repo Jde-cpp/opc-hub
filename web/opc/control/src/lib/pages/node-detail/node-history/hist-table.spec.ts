@@ -4,6 +4,8 @@ import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { EAccess } from '../../../model/types';
 import { HistTable } from './hist-table';
+import { NodeId } from '../../../model/node-id';
+import { ExtensionObject } from '../../../model/value';
 import { histTick, histValue, variable } from 'jde-opc/testing';
 
 const A = variable( 1, 'A', {historizing: true, userAccessLevel: EAccess.Read|EAccess.HistoryRead|EAccess.HistoryWrite} ), B = variable( 2, 'B', {historizing: true, userAccessLevel: EAccess.Read|EAccess.HistoryRead} );
@@ -21,6 +23,15 @@ const render = ( values:HistValue[], inputs:Record<string,unknown>={} )=>{
 };
 
 describe( 'HistTable', ()=>{
+	//clients plan 8b (#422):  a stored structure arrives decoded by member and the cell is a table of them;  a body no type explains says so
+	it( 'shows a structure as a table of its members, and an undecoded body as such', ()=>{
+		const t = render( [at(A, 1000, <any>{Rpm: 1480.5, Limits: {Low: 0, High: 3000}}), at(A, 2000, <any>new ExtensionObject( new NodeId({ns: 2, i: 3010}), "AAAA" ))] );
+		const value = ( row:number )=>t.fixture.nativeElement.querySelectorAll( 'mat-row' )[row].querySelector( '.mat-column-value' );
+		expect( [...value( 1 ).querySelectorAll( 'structure-table > table > tbody > tr > th' )].map( (h:Element)=>h.textContent ) ).toEqual( ['Rpm', 'Limits', 'Low', 'High'] );//the members, the nested Range's after its row
+		expect( value( 1 ).querySelector( 'structure-table structure-table' ) ).not.toBeNull();//Limits, nested
+		expect( value( 0 ).querySelector( 'structure-table' ) ).toBeNull();
+		expect( value( 0 ).textContent.trim() ).toBe( 'undecoded ns=2;i=3010' );
+	} );
 	it( 'lists the values newest first with the flags column, and no actions without editable nodes', ()=>{
 		const t = render( [at(A, 1000, 1), at(B, 2000, 2, {bound: true})] );
 		expect( t.headers() ).toEqual( ['Node', 'Source time', 'Server time', 'Status', 'Value', ''] );

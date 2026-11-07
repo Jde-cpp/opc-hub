@@ -186,7 +186,23 @@ describe( 'Gateway readings', ()=>{
 		expect( results.map(r=>r.value) ).toMatchObject( ["Hello", "", "2:Temperature", "Server", {body: new Uint8Array([0, 255])}, [1, "x"]] );
 		const x = results[4].value as ExtensionObject;
 		expect( x ).toBeInstanceOf( ExtensionObject );
-		expect( valueString(x) ).toBe( "i=886 AP8=" );
+		expect( valueString(x) ).toBe( "undecoded i=886" );
+	} );
+
+	//clients plan 8b (#422):  a structure comes as its members by name, nested where they are, an array member an array, an absent
+	//optional member null - the shape the REST json gives, so one renderer shows both
+	it( 'decodes a structure push to its members', async ()=>{
+		const { results, push } = await subscribed();
+		push( {structure: {typeId: {namespaceIndex: 2, numeric: 3001}, members: [
+			{name: "Rpm", value: {doubleValue: 1480.5}},
+			{name: "Running", value: {boolean: true}},
+			{name: "Label", value: {stringValue: "sample"}},
+			{name: "Limits", value: {structure: {typeId: {namespaceIndex: 0, numeric: 884}, members: [{name: "Low", value: {doubleValue: 0}}, {name: "High", value: {doubleValue: 3000}}]}}},
+			{name: "History", value: {array: {values: [{doubleValue: 1}, {doubleValue: 2}], dimensions: [], type: 11, isNull: false}}},
+			{name: "Note"},
+		]}} );
+		expect( results.map(r=>r.value) ).toEqual( [{Rpm: 1480.5, Running: true, Label: "sample", Limits: {Low: 0, High: 3000}, History: [1, 2], Note: null}] );
+		expect( valueString(results[0].value) ).toBe( '{"Rpm":1480.5,"Running":true,"Label":"sample","Limits":{"Low":0,"High":3000},"History":[1,2],"Note":null}' );
 	} );
 
 	it( 'keeps an Uncertain reading\'s value and says what it is worth', async ()=>{

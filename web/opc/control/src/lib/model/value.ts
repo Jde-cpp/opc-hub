@@ -5,12 +5,28 @@ import { ExNodeId } from "./ex-node-id";
 import {OpcError} from "./opc-error";
 import { ETypes, StatusCode } from "./types";
 
-export type Value = boolean | Duration | ExtensionObject | OpcError | ExNodeId | Guid | Long | NodeId | number | string | Timestamp | Uint8Array | Value[];
+export type Value = boolean | Duration | ExtensionObject | OpcError | ExNodeId | Guid | Long | NodeId | number | string | Structure | Timestamp | Uint8Array | Value[];
 
-//A structure as it travels - the encoding's type id and the encoded body - since nothing here knows how to decode it.
+//A structure the gateway decoded by member (clients spec *Structures*, #422):  its members by name, in the type's order, each a Value - a
+//nested structure one of these, an array member an array, an absent optional member null.  The same shape off the socket's `structure`
+//(Gateway.toValue) and off the REST json, so one renderer (StructureTable) shows both.
+export type Structure = { [member:string]:Value|null };
+//A plain object of members:  not a Timestamp, {seconds,nanos}, nor the Long form, {low,high,unsigned}, which travel as plain objects too.
+export function isStructure( value:unknown ):value is Structure{
+	if( typeof value!='object' || value===null || Array.isArray(value) || Object.getPrototypeOf(value)!==Object.prototype )
+		return false;
+	const keys = Object.keys( value );
+	const only = ( names:string[] )=>keys.length==names.length && names.every( n=>keys.includes(n) );
+	return !only( ['seconds', 'nanos'] ) && !only( ['low', 'high', 'unsigned'] );
+}
+
+//A structure no type explains, as it travels - the encoding's type id and the encoded body:  a type the server gives no DataTypeDefinition
+//for, a pre-1.04 server's say, which the gateway's registry cannot build (clients spec *Structures*).  The cell says so rather than showing
+//the bytes.
 export class ExtensionObject{
 	constructor( public typeId:NodeId, public body?:Uint8Array|string ){}
-	toString():string{ return this.body===undefined ? this.typeId.uaString() : `${this.typeId.uaString()} ${valueString(this.body)}`; }
+	toString():string{ return `undecoded ${this.typeId.uaString()}`; }
+	get tooltip():string{ return `The server gives no definition for the type ${this.typeId.uaString()}, so the value cannot be decoded.`; }
 }
 
 export function valueJson( value: Value ):any/*:NodeIdJson*/{
@@ -102,6 +118,8 @@ export function toValue( json:any ):Value{
 		value = new OpcError( json.sc, "OpcError", "", undefined );//was `new Error(sc)` — a plain Error isn't `instanceof OpcError`, so valueString rendered it as "unknown type object"
 	else if( value?.hasOwnProperty('unsigned') )
 		value = new Long( json.low, json.high, json.unsigned );
+	else if( value?.hasOwnProperty('typeId') && Object.keys(value).every( k=>k=='typeId' || k=='body' ) )//the opaque form, {typeId, body}, a body no type explains (Variant.cpp extensionObjectToJson)
+		value = new ExtensionObject( new NodeId( json.typeId ), json.body );
 	return value;
 }
 

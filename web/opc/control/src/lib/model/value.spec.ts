@@ -1,5 +1,5 @@
 import Long from 'long';
-import { ExtensionObject, shortestFloat, toReading, valueJson, valueString } from './value';
+import { ExtensionObject, isStructure, shortestFloat, toReading, toValue, valueJson, valueString } from './value';
 import { NodeId } from './node-id';
 
 //the gateway's three shapes (Value::ToJson):  the bare value for Good, {v,sc} for any other code that is not Bad, {sc} for Bad.
@@ -67,17 +67,45 @@ describe( 'valueString', ()=>{
 		expect( valueString(<any>{seconds: Math.floor(local.getTime()/1000), nanos: 92_000_000}) ).toBe( '2026-11-05 20:18:11.092' );
 		expect( valueString(<any>{seconds: 0, nanos: 0}) ).toBe( '' );//unset
 	} );
-	it( 'shows an ExtensionObject as its type id and body', ()=>{
+	//clients plan 8b (#422):  a body no type explains - a pre-1.04 server's, say - says so, never its bytes
+	it( 'says an ExtensionObject is undecoded, with its type id and not its bytes', ()=>{
 		const typeId = new NodeId( {ns: 2, i: 5001} );
-		expect( valueString(new ExtensionObject(typeId, new Uint8Array([1, 2, 3]))) ).toBe( "ns=2;i=5001 AQID" );
-		expect( valueString(new ExtensionObject(typeId, "<Range/>")) ).toBe( "ns=2;i=5001 <Range/>" );
-		expect( valueString(new ExtensionObject(typeId)) ).toBe( "ns=2;i=5001" );
+		expect( valueString(new ExtensionObject(typeId, new Uint8Array([1, 2, 3]))) ).toBe( "undecoded ns=2;i=5001" );
+		expect( valueString(new ExtensionObject(typeId, "<Range/>")) ).toBe( "undecoded ns=2;i=5001" );
+		expect( valueString(new ExtensionObject(typeId)) ).toBe( "undecoded ns=2;i=5001" );
+		expect( new ExtensionObject(typeId).tooltip ).toContain( "ns=2;i=5001" );
 	} );
 	//the #421 walk's W1:  a structure decoded by member read "unknown type object"
 	it( 'shows a structure as its members, a 64-bit one exact', ()=>{
 		const big = Long.fromString( "9007199254740993" );
 		const structure = { Rpm: 1480.5, Limits: {Low: 0, High: 3000}, Count: {low: big.low, high: big.high, unsigned: false}, Total: big };
 		expect( valueString(<any>structure) ).toBe( '{"Rpm":1480.5,"Limits":{"Low":0,"High":3000},"Count":"9007199254740993","Total":"9007199254740993"}' );
+	} );
+} );
+
+//clients plan 8b (#422):  a structure decoded by member is a plain object of them, the one shape off the socket and off the REST json,
+//and the two plain objects that are not structures - a Timestamp and the Long form - are told apart by their whole shape
+describe( 'isStructure', ()=>{
+	it( 'is a plain object of members, and not a Timestamp or a Long form', ()=>{
+		expect( isStructure({Rpm: 1480.5, Limits: {Low: 0, High: 3000}}) ).toBe( true );
+		expect( isStructure({}) ).toBe( true );//a union with no member selected
+		expect( isStructure({seconds: 1762300000, nanos: 0}) ).toBe( false );
+		expect( isStructure({low: 1, high: 0, unsigned: false}) ).toBe( false );
+		expect( isStructure({seconds: 1, nanos: 0, Extra: 2}) ).toBe( true );//a structure with those member names and another
+		expect( isStructure([{Rpm: 1}]) ).toBe( false );
+		expect( isStructure(new NodeId({ns: 2, i: 1})) ).toBe( false );
+		expect( isStructure(new ExtensionObject(new NodeId({ns: 2, i: 1}))) ).toBe( false );
+		expect( isStructure(null) ).toBe( false );
+		expect( isStructure(3) ).toBe( false );
+	} );
+	it( 'reads the gateway\'s opaque form, {typeId, body}, as an ExtensionObject', ()=>{
+		const x = toValue( {typeId: {ns: 2, i: 777}, body: "AAAA"} ) as ExtensionObject;
+		expect( x ).toBeInstanceOf( ExtensionObject );
+		expect( x.typeId.uaString() ).toBe( "ns=2;i=777" );
+		expect( x.body ).toBe( "AAAA" );
+		expect( toValue({typeId: {ns: 2, i: 777}}) ).toBeInstanceOf( ExtensionObject );//no body
+		expect( isStructure(toValue({typeId: {ns: 2, i: 777}, body: "AAAA", Rpm: 1})) ).toBe( true );//a structure with those member names stays one
+		expect( toReading({typeId: {ns: 2, i: 777}, body: "AAAA"}).value ).toBeInstanceOf( ExtensionObject );
 	} );
 } );
 

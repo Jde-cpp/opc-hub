@@ -1,7 +1,7 @@
 ﻿#include <jde/opc/uatypes/Value.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/DateTime.h>
-#include <jde/opc/uatypes/Variant.h>
+#include <jde/opc/uatypes/Members.h>
 
 
 #define let const auto
@@ -96,7 +96,7 @@ namespace Jde::Opc{
 		vector<const UA_DataType*> walking;
 		return settable( type, walking );
 	}
-	Ω isStructure( const UA_DataType* type )ι->bool{ return type && (type->typeKind==UA_DATATYPEKIND_STRUCTURE || type->typeKind==UA_DATATYPEKIND_OPTSTRUCT || type->typeKind==UA_DATATYPEKIND_UNION); }
+	Ω isStructure( const UA_DataType* type )ι->bool{ return type && IsStructure( *type ); }
 	Ω hasMember( const UA_DataType& type, sv name )ι->bool{
 		for( uint i=0; i<type.membersSize; ++i ){
 			if( name==type.members[i].memberName )
@@ -222,80 +222,27 @@ namespace Jde::Opc{
 	}
 
 	//Each member from the object by its name through Value - so a member takes the arm its kind has, a nested structure this one again -
-	//its box then moved into the slot as SetArray moves an element's:  memcpy'd in place for a scalar, pointed to for an optional one,
-	//its count and pointer for an array.  The layout is structureToJson's (Variant.cpp).  A required member missing, a union naming none or
-	//more than one of its members, a member of a kind Set has no arm for:  refused, naming the member.  `p` is zeroed by UA_new, so what
-	//a throw leaves half filled clears cleanly.
+	//in the box Value made, which the fill takes (FillMembers):  a required member missing, a union naming none or more than one of its
+	//members, a member of a kind Set has no arm for, refused naming the member.  A null member is absent.
 	Ω fillStructure( void* p, const UA_DataType& type, const jobject& o, SL sl )ε->void{
-		auto ptr = reinterpret_cast<uintptr_t>( p );
-		let member = [&]( const UA_DataTypeMember& m )->const jvalue*{ let v = o.if_contains( m.memberName ); return v && !v->is_null() ? v : nullptr; };
-		//The member's value in a box Value made, the box released to the caller:  ~Value then frees nothing.
-		let box = [&]( const UA_DataTypeMember& m, const jvalue& j )ε->std::pair<void*,uint>{
+		if( type.typeKind==UA_DATATYPEKIND_UNION ){
+			THROW_IFSL( o.size()>1, "A '{}' is one of its members, not {} - '{}'.", type.typeName, o.size(), serialize(o) );
+			if( o.size() && !hasMember(type, o.begin()->key()) )
+				throw Exception{ sl, ELogLevel::Debug, "A '{}' has no member '{}'.", type.typeName, o.begin()->key() };
+		}
+		FillMembers( p, type, [&]( const UA_DataTypeMember& m )ε->optional<Variant>{
+			let j = o.if_contains( m.memberName );
+			if( !j || j->is_null() )
+				return nullopt;
 			try{
-				Value element{ j, m.memberType, sl };
+				Value element{ *j, m.memberType, sl };
 				THROW_IFSL( !element.value.data, "'{}' produced no value.", m.memberName );
-				std::pair<void*,uint> y{ element.value.data, element.value.arrayLength };
-				UA_Variant_init( &element.value );
-				return y;
+				return Variant{ move(element.value) };
 			}
 			catch( const Exception& e ){
 				throw Exception{ sl, ELogLevel::Debug, "'{}'.{}:  {}", type.typeName, m.memberName, e.what() };
 			}
-		};
-		let scalar = [&]( const UA_DataTypeMember& m, const jvalue& j, uintptr_t at )ε->void{
-			THROW_IFSL( j.is_array(), "'{}'.{} is a scalar - '{}'.", type.typeName, m.memberName, serialize(j) );
-			let [data, _] = box( m, j );
-			::memcpy( reinterpret_cast<void*>(at), data, m.memberType->memSize );
-			UA_free( data );
-		};
-		let array = [&]( const UA_DataTypeMember& m, const jvalue& j, uintptr_t at )ε->void{
-			THROW_IFSL( !j.is_array(), "'{}'.{} is an array - '{}'.", type.typeName, m.memberName, serialize(j) );
-			let [data, count] = box( m, j );
-			*reinterpret_cast<uint*>( at ) = count;
-			*reinterpret_cast<void**>( at+sizeof(uint) ) = data;
-		};
-		if( type.typeKind==UA_DATATYPEKIND_UNION ){
-			THROW_IFSL( o.size()>1, "A '{}' is one of its members, not {} - '{}'.", type.typeName, o.size(), serialize(o) );
-			if( o.empty() )
-				return;//none selected.
-			let& name = o.begin()->key();
-			for( UA_UInt32 i=0; i<type.membersSize; ++i ){
-				let& m = type.members[i];
-				if( name!=m.memberName )
-					continue;
-				*reinterpret_cast<UA_UInt32*>( ptr ) = i+1;
-				if( m.isArray )
-					array( m, o.begin()->value(), ptr+m.padding );
-				else
-					scalar( m, o.begin()->value(), ptr+m.padding );
-				return;
-			}
-			throw Exception{ sl, ELogLevel::Debug, "A '{}' has no member '{}'.", type.typeName, name };
-		}
-		for( uint i=0; i<type.membersSize; ++i ){
-			let& m = type.members[i];
-			ptr += m.padding;
-			let j = member( m );
-			if( m.isArray ){
-				if( j )
-					array( m, *j, ptr );
-				else
-					THROW_IFSL( !m.isOptional, "'{}'.{} is missing - '{}'.", type.typeName, m.memberName, serialize(o) );
-				ptr += sizeof(uint)+sizeof(void*);
-			}
-			else if( m.isOptional ){
-				if( j ){
-					THROW_IFSL( j->is_array(), "'{}'.{} is a scalar - '{}'.", type.typeName, m.memberName, serialize(*j) );
-					*reinterpret_cast<void**>( ptr ) = box( m, *j ).first;
-				}
-				ptr += sizeof(void*);
-			}
-			else{
-				THROW_IFSL( !j, "'{}'.{} is missing - '{}'.", type.typeName, m.memberName, serialize(o) );
-				scalar( m, *j, ptr );
-				ptr += m.memberType->memSize;
-			}
-		}
+		}, sl );
 	}
 	α Value::SetStructure( const jvalue& j, SL sl )ε->void{
 		let type = value.type;
