@@ -18,6 +18,7 @@ namespace Jde::Opc::Server {
 		INFOT( ELogTags::App, "Stopping OPC UA server..." );
 		if( _thread.has_value() ){
 			_thread->request_stop();
+			Wake( *_ua );
 			_thread->join();
 			_thread.reset();
 		}
@@ -46,9 +47,24 @@ namespace Jde::Opc::Server {
 			//UA_Server_run(...) demands a volatile UA_Boolean*; run the loop manually against the stop token instead. This is what UA_Server_run does internally, and it also drops the original's double run_shutdown.
 			while( !st.stop_requested() )
 				UA_Server_run_iterate( _ua, true );
-			UA_Server_run_shutdown( _ua );//the delete is the destructor's, after it joins this thread.
+			RunShutdown( *_ua );//the delete is the destructor's, after it joins this thread.
 			INFOT( ELogTags::App, "OPC UA server stopped." );
 		}};
+	}
+	//A no-op if the loop is between polls:  the stop flag is then seen before the next one.
+	α UAServer::Wake( UA_Server& server )ι->void{
+		auto& el = *UA_Server_getConfig( &server )->eventLoop;
+		el.cancel( &el );
+	}
+	//UA_Server_run_shutdown iterates once more, then until its components have stopped, and with no timer due each poll waits its whole
+	//timeout:  a timer every 10 ms ends each one.  A cancel can't stand in - it only reaches a poll already running.
+	α UAServer::RunShutdown( UA_Server& server )ι->void{
+		auto& el = *UA_Server_getConfig( &server )->eventLoop;
+		UA_UInt64 tick{};
+		let added = el.addTimer( &el, []( void*, void* ){}, nullptr, nullptr, 10.0, nullptr, UA_TIMERPOLICY_CURRENTTIME, &tick );
+		UA_Server_run_shutdown( &server );
+		if( added==UA_STATUSCODE_GOOD )
+			el.removeTimer( &el, tick );
 	}
 
 	α UAServer::Sessions()ι->sp<UAAccess::SessionList>{ return UAAccess::Sessions( *_ua ); }

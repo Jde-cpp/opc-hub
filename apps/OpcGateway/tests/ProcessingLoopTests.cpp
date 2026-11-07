@@ -30,11 +30,13 @@ namespace Jde::Opc::Gateway::Tests{
 	//100 ms publishing interval and open62541's ten-count - and the client's own 1 s housekeeping are the events of three idle
 	//seconds.  Polling the subscription's interval made it about thirty.
 	TEST_F( ProcessingLoopTests, AnIdleSubscriptionIsPumpedForItsEventsAlone ){
+		let before = _client->MonitoredNodes().Count();
 		auto listener = ms<PushCount>();
 		ASSERT_NO_THROW( SubscribeCounting(_client, listener, {Intensity}) );
 		absl::Cleanup unsubscribe = [&]{
 			UAClient::Unsubscribe( listener );
-			std::this_thread::sleep_for( 1500ms );//the delete-monitoring pass is 1 s after the last item goes.
+			if( !WaitUntil([&]{ return _client->MonitoredNodes().Count()==before; }, 6s) )//the item goes _itemDeleteDelay after the unsubscribe.
+				ADD_FAILURE() << "the item was not deleted after the unsubscribe";
 		};
 		std::this_thread::sleep_for( 500ms );//the create's own traffic settles.
 		Clear();

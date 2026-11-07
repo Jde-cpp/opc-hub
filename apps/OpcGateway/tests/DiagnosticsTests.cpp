@@ -66,8 +66,8 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 			return y;
 		}
-		//The listener's item off the client:  the delete runs a DeleteMonitoring timer (1 s) after the last listener goes, and a subscribe
-		//of the same node inside that second joins the item on its way out - so the next test waits for it to go.
+		//The listener's item off the client:  the delete runs _itemDeleteDelay after the last listener goes, and a subscribe
+		//of the same node inside it joins the item on its way out - so the next test waits for it to go.
 		Ω Unsubscribe( const sp<PushCount>& listener )ι->void{
 			UAClient::Unsubscribe( listener );
 			if( !WaitUntil([]{ let nodes = _client ? _client->TryMonitoredNodes() : nullptr; return !nodes || !nodes->Count(); }, 6s) )
@@ -150,6 +150,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//loss, the start the lost client had, and the item restored - and the slug's client count stays one.  lastBreak and connectedSince
 	//are to the millisecond.
 	TEST_F( DiagnosticsTests, ClientDiagnosticsReadAReconnectAndItsBreak ){
+		const DurationOverride delay{ _reconnectDelay, 1s };//the shipped wait, which the reads in the backoff fit inside.
 		auto listener = ms<PushCount>();
 		ASSERT_NO_THROW( SubscribeCounting(_client, listener, {Intensity}) );
 		absl::Cleanup unsubscribe = [&]{ Unsubscribe( listener ); };//off whichever client holds it by then - the revived one, once the reconnect has restored it.
@@ -274,6 +275,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//A second client of the key, built while the chain waits out its backoff and lost in turn, joins the chain:  the client the
 	//reconnect brings up counts both breaks, reports the later, and keeps the first client's start.
 	TEST_F( DiagnosticsTests, ALossInTheBackoffJoinsTheChain ){
+		const DurationOverride delay{ _reconnectDelay, 1s };//the shipped wait, which a connect and a subscribe fit inside.
 		auto listener = ms<PushCount>(), second = ms<PushCount>();
 		ASSERT_NO_THROW( SubscribeCounting(_client, listener, {Intensity}) );
 		absl::Cleanup unsubscribe = [&]{ UAClient::Unsubscribe( second ); Unsubscribe( listener ); };
@@ -297,6 +299,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//The chain's reconnect hands the listeners to whatever client is registered under the key - here one built in the backoff, with
 	//an in-place reconnect of its own.  That client continues from the lost one:  its own break kept, one more reconnect for the loss.
 	TEST_F( DiagnosticsTests, AReconnectOntoALiveClientAddsToItsOwn ){
+		const DurationOverride delay{ _reconnectDelay, 1s };//the shipped wait, which a connect and its re-activation fit inside.
 		auto listener = ms<PushCount>();
 		ASSERT_NO_THROW( SubscribeCounting(_client, listener, {Intensity}) );
 		absl::Cleanup unsubscribe = [&]{ Unsubscribe( listener ); };

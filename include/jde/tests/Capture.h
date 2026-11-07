@@ -91,9 +91,10 @@ namespace Jde::Logging::Internal{
 				if( suite.Default && *suite.Default!=ELogLevel::NoLog )
 					_suite = move( suite );
 			}
+			const auto floor = _suite.Floor();
 			{
 				ul _{ _mutex };
-				_suiteActive = *_suite.Default!=ELogLevel::NoLog;
+				_suiteActive = floor!=ELogLevel::NoLog && floor<=ELogLevel::Critical;//"None" parses past Critical:  it takes nothing either.
 			}
 			apply();
 		}

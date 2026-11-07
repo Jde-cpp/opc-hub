@@ -67,6 +67,11 @@ namespace Jde::Opc::Gateway{
 			UA_ClientConfig_clear( &config );
 			throw Exception{ sl, {EHttpStatus::InternalServerError}, "Could not create a discovery client for '{}'.", url };
 		}
+		//connectSync looks at the connect only between the event loop's runs, and a refused TCP connect is closed by the delayed callback
+		//a run starts with - whose poll then waits for the next timer, the client's 1 s housekeeping:  a closed port answered a second
+		//late.  A timer every 10 ms ends that poll.
+		if( let sc = UA_Client_addRepeatedCallback(client.get(), []( UA_Client*, void* ){}, nullptr, 10.0, nullptr); sc )
+			DBG( "The discovery client for '{}' has no tick, so a refusal answers a second late:  {:x}", url, sc );
 		return client;
 	}
 	//An array a discovery service allocated, freed with its scope.

@@ -26,7 +26,7 @@ namespace Jde::Opc::Gateway::Tests{
 			_connection = SelectServerCnnctn( OpcServerSlug )->Id;
 			_suiteItems = Items();
 		}
-		//A purge takes its group's items a second on (DeleteMonitoring).  HistGroupTests' purges don't wait for them, and they fell during the
+		//A purge takes its group's items _itemDeleteDelay on (DeleteMonitoring).  HistGroupTests' purges don't wait for them, and they fell during the
 		//next suite's first test, under the count it started from:  its Purge waited out 15s for a count the drop had passed.
 		Ω TearDownTestSuite()ι->void{
 			try{
@@ -69,7 +69,7 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 			return Id( Mutate(ql+" ){ id }", move(vars)) );
 		}
-		//The group goes, and its items with it, a second on (DeleteMonitoring):  waited for, so the next test counts none of them.
+		//The group goes, and its items with it, _itemDeleteDelay on (DeleteMonitoring):  waited for, so the next test counts none of them.
 		Ω Purge( uint32 group, uint itemsBefore )ι->void{
 			try{
 				Mutate( "purgeHistGroup( id:$id )", {{"id", group}} );

@@ -140,7 +140,7 @@ namespace Jde::Opc::Gateway::Tests{
 	α SubscribeTests::UnsubscribeAndDrain( const NodeId& nodeId, uint remaining, Duration timeout )ε->void{
 		let ack = BlockAwait<ClientSocketAwait<FromServer::UnsubscribeAck>,FromServer::UnsubscribeAck>( Socket().Unsubscribe(OpcServerSlug, {nodeId}) );
 		THROW_IF( ack.successes_size()!=1, "the unsubscribe dropped {} node(s), not the 1 it was given", ack.successes_size() );
-		Stopwatch sw;//the item goes a DeleteMonitoring timer (1s) after the ack, so poll rather than fixed-sleep.
+		Stopwatch sw;//the item goes _itemDeleteDelay after the ack, so poll rather than fixed-sleep.
 		while( _client->MonitoredNodes().Count()!=remaining )
 			sw.CheckTimeout( timeout, 1ms );
 	}
@@ -212,7 +212,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( WriteAndPush(Intensity, 6s) );
 		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity) );
 		TRACE( "-------------------------------------------------------------" );
-		//teardown costs the gateway's 1s DeleteMonitoring wait and the delete's round trip, so poll rather than fixed-sleep.
+		//teardown costs the gateway's DeleteMonitoring wait (_itemDeleteDelay) and the delete's round trip, so poll rather than fixed-sleep.
 		Stopwatch sw;
 		while( _client->Processing() )
 			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
@@ -333,21 +333,21 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity, before) );
 	}
 
-	//soak-findings #11: the last monitored item going deletes the whole subscription, but a second later (DeleteMonitoring's
+	//soak-findings #11: the last monitored item going deletes the whole subscription, but _itemDeleteDelay later (DeleteMonitoring's
 	//timer).  A subscribe arriving inside that window used to build its items on the id about to be deleted - the ack came
 	//back successful, the items existed client-side, and nothing ever pushed.  Re-subscribing immediately after an
 	//unsubscribe lands inside the window every time, which is what this does; the assertion is simply that pushes work.
 	TEST_F( SubscribeTests, SubscribeSurvivesSubscriptionDelete ){
 		ASSERT_NO_THROW( SubscribeAndPush(Intensity) );
 
-		//The window opens when the item is actually gone, not at the unsubscribe:  DeleteMonitoring's timer erases the item a
-		//second later and submits the subscription delete in the same pass.  The drain to zero is that pass having run, so the
+		//The window opens when the item is actually gone, not at the unsubscribe:  DeleteMonitoring's timer erases the item
+		//_itemDeleteDelay later and submits the subscription delete in the same pass.  The drain to zero is that pass having run, so the
 		//delete is in flight from here and a subscribe landing now is the race.  (Re-subscribing before this instead keeps the
 		//item count non-zero, and the pass then deletes nothing - which is why that ordering proves nothing.)
 		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity) );
 		Subscribe( Intensity );//into the window, and no wait for a push: the write below is the one that has to arrive.
 
-		//Past the 1s delete timer, so a subscription deleted out from under these items shows up here as silence.
+		//Past the delete timer, so a subscription deleted out from under these items shows up here as silence.
 		ASSERT_NO_THROW( WriteAndPush(Intensity) ) << "no data change - the re-subscribe's items went onto a deleted subscription";
 		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity) );
 	}
@@ -374,7 +374,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( parked, parkedBefore+monitoredLost ) << "the nodes the loss parked are in neither count";
 		}
 
-		let revived = WaitRevived( lost, OpcServerSlug );//the reconnect waits a second before its first attempt, then connects, subscribes and re-creates the items.
+		let revived = WaitRevived( lost, OpcServerSlug );//the reconnect's first wait, then a connect, subscribe and create.
 		ASSERT_TRUE( revived ) << "no replacement client came up with the monitored node restored";
 		Stopwatch sw;
 		_client = revived;//the suite shares it: later tests must not reach for the deregistered one.
@@ -401,7 +401,7 @@ namespace Jde::Opc::Gateway::Tests{
 		_client->Resubscribe();
 		UAClient::ConnectionLost( sp<UAClient>{_client} );
 
-		let revived = WaitRevived( lost, OpcServerSlug );//parked by the failed rebuild, so the reconnect's second-long wait, then a connect, subscribe and create.
+		let revived = WaitRevived( lost, OpcServerSlug );//parked by the failed rebuild, so the reconnect's first wait, then a connect, subscribe and create.
 		ASSERT_TRUE( revived ) << "no replacement client came up with the monitored node restored";
 		_client = revived;//the suite shares it: later tests must not reach for the deregistered one.
 
@@ -429,7 +429,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}}) );
 		ASSERT_EQ( sc, UA_STATUSCODE_GOOD );
 
-		let revived = WaitRevived( lost, OpcServerSlug );//parked by the refused rebuild, so the reconnect's second-long wait, then a connect, subscribe and create.
+		let revived = WaitRevived( lost, OpcServerSlug );//parked by the refused rebuild, so the reconnect's first wait, then a connect, subscribe and create.
 		ASSERT_TRUE( revived ) << "no replacement client came up with the monitored node restored - the refused rebuild dropped its listener";
 		_client = revived;//the suite shares it: later tests must not reach for the deregistered one.
 
@@ -442,6 +442,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//mid-shutdown built a client nothing stopped.  UAClient::Shutdown now starts with StopReconnects, which cancels the wait.  The
 	//chain's first wait is a second long, so one still running half a second after StopReconnects was not cancelled.
 	TEST_F( SubscribeTests, StopReconnectsEndsTheWait ){
+		const DurationOverride delay{ _reconnectDelay, 1s };//the shipped wait:  the suite's would end by itself inside the half second.
 		ASSERT_NO_THROW( SubscribeAndPush(Intensity) );//the initial push - the subscription is live from here.
 
 		let waiting = UAClient::ReconnectsWaiting();
@@ -521,7 +522,7 @@ namespace Jde::Opc::Gateway::Tests{
 		atomic<double> RevisedSamplingInterval{}; atomic<uint32> RevisedQueueSize{};
 		mutex Mutex; string LostOpc, RestoredOpc; flat_set<NodeId> LostNodes, RestoredNodes; TimePoint LostAt;
 	};
-	Ω drainListener( const sp<UAClient>& client, const sp<StateListener>& listener, uint remaining )->void{//off the client, and its item gone - the DeleteMonitoring timer runs a second behind the unsubscribe.
+	Ω drainListener( const sp<UAClient>& client, const sp<StateListener>& listener, uint remaining )->void{//off the client, and its item gone - the DeleteMonitoring timer runs _itemDeleteDelay behind the unsubscribe.
 		UAClient::Unsubscribe( listener );
 		Stopwatch sw;
 		while( client->MonitoredNodes().Count()!=remaining )
@@ -647,7 +648,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( listener->LostNodes, flat_set<NodeId>{Intensity} );
 			EXPECT_GE( listener->LostAt, lostAfter );
 		}
-		Stopwatch sw;//the reconnect waits a second before its first attempt, then connects, subscribes and re-creates the item.
+		Stopwatch sw;//the reconnect's first wait, then a connect, subscribe and create.
 		while( !listener->PushesAfterRestore ){
 			ASSERT_NO_THROW( sw.CheckTimeout(30s, 10ms) ) << "no push after the reconnect";
 		}
@@ -1066,6 +1067,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//the item it needs, and late enough that the new subscription, a round trip of milliseconds since the loop stopped polling
 	//(#526), is in place first.  A run that misses either condition skips rather than passing on a scenario it did not stage.
 	TEST_F( SubscribeTests, EmptyDeletePassKeepsNewSubscription ){
+		const DurationOverride delay{ _itemDeleteDelay, 1s };//the timings below are the shipped second's.
 		auto listener = ms<PushCount>();
 		auto& nodes = _client->MonitoredNodes();
 		ASSERT_NO_THROW( SubscribeCounting(_client, listener, {Intensity}) );
@@ -1099,7 +1101,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//an item monitored had it revived a second after its teardown, with pushes landing in a fixture gtest had already deleted.
 	//Parking is ConnectionLost's alone now; these pin that RemoveClient parks nothing, directly and through a rebuild.
 	Ω expectNothingRevived( const sp<PushCount>& listener, uint pushes )->void{
-		std::this_thread::sleep_for( 4s );//a revival is the reconnect's second-long wait, a connect, a subscribe, a create and an initial push.
+		std::this_thread::sleep_for( _reconnectDelay+2s );//a revival is the reconnect's first wait, then a connect, a subscribe, a create and an initial push - about 0.7 s.
 		EXPECT_EQ( listener->Pushes.load(), pushes ) << "the removed client's listener was sent data again";
 		for( let& client : UAClient::LiveClients() ){
 			let nodes = client->TryMonitoredNodes();
@@ -1269,6 +1271,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//processing once nothing is monitored.  The create is for a node the server does not have, and the strand is held across the
 	//pass, so the create is still in flight when the pass decides.
 	TEST_F( SubscribeTests, KeptEmptySubscriptionStopsProcessing ){
+		const DurationOverride delay{ _itemDeleteDelay, 1s };//the timings below are the shipped second's.
 		const NodeId missing{ 4, 999'999 };//not on the server:  its create fails for every node.
 		if( _client->MonitoredNodes().Count() )
 			GTEST_SKIP() << "an earlier test left items monitored - the subscription would not end up empty";
@@ -1313,13 +1316,14 @@ namespace Jde::Opc::Gateway::Tests{
 		ServerTrust::OverrideTrustedCertDirs( vector<fs::path>{ fs::temp_directory_path()/"jde-reconnect-no-anchors" } );
 		UAClient::ConnectionLost( sp<UAClient>{_client} );//parks the node; every reconnect from here is refused.
 
-		//Given up means no chain waiting, for longer than any wait it would take:  the chain waits 1s, 2s, 4s between attempts, and
-		//retrying forever it is waiting nearly all the time.
+		//Given up means no chain waiting for a while:  the chain waits _reconnectDelay, then twice and four times it, between attempts
+		//refused at once, so retrying forever it is waiting nearly all the time.
+		let quiet = std::max<Duration>( 1s, 3*_reconnectDelay );
 		auto quietSince = steady_clock::now();
 		ASSERT_TRUE( WaitUntil([&]{
 			if( UAClient::ReconnectsWaiting()!=waiting )
 				quietSince = steady_clock::now();
-			return steady_clock::now()-quietSince>=3s;
+			return steady_clock::now()-quietSince>=quiet;
 		}, 30s) ) << "the reconnect chain is still retrying a certificate the gateway refuses every time";
 		EXPECT_TRUE( UAClient::UnsubscribePending(OpcServerSlug, listener, {Intensity}).empty() ) << "the chain stopped but left the node parked";
 		let errors = UAClient::ConnectErrors();
@@ -1516,7 +1520,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_EQ( _client->MonitoredNodes().Count(), before+1 );
 
 		BlockAwait( session->Close(false, SRCE_CUR) );
-		Stopwatch sw;//the item goes away a DeleteMonitoring timer (1s) after the close, so poll rather than fixed-sleep.
+		Stopwatch sw;//the item goes away _itemDeleteDelay after the close, so poll rather than fixed-sleep.
 		while( _client->MonitoredNodes().Count()!=before )
 			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) );
 	}

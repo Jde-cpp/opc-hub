@@ -1271,7 +1271,7 @@ namespace Jde::Opc::Gateway{
 	//Two coroutines, not one loop:  this is the house hand-off chain, because the two awaitables have different task types.
 	//An earlier version bridged ConnectAwait through Any() so one frame could do both, and that is not safe here - take the
 	//awaitable as your own task type, as this chain does.
-	constexpr auto MaxReconnectDelay{ 15s };//capped, not given up on:  an industrial server can be down for a maintenance window and the live view is expected back with it.
+	Duration _reconnectDelay{ 1s };
 	constexpr uint MaxRejections{ 3 };//in a row, ~7s apart at most:  one could be a server still loading its users; three is the credential or the certificate.
 
 	//A connect failure a retry would only repeat:  the server refusing this credential or this client's certificate, the gateway
@@ -1395,7 +1395,7 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	Ω startReconnect( const ServerCnnctnNK& slug, const Credential& credential )ι->void{ waitThenConnect( slug, credential, 1, 1s ); }
+	Ω startReconnect( const ServerCnnctnNK& slug, const Credential& credential )ι->void{ waitThenConnect( slug, credential, 1, _reconnectDelay ); }
 
 	//`client`'s figures continued from `lost`, the client it stands in for:  the earlier start, both counts and one more for the break
 	//between them, the later break.

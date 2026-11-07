@@ -673,10 +673,11 @@ namespace Jde::Opc::Gateway::Tests{
 			//(414-clients-discovery review #1:  on the blocking pool, two discovers held every connect).
 			boost::asio::io_context ctx;
 			boost::asio::ip::tcp::acceptor silent{ ctx, {boost::asio::ip::make_address("127.0.0.1"), 0} };
+			constexpr milliseconds requestTimeout{ 1000 };
 			let start = steady_clock::now();
 			array<sp<Awaited<jvalue>>,2> discovering{ ms<Awaited<jvalue>>(), ms<Awaited<jvalue>>() };
 			for( auto& d : discovering )
-				querying( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"requestTimeout", 2000}}, d );
+				querying( "discover( url: $url, requestTimeout: $requestTimeout ){ url }", {{"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"requestTimeout", requestTimeout.count()}}, d );
 			let node = Socket().QuerySync( "node( opc: $opc, id: $id ){ id name }", {{"opc", OpcServerSlug}, {"id", Intensity.ToJson()}} );
 			let nodeAnswered = steady_clock::now()-start;
 			auto ran = ms<std::atomic_flag>();
@@ -686,8 +687,8 @@ namespace Jde::Opc::Gateway::Tests{
 			let jobRan = steady_clock::now()-posted;
 			EXPECT_FALSE( discovering[0]->Done.test() || discovering[1]->Done.test() ) << "the discovers are still waiting on the listener";
 			EXPECT_FALSE( Json::AsSV(node.as_object(), "name").empty() ) << serialize( node );
-			EXPECT_LT( nodeAnswered, 2s ) << "the node query did not wait on the discovers";
-			EXPECT_LT( jobRan, 1s ) << "a connect's job did not queue behind the discovers";
+			EXPECT_LT( nodeAnswered, requestTimeout ) << "the node query did not wait on the discovers";
+			EXPECT_LT( jobRan, requestTimeout/2 ) << "a connect's job did not queue behind the discovers";
 			for( let& d : discovering ){
 				ASSERT_TRUE( d->Wait(10s) ) << "the discover answered";
 				ASSERT_TRUE( d->Error ) << "a listener that never answers is the mutation's error: " << serialize( d->Result );
@@ -695,8 +696,8 @@ namespace Jde::Opc::Gateway::Tests{
 				EXPECT_TRUE( sv{d->Error->what()}.contains("did not answer GetEndpoints") ) << d->Error->what();
 			}
 			let elapsed = steady_clock::now()-start;
-			EXPECT_GE( elapsed, 2s ) << "the requestTimeout is the deadline";
-			EXPECT_LT( elapsed, 8s ) << "the request's 2 s, not the gateway's 10 s, and the two at once";
+			EXPECT_GE( elapsed, requestTimeout ) << "the requestTimeout is the deadline";
+			EXPECT_LT( elapsed, 8s ) << "the request's 1 s, not the gateway's 10 s, and the two at once";
 		}
 		{//A name that doesn't exist (.invalid, RFC 6761) is said so;  a lookup past its deadline - a nameserver that doesn't answer - names
 			//the deadline, which is the request's where that is shorter than 3 s (review #5).
