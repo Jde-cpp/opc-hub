@@ -21,10 +21,15 @@ namespace Jde::Opc::Gateway::Tests{
 			UA_Variant v; UA_Variant_setScalar( &v, &held, &UA_TYPES[UA_TYPES_INT32] );
 			UAε( UA_Server_writeValue(ua, node, v) );
 		}
-		//updateVariable's answer:  the value it reads back.
-		Ω Update( const NodeId& node, jvalue value )ε->jvalue{
-			const jobject vars{ {"opc", OpcServerSlug}, {"id", node.ToJson()}, {"value", move(value)} };
-			let written = Socket().QuerySync( "updateVariable( opc: $opc, id: $id, value: $value ){ value }", vars );
+		//updateVariable's answer:  the value it reads back - the whole of an array written by `indexRange`, Part 4's "2:4".
+		Ω Update( const NodeId& node, jvalue value, sv indexRange={} )ε->jvalue{
+			jobject vars{ {"opc", OpcServerSlug}, {"id", node.ToJson()}, {"value", move(value)} };
+			string query{ "updateVariable( opc: $opc, id: $id, value: $value" };
+			if( indexRange.size() ){
+				vars["indexRange"] = indexRange;
+				query += ", indexRange: $indexRange";
+			}
+			let written = Socket().QuerySync( query+" ){ value }", vars );
 			return written.as_object().at( "value" );
 		}
 		//node( opc, id ){ columns }:  the id form's read of one node.
@@ -47,6 +52,58 @@ namespace Jde::Opc::Gateway::Tests{
 		const RetypedNode retyped{ _ua, _node, UA_NS0ID_SERVERSTATE };
 		constexpr UA_Int32 shutdown{ UA_SERVERSTATE_SHUTDOWN };
 		EXPECT_EQ( Update(_node, shutdown), jvalue{shutdown} );
+	}
+
+	//updateVariable writes each built-in type (clients spec *Values and writes*, #423) to _Test's variable of it (Pumps.h TestVariable), each
+	//from the json ToJson writes for it and read back the same:  a 64-bit integer in the Long form, exact past 2^53;  a ByteString its
+	//hex, or {b: base64} as the web sends one;  a NodeId and an ExpandedNodeId as NodeId::ToJson spells them;  a QualifiedName {ns, name};
+	//a LocalizedText its text, and {locale, text} naming a locale the server keeps (Open questions #11).  The server holds what was sent.
+	TEST_F( WriteTests, EveryBuiltInType ){
+		let ns = PumpsNs();
+		struct Case{ UA_UInt32 Type; jvalue Written; jvalue ReadBack; };//ReadBack null:  as written
+		const jobject big{ {"high", 2097152}, {"low", 1}, {"unsigned", false} }, top{ {"high", 0xFFFFFFFF}, {"low", 0xFFFFFFFF}, {"unsigned", true} };
+		const vector<Case> cases{
+			{ UA_NS0ID_BOOLEAN, false, {} }, { UA_NS0ID_SBYTE, -5, {} }, { UA_NS0ID_BYTE, 200, {} }, { UA_NS0ID_INT16, -300, {} }, { UA_NS0ID_UINT16, 60000, {} },
+			{ UA_NS0ID_INT32, -70000, {} }, { UA_NS0ID_UINT32, 4000000000u, {} }, { UA_NS0ID_INT64, big, {} }, { UA_NS0ID_UINT64, top, {} },
+			{ UA_NS0ID_FLOAT, 1.5, {} }, { UA_NS0ID_DOUBLE, 2.25, {} }, { UA_NS0ID_STRING, "written", {} },
+			{ UA_NS0ID_DATETIME, jobject{{"seconds", 1800000000}, {"nanos", 500000000}}, {} },
+			{ UA_NS0ID_GUID, "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", {} },
+			{ UA_NS0ID_BYTESTRING, jobject{{"b", "AQID"}}, "010203" }, { UA_NS0ID_BYTESTRING, "0a0b0c", {} },
+			{ UA_NS0ID_XMLELEMENT, "<written/>", {} },
+			{ UA_NS0ID_NODEID, jobject{{"ns", ns}, {"i", PumpManual}}, {} }, { UA_NS0ID_NODEID, jobject{{"ns", ns}, {"s", "written"}}, {} },
+			{ UA_NS0ID_EXPANDEDNODEID, jobject{{"nsu", PumpsUri}, {"i", PumpManual}}, jobject{{"ns", ns}, {"i", PumpManual}, {"nsu", PumpsUri}} },//the uri kept, and the index the client's namespace table gives it
+			{ UA_NS0ID_STATUSCODE, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE, {} }, { UA_NS0ID_STATUSCODE, jobject{{"sc", UA_STATUSCODE_GOODCLAMPED}}, UA_STATUSCODE_GOODCLAMPED },
+			{ UA_NS0ID_QUALIFIEDNAME, jobject{{"ns", ns}, {"name", "written"}}, {} },
+			{ UA_NS0ID_LOCALIZEDTEXT, "written", {} }, { UA_NS0ID_LOCALIZEDTEXT, jobject{{"locale", "de"}, {"text", "geschrieben"}}, "geschrieben" } };
+		for( let& c : cases ){
+			SCOPED_TRACE( Ƒ("{}:  {}", UA_TYPES[c.Type-1].typeName, serialize(c.Written)) );
+			EXPECT_EQ( Update(NodeId{ns, TestVariable(c.Type)}, c.Written), c.ReadBack.is_null() ? c.Written : c.ReadBack );
+		}
+		let held = []( UA_Server* ua, UA_UInt32 type ){ return Opc::ReadValue( *ua, NodeId{PumpsNs(), TestVariable(type)} ); };
+		EXPECT_EQ( held(_ua, UA_NS0ID_INT64).Get<UA_Int64>(0), 9007199254740993ll ) << "past 2^53, exact";
+		EXPECT_EQ( held(_ua, UA_NS0ID_UINT64).Get<UA_UInt64>(0), std::numeric_limits<UA_UInt64>::max() );
+		let text = held( _ua, UA_NS0ID_LOCALIZEDTEXT );
+		EXPECT_EQ( ToSV(text.Get<UA_LocalizedText>(0).locale), "de" ) << "the locale named goes with the text";
+		let bytes = held( _ua, UA_NS0ID_BYTESTRING );
+		EXPECT_EQ( ToSV(bytes.Get<UA_ByteString>(0)), "\x0a\x0b\x0c" );
+	}
+	//An array writes whole, and a slice of it by indexRange (Part 4 §7.27):  the value is the slice, and the rest stays.  A range past the
+	//array, or one the slice doesn't fit, is the server's refusal.
+	TEST_F( WriteTests, AnArrayAndAnIndexRange ){
+		const NodeId node{ PumpsNs(), TestArray };
+		EXPECT_EQ( Update(node, jarray{1, 2, 3, 4, 5}), (jarray{1, 2, 3, 4, 5}) );
+		EXPECT_EQ( Update(node, jarray{20, 30}, "1:2"), (jarray{1, 20, 30, 4, 5}) );
+		EXPECT_EQ( Update(node, jarray{50}, "4"), (jarray{1, 20, 30, 4, 50}) );
+		EXPECT_EQ( Update(node, jarray{7, 8, 9}), (jarray{7, 8, 9}) ) << "any length";
+		try{
+			Update( node, jarray{1}, "5" );
+			ADD_FAILURE() << "a range past the array was written";
+		}
+		catch( const Exception& e ){
+			EXPECT_TRUE( UA_StatusCode_isBad(e.Code()) ) << e.what();
+		}
+		EXPECT_THROW( Update(node, jarray{1, 2}, "0"), Exception ) << "two values for one slot";
+		EXPECT_THROW( Update(node, jarray{1}, "x"), Exception ) << "no range";
 	}
 
 	//A DataType the gateway has no built-in type for takes the type of the node's value, so 9 goes out as the Int32 the node

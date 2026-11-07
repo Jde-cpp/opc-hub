@@ -1,6 +1,6 @@
 import { computed } from '@angular/core';
 import { OpcError } from './opc-error';
-import { EHistorian, ELimit, ESeverity, flagsText, infoBits, isBad, nameKey, scHex, severity, statusIcon, statusText } from './status-code';
+import { EHistorian, ELimit, ESeverity, flagsText, infoBits, isBad, nameKey, parseStatus, scHex, severity, statusIcon, statusText } from './status-code';
 
 //OPC 10000-4 7.38.  The codes are the stack's own:  0x40940000 UncertainEngineeringUnitsExceeded, 0x808C0000 BadSensorFailure,
 //0x00960000 GoodLocalOverride.  InfoType (11:10) = 01 is 0x0400 - the bit that gives the limit and overflow bits a meaning.
@@ -126,5 +126,16 @@ describe( 'OpcError status names', ()=>{
 	it( 'never renders an unfetched name as "undefined" or "null"', ()=>{
 		const text = new OpcError( 0x808D0000, "OpcError", "", undefined ).toString();
 		expect( text ).toBe( "[808d0000] - Bad 0x808D0000" );
+	} );
+} );
+
+//the hist-edit dialog's status field and the StatusCode editor:  a code as typed
+describe( 'parseStatus', ()=>{
+	it( 'takes hex or decimal, blank as Good, and nothing else', ()=>{
+		expect( parseStatus( '' ) ).toBeUndefined();
+		expect( parseStatus( ' 0x40940600 ' ) ).toBe( 0x40940600 );
+		expect( parseStatus( '1082130432' ) ).toBe( 0x40800000 );
+		expect( parseStatus( 'Good' ) ).toBeNull();
+		expect( parseStatus( '0x100000000' ) ).toBeNull();
 	} );
 } );

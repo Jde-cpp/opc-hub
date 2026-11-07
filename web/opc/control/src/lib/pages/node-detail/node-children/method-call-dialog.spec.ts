@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { flush, stable } from 'jde-spa/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { Enum } from '../../../model/enum';
@@ -7,6 +8,7 @@ import { NodeId } from '../../../model/node-id';
 import { Method, OpcObject } from '../../../model/node';
 import { StatusCode } from '../../../model/types';
 import { Value } from '../../../model/value';
+import { ValueEditor } from '../value-editor/value-editor';
 import { MethodCallDialog, MethodCallDialogData } from './method-call-dialog';
 
 const pump = new OpcObject( <any>{ns: 2, i: 5005, name: 'Pump (Manual)', browse: {ns: 2, name: 'pumpManual'}} );
@@ -17,7 +19,7 @@ const declared = new MethodArguments( {name: 'toHertz',
 const BadInvalidArgument = 0x80AB0000, BadTypeMismatch = 0x80740000, BadUserAccessDenied = 0x801F0000;
 
 //The dialog over a stub gateway:  `arguments` answers the method's declaration, `calls` is what it sent, `answerWith` sets the
-//result each call gets, and `names` the status codes it asked the names of.
+//result each call gets, `names` the status codes it asked the names of, and `editors` the ValueEditor per input.
 const open = async ( data:Partial<MethodCallDialogData>={} )=>{
 	let answer:CallResult|Error = { statusCode: 0, inputArgumentResults: [], outputArguments: [] };
 	const call = vi.fn( async ( _args:Value[] )=>{ if( answer instanceof Error ) throw answer; return answer; } );
@@ -32,6 +34,7 @@ const open = async ( data:Partial<MethodCallDialogData>={} )=>{
 	const dialog = fixture.componentInstance;
 	await stable( fixture, 2 );//ngOnInit's load, then the arguments rendered:  the only load - an explicit one beside it reset what a test typed when the second landed
 	return { fixture, dialog, ref,
+		editors: ()=>fixture.debugElement.queryAll( By.directive( ValueEditor ) ).map( d=><ValueEditor>d.componentInstance ),
 		calls: ()=>call.mock.calls.map( ([args])=>args ),
 		names: ()=>names.mock.calls.map( ([codes])=>codes ),
 		answerWith: ( a:CallResult|Error )=>{ answer = a; } };
@@ -41,7 +44,7 @@ describe( 'MethodCallDialog', ()=>{
 	it( 'builds an editor per input argument from the declaration, and sends nothing until each has a value', async ()=>{
 		const d = await open();
 		expect( d.dialog.title ).toBe( 'Pump (Manual).toHertz' );
-		expect( d.dialog.inputs.map( a=>a.editor ) ).toEqual( ['number'] );
+		expect( d.editors().map( e=>e.kind() ) ).toEqual( ['number'] );
 		expect( d.dialog.label( d.dialog.inputs[0] ) ).toBe( 'rpm (Double)' );
 		expect( d.dialog.problem() ).toBe( 'Enter rpm.' );
 		await d.dialog.apply();
@@ -52,7 +55,7 @@ describe( 'MethodCallDialog', ()=>{
 	//listed as the outputs' names over nothing;  a Bad status is the whole answer
 	it( 'lists no outputs for a refused call, and an empty array as one', async ()=>{
 		const d = await open();
-		d.dialog.setText( 0, '1500' );
+		d.dialog.setValue( 0, 1500 );
 		d.answerWith( {statusCode: 0x80280000, inputArgumentResults: [], outputArguments: [[], []]} );//BadSubscriptionIdInvalid
 		await d.dialog.apply();
 		expect( d.dialog.outputs() ).toEqual( [] );
@@ -69,11 +72,11 @@ describe( 'MethodCallDialog', ()=>{
 		const arguments_ = new MethodArguments( {name: 'setHealth', inputArguments: [{name: 'health', dataType: {ns: 2, i: 6244}, baseDataType: {i: 29}}], outputArguments: [{name: 'was', dataType: {ns: 2, i: 6244}, baseDataType: {i: 29}}]} );
 		arguments_.inputs[0].enum = arguments_.outputs[0].enum = health;
 		const d = await open( {arguments: async ()=>arguments_} );
-		expect( d.dialog.inputs[0].editor ).toBe( 'enum' );
+		expect( d.editors()[0].kind() ).toBe( 'enum' );
 		expect( d.dialog.label( d.dialog.inputs[0] ) ).toBe( 'health (DeviceHealthEnumeration)' );
 		expect( d.fixture.nativeElement.querySelector( 'mat-select' ) ).not.toBeNull();
 		expect( d.dialog.problem() ).toBe( 'Enter health.' );
-		d.dialog.setText( 0, '2' );
+		d.dialog.setValue( 0, 2 );
 		d.answerWith( {statusCode: 0, inputArgumentResults: [], outputArguments: [0]} );
 		await d.dialog.apply();
 		expect( d.calls() ).toEqual( [[2]] );
@@ -83,7 +86,7 @@ describe( 'MethodCallDialog', ()=>{
 	it( 'reads the arguments once, and keeps what was typed while the page awaits', async ()=>{
 		const read = vi.fn( async ()=>declared );
 		const d = await open( {arguments: read} );
-		d.dialog.setText( 0, '1500' );
+		d.dialog.setValue( 0, 1500 );
 		await flush();
 		await d.dialog.apply();
 		expect( read ).toHaveBeenCalledTimes( 1 );
@@ -91,7 +94,7 @@ describe( 'MethodCallDialog', ()=>{
 	} );
 	it( 'calls with the arguments typed and shows the status and the outputs by name', async ()=>{
 		const d = await open();
-		d.dialog.setText( 0, '1500' );
+		d.dialog.setValue( 0, 1500 );
 		expect( d.dialog.problem() ).toBeUndefined();
 		d.answerWith( {statusCode: 0, inputArgumentResults: [], outputArguments: [25, '25 Hz']} );
 		await d.dialog.apply();
@@ -104,7 +107,7 @@ describe( 'MethodCallDialog', ()=>{
 	} );
 	it( 'shows a refusal with each argument\'s status, by name once fetched', async ()=>{
 		const d = await open();
-		d.dialog.setText( 0, '1500' );
+		d.dialog.setValue( 0, 1500 );
 		d.answerWith( {statusCode: BadInvalidArgument, inputArgumentResults: [BadTypeMismatch], outputArguments: []} );
 		await d.dialog.apply();
 		expect( d.dialog.argumentResults() ).toEqual( [{name: 'rpm', status: BadTypeMismatch}] );
@@ -121,7 +124,7 @@ describe( 'MethodCallDialog', ()=>{
 	} );
 	it( 'shows the gateway\'s refusal before any call, and the arguments\' when they cannot be read', async ()=>{
 		const d = await open();
-		d.dialog.setText( 0, '1500' );
+		d.dialog.setValue( 0, 1500 );
 		d.answerWith( new Error( 'BadNodeIdUnknown' ) );
 		await d.dialog.apply();
 		expect( d.dialog.error() ).toBe( 'BadNodeIdUnknown' );
@@ -136,10 +139,10 @@ describe( 'MethodCallDialog', ()=>{
 		await none.dialog.apply();
 		expect( none.calls() ).toEqual( [[]] );
 		const flag = await open( {arguments: async ()=>new MethodArguments( {name: 'run', inputArguments: [{name: 'on', dataType: {i: 1}}, {name: 'label', dataType: {i: 12}}]} )} );
-		expect( flag.dialog.inputs.map( a=>a.editor ) ).toEqual( ['boolean', 'text'] );
+		expect( flag.editors().map( e=>e.kind() ) ).toEqual( ['boolean', 'text'] );
 		expect( flag.dialog.problem() ).toBeUndefined();//a toggle holds false, and text may be blank
-		flag.dialog.setFlag( 0, true );
-		flag.dialog.setText( 1, 'x' );
+		flag.editors()[0].setFlag( true );
+		flag.editors()[1].setText( 'x' );
 		await flag.dialog.apply();
 		expect( flag.calls() ).toEqual( [[true, 'x']] );
 	} );

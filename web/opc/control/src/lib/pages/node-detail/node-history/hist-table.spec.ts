@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { Paginator } from 'jde-framework';
 import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
+import { Enum } from '../../../model/enum';
 import { EAccess } from '../../../model/types';
 import { HistTable } from './hist-table';
 import { NodeId } from '../../../model/node-id';
@@ -23,6 +24,14 @@ const render = ( values:HistValue[], inputs:Record<string,unknown>={} )=>{
 };
 
 describe( 'HistTable', ()=>{
+	//clients spec *Values and writes* (#423):  an enumeration of the server's own shows the name of its value, as the Children tab's cell
+	//and the watch list do;  a value the type doesn't name, and any other node's, its text
+	it( 'shows an enumeration by name', ()=>{
+		const health = variable( 3, 'health', {dataType: {ns: 2, i: 3002}, historizing: true} );
+		health.customDataType = new Enum( new NodeId( {ns: 2, i: 3002} ), <any>{name: 'Health', enumValues: [{id: 1, name: 'OK'}, {id: 2, name: 'Failed'}]} );
+		const t = render( [at(health, 1000, 2), at(health, 2000, 7), at(A, 3000, 2)], {nodes: [A, health]} );
+		expect( [0, 1, 2].map( r=>t.cells( r )[4] ) ).toEqual( ['2', '7', 'Failed'] );
+	} );
 	//clients plan 8b (#422):  a stored structure arrives decoded by member and the cell is a table of them;  a body no type explains says so
 	it( 'shows a structure as a table of its members, and an undecoded body as such', ()=>{
 		const t = render( [at(A, 1000, <any>{Rpm: 1480.5, Limits: {Low: 0, High: 3000}}), at(A, 2000, <any>new ExtensionObject( new NodeId({ns: 2, i: 3010}), "AAAA" ))] );

@@ -76,7 +76,7 @@ export class NodeView extends View{
 			case "name":        return node.name;
 			case "class":       return ENodeClass[node.nodeClass];
 			case "dataType":    return NodeView.dataType( variable );
-			case "snapshot":    return typeof variable?.value=="number" ? variable.value : variable?.value===undefined ? undefined : valueString( variable?.value );
+			case "snapshot":    return NodeView.enumName( variable ) ?? ( typeof variable?.value=="number" ? variable.value : variable?.value===undefined ? undefined : valueString( variable?.value ) );
 			case "status":      return NodeView.status( variable );
 			case "sourceTime":  return NodeView.time( variable?.sourceTime );
 			case "serverTime":  return NodeView.time( variable?.serverTime );
@@ -86,6 +86,12 @@ export class NodeView extends View{
 			case "description": return node.description?.text;
 		}
 		return undefined;
+	}
+	//an enumeration of the server's own by the name of its value, once the type is resolved (Gateway.resolveEnum):  the cell shows it, and
+	//the view sorts and filters on it, as the watch list does (Watch.valueName);  nothing for any other value
+	static enumName( variable:Variable|undefined ):string|undefined{
+		const custom = variable?.customDataType;
+		return custom && "enumValues" in custom && typeof variable.value=="number" ? custom.enumValues.find( v=>v.id==variable.value )?.name : undefined;
 	}
 	//local time to the millisecond, the History tab's format:  fixed width, so the text sorts and compares in time order
 	static time( d:Date|undefined ):string|undefined{ return d ? DateUtils.toLocalInput( d ).replace( "T", " " ) : undefined; }

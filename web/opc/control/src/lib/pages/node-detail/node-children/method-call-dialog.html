@@ -13,45 +13,9 @@
 		@if( !inputs.length ){
 			<p class="hint">The method takes no arguments.</p>
 		}
-		@for( a of inputs; track $index ){
-			@switch( a.editor ){
-				@case( 'boolean' ){
-					<mat-slide-toggle class="value-toggle" [checked]="flags()[$index]" (change)="setFlag($index, $event.checked)" [disabled]="busy()" [attr.aria-label]="a.name">{{ label(a) }}: {{ flags()[$index] ? "true" : "false" }}</mat-slide-toggle>
-					@if( a.description ){<p class="hint">{{ a.description }}</p>}
-				}
-				@case( 'number' ){
-					<mat-form-field>
-						<mat-label>{{ label(a) }}</mat-label>
-						<input matInput type="number" step="any" [value]="texts()[$index]" (input)="setText($index, $any($event.target).value)" [disabled]="busy()">
-						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
-					</mat-form-field>
-				}
-				@case( 'enum' ){
-					<mat-form-field>
-						<mat-label>{{ label(a) }}</mat-label>
-						<mat-select [value]="texts()[$index]" (selectionChange)="setText($index, $event.value)" [disabled]="busy()">
-							@for( option of a.enum!.enumValues; track option.id ){
-								<mat-option [value]="'' + option.id">{{ option.name }}</mat-option>
-							}
-						</mat-select>
-						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
-					</mat-form-field>
-				}
-				@case( 'datetime' ){
-					<mat-form-field>
-						<mat-label>{{ label(a) }}</mat-label>
-						<input matInput type="datetime-local" step="0.001" [value]="texts()[$index]" (input)="setText($index, $any($event.target).value)" [disabled]="busy()">
-						@if( a.description ){<mat-hint>{{ a.description }}</mat-hint>}
-					</mat-form-field>
-				}
-				@default{
-					<mat-form-field>
-						<mat-label>{{ label(a) }}</mat-label>
-						<input matInput type="text" [value]="texts()[$index]" (input)="setText($index, $any($event.target).value)" [disabled]="busy()">
-						@if( hint(a) ){<mat-hint>{{ hint(a) }}</mat-hint>}
-					</mat-form-field>
-				}
-			}
+		@for( a of inputs; track $index ){<!--typed as the argument's type says, a type of the server's own as the base it goes as (Argument.valueType)-->
+			<value-editor [type]="a.valueType" [enumeration]="a.enum" [isArray]="a.isArray" [value]="values()[$index]" (valueChange)="setValue($index, $event)" [label]="label(a)" [disabled]="busy()"></value-editor>
+			@if( a.description ){<p class="hint argument-hint">{{ a.description }}</p>}
 		}
 	}
 	@if( busy() ){

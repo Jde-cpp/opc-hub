@@ -7,15 +7,16 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { DateUtils, errorMessage, ProtoUtils, Timestamp } from 'jde-framework';
-import { editRefusedAll, HistEditArgs, HistEditKind, HistEditResult, HistTime, qlTime } from '../../../model/hist';
+import { DateUtils, errorMessage } from 'jde-framework';
+import { Enum } from '../../../model/enum';
+import { editRefusedAll, HistEditArgs, HistEditKind, HistEditResult, HistTime } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
-import { statusIcon } from '../../../model/status-code';
+import { parseStatus, statusIcon } from '../../../model/status-code';
 import { ETypes, StatusCode } from '../../../model/types';
-import { numberValue, Value, valueString } from '../../../model/value';
+import { Value } from '../../../model/value';
+import { ValueEditor } from '../value-editor/value-editor';
 
 //what a dialog opens on:  a row's node, time and value for a Replace, a time for a purge.  Not the row's status:  a Replace
 //corrects a value, which a Bad status left in the field would store Bad again (historian-web-edits #9).  `sourceTime` is a
@@ -29,23 +30,14 @@ export type HistEditDialogData = {
 	names?:( codes:StatusCode[] )=>void;//asks for the names of the statuses the server answered, so a refusal reads by name
 };
 
-//a status as typed - hex with 0x, or decimal;  blank is Good.  null for text that is neither.
-export function parseStatus( text:string ):StatusCode|undefined|null{
-	const t = text.trim();
-	if( !t )
-		return undefined;
-	const n = /^0x[0-9a-f]+$/i.test( t ) ? parseInt( t, 16 ) : /^\d+$/.test( t ) ? Number( t ) : NaN;
-	return Number.isInteger( n ) && n>=0 && n<=0xFFFFFFFF ? n : null;
-}
-
-//One dialog for the five edits (spec *Edits*):  a node, the time, and for an UpdateData the value and its status;  a range
-//or a list of times for a purge.  It sends the edit itself, so a refusal - a value the time already holds, a right the
-//server withholds - shows beside the fields for another go.  An edit the server took any of closes it:  the history changed,
-//and the tab reads it again and names what was refused.  Another go would send the part taken again.
+//One dialog for the five edits (spec *Edits*):  a node, the time, and for an UpdateData the value - typed as the node's DataType says
+//(ValueEditor, the write dialog's) - and its status;  a range or a list of times for a purge.  It sends the edit itself, so a refusal -
+//a value the time already holds, a right the server withholds - shows beside the fields for another go.  An edit the server took any of
+//closes it:  the history changed, and the tab reads it again and names what was refused.  Another go would send the part taken again.
 @Component({
 	templateUrl: './hist-edit-dialog.html',
 	styleUrls: ['./hist-edit-dialog.scss'],
-	imports: [DatePipe, MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatSlideToggleModule]
+	imports: [DatePipe, MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, ValueEditor]
 })
 export class HistEditDialog{
 	constructor(){
@@ -55,10 +47,7 @@ export class HistEditDialog{
 		this.time.set( DateUtils.toLocalInput( preset.time ?? now ) );
 		this.end.set( DateUtils.toLocalInput( preset.end ?? preset.time ?? now ) );
 		this.times.set( [DateUtils.toLocalInput( preset.time ?? now )] );
-		this.flag.set( preset.value===true );
-		this.choice.set( typeof preset.value=="number" ? preset.value : undefined );
-		const presetDate = preset.value!=null && typeof preset.value=="object" && "seconds" in preset.value ? ProtoUtils.toDate( <Timestamp>preset.value ) : null;
-		this.text.set( presetDate ? DateUtils.toLocalInput( presetDate ) : preset.value!=undefined ? valueString( preset.value ) : "" );
+		this.value.set( preset.value );
 	}
 	dialogRef = inject<MatDialogRef<HistEditDialog,HistEditResult|undefined>>( MatDialogRef );
 	data = inject<HistEditDialogData>( MAT_DIALOG_DATA );
@@ -73,44 +62,26 @@ export class HistEditDialog{
 	time = signal( "" );//the UpdateData's source time, or the range's start, as the input holds it
 	end = signal( "" );
 	times = signal<string[]>( [] );
-	text = signal( "" );//a number, string or DateTime value as typed
-	flag = signal( false );//a Boolean's
-	choice = signal<number|undefined>( undefined );//an enumeration's
+	value = signal<Value|null|undefined>( undefined );//the UpdateData's value, as the editor holds it:  undefined while the fields hold none
 	status = signal( "" );
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );//the gateway's refusal of the call
 	result = signal<HistEditResult|undefined>( undefined );//the server's refusal of a value or node, kept for another go
 
-	onNodes( picked:Variable|Variable[] ){ this.nodes.set( Array.isArray( picked ) ? picked : [picked] ); }
+	//another node picked:  the preset's value stays for its node, and goes for another, whose type the editor follows
+	onNodes( picked:Variable|Variable[] ){
+		const nodes = Array.isArray( picked ) ? picked : [picked];
+		if( nodes[0]?.key!=this.nodes()[0]?.key )
+			this.value.set( nodes[0] && nodes[0].key==this.data.preset?.node?.key ? this.data.preset?.value : undefined );
+		this.nodes.set( nodes );
+	}
 	setTime( i:number, text:string ){ this.times.update( t=>t.map( (x, j)=>j==i ? text : x ) ); }
 	addTime(){ this.times.update( t=>[...t, t[t.length-1] ?? DateUtils.toLocalInput( new Date() )] ); }
 	removeTime( i:number ){ this.times.update( t=>t.length>1 ? t.filter( (_, j)=>j!=i ) : t ); }
 
-	//the editor the value takes, by the node's DataType, as the Children tab's cells have it
-	editor = computed<'boolean'|'enum'|'number'|'datetime'|'text'>( ()=>{
-		const n = this.node();
-		if( !n )
-			return 'text';
-		if( n.dataType==ETypes.Boolean )
-			return 'boolean';
-		if( n.customDataType && "enumValues" in n.customDataType )
-			return 'enum';
-		if( n.isInteger || n.isUnsigned || n.isFloating )
-			return 'number';
-		if( n.dataType==ETypes.DateTime || n.dataType==ETypes.UtcTime )
-			return 'datetime';
-		return 'text';
-	} );
-	enumValues = computed( ()=>{ const t = this.node()?.customDataType; return t && "enumValues" in t ? t.enumValues : []; } );
-	value = computed<Value|undefined>( ()=>{
-		switch( this.editor() ){
-		case 'boolean': return this.flag();
-		case 'enum': return this.choice();
-		case 'number': return numberValue( this.text(), this.node()?.dataType );
-		case 'datetime':{ const d = DateUtils.fromLocalInput( this.text() ); return d ? <Timestamp>qlTime( d ) : undefined; }
-		default: return this.text();
-		}
-	} );
+	//the editor's type, the node's DataType - none for a type of the server's own, whose value's shape decides - and an enumeration's values
+	valueType = computed<ETypes|undefined>( ()=>{ const n = this.node(); return !n || n.customDataType ? undefined : n.dataType; } );
+	enumeration = computed<Enum|undefined>( ()=>{ const t = this.node()?.customDataType; return t && "enumValues" in t ? t : undefined; } );
 	//why the edit can't be sent yet, or nothing
 	problem = computed<string|undefined>( ()=>{
 		if( !this.nodes().length )

@@ -30,7 +30,7 @@ describe( 'Gateway.methodArguments', ()=>{
 		expect( warn ).toHaveBeenCalledTimes( 1 );//7000's values
 		expect( g.queries[0] ).toContain( 'baseDataType' );
 		expect( g.queries.filter( q=>q.startsWith('__type') ) ).toHaveLength( 2 );//the two enumerations, not the Double
-		expect( m.inputs.map( a=>a.editor ) ).toEqual( ['enum', 'number', 'number'] );
+		expect( m.inputs.map( a=>a.isEnumeration ) ).toEqual( [true, true, false] );
 		expect( m.inputs[0].enum?.enumValues.map( e=>e.name ) ).toEqual( ['NORMAL', 'OFF_SPEC'] );
 		expect( m.inputs[1].enum ).toBeUndefined();
 	} );

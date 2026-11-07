@@ -355,9 +355,12 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		const data:any = await super.postQL<any>( q, vars );
 		return toCallResult( data?.["call"] ?? data );//keyed by command name, as write()'s is;  the caller asks for the codes' names
 	}
-	async write( opcId:CnnctnSlug, n:NodeId, v:Value ):Promise<Reading>{
-		const q = `updateVariable( opc: $opc, id: $id, value: $value ){ value }`;
-		const vars = { opc: opcId, id: n.toJson(), value: valueJson(v) };
+	//updateVariable( opc, id, value, indexRange ):  the value typed at the gateway toward the node's DataType (Value::Set), and with
+	//`indexRange`, Part 4's "2:4", the array's slice that the value fills (clients spec *Values and writes*);  the answer is the value
+	//read back whole
+	async write( opcId:CnnctnSlug, n:NodeId, v:Value, indexRange?:string ):Promise<Reading>{
+		const q = `updateVariable( opc: $opc, id: $id, value: $value${indexRange ? ", indexRange: $indexRange" : ""} ){ value }`;
+		const vars = { opc: opcId, id: n.toJson(), value: valueJson(v), ...(indexRange ? {indexRange} : {}) };
 		const data:any = await super.postQL<any>( q, vars );
 		this.updateErrorCodes();
 		//unwrap first, toValue last - mirroring read().  postQL returns the `data` object and the server keys a mutation payload by command name (QLAwait: `result[commandName]`, skipped only for `raw`, which this never requests), so toValue used to run on the wrapper and `["value"]` off its result was always undefined - blanking the cell.  `?? data` keeps the raw/unkeyed shape working too.

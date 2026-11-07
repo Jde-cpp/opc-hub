@@ -1,0 +1,25 @@
+<h2 mat-dialog-title>{{ title }}</h2>
+<mat-dialog-content>
+	<p class="hint">{{ typeName }}@if( node.description?.text ){ - {{ node.description!.text }}}</p>
+	@if( isArray ){
+		<mat-form-field>
+			<mat-label>Index range</mat-label>
+			<input matInput type="text" [value]="indexRange()" (input)="setIndexRange($any($event.target).value)" [disabled]="busy()" placeholder="whole array">
+			<mat-hint>An index, or low:high, of the elements to write;  blank writes the whole array.</mat-hint>
+		</mat-form-field>
+	}
+	<value-editor [type]="type" [enumeration]="enumeration" [isArray]="isArray" [fixedLength]="!!range()" [(value)]="value" [label]="isArray && range() ? 'Element' : 'Value'" [disabled]="busy()"></value-editor>
+	@if( busy() ){
+		<mat-progress-bar mode="indeterminate" aria-label="Writing"></mat-progress-bar>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	@if( problem(); as p ){
+		<span class="problem">{{ p }}</span>
+	}
+	<button matButton="outlined" type="button" (click)="dialogRef.close()" [disabled]="busy()">Cancel</button>
+	<button matButton="tonal" type="button" [disabled]="busy() || !!problem()" (click)="apply()">Write</button>
+</mat-dialog-actions>

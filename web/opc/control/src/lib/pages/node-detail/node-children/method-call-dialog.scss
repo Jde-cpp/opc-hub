@@ -9,9 +9,10 @@ mat-form-field{
 	color: var(--mat-sys-on-surface-variant);
 	font: var(--mat-sys-body-medium);
 }
-.value-toggle{
-	display: block;
-	margin: .25rem 0 .5rem;
+/* an argument's description, under its editor */
+.argument-hint{
+	margin: -.5rem 0 1rem;
+	font: var(--mat-sys-body-small);
 }
 /* the server's answer */
 .refused, .results li{

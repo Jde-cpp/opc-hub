@@ -58,3 +58,11 @@ export function statusIcon( sc:StatusCode|undefined ):"error"|"warning"|"info"|u
 	const s = severity( sc );
 	return s>=ESeverity.Bad ? "error" : s==ESeverity.Uncertain ? "warning" : nameKey( sc ) || flagsText( sc ) ? "info" : undefined;
 }
+//a status as typed - hex with 0x, or decimal;  blank is Good.  null for text that is neither.
+export function parseStatus( text:string ):StatusCode|undefined|null{
+	const t = text.trim();
+	if( !t )
+		return undefined;
+	const n = /^0x[0-9a-f]+$/i.test( t ) ? parseInt( t, 16 ) : /^\d+$/.test( t ) ? Number( t ) : NaN;
+	return Number.isInteger( n ) && n>=0 && n<=0xFFFFFFFF ? n : null;
+}

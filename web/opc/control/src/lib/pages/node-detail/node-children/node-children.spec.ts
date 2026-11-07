@@ -1,7 +1,6 @@
 import { TestBed } from '@angular/core/testing';
-import Long from 'long';
 import { config } from 'rxjs';
-import { DateUtils, ProtoUtils, SnackbarService, Timestamp, ViewType } from 'jde-framework';
+import { SnackbarService, ViewType } from 'jde-framework';
 import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
 import { Enum } from '../../../model/enum';
@@ -12,9 +11,10 @@ import { OpcError } from '../../../model/opc-error';
 import { EAccess, ETypes } from '../../../model/types';
 import { MethodCallDialog } from './method-call-dialog';
 import { NodeChildren } from './node-children';
+import { WriteDialog } from './write-dialog';
 import { OpcStore } from '../../../services/opc-store';
 import { WatchStore } from '../../../services/watch-store';
-import { flush, pageTitleStub, provideRoute, silence, screenSize } from 'jde-spa/testing';
+import { flush, pageTitleStub, provideRoute, screenSize } from 'jde-spa/testing';
 import { snackbarStub } from 'jde-framework/testing';
 import { fakeGateway, TestGateway, variable } from 'jde-opc/testing';
 
@@ -239,160 +239,52 @@ describe( 'NodeChildren subscription values', ()=>{
 		} );
 
 		it( 'takes a write\'s echo as a reading, quality and all', async ()=>{
-			const { page, answer, row } = subscribed();
-			answer( {value: 9, sc: uncertain} );
-			await page.changeDouble( row, {target: {value: "9"}} as any );
+			const { page, row } = subscribed();
+			vi.spyOn( WriteDialog, 'open' ).mockResolvedValue( {value: 9, sc: uncertain} );
+			await page.write( row );
 			expect( row ).toMatchObject( {value: 9, sc: uncertain} );
 		} );
 	} );
 
-	//A21:  the five editors wrote through one #write, which leaves the control showing the row's reading - the echo, or after a
-	//failure the value read back - since a binding only re-applies on a change, and a refused write kept the typed text.
-	describe( 'writes', ()=>{
-		const row = ( value:any )=>variable( 7, "q", {value} );
-		it( 'puts the value read back in a box whose write failed', async ()=>{
-			const { page, gateway, snackbar, answer } = create();
-			const n = row( "a" ), box = {value: "typed"};
-			gateway.write.mockRejectedValue( new Error("refused") );
-			answer( {value: "b", sc: 0} );
-			await page.changeString( n, {target: box} as any );
-			expect( snackbar.exception ).toHaveBeenCalledWith( "Could not write q.", expect.any(Error) );
-			expect( n.value ).toBe( "b" );
-			expect( box.value ).toBe( "b" );
-		} );
-		it( 'keeps the row\'s value when the re-read fails too', async ()=>{
-			const { page, gateway } = create();
-			const n = row( 5 ), box = {value: "9"};
-			const warn = silence();
-			gateway.write.mockRejectedValue( new Error("Connection to the gateway was lost.") );
-			gateway.read.mockRejectedValue( new Error("Connection to the gateway was lost.") );
-			await page.changeDouble( n, {target: box} as any );
-			expect( warn ).toHaveBeenCalled();
-			expect( box.value ).toBe( "5" );
-			warn.mockRestore();
-		} );
-		it( 'shows the echo on the checkbox, not the click', async ()=>{
-			const { page, answer } = create();
-			const n = row( false ), source = {checked: true};
-			answer( {value: false, sc: 0} );//the server kept its value
-			await page.toggleValue( n, {checked: true, source} as any );
-			expect( source.checked ).toBe( false );
-			answer( {value: true, sc: 0} );
-			source.checked = true;
-			await page.toggleValue( n, {checked: true, source} as any );
-			expect( n.value ).toBe( true );
-			expect( source.checked ).toBe( true );
-		} );
-	} );
-
-	//clients spec, Gaps #9:  a 64-bit integer went as a JS number, which holds 53 bits - `+text` rounded what was typed past
-	//2^53 before the gateway saw it.  It goes as a Long built from the text, the {low,high,unsigned} form Value::Set reads back.
-	describe( 'a 64-bit integer', ()=>{
-		const row = ( type:ETypes, value:any=5 )=>variable( 9, "big", {dataType: {i: type}, value} );
-		const sent = ( gateway:ReturnType<typeof create>["gateway"] )=>gateway.write.mock.calls[0][2];
-		it( 'goes as a Long built from the text, exact past 2^53', async ()=>{
+	//clients spec *Values and writes* (#423):  the cell editors gave way to the write dialog, which types the value as the DataType says,
+	//sends it and closes with the value read back;  the row shows that reading, and keeps its own when the dialog is cancelled or refused
+	describe( 'the write dialog', ()=>{
+		const row = ( value:any )=>variable( 7, "q", {value, dataType: {i: ETypes.Double}, userAccessLevel: EAccess.Read | EAccess.Write} );
+		it( 'opens on the row and sends its value through the gateway, index range and all', async ()=>{
 			const { page, gateway, answer } = create();
-			answer( {value: Long.fromString("9007199254740993"), sc: 0} );
-			await page.changeDouble( row(ETypes.Int64), {target: {value: "9007199254740993"}} as any );
-			expect( sent(gateway) ).toBeInstanceOf( Long );
-			expect( sent(gateway).toString() ).toBe( "9007199254740993" );
-			expect( (sent(gateway) as Long).unsigned ).toBe( false );
+			const n = row( 5 );
+			const open = vi.spyOn( WriteDialog, 'open' ).mockImplementation( async ( _d, data )=>{
+				expect( data.node ).toBe( n );
+				return data.write( [7, 8], "1:2" );
+			} );
+			answer( {value: [5, 7, 8], sc: 0} );
+			await page.write( n );
+			expect( open ).toHaveBeenCalledTimes( 1 );
+			expect( gateway.write ).toHaveBeenCalledWith( 'local', n.nodeId, [7, 8], "1:2" );
+			expect( n.value ).toEqual( [5, 7, 8] );
 		} );
-		it( 'takes a negative, and an unsigned one to the top of its range', async ()=>{
-			const { page, gateway, answer } = create();
-			answer( {value: Long.fromString("-9223372036854775808"), sc: 0} );
-			await page.changeDouble( row(ETypes.Int64), {target: {value: "-9223372036854775808"}} as any );
-			answer( {value: Long.fromString("18446744073709551615", true), sc: 0} );
-			await page.changeDouble( row(ETypes.UInt64), {target: {value: "18446744073709551615"}} as any );
-			expect( gateway.write.mock.calls.map( c=>[c[2].toString(), (c[2] as Long).unsigned] ) ).toEqual( [["-9223372036854775808", false], ["18446744073709551615", true]] );
-		} );
-		it( 'writes nothing for text that is not a whole number in range, and shows the row\'s value again', async ()=>{
+		it( 'leaves the row as it was when the dialog is cancelled', async ()=>{
 			const { page, gateway } = create();
-			for( const [type, text] of [[ETypes.Int64, "1.5"], [ETypes.Int64, "9223372036854775808"], [ETypes.UInt64, "-1"], [ETypes.UInt64, "18446744073709551616"], [ETypes.Int64, "abc"]] as [ETypes, string][] ){
-				const box = {value: text};
-				await page.changeDouble( row(type), {target: box} as any );
-				expect( box.value ).toBe( "5" );
-			}
+			const n = row( 5 );
+			vi.spyOn( WriteDialog, 'open' ).mockResolvedValue( undefined );
+			await page.write( n );
 			expect( gateway.write ).not.toHaveBeenCalled();
+			expect( n.value ).toBe( 5 );
 		} );
-		it( 'still sends a 32-bit integer and a double as numbers', async ()=>{
-			const { page, gateway, answer } = create();
-			answer( {value: 7, sc: 0} );
-			await page.changeDouble( row(ETypes.Int32), {target: {value: "7"}} as any );
-			answer( {value: 7.5, sc: 0} );
-			await page.changeDouble( row(ETypes.Double), {target: {value: "7.5"}} as any );
-			expect( gateway.write.mock.calls.map( c=>c[2] ) ).toEqual( [7, 7.5] );
-		} );
-		//reviews-issue/412-clients-web-fixes.md #2:  `+""` is 0, so a cleared box wrote 0 to the device
-		it( 'writes nothing for a cleared box of any numeric type, and shows the row\'s value again', async ()=>{
-			const { page, gateway } = create();
-			for( const type of [ETypes.Int32, ETypes.Double, ETypes.Byte, ETypes.Int64] ){
-				const box = {value: ""};
-				await page.changeDouble( row(type), {target: box} as any );
-				expect( box.value ).toBe( "5" );
-			}
-			expect( gateway.write ).not.toHaveBeenCalled();
-		} );
-	} );
-
-	//clients spec, Gaps #7:  the date picker wrote the start of the day, in UTC - a DateTime takes the date and time typed, to
-	//the millisecond, in the browser's local time, as the history edit dialog's times do.
-	describe( 'the DateTime editor', ()=>{
-		const typed = new Date( 2026, 9, 9, 13, 4, 5, 6 );//local time
-		const row = ( at?:Date )=>variable( 9, "when", {dataType: {i: ETypes.DateTime}, value: at ? ProtoUtils.fromDate( at ) : undefined} );
-		it( 'writes the date and time typed, to the millisecond', async ()=>{
-			const { page, gateway, answer } = create();
-			answer( {value: ProtoUtils.fromDate( typed ), sc: 0} );
-			await page.changeDate( row(new Date(2026, 9, 9)), {target: {value: DateUtils.toLocalInput( typed )}} as any );
-			expect( ProtoUtils.toDate( gateway.write.mock.calls[0][2] as Timestamp )?.getTime() ).toBe( typed.getTime() );
-		} );
-		it( 'shows the row\'s value in local time to the millisecond, and nothing for none', ()=>{
-			const { page } = create();
-			expect( page.dateValue( row(typed) ) ).toBe( "2026-10-09T13:04:05.006" );
-			expect( page.dateValue( row() ) ).toBe( "" );
-		} );
-		it( 'writes nothing for a cleared box, and shows the row\'s value again', async ()=>{
-			const { page, gateway } = create();
-			const box = {value: ""};
-			await page.changeDate( row(typed), {target: box} as any );
-			expect( gateway.write ).not.toHaveBeenCalled();
-			expect( box.value ).toBe( "2026-10-09T13:04:05.006" );
-		} );
-		it( 'writes nothing for a box left as it was', async ()=>{
-			const { page, gateway } = create();
-			await page.changeDate( row(typed), {target: {value: "2026-10-09T13:04:05.006"}} as any );
-			expect( gateway.write ).not.toHaveBeenCalled();
-		} );
-		//reviews-issue/412-clients-web-fixes.md #1:  `change` fires on each part of the date edited, so typing a year wrote the
-		//years on the way to it.  The box writes on blur, and Enter blurs it.
-		it( 'writes when the box is left, not on its change event', ()=>{
+		it( 'offers a Write in the cell and on the row menu of a writable row alone', ()=>{
 			const { page, fixture } = create();
-			const write = vi.spyOn( page, 'changeDate' ).mockResolvedValue( undefined );
-			const n = row( typed );
+			const writable = row( 5 ), locked = variable( 8, "r", {value: 1, dataType: {i: ETypes.Double}, userAccessLevel: EAccess.Read} );
 			page.viewSet.reset( [NodeView.fromConfig( {name: "value", configColumns: ["name", "snapshot"], sort: []}, NodeView.schema )] );
-			page.nodes.set( [n] );
+			page.nodes.set( [writable, locked] );
 			page.isLoading.set( false );
 			fixture.detectChanges();
-			const box = <HTMLInputElement>fixture.nativeElement.querySelector( 'input[type=datetime-local]' );
-			expect( box.getAttribute( 'aria-label' ) ).toBe( "when" );
-			box.value = "0002-10-09T13:04:05.006";
-			box.dispatchEvent( new Event('change') );
-			expect( write ).not.toHaveBeenCalled();
-			box.dispatchEvent( new KeyboardEvent('keydown', {key: 'Enter'}) );
-			box.dispatchEvent( new Event('blur') );
-			expect( write ).toHaveBeenCalledTimes( 1 );
-		} );
-		//reviews-issue/412-clients-web-fixes.md #9:  the text went through new Date, which takes the hour DST repeats as its earlier half
-		describe( 'in the hour DST repeats', ()=>{
-			beforeEach( ()=>vi.stubEnv( 'TZ', 'America/New_York' ) );
-			afterEach( ()=>vi.unstubAllEnvs() );
-			it( 'keeps an edit of a time in the later half there', async ()=>{
-				const { page, gateway, answer } = create();
-				const later = new Date( Date.UTC(2026, 10, 1, 6, 30) );//01:30 EST
-				answer( {value: ProtoUtils.fromDate( later ), sc: 0} );
-				await page.changeDate( row(later), {target: {value: "2026-11-01T01:30:00.500"}} as any );
-				expect( ProtoUtils.toDate( gateway.write.mock.calls[0][2] as Timestamp )?.getTime() ).toBe( later.getTime() + 500 );
-			} );
+			expect( fixture.nativeElement.querySelector( 'button[aria-label="Write q"]' ) ).not.toBeNull();
+			expect( fixture.nativeElement.querySelector( 'button[aria-label="Write r"]' ) ).toBeNull();
+			expect( fixture.nativeElement.querySelector( 'input[type=number]' ) ).toBeNull();//no cell editor
+			expect( [...fixture.nativeElement.querySelectorAll( '.value-text' )].map( e=>e.textContent ) ).toEqual( ['5', '1'] );
+			const open = vi.spyOn( WriteDialog, 'open' ).mockResolvedValue( undefined );
+			fixture.nativeElement.querySelector( 'button[aria-label="Write q"]' ).click();
+			expect( open.mock.calls[0][1].node ).toBe( writable );
 		} );
 	} );
 
@@ -591,7 +483,7 @@ describe( 'NodeChildren a Method\'s Call button', ()=>{
 //8b (#422) a structure is a table of its members, nested where they are, and a body no type explains says it is undecoded - whatever the
 //DataType says, a BaseDataType variable's too, and an array of structures a table each (reviews-issue/422-structures.md #9)
 describe( 'NodeChildren a value of the server\'s own type', ()=>{
-	it( 'offers an enumeration\'s values and shows a structure as a table of its members', ()=>{
+	it( 'shows an enumeration by name and a structure as a table of its members', ()=>{
 		TestBed.configureTestingModule({ providers: [screenSize(), provideRoute(), { provide: GATEWAY_SERVICE, useValue: {} }, { provide: SnackbarService, useValue: snackbarStub() }, pageTitleStub] });
 		const fixture = TestBed.createComponent( NodeChildren );
 		const page = fixture.componentInstance;
@@ -610,8 +502,9 @@ describe( 'NodeChildren a value of the server\'s own type', ()=>{
 		fixture.detectChanges();
 		const snapshot = ( name:string ):Element=>[...fixture.nativeElement.querySelectorAll( 'mat-row' )]
 			.find( (r:Element)=>r.querySelector('.mat-column-name')?.textContent?.trim()==name )!.querySelector( '.mat-column-snapshot' )!;
-		expect( snapshot('health').querySelector('mat-select') ).not.toBeNull();
-		expect( snapshot('sample').querySelector('mat-select') ).toBeNull();
+		expect( snapshot('health').querySelector('.value-text')?.textContent ).toBe( 'OK' );//by name (NodeView.enumName)
+		expect( snapshot('health').querySelector('button[aria-label="Write health"]') ).not.toBeNull();
+		expect( snapshot('sample').querySelector('button[aria-label="Write sample"]') ).not.toBeNull();//member by member, in the dialog
 		const rows = ( table:Element )=>[...table.querySelectorAll( ':scope > tbody > tr' )].map( r=>[r.querySelector('th')!.textContent!.trim(), r.querySelector(':scope > td')!.textContent!.trim().replace( /\s+/g, ' ' )] );
 		const table = snapshot('sample').querySelector( 'structure-table > table' )!;
 		expect( table ).not.toBeNull();

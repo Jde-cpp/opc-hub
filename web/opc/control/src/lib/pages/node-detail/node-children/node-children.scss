@@ -4,12 +4,6 @@
 	width: 100%;
 }
 
-/* the value editors that hold ordinal data line up on their right edge, as a numeric table column does - text (and the
-uris in it) stays left.  `end`, not `right`, so both flip under dir="rtl". */
-input[type="number"], input[type="datetime-local"] {
-	text-align: end;
-}
-
 .mat-column-select{
 	flex: 0 0 40px;
 	justify-content: center;
@@ -58,24 +52,29 @@ rather than running into the next cell */
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-/* 260px:  the widest editor (a date and time to the millisecond, with the browser's picker button) and the quality icon
-beside it.  The editors may shrink to make room for that icon - min-width:0, as an input's automatic minimum is its intrinsic
-width. */
+/* 260px:  a value to the millisecond ("2026-10-09 13:04:05.006") with the Write and the quality icon beside it.  The text ends in an
+ellipsis - its title has it whole - so a long string never widens the row;  min-width:0, since a flex item's automatic minimum is its text. */
 .mat-column-snapshot{
 	flex: 0 0 260px;
 	gap: 4px;
 	padding-left: 5px;
 	padding-right: 5px;
 }
-mat-cell.mat-column-snapshot > input{
+mat-cell.mat-column-snapshot > .value-text{
+	flex: 1 1 auto;
 	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
-/* the cell itself stays flex-start:  it holds whatever editor the value type needs (number, text, date-time, select),
-and those keep their left edges lined up down the column.  A lone checkbox is the one that reads as adrift under the
-centred header - an auto inline margin centres just that flex item, the way .mat-column-select centres a checkbox-only
-cell.  (For the whole column, put `justify-content: center` on .mat-column-snapshot instead.) */
-mat-cell.mat-column-snapshot mat-checkbox{
-	margin-inline: auto;
+//the row's Write, beside the value:  sized to the dense row, as the Call icon and the row menu are
+.write-button{
+	--mat-icon-button-state-layer-size: 32px;
+	--mat-icon-button-icon-size: 18px;
+	flex: 0 0 auto;
+	width: 32px;
+	height: 32px;
+	padding: 0;
 }
 /* the flags are tags, not prose, so each gets a chip.  170px is what Read + Write need side by side at this size; the
 rarer history flags wrap to a second line rather than widen a column every row pays for. */

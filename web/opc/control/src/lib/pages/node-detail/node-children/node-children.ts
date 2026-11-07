@@ -1,30 +1,30 @@
 import { SelectionModel, SelectionChange } from '@angular/cdk/collections';
 import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, output, Signal, signal } from '@angular/core';
 import {MatButtonModule} from '@angular/material/button';
-import {MatCheckboxChange, MatCheckboxModule} from '@angular/material/checkbox';
+import {MatCheckboxModule} from '@angular/material/checkbox';
 import {MatChipsModule} from '@angular/material/chips';
 import {MatDialog} from '@angular/material/dialog';
 import {MatIconModule} from '@angular/material/icon';
 import {MatMenuModule} from '@angular/material/menu';
-import {MatSelectChange, MatSelectModule} from '@angular/material/select';
 import {MatSlideToggleModule} from '@angular/material/slide-toggle';
 import { MatSortModule, Sort } from "@angular/material/sort";
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { DateUtils, QLListSettings, SnackbarService, ProtoUtils, Timestamp, View, ViewToolbar } from 'jde-framework'
-import { EAccess, ETypes } from '../../../model/types';
+import { QLListSettings, SnackbarService, View, ViewToolbar } from 'jde-framework'
+import { EAccess } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { OpcStore } from '../../../services/opc-store';
 import { WatchStore } from '../../../services/watch-store';
-import { numberValue, Reading, Value, valueString } from '../../../model/value';
+import { Reading, Value, valueString } from '../../../model/value';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
 import { ENodeClass, Method, Variable, UaNode }  from '../../../model/node';
 import { MethodCallDialog } from './method-call-dialog';
+import { WriteDialog } from './write-dialog';
 import { NodeView } from '../../../model/node-view';
 import { Server } from '../../../model/server';
 import { NodeId } from '../../../model/node-id';
@@ -34,7 +34,7 @@ import { StructureTable } from '../../structure-table/structure-table';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,StructureTable,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,QLListSettings,StructureTable,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -150,12 +150,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 		return suggestions;
 	}
 
-	//a DateTime value as the datetime-local editor holds it - local time to the millisecond, blank for none.  A string, so the
-	//[value] binding re-applies only when the timestamp changes, and never over an edit in progress.
-	dateValue( n:Variable ):string{
-		const date = n.value ? ProtoUtils.toDate( <Timestamp>n.value ) : null;
-		return date ? DateUtils.toLocalInput( date ) : "";
-	}
 	//the value cells bind to plain fields on the nodes, not signals, so an async write (or a subscription push) changes nothing
 	//Angular is watching:  zoneless runs no pass of its own, and the cell kept the old value until an unrelated event forced one.
 	#repaint(){
@@ -257,46 +251,14 @@ export class NodeChildren implements OnInit, OnDestroy {
 			this.selections.select( ...this.selectableRows );
 	}
 
-	toggleValue( n:Variable, e:MatCheckboxChange ){
-		return this.#write( n, e.checked, ()=>e.source.checked = !!n.value );
-	}
-	changeDouble( n:Variable, e:Event ){
-		const box = <HTMLInputElement>e.target;
-		const show = ()=>box.value = n.value?.toString() ?? "";
-		const value = numberValue( box.value, n.dataType );//no value - a cleared box, text that is no number - and the box shows the row's again
-		return value===undefined ? show() : this.#write( n, value, show );
-	}
-	changeString( n:Variable, e:Event ){
-		const box = <HTMLInputElement>e.target;
-		return this.#write( n, box.value, ()=>box.value = n.value?.toString() ?? "" );
-	}
-	changeEnum( n:Variable, e:MatSelectChange<number> ){
-		return this.#write( n, e.value, ()=>e.source.value = <number>n.value );
-	}
-	//on leaving the box (blur, or Enter), not its change event:  that fires on each part of the date edited once the whole is
-	//valid, and typing a year would write 0002, 0020 and 0202 on the way to 2026.
-	async changeDate( n:Variable, e:Event ){
-		const box = <HTMLInputElement>e.target;
-		if( box.value==this.dateValue(n) )
+	//a Variable row's Write (clients spec *Values and writes*, #423):  the dialog types the value as the DataType says - every built-in
+	//type, an array whole or by index range, a structure by member - sends it through the gateway and closes with the value read back,
+	//which the row shows with its quality;  a refusal stays in the dialog for another go, and the row keeps its reading.
+	async write( n:Variable ){
+		const reading = await WriteDialog.open( this.#dialog, { node: n, write: ( value, indexRange )=>this._iot.write( this.cnnctnSlug, n.nodeId, value, indexRange ) } );
+		if( !reading )
 			return;
-		const show = ()=>{ box.value = this.dateValue( n ); };
-		const date = DateUtils.fromLocalInput( box.value, ProtoUtils.toDate( <Timestamp>n.value ) ?? undefined );//from the row's time, so an edit in the hour DST repeats stays in its half
-		if( !date )//a cleared box:  the row's value stays, and the box shows it again
-			show();
-		else
-			await this.#write( n, <Timestamp>ProtoUtils.fromDate(date), show );
-	}
-	//The editor ends showing the row's reading - the echo, or after a failure a re-read of the value - rather than what was
-	//typed:  a binding is re-applied only when its value changes, so a refused write, or an echo of the old value, kept the text.
-	async #write( row:Variable, value:Value, show?:()=>void ){
-		try{
-			this.#setReading( row, await this._iot.write(this.cnnctnSlug, row.nodeId, value) );
-		}
-		catch( e ){
-			this.#snackbar.exception( `Could not write ${row.name}.`, e );
-			await this._iot.read( this.cnnctnSlug, row.nodeId ).then( r=>this.#setReading(row, r), x=>console.warn(`Could not re-read ${row.name}.`, x) );
-		}
-		show?.();
+		this.#setReading( n, reading );
 		this.#repaint();
 	}
 
@@ -329,7 +291,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 		return [ `./${n.browseFQ(this.server.connection.defaultBrowseNs, this.nodes(), !!this.pageData.route.node?.isRoot)}` ];//the route's node, as isSelf's
 	}
 	isSelf( n:UaNode ):boolean{ return n.key==this.pageData.route.node?.key; }//a Variable page's own row (NodeResolver):  its name is no link.  The route's node, which `node` is too:  a row renders before the model is set
-	ETypes = ETypes;
 	get _iot():Gateway{ return this.pageData.gateway; }
 	//the quality of a row's reading (OPC 10000-4 7.38) - the Status cell's text, and the icon that stands in beside the value where a view hides the column
 	status( r:UaNode ):string{ return NodeView.cellValue( r, "status" )?.toString() ?? ""; }
@@ -343,14 +304,13 @@ export class NodeChildren implements OnInit, OnDestroy {
 	//Variable.accessLevelOf) locked every cell it had.  Now: a level we were given decides by its CurrentWrite bit, and one we
 	//were not given is unknown, not a denial - the editor stays live and the server's own refusal is the answer, which is a
 	//status the user can see rather than a dimmed box that says nothing.
-	readOnly( r:Variable ):boolean{ return r.stale || (r.userAccessLevel!=undefined && !(r.userAccessLevel & EAccess.Write)); }//a stale value is the last one known, not one to edit
-	isEnum( r:Variable ):boolean{ return !!r.customDataType && "enumValues" in r.customDataType; }//a type of the server's own the select can offer the values of:  a structure, or an enumeration not yet read, is no Enum
-	//why an editor is locked - the tooltip and aria-label on the cell.  #35: a disabled box with no explanation is what cost
+	readOnly( r:Variable ):boolean{ return r.stale || (r.userAccessLevel!=undefined && !(r.userAccessLevel & EAccess.Write)); }//a stale value is the last one known, not one to write over
+	//why a cell has no Write - the tooltip and aria-label on the lock beside it.  #35: a locked cell with no explanation is what cost
 	//the walk the afternoon;  the level is spelled out so an operator can tell "the server says read-only" from "the value is
 	//stale" without the log.
 	readOnlyReason( r:Variable ):string{
 		if( !r.isVariable || this.readDenied(r) || !this.readOnly(r) )
-			return "";//no editor to explain, or one that is live
+			return "";//nothing to explain, or a cell with its Write
 		if( r.stale )
 			return `The last reading was ${this.status(r) || "bad"}, so this is the last value known and not one to edit.`;
 		const names = NodeView.accessList( r );

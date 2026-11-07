@@ -33,7 +33,7 @@ export function jsonShape( o:Record<string,unknown> ):JsonShape|undefined{
 		return 'qualifiedName';
 	if( nodeIdKeys(o) )
 		return 'nodeId';
-	if( ('nsu' in o || 'serverIndex' in o) && nodeIdKeys(o, ['nsu', 'serverIndex']) )
+	if( ('nsu' in o || 'serverIndex' in o || 'serverindex' in o) && nodeIdKeys(o, ['nsu', 'serverIndex', 'serverindex']) )//the gateway spells the index `serverindex` (ExNodeId.cpp)
 		return 'expandedNodeId';
 	const typeId = o['typeId'];
 	if( isPlain(typeId) && nodeIdKeys(typeId) && within(o, ['typeId', 'body']) )
@@ -54,21 +54,42 @@ export class ExtensionObject{
 	get tooltip():string{ return `The server gives no definition for the type ${this.typeId.uaString()}, so the value cannot be decoded.`; }
 }
 
-export function valueJson( value: Value ):any/*:NodeIdJson*/{
+//A value as a write sends it - the json Value::Set reads for its type (clients spec *Values and writes*):  a NodeId as NodeId::ToJson
+//spells one, an ExpandedNodeId with its uri and server index, a Guid its text, a ByteString {b: base64}, a status {sc};  a structure as
+//its members, each this way.  A body no type explains has no json to write.
+export function valueJson( value: Value ):any{
 	if( value instanceof ExNodeId )
-		return value.toJson();
+		return { ...value.toJson(), ...(value.nsu ? {nsu: value.nsu} : {}), ...(value.serverIndex ? {serverindex: value.serverIndex} : {}) };
 	else if( value instanceof NodeId )
-		return value.id;
+		return value.toJson();
+	else if( value instanceof Guid )
+		return value.toString();
 	else if( value instanceof Uint8Array )
 		return {b: btoa(value.reduce((acc, current) => acc + String.fromCharCode(current), "")) };
 	else if( value instanceof OpcError )
 		return {sc: value.sc };
-	else if( value instanceof ExtensionObject )//Value::Set has no arm for a structure, so refuse it here rather than send the class's fields.
-		throw new Error( `Writing a structure is not supported - ${value.typeId.uaString()}.` );
+	else if( value instanceof ExtensionObject )//the body no type explains:  Value::Set builds a structure from its members, which this has none of
+		throw new Error( `The value is undecoded, so it cannot be written - ${value.typeId.uaString()}.` );
 	else if( Array.isArray(value) )
 		return value.map( x=>valueJson(x) );
+	else if( isStructure(value) )
+		return Object.fromEntries( Object.entries(value).map( ([name, member])=>[name, member===null ? null : valueJson(member)] ) );
 	else
 		return value;
+}
+//A ByteString's text, the hex REST's json gives (ByteStringToJson), and the bytes of such text:  none for an odd count of digits or
+//a character that is no hex digit.  Blank is no bytes.
+export function hexOf( bytes:Uint8Array ):string{ return [...bytes].map( b=>b.toString( 16 ).padStart( 2, '0' ) ).join( '' ); }
+export function bytesOfHex( text:string ):Uint8Array|undefined{
+	const t = text.trim();
+	if( t.length%2 || !/^[0-9a-fA-F]*$/.test( t ) )
+		return undefined;
+	return Uint8Array.from( t.match( /../g ) ?? [], pair=>parseInt( pair, 16 ) );
+}
+//A Guid from its text, 8-4-4-4-12 hex digits as a read spells one;  none for any other text.
+export function parseGuid( text:string ):Guid|undefined{
+	const t = text.trim();
+	return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test( t ) ? new Guid( t.toLowerCase() ) : undefined;
 }
 
 //A Float reading at the fewest digits that are still that float.  The proto's float decodes widened to a double, 21.3 as

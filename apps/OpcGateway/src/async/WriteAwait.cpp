@@ -16,6 +16,7 @@ namespace Jde::Opc::Gateway{
 				auto& item = items[i]; UA_WriteValue_init( &item );
 				item.nodeId = _items[i].Node;
 				item.attributeId = _items[i].Attribute;
+				item.indexRange = ToUV( _items[i].IndexRange );
 				item.value = _items[i].Written;
 			}
 			UA_WriteRequest request; UA_WriteRequest_init( &request );
