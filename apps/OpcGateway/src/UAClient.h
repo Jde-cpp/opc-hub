@@ -27,6 +27,10 @@ namespace Jde::Opc::Gateway{
 	namespace Tests{ struct UAClientState; }
 
 	struct CreateMonitoredItemsRequest;
+	constexpr Duration MaxReconnectDelay{ 15s };//capped, not given up on:  an industrial server can be down for a maintenance window and the live view is expected back with it.
+	//A lost connection's first wait before it reconnects, /gateway/reconnectDelay:  doubled after each failed attempt, to
+	//MaxReconnectDelay.  Set by Configure, before the web server starts;  read as each chain starts.
+	extern Duration _reconnectDelay;
 	//What a test connect (UAClient::ConnectForTest) reports:  the client with its session activated, or why the connect failed.
 	using ConnectCallback = absl::AnyInvocable<void(sp<UAClient>, up<UAClientException>)>;
 	//The connection error for a server that refused the certificate this gateway presented.  `sanUri` is the certificate's

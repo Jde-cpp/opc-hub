@@ -72,7 +72,11 @@ local logsDir = args.logsDir;
 		serversDir: serversDir,
 		issuedCerts: instance.http.gateway.ssl,
 		allowPlaintextPassword: false, //the shipped default; PlaintextPasswordTests flips it for one test.
-		subscription: { publishingInterval: "PT0.1S" }, //not the shipped 0.5 s:  a push waits out up to a publishing interval at the server, about 18 s of the suite at 0.5 s.
+		//Not the shipped values, which the suite would wait out:  a push waits up to a publishing interval at the server (about 18 s of
+		//the suite at 0.5 s), most tests wait for their items' delete after the unsubscribe, and a reconnect for its first delay.  A test
+		//built on the shipped 1 s window sets it back for its run (utils/helpers.h DurationOverride).
+		subscription: { publishingInterval: "PT0.1S", itemDeleteDelay: "PT0.1S" },
+		reconnectDelay: "PT0.1S",
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-gateway-tests" }, //the gateway's own groups (HistGroupTests), which main.cpp empties at the start as it does the server's.
 		//the gateway's own endpoint (GatewayServerTests), beside the embedded OpcServer's 4940:  two UA servers in one process.  No ssl:

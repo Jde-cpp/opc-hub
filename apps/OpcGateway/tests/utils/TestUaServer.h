@@ -1,6 +1,5 @@
 #pragma once
 #include <thread>
-#include <open62541/server.h>
 #include <open62541/server_config_default.h>
 #include <open62541/plugin/accesscontrol_default.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
@@ -8,6 +7,7 @@
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/opc/uatypes/UAString.h>
+#include <jde/opc/server/UAServer.h>
 #ifndef let
 #define let const auto
 #endif
@@ -61,8 +61,9 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		~TestUaServer(){
 			_thread.request_stop();
+			Server::UAServer::Wake( *_server );
 			_thread.join();
-			UA_Server_run_shutdown( _server );
+			Server::UAServer::RunShutdown( *_server );
 			UA_Server_delete( _server );
 		}
 		//Anonymous access on every endpoint the config's policies give, for a server whose test is about anything but credentials.

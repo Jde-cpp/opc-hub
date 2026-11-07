@@ -28,6 +28,10 @@ namespace Jde::Opc::Server {
 		α Trust()ι->UATrust&{ return _config.Trust(); }
 		α OnAsyncCancel( UAConfig::AsyncCancel f )ι->void{ _config.OnAsyncCancel( move(f) ); }//a cancelled async operation's key (UAConfig::OnAsyncCancel);  before Run.
 		α CustomTypes()ι->vector<UA_DataTypeArray>&{ return _customTypes; }//the host's mirrors of the nodeset types, which config.customDataTypes points into.
+		//The stop of a loop run as this one's is, UA_Server_run_iterate( server, true ) until a stop flag:  Wake from another thread
+		//once the flag is set, then RunShutdown.  An idle loop's poll otherwise sleeps out UA_MAXTIMEOUT (500 ms) in each - a second a stop.
+		Ω Wake( UA_Server& server )ι->void;
+		Ω RunShutdown( UA_Server& server )ι->void;
 	private:
 		UAHistory _history;//before _config, which installs its backend, and so destroyed after the server it serves.
 		UAConfig _config;

@@ -14,6 +14,9 @@ namespace Jde::Opc{ struct ITypes; struct Value; }
 namespace Jde::Opc::Gateway{
 	struct UAClient;
 	struct CreateMonitoredItemsRequest;
+	//How long an item outlives its last listener, /gateway/subscription/itemDeleteDelay (DeleteMonitoring):  a node subscribed again
+	//within it joins the item, with no initial value.  Set by Configure, before the web server starts;  read as each delete is armed.
+	extern Duration _itemDeleteDelay;
 
 	//A listener's ask on a node's item that the server refused, put back to the last one it granted (418-watch-items #9):  a rebuild
 	//re-creates the item with what the listener asks then, so a refused ask kept would be refused again and the node lost.

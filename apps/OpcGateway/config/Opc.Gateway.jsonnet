@@ -20,12 +20,14 @@ function( sync=false )
 		pingInterval: "PT30S",
 		ttl: "PT2M",
 		requestTimeout:: "PT10S", //a service call's deadline, and the test connect's, where the connection row sets no request_timeout (src/UAClient.cpp Create, UA_ClientConfig::timeout).
+		reconnectDelay:: "PT1S", //a lost connection's first wait before it reconnects, doubled after each failed attempt to at most 15 s (src/UAClient.cpp startReconnect).
 		subscription:: { //the one data subscription per client (src/async/Subscriptions.cpp CreateSubscriptionRequest), open62541's defaults.
 			publishingInterval: "PT0.5S", //what the create asks for; the historian sizes its item queues and heartbeat hold from what the server revises it to.
 			lifetimeCount:: 10000, //publishing intervals the server keeps the subscription without a Publish from the gateway.
 			maxKeepAliveCount:: 10, //publishing intervals without a notification before the server sends a keep-alive.
 			maxNotificationsPerPublish:: 0, //per Publish response; 0 is unlimited.
-			priority:: 0 //0-255, against the server's other subscriptions.
+			priority:: 0, //0-255, against the server's other subscriptions.
+			itemDeleteDelay:: "PT1S" //how long an item outlives its last listener (src/types/MonitoringNodes.cpp DeleteMonitoring):  a node subscribed again within it joins the item, with no initial value.
 		},
 		search:{ //the `search` query's per-connection node-name index (src/NodeIndex.cpp), crawled on the first search and dropped with the client at ttl.
 			maxDepth: 12, //levels under Objects

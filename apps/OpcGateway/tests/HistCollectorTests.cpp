@@ -203,6 +203,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//after the Bad_DataLost a rejoin's break writes (spec *Gaps*), the first membership's value before them, since a read
 	//of the node joins its indexes (#326, spec *Reads*).
 	TEST_F( HistCollectorTests, ARejoinReadsTheItemsValue ){
+		const DurationOverride delay{ _itemDeleteDelay, 1s };//the shipped second, which the purge and the add fit inside.
 		let [group, first, host, itemsBefore] = OneNodeGroup{ "rejoin", RpmManual };
 		Mutate( "purgeHistGroupNode( id:$id )", {{"id", first}} );
 		let again = AddNode( group, RpmManual );

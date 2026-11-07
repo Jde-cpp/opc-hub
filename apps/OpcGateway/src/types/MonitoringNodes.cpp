@@ -10,6 +10,7 @@
 
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ MonitoringTag };
+	Duration _itemDeleteDelay{ 1s };
 
 	//until orphaned UAClient's go away.
 	α UAMonitoringNodes::Shutdown( SL sl )ι->UnsubscribeAwait{
@@ -464,8 +465,8 @@ namespace Jde::Opc::Gateway{
 	//RemoveClient), and the client owns the up<UAMonitoringNodes> that is `this` - so a weak handle left the resumed
 	//coroutine taking _mutex and walking _subscriptions on freed memory.  Both callers already hold a live sp.
 	α UAMonitoringNodes::DeleteMonitoring( sp<UAClient> ua, Handle uaHandle, flat_map<SubscriptionId,flat_set<MonitorId>> requested )ι->VoidTask{
-		auto wait = 1s;
-		TRACE( "[{}]DeleteMonitoring count={}, wait={}", hex(uaHandle), requested.size(), Chrono::ToString(wait) ); //duration_cast<std::chrono::seconds>(wait).count()
+		let wait = _itemDeleteDelay;
+		TRACE( "[{}]DeleteMonitoring count={}, wait={}", hex(uaHandle), requested.size(), Chrono::ToString(wait) );
 		(void)co_await DurationTimer{ wait };
 		flat_map<UA_UInt32,flat_set<MonitorId>> toDelete;//co_return below releases the lock with the frame's locals.
 		ul _{ _mutex };

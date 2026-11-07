@@ -83,6 +83,17 @@ namespace Jde::Opc::Gateway::Tests{
 		up<Exception> Error;
 		std::atomic_flag Done;
 	};
+	//One of the gateway's timings - _itemDeleteDelay, _reconnectDelay - at `value` until this goes:  the suite runs them shorter than
+	//shipped (Opc.Tests.jsonnet), and a test built on the shipped window sets it back.
+	struct DurationOverride final{
+		DurationOverride( Duration& setting, Duration value )ι:_setting{ setting }, _was{ setting }{ _setting = value; }
+		~DurationOverride(){ _setting = _was; }
+		DurationOverride( const DurationOverride& )=delete;
+		DurationOverride& operator=( const DurationOverride& )=delete;
+	private:
+		Duration& _setting;
+		Duration _was;
+	};
 	//Every executor thread held until Release, or this goes:  what runs elsewhere - the endpoint's own thread, the blocking pool -
 	//still runs, and what needs the executor waits.  A thread busy elsewhere leaves fewer to hold, which Held can't tell from a pass;
 	//one busy for seconds right after startup has been seen (2026-11-02, twice in eight runs, both times in the process's first test),
