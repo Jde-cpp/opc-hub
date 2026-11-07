@@ -254,6 +254,8 @@ namespace Jde::Opc::Tests{
 	TEST( ValueTests, SettableListsSetsArms ){
 		for( uint i=0; i<UA_TYPES_COUNT; ++i ){
 			let& type = UA_TYPES[i];
+			if( type.typeKind==UA_DATATYPEKIND_STRUCTURE || type.typeKind==UA_DATATYPEKIND_OPTSTRUCT || type.typeKind==UA_DATATYPEKIND_UNION )
+				continue;//its members' arms:  StructureSettableIsItsMembers.
 			string thrown;
 			try{
 				Value v{ jvalue{0}, &type };
@@ -265,6 +267,26 @@ namespace Jde::Opc::Tests{
 		}
 		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_NODEID]) );
 		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_DURATION]) ) << "a Double";
+	}
+	//A structure is settable when every member is, at any depth (reviews-issue/421-type-registry.md #8):  one holding a NodeId refuses
+	//before Set is tried, as the gateway's limit;  an enumeration member writes back the number ToJson wrote.
+	TEST( ValueTests, StructureSettableIsItsMembers ){
+		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_RANGE]) );
+		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_EUINFORMATION]) );
+		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_ARGUMENT]) ) << "its DataType is a NodeId";
+		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_KEYVALUEPAIR]) ) << "its Value is a Variant";
+		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_SERVERSTATUSDATATYPE]) ) << "a ServerState enum and a nested BuildInfo";
+
+		UA_ServerStatusDataType status; UA_ServerStatusDataType_init( &status );
+		status.state = UA_SERVERSTATE_SUSPENDED;
+		status.secondsTillShutdown = 7;
+		let json = dataValue( &status, UA_TYPES[UA_TYPES_SERVERSTATUSDATATYPE] ).ToJson();
+		EXPECT_EQ( Json::AsNumber<int>(json.as_object(), "State"), (int)UA_SERVERSTATE_SUSPENDED ) << serialize( json );
+		const Value back{ json, &UA_TYPES[UA_TYPES_SERVERSTATUSDATATYPE] };
+		ASSERT_TRUE( UA_Variant_hasScalarType(&back.value, &UA_TYPES[UA_TYPES_SERVERSTATUSDATATYPE]) );
+		let& read = *(const UA_ServerStatusDataType*)back.value.data;
+		EXPECT_EQ( read.state, UA_SERVERSTATE_SUSPENDED );
+		EXPECT_EQ( read.secondsTillShutdown, 7u );
 	}
 
 	//A typeless Value infers the UA type from the json kind - the path a write takes before the node's DataType is known.

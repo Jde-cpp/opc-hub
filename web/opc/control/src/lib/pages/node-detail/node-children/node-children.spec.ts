@@ -4,6 +4,7 @@ import { config } from 'rxjs';
 import { DateUtils, ProtoUtils, SnackbarService, Timestamp, ViewType } from 'jde-framework';
 import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
+import { Enum } from '../../../model/enum';
 import { NodeId } from '../../../model/node-id';
 import { Method, OpcObject, UaNode, Variable } from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
@@ -583,6 +584,30 @@ describe( 'NodeChildren a Method\'s Call button', ()=>{
 		const open = vi.spyOn( MethodCallDialog, 'open' ).mockResolvedValue( undefined );
 		fixture.nativeElement.querySelector( 'button[aria-label="Call toHertz"]' ).click();
 		expect( open.mock.calls[0][1].method ).toBe( toHertz );
+	} );
+} );
+
+//the #421 walk's W1:  every value of a type of the server's own took the enumeration's select, so a structure showed an empty one
+describe( 'NodeChildren a value of the server\'s own type', ()=>{
+	it( 'offers an enumeration\'s values and shows a structure as text', ()=>{
+		TestBed.configureTestingModule({ providers: [screenSize(), provideRoute(), { provide: GATEWAY_SERVICE, useValue: {} }, { provide: SnackbarService, useValue: snackbarStub() }, pageTitleStub] });
+		const fixture = TestBed.createComponent( NodeChildren );
+		const page = fixture.componentInstance;
+		const health = variable( 1, "health", {dataType: {ns: 2, i: 3002}, value: 1} );
+		health.customDataType = new Enum( new NodeId({ns: 2, i: 3002}), <any>{name: "Health", enumValues: [{id: 1, name: "OK"}]} );
+		const sample = variable( 2, "sample", {dataType: {ns: 2, i: 3001}, value: {Rpm: 1480.5, Running: true}} );
+		page.pageData = { gateway: fakeGateway( 'local' ), route: {profileKey: 'k'}, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
+		page.profile = { subscriptions: [] } as any;
+		fixture.componentRef.setInput( 'node', new OpcObject(<any>{ns: 2, i: 5010, name: '_Test', browse: {ns: 2, name: '_Test'}}) );
+		(<any>page).setNodes( [health, sample], false );
+		page.isLoading.set( false );//the route's load, which provideRoute() leaves out
+		page.viewSet.reset( [NodeView.default()] );
+		fixture.detectChanges();
+		const snapshot = ( name:string ):Element=>[...fixture.nativeElement.querySelectorAll( 'mat-row' )]
+			.find( (r:Element)=>r.querySelector('.mat-column-name')?.textContent?.trim()==name )!.querySelector( '.mat-column-snapshot' )!;
+		expect( snapshot('health').querySelector('mat-select') ).not.toBeNull();
+		expect( snapshot('sample').querySelector('mat-select') ).toBeNull();
+		expect( snapshot('sample').textContent!.trim() ).toBe( '{"Rpm":1480.5,"Running":true}' );
 	} );
 } );
 

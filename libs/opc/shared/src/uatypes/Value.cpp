@@ -72,16 +72,29 @@ namespace Jde::Opc{
 		return j;
 	}
 
-	α Value::Settable( const UA_DataType& type )ι->bool{
+	//`type` on Set's arms, a structure by every member's:  `walking`, the structures this one is a member of, so a type holding
+	//itself (by an array or optional member) is not walked again.
+	Ω settable( const UA_DataType& type, vector<const UA_DataType*>& walking )ι->bool{
 		switch( type.typeKind ){//Set's arms
 		case UA_DATATYPEKIND_BOOLEAN: case UA_DATATYPEKIND_BYTE: case UA_DATATYPEKIND_SBYTE: case UA_DATATYPEKIND_INT16: case UA_DATATYPEKIND_UINT16:
 		case UA_DATATYPEKIND_INT32: case UA_DATATYPEKIND_UINT32: case UA_DATATYPEKIND_INT64: case UA_DATATYPEKIND_UINT64: case UA_DATATYPEKIND_DOUBLE:
 		case UA_DATATYPEKIND_FLOAT: case UA_DATATYPEKIND_STRING: case UA_DATATYPEKIND_LOCALIZEDTEXT: case UA_DATATYPEKIND_DATETIME:
-		case UA_DATATYPEKIND_STRUCTURE: case UA_DATATYPEKIND_OPTSTRUCT: case UA_DATATYPEKIND_UNION:
+		case UA_DATATYPEKIND_ENUM:
 			return true;
+		case UA_DATATYPEKIND_STRUCTURE: case UA_DATATYPEKIND_OPTSTRUCT: case UA_DATATYPEKIND_UNION:{
+			if( std::ranges::find(walking, &type)!=walking.end() )
+				return true;
+			walking.push_back( &type );
+			let y = std::ranges::all_of( std::span{type.members, type.membersSize}, [&]( const UA_DataTypeMember& m ){ return m.memberType && settable(*m.memberType, walking); } );
+			walking.pop_back();
+			return y;}
 		default:
 			return false;
 		}
+	}
+	α Value::Settable( const UA_DataType& type )ι->bool{
+		vector<const UA_DataType*> walking;
+		return settable( type, walking );
 	}
 	Ω isStructure( const UA_DataType* type )ι->bool{ return type && (type->typeKind==UA_DATATYPEKIND_STRUCTURE || type->typeKind==UA_DATATYPEKIND_OPTSTRUCT || type->typeKind==UA_DATATYPEKIND_UNION); }
 	Ω hasMember( const UA_DataType& type, sv name )ι->bool{
@@ -150,6 +163,7 @@ namespace Jde::Opc{
 		case UA_DATATYPEKIND_UINT16: SetNumber<UA_UInt16>( j, sl ); break;
 		case UA_DATATYPEKIND_INT32: SetNumber<UA_Int32>( j, sl ); break;
 		case UA_DATATYPEKIND_UINT32: SetNumber<UA_UInt32>( j, sl ); break;
+		case UA_DATATYPEKIND_ENUM: SetNumber<UA_Int32>( j, sl ); break;//its value, as ToJson writes it (Variant::ElementToJson), typed as the enumeration.
 		case UA_DATATYPEKIND_INT64: SetNumber<UA_Int64>( j, sl ); break;
 		case UA_DATATYPEKIND_UINT64: SetNumber<UA_UInt64>( j, sl ); break;
 		//One arm for both:  UA_Duration *is* UA_Double, a count of milliseconds - the same kind - and either can arrive in

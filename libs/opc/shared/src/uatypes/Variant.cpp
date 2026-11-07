@@ -19,41 +19,6 @@ namespace Jde::Opc{
 		Owned{ move(Value{v, dataType}.value) }
 	{}
 
-	α FindEncoding( const UA_NodeId& encodingId, const ITypes* types )ι->const UA_DataType*{
-		static const absl::flat_hash_map<UA_UInt32,const UA_DataType*> ns0 = []{//UA_TYPES by DefaultBinary id, every one of which is numeric in namespace 0.
-			absl::flat_hash_map<UA_UInt32,const UA_DataType*> y;
-			for( uint i=0; i<UA_TYPES_COUNT; ++i ){
-				if( let& encoding = UA_TYPES[i].binaryEncodingId; !encoding.namespaceIndex && encoding.identifierType==UA_NODEIDTYPE_NUMERIC && encoding.identifier.numeric )
-					y.emplace( encoding.identifier.numeric, &UA_TYPES[i] );
-			}
-			return y;
-		}();
-		if( !encodingId.namespaceIndex && encodingId.identifierType==UA_NODEIDTYPE_NUMERIC ){
-			if( let p = ns0.find(encodingId.identifier.numeric); p!=ns0.end() )
-				return p->second;
-		}
-		for( auto a = types ? types->Chain() : nullptr; a; a = a->next ){
-			for( uint i=0; i<a->typesSize; ++i ){
-				if( UA_NodeId_equal(&a->types[i].binaryEncodingId, &encodingId) )
-					return &a->types[i];
-			}
-		}
-		return nullptr;
-	}
-	α FindDataType( const UA_NodeId& typeId, const ITypes* types )ι->const UA_DataType*{
-		return UA_findDataTypeWithCustom( &typeId, types ? types->Chain() : nullptr );
-	}
-	α NoteMissingTypes( const UA_Variant& v, const ITypes& types )ι->void{
-		if( !v.type || !v.data || v.type->typeKind!=UA_DATATYPEKIND_EXTENSIONOBJECT )
-			return;
-		let count = UA_Variant_isScalar( &v ) ? 1 : v.arrayLength;
-		for( uint i=0; i<count; ++i ){
-			let& eo = ((const UA_ExtensionObject*)v.data)[i];
-			if( eo.encoding==UA_EXTENSIONOBJECT_ENCODED_BYTESTRING && eo.content.encoded.typeId.namespaceIndex && !FindEncoding(eo.content.encoded.typeId, &types) )
-				types.Missing( eo.content.encoded.typeId );
-		}
-	}
-
 	//OPC-UA Part 6 spells the non-finite doubles as the strings "NaN"/"Infinity"/"-Infinity", which is what UA_encodeJson
 	//writes.  Boost.JSON's default options write a NaN as `null`, the same text a value-less reading serializes as, so a
 	//failed sensor - NaN is the common one - reached the SPA as a blank tag.  Its allow_infinity_and_nan writes the bare
@@ -81,7 +46,7 @@ namespace Jde::Opc{
 			return jvalue{ v };
 	}
 
-	//What no arm here has a shape for - a Variant, a DataValue, a DiagnosticInfo, a Decimal - as open62541's json encoder writes it.
+	//What no arm here has a shape for - a DataValue, a DiagnosticInfo, a Decimal - as open62541's json encoder writes it.
 	Ω encoded( const void* element, const UA_DataType& type )ε->jvalue{
 		UAString ua;
 		UA_EncodeJsonOptions options{};
@@ -180,6 +145,16 @@ namespace Jde::Opc{
 		return y;
 	}
 
+	Ω variantToJson( const UA_Variant& v, const ITypes* types )ε->jvalue{
+		if( UA_Variant_isEmpty(&v) )
+			return {};
+		if( UA_Variant_isScalar(&v) )
+			return Variant::ElementToJson( v.data, *v.type, types );
+		jarray y;
+		for( uint i=0; i<v.arrayLength; ++i )
+			y.emplace_back( Variant::ElementToJson((const UA_Byte*)v.data+i*v.type->memSize, *v.type, types) );
+		return y;
+	}
 	α Variant::ElementToJson( const void* element, const UA_DataType& type, const ITypes* types )ε->jvalue{
 		switch( type.typeKind ){
 		case UA_DATATYPEKIND_STRING:
@@ -193,6 +168,7 @@ namespace Jde::Opc{
 		case UA_DATATYPEKIND_LOCALIZEDTEXT: return jstring{ ToSV(((const UA_LocalizedText*)element)->text) };//the text alone.
 		case UA_DATATYPEKIND_ENUM: return jvalue{ *(const UA_Int32*)element };//its value:  what an enumeration encodes as.
 		case UA_DATATYPEKIND_EXTENSIONOBJECT: return extensionObjectToJson( *(const UA_ExtensionObject*)element, types );
+		case UA_DATATYPEKIND_VARIANT: return variantToJson( *(const UA_Variant*)element, types );//its value, walked as a top-level one is.
 		case UA_DATATYPEKIND_STRUCTURE:
 		case UA_DATATYPEKIND_OPTSTRUCT:
 		case UA_DATATYPEKIND_UNION: return structureToJson( element, type, types );
@@ -200,88 +176,210 @@ namespace Jde::Opc{
 		}
 	}
 	α Variant::ToJson( const ITypes* types )ε->jvalue{
-		if( IsNull() )
-			return {};
-		if( IsScalar() )
-			return ElementToJson( data, *type, types );
-		jarray y;
-		for( uint i=0; i<arrayLength; ++i )
-			y.emplace_back( ElementToJson((UA_Byte*)data+i*type->memSize, *type, types) );
-		return y;
+		return variantToJson( *this, types );
 	}
 
 	Ω isStructure( const UA_DataType& type )ι->bool{ return type.typeKind==UA_DATATYPEKIND_STRUCTURE || type.typeKind==UA_DATATYPEKIND_OPTSTRUCT || type.typeKind==UA_DATATYPEKIND_UNION; }
-	//The ExtensionObject `p` of `type` travels as:  the type's DefaultBinary id and its binary form, as open62541's encoder writes a
-	//structure held in a Variant.
-	Ω encodeStructure( const void* p, const UA_DataType& type, UA_ExtensionObject& y )ι->StatusCode{
+	//Each element of each member of the structure `p` of `type`, laid out as structureToJson reads it, to `f( element, memberType )` until
+	//it answers false;  false when it did.
+	Ω allMembers( void* p, const UA_DataType& type, const auto& f )ι->bool{
+		auto ptr = reinterpret_cast<uintptr_t>( p );
+		let array = [&]( const UA_DataTypeMember& m, uintptr_t at )->bool{
+			let count = *reinterpret_cast<const uint*>( at );
+			let data = *reinterpret_cast<UA_Byte* const*>( at+sizeof(uint) );
+			for( uint i=0; data && (const void*)data!=UA_EMPTY_ARRAY_SENTINEL && i<count; ++i ){
+				if( !f(data+i*m.memberType->memSize, *m.memberType) )
+					return false;
+			}
+			return true;
+		};
+		if( type.typeKind==UA_DATATYPEKIND_UNION ){
+			let selection = *reinterpret_cast<const UA_UInt32*>( ptr );
+			if( !selection || selection>type.membersSize )
+				return true;
+			let& m = type.members[selection-1];
+			return m.isArray ? array( m, ptr+m.padding ) : f( reinterpret_cast<void*>(ptr+m.padding), *m.memberType );
+		}
+		for( uint i=0; i<type.membersSize; ++i ){
+			let& m = type.members[i];
+			ptr += m.padding;
+			if( m.isArray ){
+				if( !array(m, ptr) )
+					return false;
+				ptr += sizeof(uint)+sizeof(void*);
+			}
+			else if( m.isOptional ){
+				if( let member = *reinterpret_cast<void* const*>( ptr ); member && !f(member, *m.memberType) )
+					return false;
+				ptr += sizeof(void*);
+			}
+			else{
+				if( !f(reinterpret_cast<void*>(ptr), *m.memberType) )
+					return false;
+				ptr += m.memberType->memSize;
+			}
+		}
+		return true;
+	}
+	Ω allElements( const UA_Variant& v, const auto& f )ι->bool{
+		if( !v.type || !v.data || (const void*)v.data==UA_EMPTY_ARRAY_SENTINEL )
+			return true;
+		let count = UA_Variant_isScalar( &v ) ? 1 : v.arrayLength;
+		for( uint i=0; i<count; ++i ){
+			if( !f((UA_Byte*)v.data+i*v.type->memSize, *v.type) )
+				return false;
+		}
+		return true;
+	}
+	//A kind whose value may hold another type:  a Variant, an ExtensionObject, a DataValue, a structure's members.
+	Ω container( const UA_DataType& type )ι->bool{
+		return type.typeKind==UA_DATATYPEKIND_VARIANT || type.typeKind==UA_DATATYPEKIND_EXTENSIONOBJECT || type.typeKind==UA_DATATYPEKIND_DATAVALUE || isStructure( type );
+	}
+	//The element `p` of `type` is a type outside UA_TYPES, or holds one anywhere:  a Variant of one, an ExtensionObject decoded as one,
+	//or a member of namespace 0's that does - a KeyValuePair's Value, an EventFieldList's fields, a DataValue's value.
+	Ω holdsCustom( const void* p, const UA_DataType& type )ι->bool{
+		if( !IsBuiltIn(&type) )
+			return true;
+		let walk = []( void* element, const UA_DataType& t )ι->bool{ return !holdsCustom( element, t ); };
+		switch( type.typeKind ){
+		case UA_DATATYPEKIND_VARIANT:{
+			let& v = *(const UA_Variant*)p;
+			return v.type && ( !IsBuiltIn(v.type) || (container(*v.type) && !allElements(v, walk)) );}
+		case UA_DATATYPEKIND_EXTENSIONOBJECT:{
+			let& eo = *(const UA_ExtensionObject*)p;
+			return eo.encoding>=UA_EXTENSIONOBJECT_DECODED && eo.content.decoded.type && ( !IsBuiltIn(eo.content.decoded.type) || (eo.content.decoded.data && holdsCustom(eo.content.decoded.data, *eo.content.decoded.type)) );}
+		case UA_DATATYPEKIND_DATAVALUE:{
+			let& dv = *(const UA_DataValue*)p;
+			return dv.hasValue && holdsCustom( &dv.value, UA_TYPES[UA_TYPES_VARIANT] );}
+		default:
+			return isStructure( type ) && !allMembers( const_cast<void*>(p), type, walk );
+		}
+	}
+	//The structure `p` of `type` as the ExtensionObject it travels as:  the type's DefaultBinary id and its binary form, as open62541's
+	//encoder writes a structure held in a Variant.  One that won't encode is an empty ExtensionObject, never one that keeps the type.
+	Ω encodeStructure( const void* p, const UA_DataType& type, UA_ExtensionObject& y )ι->void{
 		UA_ExtensionObject_init( &y );
 		y.encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
-		if( let sc = UA_NodeId_copy(&type.binaryEncodingId, &y.content.encoded.typeId); sc )
-			return sc;
-		return UA_encodeBinary( p, &type, &y.content.encoded.body, nullptr );
+		StatusCode sc = UA_NodeId_copy( &type.binaryEncodingId, &y.content.encoded.typeId );
+		if( !sc )
+			sc = UA_encodeBinary( p, &type, &y.content.encoded.body, nullptr );
+		if( sc ){
+			WARNT( ELogTags::Parsing, "Could not encode a '{}' to keep it - {}.  Kept as an empty ExtensionObject.", type.typeName, UAException::Message(sc) );
+			UA_ExtensionObject_clear( &y );//the id copied, and whatever body was written.
+		}
+	}
+	//`v`, of a type outside UA_TYPES, as an ExtensionObject of each element, in v's shape.
+	Ω encodeVariant( const UA_Variant& v, UA_Variant& y )ι->void{
+		UA_Variant_init( &y );
+		let scalar = UA_Variant_isScalar( &v );
+		let count = scalar || !v.data ? (uint)scalar : v.arrayLength;
+		auto objects = (UA_ExtensionObject*)UA_Array_new( count, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+		if( !objects ){
+			WARNT( ELogTags::Parsing, "Could not allocate {} ExtensionObjects to keep a '{}' - kept empty.", count, v.type->typeName );
+			return;
+		}
+		for( uint i=0; i<count; ++i )
+			encodeStructure( (const UA_Byte*)v.data+i*v.type->memSize, *v.type, objects[i] );
+		if( scalar )
+			UA_Variant_setScalar( &y, objects, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );//one element from UA_Array_new frees as a scalar does.
+		else{
+			UA_Variant_setArray( &y, objects, count, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+			if( let sc = UA_Array_copy(v.arrayDimensions, v.arrayDimensionsSize, (void**)&y.arrayDimensions, &UA_TYPES[UA_TYPES_UINT32]); !sc )
+				y.arrayDimensionsSize = v.arrayDimensionsSize;
+		}
+	}
+	//In place, in a copy:  every type outside UA_TYPES under the element `p` of `type` encoded, holdsCustom's places walked.
+	Ω encodeCustom( void* p, const UA_DataType& type )ι->void{
+		let walk = []( void* element, const UA_DataType& t )ι->bool{ encodeCustom( element, t ); return true; };
+		switch( type.typeKind ){
+		case UA_DATATYPEKIND_VARIANT:{
+			auto& v = *(UA_Variant*)p;
+			if( !v.type )
+				break;
+			if( !IsBuiltIn(v.type) ){
+				UA_Variant y; encodeVariant( v, y );
+				UA_Variant_clear( &v );
+				v = y;
+			}
+			else if( container(*v.type) )
+				allElements( v, walk );
+			break;}
+		case UA_DATATYPEKIND_EXTENSIONOBJECT:{
+			auto& eo = *(UA_ExtensionObject*)p;
+			if( eo.encoding<UA_EXTENSIONOBJECT_DECODED || !eo.content.decoded.type || !eo.content.decoded.data )
+				break;
+			if( !IsBuiltIn(eo.content.decoded.type) ){
+				UA_ExtensionObject y; encodeStructure( eo.content.decoded.data, *eo.content.decoded.type, y );
+				UA_ExtensionObject_clear( &eo );
+				eo = y;
+			}
+			else
+				encodeCustom( eo.content.decoded.data, *eo.content.decoded.type );
+			break;}
+		case UA_DATATYPEKIND_DATAVALUE:{
+			auto& dv = *(UA_DataValue*)p;
+			if( dv.hasValue )
+				encodeCustom( &dv.value, UA_TYPES[UA_TYPES_VARIANT] );
+			break;}
+		default:
+			if( isStructure(type) )
+				allMembers( p, type, walk );
+		}
 	}
 	α Variant::WithBuiltInTypes( const UA_Variant& v )ι->optional<Variant>{
-		if( !v.type || !v.data )
+		if( !holdsCustom(&v, UA_TYPES[UA_TYPES_VARIANT]) )
 			return nullopt;
-		let count = UA_Variant_isScalar( &v ) ? 1 : v.arrayLength;
-		let& type = *v.type;
-		if( !IsBuiltIn(&type) && isStructure(type) ){
-			auto objects = (UA_ExtensionObject*)UA_Array_new( count, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
-			if( !objects )
-				return nullopt;
-			for( uint i=0; i<count; ++i ){
-				if( let sc = encodeStructure((const UA_Byte*)v.data+i*type.memSize, type, objects[i]); sc ){
-					WARNT( ELogTags::Parsing, "Could not encode a '{}' to keep it - {}.", type.typeName, UAException::Message(sc) );
-					UA_Array_delete( objects, count, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
-					return nullopt;
-				}
-			}
-			UA_Variant y{};
-			if( UA_Variant_isScalar(&v) )
-				UA_Variant_setScalar( &y, objects, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );//one element from UA_Array_new frees as a scalar does.
-			else{
-				UA_Variant_setArray( &y, objects, count, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
-				if( let sc = UA_Array_copy(v.arrayDimensions, v.arrayDimensionsSize, (void**)&y.arrayDimensions, &UA_TYPES[UA_TYPES_UINT32]); !sc )
-					y.arrayDimensionsSize = v.arrayDimensionsSize;
-			}
+		if( !IsBuiltIn(v.type) ){//the elements encoded straight from `v`:  a copy of them would only be cleared.
+			UA_Variant y; encodeVariant( v, y );
 			return Variant{ move(y) };
 		}
-		//A decoded ExtensionObject of such a type, or a Variant element holding one:  the element re-encoded in a copy of the whole.
-		let needs = [&]( const UA_Variant& x )->bool{
-			for( uint i=0; i<count; ++i ){
-				let element = (const UA_Byte*)x.data+i*type.memSize;
-				if( type.typeKind==UA_DATATYPEKIND_EXTENSIONOBJECT ){
-					let& eo = *(const UA_ExtensionObject*)element;
-					if( eo.encoding>=UA_EXTENSIONOBJECT_DECODED && eo.content.decoded.type && !IsBuiltIn(eo.content.decoded.type) )
-						return true;
-				}
-				else if( type.typeKind==UA_DATATYPEKIND_VARIANT && WithBuiltInTypes(*(const UA_Variant*)element) )
-					return true;
-			}
-			return false;
-		};
-		if( !needs(v) )
-			return nullopt;
 		Variant y{ v };
+		encodeCustom( (UA_Variant*)&y, UA_TYPES[UA_TYPES_VARIANT] );
+		return y;
+	}
+	Ω noteMissing( const UA_Variant& v, const ITypes& types )ι->void{
+		if( !v.type || !v.data || (v.type->typeKind!=UA_DATATYPEKIND_EXTENSIONOBJECT && v.type->typeKind!=UA_DATATYPEKIND_VARIANT) )
+			return;
+		let count = UA_Variant_isScalar( &v ) ? 1 : v.arrayLength;
 		for( uint i=0; i<count; ++i ){
-			auto element = (UA_Byte*)y.data+i*type.memSize;
-			if( type.typeKind==UA_DATATYPEKIND_EXTENSIONOBJECT ){
-				auto& eo = *(UA_ExtensionObject*)element;
-				if( eo.encoding<UA_EXTENSIONOBJECT_DECODED || !eo.content.decoded.type || IsBuiltIn(eo.content.decoded.type) )
-					continue;
-				UA_ExtensionObject object;
-				if( encodeStructure(eo.content.decoded.data, *eo.content.decoded.type, object) )
-					continue;//kept as it is, decoded:  the warning above would say the same.
-				UA_ExtensionObject_clear( &eo );
-				eo = object;
+			if( v.type->typeKind==UA_DATATYPEKIND_VARIANT ){
+				noteMissing( ((const UA_Variant*)v.data)[i], types );
+				continue;
 			}
-			else if( type.typeKind==UA_DATATYPEKIND_VARIANT ){
-				if( auto inner = WithBuiltInTypes(*(const UA_Variant*)element); inner ){
-					UA_Variant_clear( (UA_Variant*)element );
-					*(UA_Variant*)element = inner->Move();
-				}
+			let& eo = ((const UA_ExtensionObject*)v.data)[i];
+			if( eo.encoding==UA_EXTENSIONOBJECT_ENCODED_BYTESTRING && eo.content.encoded.typeId.namespaceIndex && !FindEncoding(eo.content.encoded.typeId, &types) )
+				types.Missing( eo.content.encoded.typeId );
+		}
+	}
+}
+
+namespace Jde{
+	α Opc::FindEncoding( const UA_NodeId& encodingId, const ITypes* types )ι->const UA_DataType*{
+		static const absl::flat_hash_map<UA_UInt32,const UA_DataType*> ns0 = []{//UA_TYPES by DefaultBinary id, every one of which is numeric in namespace 0.
+			absl::flat_hash_map<UA_UInt32,const UA_DataType*> y;
+			for( uint i=0; i<UA_TYPES_COUNT; ++i ){
+				if( let& encoding = UA_TYPES[i].binaryEncodingId; !encoding.namespaceIndex && encoding.identifierType==UA_NODEIDTYPE_NUMERIC && encoding.identifier.numeric )
+					y.emplace( encoding.identifier.numeric, &UA_TYPES[i] );
+			}
+			return y;
+		}();
+		if( !encodingId.namespaceIndex && encodingId.identifierType==UA_NODEIDTYPE_NUMERIC ){
+			if( let p = ns0.find(encodingId.identifier.numeric); p!=ns0.end() )
+				return p->second;
+		}
+		for( auto a = types ? types->Chain() : nullptr; a; a = a->next ){
+			for( uint i=0; i<a->typesSize; ++i ){
+				if( UA_NodeId_equal(&a->types[i].binaryEncodingId, &encodingId) )
+					return &a->types[i];
 			}
 		}
-		return y;
+		return nullptr;
+	}
+	α Opc::FindDataType( const UA_NodeId& typeId, const ITypes* types )ι->const UA_DataType*{
+		return UA_findDataTypeWithCustom( &typeId, types ? types->Chain() : nullptr );
+	}
+	//An ExtensionObject element, or a Variant element's, at any depth.
+	α Opc::NoteMissingTypes( const UA_Variant& v, const ITypes& types )ι->void{
+		noteMissing( v, types );
 	}
 }

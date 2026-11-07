@@ -617,7 +617,7 @@ namespace Jde::Opc::Gateway{
 			client->ReleaseParked();
 			if( client->RecordSession() ){
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
-				Post( [client]()ι->void{ client->_types->Fetch( client ); } );//a reconnect in place:  the server may be back with structures the registry lacks, as the chain's new client would fetch.
+				Post( [client]()ι->void{ client->_types->Fetch( client, TypeRegistry::EFetch::Check ); } );//a reconnect in place:  the server may be back with its namespaces moved, which starts the registry over.
 			}
 			client->_brokeAt = TimePoint{};//the same session back, or the rebuild has taken it:  a later loss is a new break.
 			if( broke!=TimePoint{} ){
@@ -810,7 +810,7 @@ namespace Jde::Opc::Gateway{
 			}
 			ClearConnectError( client->Slug() );//a reachable slug - whatever the previous attempt failed on no longer applies.
 			notifyChange( client->Slug(), ConnectionChange::EKind::Activated );
-			Post( [client]()ι->void{ client->_types->Fetch( client ); } );//the server's structures the registry lacks (clients spec *Structures*):  off this callback, behind the namespace read open62541 fires first.
+			Post( [client]()ι->void{ client->_types->Fetch( client, TypeRegistry::EFetch::Check ); } );//the server's structures, walked once per registry (clients spec *Structures*):  off this callback, behind the namespace read open62541 fires first, and running before ConnectAwait resumes the query that caused the connect, which waits it out (TypeRegistry::Settled).
 			Post( [client]()ι->void {
 				ConnectAwait::Resume( move(client) );
 			});

@@ -20,25 +20,62 @@ namespace Jde::Opc{
 	}
 	namespace Gateway{
 	DataTypesAwait::DataTypesAwait( vector<NodeId>&& nodes, sp<UAClient> client, const UA_DataTypeArray* known, SL sl )ι:
-		UAServiceAwait{ move(client), "read DataTypeDefinition", sl },
+		AnyAwait{ sl },
 		_nodes{ move(nodes) },
-		_request{ _nodes, {UA_ATTRIBUTEID_DATATYPEDEFINITION, UA_ATTRIBUTEID_BROWSENAME} },
+		_client{ move(client) },
 		_known{ known }
 	{}
-	α DataTypesAwait::Suspend()ι->void{
-		if( _nodes.empty() )
-			Resume( DataTypeArrayPtr{nullptr, FreeDataTypeArray} );
-		else
-			UAServiceAwait::Suspend();
+	α DataTypesAwait::await_ready()ι->bool{
+		if( !_nodes.empty() )
+			return false;
+		_result = DataTypeArrayPtr{ nullptr, FreeDataTypeArray };
+		return true;
 	}
-	α DataTypesAwait::Request()ι->void*{
-		return static_cast<UA_ReadRequest*>( &_request );
+	α DataTypesAwait::Read()ι->VoidTask{
+		try{
+			vector<ReadResponse> responses;
+			vector<uint> starts;
+			uint batch = _nodes.size();
+			for( uint start=0; start<_nodes.size(); ){
+				let count = std::min<uint>( batch, _nodes.size()-start );
+				vector<NodeId> asked; asked.reserve( count );
+				for( uint i=start; i<start+count; ++i )
+					asked.push_back( NodeId{_nodes[i]} );
+				optional<ReadResponse> response; bool tooMany{};
+				try{
+					ReadAwait read{ ReadRequest{asked, {UA_ATTRIBUTEID_DATATYPEDEFINITION, UA_ATTRIBUTEID_BROWSENAME}}, _client };
+					response = co_await Any( read );
+				}
+				catch( const UAException& e ){
+					if( e.Code()!=UA_STATUSCODE_BADTOOMANYOPERATIONS || count==1 )
+						throw;
+					tooMany = true;
+				}
+				if( tooMany ){//the server's MaxNodesPerRead is below the request:  fewer, and again.
+					batch = std::max<uint>( 1, count/2 );
+					DBG( "[{}]A read of {} DataType definitions was refused as too many - {} at a time.", hex(_client->Handle()), count, batch );
+					continue;
+				}
+				THROW_IFX( response->resultsSize!=count*2, UAClientException(UA_STATUSCODE_BADUNEXPECTEDERROR, _client->Handle(), Ƒ("read answered {} results for {} attributes", response->resultsSize, count*2), _sl) );
+				starts.push_back( start );
+				responses.push_back( move(*response) );
+				start += count;
+			}
+			Resume( Build(responses, starts) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
 	}
-	//open62541 clears the response once the completion returns:  fromDescription copies what it keeps.
-	α DataTypesAwait::Convert( UA_ReadResponse&& response )ε->DataTypeArrayPtr{
-		THROW_IFX( response.responseHeader.serviceResult, UAClientException(response.responseHeader.serviceResult, _client->Handle(), "read DataTypeDefinition", _sl) );
-		THROW_IFX( response.resultsSize!=_request.nodesToReadSize, UAClientException(UA_STATUSCODE_BADUNEXPECTEDERROR, _client->Handle(), Ƒ("read answered {} results for {} attributes", response.resultsSize, _request.nodesToReadSize), _sl) );
+	//fromDescription copies what it keeps.
+	α DataTypesAwait::Build( const vector<ReadResponse>& responses, const vector<uint>& starts )ε->DataTypeArrayPtr{
 		let count = _nodes.size();
+		vector<std::pair<const UA_DataValue*,const UA_DataValue*>> answers( count );//each node's definition and name.
+		for( uint b=0; b<responses.size(); ++b ){
+			let end = b+1<starts.size() ? starts[b+1] : count;
+			for( uint i=starts[b]; i<end; ++i )
+				answers[i] = { &responses[b].results[(i-starts[b])*2], &responses[b].results[(i-starts[b])*2+1] };
+		}
 		DataTypeArrayPtr y{ (UA_DataTypeArray*)UA_calloc(1, sizeof(UA_DataTypeArray)), FreeDataTypeArray };
 		THROW_IF( !y, "Could not allocate the DataTypeArray." );
 		y->cleanup = true;
@@ -46,8 +83,8 @@ namespace Jde::Opc{
 		THROW_IF( !y->types, "Could not allocate {} DataTypes.", count );
 		vector<uint> pending;//the nodes with a definition to build, by index.
 		for( uint i=0; i<count; ++i ){
-			let& definition = response.results[i*2];
-			let& name = response.results[i*2+1];
+			let& definition = *answers[i].first;
+			let& name = *answers[i].second;
 			if( (definition.hasStatus && definition.status) || !definition.hasValue || !UA_Variant_hasScalarType(&definition.value, &UA_TYPES[UA_TYPES_STRUCTUREDEFINITION]) )
 				continue;
 			if( (name.hasStatus && name.status) || !name.hasValue || !UA_Variant_hasScalarType(&name.value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) )
@@ -60,9 +97,9 @@ namespace Jde::Opc{
 			vector<uint> left;
 			for( let i : pending ){
 				UA_StructureDescription description;
-				description.structureDefinition = *(UA_StructureDefinition*)response.results[i*2].value.data;
-				description.dataTypeId = _request.nodesToRead[i*2].nodeId;
-				description.name = *(UA_QualifiedName*)response.results[i*2+1].value.data;
+				description.structureDefinition = *(UA_StructureDefinition*)answers[i].first->value.data;
+				description.dataTypeId = _nodes[i];
+				description.name = *(UA_QualifiedName*)answers[i].second->value.data;
 				UA_ExtensionObject eo;
 				UA_ExtensionObject_setValue( &eo, &description, &UA_TYPES[UA_TYPES_STRUCTUREDESCRIPTION] );
 				UA_DataTypeArray lookup = *y;//the types built so far, then the known ones:  a member's type may be one of them.
@@ -78,7 +115,7 @@ namespace Jde::Opc{
 			pending = move( left );
 		}
 		for( let i : pending )
-			WARN( "[{}]Could not build the DataType {} from {}: {}", hex(_client->Handle()), ToSV(((UA_QualifiedName*)response.results[i*2+1].value.data)->name), _nodes[i].ToString(), UAException::Message(failed[i]) );
+			WARN( "[{}]Could not build the DataType {} from {}: {}", hex(_client->Handle()), ToSV(((UA_QualifiedName*)answers[i].second->value.data)->name), _nodes[i].ToString(), UAException::Message(failed[i]) );
 		if( !y->typesSize ){
 			UA_free( y->types );
 			y->types = nullptr;

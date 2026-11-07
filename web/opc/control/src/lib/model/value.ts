@@ -86,6 +86,8 @@ export function valueString( value: Value|undefined ):string{
 		return value.toString();
 	else if( Array.isArray(value) )
 		return value.map( x=>valueString(x) ).join( ", " );//`this.` was stale — these are free functions now
+	else if( typeof value === "object" )//a structure the gateway decoded by member (clients spec *Structures*):  its members as JSON, until the cell gets a table of its own (#422)
+		return JSON.stringify( value, (_,v)=>v instanceof Long || v instanceof Guid ? v.toString() : v?.hasOwnProperty?.('unsigned') ? new Long( v.low, v.high, v.unsigned ).toString() : v );//a 64-bit member comes as the Long form, which toValue leaves inside a structure
 	else
 		return `unknown type ${typeof value}`;
 }

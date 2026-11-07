@@ -140,14 +140,23 @@ namespace Jde::Opc::Gateway{
 		try{
 			jvalue y;
 			_query.ReturnRaw = true;
+			let readsValues = _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") || _query.JsonName=="history";
+			if( readsValues )//the registry's fetch running - a cold connect's - waited out, so its structures read as fields (#7).  AnyVoidAwait.
+				co_await _client->Types()->Settled( _sl );
 			if( _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") )
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
-			else if( _query.JsonName.starts_with("dataType") ){//from the registry, after a fetch when it lacks one asked for:  what it still lacks after that is no structure the server defines.
+			else if( _query.JsonName.starts_with("dataType") ){//from the registry, after a walk when it lacks one asked for:  what it still lacks after that is no structure the server defines, and never walked for again.
 				auto nodeIds = NodeId::ParseQL( _query );
 				THROW_IF( nodeIds.empty(), "No nodeIds specified." );
 				auto& registry = *_client->Types();
-				if( std::ranges::any_of(nodeIds, [&]( let& id ){ return !registry.Find(id); }) )
+				let lacks = [&]( let& id ){ return !registry.Find(id) && !registry.Unexplained(id); };
+				if( std::ranges::any_of(nodeIds, lacks) ){
 					co_await registry.Fetched( _client, _sl );//AnyVoidAwait - legal from this TAwait<jvalue>::Task.
+					for( let& id : nodeIds ){
+						if( lacks(id) )
+							registry.NoteUnexplained( id );
+					}
+				}
 				y = dataTypesJson( registry, nodeIds, _query );
 			}
 			else if( _query.JsonName=="history" ){//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here (HistGroupReadQLAwait).

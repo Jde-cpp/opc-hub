@@ -218,7 +218,7 @@ namespace Jde::Opc::Gateway{
 		{
 			ul _{ _mutex };
 			auto p = _nodes.find( node );
-			if( p==_nodes.end() || std::exchange(back ? p->second.Refused : p->second.Warned, true) )
+			if( p==_nodes.end() || exchange(back ? p->second.Refused : p->second.Warned, true) )
 				return;
 			slug = p->second.Slug;
 		}
@@ -240,21 +240,12 @@ namespace Jde::Opc::Gateway{
 	//An encoded structure of namespace 0's, decoded in place so its members are walked:  the historian keeps every structure encoded,
 	//and a history page's come back so.  False for a source's own type, which stays encoded, or a body that won't decode.
 	Ω decode( UA_ExtensionObject& o )ι->bool{
-		let& id = o.content.encoded.typeId;
-		if( o.encoding!=UA_EXTENSIONOBJECT_ENCODED_BYTESTRING || id.namespaceIndex || id.identifierType!=UA_NODEIDTYPE_NUMERIC )
+		if( o.encoding!=UA_EXTENSIONOBJECT_ENCODED_BYTESTRING )
 			return false;
-		static const absl::flat_hash_map<UA_UInt32,const UA_DataType*> types = []{//by DefaultBinary id.
-			absl::flat_hash_map<UA_UInt32,const UA_DataType*> y;
-			for( uint i=0; i<UA_TYPES_COUNT; ++i ){
-				if( let& encoding = UA_TYPES[i].binaryEncodingId; !encoding.namespaceIndex && encoding.identifierType==UA_NODEIDTYPE_NUMERIC && encoding.identifier.numeric )
-					y.emplace( encoding.identifier.numeric, &UA_TYPES[i] );
-			}
-			return y;
-		}();
-		let p = types.find( id.identifier.numeric );
-		if( p==types.end() )
+		let found = FindEncoding( o.content.encoded.typeId, nullptr );//UA_TYPES' alone.
+		if( !found )
 			return false;
-		let& type = *p->second;
+		let& type = *found;
 		void* data = UA_new( &type );
 		if( !data || UA_decodeBinary(&o.content.encoded.body, data, &type, nullptr) ){
 			UA_delete( data, &type );

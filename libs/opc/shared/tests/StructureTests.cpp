@@ -205,4 +205,59 @@ namespace Jde::Opc::Tests{
 		ASSERT_TRUE( inner );
 		EXPECT_EQ( ((const UA_ExtensionObject*)inner->data)->encoding, UA_EXTENSIONOBJECT_ENCODED_BYTESTRING );
 	}
+	//A registry's type held anywhere a namespace-0 value can hold one is re-encoded too (reviews-issue/421-type-registry.md #11):  a
+	//KeyValuePair's Value, every element of an array of them, a DataValue's value inside a Variant - and a KeyValuePair of built-in values
+	//is left as it is.
+	TEST( StructureTests, WithBuiltInTypesReachesNestedValues ){
+		Registry registry{ {description(3001, "PumpSampleType", _sampleFields)} };
+		let& sample = registry.Type( 0 );
+		Value v{ sampleJson(), &sample };
+		let reencoded = []( const UA_Variant& x )ι->bool{ return x.type==&UA_TYPES[UA_TYPES_EXTENSIONOBJECT] && ((const UA_ExtensionObject*)x.data)->encoding==UA_EXTENSIONOBJECT_ENCODED_BYTESTRING; };
+		UA_KeyValuePair pairs[2]; UA_KeyValuePair_init( &pairs[0] ); UA_KeyValuePair_init( &pairs[1] );
+		pairs[0].key = UA_QUALIFIEDNAME( 0, (char*)"sample" );
+		UA_Variant_setScalar( &pairs[0].value, v.value.data, &sample );//borrowed:  arrayVariant copies.
+		pairs[1].key = UA_QUALIFIEDNAME( 0, (char*)"double" );
+		const UA_Double d{ 1.5 };
+		UA_Variant_setScalar( &pairs[1].value, (void*)&d, &UA_TYPES[UA_TYPES_DOUBLE] );
+		const Variant kvs{ arrayVariant(pairs, 2, UA_TYPES[UA_TYPES_KEYVALUEPAIR]) };
+		let kept = Variant::WithBuiltInTypes( kvs );
+		ASSERT_TRUE( kept );
+		let& keptPairs = *(const UA_KeyValuePair(*)[2])kept->data;
+		EXPECT_TRUE( reencoded(keptPairs[0].value) ) << "the sample, as it travelled";
+		EXPECT_EQ( keptPairs[1].value.type, &UA_TYPES[UA_TYPES_DOUBLE] ) << "built in:  as it was";
+		EXPECT_EQ( Value(Variant{*kept}.Move()).ToJson(&registry).as_array()[0].as_object().at("Value"), sampleJson() ) << "the same value, decoded again";
+		EXPECT_FALSE( Variant::WithBuiltInTypes(Variant{scalarVariant(&pairs[1], UA_TYPES[UA_TYPES_KEYVALUEPAIR])}) );
+
+		UA_DataValue dv; UA_DataValue_init( &dv );
+		UA_Variant_setScalar( &dv.value, v.value.data, &sample ); dv.hasValue = true;
+		let inDataValue = Variant::WithBuiltInTypes( Variant{scalarVariant(&dv, UA_TYPES[UA_TYPES_DATAVALUE])} );
+		ASSERT_TRUE( inDataValue );
+		EXPECT_TRUE( reencoded(((const UA_DataValue*)inDataValue->data)->value) );
+	}
+	//A Variant element or member is its value, walked as a top-level one is (#9):  a decoded registry type as its fields, an encoded one
+	//decoded against the chain, one no type explains opaque and noted - by the serializer and by the data-change callback's NoteMissingTypes.
+	TEST( StructureTests, AVariantElementWalksItsValue ){
+		Registry registry{ {description(3001, "PumpSampleType", _sampleFields)} };
+		let& sample = registry.Type( 0 );
+		Value v{ sampleJson(), &sample };
+		const Value encodedSample = encoded( v.value.data, sample );
+		UA_ExtensionObject unknown; UA_ExtensionObject_init( &unknown );
+		unknown.encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+		unknown.content.encoded.typeId = UA_NODEID_NUMERIC( _ns, 888 );
+		UA_Variant elements[3]; UA_Variant_init( &elements[0] ); UA_Variant_init( &elements[1] ); UA_Variant_init( &elements[2] );
+		UA_Variant_setScalar( &elements[0], v.value.data, &sample );//borrowed:  arrayVariant copies.
+		elements[1] = encodedSample.value;
+		UA_Variant_setScalar( &elements[2], &unknown, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+		const Value array{ arrayVariant(elements, 3, UA_TYPES[UA_TYPES_VARIANT]) };
+		let json = array.ToJson( &registry );
+		ASSERT_TRUE( json.is_array() ) << serialize( json );
+		EXPECT_EQ( json.as_array()[0], sampleJson() );
+		EXPECT_EQ( json.as_array()[1], sampleJson() );
+		EXPECT_TRUE( json.as_array()[2].as_object().contains("body") ) << serialize( json );
+		ASSERT_EQ( registry.Noted.size(), 1u );
+		EXPECT_EQ( registry.Noted[0], (NodeId{_ns, 888}) );
+		NoteMissingTypes( array.value, registry );
+		ASSERT_EQ( registry.Noted.size(), 2u ) << "the callback's note reaches a Variant element";
+		EXPECT_EQ( registry.Noted[1], (NodeId{_ns, 888}) );
+	}
 }

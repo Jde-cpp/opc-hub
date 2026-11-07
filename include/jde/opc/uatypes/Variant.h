@@ -23,9 +23,10 @@ namespace Jde::Opc{
 		//encoding id noted with `types` (ITypes::Missing).
 		Ω ElementToJson( const void* element, const UA_DataType& type, const ITypes* types=nullptr )ε->jvalue;
 		//`v` with every structure of a type outside UA_TYPES - a connection's registry's, which a row edit drops (Gateway::TypeRegistry) -
-		//re-encoded as the ExtensionObject it travelled as, an array of them as an array, a Variant element's the same:  what keeps a value
-		//past the request, the historian and the endpoint's mirror, then holds no type a registry owns.  nullopt when `v` holds none, so
-		//the caller keeps `v` as it is.
+		//re-encoded as the ExtensionObject it travelled as, an array of them as an array, at any depth:  a Variant element's, an
+		//ExtensionObject's, a DataValue's, a namespace-0 structure's member (KeyValuePair's Value).  What keeps a value past the request,
+		//the historian and the endpoint's mirror, then holds no type a registry owns;  one that won't encode is kept as an empty
+		//ExtensionObject, never decoded.  nullopt when `v` holds none, so the caller keeps `v` as it is.
 		Ω WithBuiltInTypes( const UA_Variant& v )ι->optional<Variant>;
 	};
 }

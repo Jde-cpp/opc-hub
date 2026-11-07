@@ -26,6 +26,20 @@ namespace Jde::Opc::Gateway::Tests{
 			const Value v{ j, &SampleDataType() };
 			Write( TestSample, v.value.data, SampleDataType(), source );
 		}
+		//Every registry a client of the slug decodes by:  a row made again under the slug (ServerCnnctnDBTests' purge) leaves the clients
+		//built before it on the old row's, where FindTypes answers the new row's - the socket's client may be either.
+		Ω Registries()ι->vector<sp<TypeRegistry>>{
+			vector<sp<TypeRegistry>> y;
+			if( auto found = UAClient::FindTypes(OpcServerSlug); found )
+				y.push_back( move(found) );
+			for( let& client : UAClient::LiveClients() ){
+				if( client->Slug()==OpcServerSlug && std::ranges::find(y, client->Types())==y.end() )
+					y.push_back( client->Types() );
+			}
+			return y;
+		}
+		Ω Fetches( const vector<sp<TypeRegistry>>& registries )ι->uint{ uint y{}; for( let& r : registries ) y += r->Fetches(); return y; }
+		Ω Holds( const vector<sp<TypeRegistry>>& registries, const NodeId& type )ι->bool{ return std::ranges::any_of( registries, [&]( let& r ){ return r->Find(type)!=nullptr; } ); }
 		Ω ReadQL( const NodeId& node )ε->jvalue{
 			return Socket().QuerySync( "node( opc: $opc, id: $id ){ value }", {{"opc", OpcServerSlug}, {"id", node.ToJson()}} ).as_object().at( "value" );
 		}
@@ -128,9 +142,13 @@ namespace Jde::Opc::Gateway::Tests{
 		constexpr UA_UInt32 typeId{ 9071 }, encodingId{ 9072 }, variable{ 9073 };//past every other suite's 90xx (GatewayHistoryTests takes 9061-9065).
 		auto& ua = Server::GetUAServer();
 		let ns = PumpsNs();
-		auto registry = Registry();
-		let fetchesBefore = registry->Fetches();
-		if( UA_NodeClass c; UA_Server_readNodeClass(ua.Ptr(), Node(typeId), &c) ){//a repeat of this test finds them.
+		ReadQL( Node(TestSample) );//the socket's client, connected, among Registries'.
+		let registries = Registries();
+		if( Holds(registries, Node(typeId)) )//the clients and their registries live as long as the process:  a repeat finds the type fetched.
+			GTEST_SKIP() << "RuntimeSampleType is in a registry from an earlier run in this process.";
+		let fetchesBefore = Fetches( registries );
+		let fetching = [&]{ return std::ranges::any_of( registries, []( let& r ){ return r->Fetching(); } ); };
+		if( UA_NodeClass c; UA_Server_readNodeClass(ua.Ptr(), Node(typeId), &c) ){//the embedded server's, which a repeat finds added.
 			auto typeAttributes = UA_DataTypeAttributes_default;
 			typeAttributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)"RuntimeSampleType" );
 			UAε( UA_Server_addDataTypeNode(ua.Ptr(), Node(typeId), UA_NODEID_NUMERIC(0, UA_NS0ID_STRUCTURE), UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE), UA_QUALIFIEDNAME(ns, (char*)"RuntimeSampleType"), typeAttributes, nullptr, nullptr) );
@@ -159,16 +177,16 @@ namespace Jde::Opc::Gateway::Tests{
 			UAε( UA_Server_addVariableNode(ua.Ptr(), Node(variable), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(ns, (char*)"runtimeSample"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
 		}
 		let first = ReadQL( Node(variable) );
-		if( registry->Fetches()==fetchesBefore && !registry->Fetching() ){//no fetch since the type was added:  the read came before the one it posts.
+		if( Fetches(registries)==fetchesBefore && !fetching() ){//no fetch since the type was added:  the read came before the one it posts.
 			EXPECT_TRUE( Opaque(first) ) << serialize( first );
 			if( Opaque(first) )
 				EXPECT_EQ( NodeId{first.as_object().at("typeId")}, Node(encodingId) ) << "the encoding id, as it came";
 		}
 		jvalue decoded;
-		ASSERT_TRUE( WaitUntil([&]{ decoded = ReadQL( Node(variable) ); return Decoded( decoded, "X" ); }, 15s) ) << serialize( decoded ) << " after " << registry->Fetches()-fetchesBefore << " fetch(es)";
-		EXPECT_GT( registry->Fetches(), fetchesBefore ) << "the read's note posted a fetch";
+		ASSERT_TRUE( WaitUntil([&]{ decoded = ReadQL( Node(variable) ); return Decoded( decoded, "X" ); }, 15s) ) << serialize( decoded ) << " after " << Fetches(registries)-fetchesBefore << " fetch(es)";
+		EXPECT_GT( Fetches(registries), fetchesBefore ) << "the read's note posted a fetch";
 		EXPECT_DOUBLE_EQ( Json::AsNumber<double>(decoded.as_object(), "X"), 1.5 );
 		EXPECT_EQ( Json::AsSV(decoded.as_object(), "Name"), "runtime" );
-		EXPECT_TRUE( registry->Find(Node(typeId)) ) << "registered";
+		EXPECT_TRUE( Holds(registries, Node(typeId)) ) << "registered";
 	}
 }

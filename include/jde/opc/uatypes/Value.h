@@ -27,7 +27,8 @@ namespace Jde::Opc{
 		α Set( const jvalue& j, SRCE )ε->void;
 		//Whether Set has an arm for the type.  Any other throws "has not been implemented" whatever the json - the conversion's
 		//limit, not a value that does not fit its type.  A structure's is its members', each through Set by the type's member list
-		//(clients spec *Structures*, #421):  a member of a kind without an arm refuses the whole.
+		//(clients spec *Structures*, #421):  false when any member's kind, at any depth, has no arm - an Argument's NodeId - since that
+		//member refuses the whole.
 		Ω Settable( const UA_DataType& type )ι->bool;
 		Ŧ Get( uint index )Ι->const T&{ return ((T*)value.data)[index]; };
 	private:

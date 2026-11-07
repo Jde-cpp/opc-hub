@@ -5,8 +5,9 @@ import { MatIcon } from '@angular/material/icon';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
-import { IGraphQL, SnackbarService, errorMessage, isRefusal } from 'jde-framework';
+import { IGraphQL, ProtoUtils, SnackbarService, Timestamp, errorMessage, isRefusal } from 'jde-framework';
 import { ClientDiagnostics, clientDiagnosticsQuery, serverDiagnosticsIds, serverDiagnosticsQuery, ServerDiagnosticsRow, serverDiagnosticsSummaryId, serverStatusId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId, UaStructure } from '../../../../model/server';
+import { NodeId } from '../../../../model/node-id';
 import { nameKey, statusText } from '../../../../model/status-code';
 
 export const refusedClientText = "You may not read the gateway's session telemetry.";
@@ -33,12 +34,8 @@ export const localizedText = ( v:unknown ):string=>typeof v=='string' ? v : Stri
 export const nodeIdText = ( v:unknown ):string=>{
 	if( typeof v=='string' )
 		return v;
-	if( v && typeof v=='object' && !Array.isArray(v) ){
-		const o = v as UaStructure;
-		const kind = ["i", "s", "g", "b"].find( k=>k in o );
-		if( kind )
-			return `${o["ns"] ? `ns=${o["ns"]};` : ""}${kind}=${o[kind]}`;
-	}
+	if( v && typeof v=='object' && !Array.isArray(v) && ["i", "s", "g", "b"].some(k=>k in v) )
+		return new NodeId( v ).uaString();
 	const id = member( v, "Id" );
 	if( id===undefined )
 		return v==null ? "" : String( v );
@@ -234,8 +231,8 @@ export class ServerDiagnostics{
 	//- from the gateway's {seconds, nanos} or an ISO string;  blank for none, the text as it came for one that is no date
 	#time( v:unknown ):string{
 		if( v && typeof v=='object' && typeof (v as {seconds?:unknown}).seconds=='number' ){
-			const t = v as { seconds:number; nanos?:number };
-			return this.#date.transform( new Date(t.seconds*1000+Math.floor((t.nanos ?? 0)/1e6)), 'medium' ) ?? "";
+			const d = ProtoUtils.toDate( { nanos: 0, ...v } as Timestamp );
+			return d ? this.#date.transform( d, 'medium' ) ?? "" : "";
 		}
 		if( typeof v!='string' || !v )
 			return "";
