@@ -294,8 +294,9 @@ namespace Jde::Opc::Gateway{
 		if( auto pSubscription = _subscriptions.find(h); client && pSubscription!=_subscriptions.end() ){
 			auto& args = pSubscription->second;
 			calls = args.Listeners.size();
+			let types = client->Types().get();
 			for( let& [listener,_] : args.Listeners )
-				listener->SendDataChange( client->Slug(), args.Node, value );
+				listener->SendDataChange( client->Slug(), args.Node, value, types );
 		}
 		else
 			TRACE( "Could not find subscription:  {}.", hex(h) );

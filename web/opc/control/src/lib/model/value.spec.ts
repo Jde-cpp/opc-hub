@@ -1,5 +1,5 @@
 import Long from 'long';
-import { ExtensionObject, shortestFloat, toReading, valueJson, valueString } from './value';
+import { ExtensionObject, isStructure, shortestFloat, toReading, toValue, valueJson, valueString } from './value';
 import { NodeId } from './node-id';
 
 //the gateway's three shapes (Value::ToJson):  the bare value for Good, {v,sc} for any other code that is not Bad, {sc} for Bad.
@@ -66,18 +66,75 @@ describe( 'valueString', ()=>{
 		const local = new Date( 2026, 10, 5, 20, 18, 11, 92 );//the zone the spec runs in
 		expect( valueString(<any>{seconds: Math.floor(local.getTime()/1000), nanos: 92_000_000}) ).toBe( '2026-11-05 20:18:11.092' );
 		expect( valueString(<any>{seconds: 0, nanos: 0}) ).toBe( '' );//unset
+		expect( valueString(<any>{ns: 2, i: 5}) ).toBe( 'ns=2;i=5' );//REST's NodeId, as a push's NodeId spells it
+		expect( valueString(new NodeId({ns: 2, i: 5})) ).toBe( 'ns=2;i=5' );
+		expect( valueString(<any>{ns: 2, name: "Speed"}) ).toBe( '2:Speed' );
+		expect( valueString(<any>{}) ).toBe( '' );
 	} );
-	it( 'shows an ExtensionObject as its type id and body', ()=>{
+	//clients plan 8b (#422):  a body no type explains - a pre-1.04 server's, say - says so, never its bytes
+	it( 'says an ExtensionObject is undecoded, with its type id and not its bytes', ()=>{
 		const typeId = new NodeId( {ns: 2, i: 5001} );
-		expect( valueString(new ExtensionObject(typeId, new Uint8Array([1, 2, 3]))) ).toBe( "ns=2;i=5001 AQID" );
-		expect( valueString(new ExtensionObject(typeId, "<Range/>")) ).toBe( "ns=2;i=5001 <Range/>" );
-		expect( valueString(new ExtensionObject(typeId)) ).toBe( "ns=2;i=5001" );
+		expect( valueString(new ExtensionObject(typeId, new Uint8Array([1, 2, 3]))) ).toBe( "undecoded ns=2;i=5001" );
+		expect( valueString(new ExtensionObject(typeId, "<Range/>")) ).toBe( "undecoded ns=2;i=5001" );
+		expect( valueString(new ExtensionObject(typeId)) ).toBe( "undecoded ns=2;i=5001" );
+		expect( new ExtensionObject(typeId).tooltip ).toContain( "ns=2;i=5001" );
 	} );
 	//the #421 walk's W1:  a structure decoded by member read "unknown type object"
 	it( 'shows a structure as its members, a 64-bit one exact', ()=>{
 		const big = Long.fromString( "9007199254740993" );
 		const structure = { Rpm: 1480.5, Limits: {Low: 0, High: 3000}, Count: {low: big.low, high: big.high, unsigned: false}, Total: big };
 		expect( valueString(<any>structure) ).toBe( '{"Rpm":1480.5,"Limits":{"Low":0,"High":3000},"Count":"9007199254740993","Total":"9007199254740993"}' );
+	} );
+} );
+
+//clients plan 8b (#422):  a structure decoded by member is a plain object of them, the one shape off the socket and off the REST json,
+//and the plain objects that are not structures - a Timestamp, the Long form, a NodeId, a QualifiedName, an ExpandedNodeId, an opaque
+//body, {} - are told apart by their whole shape (reviews-issue/422-structures.md #6)
+describe( 'isStructure', ()=>{
+	it( 'is a plain object of members, and not a Timestamp, a Long form, a NodeId or a QualifiedName', ()=>{
+		expect( isStructure({Rpm: 1480.5, Limits: {Low: 0, High: 3000}}) ).toBe( true );
+		expect( isStructure({}) ).toBe( false );//an empty QualifiedName, or a union with no member selected:  nothing to tabulate
+		expect( isStructure({ns: 2, i: 5}) ).toBe( false );
+		expect( isStructure({s: "Pump.Speed"}) ).toBe( false );
+		expect( isStructure({ns: 2, name: "Speed"}) ).toBe( false );
+		expect( isStructure({nsu: "urn:x", i: 5}) ).toBe( false );
+		expect( isStructure({ns: 2, i: 5, Rpm: 1}) ).toBe( true );//a structure with those member names and another
+		expect( isStructure({ns: 2, i: 5, s: "x"}) ).toBe( true );//two identifiers:  no NodeId
+		expect( isStructure({seconds: 1762300000, nanos: 0}) ).toBe( false );
+		expect( isStructure({low: 1, high: 0, unsigned: false}) ).toBe( false );
+		expect( isStructure({seconds: 1, nanos: 0, Extra: 2}) ).toBe( true );//a structure with those member names and another
+		expect( isStructure([{Rpm: 1}]) ).toBe( false );
+		expect( isStructure(new NodeId({ns: 2, i: 1})) ).toBe( false );
+		expect( isStructure(new ExtensionObject(new NodeId({ns: 2, i: 1}))) ).toBe( false );
+		expect( isStructure(null) ).toBe( false );
+		expect( isStructure(3) ).toBe( false );
+	} );
+	it( 'reads the gateway\'s opaque form, {typeId, body}, as an ExtensionObject', ()=>{
+		const x = toValue( {typeId: {ns: 2, i: 777}, body: "AAAA"} ) as ExtensionObject;
+		expect( x ).toBeInstanceOf( ExtensionObject );
+		expect( x.typeId.uaString() ).toBe( "ns=2;i=777" );
+		expect( x.body ).toBe( "AAAA" );
+		expect( toValue({typeId: {ns: 2, i: 777}}) ).toBeInstanceOf( ExtensionObject );//no body
+		expect( isStructure(toValue({typeId: {ns: 2, i: 777}, body: "AAAA", Rpm: 1})) ).toBe( true );//a structure with those member names stays one
+		expect( toReading({typeId: {ns: 2, i: 777}, body: "AAAA"}).value ).toBeInstanceOf( ExtensionObject );
+		expect( isStructure(toValue({typeId: 7})) ).toBe( true );//a member named typeId that holds no NodeId
+	} );
+	//#7, #8:  REST's structure becomes the socket's shape member by member, and a member named as the reading's wrapper is a member
+	it( 'converts a REST structure\'s members as the socket\'s are', ()=>{
+		const s = <any>toValue( {Count: {low: 1, high: 2097152, unsigned: false}, Inner: {typeId: {ns: 2, i: 3010}, body: "AAAA"}, Limits: {Low: 0, High: {low: 5, high: 0, unsigned: true}}, Ids: [{ns: 2, i: 5}], Note: null} );
+		expect( s.Count ).toBeInstanceOf( Long );
+		expect( s.Count.toString() ).toBe( "9007199254740993" );
+		expect( s.Inner ).toBeInstanceOf( ExtensionObject );
+		expect( s.Limits.High ).toBeInstanceOf( Long );
+		expect( s.Ids ).toEqual( [{ns: 2, i: 5}] );
+		expect( s.Note ).toBeNull();
+		expect( valueString(s) ).toBe( '{"Count":"9007199254740993","Inner":"undecoded ns=2;i=3010","Limits":{"Low":0,"High":"5"},"Ids":[{"ns":2,"i":5}],"Note":null}' );//the text a view sorts and filters by:  never the body
+		const r = toReading( {sc: 7, Rpm: 1} );
+		expect( r.sc ).toBe( 0 );//a Good structure with an `sc` member:  not a Bad reading
+		expect( (<any>r.value).sc ).toBe( 7 );
+		expect( (<any>toValue({v: 3, Other: 1})).v ).toBe( 3 );//nor a {v,sc}
+		expect( toValue({v: 3, sc: 1073741824}) ).toBe( 3 );//the wrapper, by its whole key set
+		expect( toReading({sc: 2147483648}).value ).toBeUndefined();
 	} );
 } );
 

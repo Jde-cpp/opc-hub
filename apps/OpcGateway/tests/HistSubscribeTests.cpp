@@ -3,6 +3,7 @@
 //durable, the ack's status per node, the refusals, and a HistUnsubscribe.
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
+#include <jde/opc/proto/opc.Common.h>
 #include "utils/HistGroupFixture.h"
 #include "utils/GatewayClientSocket.h"
 
@@ -121,6 +122,40 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Socket().HistStrays(), strays );
 		EXPECT_THROW( Unsubscribe(subscription), GatewayErrorResponse ) << "ended already";
 		EXPECT_THROW( Unsubscribe(999'999), GatewayErrorResponse );
+	}
+
+	//Clients 8b (#422):  a structure a group stores, as the ExtensionObject it travelled as, arrives on a subscription as fields - the
+	//bound in the snapshot and a record pushed after it - decoded by the connection's registry as a history read's are, so a conversion
+	//back gives the value written.
+	TEST_F( HistSubscribeTests, AStoredStructureArrivesAsFields ){
+		WriteSample( SampleJson(1480.5, "sample"), Since() );
+		WaitSampleType();
+		let [group, index, host, _] = OneNodeGroup{ "structure", TestSample };
+		let t0 = Since();
+		let stored = SampleJson( 1490.75, "stored" );
+		WriteSample( stored, t0 );
+		ASSERT_NO_THROW( WaitStored(host, index, t0, 1) );
+		auto heard = ms<Heard>();
+		EXPECT_EQ( Subscribe(group, {Ex(TestSample)}, t0+5ms, heard), vector<StatusCode>{UA_STATUSCODE_GOOD} );
+		ASSERT_NO_THROW( WaitComplete(*heard) );
+		let registry = UAClient::FindTypes( OpcServerSlug );
+		ASSERT_TRUE( registry );
+		let fields = [&]( const FromServer::HistValue& v )->jvalue{ return Opc::Value{ ProtoUtils::ToVariant(v.value(), registry.get()) }.ToJson( registry.get() ); };
+		let values = heard->Values();
+		ASSERT_EQ( values.size(), 1u ) << "the bound";
+		ASSERT_TRUE( values[0].value().has_structure() ) << "member " << (int)values[0].value().of_case();
+		EXPECT_EQ( ProtoUtils::ToNodeId(values[0].value().structure().type_id()), Node(SampleType) );
+		EXPECT_EQ( values[0].value().structure().members_size(), 5 );
+		EXPECT_EQ( fields(values[0]), jvalue{stored} );
+		EXPECT_EQ( Time(values[0].source()), t0 );
+		let pushed = SampleJson( 1500.25, "pushed" );
+		WriteSample( pushed, t0+20ms );
+		ASSERT_NO_THROW( WaitPushed(*heard, 1) );
+		let records = heard->Pushed();
+		ASSERT_EQ( records.size(), 1u );
+		ASSERT_TRUE( records[0].value().has_structure() );
+		EXPECT_EQ( fields(records[0]), jvalue{pushed} );
+		EXPECT_TRUE( Unsubscribe(Last()) );
 	}
 
 	//The ack's statuses:  Good for a member, Bad_NodeIdUnknown for a node the group doesn't hold, which the snapshot then

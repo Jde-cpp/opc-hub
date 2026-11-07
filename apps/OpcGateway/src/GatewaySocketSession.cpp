@@ -42,8 +42,8 @@ namespace Jde::Opc::Gateway{
 		Write( FromServer::AckTrans(id) );
 	}
 
-	α GatewaySocketSession::SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value )ι->void{
-		return Write( MessageTrans(FromServer::ToProto(opcNK, node, value, 0), 0) );
+	α GatewaySocketSession::SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value, const ITypes* types )ι->void{
+		return Write( MessageTrans(FromServer::ToProto(opcNK, node, value, 0, types), 0) );
 	}
 	α GatewaySocketSession::ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters{
 		MonitoringParameters y;
@@ -138,7 +138,7 @@ namespace Jde::Opc::Gateway{
 			Write( FromServer::SubscribeAckTrans(move(ack), requestId) );
 			ReadValueAwait read{ move(nodes), client, UA_TIMESTAMPSTORETURN_BOTH };//the first push:  its timestamps as a data change's
 			auto values = co_await Any( read );
-			Write( FromServer::ReadValuesTrans(client->Slug(), move(values), requestId) );
+			Write( FromServer::ReadValuesTrans(client->Slug(), move(values), requestId, client->Types().get()) );
 		}
 		catch( runtime_error& e ){
 			if( !acked )

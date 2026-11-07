@@ -3,10 +3,10 @@
 #include "../GatewaySocketSession.h"
 
 namespace Jde::Opc::Gateway{
-	struct HistGroupHost;
+	struct HistGroupHost; struct TypeRegistry;
 	//One HistSubscribe on the gateway's socket (spec *Subscriptions*):  the group's registration and snapshot, and what the
 	//group pushes, queued until the snapshot's pages are written and sent at once after.  The group delivers on the thread that
-	//stored the record, so OnRecords only converts and hands the message to the socket's strand.  The page reads and the end
+	//stored the record, so OnRecords only hands the records to the socket's strand, which converts them.  The page reads and the end
 	//take one lock, the queue another, so a push never waits on a page.  It holds neither the session nor the group's host:
 	//the group holds it through its registration, and an owning pointer back would make a cycle that outlived them both.
 	//The session's side, HistSubscribe to RemoveHist, is defined with it in HistSubscriber.cpp.
@@ -19,9 +19,11 @@ namespace Jde::Opc::Gateway{
 		α Ended()Ι->bool{ return _ended; }
 		α Request()Ι->Jde::RequestId{ return _requestId; }
 		α Host( SL sl )Ε->sp<HistGroupHost>;
+		α Types()Ι->sp<TypeRegistry>;//the connection's registry as it stands, which a page's and a push's stored bodies decode by (clients spec *Structures*);  none once the group is gone.
 		//The node's place in the HistSubscribe's nodes:  none for one the subscription doesn't name, which the group never sends.
 		α Slot( Hist::NodeIndex index )Ι->optional<uint32>;
 		α Page( Hist::ReadResult&& result, bool more )Ι->FromServer::HistSnapshot;
+		α Records( const vector<Hist::Proto::HistoryRecord>& records )Ι->FromServer::Transmission;//a push as its message, the stored bodies decoded:  on the socket's strand.
 		α Live()ι->void;//the snapshot is written:  what queued goes, and each push from here on goes as it comes.
 		α OnRecords( vector<Hist::Proto::HistoryRecord>&& records )ι->void override;
 		α OnEnded( Hist::ESubscriptionEnd why )ι->void override;

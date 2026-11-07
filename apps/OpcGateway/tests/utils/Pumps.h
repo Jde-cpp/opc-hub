@@ -3,6 +3,7 @@
 //Objects folder, each with a status and a motorRpm, in urn:jde:pumps.
 #include <open62541/server.h>
 #include <jde/opc/UAException.h>
+#include <jde/opc/uatypes/NodeId.h>
 #include "../../../OpcServer/src/globals.h"
 #include <jde/opc/server/UAServer.h>
 #ifndef let
@@ -33,5 +34,16 @@ namespace Jde::Opc::Gateway::Tests{
 		uint ns{};
 		UAε( UA_Server_getNamespaceByName(ua->Ptr(), UA_STRING((char*)PumpsUri.data()), &ns) );
 		return (NsIndex)ns;
+	}
+	//PumpSampleType as the embedded server built it from the nodeset.
+	Ξ SampleDataType()ε->const UA_DataType&{
+		const NodeId id{ PumpsNs(), SampleType };
+		const auto type = UA_Server_findDataType( Server::GetUAServer().Ptr(), &id );
+		THROW_IF( !type, "PumpSampleType ({}) is not among the server's types.", id.ToString() );
+		return *type;
+	}
+	//The sample as Value::ToJson writes it and Value::Set reads it back:  `rpm` and `label` the test's, the rest fixed.
+	Ξ SampleJson( double rpm, sv label, bool running=true )ι->jobject{
+		return { {"Rpm", rpm}, {"Running", running}, {"Label", label}, {"Limits", jobject{{"Low", 0.0}, {"High", 3000.0}}}, {"History", jarray{1470.0, 1475.0, rpm}} };
 	}
 }

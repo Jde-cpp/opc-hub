@@ -4,6 +4,7 @@
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/utils/Stopwatch.h>
 #include <jde/ql/LocalQL.h>
+#include <jde/tests/WaitUntil.h>
 #include <jde/access/Authorize.h>
 #include "HistReadFixture.h"
 #include "../../src/GatewayAppClient.h"
@@ -119,6 +120,17 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		Ω WriteRpm( double value, TimePoint source )ε->void{ Write( RpmManual, &value, UA_TYPES[UA_TYPES_DOUBLE], source ); }
 		Ω WriteStatus( bool value, TimePoint source )ε->void{ UA_Boolean b = value; Write( Status1, &b, UA_TYPES[UA_TYPES_BOOLEAN], source ); }
+		//The sample written on the server itself, as the source would, with the time the source gave it (SampleJson).
+		Ω WriteSample( const jobject& j, TimePoint source )ε->void{
+			const Value v{ j, &SampleDataType() };
+			Write( TestSample, v.value.data, SampleDataType(), source );
+		}
+		//The registry holds the sample's type:  the activation's fetch, which the socket's first query starts, has landed.
+		Ω WaitSampleType()ε->void{
+			Socket().QuerySync( "node( opc: $opc, id: $id ){ value }", {{"opc", OpcServerSlug}, {"id", Node(TestSample).ToJson()}} );//the connect, and with it the fetch.
+			let registry = [&]{ auto y = UAClient::FindTypes( OpcServerSlug ); THROW_IF( !y, "No type registry for '{}' - no client of it was built.", OpcServerSlug ); return y; };
+			ASSERT_TRUE( WaitUntil([&]{ return registry()->Find( Node(SampleType) )!=nullptr; }, 15s) ) << "the registry never held PumpSampleType:  " << registry()->Count() << " type(s), " << registry()->Fetches() << " fetch(es)";
+		}
 		Ω Current( UA_UInt32 id )ι->Value{ return Opc::ReadValue( Server::GetUAServer(), Node(id) ); }
 		//A first write's value, off RpmManual's now by more than any band.
 		Ω BaseRpm()ι->double{ return Current( RpmManual ).AsNumber<double>()+1000; }

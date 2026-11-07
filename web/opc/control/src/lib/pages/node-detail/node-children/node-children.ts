@@ -28,12 +28,13 @@ import { MethodCallDialog } from './method-call-dialog';
 import { NodeView } from '../../../model/node-view';
 import { Server } from '../../../model/server';
 import { NodeId } from '../../../model/node-id';
+import { StructureTable } from '../../structure-table/structure-table';
 
 @Component({
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,StructureTable,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -171,6 +172,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 
 	toObject( x:ENodeClass ):string{ return ENodeClass[x]; }
 	toString( value:Value|undefined ){ return valueString(value); }//Variable.value is optional - a node the read could not answer for has none
+	readonly structured = StructureTable.shows;//a value the cell's StructureTable shows (clients spec *Structures*)
 	dataType( n:UaNode ):string{ return this.cell( n, "dataType" ); }
 	cell( n:UaNode, column:string ):string{ return NodeView.cellValue( n, column )?.toString() ?? ""; }//a column's text, as the view sorts and filters it
 	//the Access cell is a chip per flag, so it takes the list the cell text is joined from rather than the text

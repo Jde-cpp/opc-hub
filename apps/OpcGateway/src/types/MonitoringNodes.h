@@ -10,7 +10,7 @@
 #include "../async/Subscriptions.h"
 #include "../usings.h"
 
-namespace Jde::Opc{ struct Value; }
+namespace Jde::Opc{ struct ITypes; struct Value; }
 namespace Jde::Opc::Gateway{
 	struct UAClient;
 	struct CreateMonitoredItemsRequest;
@@ -19,7 +19,9 @@ namespace Jde::Opc::Gateway{
 	//re-creates the item with what the listener asks then, so a refused ask kept would be refused again and the node lost.
 	struct AskReverted final{ MonitoringParameters Refused; MonitoringParameters Restored; };
 	struct IDataChange{
-		β SendDataChange( const ServerCnnctnNK& opcId, const NodeId& node, const Value& value )ι->void=0;
+		//`types`:  the connection's registry, which a value decoded by the client walks by and a body its chain lacked may decode by - the
+		//client's own, so a push and the read before it decode alike (clients spec *Structures*).
+		β SendDataChange( const ServerCnnctnNK& opcId, const NodeId& node, const Value& value, const ITypes* types )ι->void=0;
 		//The subscription these nodes were on is gone - the connection failed, or the server dropped the session or the
 		//subscription (SubscriptionStatusChanged) - broken at `when`, the gateway's clock:  when the client first saw its channel
 		//or session go (UAClient::RecordBreak), which can be well before the loss is found, else when it was found.  They are

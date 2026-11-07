@@ -23,7 +23,14 @@
 	</ng-container>
 	<ng-container matColumnDef="value">
 		<mat-header-cell *matHeaderCellDef>Value</mat-header-cell>
-		<mat-cell *matCellDef="let r"><span class="value-text" [title]="valueText(r)">{{ valueText(r) }}</span></mat-cell>
+		<mat-cell *matCellDef="let r">
+			@if( structured(r.value) ){<!--a structure decoded by member, an array of them, or a body no type explains (clients spec *Structures*)-->
+				<structure-table [value]="r.value" [label]="nodeName(r.node)"></structure-table>
+			}
+			@else{
+				<span class="value-text" [title]="valueText(r)">{{ valueText(r) }}</span>
+			}
+		</mat-cell>
 	</ng-container>
 	<ng-container matColumnDef="flags">
 		<mat-header-cell *matHeaderCellDef></mat-header-cell>

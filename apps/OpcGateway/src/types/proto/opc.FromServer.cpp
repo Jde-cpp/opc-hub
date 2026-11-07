@@ -59,10 +59,10 @@ namespace Jde::Opc::Gateway{
 		} );
 	}
 
-	α FromServer::ReadValuesTrans( string opcId, flat_map<NodeId, Opc::Value>&& values, RequestId requestId )ι->FromServer::Transmission{
+	α FromServer::ReadValuesTrans( string opcId, flat_map<NodeId, Opc::Value>&& values, RequestId requestId, const ITypes* types )ι->FromServer::Transmission{
 		FromServer::Transmission t;
 		for( auto&& [nodeId, v] : values )
-			*t.add_messages() = ToProto( opcId, nodeId, v, requestId );
+			*t.add_messages() = ToProto( opcId, nodeId, v, requestId, types );
 		return t;
 	}
 
@@ -93,7 +93,7 @@ namespace Jde::Opc::Gateway{
 			modified.set_status_code( result.Status );
 		});
 	}
-	α FromServer::ToProto( const ServerCnnctnNK& opcId, const NodeId& node, const Opc::Value& v, RequestId requestId )ι->FromServer::Message{
+	α FromServer::ToProto( const ServerCnnctnNK& opcId, const NodeId& node, const Opc::Value& v, RequestId requestId, const ITypes* types )ι->FromServer::Message{
 		auto nv = mu<FromServer::NodeValues>();
 		*nv->mutable_node() = ProtoUtils::ToNodeId( node );
 		nv->set_opc_id( opcId );
@@ -103,11 +103,11 @@ namespace Jde::Opc::Gateway{
 			*nv->mutable_server() = UADateTime{ v.serverTimestamp }.ToProto();
 		StatusCode sc = v.status;//the reading's quality - without it a Bad or Uncertain reading was indistinguishable from a Good one on the socket (proto3 omits 0/Good from the wire).
 		try{
-			*nv->mutable_value() = ProtoUtils::ToValue( v.value );
+			*nv->mutable_value() = ProtoUtils::ToValue( v.value, ProtoUtils::EStructures::Decoded, types );
 		}
 		catch( const UAException& e ){//the whole reading, as the historian refuses it - a Variant array's good elements alone would pass for the array.
 			WARNT( IotReadTag, "{} - {}", node.ToString(), e.what() );
-			sc = (StatusCode)e.Code();//BadNotSupported for a DataValue or DiagnosticInfo, with no value, as the historian stores it.  A status_code value read as a StatusCode reading.
+			sc = (StatusCode)e.Code();//BadNotSupported for a DataValue or DiagnosticInfo, BadEncodingError for text that isn't UTF-8, with no value, as the historian stores each.  A status_code value read as a StatusCode reading.
 		}
 		nv->set_sc( sc );
 		FromServer::Message m;
@@ -125,11 +125,13 @@ namespace Jde::Opc::Gateway{
 	α FromServer::HistRecordsTrans( FromServer::HistRecords&& records, RequestId requestId )ι->FromServer::Transmission{
 		return set( requestId, [&records](FromServer::Message& m){ *m.mutable_hist_records() = move( records ); } );
 	}
-	α FromServer::ToProto( const Hist::Proto::DataValue& v, uint32 slot, bool bound )ι->FromServer::HistValue{
+	α FromServer::ToProto( const Hist::Proto::DataValue& v, uint32 slot, bool bound, const ITypes* types )ι->FromServer::HistValue{
 		FromServer::HistValue y;
 		y.set_node( slot );
-		if( v.has_value() )
+		if( v.has_value() ){
 			*y.mutable_value() = v.value();
+			ProtoUtils::DecodeStructures( *y.mutable_value(), types );
+		}
 		y.set_sc( v.status() );
 		if( v.has_source_ts() )
 			*y.mutable_source() = UADateTime{ (UA_DateTime)v.source_ts() }.ToProto();
@@ -139,13 +141,13 @@ namespace Jde::Opc::Gateway{
 		y.set_bound( bound );
 		return y;
 	}
-	α FromServer::ToProto( const Hist::Proto::Modification& m, uint32 slot )ι->FromServer::HistModification{
+	α FromServer::ToProto( const Hist::Proto::Modification& m, uint32 slot, const ITypes* types )ι->FromServer::HistModification{
 		FromServer::HistModification y;
 		y.set_node( slot );
 		*y.mutable_target() = UADateTime{ (UA_DateTime)m.target_source_ts() }.ToProto();
 		y.set_type( (uint32)m.update_type() );
 		if( m.has_new_value() )
-			*y.mutable_value() = ToProto( m.new_value(), slot, false );
+			*y.mutable_value() = ToProto( m.new_value(), slot, false, types );
 		*y.mutable_time() = UADateTime{ (UA_DateTime)m.ts() }.ToProto();
 		y.set_user( m.user_name() );
 		return y;

@@ -5,6 +5,7 @@
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../GatewayAppClient.h"
+#include "../UAClient.h"
 #include "../types/proto/opc.FromServer.h"
 #include "HistHost.h"
 #include "../async/ExecutorAwait.h"
@@ -42,11 +43,16 @@ namespace Jde::Opc::Gateway{
 		auto p = _slots.find( index );
 		return p==_slots.end() ? optional<uint32>{} : p->second;
 	}
+	α HistSubscriber::Types()Ι->sp<TypeRegistry>{
+		auto host = _host.lock();
+		return host ? UAClient::FindTypes( host->Slug() ) : nullptr;
+	}
 	α HistSubscriber::Page( Hist::ReadResult&& result, bool more )Ι->FromServer::HistSnapshot{
 		FromServer::HistSnapshot y;
+		let types = Types();
 		for( let& v : result.Values ){
 			if( let slot = Slot(v.Value.node_index()); slot )
-				*y.add_values() = FromServer::ToProto( v.Value, *slot, v.Bound );
+				*y.add_values() = FromServer::ToProto( v.Value, *slot, v.Bound, types.get() );
 		}
 		y.set_more( more );
 		return y;
@@ -73,19 +79,21 @@ namespace Jde::Opc::Gateway{
 			session->HistEnded( shared_from_this(), why );
 	}
 	α HistSubscriber::Send( vector<Hist::Proto::HistoryRecord>&& records )ι->void{
-		auto session = _session.lock();
-		if( !session )
-			return;
+		if( auto session = _session.lock(); session )
+			session->WriteHist( shared_from_this(), move(records) );
+	}
+	α HistSubscriber::Records( const vector<Hist::Proto::HistoryRecord>& records )Ι->FromServer::Transmission{
 		FromServer::HistRecords y;
+		let types = Types();
 		for( let& r : records ){
 			if( r.has_modification() ){
 				if( let slot = Slot(r.modification().node_index()); slot )
-					*y.add_modifications() = FromServer::ToProto( r.modification(), *slot );
+					*y.add_modifications() = FromServer::ToProto( r.modification(), *slot, types.get() );
 			}
 			else if( let slot = Slot(r.value().node_index()); slot )
-				*y.add_values() = FromServer::ToProto( r.value(), *slot, false );
+				*y.add_values() = FromServer::ToProto( r.value(), *slot, false, types.get() );
 		}
-		session->WriteHist( shared_from_this(), FromServer::HistRecordsTrans(move(y), _requestId) );
+		return FromServer::HistRecordsTrans( move(y), _requestId );
 	}
 
 	α GatewaySocketSession::HistSubscribe( FromClient::HistSubscribe&& request, Jde::RequestId requestId )ι->void{
@@ -154,6 +162,12 @@ namespace Jde::Opc::Gateway{
 		Dispatch( [this, self=SharedFromThis(), subscriber=move(subscriber), message=move(message)]()mutable{
 			if( !subscriber->Ended() )
 				Write( move(message) );
+		} );
+	}
+	α GatewaySocketSession::WriteHist( sp<HistSubscriber> subscriber, vector<Hist::Proto::HistoryRecord>&& records )ι->void{
+		Dispatch( [this, self=SharedFromThis(), subscriber=move(subscriber), records=move(records)]{
+			if( !subscriber->Ended() )
+				Write( subscriber->Records(records) );
 		} );
 	}
 	α GatewaySocketSession::HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void{

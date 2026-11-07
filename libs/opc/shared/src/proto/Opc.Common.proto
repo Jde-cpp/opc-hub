@@ -30,14 +30,27 @@ message QualifiedName{
 	string name=2;
 }
 
-//A structure is kept encoded, so it survives whether or not anything here knows its type.  type_id is the encoding's
-//NodeId (e.g. a type's DefaultBinary), as on the wire; no body is UA's ENCODED_NOBODY.
+//A structure kept encoded:  what the historian stores (libs/historian/docs/spec.md *Values*), so it survives whether or not
+//anything here knows its type, and on the socket a body no type explains (clients spec *Structures*).  type_id is the
+//encoding's NodeId (e.g. a type's DefaultBinary), as on the wire; no body is UA's ENCODED_NOBODY.
 message ExtensionObject{
 	NodeId type_id=1;
 	oneof body{
 		bytes binary=2;
 		string xml=3;
 	}
+}
+
+//A structure a type explains (clients spec *Structures*), as the socket carries one:  the DataType's id and its members by name
+//in the type's order, each a Value in the shape its kind takes here, a nested structure a `structure`, an array member an
+//`array`, a union its one selected member alone, an absent optional member with no value.
+message StructureMember{
+	string name=1;
+	Value value=2;
+}
+message Structure{
+	NodeId type_id=1;
+	repeated StructureMember members=2;
 }
 
 message Array{
@@ -74,5 +87,6 @@ message Value{
 		QualifiedName qualified_name=22;
 		ExtensionObject extension_object=23;
 		Array array=24;
+		Structure structure=25;
 	}
 }

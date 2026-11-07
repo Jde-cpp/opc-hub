@@ -28,6 +28,7 @@ import { valueString } from '../../../model/value';
 import { discardText, filterText, queueText, samplingText, WatchParameters, WatchRow } from '../../../model/watch';
 import { WatchView } from '../../../model/watch-view';
 import { trendPalette } from '../../node-detail/node-history/hist-trend-data';
+import { StructureTable } from '../../structure-table/structure-table';
 import { WatchAddDialog, WatchConnection, WatchPick } from './watch-add-dialog';
 import { WatchParametersDialog } from './watch-parameters-dialog';
 import { WatchTrend } from './watch-trend';
@@ -44,7 +45,7 @@ import { WatchTrend } from './watch-trend';
 	templateUrl: './gateway-watch.html',
 	styleUrls: ['./gateway-watch.scss'],
 	host: {class: 'main-content my-content gateway-watch'},
-	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, QLListSettings, ViewToolbar, WatchTrend]
+	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, QLListSettings, StructureTable, ViewToolbar, WatchTrend]
 })
 export class GatewayWatch implements OnInit, OnDestroy{
 	static readonly prefsOwner = 'gatewayWatch';
@@ -344,6 +345,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	readonly names = ( slug:CnnctnSlug )=>this.cnnctnName( slug );
 	cell( row:WatchRow, column:string ):string{ return WatchView.cellValue( row, column, this.names )?.toString() ?? ""; }
 	valueText( row:WatchRow ):string{ return row.valueName ?? valueString( <any>row.value ); }
+	readonly structured = StructureTable.shows;//a value the cell's StructureTable shows (clients spec *Structures*)
 	status( row:WatchRow ):string{ return row.error ? row.error : row.sc==undefined ? "" : OpcError.text( row.sc ); }
 	statusTooltip( row:WatchRow ):string{ return row.sc ? `${scHex( row.sc )} - ${OpcError.text( row.sc )}` : ""; }
 	qualityIcon( row:WatchRow ){ return row.error ? "error" : statusIcon( row.sc ); }

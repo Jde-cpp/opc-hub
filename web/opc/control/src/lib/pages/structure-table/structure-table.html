@@ -1,0 +1,27 @@
+@if( structure() ){
+	<table class="structure" [attr.aria-label]="label() ? label() + ' members' : 'Structure members'">
+		<tbody>
+			@for( r of rows(); track r.name ){
+				<tr>
+					<th scope="row">{{ r.name }}</th>
+					<td>
+						@if( r.nested ){
+							<structure-table [value]="r.value" [label]="r.name" [nested]="true"></structure-table>
+						}
+						@else{
+							<span class="member-text" [title]="r.text">{{ r.text }}</span>
+						}
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}
+@else if( structures(); as elements ){
+	@for( s of elements; track $index ){
+		<structure-table [value]="s" [label]="(label() ?? 'Structure') + ' ' + $index" [nested]="true"></structure-table>
+	}
+}
+@else if( undecoded(); as x ){<!--a body no type explains:  said, not shown as bytes;  focusable, so the reason is a keyboard's too-->
+	<span class="undecoded" tabindex="0" [matTooltip]="x.tooltip">{{ x.toString() }}</span>
+}

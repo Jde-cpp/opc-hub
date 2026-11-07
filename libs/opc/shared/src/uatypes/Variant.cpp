@@ -5,6 +5,7 @@
 #include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/ExNodeId.h>
+#include <jde/opc/uatypes/Members.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/UAString.h>
 #include <jde/opc/uatypes/Value.h>
@@ -62,48 +63,23 @@ namespace Jde::Opc{
 		}
 	}
 
-	//A structure's members as open62541 lays them out (ua_types.c copyStructure and copyUnion):  each after its padding;  an array as its
-	//uint count then its pointer, an optional one absent when the pointer is null (an empty one present is the sentinel);  an optional
-	//scalar by pointer, null when absent;  an absent member goes out as null;  a union's selected member alone, at its padding from the
-	//start, after the UInt32 switch field, and none selected as an empty object.  Value::Set's fillStructure walks the same layout back.
+	//Each member by name (ForEachMember):  an array member as an array, an absent optional member as null, a union as its selected member
+	//alone, none selected as an empty object.
 	Ω structureToJson( const void* p, const UA_DataType& type, const ITypes* types )ε->jobject{
-		auto ptr = reinterpret_cast<uintptr_t>( p );
 		jobject y;
-		let array = [&]( const UA_DataTypeMember& m, uintptr_t at )ε->jvalue{
-			let count = *reinterpret_cast<const uint*>( at );
-			let data = *reinterpret_cast<const UA_Byte* const*>( at+sizeof(uint) );
-			if( m.isOptional && !data )
-				return jvalue{};
-			jarray a;
-			for( uint i=0; data && (const void*)data!=UA_EMPTY_ARRAY_SENTINEL && i<count; ++i )
-				a.push_back( Variant::ElementToJson(data+i*m.memberType->memSize, *m.memberType, types) );
-			return a;
-		};
-		if( type.typeKind==UA_DATATYPEKIND_UNION ){
-			let selection = *reinterpret_cast<const UA_UInt32*>( ptr );
-			if( selection && selection<=type.membersSize ){
-				let& m = type.members[selection-1];
-				y[m.memberName] = m.isArray ? array( m, ptr+m.padding ) : Variant::ElementToJson( reinterpret_cast<const void*>(ptr+m.padding), *m.memberType, types );
+		ForEachMember( p, type, [&]( const UA_DataTypeMember& m, const void* data, uint count )ε->bool{
+			if( !data && m.isOptional )
+				y[m.memberName] = jvalue{};
+			else if( m.isArray ){
+				jarray a;
+				for( uint i=0; i<count; ++i )
+					a.push_back( Variant::ElementToJson((const UA_Byte*)data+i*m.memberType->memSize, *m.memberType, types) );
+				y[m.memberName] = move( a );
 			}
-			return y;
-		}
-		for( uint i=0; i<type.membersSize; ++i ){
-			let& m = type.members[i];
-			ptr += m.padding;
-			if( m.isArray ){
-				y[m.memberName] = array( m, ptr );
-				ptr += sizeof(uint)+sizeof(void*);
-			}
-			else if( m.isOptional ){
-				let member = *reinterpret_cast<const void* const*>( ptr );
-				y[m.memberName] = member ? Variant::ElementToJson( member, *m.memberType, types ) : jvalue{};
-				ptr += sizeof(void*);
-			}
-			else{
-				y[m.memberName] = Variant::ElementToJson( reinterpret_cast<const void*>(ptr), *m.memberType, types );
-				ptr += m.memberType->memSize;
-			}
-		}
+			else
+				y[m.memberName] = Variant::ElementToJson( data, *m.memberType, types );
+			return true;
+		} );
 		return y;
 	}
 	//Decoded, the structure it holds;  encoded with a type UA_TYPES or `types` explains, that structure, decoded against the chain for its
@@ -112,31 +88,9 @@ namespace Jde::Opc{
 	Ω extensionObjectToJson( const UA_ExtensionObject& eo, const ITypes* types )ε->jvalue{
 		if( eo.encoding>=UA_EXTENSIONOBJECT_DECODED )
 			return eo.content.decoded.type && eo.content.decoded.data ? Variant::ElementToJson( eo.content.decoded.data, *eo.content.decoded.type, types ) : jvalue{};
+		if( let decoded = DecodeBody(eo, types); decoded )
+			return Variant::ElementToJson( decoded.Data, *decoded.Type, types );
 		let& enc = eo.content.encoded;
-		if( eo.encoding==UA_EXTENSIONOBJECT_ENCODED_BYTESTRING ){
-			if( let type = FindEncoding(enc.typeId, types); type ){
-				void* data = UA_new( type );
-				THROW_IF( !data, "Could not allocate a '{}'.", type->typeName );
-				UA_DecodeBinaryOptions options{};
-				options.customTypes = types ? types->Chain() : nullptr;
-				let sc = UA_decodeBinary( &enc.body, data, type, &options );
-				if( !sc ){
-					try{
-						auto y = Variant::ElementToJson( data, *type, types );
-						UA_delete( data, type );
-						return y;
-					}
-					catch( ... ){
-						UA_delete( data, type );
-						throw;
-					}
-				}
-				UA_delete( data, type );
-				WARNT( ELogTags::Parsing, "Could not decode a '{}' body of {} bytes - {}.  Serializing it as it came.", type->typeName, enc.body.length, UAException::Message(sc) );
-			}
-			else if( enc.typeId.namespaceIndex && types )
-				types->Missing( enc.typeId );
-		}
 		jobject y{ {"typeId", Opc::ToJson(enc.typeId)} };
 		if( eo.encoding==UA_EXTENSIONOBJECT_ENCODED_BYTESTRING )
 			y["body"] = ByteStringToBase64( enc.body );
@@ -179,47 +133,16 @@ namespace Jde::Opc{
 		return variantToJson( *this, types );
 	}
 
-	Ω isStructure( const UA_DataType& type )ι->bool{ return type.typeKind==UA_DATATYPEKIND_STRUCTURE || type.typeKind==UA_DATATYPEKIND_OPTSTRUCT || type.typeKind==UA_DATATYPEKIND_UNION; }
-	//Each element of each member of the structure `p` of `type`, laid out as structureToJson reads it, to `f( element, memberType )` until
-	//it answers false;  false when it did.
-	Ω allMembers( void* p, const UA_DataType& type, const auto& f )ι->bool{
-		auto ptr = reinterpret_cast<uintptr_t>( p );
-		let array = [&]( const UA_DataTypeMember& m, uintptr_t at )->bool{
-			let count = *reinterpret_cast<const uint*>( at );
-			let data = *reinterpret_cast<UA_Byte* const*>( at+sizeof(uint) );
-			for( uint i=0; data && (const void*)data!=UA_EMPTY_ARRAY_SENTINEL && i<count; ++i ){
-				if( !f(data+i*m.memberType->memSize, *m.memberType) )
+	//Each element of each member of the structure `p` of `type` to `f( element, memberType )` until it answers false;  false when it did.
+	//The elements are `f`'s to change in place:  encodeCustom's walk.
+	Ω allMembers( const void* p, const UA_DataType& type, const auto& f )ι->bool{
+		return ForEachMember( p, type, [&]( const UA_DataTypeMember& m, const void* data, uint count )ι->bool{
+			for( uint i=0; i<count; ++i ){
+				if( !f(const_cast<UA_Byte*>((const UA_Byte*)data)+i*m.memberType->memSize, *m.memberType) )
 					return false;
 			}
 			return true;
-		};
-		if( type.typeKind==UA_DATATYPEKIND_UNION ){
-			let selection = *reinterpret_cast<const UA_UInt32*>( ptr );
-			if( !selection || selection>type.membersSize )
-				return true;
-			let& m = type.members[selection-1];
-			return m.isArray ? array( m, ptr+m.padding ) : f( reinterpret_cast<void*>(ptr+m.padding), *m.memberType );
-		}
-		for( uint i=0; i<type.membersSize; ++i ){
-			let& m = type.members[i];
-			ptr += m.padding;
-			if( m.isArray ){
-				if( !array(m, ptr) )
-					return false;
-				ptr += sizeof(uint)+sizeof(void*);
-			}
-			else if( m.isOptional ){
-				if( let member = *reinterpret_cast<void* const*>( ptr ); member && !f(member, *m.memberType) )
-					return false;
-				ptr += sizeof(void*);
-			}
-			else{
-				if( !f(reinterpret_cast<void*>(ptr), *m.memberType) )
-					return false;
-				ptr += m.memberType->memSize;
-			}
-		}
-		return true;
+		} );
 	}
 	Ω allElements( const UA_Variant& v, const auto& f )ι->bool{
 		if( !v.type || !v.data || (const void*)v.data==UA_EMPTY_ARRAY_SENTINEL )
@@ -233,7 +156,7 @@ namespace Jde::Opc{
 	}
 	//A kind whose value may hold another type:  a Variant, an ExtensionObject, a DataValue, a structure's members.
 	Ω container( const UA_DataType& type )ι->bool{
-		return type.typeKind==UA_DATATYPEKIND_VARIANT || type.typeKind==UA_DATATYPEKIND_EXTENSIONOBJECT || type.typeKind==UA_DATATYPEKIND_DATAVALUE || isStructure( type );
+		return type.typeKind==UA_DATATYPEKIND_VARIANT || type.typeKind==UA_DATATYPEKIND_EXTENSIONOBJECT || type.typeKind==UA_DATATYPEKIND_DATAVALUE || IsStructure( type );
 	}
 	//The element `p` of `type` is a type outside UA_TYPES, or holds one anywhere:  a Variant of one, an ExtensionObject decoded as one,
 	//or a member of namespace 0's that does - a KeyValuePair's Value, an EventFieldList's fields, a DataValue's value.
@@ -252,7 +175,7 @@ namespace Jde::Opc{
 			let& dv = *(const UA_DataValue*)p;
 			return dv.hasValue && holdsCustom( &dv.value, UA_TYPES[UA_TYPES_VARIANT] );}
 		default:
-			return isStructure( type ) && !allMembers( const_cast<void*>(p), type, walk );
+			return IsStructure( type ) && !allMembers( p, type, walk );
 		}
 	}
 	//The structure `p` of `type` as the ExtensionObject it travels as:  the type's DefaultBinary id and its binary form, as open62541's
@@ -322,7 +245,7 @@ namespace Jde::Opc{
 				encodeCustom( &dv.value, UA_TYPES[UA_TYPES_VARIANT] );
 			break;}
 		default:
-			if( isStructure(type) )
+			if( IsStructure(type) )
 				allMembers( p, type, walk );
 		}
 	}
@@ -377,6 +300,38 @@ namespace Jde{
 	}
 	α Opc::FindDataType( const UA_NodeId& typeId, const ITypes* types )ι->const UA_DataType*{
 		return UA_findDataTypeWithCustom( &typeId, types ? types->Chain() : nullptr );
+	}
+	//The first body of an encoding id that won't decode, of any connection:  a server that redefined a type would otherwise log once for
+	//each stored record of it every page and push carries, for each subscriber.
+	Ω firstFailure( const UA_NodeId& encodingId )ι->bool{
+		static std::mutex mutex;
+		static flat_set<Opc::NodeId> failed;
+		lg _{ mutex };
+		return failed.emplace( encodingId ).second;
+	}
+	α Opc::DecodeBody( const UA_ExtensionObject& eo, const ITypes* types )ι->DecodedBody{
+		if( eo.encoding!=UA_EXTENSIONOBJECT_ENCODED_BYTESTRING )
+			return {};
+		let& enc = eo.content.encoded;
+		let type = FindEncoding( enc.typeId, types );
+		if( !type ){
+			if( enc.typeId.namespaceIndex && types )
+				types->Missing( enc.typeId );
+			return {};
+		}
+		void* data = UA_new( type );
+		if( !data ){
+			WARNT( ELogTags::Parsing, "Could not allocate a '{}' to decode a body of {} bytes into.", type->typeName, enc.body.length );
+			return {};
+		}
+		UA_DecodeBinaryOptions options{};
+		options.customTypes = types ? types->Chain() : nullptr;
+		if( let sc = UA_decodeBinary(&enc.body, data, type, &options); sc ){
+			UA_delete( data, type );
+			LOG( firstFailure(enc.typeId) ? ELogLevel::Warning : ELogLevel::Trace, ELogTags::Parsing, "Could not decode a '{}' body of {} bytes - {}.  Kept as it came.", type->typeName, enc.body.length, UAException::Message(sc) );
+			return {};
+		}
+		return { data, type };
 	}
 	//An ExtensionObject element, or a Variant element's, at any depth.
 	α Opc::NoteMissingTypes( const UA_Variant& v, const ITypes& types )ι->void{

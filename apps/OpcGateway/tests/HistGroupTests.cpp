@@ -442,7 +442,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//inline there - so a strand task that finds the node taken holds the strand behind the create, and its answer waits.
 	namespace{
 		struct Joiner final : IDataChange{
-			α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value& )ι->void override{}
+			α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value&, const ITypes* )ι->void override{}
 			α to_string()Ι->string override{ return "HistGroupTests.Joiner"; }
 		};
 	}

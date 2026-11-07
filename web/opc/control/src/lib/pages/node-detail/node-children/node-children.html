@@ -65,6 +65,9 @@
 						@else if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
 							<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
 						}
+						@else if( structured(r.value) ){<!--a structure the gateway decoded by member, an array of them, or a body no type explains (clients spec *Structures*), whatever the DataType says - a BaseDataType variable's too.  Read-only until the write dialog edits it member by member (clients plan, Phase 9)-->
+							<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.stale"></structure-table>
+						}
 						@else if( r.dataType==ETypes.Boolean && !r.isArray ){
 							<mat-checkbox [checked]="r.value" (change)="toggleValue(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale" [aria-label]="r.name"></mat-checkbox>
 						}
@@ -93,7 +96,7 @@
 								}
 							</mat-select>
 						}
-						@else if( r.customDataType ){<!--a structure, or an enumeration whose values could not be read:  the value as text, read-only until the cell edits a structure by member (clients plan 8b, #422)-->
+						@else if( r.customDataType ){<!--an enumeration whose values could not be read:  the value as text-->
 							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
 						}
 						<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the

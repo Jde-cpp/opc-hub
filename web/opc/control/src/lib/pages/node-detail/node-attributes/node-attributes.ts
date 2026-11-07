@@ -10,7 +10,8 @@ import { UaNode } from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
-import { numberValue, Value } from '../../../model/value';
+import { ExtensionObject, numberValue, Value } from '../../../model/value';
+import { StructureTable } from '../../structure-table/structure-table';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 
 //The Attributes tab (clients spec *Attributes*, #417):  every attribute of the node's class in one read, each with its status where the
@@ -21,7 +22,7 @@ import { NodePageData } from '../../../services/resolvers/node-resolver';
 	selector: 'node-attributes',
 	templateUrl: './node-attributes.html',
 	styleUrl: './node-attributes.scss',
-	imports: [MatCheckboxModule, MatIconModule, MatProgressBarModule, MatTableModule, MatTooltipModule]
+	imports: [MatCheckboxModule, MatIconModule, MatProgressBarModule, MatTableModule, MatTooltipModule, StructureTable]
 })
 export class NodeAttributes{
 	#snackbar = inject( SnackbarService );
@@ -66,6 +67,9 @@ export class NodeAttributes{
 		this.userWriteMask.set( typeof mask=='number' ? mask : undefined );
 	}
 	editor( a:Attribute ):AttributeEditor|undefined{ return a.editor( this.userWriteMask() ); }
+	//the row's StructureTable (clients spec *Structures*):  the Value's structures, and any attribute's body no type explains - a
+	//RolePermissions or DataTypeDefinition stays its text
+	structured( a:Attribute ):boolean{ return a.key=='dataValue' ? StructureTable.shows( a.value ) : a.value instanceof ExtensionObject; }
 	//the quality the server gave - the Value's reading always has one, Good included;  another attribute's shows only where it refused
 	status( a:Attribute ):string{ return a.sc || (a.key=='dataValue' && a.value!==undefined) ? OpcError.text( a.sc ) : ""; }
 	statusTooltip( a:Attribute ):string{ return a.sc ? `${scHex( a.sc )} - ${this.status( a )}` : ""; }

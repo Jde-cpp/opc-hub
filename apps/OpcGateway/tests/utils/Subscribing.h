@@ -6,7 +6,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//Counts its data changes.  A listener that does more overrides SendDataChange and counts as well.
 	struct PushCount : IDataChange{
 		virtual ~PushCount()=default;
-		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value& )ι->void override{ ++Pushes; }
+		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value&, const ITypes* )ι->void override{ ++Pushes; }
 		α to_string()Ι->string override{ return "Tests.PushCount"; }
 		atomic<uint> Pushes;
 	};

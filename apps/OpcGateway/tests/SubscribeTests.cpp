@@ -3,6 +3,7 @@
 #include <jde/fwk/process/execution.h>
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/utils/Stopwatch.h>
+#include <jde/tests/WaitUntil.h>
 #include "../src/GatewayAppClient.h"
 #include "../src/async/ConnectAwait.h"
 #include "../src/async/Subscriptions.h"
@@ -160,6 +161,52 @@ namespace Jde::Opc::Gateway::Tests{
 		while( listener->Value!=value )
 			sw.CheckTimeout( timeout, 1ms );
 	}
+	//Clients 8b (#422):  a structure variable's push carries its value as fields, `structure` - its members by name, the Range nested, the
+	//array an array - the first push and a data change alike, and the listener's conversion back, by the connection's registry, gives
+	//the value written.
+	TEST_F( SubscribeTests, AStructurePushesAsFields ){
+		struct StructureListener final : IListener{
+			α OnData( string, NodeId, const Proto::Value& value )ι->void override{ lg _{ Mutex }; Values.push_back( value ); }
+			α Last()Ι->optional<Proto::Value>{ lg _{ Mutex }; return Values.empty() ? nullopt : optional{Values.back()}; }
+			mutable mutex Mutex; vector<Proto::Value> Values;
+		};
+		let member = []( const Proto::Structure& s, sv name )->const Proto::Value*{
+			for( let& m : s.members() ){
+				if( m.name()==name )
+					return m.has_value() ? &m.value() : nullptr;
+			}
+			return nullptr;
+		};
+		let rpm = [&]( const Proto::Value& v )->optional<double>{ let m = v.has_structure() ? member( v.structure(), "Rpm" ) : nullptr; return m ? optional{m->double_value()} : nullopt; };
+		const NodeId node{ PumpsNs(), TestSample };
+		Socket().QuerySync( "node( opc: $opc, id: $id ){ value }", {{"opc", OpcServerSlug}, {"id", node.ToJson()}} );//the connect, and with it the registry's fetch.
+		ASSERT_TRUE( WaitUntil([&]{ auto r = UAClient::FindTypes( OpcServerSlug ); return r && r->Find( NodeId{PumpsNs(), SampleType} ); }, 15s) ) << "the registry never held PumpSampleType";
+		auto listener = ms<StructureListener>();
+		let ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( Socket().Subscribe(OpcServerSlug, {node}, listener) );
+		ASSERT_EQ( ack.results_size(), 1 );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		absl::Cleanup unsubscribe = [&]{ try{ UnsubscribeAndDrain( node ); }catch( const std::exception& e ){ ADD_FAILURE() << e.what(); } };
+		ASSERT_TRUE( WaitUntil([&]{ return listener->Last().has_value(); }, 10s) ) << "the first push";
+		EXPECT_TRUE( rpm(*listener->Last()) ) << "the first push, as fields";
+		let written = SampleJson( 1515.5, "pushed", false );
+		Socket().QuerySync( "updateVariable( opc: $opc, id: $id, value: $value ){ value }", {{"opc", OpcServerSlug}, {"id", node.ToJson()}, {"value", written}} );
+		Proto::Value pushed;
+		ASSERT_TRUE( WaitUntil([&]{ auto v = listener->Last(); if( v && rpm(*v)==1515.5 ) pushed = *v; return v && rpm(*v)==1515.5; }, 10s) ) << "the data change";
+		let& s = pushed.structure();
+		ASSERT_EQ( s.members_size(), 5 );
+		EXPECT_EQ( ProtoUtils::ToNodeId(s.type_id()), (NodeId{PumpsNs(), SampleType}) );
+		EXPECT_EQ( s.members(0).name(), "Rpm" );
+		EXPECT_FALSE( member(s, "Running")->boolean() );
+		EXPECT_EQ( member(s, "Label")->string_value(), "pushed" );
+		ASSERT_TRUE( member(s, "Limits") && member(s, "Limits")->has_structure() ) << "a namespace-0 member, nested";
+		EXPECT_EQ( member(member(s, "Limits")->structure(), "High")->double_value(), 3000 );
+		ASSERT_TRUE( member(s, "History") && member(s, "History")->has_array() );
+		EXPECT_EQ( member(s, "History")->array().values_size(), 3 );
+		let registry = UAClient::FindTypes( OpcServerSlug );
+		ASSERT_TRUE( registry );
+		EXPECT_EQ( Opc::Value{ProtoUtils::ToVariant(pushed, registry.get())}.ToJson(registry.get()), jvalue{written} ) << "the push converted back, member by member";
+	}
+
 	TEST_F( SubscribeTests, Basic ){
 		ASSERT_NO_THROW( SubscribeAndPush(Intensity) );
 		ASSERT_NO_THROW( WriteAndPush(Intensity, 6s) );
@@ -449,7 +496,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//with the time the subscription went, ConnectionRestored once the rebuild has the nodes back and before the new subscription
 	//delivers a value - and the per-node item parameters a listener answers (IDataChange::ItemParameters).
 	struct StateListener final : PushCount{
-		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value& )ι->void override{
+		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value&, const ITypes* )ι->void override{
 			if( Lost && !Restored )
 				++PushesWhileLost;//nothing was in flight at either staged loss, so one of these is the new item delivering before ConnectionRestored.
 			if( Restored )
@@ -1540,7 +1587,7 @@ namespace Jde::Opc::Gateway::Tests{
 		dv.hasValue = true;
 		const UA_DataValue inner{};
 		UA_Variant_setScalarCopy( &dv.value, &inner, &UA_TYPES[UA_TYPES_DATAVALUE] );
-		let m = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(dv)}, 0 );
+		let m = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(dv)}, 0, nullptr );
 		ASSERT_TRUE( m.has_node_values() );
 		EXPECT_FALSE( m.node_values().has_value() );
 		EXPECT_EQ( m.node_values().sc(), UA_STATUSCODE_BADNOTSUPPORTED );
@@ -1549,7 +1596,7 @@ namespace Jde::Opc::Gateway::Tests{
 		bad.hasValue = true; bad.hasStatus = true; bad.status = UA_STATUSCODE_BADSENSORFAILURE;
 		const UA_Int32 i{ 7 };
 		UA_Variant_setScalarCopy( &bad.value, &i, &UA_TYPES[UA_TYPES_INT32] );
-		let ok = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(bad)}, 0 );
+		let ok = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(bad)}, 0, nullptr );
 		EXPECT_EQ( ok.node_values().value().int32(), 7 );
 		EXPECT_EQ( ok.node_values().sc(), UA_STATUSCODE_BADSENSORFAILURE );
 	}
@@ -1561,14 +1608,14 @@ namespace Jde::Opc::Gateway::Tests{
 		dv.hasValue = true;
 		const UA_Int32 i{ 7 };
 		UA_Variant_setScalarCopy( &dv.value, &i, &UA_TYPES[UA_TYPES_INT32] );
-		let bare = FromServer::ToProto( "opc", NodeId{}, Opc::Value{dv}, 0 );
+		let bare = FromServer::ToProto( "opc", NodeId{}, Opc::Value{dv}, 0, nullptr );
 		EXPECT_FALSE( bare.node_values().has_source() );
 		EXPECT_FALSE( bare.node_values().has_server() );
 
 		let source = UA_DateTime_now()-UA_DATETIME_SEC, server = source+UA_DATETIME_MSEC;
 		dv.hasSourceTimestamp = true; dv.sourceTimestamp = source;
 		dv.hasServerTimestamp = true; dv.serverTimestamp = server;
-		let stamped = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(dv)}, 0 );
+		let stamped = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(dv)}, 0, nullptr );
 		ASSERT_TRUE( stamped.node_values().has_source() );
 		ASSERT_TRUE( stamped.node_values().has_server() );
 		EXPECT_EQ( UADateTime{stamped.node_values().source()}.UA(), source );

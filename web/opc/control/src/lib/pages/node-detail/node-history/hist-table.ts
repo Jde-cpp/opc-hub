@@ -13,6 +13,7 @@ import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
 import { valueString } from '../../../model/value';
+import { StructureTable } from '../../structure-table/structure-table';
 
 //The table:  every value loaded, newest first, with both timestamps and the status, paged.  The read opens with
 //the newest values and Load earlier adds older ones below them, as a log reads.  In modified mode the rows are the edits
@@ -23,7 +24,7 @@ import { valueString } from '../../../model/value';
 	selector: 'hist-table',
 	templateUrl: './hist-table.html',
 	styleUrls: ['./hist-table.scss'],
-	imports: [DatePipe, MatButtonModule, MatChipsModule, MatIconModule, MatPaginatorModule, MatTableModule, MatTooltipModule]
+	imports: [DatePipe, MatButtonModule, MatChipsModule, MatIconModule, MatPaginatorModule, MatTableModule, MatTooltipModule, StructureTable]
 })
 export class HistTable{
 	#el = inject( ElementRef );
@@ -58,6 +59,7 @@ export class HistTable{
 	statusTooltip( v:HistValue ):string{ return v.status ? `${scHex( v.status )} - ${this.status( v )}` : ""; }
 	qualityIcon( v:HistValue ){ return statusIcon( v.status ); }
 	valueText( v:HistValue ):string{ return valueString( v.value ); }
+	readonly structured = StructureTable.shows;//a value the cell's StructureTable shows (clients spec *Structures*)
 	//what a value is besides a reading:  a bound returnBounds asked for, a group's heartbeat, or an edit's record in modified mode
 	flags( v:HistValue ):string[]{
 		const y:string[] = [];
