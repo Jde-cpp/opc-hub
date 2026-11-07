@@ -144,9 +144,7 @@ local logsDir = args.logsDir;
 				file:{ path: logsDir, md: false }
 			}
 		},
-		memory:{
-			default: "trace"
-		},
+		memory::{ tags: { default: "None" } },//the suite's capture (jde/tests/Capture.h), off:  a test captures what it reads with a Logging::Capture.
 		proto:{
 			path: logsDir + "/opc-tests",
 			timeZone: "America/New_York",

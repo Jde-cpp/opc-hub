@@ -1,25 +1,22 @@
-#include "jde/fwk/process/process.h"
 #include <jde/fwk/log/SpdLog.h>
 #include <iostream>
 #include <numeric>
-#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/pattern_formatter.h>
-#include <jde/fwk/settings.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 #include <jde/fwk/io/file.h>
-#include <jde/fwk/log/log.h>
 
 #define let const auto
 #ifndef JDE_SOURCE_ROOT
 	#define JDE_SOURCE_ROOT ""
 #endif
 
-namespace Jde::Logging{
+namespace Jde{
 	using spdlog::level::level_enum;
 
 	//`-fmacro-prefix-map` makes source paths repo-relative;  the terminal's osc-8 link needs an absolute file:// uri.
-	α FormatSourceUri( sv file )ι->string{
+	α Logging::FormatSourceUri( sv file )ι->string{
 		string y;
 		if( file.empty() )
 			return y;
@@ -33,6 +30,7 @@ namespace Jde::Logging{
 				y.push_back( ch=='\\' ? '/' : ch );
 		return y;
 	}
+namespace Logging{
 	struct SourceUri final : spdlog::custom_flag_formatter{
 		α format( const spdlog::details::log_msg& msg, const std::tm&, spdlog::memory_buf_t& dest )ι->void override{
 			let uri = FormatSourceUri( msg.source.filename ? sv{msg.source.filename} : sv{} );
@@ -47,7 +45,7 @@ namespace Jde::Logging{
 		for( let& [name,sink] : sinkSettings ){
 			spdlog::sink_ptr pSink;
 			string additional;
-			auto pattern =  Json::FindSV( sink, "/pattern" );
+			auto pattern = Json::FindSV( sink, "/pattern" );
 			if( name=="console" && Process::IsConsole() ){
 				let escapes = Process::IsTerminal() && Process::PrepareConsole();//readied whatever the pattern - on windows it sets the code page too
 				if( !pattern ){//an installed product's is set (args/install logConsole):  these defaults put the build machine's source in every line (reviews/install-issues.md #49)
@@ -90,7 +88,7 @@ namespace Jde::Logging{
 						pSink = ms<spdlog::sinks::basic_file_sink_mt>( path.string(), truncate );
 				}
 				catch( const spdlog::spdlog_ex& e ){
-					ERRT( ELogTags::Settings, "Could not create log:  ({}) path='{}' - {}", string{name}, path.string(), string{e.what()} );
+					ERRT( ELogTags::Settings, "Could not create log:  ({}) path='{}' - {}", string{name}, path.string(), e.what() );
 					std::cerr << Ƒ( "Could not create log:  ({}) path='{}' - {}", name, path.string(), e.what() ) << std::endl;
 					continue;
 				}
@@ -104,7 +102,6 @@ namespace Jde::Logging{
 			pSink->set_formatter( move(formatter) );
 			let level = Json::FindEnum<ELogLevel>( sink, "/level", ToLogLevel ).value_or( ELogLevel::Trace );
 			pSink->set_level( (level_enum)level );
-			//std::cout << Ƒ( "({})level='{}' pattern='{}'{}", name, ToString(level), pattern, additional ) << std::endl;
 			DBGT( ELogTags::Settings, "({})level='{}' pattern='{}'{}", name, ToString(level), *pattern, additional );
 			sinks.push_back( pSink );
 		}
@@ -136,4 +133,4 @@ namespace Jde::Logging{
 			Jde::ToString( (ELogLevel)_logger.flush_level() ), ToString()
 		);
 	}
-}
+}}
