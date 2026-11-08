@@ -56,6 +56,28 @@ namespace Jde::Tests{
 		EXPECT_EQ( repeated.count("-arg"), 2u );
 	}
 
+	TEST( ProcessTests, ParseStartupArgsSeparatesItsFlagsFromTheServices ){
+		let args = Process::ParseStartupArgs( {"-c", "-install", "-settings=a.jsonnet", "-t", "-include=args/x", "-sync"}, nullopt );
+		EXPECT_TRUE( args.Console );
+		EXPECT_TRUE( args.Install );
+		EXPECT_FALSE( args.Uninstall );
+		EXPECT_EQ( args.ServiceArgs, (vector<string>{"-settings=a.jsonnet", "-include=args/x", "-sync"}) ) << "a flag after -install still reaches the registration, in argv order";
+		EXPECT_TRUE( Process::ParseStartupArgs({"-uninstall"}, nullopt).Uninstall );
+		EXPECT_TRUE( Process::ParseStartupArgs({"-uninstall"}, nullopt).ServiceArgs.empty() );
+	}
+	TEST( ProcessTests, ParseStartupArgsConsoleParameterOverridesTheFlag ){
+		EXPECT_FALSE( Process::ParseStartupArgs({}, nullopt).Console );
+		EXPECT_TRUE( Process::ParseStartupArgs({}, true).Console );
+		let args = Process::ParseStartupArgs( {"-c"}, false );
+		EXPECT_FALSE( args.Console );
+		EXPECT_TRUE( args.ServiceArgs.empty() ) << "-c is this run's, whatever decides it";
+	}
+	TEST( ProcessTests, ParseStartupArgsTogglesTerminate ){
+		EXPECT_EQ( Process::ParseStartupArgs({}, nullopt).SetTerminate, !_debug );
+		EXPECT_EQ( Process::ParseStartupArgs({"-t"}, nullopt).SetTerminate, _debug );
+		EXPECT_EQ( Process::ParseStartupArgs({"-t", "-t"}, nullopt).SetTerminate, !_debug );
+	}
+
 	//What -install hands the SCM.  The other end is CommandLineToArgvW (Args() on windows), so the rules are its.  An
 	//unquoted `C:\Program Files\…\x.exe` came back as argv[0]=`C:\Program`: Executable() pointed at nothing, ProductName()
 	//fell back to "Jde-cpp" and the service grew a second data tree - hence the exe is quoted whether or not it needs it.

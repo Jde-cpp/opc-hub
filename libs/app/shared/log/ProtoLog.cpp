@@ -74,7 +74,7 @@ namespace Jde::App{
 		//Every other writer of the daily file holds _fileLock; this one did not.  Appending into the middle of a flush's
 		//write would leave a run no checkpoint proves, and appending into one an archive round is about to fs::remove
 		//loses the entries silently.
-		//Try, never wait: loggers are destroyed *after* the executor is (Process::cleanup), so a flush or round suspended
+		//Try, never wait: loggers are destroyed *after* the executor is (Process::Shutdown), so a flush or round suspended
 		//mid-flight will never resume to release it - blocking here would hang the process instead of losing a buffer.
 		auto lock = _fileLock.TryLock();
 		vector<FileEntry> batch;

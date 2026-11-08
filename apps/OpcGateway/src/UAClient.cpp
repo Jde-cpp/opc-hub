@@ -1302,7 +1302,7 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω connectPending( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->ConnectAwait::Task;
 
-	//ShuttingDown(), never Finalizing():  Finalizing is set after every shutdown function has run, so a chain gated on it could
+	//ShuttingDown(), never LoggersGone():  that is set after every shutdown function has run, so a chain gated on it could
 	//still reconnect while UAClient::Shutdown was tearing the clients down (subscription-disconnect #3).
 	Ω waitThenConnect( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->VoidTask{
 		optional<DurationTimer> timer;

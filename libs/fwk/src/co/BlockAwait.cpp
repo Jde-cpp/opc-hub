@@ -39,7 +39,7 @@ namespace Jde::Internal{
 		//caller's contract is a value, not a timeout - but says so every interval, and says where from: the whole cost of the
 		//2026-08-07 gateway stall was that a dropped response looked exactly like a process quietly doing nothing.
 		for( uint i=1; !_done.WaitForNotificationWithTimeout(absl::FromChrono(interval)); ++i ){
-			if( Process::Finalizing() )//the loggers are gone by then; a stall during finalize is the shutdown watchdog's problem.
+			if( Process::LoggersGone() )//the loggers are gone by then; a stall during finalize is the shutdown watchdog's problem.
 				continue;
 			//stallLevel (Await.h) caps the level for a wait the caller knows to be long; a real hang still climbs to Critical.
 			LOGSL( std::min(i==1 ? ELogLevel::Warning : ELogLevel::Critical, stallLevel), sl, _tags, "BlockAwait has been waiting {}s for its result.", Ƒ("{:.1f}", std::chrono::duration<double>(interval*static_cast<Duration::rep>(i)).count()) );

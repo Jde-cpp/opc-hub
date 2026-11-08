@@ -21,7 +21,7 @@
 #define Φ Γ auto
 
 #define LOGSL(level, sl, tags, message,...) \
-	if( Logging::ShouldLog(level, (ELogTags)tags) && !Process::Finalizing() ){\
+	if( Logging::ShouldLog(level, (ELogTags)tags) && !Process::LoggersGone() ){\
  		Logging::Emit( level, (ELogTags)tags, sl, message __VA_OPT__(,) __VA_ARGS__ );\
 	}
 #define LOG(level, tags, message,...) LOGSL( level, SRCE_CUR, tags, message __VA_OPT__(,) __VA_ARGS__ )
@@ -53,13 +53,13 @@ namespace Jde::Logging{
 	//instance, which never breaks into the debugger.  Gated here.
 	Φ Log( const Record& record )ι->void;
 
-	//A line, ungated:  the macros check ShouldLog and Finalizing before evaluating their arguments, and LogStack and LogOnce
+	//A line, ungated:  the macros check ShouldLog and LoggersGone before evaluating their arguments, and LogStack and LogOnce
 	//check them too, so this doesn't again.  The fan-out to the loggers is out of line, with the arguments' types erased.
 	Φ Emit( ELogLevel level, ELogTags tags, SL sl, const FormatView& m, fmt::format_args args )ι->void;
 	ψ Emit( ELogLevel level, ELogTags tags, SL sl, FormatString&& m, ARGS... args )ι->void{ Emit( level, tags, sl, m.View(), fmt::make_format_args(args...) ); }
 	//A line from code that doesn't use the macros:  gated once, then emitted.
 	ψ Log( ELogLevel level, ELogTags tags, SL sl, FormatString&& m, ARGS... args )ι->void{
-		if( ShouldLog(level, tags) && !Process::Finalizing() )
+		if( ShouldLog(level, tags) && !Process::LoggersGone() )
 			Emit( level, tags, sl, FWD(m), FWD(args)... );
 	}
 	//Whether LogStack walks the stack for a line's file, line and function:  /logging/stack, a per-tag level object read at
@@ -67,7 +67,7 @@ namespace Jde::Logging{
 	Φ ShouldCaptureStack( ELogLevel level, ELogTags tags )ι->bool;
 #ifdef __cpp_lib_stacktrace
 	ψ LogStack( ELogLevel level, ELogTags tags, std::stacktrace::size_type stackTraceIndex, FormatString&& m, ARGS... args )ι->void{
-		if( !ShouldLog(level, tags) || Process::Finalizing() )
+		if( !ShouldLog(level, tags) || Process::LoggersGone() )
 			return;
 
 		if( !ShouldCaptureStack(level, tags) )
@@ -79,7 +79,7 @@ namespace Jde::Logging{
 	}
 	#else
 	ψ LogStack( ELogLevel level, ELogTags tags, boost::stacktrace::stacktrace::size_type stackTraceIndex, FormatString&& m, ARGS... args )ι->void{
-		if( !ShouldLog(level, tags) || Process::Finalizing() )
+		if( !ShouldLog(level, tags) || Process::LoggersGone() )
 			return;
 		if( !ShouldCaptureStack(level, tags) )
 			Emit( level, tags, SL{}, FWD(m), FWD(args)... );
@@ -94,7 +94,7 @@ namespace Jde::Logging{
 	//Gated before the id is claimed, so a line below every logger's level is still unclaimed when it would first be seen.
 	template<typename... Args>
 	α LogOnce( SL sl, ELogLevel level, ELogTags tags, FormatString&& m, ARGS... args )ι->void{
-		if( ShouldLog(level, tags) && !Process::Finalizing() && MarkLogged(m.Id) )
+		if( ShouldLog(level, tags) && !Process::LoggersGone() && MarkLogged(m.Id) )
 			Emit( level, tags, sl, FWD(m), FWD(args)... );
 	}
 }

@@ -61,7 +61,7 @@ namespace Jde{
 			default: INFOT( tags, "Ctrl-C event unhanded: {:x}", ctrlType ); handled = false;
     }
 		if( handled ) //was in WindowsWorker.cpp
-			Windows::WindowsWorkerMain::Stop( ctrlType );
+			Windows::WindowsWorkerMain::Stop( EXIT_SUCCESS );
 		return handled;
 	}
 	Ω stopRequested( PVOID, BOOLEAN )->void{
@@ -161,17 +161,13 @@ namespace Jde{
 		return fs::path{ Windows::ToWString(Process::Args().find( {} )->second) };//the args are UTF-8 (Windows::ToString above) - fs::path's narrow constructor would read them in the ANSI code page (reviews/m4-closing.md #3)
 	}
 
-	α Process::UnPause()ι->void{
-		Windows::WindowsWorkerMain::Stop( 0 );
-	}
-
 	α Process::Pause()ι->int{
 		INFOT( ELogTags::App | ELogTags::Startup, "Starting main thread loop...{}", _getpid() );
 		if( _isService )
 			Windows::Service::Started(); //the dispatcher connected in AsService;  this runs the loop until the service stops
 		else
 			Windows::WindowsWorkerMain::Start( false );
-		return 1;
+		return ExitReason().value_or( EXIT_FAILURE );
 	}
 	string _companyName;
 
