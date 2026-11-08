@@ -2,17 +2,7 @@
 
 //Every refusal of the spec's *Validation* that needs only the row:  each a BadRequest whose message names what was wrong.
 namespace Jde::Calendar::Tests{
-	Ω refused( std::function<void()> f )->string{
-		try{
-			f();
-		}
-		catch( const Jde::Exception& e ){
-			EXPECT_EQ( e.HttpStatus(), EHttpStatus::BadRequest ) << e.what();
-			return e.what();
-		}
-		return {};
-	}
-	#define EXPECT_REFUSED( call, fragment ) { let what = refused( [&]{ call; } ); EXPECT_NE( what.find(fragment), string::npos ) << #call << " - '" << what << "'"; }
+	#define EXPECT_REFUSED( call, fragment ) { let what = Refused( [&]{ call; } ); EXPECT_NE( what.find(fragment), string::npos ) << #call << " - '" << what << "'"; }
 
 	Ω shift( sv name, uint32 days, uint16 start, uint16 minutes, vector<Break> breaks={} )ι->Shift{ return Shift{ 0, 0, string{name}, days, start, minutes, move(breaks) }; }
 	Ω pattern( vector<Shift> shifts, uint8 cycleDays=7, optional<TimePoint> cycleStart={} )ι->Pattern{ return Pattern{ 1, 1, {}, cycleDays, cycleStart, move(shifts) }; }
@@ -74,6 +64,19 @@ namespace Jde::Calendar::Tests{
 		EXPECT_NO_THROW( ValidatePattern(pattern({shift("Long", Everyday, 0, 1440)})) ) << "a day-long shift every day is back to back with itself";
 		EXPECT_REFUSED( ValidatePattern(pattern({shift("A", 1, 1380, 480), shift("B", 2, 0, 480)}, 2, Utc(2026,6,1,10))), "Shifts 'A' on day 0 and 'B' on day 1 overlap" );//a rotation names its days by number
 		EXPECT_REFUSED( ValidatePattern(pattern({shift("A", 2, 1380, 480), shift("B", 1, 0, 480)}, 2, Utc(2026,6,1,10))), "'A' on day 1 and 'B' on day 0 overlap" );//the last day wraps into the first
+	}
+
+	//Night 23:00-07:00 under the old pattern, then a new one from Monday 2026-07-06, on a midnight day start.
+	Ω seam( uint32 oldDays, uint32 newDays, uint16 newStart )ε->Schedule{
+		return Schedule{ CalendarRow(1, "seam", NewYork, 0), jarray{ PatternRow(1, 1), PatternRow(2, 1, Utc(2026,7,6,4)) }, jarray{ ShiftRow(1, 1, "Night", oldDays, 1380, 480), ShiftRow(2, 2, "Day", newDays, newStart, 480) }, jarray{} };
+	}
+	TEST( ValidationTests, Seams ){
+		EXPECT_REFUSED( ValidateSeams(seam(Everyday, Everyday, 0)), "Shift 'Night' runs 420 minutes into 2026-07-06, the first day of a new pattern, past the start of its shift 'Day'" );
+		EXPECT_REFUSED( ValidateSeams(seam(64, 1, 419)), "past the start" );
+		EXPECT_NO_THROW( ValidateSeams(seam(Everyday, Everyday, 420)) ) << "back to back";
+		EXPECT_NO_THROW( ValidateSeams(seam(Weekdays, Everyday, 0)) ) << "the old shift doesn't run on Sunday";
+		EXPECT_NO_THROW( ValidateSeams(seam(Everyday, 2, 0)) ) << "the new shift doesn't run on Monday";
+		EXPECT_NO_THROW( ValidateSeams(Plant()) ) << "one pattern has no seam";
 	}
 
 	TEST( ValidationTests, Exception ){

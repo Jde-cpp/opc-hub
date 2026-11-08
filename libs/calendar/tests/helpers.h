@@ -12,7 +12,21 @@ namespace Jde::Calendar::Tests{
 	Ξ Utc( int y, unsigned m, unsigned d, int h=0, int min=0 )ι->TimePoint{ return sys_days{year{y}/month{m}/day{d}}+hours{h}+minutes{min}; }
 	Ξ Iso( TimePoint t )ι->string{ return ToIsoString<seconds>( t ); }
 	Ξ Ymd( int y, unsigned m, unsigned d )ι->year_month_day{ return year{y}/month{m}/day{d}; }
-	#define EXPECT_TP( a, b ) EXPECT_EQ( Iso(a), Iso(b) )
+	Ξ SameInstant( TimePoint a, TimePoint b )ι->::testing::AssertionResult{
+		return a==b ? ::testing::AssertionSuccess() : ::testing::AssertionFailure() << ToIsoString( a ) << " is not " << ToIsoString( b );
+	}
+	#define EXPECT_TP( a, b ) EXPECT_TRUE( SameInstant(a, b) )
+	//What f's BadRequest says, or empty when it didn't throw.
+	Ξ Refused( std::function<void()> f )->string{
+		try{
+			f();
+		}
+		catch( const Jde::Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::BadRequest ) << e.what();
+			return e.what();
+		}
+		return {};
+	}
 
 	Ξ CalendarRow( uint32 id, sv slug, sv timeZone=NewYork, uint16 dayStart=360 )ι->jobject{
 		return jobject{ {"id", id}, {"name", slug}, {"slug", slug}, {"timeZone", timeZone}, {"dayStart", dayStart} };
@@ -32,15 +46,15 @@ namespace Jde::Calendar::Tests{
 	Ξ PlantShifts( uint32 patternId=1, uint32 firstId=1 )ι->jarray{
 		return jarray{ ShiftRow(firstId, patternId, "Day", Weekdays, 0, 480, "[{\"start\":240,\"minutes\":30}]"), ShiftRow(firstId+1, patternId, "Evening", Weekdays, 480, 480), ShiftRow(firstId+2, patternId, "Night", Weekdays, 960, 480) };
 	}
-	Ξ Plant( jarray exceptions={}, jarray morePatterns={}, jarray moreShifts={} )ε->Calendar{
+	Ξ Plant( jarray exceptions={}, jarray morePatterns={}, jarray moreShifts={} )ε->Schedule{
 		jarray patterns{ PatternRow(1, 1) };
 		patterns.insert( patterns.end(), morePatterns.begin(), morePatterns.end() );
 		auto shifts = PlantShifts();
 		shifts.insert( shifts.end(), moreShifts.begin(), moreShifts.end() );
-		return Calendar{ CalendarRow(1, "plant"), patterns, shifts, exceptions };
+		return Schedule{ CalendarRow(1, "plant"), patterns, shifts, exceptions };
 	}
 	//Night 22:00-06:00 every day of the week, so a clock-change night is a shift.
-	Ξ Continuous( uint16 dayStart=360 )ε->Calendar{
-		return Calendar{ CalendarRow(2, "continuous", NewYork, dayStart), jarray{ PatternRow(1, 2) }, jarray{ ShiftRow(1, 1, "Night", Everyday, 960, 480) }, jarray{} };
+	Ξ Continuous( uint16 dayStart=360 )ε->Schedule{
+		return Schedule{ CalendarRow(2, "continuous", NewYork, dayStart), jarray{ PatternRow(1, 2) }, jarray{ ShiftRow(1, 1, "Night", Everyday, 960, 480) }, jarray{} };
 	}
 }

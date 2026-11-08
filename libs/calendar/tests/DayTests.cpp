@@ -32,17 +32,17 @@ namespace Jde::Calendar::Tests{
 
 	TEST( DayTests, BreaksColumn ){
 		let shifts = jarray{ ShiftRow(1, 1, "A", Everyday, 0, 480, ""), ShiftRow(2, 1, "B", Everyday, 480, 480, jarray{ jobject{{"start", 60}, {"minutes", 15}}, jobject{{"start", 30}, {"minutes", 10}} }) };
-		let c = Calendar{ CalendarRow(1, "plant"), jarray{ PatternRow(1, 1) }, shifts, jarray{} };
+		let c = Schedule{ CalendarRow(1, "plant"), jarray{ PatternRow(1, 1) }, shifts, jarray{} };
 		let& p = c.Patterns().front();
 		EXPECT_TRUE( p.Shifts[0].Breaks.empty() ) << "an empty string, which the db saves as null, is no breaks";
 		ASSERT_EQ( p.Shifts[1].Breaks.size(), 2u ) << "an array is taken as it is";
 		EXPECT_EQ( p.Shifts[1].Breaks[0].Start, 30 ) << "sorted by start";
 		EXPECT_EQ( ParseBreaks(jvalue{nullptr}).size(), 0u );
-		EXPECT_EQ( ParseBreaks(jvalue{"[{\"start\":10,\"minutes\":5},{\"start\":0,\"minutes\":5}]"})[0].Start, 0 );
+		EXPECT_EQ( ParseBreaks(jvalue{"[{\"start\":10,\"minutes\":5},{\"start\":0,\"minutes\":5}]"}).size(), 2u ) << "the column's json text";
 	}
 
 	TEST( DayTests, UnknownZoneRefused ){
-		EXPECT_THROW( (Calendar{ CalendarRow(1, "plant", "Mars/Olympus_Mons"), jarray{}, jarray{}, jarray{} }), Jde::Exception );
+		EXPECT_THROW( (Schedule{ CalendarRow(1, "plant", "Mars/Olympus_Mons"), jarray{}, jarray{}, jarray{} }), Jde::Exception );
 	}
 
 	//New York springs forward 2026-03-08 at 02:00 and falls back 2026-11-01 at 02:00.  Under a 06:00 day start, the instants
@@ -91,7 +91,7 @@ namespace Jde::Calendar::Tests{
 	//A 14-day cycle anchored on Monday 2026-06-01, given inside that day:  the anchor is moved to the day's start, the days count
 	//in local dates, and the cycle repeats backwards from the anchor too.
 	TEST( DayTests, CycleDayFromAnchor ){
-		let rotation = Calendar{ CalendarRow(3, "rotation"), jarray{ PatternRow(1, 3, {}, 14, Utc(2026,6,1,15)) }, jarray{}, jarray{} };
+		let rotation = Schedule{ CalendarRow(3, "rotation"), jarray{ PatternRow(1, 3, {}, 14, Utc(2026,6,1,15)) }, jarray{}, jarray{} };
 		let& p = rotation.Patterns().front();
 		ASSERT_TRUE( p.CycleStart );
 		EXPECT_TP( *p.CycleStart, Utc(2026,6,1,10) ) << "normalised to the production day's start";
@@ -123,9 +123,9 @@ namespace Jde::Calendar::Tests{
 		EXPECT_EQ( plant.InEffect(Ymd(2030,1,1))->Id, 2u );
 		EXPECT_EQ( plant.InEffect(Ymd(2000,1,1))->Id, 1u ) << "the first pattern is in effect from the beginning of time";
 
-		let late = Calendar{ CalendarRow(1, "late"), jarray{ PatternRow(1, 1, Utc(2026,7,6,10)) }, jarray{}, jarray{} };
+		let late = Schedule{ CalendarRow(1, "late"), jarray{ PatternRow(1, 1, Utc(2026,7,6,10)) }, jarray{}, jarray{} };
 		EXPECT_EQ( late.InEffect(Ymd(2026,7,5)), nullptr ) << "nothing in effect before a dated first pattern";
-		let tie = Calendar{ CalendarRow(1, "tie"), jarray{ PatternRow(7, 1, Utc(2026,7,6,10)), PatternRow(5, 1, Utc(2026,7,6,10)) }, jarray{}, jarray{} };
+		let tie = Schedule{ CalendarRow(1, "tie"), jarray{ PatternRow(7, 1, Utc(2026,7,6,10)), PatternRow(5, 1, Utc(2026,7,6,10)) }, jarray{}, jarray{} };
 		EXPECT_EQ( tie.InEffect(Ymd(2026,7,6))->Id, 5u ) << "the lowest id on a tie";
 	}
 
@@ -145,12 +145,13 @@ namespace Jde::Calendar::Tests{
 	//time an exception's bound was entered as.
 	TEST( DayTests, Reanchor ){
 		let plant = Plant();
-		let chicago = Calendar{ 9, "chicago", "chicago", *locate_zone("America/Chicago"), 0 };
+		let chicago = Schedule{ 9, "chicago", "chicago", *locate_zone("America/Chicago"), 0 };
 		EXPECT_TP( ReanchorDay(Utc(2026,7,6,10), plant, chicago), Utc(2026,7,6,5) ) << "Monday 06:00 EDT names 2026-07-06, whose day starts 00:00 CDT";
 		EXPECT_TP( ReanchorLocal(Utc(2026,7,3,10), plant, chicago), Utc(2026,7,3,11) ) << "06:00 EDT re-entered as 06:00 CDT";
-		let midnight = Calendar{ 9, "midnight", "midnight", plant.Zone(), 0 };
+		let midnight = Schedule{ 9, "midnight", "midnight", plant.Zone(), 0 };
 		EXPECT_TP( ReanchorDay(Utc(2026,7,6,10), plant, midnight), Utc(2026,7,6,4) ) << "the same day under a midnight start";
 		EXPECT_TP( ReanchorLocal(Utc(2026,7,3,10), plant, midnight), Utc(2026,7,3,10) ) << "a day start change moves no exception";
+		EXPECT_TP( ReanchorLocal(Utc(2026,11,1,6,30), plant, midnight), Utc(2026,11,1,6,30) ) << "nor one in the second pass of the repeated hour";
 		EXPECT_TP( ReanchorDay(Utc(2026,11,1,11), plant, midnight), Utc(2026,11,1,4) ) << "the day of the fall change:  its 00:00 is still EDT";
 		EXPECT_TP( ReanchorDay(Utc(2026,11,2,11), plant, midnight), Utc(2026,11,2,5) ) << "the day after:  00:00 EST";
 	}

@@ -1,15 +1,14 @@
-#include <jde/calendar/calendar.h>
+#include <jde/calendar/Schedule.h>
 #include <jde/fwk/str.h>
 #include <jde/calendar/validation.h>
+#include "refuse.h"
 
 #define let const auto
 
 namespace Jde{
 	constexpr ELogTags _tags{ ELogTags::App };
-	constexpr local_days _monday{ 1970y/January/5 };//a Monday:  day 0 of a cycle with no anchor, so the default's mask is the weekday's.
 
 	namespace Calendar{
-		Ω refusal( SL sl, string what )ι->Jde::Exception{ return Jde::Exception{ move(what), {_tags, 0, EHttpStatus::BadRequest}, sl }; }
 		Ω number( const jobject& row, sv key, SL sl )ε->uint32{ return Json::AsNumber<uint32>( row, key, sl ); }
 		Ω findTime( const jobject& row, sv key, SL sl )ε->optional<TimePoint>{
 			let p = row.if_contains( key );
@@ -69,9 +68,8 @@ namespace Jde{
 			}
 		}
 		catch( const Jde::Exception& e ){
-			throw refusal( sl, Ƒ("breaks must be a json list of {{start, minutes}}, in minutes from the shift's start, not {}:  {}", serialize(breaks), e.what()) );
+			REFUSE( "breaks must be a json list of {{start, minutes}}, in minutes from the shift's start, not {}:  {}", serialize(breaks), e.what() );
 		}
-		std::ranges::sort( y, []( const Break& a, const Break& b ){ return a.Start<b.Start; } );
 		return y;
 	}
 
@@ -82,10 +80,8 @@ namespace Jde{
 		if( lower=="week" ) return EBucket::Week;
 		if( lower=="month" ) return EBucket::Month;
 		let d = Chrono::TryToDuration( by, ELogLevel::Debug, sl );
-		if( !d )
-			throw refusal( sl, Ƒ("by '{}' is not shift, day, week, month or an ISO 8601 duration.", by) );
-		if( *d<minutes{1} )
-			throw refusal( sl, Ƒ("by '{}' is under a minute, the smallest bucket.", by) );
+		REFUSE_IF( !d, "by '{}' is not shift, day, week, month or an ISO 8601 duration.", by );
+		REFUSE_IF( *d<minutes{1}, "by '{}' is under a minute, the smallest bucket.", by );
 		return *d;
 	}
 
@@ -102,9 +98,7 @@ namespace Jde{
 			{"breaks", move(breaks)}
 		};
 	}
-}
-namespace Jde::Calendar{
-	Calendar::Calendar( const jobject& row, const jarray& patterns, const jarray& shifts, const jarray& exceptions, SL sl )ε:
+	Calendar::Schedule::Schedule( const jobject& row, const jarray& patterns, const jarray& shifts, const jarray& exceptions, SL sl )ε:
 		_id{ number(row, "id", sl) },
 		_name{ Json::FindDefaultSV(row, "name") },
 		_slug{ Json::FindDefaultSV(row, "slug") },
@@ -133,7 +127,7 @@ namespace Jde::Calendar{
 		Finish();
 	}
 
-	Calendar::Calendar( uint32 id, string name, string slug, const time_zone& zone, uint16 dayStart, vector<Pattern> patterns, vector<Override> exceptions )ι:
+	Calendar::Schedule::Schedule( uint32 id, string name, string slug, const time_zone& zone, uint16 dayStart, vector<Pattern> patterns, vector<Override> exceptions )ι:
 		_id{ id },
 		_name{ move(name) },
 		_slug{ move(slug) },
@@ -144,37 +138,42 @@ namespace Jde::Calendar{
 		Finish();
 	}
 
-	α Calendar::Finish()ι->void{
+	α Calendar::Schedule::Finish()ι->void{
 		for( auto& p : _patterns ){
 			if( p.Effective )
 				p.Effective = Normalize( *p.Effective );
-			if( p.CycleStart )
+			if( p.CycleStart ){
 				p.CycleStart = Normalize( *p.CycleStart );
+				p.Anchor = local_days{ DayOf(*p.CycleStart) };
+			}
 			for( auto& s : p.Shifts )
-				std::ranges::sort( s.Breaks, []( const Break& a, const Break& b ){ return a.Start<b.Start; } );
+				std::ranges::sort( s.Breaks, {}, &Break::Start );
 			sortShifts( p.Shifts );
+		}
+		for( auto& e : _exceptions ){//whole seconds, which is all calendarOccurrences can say.
+			e.Start = floor<seconds>( e.Start );
+			e.End = floor<seconds>( e.End );
 		}
 		std::ranges::sort( _patterns, []( const Pattern& a, const Pattern& b ){ return std::tie(a.Effective, a.Id)<std::tie(b.Effective, b.Id); } );//an empty optional sorts first:  the first pattern.
 		std::ranges::sort( _exceptions, []( const Override& a, const Override& b ){ return std::tie(a.Start, a.Id)<std::tie(b.Start, b.Id); } );
 	}
 
-	α Calendar::Local( year_month_day day, minutes afterDayStart )Ι->TimePoint{
+	α Calendar::Schedule::Local( year_month_day day, minutes afterDayStart )Ι->TimePoint{
 		return _zone->to_sys( local_days{day}+_dayStart+afterDayStart, choose::earliest );
 	}
-	α Calendar::DayStart( year_month_day day )Ι->TimePoint{
+	α Calendar::Schedule::DayStart( year_month_day day )Ι->TimePoint{
 		return Local( day, minutes::zero() );
 	}
-	α Calendar::DayOf( TimePoint t )Ι->year_month_day{
+	α Calendar::Schedule::DayOf( TimePoint t )Ι->year_month_day{
 		let day = Chrono::LocalYMD( t, *_zone );
 		return DayStart( day )<=t ? day : year_month_day{ local_days{day}-days{1} };
 	}
-	α Calendar::CycleDay( year_month_day day, const Pattern& pattern )Ι->uint8{
-		let anchor = pattern.CycleStart ? local_days{ DayOf(*pattern.CycleStart) } : _monday;
+	α Calendar::Schedule::CycleDay( year_month_day day, const Pattern& pattern )Ι->uint8{
 		let cycle = std::max<int64_t>( pattern.CycleDays, 1 );
-		let n = (local_days{day}-anchor).count();
+		let n = (local_days{day}-pattern.Anchor).count();
 		return (uint8)( ((n%cycle)+cycle)%cycle );
 	}
-	α Calendar::InEffect( year_month_day day )Ι->const Pattern*{
+	α Calendar::Schedule::InEffect( year_month_day day )Ι->const Pattern*{
 		let start = DayStart( day );
 		const Pattern* y{};
 		for( let& p : _patterns ){//by Effective then Id, so the first of a tie is the lowest id and a later one only replaces it with a later date.
@@ -185,16 +184,15 @@ namespace Jde::Calendar{
 		}
 		return y;
 	}
-	α Calendar::ToTimePoint( string iso, SL sl )Ε->TimePoint{
+	α Calendar::Schedule::ToTimePoint( string iso, SL sl )Ε->TimePoint{
 		return Chrono::ToTimePoint( move(iso), *_zone, sl );
 	}
 
-	α Calendar::Occurrences( TimePoint start, TimePoint end )Ι->vector<Occurrence>{
+	α Calendar::Schedule::Occurrences( TimePoint start, TimePoint end )Ι->vector<Occurrence>{
 		vector<Occurrence> y;
 		if( end<=start )
 			return y;
-		//Two days back, not one:  a shift may start at minute 1439 and run 1440, so the day before last's can still be running.
-		auto first = local_days{ DayOf(start) }-days{2};
+		auto first = local_days{ DayOf(start) }-days{1};
 		auto last = local_days{ DayOf(end-Duration{1}) };
 		vector<const Override*> closed, open;
 		for( let& e : _exceptions ){
@@ -204,10 +202,12 @@ namespace Jde::Calendar{
 				closed.push_back( &e );
 			else if( e.End>start && e.Start<end ){//the shifts under an open exception decide what it adds, so its days are walked too.
 				open.push_back( &e );
-				first = std::min( first, local_days{DayOf(e.Start)}-days{2} );
+				first = std::min( first, local_days{DayOf(e.Start)}-days{1} );
 				last = std::max( last, local_days{DayOf(e.End-Duration{1})} );
 			}
 		}
+		let walked = Span{ DayStart(year_month_day{first}), DayStart(year_month_day{last+days{2}}) };//the last day's latest shift ends before the day after next.
+		std::erase_if( closed, [&]( const Override* e ){ return e->End<=walked.Start || e->Start>=walked.End; } );
 		for( auto d=first; d<=last; d+=days{1} ){
 			let day = year_month_day{ d };
 			let pattern = InEffect( day );
@@ -229,8 +229,15 @@ namespace Jde::Calendar{
 			}
 		}
 		for( let e : closed ){
+			auto touches = [e]( const Occurrence& o ){ return o.Start<e->End && e->Start<o.End; };
+			if( std::ranges::none_of(y, touches) )
+				continue;
 			vector<Occurrence> cut;
 			for( auto& o : y ){
+				if( !touches(o) ){
+					cut.push_back( move(o) );
+					continue;
+				}
 				for( let& span : subtract(Span{o.Start, o.End}, Span{e->Start, e->End}) )
 					cut.push_back( piece(o, span) );
 			}
@@ -250,7 +257,7 @@ namespace Jde::Calendar{
 		return y;
 	}
 
-	α Calendar::Planned( TimePoint start, TimePoint end )Ι->PlannedTime{
+	α Calendar::Schedule::Planned( TimePoint start, TimePoint end )Ι->PlannedTime{
 		vector<Span> spans;
 		for( let& o : Occurrences(start, end) ){
 			auto cursor = o.Start;
@@ -278,12 +285,12 @@ namespace Jde::Calendar{
 		return y;
 	}
 
-	α Calendar::At( TimePoint t )Ι->optional<Occurrence>{
+	α Calendar::Schedule::At( TimePoint t )Ι->optional<Occurrence>{
 		auto occurrences = Occurrences( t, t+Duration{1} );//overlapping [t, t+1) means Start<=t<End.
 		return occurrences.empty() ? nullopt : optional<Occurrence>{ move(occurrences.front()) };
 	}
 
-	α Calendar::Next( TimePoint t )Ι->optional<TimePoint>{
+	α Calendar::Schedule::Next( TimePoint t )Ι->optional<TimePoint>{
 		optional<TimePoint> y;
 		auto consider = [&]( TimePoint boundary ){
 			if( boundary>t && (!y || boundary<*y) )
@@ -304,8 +311,10 @@ namespace Jde::Calendar{
 		return y;
 	}
 
-	α Calendar::Buckets( TimePoint start, TimePoint end, BucketBy by, SL sl )Ε->vector<Bucket>{
+	α Calendar::Schedule::Buckets( TimePoint start, TimePoint end, BucketBy by, SL sl )Ε->vector<Bucket>{
 		vector<Bucket> y;
+		let d = std::get_if<Duration>( &by );
+		REFUSE_IF( d && *d<minutes{1}, "by {} is under a minute, the smallest bucket.", Chrono::ToString(*d) );
 		if( end<=start )
 			return y;
 		auto clip = [&]( TimePoint s, TimePoint e, string label ){
@@ -313,11 +322,13 @@ namespace Jde::Calendar{
 			if( e>s )
 				y.push_back( Bucket{s, e, move(label)} );
 		};
-		if( let d = std::get_if<Duration>(&by); d ){
-			if( *d<minutes{1} )
-				throw refusal( sl, Ƒ("by {} is under a minute, the smallest bucket.", Chrono::ToString(*d)) );
-			for( auto s=start; s<end; s+=*d )
-				clip( s, s+*d, ToIsoString<seconds>(s) );
+		if( d ){
+			for( auto s=start; ; s+=*d ){
+				let last = end-s<=*d;//not s+*d>=end, which a long `by` overflows.
+				clip( s, last ? end : s+*d, ToIsoString<seconds>(s) );
+				if( last )
+					break;
+			}
 			return y;
 		}
 		let firstDay = local_days{ DayOf(start) };
@@ -341,12 +352,12 @@ namespace Jde::Calendar{
 		}
 		return y;
 	}
-}
-namespace Jde{
-	α Calendar::ReanchorDay( TimePoint dayStart, const Calendar& from, const Calendar& to )ι->TimePoint{
+	α Calendar::ReanchorDay( TimePoint dayStart, const Schedule& from, const Schedule& to )ι->TimePoint{
 		return to.DayStart( from.DayOf(dayStart) );
 	}
-	α Calendar::ReanchorLocal( TimePoint t, const Calendar& from, const Calendar& to )ι->TimePoint{
+	α Calendar::ReanchorLocal( TimePoint t, const Schedule& from, const Schedule& to )ι->TimePoint{
+		if( from.Zone()==to.Zone() )//the round trip would move an instant in the second pass of a repeated hour to its first.
+			return t;
 		return to.Zone().to_sys( from.Zone().to_local(t), choose::earliest );
 	}
 }

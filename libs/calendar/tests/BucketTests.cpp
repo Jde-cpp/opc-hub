@@ -94,19 +94,20 @@ namespace Jde::Calendar::Tests{
 		EXPECT_EQ( std::get<Duration>(ParseBucketBy("PT1M")), 1min );
 	}
 
-	Ω refused( std::function<void()> f )->string{
-		try{
-			f();
-		}
-		catch( const Jde::Exception& e ){
-			EXPECT_EQ( e.HttpStatus(), EHttpStatus::BadRequest );
-			return e.what();
-		}
-		return {};
+	TEST( BucketTests, ByDurationPastTheClock ){
+		let plant = Plant();
+		let pastTheClock = Duration::max()-Utc(2026,7,1).time_since_epoch()+hours{24};//start+by overflows, on any tick.
+		let one = plant.Buckets( Utc(2026,7,1), Utc(2026,7,2), pastTheClock );
+		ASSERT_EQ( labels(one), (vector<string>{"2026-07-01T00:00:00Z"}) ) << "one bucket, not a wrapped start";
+		EXPECT_TP( one[0].End, Utc(2026,7,2) );
+		let exact = plant.Buckets( Utc(2026,7,1), Utc(2026,7,1,2), ParseBucketBy("PT1H") );
+		EXPECT_EQ( exact.size(), 2u ) << "a last bucket that ends on the range's end";
 	}
+
 	TEST( BucketTests, ByRefused ){
-		EXPECT_NE( refused([]{ ParseBucketBy("fortnight"); }).find("not shift, day, week, month or an ISO 8601 duration"), string::npos );
-		EXPECT_NE( refused([]{ ParseBucketBy("PT30S"); }).find("under a minute"), string::npos );
-		EXPECT_NE( refused([]{ Plant().Buckets(Utc(2026,7,1), Utc(2026,7,2), seconds{30}); }).find("under a minute"), string::npos );
+		EXPECT_NE( Refused([]{ ParseBucketBy("fortnight"); }).find("not shift, day, week, month or an ISO 8601 duration"), string::npos );
+		EXPECT_NE( Refused([]{ ParseBucketBy("PT30S"); }).find("under a minute"), string::npos );
+		EXPECT_NE( Refused([]{ Plant().Buckets(Utc(2026,7,1), Utc(2026,7,2), seconds{30}); }).find("under a minute"), string::npos );
+		EXPECT_NE( Refused([]{ Plant().Buckets(Utc(2026,7,1), Utc(2026,7,1), seconds{30}); }).find("under a minute"), string::npos ) << "an empty range too";
 	}
 }

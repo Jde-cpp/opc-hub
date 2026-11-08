@@ -1,5 +1,5 @@
 #pragma once
-#include "calendar.h"
+#include "Schedule.h"
 
 //The rule checks of docs/calendar/spec.md *Validation* that need only a row, the zone and the ranges.  Each throws a
 //Jde::Exception with EHttpStatus::BadRequest whose message is what the client sees;  the mutation await adds the checks
@@ -12,5 +12,8 @@ namespace Jde::Calendar{
 	//cycleDays 1 to 31, a cycleStart unless the cycle is 7 days, each shift under it, and no two shifts whose occurrences
 	//would overlap, checked over the cycle with its wrap into the next.
 	α ValidatePattern( const Pattern& pattern, SRCE )ε->void;
+	//No shift of a pattern's last day runs past the start of a shift on the next pattern's first day, which ValidatePattern
+	//cannot see.  `schedule` is the calendar as the mutation would leave it.
+	α ValidateSeams( const Schedule& schedule, SRCE )ε->void;
 	α ValidateException( const Override& exception, SRCE )ε->void;//runs forward.
 }

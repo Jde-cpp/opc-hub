@@ -1,17 +1,16 @@
 #include <jde/calendar/validation.h>
 #include <bit>
+#include "refuse.h"
 
 #define let const auto
 
 namespace Jde{
 	constexpr ELogTags _tags{ ELogTags::App };
-	#define REFUSE(...) throw Jde::Exception{ sl, {_tags, 0, EHttpStatus::BadRequest}, __VA_ARGS__ }
-	#define REFUSE_IF(condition, ...) if( condition ) REFUSE( __VA_ARGS__ )
 
 	namespace Calendar{
 		//A cycle day as the grid names it:  the weekday on the default cycle, `day n` otherwise.
 		Ω dayName( const Pattern& p, uint8 cycleDay )ι->string{
-			return p.CycleStart || p.CycleDays!=7 ? Ƒ("day {}", cycleDay) : std::format( "{:%A}", weekday{local_days{1970y/January/5}+days{cycleDay}} );
+			return p.CycleStart || p.CycleDays!=7 ? Ƒ("day {}", cycleDay) : std::format( "{:%A}", weekday{CycleMonday+days{cycleDay}} );
 		}
 	}
 
@@ -68,6 +67,27 @@ namespace Jde{
 				let& a = runs[i]; let& b = runs[j];
 				for( let shift : {int64_t{0}, cycle, -cycle} ){
 					REFUSE_IF( a.Start<b.End+shift && b.Start+shift<a.End, "Shifts '{}' on {} and '{}' on {} overlap.", a.S->Name, dayName(p, a.Day), b.S->Name, dayName(p, b.Day) );
+				}
+			}
+		}
+	}
+
+	α Calendar::ValidateSeams( const Schedule& c, SL sl )ε->void{
+		for( let& p : c.Patterns() ){
+			if( !p.Effective )
+				continue;
+			let first = c.DayOf( *p.Effective );
+			let last = year_month_day{ local_days{first}-days{1} };
+			let previous = c.InEffect( last );
+			if( !previous || c.InEffect(first)!=&p )//a tie's loser is never in effect.
+				continue;
+			let lastCycleDay = c.CycleDay( last, *previous ), firstCycleDay = c.CycleDay( first, p );
+			for( let& before : previous->Shifts ){
+				let into = (int64_t)before.Start+(int64_t)before.Minutes-1440;//uint16 is wider than int, so unsigned without the casts.
+				if( into<=0 || !(before.Days & (1u<<lastCycleDay)) )
+					continue;
+				for( let& after : p.Shifts ){
+					REFUSE_IF( (after.Days & (1u<<firstCycleDay)) && (int64_t)after.Start<into, "Shift '{}' runs {} minutes into {}, the first day of a new pattern, past the start of its shift '{}'.", before.Name, into, std::format("{:%F}", first), after.Name );
 				}
 			}
 		}

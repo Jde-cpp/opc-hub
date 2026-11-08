@@ -1,12 +1,12 @@
 #pragma once
-#include <chrono>
-#include <variant>
 #include <jde/fwk/chrono.h>
 
 //The shift calendar's model and resolver (docs/calendar/spec.md *Resolution*):  a calendar's rows, as the table QL returns
 //them, and the questions about time they answer, in instants, in the calendar's zone.  No database and no QL here.
 namespace Jde::Calendar{
 	using namespace std::chrono;
+
+	constexpr local_days CycleMonday{ year{1970}/January/5 };//a Monday:  day 0 of a cycle with no anchor, so the default's mask is the weekday's.
 
 	struct Break final{ uint16 Start{}; uint16 Minutes{}; };//minutes from the shift's start.
 	struct Shift final{//a calendarShifts row.
@@ -25,6 +25,7 @@ namespace Jde::Calendar{
 		uint8 CycleDays{ 7 };
 		optional<TimePoint> CycleStart;//the start of the production day that is cycle day 0;  none for a 7-day cycle whose day 0 is Monday.
 		vector<Shift> Shifts;//by Start, then Id.
+		local_days Anchor{ CycleMonday };//cycle day 0's production day, which a Schedule sets from CycleStart.
 	};
 	//A calendarExceptions row:  a dated range that closes planned time, a holiday or a shutdown, or opens it, an extra
 	//Saturday.  Not `Exception`, which would shadow Jde::Exception throughout this namespace.
@@ -67,12 +68,12 @@ namespace Jde::Calendar{
 	α ToJson( const Occurrence& o )ι->jobject;//{ shift name day start end breaks[{ start end }] }, the calendarOccurrences shape.
 
 	//An immutable snapshot of one calendar.  Every method is a pure function of the rows, so a consumer reads one without a lock.
-	struct Calendar final{
+	struct Schedule final{
 		//The calendar's row and the three child tables' rows, as the four flat reads return them, each child table's for
 		//every calendar - the rows of other calendars are skipped.  An `effective` or `cycleStart` inside a day is moved back
 		//to the start of the production day it falls in.
-		Calendar( const jobject& row, const jarray& patterns, const jarray& shifts, const jarray& exceptions, SRCE )ε;
-		Calendar( uint32 id, string name, string slug, const time_zone& zone, uint16 dayStart, vector<Pattern> patterns={}, vector<Override> exceptions={} )ι;
+		Schedule( const jobject& row, const jarray& patterns, const jarray& shifts, const jarray& exceptions, SRCE )ε;
+		Schedule( uint32 id, string name, string slug, const time_zone& zone, uint16 dayStart, vector<Pattern> patterns={}, vector<Override> exceptions={} )ι;
 
 		α Id()Ι->uint32{ return _id; }
 		α Name()Ι->str{ return _name; }
@@ -121,6 +122,6 @@ namespace Jde::Calendar{
 
 	//What a change of zone or dayStart keeps:  a production day's start names the same day under the new settings, and an
 	//instant entered as a local time, an exception's bound, the same wall-clock time in the new zone.
-	α ReanchorDay( TimePoint dayStart, const Calendar& from, const Calendar& to )ι->TimePoint;
-	α ReanchorLocal( TimePoint t, const Calendar& from, const Calendar& to )ι->TimePoint;
+	α ReanchorDay( TimePoint dayStart, const Schedule& from, const Schedule& to )ι->TimePoint;
+	α ReanchorLocal( TimePoint t, const Schedule& from, const Schedule& to )ι->TimePoint;
 }

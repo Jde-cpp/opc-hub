@@ -83,7 +83,7 @@ namespace Jde::Calendar::Tests{
 	//A break in the hour the clocks skip, 02:00-03:00 in March, collapses to nothing;  one in the hour they repeat, 01:00-02:00
 	//in November, is its first pass.
 	TEST( ResolveTests, BreakInTheChange ){
-		let c = Calendar{ CalendarRow(4, "breaks", NewYork, 0), jarray{ PatternRow(1, 4) }, jarray{ ShiftRow(1, 1, "Night", Everyday, 1380, 360, "[{\"start\":150,\"minutes\":30},{\"start\":180,\"minutes\":30}]") }, jarray{} };//23:00-05:00 with breaks 01:30-02:00 and 02:00-02:30.
+		let c = Schedule{ CalendarRow(4, "breaks", NewYork, 0), jarray{ PatternRow(1, 4) }, jarray{ ShiftRow(1, 1, "Night", Everyday, 1380, 360, "[{\"start\":150,\"minutes\":30},{\"start\":180,\"minutes\":30}]") }, jarray{} };//23:00-05:00 with breaks 01:30-02:00 and 02:00-02:30.
 		let spring = c.Occurrences( Utc(2026,3,8,5), Utc(2026,3,8,6) );
 		ASSERT_EQ( spring.size(), 1u );
 		ASSERT_EQ( spring[0].Breaks.size(), 1u ) << "02:00 and 02:30 EST both resolve to 03:00 EDT, so the second is gone";
@@ -103,7 +103,7 @@ namespace Jde::Calendar::Tests{
 	//Wednesday and Thursday, off three - and the same fortnight before the anchor.
 	TEST( ResolveTests, Rotation ){
 		constexpr uint32 twoTwoThree{ 1|2|16|32|64|512|1024 };
-		let rotation = Calendar{ CalendarRow(3, "rotation"), jarray{ PatternRow(1, 3, {}, 14, Utc(2026,6,1,10)) }, jarray{ ShiftRow(1, 1, "A", twoTwoThree, 0, 720) }, jarray{} };
+		let rotation = Schedule{ CalendarRow(3, "rotation"), jarray{ PatternRow(1, 3, {}, 14, Utc(2026,6,1,10)) }, jarray{ ShiftRow(1, 1, "A", twoTwoThree, 0, 720) }, jarray{} };
 		vector<year_month_day> on;
 		for( let& o : rotation.Occurrences(Utc(2026,5,18,10), Utc(2026,6,15,10)) )
 			on.push_back( o.Day );
@@ -218,8 +218,34 @@ namespace Jde::Calendar::Tests{
 
 		let holiday = Plant( jarray{ ExceptionRow(1, 1, "Shutdown", Utc(2026,7,6,10), Utc(2026,8,3,10)) } );
 		EXPECT_TP( *holiday.Next(Utc(2026,7,4,16)), Utc(2026,8,3,10) ) << "a month closed:  the first shift after it";
-		let empty = Calendar{ CalendarRow(5, "empty"), jarray{ PatternRow(1, 5) }, jarray{}, jarray{} };
+		let empty = Schedule{ CalendarRow(5, "empty"), jarray{ PatternRow(1, 5) }, jarray{}, jarray{} };
 		EXPECT_FALSE( empty.Next(Utc(2026,7,4,16)) ) << "nothing planned, ever";
 		EXPECT_FALSE( empty.At(Utc(2026,7,4,16)) );
+	}
+
+	//Exception bounds keep whole seconds, so what the json says is what was resolved.
+	TEST( ResolveTests, ExceptionBoundsWholeSeconds ){
+		auto row = ExceptionRow( 1, 1, "Cut", Utc(2026,7,1,12), Utc(2026,7,1,13) );
+		row["start"] = "2026-07-01T12:00:00.750Z";
+		let plant = Plant( jarray{ row } );
+		let day = plant.Occurrences( Utc(2026,7,1,10), Utc(2026,7,1,18) );
+		ASSERT_EQ( day.size(), 2u );
+		EXPECT_TP( day[0].End, Utc(2026,7,1,12) );
+		EXPECT_EQ( ToJson(day[0]).at("end"), jvalue{"2026-07-01T12:00:00Z"} );
+	}
+
+	//Latest start, longest run:  a shift from the day before still counts, and one from two days before never does.
+	TEST( ResolveTests, LongestShiftWalk ){
+		let c = Schedule{ CalendarRow(3, "long", NewYork, 0), jarray{ PatternRow(1, 3) }, jarray{ ShiftRow(1, 1, "Long", 1, 1439, 1440) }, jarray{} };//Monday 23:59 EDT to Tuesday 23:59.
+		EXPECT_TRUE( c.At(Utc(2026,7,8,3,58)) ) << "Tuesday 23:58, its last minute";
+		EXPECT_FALSE( c.At(Utc(2026,7,8,3,59)) ) << "Tuesday 23:59, its end";
+	}
+
+	TEST( ResolveTests, ExceptionsOutsideTheWalkChangeNothing ){
+		let c = Plant( jarray{ ExceptionRow(1, 1, "Long ago", Utc(2020,7,1), Utc(2020,7,2)), ExceptionRow(2, 1, "Today", Utc(2026,7,1,12), Utc(2026,7,1,13)) } );
+		let day = c.Occurrences( Utc(2026,7,1,10), Utc(2026,7,1,18) );
+		ASSERT_EQ( day.size(), 2u );
+		ASSERT_EQ( day[1].Breaks.size(), 1u ) << "the uncut piece keeps its break";
+		EXPECT_TP( day[1].Breaks[0].Start, Utc(2026,7,1,14) );
 	}
 }
