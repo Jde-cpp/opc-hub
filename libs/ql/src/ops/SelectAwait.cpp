@@ -9,13 +9,13 @@
 
 #define let const auto
 
-namespace Jde::QL{
+namespace Jde{
 	using namespace DB::Names;
 
 	//#48: the one flags-array parser.  Insert had its own, which `continue`d past a non-string element instead of refusing it -
 	//so `allowed:[1,2]`, which no name lookup could ever match, produced flags==0 and a silently unusable row, while the same
 	//array through the update path threw.  Both now come here, so they cannot drift again.
-	α ToFlags( const flat_map<uint,string>& values, const jarray& flags, sv memberName, SL sl )ε->uint{
+	α QL::ToFlags( const flat_map<uint,string>& values, const jarray& flags, sv memberName, SL sl )ε->uint{
 		uint y{};
 		for( let& jflag : flags ){
 			let name = Json::AsString( jflag );//throws for anything that is not a flag name.
@@ -24,7 +24,7 @@ namespace Jde::QL{
 		}
 		return y;
 	}
-	α GetEnumValues( const DB::Table& table, SL sl )ε->sp<const DB::EnumMap>{
+	α QL::GetEnumValues( const DB::Table& table, SL sl )ε->sp<const DB::EnumMap>{
 		if( auto p = DB::EnumCache::Instance().Get(table.Name) )
 			return p;
 		return ms<const DB::EnumMap>( table.Schema->DS()->SelectEnumSync(table, {}, sl) );
@@ -38,7 +38,7 @@ namespace Jde::QL{
 		else if( c.PKTable && (c.IsEnum() || c.IsFlags()) ){
 			sp<const DB::EnumMap> pValues;
 			try{
-				pValues = GetEnumValues( *c.PKTable );
+				pValues = QL::GetEnumValues( *c.PKTable );
 			}
 			catch( const runtime_error& e ){
 				WARNT( ELogTags::QL, "[{}]enum values could not be loaded - rendering the numeric id: {}", c.PKTable->Name, e.what() );
@@ -70,7 +70,7 @@ namespace Jde::QL{
 		return y;
 	}
 
-	α ValueToJson( DB::Value&& dbValue, const ColumnQL* pMember )ι->jvalue{
+	α QL::ValueToJson( DB::Value&& dbValue, const ColumnQL* pMember )ι->jvalue{
 		using enum DB::EValue;
 		jvalue json;
 		switch( dbValue.Type() ){
@@ -85,7 +85,7 @@ namespace Jde::QL{
 		}
 		return json;
 	};
-
+namespace QL{
 	α SelectAwait::await_ready()ι->bool{
 		if( _log )
 			LOGSL( ELogLevel::Trace, _sl, ELogTags::QL, "{}.", _qlTable.ToString() );
@@ -189,6 +189,7 @@ namespace Jde::QL{
 		};
 	}
 
+	//TODO: merge Query(), SelectSubTables and Query(statement,subTables) into one coroutine with one catch( ... ) - they share a task type.  An exception reaching the promise strands the awaiter.
 	α SelectAwait::SelectSubTables( DB::Statement parentSql, vector<TableQL> tables, sp<DB::Table> parentTable, DB::WhereClause where )ε->DB::SelectAwait::Task{
 		SubTables subTables;
 		try{
@@ -299,7 +300,6 @@ namespace Jde::QL{
 		return y;
 	}
 }
-namespace Jde{
 	α QL::SelectStatement( const TableQL& qlTable, bool includeWhere )ε->DB::Statement{
 		let dbView = qlTable.DBTable();
 		DB::Statement statement;

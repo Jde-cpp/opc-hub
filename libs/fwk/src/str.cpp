@@ -8,14 +8,6 @@
 
 #define let const auto
 
-template<> α Jde::To<double>( sv x )ι->double{
-	double y;
-	if( absl::SimpleAtod(x, &y) )
-		return y;
-	DBGT( ELogTags::Parsing, "Could not parse '{}' as a double.", x );
-	return 0.0;//consistent with the other To<T>.
-}
-
 boost::uuids::string_generator _gen;
 α Jde::ToUuid( sv s, SL sl )ε->uuid{
 	try{

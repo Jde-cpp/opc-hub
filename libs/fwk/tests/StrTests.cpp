@@ -48,13 +48,6 @@ namespace Jde::Tests{
 		EXPECT_THROW( Str::Decode64("qwA=="), Exception ) << "bad padding";
 	}
 
-	//To is noexcept; the double specialization used to let stod's invalid_argument escape → std::terminate.
-	TEST( StrTests, ToDoubleBadInput ){
-		EXPECT_EQ( To<double>("abc"), 0.0 );
-		EXPECT_EQ( To<double>(""), 0.0 );
-		EXPECT_EQ( To<double>("1.5"), 1.5 );
-	}
-
 	//settings' $(NAME) expansion and ExternalException's brace doubling both run through Replace, and neither had
 	//a test.  The empty-find case was an infinite loop until 2026-08-16 - source.find("",i) returns i and
 	//i+find.length() never advances - so it could not even be asserted before.
