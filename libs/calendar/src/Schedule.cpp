@@ -2,6 +2,7 @@
 #include <jde/fwk/str.h>
 #include <jde/calendar/validation.h>
 #include "refuse.h"
+#include "rows.h"
 
 #define let const auto
 
@@ -10,10 +11,6 @@ namespace Jde{
 
 	namespace Calendar{
 		Ω number( const jobject& row, sv key, SL sl )ε->uint32{ return Json::AsNumber<uint32>( row, key, sl ); }
-		Ω findTime( const jobject& row, sv key, SL sl )ε->optional<TimePoint>{
-			let p = row.if_contains( key );
-			return p && !p->is_null() ? optional<TimePoint>{ Chrono::ToTimePoint(Json::AsString(*p, sl), sl) } : nullopt;
-		}
 		Ω time( const jobject& row, sv key, SL sl )ε->TimePoint{ return Chrono::ToTimePoint( Json::AsString(row, key, sl), sl ); }
 		Ω sortShifts( vector<Shift>& shifts )ι->void{
 			std::ranges::sort( shifts, []( const Shift& a, const Shift& b ){ return std::tie(a.Start, a.Id)<std::tie(b.Start, b.Id); } );

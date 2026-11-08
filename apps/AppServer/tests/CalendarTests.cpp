@@ -68,15 +68,23 @@ namespace Jde::App::Server::Tests{
 		EXPECT_TRUE( RunQL(R"(calendars( slug:"calBadZone" ){ id })").as_array().empty() ) << "a refused create writes nothing";
 		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendar( name:"calBadDay", slug:"calBadDay", timeZone:"{}", dayStart:1440 ){{ id }})", NewYork)), "dayStart 1440 is not under 1440" );
 		EXPECT_REFUSED( RunQL(R"(createCalendar( name:"calNoZone", slug:"calNoZone" ){ id })"), "timeZone is required" );
+		for( sv bad : {"-5", "360.5", "\"360\""} )
+			EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendar( name:"calBadDay", slug:"calBadDay", timeZone:"{}", dayStart:{} ){{ id }})", NewYork, bad)), "dayStart is minutes after local midnight" );
 
 		let calendarId = Fresh( "calRefusals" );
 		let patternId = FirstPattern( calendarId );
 		ASSERT_NE( patternId, 0u );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(updateCalendar( id:{}, timeZone:"Nowhere" ))", calendarId)), "timeZone 'Nowhere'" );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(updateCalendar( id:{}, dayStart:1500 ))", calendarId)), "dayStart 1500" );
+		EXPECT_REFUSED( RunQL(Ƒ("updateCalendar( id:{}, dayStart:-5 )", calendarId)), "dayStart is minutes after local midnight" );
+		EXPECT_REFUSED( RunQL(Ƒ("updateCalendar( id:{}, timeZone:5 )", calendarId)), "timeZone is an IANA name" );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-06T00:00:00", cycleDays:14 ){{ id }})", calendarId)), "A 14-day cycle needs a cycleStart" );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-06T00:00:00", cycleDays:0 ){{ id }})", calendarId)), "cycleDays 0 is not 1 to 31" );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{} ){{ id }})", calendarId)), "already has a first pattern" );//a second null effective, which the unique index would let through.
+		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, id:{} ){{ id }})", calendarId, patternId)), "already has a first pattern" );//a caller's id doesn't pass for the row it names.
+		let otherId = Fresh( "calRefusalsOther" );
+		EXPECT_REFUSED( RunQL(Ƒ("updateCalendarPattern( id:{}, calendarId:{} )", patternId, otherId)), "isn't updateable" );
+		RunQL( Ƒ("purgeCalendar( id:{} )", otherId) );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"garbage" ){{ id }})", calendarId)), "effective is not an ISO time" );
 		EXPECT_EQ( Refused([&]{ RunQL(R"(createCalendarPattern( calendarId:999999 ){ id })"); }).first, EHttpStatus::NotFound );
 		EXPECT_EQ( Patterns(calendarId, true).size(), 1u ) << "no refused pattern was written";
@@ -89,7 +97,10 @@ namespace Jde::App::Server::Tests{
 		EXPECT_REFUSED( Shift(patternId, "Sunday", 128, 600, 60), "days bit 7 set, beyond a 7-day cycle" );
 		EXPECT_REFUSED( Shift(patternId, "Breaks", 96, 600, 60, R"([{"start":50,"minutes":20}])"), "leaves the 60-minute shift" );
 		EXPECT_REFUSED( Shift(patternId, "Garbage", 96, 600, 60, "garbage"), "breaks must be a json list" );
-		EXPECT_REFUSED( RunQL(Ƒ(R"(updateCalendarShift( id:{}, minutes:0 ))", day)), "runs 0 minutes" );
+		EXPECT_REFUSED( RunQL(Ƒ("updateCalendarShift( id:{}, minutes:0 )", day)), "runs 0 minutes" );
+		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarShift( calendarPatternId:{}, name:"NoDays", start:600, minutes:60 ){{ id }})", patternId)), "days is required" );
+		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarShift( calendarPatternId:{}, name:"NoStart", days:96, minutes:60 ){{ id }})", patternId)), "start is required" );
+		EXPECT_REFUSED( RunQL(Ƒ(R"(createCalendarShift( calendarPatternId:{}, name:"NoLength", days:96, start:600 ){{ id }})", patternId)), "minutes is required" );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(updateCalendarShift( id:{}, start:"noon" ))", day)), "start is minutes after the production day's start, not \"noon\"" );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(updateCalendarPattern( id:{}, cycleDays:3 ))", patternId)), "A 3-day cycle needs a cycleStart" );
 		EXPECT_REFUSED( RunQL(Ƒ(R"(updateCalendarPattern( id:{}, cycleDays:3, cycleStart:"2026-07-06T06:00:00" ))", patternId)), "beyond a 3-day cycle" );//lowered under the shift's bits.
@@ -119,6 +130,8 @@ namespace Jde::App::Server::Tests{
 		let updated = Exceptions( calendarId );
 		EXPECT_TP( Time(updated.front(), "finish"), Utc(2026,7,6,6) );
 		EXPECT_TRUE( Json::AsObject(updated.front()).at("isOpen").as_bool() );
+		let answered = RunQL( Ƒ(R"(updateCalendarException( id:{}, start:"2026-07-03T19:00:00" ){{ start }})", Id(exceptions.front())) );
+		EXPECT_TP( Time(answered, "start"), Utc(2026,7,3,23) ) << "an update's result carries the resolved time too";
 		EXPECT_REFUSED( RunQL(Ƒ(R"(updateCalendarException( id:{}, finish:"2026-07-03T10:00:00" ))", Id(exceptions.front()))), "not after its start" );//checked against the stored start.
 		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
 	}
@@ -132,7 +145,8 @@ namespace Jde::App::Server::Tests{
 		let patterns = Patterns( calendarId );
 		ASSERT_EQ( patterns.size(), 2u );
 		EXPECT_TP( Time(patterns.back(), "effective"), Utc(2026,7,6,10) );
-		RunQL( Ƒ(R"(updateCalendarPattern( id:{}, effective:"2026-07-13T02:00:00" ))", Id(created)) );//02:00 local Monday is still Sunday's production day.
+		let moved = RunQL( Ƒ(R"(updateCalendarPattern( id:{}, effective:"2026-07-13T02:00:00" ){{ effective }})", Id(created)) );//02:00 local Monday is still Sunday's production day.
+		EXPECT_TP( Time(moved, "effective"), Utc(2026,7,12,10) ) << "an update's result carries the moved date";
 		EXPECT_TP( Time(Patterns(calendarId).back(), "effective"), Utc(2026,7,12,10) );
 		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
 	}
@@ -167,6 +181,26 @@ namespace Jde::App::Server::Tests{
 		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
 	}
 
+	//Apia, UTC+13, to UTC-11 moves every date exactly one day, onto the one the next pattern still holds.  Both ways.
+	TEST_F( CalendarTests, WholeDayZoneChangeReanchors ){
+		let calendarId = Fresh( "calReanchorDay", "Pacific/Apia", 0 );
+		for( sv day : {"2026-07-06", "2026-07-07", "2026-07-08"} )
+			RunQL( Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"{}T00:00:00" ){{ id }})", calendarId, day) );
+		let expectFrom = [&]( unsigned firstDay ){
+			let patterns = Patterns( calendarId );
+			ASSERT_EQ( patterns.size(), 4u );
+			for( uint i=1; i<patterns.size(); ++i )
+				EXPECT_TP( Time(patterns[i], "effective"), Utc(2026, 7, firstDay+(unsigned)i-1, 11) );
+		};
+		expectFrom( 5 );
+
+		RunQL( Ƒ(R"(updateCalendar( id:{}, timeZone:"Etc/GMT+11" ))", calendarId) );
+		expectFrom( 6 );
+		RunQL( Ƒ(R"(updateCalendar( id:{}, timeZone:"Pacific/Apia" ))", calendarId) );
+		expectFrom( 5 );
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
 	//A purge takes the row's children first:  a pattern's shifts, a calendar's exceptions, patterns and their shifts.
 	TEST_F( CalendarTests, PurgeTakesTheChildren ){
 		let calendarId = Fresh( "calPurge" );
@@ -181,6 +215,10 @@ namespace Jde::App::Server::Tests{
 		EXPECT_TRUE( Shifts(secondId).empty() ) << "a pattern's purge takes its shifts";
 		EXPECT_EQ( Patterns(calendarId).size(), 1u );
 		EXPECT_EQ( Shifts(patternId).size(), 2u ) << "and no other's";
+
+		EXPECT_REFUSED( RunQL(R"(purgeCalendar( slug:"calPurge" ))"), "needs the row's id" );
+		EXPECT_NE( Refused([&]{ RunQL(Ƒ("purgeCalendar( id:{}, note:$typo )", calendarId)); }).second.find("typo"), string::npos );
+		EXPECT_EQ( Shifts(patternId).size(), 2u ) << "a refused purge takes no child";
 
 		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
 		EXPECT_TRUE( RunQL(Ƒ("calendars( id:{} ){{ id }}", calendarId)).as_array().empty() );
@@ -217,15 +255,73 @@ namespace Jde::App::Server::Tests{
 		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
 	}
 
-	//The first pattern can't be duplicated by a restore either:  a deleted first pattern, another made, the restore refused.
-	TEST_F( CalendarTests, RestoreOfASecondFirstPatternIsRefused ){
-		let calendarId = Fresh( "calRestoreFirst" );
+	//A deleted first pattern holds the null until its purge, as a deleted pattern holds its date.
+	TEST_F( CalendarTests, DeletedFirstPatternHoldsTheNull ){
+		let calendarId = Fresh( "calDeletedFirst" );
 		let firstId = FirstPattern( calendarId );
 		let secondId = Id( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-06T06:00:00" ){{ id }})", calendarId)) );
 		RunQL( Ƒ("deleteCalendarPattern( id:{} )", firstId) );
+		EXPECT_REFUSED( RunQL(Ƒ("updateCalendarPattern( id:{}, effective:null )", secondId)), "purge it to make another the first, or restore it" );
+		EXPECT_REFUSED( RunQL(Ƒ("createCalendarPattern( calendarId:{} ){{ id }}", calendarId)), "purge it to make another the first, or restore it" );
+
+		RunQL( Ƒ("purgeCalendarPattern( id:{} )", firstId) );
 		RunQL( Ƒ("updateCalendarPattern( id:{}, effective:null )", secondId) );
 		EXPECT_TRUE( Patterns(calendarId).front().as_object().at("effective").is_null() );
-		EXPECT_REFUSED( RunQL(Ƒ("restoreCalendarPattern( id:{} )", firstId)), "already has a first pattern" );
+		EXPECT_REFUSED( RunQL(Ƒ("createCalendarPattern( calendarId:{} ){{ id }}", calendarId)), "give this one the date it takes effect" );
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//Monday's night shift runs 420 minutes into Tuesday.  A purge joins a pattern's neighbours as a delete does.
+	TEST_F( CalendarTests, PurgeChecksTheSeamItLeaves ){
+		let calendarId = Fresh( "calPurgeSeam" );
+		Shift( FirstPattern(calendarId), "Night", 1, 1380, 480 );
+		let middleId = Id( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-06T06:00:00" ){{ id }})", calendarId)) );
+		let lastId = Id( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-07T06:00:00" ){{ id }})", calendarId)) );
+		let earlyId = Shift( lastId, "Early", 2, 0, 60 );
+		EXPECT_REFUSED( RunQL(Ƒ("deleteCalendarPattern( id:{} )", middleId)), "runs 420 minutes into 2026-07-07" );
+		EXPECT_REFUSED( RunQL(Ƒ("purgeCalendarPattern( id:{} )", middleId)), "runs 420 minutes into 2026-07-07" );
+		EXPECT_EQ( Patterns(calendarId).size(), 3u );
+
+		RunQL( Ƒ("purgeCalendarShift( id:{} )", earlyId) );
+		RunQL( Ƒ("purgeCalendarPattern( id:{} )", middleId) );
+		EXPECT_EQ( Patterns(calendarId).size(), 2u );
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//A deleted pattern is in effect nowhere, so its shifts meet no seam until its restore asks.
+	TEST_F( CalendarTests, DeletedPatternsShiftMeetsNoSeam ){
+		let calendarId = Fresh( "calDeletedSeam" );
+		Shift( FirstPattern(calendarId), "Night", 1, 1380, 480 );
+		let deletedId = Id( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-07T06:00:00" ){{ id }})", calendarId)) );
+		RunQL( Ƒ("deleteCalendarPattern( id:{} )", deletedId) );
+		Shift( deletedId, "Early", 2, 0, 60 );
+		EXPECT_EQ( Shifts(deletedId).size(), 1u );
+		EXPECT_REFUSED( RunQL(Ƒ("restoreCalendarPattern( id:{} )", deletedId)), "runs 420 minutes into 2026-07-07" );
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//The side effects run as the caller, whose rights on their tables are asked before the first write.  calendarPatterns enforced,
+	//calendars not:  the mutation's own table passes, and a refusal leaves nothing half done.
+	TEST_F( CalendarTests, ChildRightsAreAskedFirst ){
+		let calendarId = Fresh( "calRights" );
+		RunQL( Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-06T06:00:00" ){{ id }})", calendarId) );
+		let resources = Json::AsArray( RunQL(Ƒ(R"(resources( schemaName:"{}", slug:"calendarPatterns", criteria:null ){{ id deleted }})", Server::AppSchema()->Name)) );
+		ASSERT_EQ( resources.size(), 1u );
+		let resourceId = Id( resources[0] );
+		let wasEnforced = resources[0].as_object().at( "deleted" ).is_null();
+		if( !wasEnforced )
+			RunQL( Ƒ("restoreResource( id:{} )", resourceId) );
+		let user = User( "calRightsUser" );
+
+		EXPECT_EQ( Status([&]{ RunQL(Ƒ(R"(createCalendar( name:"calRightsNew", slug:"calRightsNew", timeZone:"{}" ){{ id }})", NewYork), {}, user); }), EHttpStatus::Forbidden );
+		EXPECT_TRUE( RunQL(R"(calendars( slug:"calRightsNew" ){ id })").as_array().empty() ) << "no pattern-less calendar";
+		EXPECT_EQ( Status([&]{ RunQL(Ƒ(R"(updateCalendar( id:{}, timeZone:"Europe/London" ))", calendarId), {}, user); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Json::AsSV(RunQL(Ƒ("calendars( id:{} ){{ id timeZone }}", calendarId)).as_array()[0].as_object(), "timeZone"), NewYork ) << "the zone wasn't saved";
+		EXPECT_EQ( Status([&]{ RunQL(Ƒ("purgeCalendar( id:{} )", calendarId), {}, user); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Patterns(calendarId).size(), 2u ) << "no child went";
+
+		if( !wasEnforced )
+			RunQL( Ƒ("deleteResource( id:{} )", resourceId) );
 		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
 	}
 

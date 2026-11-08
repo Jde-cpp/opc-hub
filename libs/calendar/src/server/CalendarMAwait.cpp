@@ -1,10 +1,12 @@
 #include <jde/calendar/server/CalendarMAwait.h>
+#include <jde/fwk/str.h>
+#include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
-#include <jde/ql/IQL.h>
 #include <jde/ql/QLAwait.h>
 #include <jde/ql/ops/MutationAwait.h>
 #include <jde/calendar/validation.h>
 #include "../refuse.h"
+#include "../rows.h"
 
 #define let const auto
 
@@ -36,9 +38,12 @@ namespace Jde{
 			}
 			return nullptr;
 		}
-		Ω findTime( const jobject& row, sv key, SL sl )ε->optional<TimePoint>{
-			let p = row.if_contains( key );
-			return p && !p->is_null() ? optional<TimePoint>{ Chrono::ToTimePoint(Json::AsString(*p, sl), sl) } : nullopt;
+		//Takes the row of `id` out, true when it was there.
+		Ω removeRow( jarray& rows, uint32 id )ι->bool{
+			let p = std::remove_if( rows.begin(), rows.end(), [id]( const jvalue& v ){ return Json::FindNumber<uint32>(v.get_object(), "id")==id; } );
+			let found = p!=rows.end();
+			rows.erase( p, rows.end() );
+			return found;
 		}
 		Ω merge( jobject& row, const jobject& args )ι->void{
 			for( let& [key,value] : args )
@@ -80,6 +85,13 @@ namespace Jde{
 			let n = p->try_to_number<uint32>();
 			REFUSE_IF( !n || *n>max, "{} is {}, not {}.", key, what, serialize(*p) );
 		}
+		//dayStart as the arguments name it, else `fallback`.
+		Ω namedDayStart( const jobject& args, uint fallback, SL sl )ε->uint{
+			if( !args.contains("dayStart") )
+				return fallback;
+			wholeNumber( args, "dayStart", "minutes after local midnight", UINT16_MAX, sl );
+			return Json::AsNumber<uint>( args, "dayStart", sl );
+		}
 		Ω requireName( const jobject& row, SL sl )ε->void{
 			let p = row.if_contains( "name" );
 			REFUSE_IF( !p || !p->is_string() || p->get_string().empty(), "name is required." );
@@ -100,10 +112,10 @@ namespace Jde{
 		Ω iso( TimePoint t )ι->jvalue{ return jvalue{ ToIsoString<seconds>(t) }; }
 		Ω day( TimePoint t, const Schedule& c )ι->string{ return std::format( "{:%F}", c.DayOf(t) ); }
 
-		//The natural key (calendarId, effective) as the database can't say it:  a second null, which a unique index lets through,
-		//and a date a soft-deleted pattern still holds, whose refusal would otherwise name the index.  `all` is every pattern of the
-		//calendar, deleted ones among them;  `row` the pattern as it would be.  A deleted pattern holds its date, which the index
-		//enforces, but not the null:  the first pattern is the one in effect from the beginning of time, so only a live one counts.
+		//The natural key (calendarId, effective) as the database can't say it:  a second null, which MySQL's and sqlite's unique
+		//indexes let through and SQL Server's refuses naming itself, and a date a soft-deleted pattern still holds, whose refusal
+		//would otherwise name the index.  `all` is every pattern of the calendar, deleted ones among them;  `row` the pattern as it
+		//would be.  A deleted pattern holds its date and its null alike until its purge.
 		Ω checkEffective( const jarray& all, const jobject& row, const Schedule& c, SL sl )ε->void{
 			let id = Json::FindNumber<uint32>( row, "id" ).value_or( 0 );
 			let effective = findTime( row, "effective", sl );
@@ -111,10 +123,10 @@ namespace Jde{
 				let& other = Json::AsObject( v, sl );
 				let otherId = Json::FindNumber<uint32>( other, "id" ).value_or( 0 );
 				let deleted = isDeleted( v );
-				if( otherId==id || findTime(other, "effective", sl)!=effective || (!effective && deleted) )
+				if( otherId==id || findTime(other, "effective", sl)!=effective )
 					continue;
 				if( !effective )
-					REFUSE( "Calendar '{}' already has a first pattern, {}:  one pattern has no effective date, in effect from the beginning of time;  give this one the date it takes effect.", c.Name(), otherId );
+					REFUSE( "Calendar '{}' already has a first pattern, {}{}", c.Name(), otherId, deleted ? ", deleted:  purge it to make another the first, or restore it." : ":  one pattern has no effective date, in effect from the beginning of time;  give this one the date it takes effect." );
 				REFUSE( "Calendar '{}' already has a pattern effective {}, {}{}.", c.Name(), day(*effective, c), otherId, deleted ? ", deleted:  purge it to reuse the date, or restore it" : "" );
 			}
 		}
@@ -122,6 +134,49 @@ namespace Jde{
 			let p = std::ranges::find_if( c.Patterns(), [id]( const Pattern& p ){ return p.Id==id; } );
 			THROW_IFSL( p==c.Patterns().end(), "Pattern {} is not among calendar {}'s.", id, c.Id() );
 			return *p;
+		}
+		//The order to re-anchor patterns in.  The unique (calendar_id, effective) applies row by row, and a move of a whole number of days
+		//lands a date on the one the next pattern still holds.  Days keep their order, so a row moving later can only meet another moving
+		//later:  those go from the last back, then the rest from the first on.
+		Ω reanchorOrder( const jarray& patterns, const Schedule& before, const Schedule& after, SL sl )ε->vector<const jobject*>{
+			vector<const jobject*> y;
+			for( let& v : patterns )
+				y.push_back( &Json::AsObject(v, sl) );
+			let effective = [&]( const jobject* p ){ return findTime( *p, "effective", sl ); };
+			std::ranges::sort( y, {}, effective );
+			let rest = std::ranges::stable_partition( y, [&]( const jobject* p ){ let t = effective( p ); return t && ReanchorDay(*t, before, after)>*t; } );
+			std::reverse( y.begin(), rest.begin() );
+			return y;
+		}
+		//One row's rewrite under new settings:  its id and the columns that move, empty when none does.
+		Ω rewrite( const jobject& row, std::initializer_list<sv> keys, const auto& reanchor, SL sl )ε->jobject{
+			jobject set;
+			for( sv key : keys ){
+				if( let t = findTime(row, key, sl); t && reanchor(*t)!=*t )
+					set[key] = iso( reanchor(*t) );
+			}
+			if( set.size() )
+				set["id"] = Json::AsNumber<uint32>( row, "id", sl );
+			return set;
+		}
+		//What the admin entered stays put:  a production day's start names the same day under the new settings.  Every row, deleted
+		//ones too, so a restore comes back right.
+		Ω reanchorPatterns( const jarray& patterns, const Schedule& before, const Schedule& after, SL sl )ε->vector<jobject>{
+			vector<jobject> y;
+			for( let p : reanchorOrder(patterns, before, after, sl) ){
+				if( auto set = rewrite(*p, {"effective", "cycleStart"}, [&]( TimePoint t ){ return ReanchorDay(t, before, after); }, sl); set.size() )
+					y.push_back( move(set) );
+			}
+			return y;
+		}
+		//An exception's bound stays the same wall-clock time in the new zone.
+		Ω reanchorExceptions( const jarray& exceptions, const Schedule& before, const Schedule& after, SL sl )ε->vector<jobject>{
+			vector<jobject> y;
+			for( let& v : exceptions ){
+				if( auto set = rewrite(Json::AsObject(v, sl), {"start", "finish"}, [&]( TimePoint t ){ return ReanchorLocal(t, before, after); }, sl); set.size() )
+					y.push_back( move(set) );
+			}
+			return y;
 		}
 		//Which mutations need the calendar's rows:  the checks and the side effects below.
 		Ω needsRows( const QL::MutationQL& m )ι->bool{
@@ -153,6 +208,7 @@ namespace Jde{
 			let type = _query.Type;
 			let table = _query.TableName();
 			_query.DBTable->Authorize( QL::StockRights(type), UserPK(), sl );//asked first:  a validation message never precedes a refusal, and a purge's children go before its statement.
+			_query.CheckVariables( _sl );//the stock op's check, which comes after those children.
 			auto read = [&]( string query ){ return QL::QLAwait<jvalue>{ move(query), jobject{}, Jde::UserPK{Jde::UserPK::System}, _ql, true, _sl }; };//the server's own reads, not the caller's.
 			auto stock = [&]( sv command, jobject args ){ return QL::MutationAwait{ QL::MutationQL{string{command}, move(args), ms<jobject>(), nullopt, true, _ql->Schemas(), false}, _creds, nullptr, _sl }; };
 			let args = _query.ExtrapolateVariables();
@@ -163,8 +219,11 @@ namespace Jde{
 			optional<Schedule> before;//the calendar as it is, live rows only:  the zone and day start the arguments are read under.
 			if( needsRows(_query) ){
 				string filter;
-				if( table==Calendars )
+				if( table==Calendars ){
+					if( type==Purge )
+						rowId( _query, _sl );//the stock purge takes an id alone, and the children go before it.
 					filter = calendarFilter( _query, _sl );
+				}
 				else{
 					if( table==Patterns ){
 						if( type==Create )
@@ -196,11 +255,18 @@ namespace Jde{
 				}
 				rows.Calendar = one( co_await read(Ƒ("calendars( {} ){{ id name slug timeZone dayStart }}", filter)), "Calendar", filter, _sl );
 				calendarId = Json::AsNumber<uint32>( rows.Calendar, "id", _sl );
-				auto children = co_await read( Ƒ("{{ calendarPatterns( calendarId:{0} ){{ id calendarId effective cycleDays cycleStart deleted }} calendarShifts{{ id calendarPatternId name days start minutes breaks }} calendarExceptions( calendarId:{0} ){{ id calendarId name start finish isOpen deleted }} }}", *calendarId) );
+				auto children = co_await read( Ƒ("{{ calendarPatterns( calendarId:{0} ){{ id calendarId effective cycleDays cycleStart deleted }} calendarExceptions( calendarId:{0} ){{ id calendarId name start finish isOpen deleted }} }}", *calendarId) );
 				auto& o = Json::AsObject( children, _sl );
 				rows.Patterns = move( Json::AsArray(o.at("calendarPatterns"), _sl) );
-				rows.Shifts = move( Json::AsArray(o.at("calendarShifts"), _sl) );
 				rows.Exceptions = move( Json::AsArray(o.at("calendarExceptions"), _sl) );
+				if( rows.Patterns.size() ){
+					vector<uint32> ids;
+					for( let& p : rows.Patterns )
+						ids.push_back( Json::AsNumber<uint32>(Json::AsObject(p, _sl), "id", _sl) );
+					auto shifts = co_await read( Ƒ("calendarShifts( calendarPatternId:[{}] ){{ id calendarPatternId name days start minutes breaks }}", Str::Join(ids)) );
+					if( shifts.is_array() )
+						rows.Shifts = move( shifts.get_array() );
+				}
 				before.emplace( rows.Calendar, live(rows.Patterns), rows.Shifts, live(rows.Exceptions), _sl );
 			}
 
@@ -211,11 +277,12 @@ namespace Jde{
 				if( type==Create ){
 					let zone = _query.FindPtr<jstring>( "timeZone" );
 					REFUSE_IF( !zone, "timeZone is required, an IANA name such as America/New_York." );
-					ValidateCalendar( *zone, _query.TryNumber<uint>("dayStart").value_or(0), _sl );
+					ValidateCalendar( *zone, namedDayStart(args, 0, _sl), _sl );
 				}
 				else if( type==Update && before ){
 					let zone = _query.FindPtr<jstring>( "timeZone" );
-					ValidateCalendar( zone ? sv{*zone} : before->Zone().name(), _query.TryNumber<uint>("dayStart").value_or((uint)before->DayStartMinutes().count()), _sl );
+					REFUSE_IF( !zone && args.contains("timeZone"), "timeZone is an IANA name such as America/New_York, not {}.", serialize(args.at("timeZone")) );
+					ValidateCalendar( zone ? sv{*zone} : before->Zone().name(), namedDayStart(args, (uint)before->DayStartMinutes().count(), _sl), _sl );
 				}
 			}
 			else if( table==Patterns && type!=Purge ){
@@ -228,6 +295,7 @@ namespace Jde{
 				if( type==Create ){
 					row = jobject{ {"id", 0}, {"calendarId", *calendarId}, {"effective", nullptr}, {"cycleDays", 7}, {"cycleStart", nullptr} };
 					merge( row, args ); merge( row, spelled );
+					row["id"] = 0;//the sequence's:  a caller's would pass for the row it names.
 					patterns.push_back( row );
 				}
 				else{
@@ -237,10 +305,11 @@ namespace Jde{
 					let wasLive = find( patterns, *patternId )!=nullptr;
 					if( type==Delete ){
 						REFUSE_IF( wasLive && patterns.size()==1, "Pattern {} is calendar '{}'s only pattern:  a calendar always has one in effect, so add the next before deleting it.", *patternId, before->Name() );
-						patterns.erase( std::remove_if(patterns.begin(), patterns.end(), [&]( const jvalue& v ){ return Json::FindNumber<uint32>(v.get_object(), "id")==*patternId; }), patterns.end() );
+						removeRow( patterns, *patternId );
 					}
 					else if( type==Update ){
 						merge( row, args ); merge( row, spelled );
+						row["calendarId"] = *calendarId;//not updateable, which the stock op refuses:  a row of another calendar is in no schedule of this one.
 						if( auto q = find(patterns, *patternId); q )
 							*q = row;
 					}
@@ -254,13 +323,18 @@ namespace Jde{
 					ValidatePattern( Schedule{rows.Calendar, jarray{row}, rows.Shifts, jarray{}, _sl}.Patterns().front(), _sl );
 				ValidateSeams( Schedule{rows.Calendar, patterns, rows.Shifts, jarray{}, _sl}, _sl );
 			}
+			else if( table==Patterns ){//a purge:  a live pattern's joins its neighbours, as a delete's does.
+				auto patterns = live( rows.Patterns );
+				if( removeRow(patterns, *patternId) )
+					ValidateSeams( Schedule{rows.Calendar, patterns, rows.Shifts, jarray{}, _sl}, _sl );
+			}
 			else if( table==Shifts && type!=Purge ){
 				if( let b = _query.FindPtr<jvalue>("breaks"); b && b->is_array() )
 					spelled["breaks"] = serialize( *b );
 				auto shifts = rows.Shifts;
 				jobject row;
 				if( type==Create ){
-					row = jobject{ {"id", 0}, {"calendarPatternId", *patternId}, {"name", ""}, {"days", 0}, {"start", 0}, {"minutes", 0}, {"breaks", nullptr} };
+					row = jobject{ {"id", 0}, {"calendarPatternId", *patternId}, {"name", ""}, {"days", nullptr}, {"start", nullptr}, {"minutes", nullptr}, {"breaks", nullptr} };
 					merge( row, args ); merge( row, spelled );
 					shifts.push_back( row );
 				}
@@ -275,14 +349,16 @@ namespace Jde{
 				wholeNumber( row, "start", "minutes after the production day's start", UINT16_MAX, _sl );
 				wholeNumber( row, "minutes", "the shift's length in minutes", UINT16_MAX, _sl );
 				auto patterns = live( rows.Patterns );
-				if( !find(patterns, *patternId) ){//a deleted pattern's shift is checked against its own pattern, which is not in effect.
+				let inEffect = find( patterns, *patternId )!=nullptr;
+				if( !inEffect ){//a deleted pattern's shift is checked against its own pattern alone:  it meets no seam until its restore.
 					let p = find( rows.Patterns, *patternId );
 					THROW_IFX( !p, Exception(_sl, {EHttpStatus::NotFound}, "Pattern {} not found.", *patternId) );
 					patterns.push_back( *p );
 				}
 				Schedule after{ rows.Calendar, patterns, shifts, jarray{}, _sl };
 				ValidatePattern( pattern(after, *patternId, _sl), _sl );
-				ValidateSeams( after, _sl );
+				if( inEffect )
+					ValidateSeams( after, _sl );
 			}
 			else if( table==Exceptions && (type==Create || type==Update) ){
 				for( sv key : {"start", "finish"} ){
@@ -305,6 +381,30 @@ namespace Jde{
 			}
 			for( let& [key,value] : spelled )
 				_query.Args[key] = value;
+
+			vector<jobject> patternMoves, exceptionMoves;
+			if( table==Calendars && type==Update && before ){
+				auto settings = rows.Calendar;
+				merge( settings, args );
+				Schedule after{ settings, jarray{}, jarray{}, jarray{}, _sl };
+				if( &before->Zone()!=&after.Zone() || before->DayStartMinutes()!=after.DayStartMinutes() ){
+					patternMoves = reanchorPatterns( rows.Patterns, *before, after, _sl );
+					exceptionMoves = reanchorExceptions( rows.Exceptions, *before, after, _sl );
+				}
+			}
+			//The side effects run as the caller:  their tables' rights asked before the first write, so a refusal leaves nothing half done.
+			let authorize = [&]( sv child, EMutationQL op, bool writes ){
+				if( writes )
+					_query.DBTable->Schema->GetTable( string{child}, sl ).Authorize( QL::StockRights(op), UserPK(), sl );
+			};
+			let purgesCalendar = type==Purge && table==Calendars;
+			let purgesShifts = purgesCalendar ? rows.Shifts.size()>0 : type==Purge && table==Patterns && std::ranges::any_of( rows.Shifts, [&]( const jvalue& s ){ return Json::FindNumber<uint32>(Json::AsObject(s, sl), "calendarPatternId")==*patternId; } );
+			authorize( Patterns, Create, table==Calendars && type==Create );
+			authorize( Patterns, Update, patternMoves.size()>0 );
+			authorize( Exceptions, Update, exceptionMoves.size()>0 );
+			authorize( Exceptions, Purge, purgesCalendar && rows.Exceptions.size()>0 );
+			authorize( Patterns, Purge, purgesCalendar && rows.Patterns.size()>0 );
+			authorize( Shifts, Purge, purgesShifts );
 
 			//A purge's children first:  the generic purge is one delete, and the foreign keys are enforced.
 			if( type==Purge && table==Calendars ){
@@ -334,43 +434,16 @@ namespace Jde{
 				THROW_IFSL( !id, "'{}' answered no id:  {}", _query.CommandName, serialize(y) );
 				co_await stock( "createCalendarPattern", {{"calendarId", id}} );
 			}
-			else if( table==Calendars && type==Update && before ){
-				//What the admin entered stays put:  a production day's start names the same day under the new settings, and an exception's
-				//bound the same wall-clock time in the new zone.  Every row, deleted ones too, so a restore comes back right.
-				auto settings = rows.Calendar;
-				merge( settings, args );
-				Schedule after{ settings, jarray{}, jarray{}, jarray{}, _sl };
-				if( &before->Zone()!=&after.Zone() || before->DayStartMinutes()!=after.DayStartMinutes() ){
-					for( let& v : rows.Patterns ){
-						let& p = Json::AsObject( v, _sl );
-						jobject set;
-						for( sv key : {"effective", "cycleStart"} ){
-							if( let t = findTime(p, key, _sl); t && ReanchorDay(*t, *before, after)!=*t )
-								set[key] = iso( ReanchorDay(*t, *before, after) );
-						}
-						if( set.size() ){
-							set["id"] = Json::AsNumber<uint32>( p, "id", _sl );
-							co_await stock( "updateCalendarPattern", move(set) );
-						}
-					}
-					for( let& v : rows.Exceptions ){
-						let& e = Json::AsObject( v, _sl );
-						jobject set;
-						for( sv key : {"start", "finish"} ){
-							if( let t = findTime(e, key, _sl); t && ReanchorLocal(*t, *before, after)!=*t )
-								set[key] = iso( ReanchorLocal(*t, *before, after) );
-						}
-						if( set.size() ){
-							set["id"] = Json::AsNumber<uint32>( e, "id", _sl );
-							co_await stock( "updateCalendarException", move(set) );
-						}
-					}
-				}
-			}
+			for( auto& set : patternMoves )
+				co_await stock( "updateCalendarPattern", move(set) );
+			for( auto& set : exceptionMoves )
+				co_await stock( "updateCalendarException", move(set) );
 			if( row0 ){
 				for( let& [key,value] : spelled )
 					(*row0)[key] = value;
 			}
+			else if( y.is_number() && spelled.size() )//an update's row count:  these columns answer, and the caller's arguments fill in the rest.
+				y = move( spelled );
 			Resume( move(y) );
 		}
 		catch( runtime_error& e ){
