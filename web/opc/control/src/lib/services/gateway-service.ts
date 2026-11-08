@@ -160,6 +160,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#itemModified( message.monitoredItemModified );
 				else if( message.eventValues )
 					this.#eventValues( message.eventValues );
+				else if( message.eventsRestored )
+					this.#eventsRestored( message.eventsRestored );
 				else if( message.exception ){
 					const e = message.exception;
 					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
@@ -362,6 +364,14 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		const vars = { opc: opcId, object: object.toJson(), method: method.toJson(), args: args.map( a=>valueJson( a ) ) };
 		const data:any = await super.postQL<any>( q, vars );
 		return toCallResult( data?.["call"] ?? data );//keyed by command name, as write()'s is;  the caller asks for the codes' names
+	}
+	//refreshConditions( opc, node ) - a system mutation (clients spec *Alarms and conditions*, #426):  ConditionRefresh called with this
+	//connection's own subscription, so every retained condition replays its last event to the events items on it - the Alarms view's on
+	//`node` among them, which the gateway requires this client to hold.  The server's status, whatever it is;  a refusal before the
+	//call - no events subscription on the node - throws.
+	async refreshConditions( opcId:CnnctnSlug, node:NodeId ):Promise<StatusCode>{
+		const data:any = await super.postQL<any>( `refreshConditions( opc: $opc, node: $node ){ statusCode }`, {opc: opcId, node: node.toJson()} );
+		return Number( ( data?.["refreshConditions"] ?? data )?.statusCode ?? 0 );
 	}
 	//updateVariable( opc, id, value, indexRange ):  the value typed at the gateway toward the node's DataType (Value::Set), and with
 	//`indexRange`, Part 4's "2:4", the array's slice that the value fills (clients spec *Values and writes*);  the answer is the value
@@ -737,7 +747,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	}
 	//An events subscription (clients spec *Events*, #424):  SubscribeEvents on `node`, an object or view whose EventNotifier has the
 	//SubscribeToEvents bit, with the eight base fields and the browse paths `select` names, which the gateway merges into the node's one
-	//item with every other listener's.  The stream delivers each event's fields in that order, and errors with an OpcError when the
+	//item with every other listener's.  The stream says when the ack came, `acked`, since a refreshConditions wants the item up (the
+	//Alarms view), and `restored` when a rebuild of the server's session put the item back, then delivers each event's fields in that order, and errors with an OpcError when the
 	//gateway or the server refuses the item - a node without the bit, a field it cannot read - or with the socket's error when the
 	//connection goes, after which the gateway has forgotten the item and the tab subscribes again.  Ended by its observer leaving,
 	//which sends UnsubscribeEvents unless another owner of this gateway still holds the node.  Subscribing the node again, under the
@@ -777,6 +788,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 				return;
 			}
 			live.acked = true;
+			live.subscriber.next( {opcId: live.opcId, node: live.node, fields: [], acked: true} );//the item is up:  a refresh asked now reaches it
 		}
 		catch( e ){
 			if( this.#events.get( owner )===live ){
@@ -801,6 +813,16 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		}
 		if( !heard )
 			console.debug( `[Opc]EventValues for ${e.opcId} ${node.uaString()}, which nothing here watches.` );
+	}
+	//A rebuild put this node's item back on a new subscription:  every owner of the node hears, since what the outage held is gone.
+	#eventsRestored( e:FromServer.EventsRestored ):void{
+		if( !e.node )
+			return;
+		const node = Gateway.toNode( e.node );
+		for( const live of this.#events.values() ){
+			if( live.opcId==e.opcId && live.node.equals( node ) )
+				live.subscriber.next( {opcId: e.opcId, node, fields: [], restored: true} );
+		}
 	}
 	//The server refused a filter this node's item was asked to change to:  the item runs on as it was, so the stream does too.
 	#eventItemRefused( opcId:OpcId, node:NodeId, refused:StatusCode ):void{
@@ -838,7 +860,14 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 }
 //An event of an events subscription (spec *Events*):  the node's, with the fields of the subscription's list in its order, undefined
 //where the server left one empty.
-export type EventPush = { opcId:string; node:NodeId; fields:EventFields; refused?:StatusCode };//refused:  no event, the status a change of the item's filter was refused with
+//what the gateway said, when it answered with an exception (ProtoService.processError):  a lost socket's rejection has no status
+export function gatewayAnswer( e:unknown ):{message:string; httpStatus:number}|undefined{
+	const error = (<{error?:{message?:string; httpStatus?:number}}>e)?.error;
+	return error && 'httpStatus' in error ? { message: error.message ?? "", httpStatus: error.httpStatus ?? 0 } : undefined;
+}
+//refused:  no event, the status a change of the item's filter was refused with;  acked:  no event, the subscription's ack came Good;
+//restored:  no event, a rebuild of the server's session put the item back
+export type EventPush = { opcId:string; node:NodeId; fields:EventFields; refused?:StatusCode; acked?:boolean; restored?:boolean };
 type EventLive = { opcId:OpcId; node:NodeId; select:string[]; subscriber:Subscriber<EventPush>; acked?:boolean };
 //A historyEvents read:  from `start` to `end`, now when left out, the fields `select` adds to the base eight, at most `limit` events,
 //and the continuation of the page before.

@@ -22,6 +22,7 @@ namespace Jde::Opc::Gateway{
 		//negative sampling interval, which asks the publishing interval, as that interval in ms, so the merge can order it.
 		α ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;
 		α ItemModified( const ServerCnnctnNK& opcNK, const NodeId& node, const MonitoredItemModifyResult& result, const optional<AskReverted>& reverted )ι->void override;//the MonitoredItemModified push, and a refused ask put back.
+		α ConnectionRestored( const ServerCnnctnNK& opcNK, const flat_set<NodeId>& nodes )ι->void override;//the EventsRestored push, for those of the nodes this session holds event items on.
 		α to_string()Ι->string override{ return Ƒ( "{:x}", Id() ); }
 		α UserPK()Ι->Jde::UserPK override{ return Session() ? Session()->UserPK : Jde::UserPK{}; }
 		α WriteException( runtime_error&& e, Jde::RequestId requestId, SRCE )ι->void override;

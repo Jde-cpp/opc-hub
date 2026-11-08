@@ -1,0 +1,91 @@
+@use '../../status';
+
+:host{
+	display: block;
+	width: 100%;
+}
+/* the toolbar is a list's (.jde-list-toolbar), as the Events tab's is */
+.jde-list-toolbar{
+	flex-wrap: wrap;
+}
+.bar-left{
+	flex: 1 1 200px;
+	min-width: 0;
+	display: flex;
+	gap: 1rem;
+	align-items: center;
+}
+.bar-right{
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	align-items: center;
+}
+.refresh-bar{
+	flex: 0 0 100%;
+}
+.refused{
+	@include status.refused( .5rem 1rem 0, var(--mat-sys-on-surface-variant) );
+}
+.row-count{
+	white-space: nowrap;
+	color: var(--mat-sys-on-surface-variant);
+}
+.mat-column-time{
+	flex: 0 0 190px;
+	padding-inline: 5px;
+}
+.mat-column-severity{
+	flex: 0 0 70px;
+	padding-inline: 5px;
+}
+.mat-column-enabled, .mat-column-active, .mat-column-acked, .mat-column-confirmed{
+	flex: 0 0 110px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+.mat-column-acked{
+	flex-basis: 135px;//fits "Unacknowledged"
+}
+.mat-column-branch{
+	flex: 0 0 80px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+.mat-column-source, .mat-column-name{
+	flex: 0 0 150px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+.mat-column-message, .mat-column-comment{
+	flex: 1 1 200px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+.mat-column-actions{
+	flex: 0 0 132px;
+	padding-inline: 0;
+	justify-content: flex-end;
+}
+/* an active alarm, and the state an action is waiting on:  the theme's tokens, which hold their contrast */
+mat-cell.state-on{
+	color: var(--mat-sys-error);
+	font-weight: 500;
+}
+mat-cell.state-wanted{
+	color: var(--mat-sys-tertiary);
+	font-weight: 500;
+}
+.message{
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.problem{
+	margin: 0;
+	font: var(--mat-sys-body-small);
+}
+.field-text{
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

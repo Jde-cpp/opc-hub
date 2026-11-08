@@ -21,14 +21,53 @@ namespace Jde::Opc::Gateway{
 			throw refuse( path, "has an empty segment", sl );
 		return BrowseName{ UA_QualifiedName{ns, AllocUAString(text)} };
 	}
+	Ω nodeIdAhead( sv path )ι->bool{
+		if( path.starts_with("ns=") || path.starts_with("nsu=") ){
+			let semicolon = path.find( ';' );
+			if( semicolon==sv::npos )
+				return false;
+			path = path.substr( semicolon+1 );
+		}
+		return path.size()>1 && path[1]=='=' && "isgb"sv.contains( path[0] );
+	}
+	//The operand's own spelling, `[typeDefinitionId]/path#attribute` (open62541 util.h):  a node id with a path or attribute after it -
+	//`i=2782#NodeId`, `ns=2;s=Truck/3:Wheel` - or a leading `/` with an attribute.  Anything else is a browse path, which may hold a `#`
+	//or an `=`:  the operand's parser would refuse `2:Flow#1`.
+	Ω isOperand( sv path )ι->bool{
+		let attribute = path.contains( '#' );
+		return path.starts_with( '/' ) ? attribute : nodeIdAhead( path ) && ( attribute || path.contains('/') );
+	}
+	Ω parseOperand( sv path, SL sl )ε->EventClause{
+		UA_SimpleAttributeOperand operand; UA_SimpleAttributeOperand_init( &operand );
+		if( let sc = UA_SimpleAttributeOperand_parse(&operand, ToUV(path)); sc ){
+			UA_SimpleAttributeOperand_clear( &operand );
+			throw refuse( path, Ƒ("is no select clause - {}", UA_StatusCode_name(sc)), sl );
+		}
+		EventClause y;
+		y.TypeDefinition = operand.typeDefinitionId;
+		y.Attribute = (UA_AttributeId)operand.attributeId;
+		for( uint i=0; i<operand.browsePathSize; ++i ){
+			UA_QualifiedName name; UA_QualifiedName_copy( &operand.browsePath[i], &name );
+			y.Path.push_back( BrowseName{move(name)} );
+		}
+		let ranged = operand.indexRange.length>0;
+		UA_SimpleAttributeOperand_clear( &operand );
+		if( ranged )
+			throw refuse( path, "has an index range, which an event field cannot take", sl );
+		return y;
+	}
 	α EventClause::Parse( sv path, SL sl )ε->EventClause{
 		EventClause y;
-		for( sv rest = path; ; ){
-			let slash = rest.find( '/' );
-			y.Path.push_back( segment(path, rest.substr(0, slash), sl) );
-			if( slash==sv::npos )
-				break;
-			rest = rest.substr( slash+1 );
+		if( isOperand(path) )
+			y = parseOperand( path, sl );
+		else{
+			for( sv rest = path; ; ){
+				let slash = rest.find( '/' );
+				y.Path.push_back( segment(path, rest.substr(0, slash), sl) );
+				if( slash==sv::npos )
+					break;
+				rest = rest.substr( slash+1 );
+			}
 		}
 		auto operand = y.Operand();
 		UAString key;
@@ -41,8 +80,8 @@ namespace Jde::Opc::Gateway{
 	}
 	α EventClause::Operand()Ι->UA_SimpleAttributeOperand{
 		UA_SimpleAttributeOperand y; UA_SimpleAttributeOperand_init( &y );
-		y.typeDefinitionId = UA_NODEID_NUMERIC( 0, UA_NS0ID_BASEEVENTTYPE );
-		y.attributeId = UA_ATTRIBUTEID_VALUE;
+		UA_NodeId_copy( &TypeDefinition, &y.typeDefinitionId );
+		y.attributeId = Attribute;
 		y.browsePathSize = Path.size();
 		y.browsePath = (UA_QualifiedName*)UA_Array_new( Path.size(), &UA_TYPES[UA_TYPES_QUALIFIEDNAME] );
 		for( uint i=0; i<Path.size(); ++i )

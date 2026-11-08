@@ -1,0 +1,93 @@
+<mat-toolbar class="jde-list-toolbar">
+	<div class="bar-left">
+		<span class="row-count">{{ rows().length }} {{ rows().length==1 ? "alarm" : "alarms" }}</span>
+		@if( refreshing() ){
+			<span class="row-count" role="status">Refreshing…</span>
+		}
+	</div>
+	<div class="bar-right">
+		<button matButton type="button" (click)="refresh()" [disabled]="busy() || !live()" matTooltip="Have the server replay every retained condition to this connection">
+			<mat-icon>refresh</mat-icon>Refresh
+		</button>
+	</div>
+</mat-toolbar>
+<mat-progress-bar class="refresh-bar" [mode]="busy() || refreshing() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Refreshing the conditions"></mat-progress-bar>
+@if( error(); as text ){
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ text }}</p>
+}
+@if( refreshStatus(); as text ){
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>The server answered the refresh with {{ text }}.</p>
+}
+@if( incomplete() ){
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="warning"></mat-icon>The server discarded events, so this list may be incomplete.  Refresh to load it again;  if this comes back, the server holds more conditions than one replay can deliver.</p>
+}
+<mat-table [dataSource]="sorted()" class="mat-elevation-z8 jde-dense">
+	<ng-container matColumnDef="source">
+		<mat-header-cell *matHeaderCellDef>Source</mat-header-cell>
+		<mat-cell *matCellDef="let r"><span class="field-text" [title]="r.source">{{ r.source }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="name">
+		<mat-header-cell *matHeaderCellDef>Condition</mat-header-cell>
+		<mat-cell *matCellDef="let r"><span class="field-text" [title]="r.conditionId.uaString()">{{ r.name || r.conditionId.uaString() }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="branch">
+		<mat-header-cell *matHeaderCellDef>Branch</mat-header-cell>
+		<mat-cell *matCellDef="let r"><span class="field-text">{{ r.branch }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="severity">
+		<mat-header-cell *matHeaderCellDef>Severity</mat-header-cell>
+		<mat-cell *matCellDef="let r">{{ r.severity ?? "" }}</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="message">
+		<mat-header-cell *matHeaderCellDef>Message</mat-header-cell>
+		<mat-cell *matCellDef="let r">
+			<div class="message">
+				<span class="field-text" [title]="r.message">{{ r.message }}</span>
+				@if( r.problem; as problem ){<!--the last action the server refused, until the condition's next event-->
+					<span class="refused problem" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ problem }}</span>
+				}
+			</div>
+		</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="enabled">
+		<mat-header-cell *matHeaderCellDef>Enabled</mat-header-cell>
+		<mat-cell *matCellDef="let r"><span class="field-text" [title]="r.enabledText">{{ r.enabledText }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="active">
+		<mat-header-cell *matHeaderCellDef>Active</mat-header-cell>
+		<mat-cell *matCellDef="let r" [class.state-on]="r.active"><span class="field-text" [title]="r.activeText">{{ r.activeText }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="acked">
+		<mat-header-cell *matHeaderCellDef>Acked</mat-header-cell>
+		<mat-cell *matCellDef="let r" [class.state-wanted]="r.acked===false"><span class="field-text" [title]="r.ackedText">{{ r.ackedText }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="confirmed">
+		<mat-header-cell *matHeaderCellDef>Confirmed</mat-header-cell>
+		<mat-cell *matCellDef="let r" [class.state-wanted]="r.acked===true && r.confirmed===false"><span class="field-text" [title]="r.confirmedText">{{ r.confirmedText }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="comment">
+		<mat-header-cell *matHeaderCellDef>Comment</mat-header-cell>
+		<mat-cell *matCellDef="let r"><span class="field-text" [title]="r.comment">{{ r.comment }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="time">
+		<mat-header-cell *matHeaderCellDef>Time</mat-header-cell>
+		<mat-cell *matCellDef="let r">{{ (r.time ?? r.received) | date:'yyyy-MM-dd HH:mm:ss.SSS' }}</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="actions">
+		<mat-header-cell *matHeaderCellDef></mat-header-cell>
+		<mat-cell *matCellDef="let r">
+			<button matIconButton type="button" (click)="acknowledge(r)" [disabled]="!canAcknowledge(r)" matTooltip="Acknowledge, with a comment" [attr.aria-label]="'Acknowledge ' + (r.name || r.conditionId.uaString())"><mat-icon>task_alt</mat-icon></button>
+			<button matIconButton type="button" (click)="confirm(r)" [disabled]="!canConfirm(r)" matTooltip="Confirm, with a comment" [attr.aria-label]="'Confirm ' + (r.name || r.conditionId.uaString())"><mat-icon>verified</mat-icon></button>
+			<button matIconButton type="button" (click)="comment(r)" matTooltip="Add a comment" [attr.aria-label]="'Comment on ' + (r.name || r.conditionId.uaString())"><mat-icon>comment</mat-icon></button>
+		</mat-cell>
+	</ng-container>
+	<mat-header-row *matHeaderRowDef="columns; sticky: true"></mat-header-row>
+	<mat-row *matRowDef="let row; columns: columns"></mat-row>
+</mat-table>
+@if( !rows().length && !error() ){
+	<div class="jde-empty" role="status">
+		<mat-icon aria-hidden="true">notifications_none</mat-icon>
+		<p class="title">No alarms.</p>
+		<p>{{ live() ? "The conditions the server retains appear here, and each transition as it comes." : "Subscribing…" }}</p>
+	</div>
+}

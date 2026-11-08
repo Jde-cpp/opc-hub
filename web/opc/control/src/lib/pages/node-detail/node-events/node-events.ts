@@ -10,16 +10,15 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTableModule } from '@angular/material/table';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { Subscription } from 'rxjs';
 import { DateUtils, SnackbarService } from 'jde-framework';
 import { LocalPrefs } from 'jde-spa';
 import { eventColumns, eventFieldText, EventFields, EventRow, eventTime, isLocalizedText, keptSelect, repeatsField, selectProblem, toEventRow } from '../../../model/event';
 import { UaNode } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { isBad, scHex } from '../../../model/status-code';
-import { Gateway, EventPush } from '../../../services/gateway-service';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { StructureTable } from '../../structure-table/structure-table';
+import { EventStream } from '../event-stream';
 
 //The Events tab (clients spec *Events*, #424), on a node whose EventNotifier has the SubscribeToEvents bit - the Server object, which
 //emits every event, and any object or view a server marks:  an events subscription on the node through the gateway, its fields the
@@ -45,11 +44,19 @@ export class NodeEvents implements OnDestroy{
 		//the router reuses the page across nodes, and a field list change asks a new item:  each is a new subscription over an empty table
 		effect( ()=>{ const node = this.node(), select = this.select(); untracked( ()=>this.#restart( node, select ) ); } );
 	}
-	ngOnDestroy(){ this.#destroyed = true; this.#unsubscribe(); }
+	ngOnDestroy(){ this.#destroyed = true; this.#stream.destroy(); }
 	#destroyed = false;
 
 	pageData = input.required<NodePageData>();
 	node = input.required<UaNode>();
+	#stream = new EventStream( {
+		gateway: ()=>this.pageData().gateway,
+		connection: ()=>this.cnnctnSlug,
+		node: ()=>this.node(),
+		select: ()=>this.select(),
+		owner: `nodeEvents/${Math.random().toString( 36 ).slice( 2 )}`,
+		onEvent: fields=>this.#onEvent( fields )
+	} );
 	readonly separatorKeysCodes = [ENTER, COMMA];
 	//the fields beside the base eight, as the chips show them, kept on this browser per connection and node
 	select = signal<string[]>( [] );
@@ -59,8 +66,8 @@ export class NodeEvents implements OnDestroy{
 	paused = signal( false );
 	held = signal( 0 );//events held while paused
 	#held:EventRow[] = [];
-	error = signal<string|undefined>( undefined );//a refusal's status, or why the subscription ended
-	live = signal( false );//the subscription is up:  its ack came and nothing ended it
+	readonly live = this.#stream.live;
+	readonly error = this.#stream.error;
 	loading = signal( false );//a history fill out
 	//Load from:  a local time to the minute, an hour ago by default, as the datetime-local input holds it
 	from = signal<string>( DateUtils.toLocalInput( new Date( Date.now()-3_600_000 ) ).slice( 0, 16 ) );
@@ -68,11 +75,11 @@ export class NodeEvents implements OnDestroy{
 
 	#prefsName( node:UaNode ):string{ return `${this.pageData().gateway.slug}/${this.cnnctnSlug}/${node.uaString()}/select`; }
 	#restart( node:UaNode, select:string[] ){
-		this.#unsubscribe();
+		this.#stream.close();
 		this.rows.set( [] );
 		this.#held = [];
 		this.held.set( 0 );
-		this.error.set( undefined );
+		this.#stream.error.set( undefined );
 		this.historyStatus.set( undefined );
 		if( node!==this.#selectNode ){//a new node:  its own list, before this one's is saved under it
 			this.#selectNode = node;
@@ -84,55 +91,11 @@ export class NodeEvents implements OnDestroy{
 		}
 		else
 			this.#prefs.set( NodeEvents.prefsOwner, this.#prefsName( node ), select.length ? select : null );
-		this.#subscribe( node, select );
+		this.#stream.open( node );
 	}
 	#selectNode:UaNode|undefined;
-	#subscribe( node:UaNode, select:string[] ){
-		const gateway = this.pageData().gateway;
-		this.#subscription = gateway.subscribeEvents( this.cnnctnSlug, node.nodeId, select, this.#owner ).subscribe( {
-			next: e=>this.#onEvent( e ),
-			error: ( e:unknown )=>{
-				this.#subscription = undefined;
-				this.live.set( false );
-				const answer = NodeEvents.gatewayAnswer( e );
-				if( e instanceof OpcError )//refused:  the node, or a field, as the server read it - no retry would change it
-					this.#showRefused( e.sc, "the subscription" );
-				else if( answer && answer.httpStatus>=400 && answer.httpStatus<500 )//a field the gateway cannot read, likewise
-					this.error.set( `The gateway refused the subscription:  ${answer.message}` );
-				else{//the socket went, or the gateway could not do it yet - a session not back, a server down:  the item is asked for again
-					this.error.set( answer ? `The gateway could not subscribe:  ${answer.message}  Trying again.` : "Connection to the gateway lost.  The subscription resumes once it is back." );
-					clearTimeout( this.#retry );
-					this.#retry = setTimeout( ()=>{ if( !this.#destroyed && node===this.node() && !this.#subscription ) this.#subscribe( node, this.select() ); }, Gateway.histRetryDelay );
-				}
-			}
-		} );
-		this.live.set( true );
-		this.error.set( undefined );
-	}
-	//what the gateway said, when it answered with an exception (ProtoService.processError):  a lost socket's rejection has no status
-	static gatewayAnswer( e:unknown ):{message:string; httpStatus:number}|undefined{
-		const error = (<{error?:{message?:string; httpStatus?:number}}>e)?.error;
-		return error && 'httpStatus' in error ? { message: error.message ?? "", httpStatus: error.httpStatus ?? 0 } : undefined;
-	}
-	#showRefused( sc:number, what:string ){
-		const text = ()=>`The server refused ${what}:  ${scHex( sc )} ${OpcError.text( sc )}.`;
-		this.error.set( text() );
-		if( !OpcError.statusCodeText( sc ) )
-			this.pageData().gateway.updateErrorCodes().then( ()=>{ if( !this.#destroyed && this.error() ) this.error.set( text() ); } );
-	}
-	#subscription:Subscription|undefined;
-	#retry:ReturnType<typeof setTimeout>|undefined;
-	readonly #owner = `nodeEvents/${Math.random().toString( 36 ).slice( 2 )}`;
-	#unsubscribe(){
-		clearTimeout( this.#retry );
-		this.#subscription?.unsubscribe();
-		this.#subscription = undefined;
-		this.live.set( false );
-	}
-	#onEvent( e:EventPush ){
-		if( e.refused )
-			return this.#showRefused( e.refused, "the field list" );
-		const row = toEventRow( e.fields );
+	#onEvent( fields:EventFields ){
+		const row = toEventRow( fields );
 		if( this.paused() ){
 			this.#held.push( row );
 			if( this.#held.length>NodeEvents.maxRows )

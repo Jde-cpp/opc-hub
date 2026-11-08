@@ -24,10 +24,22 @@ describe( 'Gateway.subscribeEvents', ()=>{
 		const pushes:EventPush[] = [];
 		let errored:unknown;
 		gateway.statusCodes = [undefined];
-		const subscription = gateway.subscribeEvents( opcId, pump, select, 'tab' ).subscribe( {next: e=>pushes.push( e ), error: e=>errored = e} );
+		const acks:EventPush[] = [];//the ack's marker, which no event is (clients spec *Alarms and conditions*)
+		const subscription = gateway.subscribeEvents( opcId, pump, select, 'tab' ).subscribe( {next: e=>( e.acked ? acks : pushes ).push( e ), error: e=>errored = e} );
 		await flush();
-		return { gateway, pushes, subscription, get errored(){ return errored; } };
+		return { gateway, pushes, acks, subscription, get errored(){ return errored; } };
 	};
+	it( 'says when the ack came, once, with no fields', async ()=>{
+		const { acks, pushes } = await subscribed();
+		expect( acks ).toHaveLength( 1 );
+		expect( acks[0] ).toEqual( expect.objectContaining( {opcId, fields: [], acked: true} ) );
+		expect( pushes ).toEqual( [] );
+	} );
+	it( 'says when a rebuild put the item back, with no fields', async ()=>{
+		const { gateway, pushes } = await subscribed();
+		gateway.receive( {eventsRestored: {opcId, node: {namespaceIndex: 2, numeric: 5005}}} );
+		expect( pushes ).toEqual( [expect.objectContaining( {opcId, fields: [], restored: true} )] );
+	} );
 	it( 'sends SubscribeEvents with the node and the fields selected', async ()=>{
 		const { gateway } = await subscribed( ['Rpm', '2:Foo'] );
 		expect( gateway.sentOf( 'subscribeEvents' ) ).toEqual( [{opcId, node: {namespaceIndex: 2, numeric: 5005}, select: ['Rpm', '2:Foo']}] );

@@ -1592,12 +1592,14 @@ namespace Jde::Opc::Gateway::Tests{
 	struct EventListener final : IListener{
 		α OnData( string, NodeId, const Proto::Value& )ι->void override{}
 		α OnEvent( const FromServer::EventValues& event )ι->void override{ lg _{ Mutex }; Events.push_back( event ); ++Count; }
+		α OnEventsRestored()ι->void override{ ++Restored; }
 		α Last()ι->FromServer::EventValues{ lg _{ Mutex }; return Events.back(); }
 		atomic<uint> Count{};
+		atomic<uint> Restored{};
 		mutex Mutex; vector<FromServer::EventValues> Events;
 	};
 	struct EventSelectListener final : IDataChange{
-		EventSelectListener( vector<string> select )ι:Select{ move(select) }{}
+		EventSelectListener( vector<string> select, uint32 queueSize=100 )ι:Select{ move(select) }, QueueSize{ queueSize }{}
 		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value&, const ITypes* )ι->void override{}
 		α SendEvent( const ServerCnnctnNK&, const NodeId&, const vector<const UA_Variant*>& fields, const ITypes* )ι->void override{
 			vector<optional<Variant>> copy;
@@ -1607,11 +1609,12 @@ namespace Jde::Opc::Gateway::Tests{
 			Events.push_back( move(copy) );
 			++Count;
 		}
-		α ItemParameters( const ServerCnnctnNK&, const NodeId&, Duration )Ι->MonitoringParameters override{ return MonitoringParameters::ForEvents( EventFilter::Of(Select) ); }
+		α ItemParameters( const ServerCnnctnNK&, const NodeId&, Duration )Ι->MonitoringParameters override{ return MonitoringParameters::ForEvents( EventFilter::Of(Select), QueueSize ); }
 		α ItemModified( const ServerCnnctnNK&, const NodeId&, const MonitoredItemModifyResult& result, const optional<AskReverted>& )ι->void override{ ModifyStatus = result.Status; ++Modified; }
 		α to_string()Ι->string override{ return "Tests.EventSelectListener"; }
 		α Last()ι->vector<optional<Variant>>{ lg _{ Mutex }; return Events.back(); }
 		vector<string> Select;
+		uint32 QueueSize;
 		atomic<uint> Count{}, Modified{};
 		atomic<StatusCode> ModifyStatus{};
 		mutex Mutex; vector<vector<optional<Variant>>> Events;
@@ -1708,6 +1711,36 @@ namespace Jde::Opc::Gateway::Tests{
 		while( _client->MonitoredNodes().Handles({pump}).size() )
 			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the event item never went";
 	}
+	//An item's queue overflowing puts an EventQueueOverflowEventType event in the stream, with the listener's whole field list:  how the
+	//Alarms view learns its list may be incomplete (426-alarms-view #6).  Enough events for some publishing interval to hold more than two.
+	TEST_F( SubscribeTests, AnOverflowedEventQueueSaysSo ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		const NodeId pump{ PumpsNs(), PumpManual };
+		Stopwatch sw;
+		while( _client->MonitoredNodes().Handles({pump}).size() )//the merge would keep the test before's larger queue
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the test before's item never went";
+		auto listener = ms<EventSelectListener>( vector<string>{"i=2782#NodeId"}, 2 );
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = SubscribeOn(_client, listener, {pump}) );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		let overflowed = [&]{
+			auto type = UA_NODEID_NUMERIC( 0, UA_NS0ID_EVENTQUEUEOVERFLOWEVENTTYPE );
+			lg _{ listener->Mutex };
+			return std::ranges::any_of( listener->Events, [&]( let& fields ){
+				return fields.size()==9 && fields[1] && UA_Variant_hasScalarType( &*fields[1], &UA_TYPES[UA_TYPES_NODEID] ) && UA_NodeId_equal( static_cast<const UA_NodeId*>(fields[1]->data), &type );
+			} );
+		};
+		for( uint i=0; i<40 && !overflowed(); ++i )
+			ASSERT_NO_THROW( raiseEvent("burst", 200) );
+		sw.Reset();
+		while( !overflowed() )
+			ASSERT_NO_THROW( sw.CheckTimeout(5s, 1ms) ) << "no EventQueueOverflowEventType event in " << listener->Count.load() << " events";
+		UAClient::Unsubscribe( listener );
+		sw.Reset();
+		while( _client->MonitoredNodes().Handles({pump}).size() )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the event item never went";
+	}
 	//An event item lost with its client is parked and put back on the reconnect's client as an event item - the rebuild asks the
 	//listener's kind - and delivers again.
 	TEST_F( SubscribeTests, AnEventItemSurvivesTheReconnect ){
@@ -1787,6 +1820,56 @@ namespace Jde::Opc::Gateway::Tests{
 		FromServer::UnsubscribeAck end;
 		ASSERT_NO_THROW( end = unsubscribeEvents(server) );
 		EXPECT_EQ( end.successes_size(), 1 ) << "the event item did not survive the refused join";
+	}
+
+	//A rebuild tells a session which event items came back, so a view keeping state from their events can start over (426-alarms-view #1);
+	//a data item has nothing to start over.
+	TEST_F( SubscribeTests, ARebuildSaysItsEventItemsAreBack ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		const NodeId server{ UA_NS0ID_SERVER };
+		auto events = ms<EventListener>(), data = ms<EventListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = subscribeEvents(server, {}, events) );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		ASSERT_NO_THROW( (BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( Socket().Subscribe(OpcServerSlug, {Intensity}, data) )) );
+
+		let subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+		ASSERT_NO_THROW( deleteSubscription(_client, subscriptionId) );
+		_client->Resubscribe();
+		ASSERT_TRUE( WaitUntil([&]{ return events->Restored.load()==1; }, 10s) ) << "no EventsRestored for the event item";
+		EXPECT_EQ( data->Restored.load(), 0u ) << "a data item is not said to be restored";
+
+		FromServer::UnsubscribeAck end;
+		ASSERT_NO_THROW( end = unsubscribeEvents(server) );
+		EXPECT_EQ( end.successes_size(), 1 );
+		ASSERT_NO_THROW( (BlockAwait<ClientSocketAwait<FromServer::UnsubscribeAck>,FromServer::UnsubscribeAck>( Socket().Unsubscribe(OpcServerSlug, {Intensity}) )) );
+	}
+	//A browse name may hold a `#` or an `=`, and only a node id with a path or attribute after it, or a leading `/` with an attribute,
+	//is the operand's spelling (426-alarms-view #5).
+	TEST( EventClauseTests, ANameHoldingOperandCharactersStaysAName ){
+		for( sv name : {"2:Flow#1"sv, "Flow#1"sv, "Mode=Auto"sv, "s=Foo"sv, "#Value"sv} ){
+			let clause = EventClause::Parse( name );
+			ASSERT_EQ( clause.Path.size(), 1u ) << name;
+			EXPECT_EQ( clause.TypeDefinition, NodeId{UA_NS0ID_BASEEVENTTYPE} ) << name;
+			EXPECT_EQ( clause.Attribute, UA_ATTRIBUTEID_VALUE ) << name;
+		}
+		EXPECT_EQ( ToSV(EventClause::Parse("2:Flow#1").Path[0].name), "Flow#1" );
+		EXPECT_EQ( EventClause::Parse("2:Flow#1").Path[0].namespaceIndex, 2 );
+
+		let condition = EventClause::Parse( "i=2782#NodeId" );
+		EXPECT_TRUE( condition.Path.empty() );
+		EXPECT_EQ( condition.TypeDefinition, NodeId{UA_NS0ID_CONDITIONTYPE} );
+		EXPECT_EQ( condition.Attribute, UA_ATTRIBUTEID_NODEID );
+		let path = EventClause::Parse( "ns=2;s=Truck/3:Wheel" );
+		ASSERT_EQ( path.Path.size(), 1u );
+		EXPECT_EQ( ToSV(path.Path[0].name), "Wheel" );
+		EXPECT_EQ( *path.TypeDefinition.String(), "Truck" );
+		let attribute = EventClause::Parse( "/2:Foo#DisplayName" );
+		ASSERT_EQ( attribute.Path.size(), 1u );
+		EXPECT_EQ( attribute.Attribute, UA_ATTRIBUTEID_DISPLAYNAME );
+		EXPECT_THROW( EventClause::Parse("/2:Foo"), Exception ) << "an empty first segment, as before";
 	}
 
 	//A run of events on one tick spans pages (424-clients-events #7):  each page's continuation counts what was returned there.

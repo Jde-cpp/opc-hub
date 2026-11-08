@@ -6,9 +6,11 @@ import { anonymousAuthStore, qlAnswering } from 'jde-framework/testing';
 import * as FromServer from 'jde-proto/Opc.FromServer';
 import { Attribute } from '../lib/model/attribute';
 import { HistTime, HistValue } from '../lib/model/hist';
+import { CallResult } from '../lib/model/method';
 import { UaNode, Variable } from '../lib/model/node';
 import { NodeId, NodeKey } from '../lib/model/node-id';
 import { References } from '../lib/model/reference';
+import { StatusCode } from '../lib/model/types';
 import { Value } from '../lib/model/value';
 import { EventPush, Gateway, HistEvent, HistEventsArgs, HistEventsPage, HistSubscribeArgs, SubscriptionResult } from '../lib/services/gateway-service';
 import { OpcStore } from '../lib/services/opc-store';
@@ -66,7 +68,8 @@ export class Feed<T, A=unknown>{
 
 //A Gateway for a page or a resolver to read through:  query/queryArray answer from `answers` as qlAnswering does, querySingle
 //nothing, browseObjectsFolder a node's children in `tree` by its key, references and attributes none, and subscribe/histSubscribe/
-//subscribeEvents open `values`/`histEvents`/`events` for the test to feed;  historyEvents answers nothing, Good.  Assign over whatever
+//subscribeEvents open `values`/`histEvents`/`events` for the test to feed;  historyEvents answers nothing, Good, refreshConditions Good
+//and call a Good result with no outputs.  Assign over whatever
 //else a test needs.
 export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tree=new Map<NodeKey,UaNode[]>() ){
 	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>(), events = new Feed<EventPush, {node:NodeId; select:string[]}>();
@@ -74,6 +77,8 @@ export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tre
 		slug, values, histEvents, events,
 		subscribeEvents: vi.fn( ( _opc:string, node:NodeId, select:string[], _owner?:string )=>events.open( {node, select} ) ),
 		historyEvents: vi.fn( async ( _opc:string, _node:NodeId, _args:HistEventsArgs ):Promise<HistEventsPage>=>({ status: 0, events: [] }) ),
+		refreshConditions: vi.fn( async ( _opc:string, _node:NodeId ):Promise<StatusCode>=>0 ),
+		call: vi.fn( async ( _opc:string, _object:NodeId, _method:NodeId, _args:Value[] ):Promise<CallResult>=>({ statusCode: 0, inputArgumentResults: [], outputArguments: [] }) ),
 		query: qlAnswering( answers ),
 		queryArray: qlAnswering( answers, {unwrapped: true} ),
 		querySingle: vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>null ),

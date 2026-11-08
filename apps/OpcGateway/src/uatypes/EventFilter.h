@@ -1,18 +1,24 @@
 #pragma once
 #include <open62541/types.h>
 #include <jde/opc/uatypes/BrowseName.h>
+#include <jde/opc/uatypes/NodeId.h>
 
 namespace Jde::Opc::Gateway{
 	//One select clause of an EventFilter (spec *Events*):  a SimpleAttributeOperand on BaseEventType for the Value of the node a browse
 	//path below the event names - "Message", "2:Rpm", "EnabledState/Id" - each segment's namespace index before its name, `2:` or
-	//`2~`, and 0 without one.  Key is what open62541 prints the operand as (UA_SimpleAttributeOperand_print):  "/Message", "/2:Rpm",
-	//"/EnabledState/Id" - the key the client delivers each field under (ua_client_subscriptions.c prepareEventFieldsMap) and the key
-	//the OpcServer resolves a field it was given by (ua_subscription_event.c resolveSAO), so one clause equals another by it.
+	//`2~`, and 0 without one.  Or the operand spelled as open62541 prints one, `[typeDefinitionId]/path#attribute`, for a clause the
+	//path grammar cannot say:  the ConditionId, `i=2782#NodeId`, the NodeId attribute of the condition itself on ConditionType (Part 9
+	//5.5.2;  spec *Alarms and conditions*), which the Alarms view keys its rows by.  Key is what open62541 prints the operand as
+	//(UA_SimpleAttributeOperand_print):  "/Message", "/2:Rpm", "/EnabledState/Id", "i=2782#NodeId" - the key the client delivers each
+	//field under (ua_client_subscriptions.c prepareEventFieldsMap) and the key the OpcServer resolves a field it was given by
+	//(ua_subscription_event.c resolveSAO), so one clause equals another by it.
 	struct EventClause final{
-		Ω Parse( sv path, SRCE )ε->EventClause;//throws BadRequest for an empty path or segment, or a namespace that is no UInt16.
+		Ω Parse( sv path, SRCE )ε->EventClause;//throws BadRequest for an empty path or segment, a namespace that is no UInt16, or an operand that does not parse.
 		α Operand()Ι->UA_SimpleAttributeOperand;//a deep copy, which the caller clears.
 		α operator==( const EventClause& x )Ι->bool{ return Key==x.Key; }
 		vector<BrowseName> Path;
+		NodeId TypeDefinition{ UA_NS0ID_BASEEVENTTYPE };
+		UA_AttributeId Attribute{ UA_ATTRIBUTEID_VALUE };
 		string Key;
 	};
 	//An event item's EventFilter (spec *Events*):  the eight base fields first, EventId through Severity as BaseEventType orders

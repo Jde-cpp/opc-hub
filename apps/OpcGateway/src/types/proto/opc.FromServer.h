@@ -16,6 +16,7 @@ namespace Jde::Opc::Gateway::FromServer{
 	//reading goes - a structure by its members, by `types` - and one with no member for a field the item did not deliver, or one
 	//the proto cannot carry.
 	α EventTrans( const ServerCnnctnNK& opcId, const NodeId& node, const vector<const UA_Variant*>& fields, const ITypes* types )ι->FromServer::Transmission;
+	α EventsRestoredTrans( const ServerCnnctnNK& opcId, const NodeId& node )ι->FromServer::Transmission;
 	α QueryTrans( string&& result, RequestId requestId )ι->FromServer::Transmission;
 	//A historian subscription's messages (spec *Subscriptions*), each under its HistSubscribe's request id.
 	α HistSubscribeAckTrans( FromServer::HistSubscribeAck&& ack, RequestId requestId )ι->FromServer::Transmission;

@@ -33,6 +33,12 @@
 				<node-events [pageData]="pageData()" [node]="node()"></node-events>
 			</ng-template>
 		</mat-tab>
+		<mat-tab><!--the same stream kept by ConditionId, with Acknowledge, Confirm and Comment (clients spec *Alarms and conditions*)-->
+			<ng-template mat-tab-label>Alarms</ng-template>
+			<ng-template matTabContent>
+				<node-alarms [pageData]="pageData()" [node]="node()"></node-alarms>
+			</ng-template>
+		</mat-tab>
 	}
 	@if( pageData().server.applicationName.startsWith("Jde-Cpp OpcServer") ){
 		<mat-tab>
