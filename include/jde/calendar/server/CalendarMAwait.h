@@ -16,13 +16,20 @@ namespace Jde::Calendar::Server{
 	//and subscription fan-out are the generic mutation's.  Around it:  a calendar's create is followed by its first pattern, a
 	//change of timeZone or dayStart by the rewrite of every pattern's dates and every exception's bounds under the new
 	//settings, and a purge is preceded by its children's, since the foreign keys are enforced.
+	//One mutation of its own, copyCalendarPattern( id, effective ){ id calendarId effective cycleDays cycleStart }, a command by
+	//its whole name (QL::SetSystemMutations):  the pattern and then its shifts, each created through the host's QL so it meets
+	//these checks as a caller's row would, the caller's Create on both tables asked before the first write, and the copy purged,
+	//shifts first, when a shift is refused, so the calendar is never left between states.
 	struct CalendarMAwait final : QL::IQLTableMutationExe{
 		using base = QL::IQLTableMutationExe;
 		//ql:  the host's, App::Server::QLPtr() - the AppServer's LocalQL, or the HubQL in the hub - for the sibling reads and the side effects' rows.
 		CalendarMAwait( QL::MutationQL&& m, QL::Creds creds, sp<QL::IQL> ql, SRCE )ι:base{ move(m), move(creds), sl }, _ql{ move(ql) }{}
 		Ω IsApplicable( const QL::MutationQL& m )ι->bool;
+		static constexpr sv CopyCommand{ "copyCalendarPattern" };
 	private:
+		α Suspend()ι->void override;//Copy for the copy command, Query for the tables' mutations.
 		α Query()ι->TAwait<jvalue>::Task override;
+		α Copy()ι->TAwait<jvalue>::Task;
 		sp<QL::IQL> _ql;
 	};
 }

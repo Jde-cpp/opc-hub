@@ -25,6 +25,18 @@ namespace Jde::App{
 	α IApp::ClientQuery( QL::RequestQL&& q, UserPK, SL sl )ε->up<TAwait<jvalue>>{
 		return mu<StatusQLAwait>( move(q), sl );
 	}
+	α IApp::TimeZoneName()ι->str{
+		static const string name = []{//once:  a host's zone doesn't change under a running server, and the status is polled.
+			try{
+				return string{ std::chrono::current_zone()->name() };
+			}
+			catch( const std::exception& e ){//no zone database, or a TZ it doesn't know.
+				WARNT( ELogTags::App, "The server's time zone could not be determined, UTC is reported:  {}", e.what() );
+				return string{ "UTC" };
+			}
+		}();
+		return name;
+	}
 }
 namespace Jde{
 	α App::InstanceName()ι->string{

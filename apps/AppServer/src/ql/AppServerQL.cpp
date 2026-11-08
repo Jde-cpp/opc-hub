@@ -4,6 +4,7 @@
 #include <jde/app/log/LogQLAwait.h>
 #include <jde/app/IApp.h>
 #include <jde/calendar/server/CalendarMAwait.h>
+#include <jde/calendar/server/OccurrencesQLAwait.h>
 #include <jde/web/server/SessionGraphQL.h>
 #include <jde/web/server/SettingQL.h>
 #include "../LocalClient.h"
@@ -27,6 +28,8 @@ namespace Jde::App{
 	α Server::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = Access::Server::CustomQuery(q, creds, sl); await )
 			return await;
+		if( Calendar::Server::OccurrencesQLAwait::IsApplicable(q) )//calendarOccurrences (docs/calendar/spec.md *Reads*);  QLPtr() is the HubQL in the hub.
+			return mu<Calendar::Server::OccurrencesQLAwait>( move(q), move(creds), QLPtr(), sl );
 		if( ConnectionQLAwait::IsApplicable(q) )
 			return mu<ConnectionQLAwait>( move(q), move(creds), sl );
 		if( q.JsonName.starts_with("setting") )

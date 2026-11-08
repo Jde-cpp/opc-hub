@@ -100,6 +100,16 @@ namespace Jde::Tests{
 		EXPECT_THROW( Chrono::ToTimePoint("2026-07-01", ny), Exception ) << "the same parse, the same refusals";
 	}
 
+	//A local time is read through the zone only inside the years 1 to 9999:  to_sys doesn't come back for one at the clock's limit.
+	TEST( ChronoTests, ToTimePointRefusesAFarLocalTime ){
+		let& ny = *locate_zone( "America/New_York" );
+		for( let iso : {"999999-01-01T00:00:00", "-999999-01-01T00:00:00", "10000-01-01T00:00:00", "0000-12-31T00:00:00"} )
+			EXPECT_THROW( Chrono::ToTimePoint(iso, ny), Exception ) << iso;
+		EXPECT_NO_THROW( Chrono::ToTimePoint("0001-01-01T00:00:00", ny) );
+		EXPECT_NO_THROW( Chrono::ToTimePoint("9999-12-31T23:59:59", ny) );
+		EXPECT_NO_THROW( Chrono::ToTimePoint("999999-01-01T00:00:00Z", ny) ) << "an instant meets no zone";
+	}
+
 	//every one of these must throw rather than come back as the epoch - an unparseable expiry reading as 1970 is a
 	//permanent "expired" instead of an error someone can see.
 	Ω parseFailure( sv iso )->string{
