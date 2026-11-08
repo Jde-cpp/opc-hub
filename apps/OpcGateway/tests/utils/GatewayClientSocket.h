@@ -16,6 +16,7 @@ namespace Jde::Opc::Gateway::Tests{
 		β OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void=0;
 		β OnPush( const FromServer::NodeValues& /*push*/ )ι->void{}//the whole push, before OnData:  its quality and timestamps too
 		β OnModified( const FromServer::MonitoredItemModified& /*modified*/ )ι->void{}//the node's item was modified for a join or a leave (spec *Watch list*).
+		β OnEvent( const FromServer::EventValues& /*event*/ )ι->void{}//an event of a SubscribeEvents' item (spec *Events*):  one field per clause of the subscription's list.
 	};
 	//A historian subscription's listener (spec *Subscriptions*), as the web's will be:  a HistSubscribe's ack resumes its
 	//await, and what follows it, the HistSnapshot pages and then the HistRecords pushes, comes here under the HistSubscribe's
@@ -60,6 +61,10 @@ namespace Jde::Opc::Gateway::Tests{
 		α Unsubscribe( vector<QL::SubscriptionId>&&, SL )ι->void override{ ASSERT(false); }
 
 		α Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SRCE )ε->await<FromServer::UnsubscribeAck>;
+		//An event subscription on `node` (spec *Events*), the base fields and the browse paths `select` names:  the ack's one result, then
+		//each event to the listener's OnEvent.  Its end answers as an Unsubscribe does.
+		α SubscribeEvents( ServerCnnctnNK slug, const NodeId& node, const vector<string>& select, sp<IListener> listener, SRCE )ε->await<FromServer::SubscriptionAck>;
+		α UnsubscribeEvents( ServerCnnctnNK slug, const NodeId& node, SRCE )ε->await<FromServer::UnsubscribeAck>;
 		α PendingSubscriptionRecords()Ι->uint;//this socket's subscribe + unsubscribe requests still awaiting their ack - a failed request may leave none (m2-closing #15).
 		//The ack's statuses, one per node.  The listener hears the subscription's pages and pushes until HistUnsubscribe's ack,
 		//or the exception that ends it;  any after either is a stray, which HistStrays counts.
@@ -82,6 +87,7 @@ namespace Jde::Opc::Gateway::Tests{
 		α onUnsubscribeAck( RequestId requestId )ι->void;//the acked nodes' listeners go with the subscription - see _unsubscribeRequests.
 		α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void;
 		α onModified( const FromServer::MonitoredItemModified& modified )ι->void;//to the node's listeners, as a push goes.
+		α onEvent( const FromServer::EventValues& event )ι->void;//to the node's listeners, as a push goes.
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
 		α OnAck( uint32 ack )ι->void;

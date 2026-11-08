@@ -1,0 +1,73 @@
+<mat-toolbar class="jde-list-toolbar">
+	<div class="bar-left">
+		<!--the fields beside the eight base ones:  a browse path below the event type, as the gateway's select takes one-->
+		<mat-form-field subscriptSizing="dynamic" class="fields">
+			<mat-label>Fields</mat-label>
+			<mat-chip-grid #fieldGrid aria-label="Event fields selected">
+				@for( path of select(); track path ){
+					<mat-chip-row (removed)="removeField(path)">
+						{{ path }}
+						<button matChipRemove [attr.aria-label]="'remove ' + path"><mat-icon>cancel</mat-icon></button>
+					</mat-chip-row>
+				}
+			</mat-chip-grid>
+			<input matInput [matChipInputFor]="fieldGrid" [matChipInputSeparatorKeyCodes]="separatorKeysCodes" (matChipInputTokenEnd)="addField($event)" placeholder="Rpm, 2:Rpm, EnabledState/Id" matTooltip="A field's browse path below the event type, a segment's namespace index before its name:  Enter adds it">
+		</mat-form-field>
+	</div>
+	<div class="bar-right">
+		<button matButton type="button" (click)="togglePause()" [matTooltip]="paused() ? 'Resume:  the events held while paused are added' : 'Pause:  events arriving are held until Resume'">
+			<mat-icon>{{ paused() ? 'play_arrow' : 'pause' }}</mat-icon>{{ paused() ? 'Resume' : 'Pause' }}@if( held() ){ ({{ held() }})}
+		</button>
+		<button matButton type="button" (click)="clear()" [disabled]="!rows().length && !held()" matTooltip="Empty the table">
+			<mat-icon>delete_sweep</mat-icon>Clear
+		</button>
+		<!--the event history from a time, where the server keeps one-->
+		<mat-form-field subscriptSizing="dynamic" class="from">
+			<mat-label>Load from</mat-label>
+			<input matInput type="datetime-local" [value]="from()" (input)="from.set($any($event.target).value)" aria-label="Load events from">
+		</mat-form-field>
+		<button matButton type="button" (click)="load()" [disabled]="loading()" matTooltip="Read the server's event history from the time given to now">
+			<mat-icon>history</mat-icon>Load
+		</button>
+		<span class="row-count">{{ rows().length }} {{ rows().length==1 ? "event" : "events" }}</span>
+	</div>
+</mat-toolbar>
+<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the event history"></mat-progress-bar>
+@if( error(); as text ){
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ text }}</p>
+}
+@if( historyStatus(); as text ){
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>The server answered the history read with {{ text }}.</p>
+}
+<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense">
+	@for( c of columns(); track c.key ){
+		<ng-container [matColumnDef]="c.key">
+			<mat-header-cell *matHeaderCellDef>{{ c.label }}</mat-header-cell>
+			<mat-cell *matCellDef="let r">
+				@if( c.key=='Time' || c.key=='ReceiveTime' ){
+					@if( eventTime(r.fields[c.index]); as time ){
+						{{ time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}
+					}
+					@else{
+						{{ text(r, c.index) }}
+					}
+				}
+				@else if( structured(r.fields[c.index]) ){<!--a structure decoded by member, an array of them, or a body no type explains (clients spec *Structures*)-->
+					<structure-table [value]="r.fields[c.index]" [label]="c.label"></structure-table>
+				}
+				@else{
+					<span class="field-text" [title]="text(r, c.index)">{{ text(r, c.index) }}</span>
+				}
+			</mat-cell>
+		</ng-container>
+	}
+	<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
+	<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
+</mat-table>
+@if( !rows().length && !error() ){
+	<div class="jde-empty" role="status">
+		<mat-icon aria-hidden="true">notifications_none</mat-icon>
+		<p class="title">No events yet.</p>
+		<p>{{ live() ? "Events the server raises from this node appear as they come." : paused() ? "Paused." : "Subscribing…" }}</p>
+	</div>
+}

@@ -87,6 +87,23 @@ namespace Jde::Opc::Gateway{
 		});
 	}
 
+	α FromClientUtils::EventSubscription( ServerCnnctnNK&& slug, const NodeId& node, const vector<string>& select, RequestId requestId )ι->string{
+		return setMessage( requestId, [&](FromClient::Message& m){
+			auto& s = *m.mutable_subscribe_events();
+			s.set_opc_id( move(slug) );
+			*s.mutable_node() = ProtoUtils::ToNodeId( node );
+			for( let& path : select )
+				s.add_select( path );
+		});
+	}
+	α FromClientUtils::EventUnsubscription( ServerCnnctnNK&& slug, const NodeId& node, RequestId requestId )ι->string{
+		return setMessage( requestId, [&](FromClient::Message& m){
+			auto& u = *m.mutable_unsubscribe_events();
+			u.set_opc_id( move(slug) );
+			*u.mutable_node() = ProtoUtils::ToNodeId( node );
+		});
+	}
+
 	α FromClientUtils::HistSubscription( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, RequestId requestId )ι->string{
 		return setMessage( requestId, [&](FromClient::Message& m){
 			auto& s = *m.mutable_hist_subscribe();

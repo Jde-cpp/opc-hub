@@ -40,6 +40,15 @@ message MonitoredItemModified{
 	uint32 status_code=5;
 }
 
+//An event a SubscribeEvents' item delivered (spec *Events*):  one Value per field of the listener's own list, in its order - the
+//eight base fields, then the browse paths its `select` named - a Value with no member for a field the event lacks, each
+//serialized as a NodeValues' reading is, a structure by its members.  Under request_id 0, as NodeValues is.
+message EventValues{
+	string opc_id=1;
+	Jde.Opc.Proto.NodeId node=2;
+	repeated Jde.Opc.Proto.Value fields=3;
+}
+
 //A historian record (spec *Record format*), as a subscription's pages and pushes carry it:  a value that passed the
 //compression test, a heartbeat, which repeats the value before it, or a Bad_DataLost marker, which holds none.  node is the
 //node's place in the HistSubscribe's nodes.
@@ -92,6 +101,7 @@ message Message{
 		HistSnapshot hist_snapshot = 9;
 		HistRecords hist_records = 10;
 		MonitoredItemModified monitored_item_modified = 11;
+		EventValues event_values = 12; //an event subscription's push, under request id 0 as node_values is.
 	}
 }
 

@@ -15,6 +15,9 @@ namespace Jde::Opc::Gateway::FromClientUtils{
 	α ToParameters( const FromClient::MonitoringParameters& proto, const NodeId& node, SRCE )ε->MonitoringParameters;
 	α ToProto( const MonitoringParameters& parameters )ι->FromClient::MonitoringParameters;
 	α Unsubscription( ServerCnnctnNK&& slug, const vector<NodeId>& nodes, RequestId requestId )ι->string;
+	//An event subscription and its end (spec *Events*), as a client sends them:  what the tests' GatewayClientSocket writes.
+	α EventSubscription( ServerCnnctnNK&& slug, const NodeId& node, const vector<string>& select, RequestId requestId )ι->string;
+	α EventUnsubscription( ServerCnnctnNK&& slug, const NodeId& node, RequestId requestId )ι->string;
 	α Query( string&& query, jobject&& variables, bool returnRaw, RequestId requestId  )ι->string;
 	//A historian subscription and its end (spec *Subscriptions*), as a client sends them:  what the tests' GatewayClientSocket writes.
 	α HistSubscription( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, RequestId requestId )ι->string;

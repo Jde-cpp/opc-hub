@@ -34,6 +34,16 @@ namespace Jde::Opc::Gateway{
 		_details = move( processed );
 		SetNodes();
 	}
+	HistoryReadRequest::HistoryReadRequest( UA_DateTime start, UA_DateTime end, uint32 numValues, const EventFilter& filter, bool release )ι:
+		HistoryReadRequest{ UA_TIMESTAMPSTORETURN_NEITHER, release, UA_TYPES[UA_TYPES_READEVENTDETAILS] }{
+		Events events{};
+		events.Details.startTime = start;
+		events.Details.endTime = end;
+		events.Details.numValuesPerNode = numValues;
+		filter.Set( events.Details.filter );
+		_details = move( events );
+		SetNodes();
+	}
 	HistoryReadRequest::HistoryReadRequest( HistoryReadRequest&& x )ι:
 		UA_HistoryReadRequest{ x }, _details{ move(x._details) }, _nodes{ move(x._nodes) }{
 		x.nodesToRead=nullptr; x.nodesToReadSize=0;//x no longer owns the identifiers this points at, nor the aggregates:  its vectors are empty.
@@ -71,10 +81,12 @@ namespace Jde::Opc::Gateway{
 				d.Details.reqTimes=d.Times.data(); d.Details.reqTimesSize=d.Times.size();
 				historyReadDetails.content.decoded.data = &d.Details;
 			}
-			else{
+			else if constexpr( std::is_same_v<T,Processed> ){
 				d.Details.aggregateType=d.Aggregates.data(); d.Details.aggregateTypeSize=d.Aggregates.size();
 				historyReadDetails.content.decoded.data = &d.Details;
 			}
+			else
+				historyReadDetails.content.decoded.data = &d.Details;
 		}, _details );
 	}
 	α HistoryReadRequest::Add( const UA_NodeId& node, sv continuationPoint )ι->void{

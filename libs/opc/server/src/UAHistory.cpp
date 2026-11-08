@@ -36,6 +36,12 @@ namespace Jde::Opc::Server{
 		if( !refused(*response, timestamps, Computed) )
 			(static_cast<UAHistory*>( context )->*Member)( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
 	}
+	//No event history here (clients spec *Events*):  every node answers Bad_HistoryOperationUnsupported, as a node this keeps no
+	//history of does, where a hook left unset has the service refuse the whole read, Bad_NotSupported.
+	Ω readEvent( UA_Server*, void*, const UA_NodeId*, void*, const UA_RequestHeader*, const UA_ReadEventDetails*, UA_TimestampsToReturn, UA_Boolean, uint count, const UA_HistoryReadValueId*, UA_HistoryReadResponse* response, UA_HistoryEvent* const* const )ι->void{
+		for( uint i=0; i<count && i<response->resultsSize; ++i )
+			response->results[i].statusCode = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
+	}
 	Ω updateData( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_UpdateDataDetails* details, UA_HistoryUpdateResult* result )ι->void{
 		static_cast<UAHistory*>( context )->UpdateData( *server, sessionId, sessionContext, *details, *result );
 	}
@@ -249,6 +255,7 @@ namespace Jde::Opc::Server{
 		y.readModified = historyRead<UA_ReadRawModifiedDetails, UA_HistoryModifiedData, &UAHistory::ReadRawModified<UA_HistoryModifiedData>>;
 		y.readAtTime = historyRead<UA_ReadAtTimeDetails, UA_HistoryData, &UAHistory::ReadAtTime, true>;
 		y.readProcessed = historyRead<UA_ReadProcessedDetails, UA_HistoryData, &UAHistory::ReadProcessed, true>;
+		y.readEvent = readEvent;
 		y.updateData = updateData;
 		y.deleteRawModified = deleteRawModified;
 		return y;

@@ -45,6 +45,9 @@ namespace Jde::Opc::Gateway{
 	α GatewaySocketSession::SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value, const ITypes* types )ι->void{
 		return Write( MessageTrans(FromServer::ToProto(opcNK, node, value, 0, types), 0) );
 	}
+	α GatewaySocketSession::SendEvent( const ServerCnnctnNK& opcNK, const NodeId& node, const vector<const UA_Variant*>& fields, const ITypes* types )ι->void{
+		Write( FromServer::EventTrans(opcNK, node, fields, types) );
+	}
 	α GatewaySocketSession::ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters{
 		MonitoringParameters y;
 		{
@@ -136,7 +139,14 @@ namespace Jde::Opc::Gateway{
 			}
 			Unstore( client->Slug(), refused, asked, prior );
 			Write( FromServer::SubscribeAckTrans(move(ack), requestId) );
-			ReadValueAwait read{ move(nodes), client, UA_TIMESTAMPSTORETURN_BOTH };//the first push:  its timestamps as a data change's
+			flat_set<NodeId> variables;//the first push, of the data-change items alone:  an event item's node is an object, with no Value to read (spec *Events*).
+			for( let& [node,parameters] : asked ){
+				if( !parameters.IsEvent() )
+					variables.emplace( node );
+			}
+			if( variables.empty() )
+				co_return;
+			ReadValueAwait read{ move(variables), client, UA_TIMESTAMPSTORETURN_BOTH };//the first push:  its timestamps as a data change's
 			auto values = co_await Any( read );
 			Write( FromServer::ReadValuesTrans(client->Slug(), move(values), requestId, client->Types().get()) );
 		}
@@ -278,6 +288,23 @@ namespace Jde::Opc::Gateway{
 			case kUnsubscribe:{
 				auto& u = *m.mutable_unsubscribe();
 				Unsubscribe( move(*u.mutable_opc_id()), ProtoUtils::ToNodeIds(move(*u.mutable_nodes())), requestId );
+				break;}
+			case kSubscribeEvents:{//an event item on the one node, its clauses the base fields and what `select` names (spec *Events*);  a path refused refuses the message.
+				auto& s = *m.mutable_subscribe_events();
+				flat_map<NodeId,MonitoringParameters> asked;
+				try{
+					vector<string> select{ s.select().begin(), s.select().end() };
+					asked.emplace( ProtoUtils::ToNodeId(s.node()), MonitoringParameters::ForEvents(EventFilter::Of(select)) );
+				}
+				catch( Exception& e ){
+					WriteException( move(e), requestId );
+					break;
+				}
+				Subscribe( move(*s.mutable_opc_id()), move(asked), requestId );
+				break;}
+			case kUnsubscribeEvents:{
+				auto& u = *m.mutable_unsubscribe_events();
+				Unsubscribe( move(*u.mutable_opc_id()), flat_set<NodeId>{ProtoUtils::ToNodeId(u.node())}, requestId );
 				break;}
 			case kHistSubscribe:
 				HistSubscribe( move(*m.mutable_hist_subscribe()), requestId );

@@ -20,10 +20,12 @@ import { Attribute, attributesOf } from '../model/attribute';
 import { CallResult, MethodArguments, toCallResult } from '../model/method';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
-import { ExtensionObject, Reading, shortestFloat, Structure, toReading, Value, valueJson } from '../model/value';
+import { ExtensionObject, Reading, shortestFloat, Structure, toReading, toValue, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
-import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound } from '../model/hist';
+import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound, qlTime } from '../model/hist';
 import { Revised, WatchParameters } from '../model/watch';
+import { baseEventFields, EventFields } from '../model/event';
+import { isBad } from '../model/status-code';
 
 type Owner = any;
 
@@ -120,6 +122,10 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		subjects.forEach( s=>s.error(e) );
 		for( const live of [...this.#hist.values()] )//the socket carried the historian subscriptions too:  each subscribes again once the gateway is back
 			this.#histDropped( live );
+		for( const [owner, live] of [...this.#events] ){//and the event subscriptions, whose streams end:  the tab subscribes again (spec *Events*)
+			this.#events.delete( owner );
+			live.subscriber.error( e );
+		}
 	};
 	protected processMessage( buffer:Uint8Array ){
 		try{
@@ -152,6 +158,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#histRecords( requestId, message.histRecords );
 				else if( message.monitoredItemModified )
 					this.#itemModified( message.monitoredItemModified );
+				else if( message.eventValues )
+					this.#eventValues( message.eventValues );
 				else if( message.exception ){
 					const e = message.exception;
 					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
@@ -661,6 +669,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	//A shared item's sampling or queue changed for another listener's join or leave, or the server refused the modify and the item
 	//stands as it was (spec *Watch list*, Opc.FromServer.proto):  every owner of the node hears what it runs at, as a `revised` result.
 	#itemModified( m:FromServer.MonitoredItemModified ):void{
+		if( m.node && isBad( m.statusCode>>>0 ) )
+			this.#eventItemRefused( m.opcId, Gateway.toNode( m.node ), m.statusCode>>>0 );
 		const opcSubscriptions = this.#subscriptions.get( m.opcId );
 		if( !opcSubscriptions || !m.node )
 			return console.debug( `[Opc]MonitoredItemModified for ${m.opcId}, which nothing here watches:  ${JSON.stringify(m)}` );
@@ -725,9 +735,115 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		else
 			return Promise.resolve();
 	}
+	//An events subscription (clients spec *Events*, #424):  SubscribeEvents on `node`, an object or view whose EventNotifier has the
+	//SubscribeToEvents bit, with the eight base fields and the browse paths `select` names, which the gateway merges into the node's one
+	//item with every other listener's.  The stream delivers each event's fields in that order, and errors with an OpcError when the
+	//gateway or the server refuses the item - a node without the bit, a field it cannot read - or with the socket's error when the
+	//connection goes, after which the gateway has forgotten the item and the tab subscribes again.  Ended by its observer leaving,
+	//which sends UnsubscribeEvents unless another owner of this gateway still holds the node.  Subscribing the node again, under the
+	//same owner, is how a tab changes its list:  the session keeps one list per node.
+	subscribeEvents( opcId:OpcId, node:NodeId, select:string[], owner:Owner ):Observable<EventPush>{
+		return new Observable<EventPush>( subscriber=>{
+			const live:EventLive = { opcId, node, select, subscriber };
+			this.#events.set( owner, live );
+			this.#sendEvents( live, owner );
+			return ()=>{
+				if( this.#events.get( owner )!==live )
+					return;//ended by a refusal, the socket, or a later subscribe under the owner
+				this.#events.delete( owner );
+				if( live.acked && !this.#eventsHeld( opcId, node ) )
+					this.#unsubscribeEvents( opcId, node );
+			};
+		} );
+	}
+	#eventsHeld( opcId:OpcId, node:NodeId ):boolean{ return [...this.#events.values()].some( l=>l.opcId==opcId && l.node.equals( node ) ); }
+	#unsubscribeEvents( opcId:OpcId, node:NodeId ):void{
+		const request:FromClient.UnsubscribeEvents = { opcId, node: Gateway.toProto( [node] )[0] };
+		this.sendPromise<void>( {unsubscribeEvents: request}, `unsubscribeEvents opcId: ${opcId}, node: ${node.uaString()}` ).catch( e=>console.warn( `unsubscribeEvents ${node.uaString()} - ${errorText(e)}` ) );
+	}
+	async #sendEvents( live:EventLive, owner:Owner ):Promise<void>{
+		const request:FromClient.SubscribeEvents = { opcId: live.opcId, node: Gateway.toProto( [live.node] )[0], select: live.select };
+		try{
+			const results = await this.sendPromise<FromServer.MonitoredItemCreateResult[]>( {subscribeEvents: request}, `subscribeEvents opcId: ${live.opcId}, node: ${live.node.uaString()}, fields: ${live.select.length}` );
+			const sc = results?.[0]?.statusCode ?? 0;
+			if( this.#events.get( owner )!==live ){//left before the ack:  the item it made goes, unless another owner holds the node
+				if( !sc && !this.#eventsHeld( live.opcId, live.node ) )
+					this.#unsubscribeEvents( live.opcId, live.node );
+				return;
+			}
+			if( sc ){
+				this.#events.delete( owner );
+				live.subscriber.error( new OpcError( sc, "SubscribeEvents", new Error().stack!, undefined ) );
+				return;
+			}
+			live.acked = true;
+		}
+		catch( e ){
+			if( this.#events.get( owner )===live ){
+				this.#events.delete( owner );
+				live.subscriber.error( e );
+			}
+		}
+	}
+	//an event of a node's item:  to every owner of the node here, each its own list's fields - the gateway projects per session, and a
+	//session holds one list per node, so every owner of the node sees the list the last subscribe asked
+	#eventValues( e:FromServer.EventValues ):void{
+		if( !e.node )
+			return;
+		const node = Gateway.toNode( e.node );
+		const fields:EventFields = e.fields.map( f=>Gateway.toValue( f ) );//a Value with no member, a field the server left empty, is undefined
+		let heard = false;
+		for( const live of this.#events.values() ){
+			if( live.opcId==e.opcId && live.node.equals( node ) && fields.length==baseEventFields.length+live.select.length ){//any other length is the list before a chip change's
+				live.subscriber.next( {opcId: e.opcId, node, fields} );
+				heard = true;
+			}
+		}
+		if( !heard )
+			console.debug( `[Opc]EventValues for ${e.opcId} ${node.uaString()}, which nothing here watches.` );
+	}
+	//The server refused a filter this node's item was asked to change to:  the item runs on as it was, so the stream does too.
+	#eventItemRefused( opcId:OpcId, node:NodeId, refused:StatusCode ):void{
+		for( const live of this.#events.values() ){
+			if( live.opcId==opcId && live.node.equals( node ) )
+				live.subscriber.next( {opcId, node, fields: [], refused} );
+		}
+	}
+	#events = new Map<Owner,EventLive>();
+	//historyEvents( opc, node, start, end, select, limit, continuation ){ status continuation events{ fields } } (hist.jsonnet):  a page of
+	//the node's event history from `start`, each event the fields a subscription with `select` delivers, in that order, by POST as the
+	//group questions go (HistoryService.groups).  The status is the node's, as the server answered it - Bad_HistoryOperationUnsupported
+	//from one that keeps no event history, Bad_NotSupported from one with no history service - and the continuation reads on after the last event, opaque to a caller.
+	async historyEvents( opc:CnnctnSlug, node:NodeId, args:HistEventsArgs ):Promise<HistEventsPage>{
+		const {ql, vars} = Gateway.historyEventsQuery( opc, node, args );
+		const data = await this.postQL<any>( ql, vars );
+		const y = data?.["historyEvents"];
+		return {
+			status: (y?.status ?? 0)>>>0,
+			continuation: typeof y?.continuation=='string' && y.continuation ? y.continuation : undefined,
+			events: ( Array.isArray( y?.events ) ? y.events : [] ).map( ( e:any )=>( Array.isArray( e?.fields ) ? e.fields : [] ).map( ( f:any )=>f==null ? undefined : toValue( f ) ) )
+		};
+	}
+	static historyEventsQuery( opc:CnnctnSlug, node:NodeId, args:HistEventsArgs ):{ql:string; vars:Record<string,unknown>}{
+		const vars:Record<string,unknown> = { opc, node: node.toJson(), start: qlTime( args.start ), select: args.select };
+		const params = ["opc: $opc", "node: $node", "start: $start", "select: $select"];
+		const add = ( name:string, value:unknown )=>{ if( value!==undefined ){ params.push( `${name}: $${name}` ); vars[name] = value; } };
+		add( "end", args.end ? qlTime( args.end ) : undefined );
+		add( "limit", args.limit );
+		add( "continuation", args.continuation );
+		return { ql: `historyEvents( ${params.join( ", " )} ){ status continuation events{ fields } }`, vars };
+	}
 	get name():string{ return this.instances[0].instanceName!; }
 	get slug():GatewaySlug{ return this.instances[0].instanceName!; }
 }
+//An event of an events subscription (spec *Events*):  the node's, with the fields of the subscription's list in its order, undefined
+//where the server left one empty.
+export type EventPush = { opcId:string; node:NodeId; fields:EventFields; refused?:StatusCode };//refused:  no event, the status a change of the item's filter was refused with
+type EventLive = { opcId:OpcId; node:NodeId; select:string[]; subscriber:Subscriber<EventPush>; acked?:boolean };
+//A historyEvents read:  from `start` to `end`, now when left out, the fields `select` adds to the base eight, at most `limit` events,
+//and the continuation of the page before.
+export type HistEventsArgs = { start:Date; end?:Date; select:string[]; limit?:number; continuation?:string };
+export type HistEventsPage = { status:StatusCode; continuation?:string; events:EventFields[] };
 //a pushed Reading - Bad keeps the value the server holds, and sc says so.  A subscribe that FAILED is the one OpcError `value`:  a
 //refused request, not a reading.  The Reading's `source`/`server` are what the history trend places a push after its read by.
 //One with `revised` is no reading:  what the server revised the node's item to, from the ack or a MonitoredItemModified push

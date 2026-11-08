@@ -34,8 +34,30 @@ namespace Jde::Opc{
 		const UA_String s{ (uint)(end-text)+unit.size(), (UA_Byte*)text };
 		return UA_Variant_setScalarCopy( &output[1], &s, &UA_TYPES[UA_TYPES_STRING] );
 	}
+	//pumpManual.raiseEvent (clients spec *Events*, #424):  the pumps demo's event source, which an install tries the Events tab on and the
+	//gateway's SubscribeTests raise - `message` String and `severity` UInt16 in, the event's EventId out.  A BaseEventType event from the
+	//pump, the one the method is called on, so pumpManual's own events subscription sees it and the Server object's does (Part 3 7.17),
+	//with the pump's motorRpm as a field of its own, `Rpm`:  a subscription selecting "Rpm" gets it, the server resolving a field by
+	//the key its clause prints, "/Rpm" (ua_subscription_event.c resolveSAO).  Borrowed, so nothing here frees the field;  the output
+	//is a copy of the id the server made.  Nothing in it throws, as toHertz doesn't.
+	Ω raiseEvent( UA_Server* ua, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId* objectId, void*, uint inputSize, const UA_Variant* input, uint outputSize, UA_Variant* output )ι->UA_StatusCode{
+		if( inputSize!=2 || outputSize!=1 || !objectId || !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_STRING]) || !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_UINT16]) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		const UA_LocalizedText message{ UA_STRING_NULL, *(const UA_String*)input[0].data };
+		const UA_UInt16 severity = *(const UA_UInt16*)input[1].data;
+		const Value rpm = ReadValue( *ua, NodeId{objectId->namespaceIndex, 6054} );//pumpManual.motorRpm;  empty when the read fails, which the field then is.
+		UA_KeyValuePair field{ .key={0, UA_STRING((char*)"/Rpm")}, .value=rpm.value };
+		const UA_KeyValueMap fields{ 1, &field };
+		UA_ByteString eventId; UA_ByteString_init( &eventId );
+		if( let sc = UA_Server_createEvent(ua, *objectId, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE), severity, message, &fields, nullptr, &eventId); sc )
+			return sc;
+		let sc = UA_Variant_setScalarCopy( &output[0], &eventId, &UA_TYPES[UA_TYPES_BYTESTRING] );
+		UA_ByteString_clear( &eventId );
+		return sc;
+	}
 	//The pumps demo after its nodeset loads.  pumpManual.toHertz's callback - a method without one answers BadInternalError (clients spec
-	//*Methods*, #318).  And a WriteMask of DisplayName and Description on pumpManual:  the nodeset declares none and the loader reads none
+	//*Methods*, #318) - and raiseEvent's (clients spec *Events*, #424), whose EventNotifier bit the nodeset declares and the loader
+	//applies.  And a WriteMask of DisplayName and Description on pumpManual:  the nodeset declares none and the loader reads none
 	//(open62541-nodeset-loader Nodeset.c), so without it no write to an attribute could pass whatever the user holds - this is the node an
 	//install can try the Attributes tab's edit on, and the one the gateway's WriteTests write (clients spec *Attributes*, #417);  the rights
 	//mask then gates the write on Update (UAAccess::GetUserRightsMask).
@@ -46,6 +68,9 @@ namespace Jde::Opc{
 		const NodeId method{ (NsIndex)ns, 6055 };//pumpManual.toHertz, as the nodeset numbers it.
 		if( let sc = UA_Server_setMethodNodeCallback(ua.Ptr(), method, &toHertz); sc )
 			WARNT( ELogTags::App, "Could not bind pumpManual.toHertz ({}):  {}", method.ToString(), UA_StatusCode_name(sc) );
+		const NodeId raise{ (NsIndex)ns, 6058 };//pumpManual.raiseEvent.
+		if( let sc = UA_Server_setMethodNodeCallback(ua.Ptr(), raise, &raiseEvent); sc )
+			WARNT( ELogTags::App, "Could not bind pumpManual.raiseEvent ({}):  {}", raise.ToString(), UA_StatusCode_name(sc) );
 		const NodeId pumpManual{ (NsIndex)ns, 5005 };
 		if( let sc = UA_Server_writeWriteMask(ua.Ptr(), pumpManual, UA_WRITEMASK_DISPLAYNAME | UA_WRITEMASK_DESCRIPTION); sc )
 			WARNT( ELogTags::App, "Could not set pumpManual's WriteMask ({}):  {}", pumpManual.ToString(), UA_StatusCode_name(sc) );

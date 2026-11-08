@@ -1,0 +1,59 @@
+@use '../../status';
+
+:host{
+	display: block;
+	width: 100%;
+}
+/* the toolbar is a list's (.jde-list-toolbar), as the History tab's is:  the field chips where its node chips sit, the controls at the right edge */
+.jde-list-toolbar{
+	flex-wrap: wrap;
+}
+.bar-left{
+	flex: 1 1 300px;
+	min-width: 0;
+}
+.bar-right{/* the controls wrap within the zone rather than run past a phone's pane (#330) */
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	align-items: center;
+}
+.fields{
+	width: 100%;
+	--mat-chip-container-height: 28px;
+}
+.from{
+	width: 220px;
+}
+.refresh-bar{
+	flex: 0 0 100%;
+}
+.refused{
+	@include status.refused( .5rem 1rem 0, var(--mat-sys-on-surface-variant) );
+}
+.row-count{
+	white-space: nowrap;
+	color: var(--mat-sys-on-surface-variant);
+}
+.mat-column-Time, .mat-column-ReceiveTime{
+	flex: 0 0 190px;
+	padding-inline: 5px;
+}
+.mat-column-Severity{
+	flex: 0 0 80px;
+	padding-inline: 5px;
+}
+.mat-column-EventType, .mat-column-SourceNode, .mat-column-SourceName{
+	flex: 0 0 160px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+.mat-column-Message{
+	flex: 1 1 240px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+.field-text{
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

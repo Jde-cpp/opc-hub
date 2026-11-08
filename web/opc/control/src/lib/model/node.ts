@@ -16,8 +16,9 @@ export enum ENodeClass{
 	DataType = 64,
 	View = 128,
 }
-//what every node page reads of a node, and what a Variable adds (Gateway.browseObjectsFolder, NodeResolver):  historizing gates the History tab
-export const nodeColumns = "id name browse nodeClass refType typeDef description";
+//what every node page reads of a node, and what a Variable adds (Gateway.browseObjectsFolder, NodeResolver):  historizing gates the History
+//tab, eventNotifier the Events tab (clients spec *Events*) - an attribute of objects and views, a status from any other class
+export const nodeColumns = "id name browse nodeClass refType typeDef description eventNotifier";
 export const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";
 
 //A node known by id alone, placed in the tree:  its name, its class and its page path - the gateway's walk up to Root (NodeQLAwait's id
@@ -39,7 +40,18 @@ export abstract class UaNode extends NodeId{
 		this.parent = parent;
 		this.refType = json.refType ? new NodeId( json.refType ) : undefined;//the keys the browse writes (Browse::Response::SetJson)
 		this.typeDef = json.typeDef ? new NodeId( json.typeDef ) : undefined;
+		this.eventNotifier = UaNode.numberOf( json.eventNotifier );
 	}
+	//an attribute read as a number:  the number itself, `{v,sc}` from a server that answers with a status, and undefined for null, a
+	//status alone or a class that hasn't the attribute (Variable.accessLevelOf's rule)
+	protected static numberOf( x:any ):number|undefined{
+		const v = x!=null && typeof x=="object" ? x["v"] : x;
+		return typeof v=="number" ? v : undefined;
+	}
+	//the EventNotifier attribute, an object's or a view's (OPC 10000-3 §5.5.2):  bit 0, SubscribeToEvents, lets a client subscribe to the
+	//node's events - the Events tab's gate (clients spec *Events*).  The Server object has it;  the bundled OPC server's pumpManual too.
+	eventNotifier?:number;
+	get notifiesEvents():boolean{ return !!((this.eventNotifier ?? 0) & 1); }
 	//the node's url segment:  the bare name in the connection's default namespace or in namespace 0 - Objects, Types and everything under
 	//Types - else `ns~name`, as the gateway spells a page path (NodeQLAwait::segment) and reads one (childBySegment).  A bare name
 	//takes the default namespace's sibling first (Root's, namespace 0's), so the other of two `siblings` of one name is `ns~name`.

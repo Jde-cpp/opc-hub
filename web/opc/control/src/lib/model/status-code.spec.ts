@@ -98,10 +98,11 @@ describe( 'OpcError status names', ()=>{
 		expect( shown() ).toBe( "BadNamedForTheTest" );
 	} );
 	it( 'asks for one name however many flag variants of the code turn up', ()=>{
-		OpcError.text( 0x40920500 );
-		OpcError.text( 0x40920600 );
-		expect( OpcError.emptyMessages().filter(sc=>sc==0x40920000) ).toHaveLength( 1 );
-		expect( OpcError.emptyMessages() ).not.toContain( 0x40920500 );
+		//0x4093, a code no other spec names:  the map is shared across the spec files a worker runs, and one that had set 0x4092's name left nothing to ask for
+		OpcError.text( 0x40930500 );
+		OpcError.text( 0x40930600 );
+		expect( OpcError.emptyMessages().filter(sc=>sc==0x40930000) ).toHaveLength( 1 );
+		expect( OpcError.emptyMessages() ).not.toContain( 0x40930500 );
 	} );
 
 	it( 'never asks for Good', ()=>{

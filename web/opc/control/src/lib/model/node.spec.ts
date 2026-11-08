@@ -23,6 +23,22 @@ describe( 'UaNode browse keys', ()=>{
 	} );
 } );
 
+//clients spec *Events* (#424):  the Events tab shows on a node whose EventNotifier has the SubscribeToEvents bit, read as the other
+//attributes are - a number, {v,sc} from a server that answers with a status, null or a status alone from one that doesn't say
+describe( 'UaNode.notifiesEvents', ()=>{
+	it( 'is bit 0 of the EventNotifier, however the attribute came', ()=>{
+		const o = ( eventNotifier:unknown )=>new OpcObject( <any>{ns: 2, i: 5005, name: 'o', browse: {ns: 2, name: 'o'}, eventNotifier} );
+		expect( o( 1 ).notifiesEvents ).toBe( true );
+		expect( o( 5 ).notifiesEvents ).toBe( true );
+		expect( o( 0 ).notifiesEvents ).toBe( false );
+		expect( o( {v: 1, sc: 0x40000000} ).notifiesEvents ).toBe( true );
+		expect( o( {sc: 0x80350000} ).notifiesEvents ).toBe( false );
+		expect( o( null ).notifiesEvents ).toBe( false );
+		expect( o( undefined ).eventNotifier ).toBeUndefined();
+		expect( x().notifiesEvents ).toBe( false );
+	} );
+} );
+
 //clients spec, Gaps #8:  a push carries both timestamps (Opc.FromServer.proto NodeValues.source/server) and the row kept
 //value and status alone.
 describe( 'Variable timestamps', ()=>{

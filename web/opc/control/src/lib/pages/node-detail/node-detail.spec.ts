@@ -7,6 +7,7 @@ import { NodeChildren } from './node-children/node-children';
 import { NodeDetail } from './node-detail';
 import { NodeReferences } from './node-references/node-references';
 import { NodeAttributes } from './node-attributes/node-attributes';
+import { NodeEvents } from './node-events/node-events';
 import { OpcStore } from '../../services/opc-store';
 import { ComponentPageTitle } from 'jde-spa';
 import { pageTitleStub, provideRoute, stable } from 'jde-spa/testing';
@@ -20,6 +21,8 @@ class ChildrenStub{ node = input<UaNode>(); refreshed = output<UaNode[]>(); }
 class AttributesStub{ node = input<UaNode>(); pageData = input<unknown>(); renamed = output<string>(); }
 @Component({ selector: 'node-references', template: '' })
 class ReferencesStub{ node = input<UaNode>(); pageData = input<unknown>(); }
+@Component({ selector: 'node-events', template: '' })
+class EventsStub{ node = input<UaNode>(); pageData = input<unknown>(); }
 
 const child = ( historizing:boolean )=>variable( 1, 'a', {historizing} );
 
@@ -31,7 +34,7 @@ describe( 'NodeDetail', ()=>{
 		const route = { node: {id: 85, name: 'Objects', toJson: ()=>({ns: 0, i: 85})}, siblings: [{title: 'Objects'}] };
 		const pageData = { route, nodes: [], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
 		TestBed.configureTestingModule({ providers: [provideRoute( {data: {pageData}} ), pageTitleStub] });
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences, NodeEvents]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub, EventsStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
@@ -54,7 +57,7 @@ describe( 'NodeDetail', ()=>{
 			provideRoute( {data: {pageData}} ),
 			pageTitleStub
 		]});
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences, NodeEvents]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub, EventsStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
@@ -77,7 +80,7 @@ describe( 'NodeDetail', ()=>{
 			provideRoute( {data: {pageData}} ),
 			pageTitleStub
 		]});
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences, NodeEvents]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub, EventsStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.detectChanges();
@@ -93,7 +96,7 @@ describe( 'NodeDetail', ()=>{
 		const route = { node, siblings: [{title: 'Pump (Manual)'}, {title: 'Pump 1'}] };
 		const pageData = { route, nodes: [], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
 		TestBed.configureTestingModule({ providers: [provideRoute( {data: {pageData}} ), pageTitleStub] });
-		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub]}} );
+		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences, NodeEvents]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub, EventsStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
 		fixture.componentRef.setInput( 'sideNav', route );
 		fixture.componentInstance.tabIndex.set( 1 );//the Attributes tab, whose content is lazy
@@ -113,5 +116,23 @@ describe( 'NodeDetail', ()=>{
 		fixture.componentInstance.tabIndex.set( 0 );
 		fixture.detectChanges();
 		fixture.destroy();
+	} );
+	//clients spec *Events* (#424):  the Events tab on a node whose EventNotifier has the SubscribeToEvents bit, and on no other
+	it( 'shows the Events tab for a node that notifies events', ()=>{
+		const tabsOf = ( node:any )=>{
+			const route = { node };
+			const pageData = { route, nodes: [], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
+			TestBed.configureTestingModule({ providers: [provideRoute( {data: {pageData}} ), pageTitleStub] });
+			TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren, NodeAttributes, NodeReferences, NodeEvents]}, add: {imports: [ChildrenStub, AttributesStub, ReferencesStub, EventsStub]}} );
+			const fixture = TestBed.createComponent( NodeDetail );
+			fixture.componentRef.setInput( 'sideNav', route );
+			fixture.detectChanges();
+			const tabs = [...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() );
+			fixture.destroy();
+			TestBed.resetTestingModule();//two pages in one test
+			return tabs;
+		};
+		expect( tabsOf( {id: 2253, name: 'Server', notifiesEvents: true, toJson: ()=>({ns: 0, i: 2253})} ) ).toEqual( ['Children', 'Attributes', 'References', 'Events'] );
+		expect( tabsOf( {id: 85, name: 'Objects', notifiesEvents: false, toJson: ()=>({ns: 0, i: 85})} ) ).toEqual( ['Children', 'Attributes', 'References'] );
 	} );
 } );

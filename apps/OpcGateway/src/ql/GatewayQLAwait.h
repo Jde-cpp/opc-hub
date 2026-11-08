@@ -20,7 +20,7 @@ namespace Jde::Opc::Gateway{
 		//and app/access tables never reach ConnectAwait.
 		Ω Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
 		//The server-bound queries Query answers - node/variable/dataType singular and plural, method - and serverDescription{ discoveryUrls }.
-		static constexpr array<sv,13> Tables{ "dataType", "dataTypes", "discoveryUrls", "history", "method", "namespaces", "node", "nodes", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables" };
+		static constexpr array<sv,14> Tables{ "dataType", "dataTypes", "discoveryUrls", "history", "historyEvents", "method", "namespaces", "node", "nodes", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables" };//historyEvents' `events` sub-table inherits.
 		α Suspend()ι->void override{ GetClient( this ); }
 		//The connection-attribute readers, untransformed - each builds what `q` asks for - shared with testConnection, which answers
 		//all of them in one object for a connection that is not saved.  Strand-only:  connection attributes are sync UA services.

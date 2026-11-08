@@ -12,6 +12,10 @@ namespace Jde::Opc::Gateway::FromServer{
 	α SubscribeAckTrans( FromServer::SubscriptionAck&& ack, RequestId requestId )ι->FromServer::Transmission;
 	α UnsubscribeTrans( uint32 id, flat_set<NodeId>&& successes, flat_set<NodeId>&& failures )ι->FromServer::Transmission;
 	α ItemModifiedTrans( const ServerCnnctnNK& opcId, const NodeId& node, const MonitoredItemModifyResult& result )ι->FromServer::Transmission;//a MonitoredItemModified push (spec *Watch list*), under request id 0 as a NodeValues is.
+	//An EventValues push (spec *Events*), under request id 0:  one Value per field in the listener's order, each as a NodeValues'
+	//reading goes - a structure by its members, by `types` - and one with no member for a field the item did not deliver, or one
+	//the proto cannot carry.
+	α EventTrans( const ServerCnnctnNK& opcId, const NodeId& node, const vector<const UA_Variant*>& fields, const ITypes* types )ι->FromServer::Transmission;
 	α QueryTrans( string&& result, RequestId requestId )ι->FromServer::Transmission;
 	//A historian subscription's messages (spec *Subscriptions*), each under its HistSubscribe's request id.
 	α HistSubscribeAckTrans( FromServer::HistSubscribeAck&& ack, RequestId requestId )ι->FromServer::Transmission;

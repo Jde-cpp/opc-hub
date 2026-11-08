@@ -6,8 +6,11 @@ namespace Jde::Opc::Gateway{
 	struct CreateMonitoredItemsRequest : Owned<UA_CreateMonitoredItemsRequest, UA_TYPES_CREATEMONITOREDITEMSREQUEST>{
 		//One item per node, in the map's order - the server answers by position, which is how UAMonitoringNodes reads the
 		//response.  `timestamps` is the request's:  BOTH by default - init is SOURCE alone, and NodeValues carries the server's too.
+		//A node whose parameters are an event's (MonitoringParameters::IsEvent) monitors its EventNotifier attribute, the rest their
+		//Value:  the two kinds go in one request, each item by its attribute (spec *Events*).
 		CreateMonitoredItemsRequest( const flat_map<NodeId,MonitoringParameters>& nodes, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ι;
 		α ToJson()ι->jarray;
+		Ω IsEvent( const UA_MonitoredItemCreateRequest& item )ι->bool{ return item.itemToMonitor.attributeId==UA_ATTRIBUTEID_EVENTNOTIFIER; }
 	};
 
 	inline CreateMonitoredItemsRequest::CreateMonitoredItemsRequest( const flat_map<NodeId,MonitoringParameters>& nodes, UA_TimestampsToReturn timestamps )ι{
@@ -18,7 +21,7 @@ namespace Jde::Opc::Gateway{
 		for( auto&& [n,parameters] : nodes ){//auto&&:  flat_map's iterator hands back a proxy pair.
 			auto& item = itemsToCreate[i++];
 			UA_NodeId_copy( &n, &item.itemToMonitor.nodeId );//deep copy - clear() owns it; assignment would alias the NodeId's heap data.
-			item.itemToMonitor.attributeId = UA_ATTRIBUTEID_VALUE;
+			item.itemToMonitor.attributeId = parameters.IsEvent() ? UA_ATTRIBUTEID_EVENTNOTIFIER : UA_ATTRIBUTEID_VALUE;
 			item.monitoringMode = UA_MONITORINGMODE_REPORTING;
 			parameters.Set( item.requestedParameters );
 		}
@@ -28,7 +31,7 @@ namespace Jde::Opc::Gateway{
 		for( auto request : Iterable<UA_MonitoredItemCreateRequest>(itemsToCreate, itemsToCreateSize) ){
 			jobject j;
 			j["nodeId"] = Opc::ToJson( request.itemToMonitor.nodeId );
-			j["attributeId"] = request.itemToMonitor.attributeId==13 ? "VALUE" : std::to_string(request.itemToMonitor.attributeId);
+			j["attributeId"] = request.itemToMonitor.attributeId==UA_ATTRIBUTEID_VALUE ? "VALUE" : IsEvent(request) ? "EVENTNOTIFIER" : std::to_string(request.itemToMonitor.attributeId);
 			j["monitoringMode"] = request.monitoringMode;
 			j["samplingInterval"] = request.requestedParameters.samplingInterval;
 			j["queueSize"] = request.requestedParameters.queueSize;
