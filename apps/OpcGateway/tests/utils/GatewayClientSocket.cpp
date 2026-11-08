@@ -121,6 +121,9 @@ namespace Jde::Opc::Gateway::Tests{
 			case kEventValues:
 				onEvent( m->event_values() );
 				break;
+			case kEventsRestored:
+				onEventsRestored( m->events_restored() );
+				break;
 			case kException:{
 				if( duplicateRefused(requestId, m->exception().what()) )
 					break;
@@ -260,6 +263,16 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 		}
 		DBGT( ELogTags::SocketClientRead, "[{},{}]An EventValues for a node nothing here watches.", event.opc_id(), nodeId.ToString() );
+	}
+
+	α GatewayClientSocket::onEventsRestored( const FromServer::EventsRestored& restored )ι->void{
+		rl _{ _subscriptionsMutex };
+		if( auto slugNodes = _subscriptions.find(restored.opc_id()); slugNodes!=_subscriptions.end() ){
+			if( auto listeners = slugNodes->second.find(ProtoUtils::ToNodeId(restored.node())); listeners!=slugNodes->second.end() ){
+				for( let& listener : listeners->second )
+					listener->OnEventsRestored();
+			}
+		}
 	}
 
 	α GatewayClientSocket::Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SL sl )ε->await<FromServer::UnsubscribeAck>{

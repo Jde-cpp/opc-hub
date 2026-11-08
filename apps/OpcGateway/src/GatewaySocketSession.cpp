@@ -77,6 +77,22 @@ namespace Jde::Opc::Gateway{
 		LogWrite( Ƒ("MonitoredItemModified: opcId: '{}', node: {}, sampling: {}, queue: {}, status: {:x}", opcNK, node.ToString(), result.RevisedSamplingInterval, result.RevisedQueueSize, result.Status), 0 );
 		Write( FromServer::ItemModifiedTrans(opcNK, node, result) );
 	}
+	α GatewaySocketSession::ConnectionRestored( const ServerCnnctnNK& opcNK, const flat_set<NodeId>& nodes )ι->void{
+		vector<NodeId> events;
+		{
+			lg _{ _parametersMutex };
+			if( auto p = _parameters.find(opcNK); p!=_parameters.end() ){
+				for( let& node : nodes ){
+					if( auto asked = p->second.find(node); asked!=p->second.end() && asked->second.IsEvent() )
+						events.push_back( node );
+				}
+			}
+		}
+		for( let& node : events ){
+			LogWrite( Ƒ("EventsRestored: opcId: '{}', node: {}", opcNK, node.ToString()), 0 );
+			Write( FromServer::EventsRestoredTrans(opcNK, node) );
+		}
+	}
 
 	α GatewaySocketSession::SetSessionId( str strSessionId, RequestId requestId )->Sessions::UpsertAwait::Task{
 		LogRead( Ƒ("sessionId: '{}'", strSessionId), requestId );

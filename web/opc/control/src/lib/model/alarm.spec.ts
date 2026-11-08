@@ -45,6 +45,8 @@ describe( 'toAlarmRow', ()=>{
 	it( 'is nothing for an event that is no condition\'s, and keeps a condition whose Retain the server left out', ()=>{
 		expect( toAlarmRow( plain( 1_700_000_000_000 ) ) ).toBeUndefined();
 		expect( toAlarmRow( bracket( 2787, 1_700_000_000_000 ) ) ).toBeUndefined();
+		expect( toAlarmRow( bracket( 2789, 1_700_000_000_000 ) ) ).toBeUndefined();
+		expect( toAlarmRow( bracket( 3035, 1_700_000_000_000 ) ) ).toBeUndefined();
 		const fields = condition( 1, 1_700_000_000_000 );
 		fields[EConditionField.Retain] = undefined;
 		expect( toAlarmRow( fields )?.retain ).toBe( true );

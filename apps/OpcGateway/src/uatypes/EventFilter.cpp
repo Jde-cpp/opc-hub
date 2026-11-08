@@ -1,7 +1,6 @@
 #include "EventFilter.h"
 #include <charconv>
 #include <open62541/util.h>
-#include <jde/opc/uatypes/UAString.h>
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -22,11 +21,21 @@ namespace Jde::Opc::Gateway{
 			throw refuse( path, "has an empty segment", sl );
 		return BrowseName{ UA_QualifiedName{ns, AllocUAString(text)} };
 	}
-	//The operand's own spelling, `[typeDefinitionId]/path#attribute` (open62541 util.h):  a `#`, or a node id's `=` ahead of any
-	//path - `i=2782#NodeId`, `ns=2;s=Truck/3:Wheel` - where a browse name would carry neither.
+	Ω nodeIdAhead( sv path )ι->bool{
+		if( path.starts_with("ns=") || path.starts_with("nsu=") ){
+			let semicolon = path.find( ';' );
+			if( semicolon==sv::npos )
+				return false;
+			path = path.substr( semicolon+1 );
+		}
+		return path.size()>1 && path[1]=='=' && "isgb"sv.contains( path[0] );
+	}
+	//The operand's own spelling, `[typeDefinitionId]/path#attribute` (open62541 util.h):  a node id with a path or attribute after it -
+	//`i=2782#NodeId`, `ns=2;s=Truck/3:Wheel` - or a leading `/` with an attribute.  Anything else is a browse path, which may hold a `#`
+	//or an `=`:  the operand's parser would refuse `2:Flow#1`.
 	Ω isOperand( sv path )ι->bool{
-		let first = path.substr( 0, path.find('/') );
-		return path.contains( '#' ) || first.contains( '=' );
+		let attribute = path.contains( '#' );
+		return path.starts_with( '/' ) ? attribute : nodeIdAhead( path ) && ( attribute || path.contains('/') );
 	}
 	Ω parseOperand( sv path, SL sl )ε->EventClause{
 		UA_SimpleAttributeOperand operand; UA_SimpleAttributeOperand_init( &operand );

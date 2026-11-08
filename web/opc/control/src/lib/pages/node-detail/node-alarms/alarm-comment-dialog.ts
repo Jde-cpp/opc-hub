@@ -4,8 +4,9 @@ import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogContent, MatDial
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 
-//what the dialog opens on:  the action - Acknowledge, Confirm or Comment - and the condition it is for, with its message
-export type AlarmCommentDialogData = { action:string; condition:string; message:string };
+//what the dialog opens on:  the action - Acknowledge, Confirm or Comment - and the condition it is for, with its message;  `comment`
+//is the text already typed when the condition moved on before it was sent
+export type AlarmCommentDialogData = { action:string; condition:string; message:string; comment?:string };
 
 //The comment an Acknowledge, Confirm or AddComment carries (clients spec *Alarms and conditions*, #426):  one text box, empty allowed,
 //since Part 9 takes a null comment as none.  Closes with the text, or with nothing on Cancel.
@@ -13,6 +14,9 @@ export type AlarmCommentDialogData = { action:string; condition:string; message:
 	template: `
 		<h2 mat-dialog-title>{{ data.action }} {{ data.condition }}</h2>
 		<mat-dialog-content>
+			@if( data.comment!==undefined ){
+				<p class="hint" role="status">The condition changed before this was sent.  Check it, then send again.</p>
+			}
 			@if( data.message ){
 				<p class="hint">{{ data.message }}</p>
 			}
@@ -34,7 +38,7 @@ export type AlarmCommentDialogData = { action:string; condition:string; message:
 export class AlarmCommentDialog{
 	dialogRef = inject<MatDialogRef<AlarmCommentDialog,string|undefined>>( MatDialogRef );
 	data = inject<AlarmCommentDialogData>( MAT_DIALOG_DATA );
-	comment = signal( "" );
+	comment = signal( this.data.comment ?? "" );
 	static open( dialog:MatDialog, data:AlarmCommentDialogData ):Promise<string|undefined>{
 		const ref = dialog.open<AlarmCommentDialog,AlarmCommentDialogData,string|undefined>( AlarmCommentDialog, {data, width: '420px', ariaModal: true} );
 		return new Promise( resolve=>ref.afterClosed().subscribe( r=>resolve( r ?? undefined ) ) );

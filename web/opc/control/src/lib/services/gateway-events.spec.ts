@@ -35,6 +35,11 @@ describe( 'Gateway.subscribeEvents', ()=>{
 		expect( acks[0] ).toEqual( expect.objectContaining( {opcId, fields: [], acked: true} ) );
 		expect( pushes ).toEqual( [] );
 	} );
+	it( 'says when a rebuild put the item back, with no fields', async ()=>{
+		const { gateway, pushes } = await subscribed();
+		gateway.receive( {eventsRestored: {opcId, node: {namespaceIndex: 2, numeric: 5005}}} );
+		expect( pushes ).toEqual( [expect.objectContaining( {opcId, fields: [], restored: true} )] );
+	} );
 	it( 'sends SubscribeEvents with the node and the fields selected', async ()=>{
 		const { gateway } = await subscribed( ['Rpm', '2:Foo'] );
 		expect( gateway.sentOf( 'subscribeEvents' ) ).toEqual( [{opcId, node: {namespaceIndex: 2, numeric: 5005}, select: ['Rpm', '2:Foo']}] );

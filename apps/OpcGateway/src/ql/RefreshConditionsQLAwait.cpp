@@ -1,5 +1,4 @@
 #include "RefreshConditionsQLAwait.h"
-#include <jde/ql/types/TableQL.h>
 #include "../UAClient.h"
 
 #define let const auto

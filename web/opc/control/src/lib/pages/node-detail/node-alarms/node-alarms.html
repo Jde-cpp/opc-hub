@@ -18,6 +18,9 @@
 @if( refreshStatus(); as text ){
 	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>The server answered the refresh with {{ text }}.</p>
 }
+@if( incomplete() ){
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="warning"></mat-icon>The server discarded events, so this list may be incomplete.  Refresh to load it again;  if this comes back, the server holds more conditions than one replay can deliver.</p>
+}
 <mat-table [dataSource]="sorted()" class="mat-elevation-z8 jde-dense">
 	<ng-container matColumnDef="source">
 		<mat-header-cell *matHeaderCellDef>Source</mat-header-cell>
@@ -48,19 +51,19 @@
 	</ng-container>
 	<ng-container matColumnDef="enabled">
 		<mat-header-cell *matHeaderCellDef>Enabled</mat-header-cell>
-		<mat-cell *matCellDef="let r">{{ r.enabledText }}</mat-cell>
+		<mat-cell *matCellDef="let r"><span class="field-text" [title]="r.enabledText">{{ r.enabledText }}</span></mat-cell>
 	</ng-container>
 	<ng-container matColumnDef="active">
 		<mat-header-cell *matHeaderCellDef>Active</mat-header-cell>
-		<mat-cell *matCellDef="let r" [class.state-on]="r.active">{{ r.activeText }}</mat-cell>
+		<mat-cell *matCellDef="let r" [class.state-on]="r.active"><span class="field-text" [title]="r.activeText">{{ r.activeText }}</span></mat-cell>
 	</ng-container>
 	<ng-container matColumnDef="acked">
 		<mat-header-cell *matHeaderCellDef>Acked</mat-header-cell>
-		<mat-cell *matCellDef="let r" [class.state-wanted]="r.acked===false">{{ r.ackedText }}</mat-cell>
+		<mat-cell *matCellDef="let r" [class.state-wanted]="r.acked===false"><span class="field-text" [title]="r.ackedText">{{ r.ackedText }}</span></mat-cell>
 	</ng-container>
 	<ng-container matColumnDef="confirmed">
 		<mat-header-cell *matHeaderCellDef>Confirmed</mat-header-cell>
-		<mat-cell *matCellDef="let r" [class.state-wanted]="r.acked===true && r.confirmed===false">{{ r.confirmedText }}</mat-cell>
+		<mat-cell *matCellDef="let r" [class.state-wanted]="r.acked===true && r.confirmed===false"><span class="field-text" [title]="r.confirmedText">{{ r.confirmedText }}</span></mat-cell>
 	</ng-container>
 	<ng-container matColumnDef="comment">
 		<mat-header-cell *matHeaderCellDef>Comment</mat-header-cell>

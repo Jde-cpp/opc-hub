@@ -93,6 +93,13 @@ namespace Jde::Opc::Gateway{
 			modified.set_status_code( result.Status );
 		});
 	}
+	α FromServer::EventsRestoredTrans( const ServerCnnctnNK& opcId, const NodeId& node )ι->FromServer::Transmission{
+		return set( 0, [&](FromServer::Message& m){
+			auto& restored = *m.mutable_events_restored();
+			restored.set_opc_id( opcId );
+			*restored.mutable_node() = ProtoUtils::ToNodeId( node );
+		});
+	}
 	α FromServer::EventTrans( const ServerCnnctnNK& opcId, const NodeId& node, const vector<const UA_Variant*>& fields, const ITypes* types )ι->FromServer::Transmission{
 		return set( 0, [&](FromServer::Message& m){
 			auto& event = *m.mutable_event_values();

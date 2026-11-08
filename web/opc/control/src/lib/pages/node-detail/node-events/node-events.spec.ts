@@ -167,6 +167,7 @@ describe( 'NodeEvents', ()=>{
 	} );
 	it( 'shows a refused change of the field list and stays subscribed', async ()=>{
 		const { fixture, tab, gateway, cells, push } = open();
+		gateway.events.next( {opcId: 'cn', node: tab.node().nodeId, fields: [], acked: true} );
 		gateway.events.next( {opcId: 'cn', node: tab.node().nodeId, fields: [], refused: 0x80450000} );
 		await flush();
 		expect( tab.error() ).toContain( '0x80450000' );
@@ -222,6 +223,8 @@ describe( 'NodeEvents', ()=>{
 			expect( tab.error() ).toContain( 'lost' );
 			await vi.advanceTimersByTimeAsync( 6_000 );
 			expect( gateway.subscribeEvents ).toHaveBeenCalledTimes( 2 );
+			expect( tab.live() ).toBe( false );
+			gateway.events.next( {opcId: 'cn', node: tab.node().nodeId, fields: [], acked: true} );
 			expect( tab.live() ).toBe( true );
 		}
 		finally{

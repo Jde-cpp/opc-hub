@@ -17,6 +17,7 @@ namespace Jde::Opc::Gateway::Tests{
 		β OnPush( const FromServer::NodeValues& /*push*/ )ι->void{}//the whole push, before OnData:  its quality and timestamps too
 		β OnModified( const FromServer::MonitoredItemModified& /*modified*/ )ι->void{}//the node's item was modified for a join or a leave (spec *Watch list*).
 		β OnEvent( const FromServer::EventValues& /*event*/ )ι->void{}//an event of a SubscribeEvents' item (spec *Events*):  one field per clause of the subscription's list.
+		β OnEventsRestored()ι->void{}//a rebuild put the node's event item back (spec *Alarms and conditions*).
 	};
 	//A historian subscription's listener (spec *Subscriptions*), as the web's will be:  a HistSubscribe's ack resumes its
 	//await, and what follows it, the HistSnapshot pages and then the HistRecords pushes, comes here under the HistSubscribe's
@@ -88,6 +89,7 @@ namespace Jde::Opc::Gateway::Tests{
 		α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void;
 		α onModified( const FromServer::MonitoredItemModified& modified )ι->void;//to the node's listeners, as a push goes.
 		α onEvent( const FromServer::EventValues& event )ι->void;//to the node's listeners, as a push goes.
+		α onEventsRestored( const FromServer::EventsRestored& restored )ι->void;//to the node's listeners, as a push goes.
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
 		α OnAck( uint32 ack )ι->void;

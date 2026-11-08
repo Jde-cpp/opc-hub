@@ -7,16 +7,15 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTableModule } from '@angular/material/table';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { Subscription } from 'rxjs';
 import { SnackbarService } from 'jde-framework';
-import { acknowledgeMethod, addCommentMethod, AlarmRow, Alarms, confirmMethod, conditionSelect, sortAlarms } from '../../../model/alarm';
+import { acknowledgeMethod, addCommentMethod, AlarmRow, Alarms, badEventIdUnknown, confirmMethod, conditionSelect, isQueueOverflow, isRefreshRequired, sortAlarms } from '../../../model/alarm';
+import { EventFields } from '../../../model/event';
 import { UaNode } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { isBad, scHex } from '../../../model/status-code';
-import { StatusCode } from '../../../model/types';
-import { EventPush, Gateway, gatewayAnswer } from '../../../services/gateway-service';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
+import { EventStream } from '../event-stream';
 import { AlarmCommentDialog } from './alarm-comment-dialog';
 
 //The Alarms tab (clients spec *Alarms and conditions*, #426), on a node whose EventNotifier has the SubscribeToEvents bit:  the Events
@@ -26,7 +25,10 @@ import { AlarmCommentDialog } from './alarm-comment-dialog';
 //subscription, so the retained conditions arrive before the live ones;  on the Server object the replay comes between RefreshStart
 //and RefreshEnd, which drop the rows the server no longer retains.  **Acknowledge**, **Confirm** and **Comment** call the type's
 //method on the condition node with the row's EventId and a comment, and a refusal - Bad_ConditionBranchAlreadyAcked, say - shows its
-//status on the row until the condition's next event.  A refusal of the subscription shows its status;  a connection lost subscribes again.
+//status on the row until the condition's next event;  when the row moved on while its dialog was open, the dialog comes back with the
+//comment, against the new event.  A refusal of the subscription shows its status;  a connection lost subscribes again, and each time
+//the item comes back up the table starts over from the refresh.  A server's RefreshRequired runs the refresh;  its queue overflowing
+//says the list may be incomplete, until the next refresh.
 @Component({
 	selector: 'node-alarms',
 	templateUrl: './node-alarms.html',
@@ -40,90 +42,81 @@ export class NodeAlarms implements OnDestroy{
 	constructor(){
 		effect( ()=>{ const node = this.node(); untracked( ()=>this.#restart( node ) ); } );//the router reuses the page across nodes
 	}
-	ngOnDestroy(){ this.#destroyed = true; this.#unsubscribe(); }
+	ngOnDestroy(){ this.#destroyed = true; this.#stream.destroy(); }
 	#destroyed = false;
 
 	pageData = input.required<NodePageData>();
 	node = input.required<UaNode>();
 	readonly columns = ['source', 'name', 'branch', 'severity', 'message', 'enabled', 'active', 'acked', 'confirmed', 'comment', 'time', 'actions'];
+	#stream = new EventStream( {
+		gateway: ()=>this.pageData().gateway,
+		connection: ()=>this.cnnctnSlug,
+		node: ()=>this.node(),
+		select: ()=>[...conditionSelect],
+		owner: `nodeAlarms/${Math.random().toString( 36 ).slice( 2 )}`,
+		onEvent: fields=>this.#onEvent( fields ),
+		onUp: ()=>this.#up()
+	} );
+	readonly live = this.#stream.live;
+	readonly error = this.#stream.error;
 	rows = signal<AlarmRow[]>( [] );
 	sorted = computed( ()=>sortAlarms( this.rows() ) );
-	refreshing = signal( false );//between RefreshStart and RefreshEnd
+	#bracket = signal( false );
+	refreshing = computed( ()=>this.#bracket() && this.live() );//between RefreshStart and RefreshEnd, while the stream is there to finish it
 	busy = signal( false );//a refreshConditions out
-	error = signal<string|undefined>( undefined );//a refusal's status, or why the subscription ended
 	refreshStatus = signal<string|undefined>( undefined );//what the server answered the refresh with, when not Good
-	live = signal( false );
+	incomplete = signal( false );//the server discarded events, or asked for refreshes too fast to follow:  the list may be short until a refresh
 	#alarms = new Alarms();
+	static readonly refreshRequiredGap = 10_000;//a replay is more work for a server that is already behind, so its asks don't each run one
+	#lastRequired = 0;
+	#refreshAgain = false;//the item came up while a refreshConditions was out, which may have been before it
 
 	#restart( node:UaNode ){
-		this.#unsubscribe();
+		this.#stream.close();
 		this.#alarms.clear();
 		this.#sync();
-		this.error.set( undefined );
 		this.refreshStatus.set( undefined );
-		this.#subscribe( node );
+		this.incomplete.set( false );
+		this.#lastRequired = 0;
+		this.#refreshAgain = false;
+		this.#stream.open( node );
 	}
-	#subscribe( node:UaNode ){
-		const gateway = this.pageData().gateway;
-		this.#subscription = gateway.subscribeEvents( this.cnnctnSlug, node.nodeId, [...conditionSelect], this.#owner ).subscribe( {
-			next: e=>this.#onEvent( e ),
-			error: ( e:unknown )=>{
-				this.#subscription = undefined;
-				this.live.set( false );
-				const answer = gatewayAnswer( e );
-				if( e instanceof OpcError )//refused:  the node, as the server read it - no retry would change it
-					this.#showRefused( e.sc, "the subscription" );
-				else if( answer && answer.httpStatus>=400 && answer.httpStatus<500 )
-					this.error.set( `The gateway refused the subscription:  ${answer.message}` );
-				else{//the socket went, or the gateway could not do it yet:  the item is asked for again
-					this.error.set( answer ? `The gateway could not subscribe:  ${answer.message}  Trying again.` : "Connection to the gateway lost.  The subscription resumes once it is back." );
-					clearTimeout( this.#retry );
-					this.#retry = setTimeout( ()=>{ if( !this.#destroyed && node===this.node() && !this.#subscription ) this.#subscribe( node ); }, Gateway.histRetryDelay );
-				}
-			}
-		} );
-		this.live.set( true );
-		this.error.set( undefined );
-	}
-	#showRefused( sc:StatusCode, what:string ){
-		const text = ()=>`The server refused ${what}:  ${scHex( sc )} ${OpcError.text( sc )}.`;
-		this.error.set( text() );
-		this.#nameOf( sc, ()=>{ if( this.error() ) this.error.set( text() ); } );
-	}
-	//the code's name fetched where this browser lacks it, then `shown` again
-	#nameOf( sc:StatusCode, shown:()=>void ){
-		if( !OpcError.statusCodeText( sc ) )
-			this.pageData().gateway.updateErrorCodes().then( ()=>{ if( !this.#destroyed ) shown(); } );
-	}
-	#subscription:Subscription|undefined;
-	#retry:ReturnType<typeof setTimeout>|undefined;
-	readonly #owner = `nodeAlarms/${Math.random().toString( 36 ).slice( 2 )}`;
-	#unsubscribe(){
-		clearTimeout( this.#retry );
-		this.#subscription?.unsubscribe();
-		this.#subscription = undefined;
-		this.live.set( false );
-	}
-	#onEvent( e:EventPush ){
-		if( e.refused )
-			return this.#showRefused( e.refused, "the field list" );
-		if( e.acked )//the item is up:  the retained conditions, before the live ones
-			return void this.refresh();
-		if( this.#alarms.apply( e.fields ) )
+	#onEvent( fields:EventFields ){
+		if( isQueueOverflow( fields ) )
+			return this.incomplete.set( true );
+		if( isRefreshRequired( fields ) )
+			return this.#refreshRequired();
+		if( this.#alarms.apply( fields ) )
 			this.#sync();
+	}
+	#refreshRequired(){
+		const now = Date.now();
+		if( now-this.#lastRequired<NodeAlarms.refreshRequiredGap )
+			return this.incomplete.set( true );
+		this.#lastRequired = now;
+		void this.refresh();
+	}
+	//The item is up, first or again:  the table starts over, since a condition an outage ended sends no event, and the retained ones come back before the live ones.
+	#up(){
+		this.#alarms.clear();
+		this.#sync();
+		void this.refresh();
 	}
 	#sync(){
 		this.rows.set( this.#alarms.rows );
-		this.refreshing.set( this.#alarms.refreshing );
+		this.#bracket.set( this.#alarms.refreshing );
 		this.#cdRef.markForCheck();
 	}
 	//ConditionRefresh with this connection's subscription:  the server's status where it is not Good
 	async refresh(){
-		if( this.busy() )
+		if( this.busy() ){
+			this.#refreshAgain = true;
 			return;
+		}
 		const node = this.node(), gateway = this.pageData().gateway;
 		this.busy.set( true );
 		this.refreshStatus.set( undefined );
+		this.incomplete.set( false );
 		try{
 			const sc = await gateway.refreshConditions( this.cnnctnSlug, node.nodeId );
 			if( this.#destroyed || node!==this.node() )
@@ -131,27 +124,32 @@ export class NodeAlarms implements OnDestroy{
 			if( isBad( sc ) ){
 				const text = ()=>`${scHex( sc )} ${OpcError.text( sc )}`;
 				this.refreshStatus.set( text() );
-				this.#nameOf( sc, ()=>{ if( this.refreshStatus() ) this.refreshStatus.set( text() ); } );
+				this.#stream.nameOf( sc, ()=>{ if( this.refreshStatus() ) this.refreshStatus.set( text() ); } );
 			}
 		}
 		catch( e ){
-			if( !this.#destroyed )
+			if( !this.#destroyed && node===this.node() )
 				this.#snackbar.exception( "Could not refresh the conditions.", e );
 		}
 		finally{
-			if( !this.#destroyed )
+			if( !this.#destroyed ){
 				this.busy.set( false );
+				const again = this.#refreshAgain && this.live();
+				this.#refreshAgain = false;
+				if( again )
+					void this.refresh();
+			}
 		}
 	}
 	//Acknowledge wants an unacknowledged condition, Confirm an acknowledged and unconfirmed one;  a server that gave no state is asked, and refuses what it will not take
 	canAcknowledge( r:AlarmRow ):boolean{ return r.acked!==true; }
 	canConfirm( r:AlarmRow ):boolean{ return r.confirmed!==true && r.acked!==false; }
-	acknowledge( r:AlarmRow ){ return this.#act( r, "Acknowledge", acknowledgeMethod ); }
-	confirm( r:AlarmRow ){ return this.#act( r, "Confirm", confirmMethod ); }
-	comment( r:AlarmRow ){ return this.#act( r, "Comment", addCommentMethod ); }
+	acknowledge( r:AlarmRow ){ return this.#act( r, "Acknowledge", acknowledgeMethod, x=>this.canAcknowledge( x ) ); }
+	confirm( r:AlarmRow ){ return this.#act( r, "Confirm", confirmMethod, x=>this.canConfirm( x ) ); }
+	comment( r:AlarmRow ){ return this.#act( r, "Comment", addCommentMethod, ()=>true ); }
 	//the type's method on the condition node with the row's EventId and the comment asked for:  a refusal is the call's status, shown on the row
-	async #act( r:AlarmRow, action:string, method:NodeId ){
-		const comment = await AlarmCommentDialog.open( this.#dialog, {action, condition: r.name || r.conditionId.uaString(), message: r.message} );
+	async #act( r:AlarmRow, action:string, method:NodeId, allowed:( r:AlarmRow )=>boolean, typed?:string ){
+		const comment = await AlarmCommentDialog.open( this.#dialog, {action, condition: r.name || r.conditionId.uaString(), message: r.message, comment: typed} );
 		if( comment===undefined || this.#destroyed )
 			return;
 		try{
@@ -160,9 +158,18 @@ export class NodeAlarms implements OnDestroy{
 				return;
 			const sc = result.statusCode;
 			if( isBad( sc ) ){
-				const text = ()=>`${action} refused:  ${scHex( sc )} ${OpcError.text( sc )}`;
-				this.#alarms.problem( r.key, text() );
-				this.#nameOf( sc, ()=>{ this.#alarms.problem( r.key, text() ); this.#sync(); } );
+				//never the newest EventId sent unasked:  an operator acknowledges the transition they saw, so they see this one first
+				const moved = sc==badEventIdUnknown ? this.#alarms.rows.find( x=>x.key==r.key && x.eventKey!=r.eventKey ) : undefined;
+				if( moved && allowed( moved ) )
+					return await this.#act( moved, action, method, allowed, comment );
+				const text = ()=>`${action} refused:  ${scHex( sc )} ${OpcError.text( sc )}`, shown = text();
+				this.#alarms.problem( r.key, shown );
+				this.#stream.nameOf( sc, ()=>{
+					if( this.#alarms.rows.find( x=>x.key==r.key )?.problem==shown ){//the condition's next event clears it
+						this.#alarms.problem( r.key, text() );
+						this.#sync();
+					}
+				} );
 			}
 			else
 				this.#alarms.problem( r.key, undefined );

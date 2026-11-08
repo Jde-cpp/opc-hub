@@ -10,8 +10,12 @@ export const conditionSelect:readonly string[] = [conditionIdField, 'ConditionNa
 export const enum EConditionField{ ConditionId=8, ConditionName, BranchId, Retain, Enabled, EnabledId, Active, ActiveId, Acked, AckedId, Confirmed, ConfirmedId, Comment }
 //RefreshStartEventType and RefreshEndEventType, the Server object's bracket around a ConditionRefresh's replay (Part 9 5.5.7)
 export const refreshStartType = new NodeId( {i: 2787} ), refreshEndType = new NodeId( {i: 2788} );
+//RefreshRequiredEventType, a server telling its clients to call ConditionRefresh (Part 9), and EventQueueOverflowEventType, which it
+//puts in an item's queue once it has had to discard events (Part 4 5.12.1.5).
+export const refreshRequiredType = new NodeId( {i: 2789} ), queueOverflowType = new NodeId( {i: 3035} );
 //AcknowledgeableConditionType's Acknowledge and Confirm, ConditionType's AddComment:  called on the condition node with the EventId and a comment
 export const acknowledgeMethod = new NodeId( {i: 9111} ), confirmMethod = new NodeId( {i: 9113} ), addCommentMethod = new NodeId( {i: 9029} );
+export const badEventIdUnknown = 0x809A0000;//what those answer for an EventId that is not the condition's latest
 
 //A condition as the view shows it:  its latest event, the condition fields read out.  `key` is the ConditionId with the branch, what
 //the view keeps one row per;  `eventKey` the EventId as hex, which a replay repeats;  `eventId` the bytes an Acknowledge takes.  A
@@ -38,6 +42,8 @@ function eventTypeIs( fields:EventFields, type:NodeId ):boolean{
 }
 export function isRefreshStart( fields:EventFields ):boolean{ return eventTypeIs( fields, refreshStartType ); }
 export function isRefreshEnd( fields:EventFields ):boolean{ return eventTypeIs( fields, refreshEndType ); }
+export function isRefreshRequired( fields:EventFields ):boolean{ return eventTypeIs( fields, refreshRequiredType ); }
+export function isQueueOverflow( fields:EventFields ):boolean{ return eventTypeIs( fields, queueOverflowType ); }
 function booleanOf( v:Value|undefined ):boolean|undefined{ return typeof v=='boolean' ? v : undefined; }
 //a two-state's text:  the server's where it gave one, else the Id read as `on`/`off`, else nothing
 export function stateText( text:Value|undefined, id:boolean|undefined, on:string, off:string ):string{

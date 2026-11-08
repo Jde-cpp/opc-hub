@@ -153,7 +153,7 @@ namespace Jde::Opc::Gateway{
 	α UAMonitoringNodes::HasEventItem( const NodeId& node )ι->bool{
 		rl _{ _mutex };
 		let pSubscription = get<1>( FindNode(node) );
-		return pSubscription && pSubscription->IsEvent();
+		return pSubscription && pSubscription->IsEvent() && !pSubscription->Listeners.empty();
 	}
 	α UAMonitoringNodes::Modified( const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void{
 		ul _{ _mutex };

@@ -43,6 +43,9 @@
 	min-width: 0;
 	padding-inline: 5px;
 }
+.mat-column-acked{
+	flex-basis: 135px;//fits "Unacknowledged"
+}
 .mat-column-branch{
 	flex: 0 0 80px;
 	min-width: 0;

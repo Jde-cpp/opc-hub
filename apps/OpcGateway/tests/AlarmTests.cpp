@@ -67,8 +67,8 @@ namespace Jde::Opc::Gateway::Tests{
 	};
 	//The condition's fields beside the base eight, in the order the view asks them:  the ConditionId under the operand's own spelling,
 	//then the state the view reads.
-	const vector<string> ConditionSelect{ "i=2782#NodeId", "Retain", "ActiveState/Id", "AckedState/Id", "ConfirmedState/Id", "Comment", "ConditionName" };
-	enum EField : int{ IEventId, IEventType, ISourceNode, ISourceName, ITime, IReceiveTime, IMessage, ISeverity, IConditionId, IRetain, IActive, IAcked, IConfirmed, IComment, IConditionName };
+	const vector<string> ConditionSelect{ "i=2782#NodeId", "ConditionName", "BranchId", "Retain", "EnabledState", "EnabledState/Id", "ActiveState", "ActiveState/Id", "AckedState", "AckedState/Id", "ConfirmedState", "ConfirmedState/Id", "Comment" };
+	enum EField : int{ IEventId, IEventType, ISourceNode, ISourceName, ITime, IReceiveTime, IMessage, ISeverity, IConditionId, IConditionName, IBranchId, IRetain, IEnabledText, IEnabled, IActiveText, IActive, IAckedText, IAcked, IConfirmedText, IConfirmed, IComment };
 	Ω subscribeEvents( const NodeId& node, sp<IListener> listener )ε->FromServer::SubscriptionAck{
 		return BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( Socket().SubscribeEvents(OpcServerSlug, node, ConditionSelect, move(listener)) );
 	}
@@ -77,7 +77,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//The condition raised through `call` reaches the Server object's events subscription with the ConditionId and its state - active,
 	//unacknowledged, retained;  `refreshConditions` on the node replays it, EventId kept, between RefreshStart and RefreshEnd, and is
-	//refused for a node this session has no events item on;  Acknowledge then Confirm through `call` are transitions the subscription
+	//refused for a node the client has no events item on;  Acknowledge then Confirm through `call` are transitions the subscription
 	//shows with the comment, a second Acknowledge answered Bad_ConditionBranchAlreadyAcked as the call's status;  the raise cleared, the
 	//condition is retained no more.
 	TEST_F( AlarmTests, ARaisedConditionIsReplayedAcknowledgedAndConfirmed ){
@@ -105,10 +105,17 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( event.fields(IAcked).boolean() );
 		EXPECT_FALSE( event.fields(IConfirmed).boolean() );
 		EXPECT_FALSE( event.fields(IConditionName).string_value().empty() );
+		let& branch = event.fields( IBranchId );
+		EXPECT_TRUE( !branch.has_node() || ProtoUtils::ToNodeId(branch.node())==NodeId{} ) << "one branch, so no BranchId";
+		EXPECT_EQ( event.fields(IEnabledText).localized_text().text(), "Enabled" );
+		EXPECT_TRUE( event.fields(IEnabled).boolean() );
+		EXPECT_EQ( event.fields(IActiveText).localized_text().text(), "Active" );
+		EXPECT_EQ( event.fields(IAckedText).localized_text().text(), "Unacknowledged" );
+		EXPECT_EQ( event.fields(IConfirmedText).localized_text().text(), "Unconfirmed" );
 
 		try{
 			RefreshConditions( NodeId{PumpsNs(), PumpManual} );
-			ADD_FAILURE() << "a refresh for a node with no events item of this session's was not refused";
+			ADD_FAILURE() << "a refresh for a node with no events item of this client's was not refused";
 		}
 		catch( const Exception& e ){
 			EXPECT_TRUE( string{e.what()}.contains("No events subscription") ) << e.what();
@@ -131,6 +138,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let acked = listener->At( 4 );
 		EXPECT_NE( eventId(acked), raised ) << "a transition is an event of its own";
 		EXPECT_TRUE( acked.fields(IAcked).boolean() );
+		EXPECT_EQ( acked.fields(IAckedText).localized_text().text(), "Acknowledged" );
 		EXPECT_FALSE( acked.fields(IConfirmed).boolean() );
 		EXPECT_TRUE( acked.fields(IRetain).boolean() );
 		EXPECT_EQ( acked.fields(IComment).localized_text().text(), "seen" );
@@ -142,6 +150,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let confirmed = listener->At( 5 );
 		EXPECT_TRUE( confirmed.fields(IAcked).boolean() );
 		EXPECT_TRUE( confirmed.fields(IConfirmed).boolean() );
+		EXPECT_EQ( confirmed.fields(IConfirmedText).localized_text().text(), "Confirmed" );
 		EXPECT_TRUE( confirmed.fields(IRetain).boolean() ) << "still active";
 		EXPECT_EQ( confirmed.fields(IComment).localized_text().text(), "dealt with" );
 
@@ -149,12 +158,31 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( listener->WaitFor(7) ) << "the clear never reached the subscription";
 		let cleared = listener->At( 6 );
 		EXPECT_FALSE( cleared.fields(IActive).boolean() );
+		EXPECT_EQ( cleared.fields(IActiveText).localized_text().text(), "Inactive" );
 		EXPECT_FALSE( cleared.fields(IRetain).boolean() ) << "inactive, acknowledged and confirmed";
 		ASSERT_NO_THROW( refreshed = RefreshConditions(server) );
 		EXPECT_EQ( Status(refreshed), UA_STATUSCODE_GOOD );
 		ASSERT_TRUE( listener->WaitFor(9) ) << "RefreshStart and RefreshEnd";
 		EXPECT_EQ( eventType(listener->At(7)), NodeId{UA_NS0ID_REFRESHSTARTEVENTTYPE} );
 		EXPECT_EQ( eventType(listener->At(8)), NodeId{UA_NS0ID_REFRESHENDEVENTTYPE} ) << "nothing replayed between";
+	}
+
+	//An item whose last listener left stays a moment for its delete (DeleteMonitoring):  a replay would reach nothing, so it is refused.
+	TEST_F( AlarmTests, ARefreshIsRefusedOnceTheLastListenerLeft ){
+		const NodeId pump{ PumpsNs(), PumpManual };
+		auto listener = ms<AlarmListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = subscribeEvents(pump, listener) );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		ASSERT_NO_THROW( RefreshConditions(pump) );
+		ASSERT_NO_THROW( (BlockAwait<ClientSocketAwait<FromServer::UnsubscribeAck>,FromServer::UnsubscribeAck>( Socket().UnsubscribeEvents(OpcServerSlug, pump) )) );
+		try{
+			RefreshConditions( pump );
+			ADD_FAILURE() << "a refresh for an item no listener holds was not refused";
+		}
+		catch( const Exception& e ){
+			EXPECT_TRUE( string{e.what()}.contains("No events subscription") ) << e.what();
+		}
 	}
 
 	//The ConditionId clause and the view's state fields through the events path alone, on the pump's own item, where no bracket comes

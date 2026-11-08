@@ -95,7 +95,7 @@ namespace Jde::Opc::Gateway{
 		α OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void;
 		α GetResult( Handle requestId, StatusCode status )ι->FromServer::SubscriptionAck;
 		α Handles( const flat_set<NodeId>& nodes )ι->flat_map<NodeId,MonitorHandle>;//the item each node is monitored on - none for a node that has none.  A snapshot:  good until the next change.
-		α HasEventItem( const NodeId& node )ι->bool;//the node is monitored on an event item the server has answered (spec *Events*) - what a refreshConditions replays to.  A snapshot, as Handles is.
+		α HasEventItem( const NodeId& node )ι->bool;//the node is monitored on an event item the server has answered and a listener still holds (spec *Events*) - what a refreshConditions replays to.  A snapshot, as Handles is.
 		α Modified( const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void;//a ModifyMonitoredItems answer:  what GetResult reports as the item's parameters from here.
 		//What a session-loss rebuild has to re-create: the live node→listener map, taken *out* - every handle in here names a
 		//subscription the server dropped with the session, so nothing keyed by one can be reused.  See UAClient::Resubscribe.

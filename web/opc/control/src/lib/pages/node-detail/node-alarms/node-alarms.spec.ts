@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { SnackbarService } from 'jde-framework';
-import { conditionSelect } from '../../../model/alarm';
+import { badEventIdUnknown, conditionSelect } from '../../../model/alarm';
 import { EventFields } from '../../../model/event';
 import { OpcObject, UaNode } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
@@ -36,7 +36,8 @@ describe( 'NodeAlarms', ()=>{
 		const cells = ()=>[...fixture.nativeElement.querySelectorAll( 'mat-row' )].map( r=>[...r.querySelectorAll( 'mat-cell' )].map( c=>c.textContent.trim() ) );
 		const push = ( f:EventFields )=>gateway.events.next( {opcId: 'cn', node: node.nodeId, fields: f} );
 		const acked = ()=>gateway.events.next( {opcId: 'cn', node: node.nodeId, fields: [], acked: true} );
-		return { fixture, tab, gateway, snackbar, dialog, cells, push, acked };
+		const restored = ()=>gateway.events.next( {opcId: 'cn', node: node.nodeId, fields: [], restored: true} );
+		return { fixture, tab, gateway, snackbar, dialog, cells, push, acked, restored };
 	};
 
 	it( 'subscribes the node\'s events with the condition fields, and refreshes once the ack comes', async ()=>{
@@ -60,7 +61,9 @@ describe( 'NodeAlarms', ()=>{
 		expect( fixture.nativeElement.querySelector( '.jde-empty' ) ).not.toBeNull();
 	} );
 	it( 'brackets the replay:  Refreshing… between RefreshStart and RefreshEnd, and a row not replayed goes', async ()=>{
-		const { fixture, tab, push } = open();
+		const { fixture, tab, push, acked } = open();
+		acked();
+		await flush();
 		push( condition( 1, 1_700_000_000_000 ) );
 		push( bracket( 2787, 1_700_000_001_000 ) );
 		fixture.detectChanges();
@@ -138,16 +141,181 @@ describe( 'NodeAlarms', ()=>{
 		vi.useFakeTimers();
 		try{
 			TestBed.resetTestingModule();//a second tab, whose socket goes
-			const { tab, gateway } = open();
+			const { tab, gateway, acked } = open();
 			gateway.events.error( new Error( 'Connection to the gateway was lost.' ) );
 			expect( tab.error() ).toContain( 'lost' );
 			await vi.advanceTimersByTimeAsync( 6_000 );
 			expect( gateway.subscribeEvents ).toHaveBeenCalledTimes( 2 );
+			expect( tab.live() ).toBe( false );
+			acked();
 			expect( tab.live() ).toBe( true );
 		}
 		finally{
 			vi.useRealTimers();
 		}
+	} );
+	it( 'is live once the ack comes, and Refresh waits for it', async ()=>{
+		const { fixture, tab, acked } = open();
+		fixture.detectChanges();
+		const button = ()=><HTMLButtonElement>fixture.nativeElement.querySelector( 'mat-toolbar button' );
+		expect( tab.live() ).toBe( false );
+		expect( button().disabled ).toBe( true );
+		acked();
+		await flush();
+		fixture.detectChanges();
+		expect( tab.live() ).toBe( true );
+		expect( button().disabled ).toBe( false );
+	} );
+	it( 'keeps the rows through a lost socket and starts over from the refresh when the item is back', async ()=>{
+		vi.useFakeTimers();
+		try{
+			const { tab, gateway, push, acked } = open();
+			acked();
+			await vi.advanceTimersByTimeAsync( 0 );
+			push( condition( 1, 1_700_000_000_000 ) );
+			push( bracket( 2787, 1_700_000_001_000 ) );
+			expect( tab.refreshing() ).toBe( true );
+			gateway.events.error( new Error( 'Connection to the gateway was lost.' ) );
+			expect( tab.refreshing() ).toBe( false );
+			await vi.advanceTimersByTimeAsync( 6_000 );
+			expect( tab.rows() ).toHaveLength( 1 );
+			gateway.refreshConditions.mockClear();
+			acked();
+			expect( tab.rows() ).toEqual( [] );
+			await vi.advanceTimersByTimeAsync( 0 );
+			expect( gateway.refreshConditions ).toHaveBeenCalledTimes( 1 );
+		}
+		finally{
+			vi.useRealTimers();
+		}
+	} );
+	it( 'starts over from the refresh when a rebuild of the server\'s session puts the item back', async ()=>{
+		const { tab, gateway, push, acked, restored } = open();
+		acked();
+		await flush();
+		push( bracket( 2787, 1_700_000_000_000 ) );
+		push( condition( 1, 1_700_000_001_000 ) );
+		expect( tab.refreshing() ).toBe( true );
+		gateway.refreshConditions.mockClear();
+		restored();
+		expect( tab.rows() ).toEqual( [] );
+		expect( tab.refreshing() ).toBe( false );
+		await flush();
+		expect( gateway.refreshConditions ).toHaveBeenCalledTimes( 1 );
+	} );
+	it( 'refreshes a new node even while the old node\'s refresh is out, and says nothing of the old one failing', async ()=>{
+		const { fixture, tab, gateway, snackbar, acked } = open();
+		let fail!:( e:Error )=>void;
+		gateway.refreshConditions.mockImplementationOnce( ()=>new Promise<number>( ( _, reject )=>fail = reject ) );
+		acked();
+		expect( tab.busy() ).toBe( true );
+		fixture.componentRef.setInput( 'node', new OpcObject( <any>{ns: 2, i: 5005, name: 'Pump (Manual)', browse: {ns: 2, name: 'pumpManual'}, eventNotifier: 1} ) );
+		fixture.detectChanges();
+		await flush();
+		acked();
+		expect( gateway.refreshConditions ).toHaveBeenCalledTimes( 1 );
+		fail( new Error( 'no session' ) );
+		await flush();
+		expect( snackbar.exception ).not.toHaveBeenCalled();
+		expect( gateway.refreshConditions ).toHaveBeenCalledTimes( 2 );
+		expect( gateway.refreshConditions ).toHaveBeenLastCalledWith( 'cn', expect.objectContaining( {ns: 2, id: 5005} ) );
+		expect( tab.busy() ).toBe( false );
+	} );
+	it( 'names a refusal\'s status once the names arrive, but never over the row\'s next event', async ()=>{
+		const { fixture, tab, gateway, push } = open();
+		const refused = {statusCode: 0x80D70000, inputArgumentResults: [], outputArguments: []};
+		let named!:()=>void;
+		gateway.updateErrorCodes.mockImplementationOnce( ()=>new Promise<void>( r=>named = r ) );
+		gateway.call.mockResolvedValueOnce( refused );
+		push( condition( 1, 1_700_000_000_000 ) );
+		fixture.detectChanges();
+		await tab.acknowledge( tab.rows()[0] );
+		push( condition( 2, 1_700_000_001_000, {acked: true} ) );
+		named();
+		await flush();
+		expect( tab.rows()[0].problem ).toBeUndefined();
+
+		gateway.updateErrorCodes.mockImplementationOnce( async ()=>OpcError.setMessages( [{sc: 0x80D80000, message: 'Bad_Named'}] ) );
+		gateway.call.mockResolvedValueOnce( {...refused, statusCode: 0x80D80000} );
+		await tab.comment( tab.rows()[0] );
+		await flush();
+		expect( tab.rows()[0].problem ).toContain( 'Bad_Named' );
+	} );
+	it( 'brings the dialog back with the comment when the condition moved on, and only then sends the new EventId', async ()=>{
+		const { fixture, tab, gateway, dialog, push } = open();
+		push( condition( 1, 1_700_000_000_000 ) );
+		fixture.detectChanges();
+		gateway.call.mockImplementationOnce( async ()=>{
+			push( condition( 2, 1_700_000_001_000 ) );
+			return {statusCode: badEventIdUnknown, inputArgumentResults: [], outputArguments: []};
+		} );
+		await tab.acknowledge( tab.rows()[0] );
+		expect( dialog.open ).toHaveBeenCalledTimes( 2 );
+		expect( dialog.open ).toHaveBeenLastCalledWith( AlarmCommentDialog, expect.objectContaining( {data: expect.objectContaining( {comment: 'seen'} )} ) );
+		expect( gateway.call ).toHaveBeenCalledTimes( 2 );
+		expect( gateway.call ).toHaveBeenLastCalledWith( 'cn', expect.anything(), expect.anything(), [Uint8Array.from( [2] ), {text: 'seen'}] );
+	} );
+	it( 'shows the refusal when the condition moved on to where the action no longer applies', async ()=>{
+		const { fixture, tab, gateway, dialog, push } = open();
+		push( condition( 1, 1_700_000_000_000 ) );
+		fixture.detectChanges();
+		gateway.call.mockImplementationOnce( async ()=>{
+			push( condition( 2, 1_700_000_001_000, {acked: true} ) );
+			return {statusCode: badEventIdUnknown, inputArgumentResults: [], outputArguments: []};
+		} );
+		await tab.acknowledge( tab.rows()[0] );
+		expect( dialog.open ).toHaveBeenCalledTimes( 1 );
+		expect( tab.rows()[0].problem ).toContain( '0x809A0000' );
+	} );
+	it( 'runs the refresh a server asks for, keeping the table and adding no row', async ()=>{
+		const { tab, gateway, push, acked } = open();
+		acked();
+		await flush();
+		push( condition( 1, 1_700_000_000_000 ) );
+		gateway.refreshConditions.mockClear();
+		push( bracket( 2789, 1_700_000_001_000 ) );
+		await flush();
+		expect( gateway.refreshConditions ).toHaveBeenCalledTimes( 1 );
+		expect( tab.rows() ).toHaveLength( 1 );
+		expect( tab.incomplete() ).toBe( false );
+	} );
+	it( 'follows a server\'s asks at most once per interval, and says the list may be short for the rest', async ()=>{
+		vi.useFakeTimers();
+		try{
+			const { tab, gateway, push, acked } = open();
+			acked();
+			await vi.advanceTimersByTimeAsync( 0 );
+			gateway.refreshConditions.mockClear();
+			push( bracket( 2789, 1_700_000_000_000 ) );
+			await vi.advanceTimersByTimeAsync( 0 );
+			push( bracket( 2789, 1_700_000_001_000 ) );
+			await vi.advanceTimersByTimeAsync( 0 );
+			expect( gateway.refreshConditions ).toHaveBeenCalledTimes( 1 );
+			expect( tab.incomplete() ).toBe( true );
+			await vi.advanceTimersByTimeAsync( NodeAlarms.refreshRequiredGap );
+			push( bracket( 2789, 1_700_000_012_000 ) );
+			await vi.advanceTimersByTimeAsync( 0 );
+			expect( gateway.refreshConditions ).toHaveBeenCalledTimes( 2 );
+			expect( tab.incomplete() ).toBe( false );
+		}
+		finally{
+			vi.useRealTimers();
+		}
+	} );
+	it( 'says a queue overflow may have shortened the list, with no refresh of its own, until the next refresh', async ()=>{
+		const { fixture, tab, gateway, push, acked } = open();
+		acked();
+		await flush();
+		gateway.refreshConditions.mockClear();
+		push( bracket( 3035, 1_700_000_000_000 ) );
+		await flush();
+		fixture.detectChanges();
+		expect( gateway.refreshConditions ).not.toHaveBeenCalled();
+		expect( tab.rows() ).toEqual( [] );
+		expect( fixture.nativeElement.textContent ).toContain( 'may be incomplete' );
+		await tab.refresh();
+		fixture.detectChanges();
+		expect( fixture.nativeElement.textContent ).not.toContain( 'may be incomplete' );
 	} );
 	it( 'starts over on another node', async ()=>{
 		const { fixture, tab, gateway, push } = open();
