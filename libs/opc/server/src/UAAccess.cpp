@@ -479,6 +479,10 @@ namespace Jde::Opc::Server{
 		auto& context = UAAccess::context( server, ac );
 		if( !method || !ctx || UAAccess::expired(context, ctx) )
 			return false;
+		//ConditionRefresh (clients spec *Alarms and conditions*, #425):  open to every session, since it replays only what the session's own
+		//subscription already receives (Conditions::Refresh), and called on ConditionType, a node no resource governs.
+		if( method->namespaceIndex==0 && method->identifierType==UA_NODEIDTYPE_NUMERIC && method->identifier.numeric==UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH )
+			return true;
 		let rights = object ? context.NodeAccess->CallRights( *object, *method, ctx->UserPK ) : context.NodeAccess->NodeRights( *method, ctx->UserPK );
 		return !empty( rights & Access::ERights::Execute );
 	}
