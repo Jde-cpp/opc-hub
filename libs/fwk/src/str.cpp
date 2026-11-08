@@ -6,9 +6,6 @@
 #include <boost/uuid/string_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
 
-#ifdef _MSC_VER
-	#include <jde/fwk/process/os/windows/WindowsUtilities.h>
-#endif
 #define let const auto
 
 template<> α Jde::To<double>( sv x )ι->double{

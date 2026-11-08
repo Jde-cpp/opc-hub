@@ -555,9 +555,11 @@ namespace Jde::Opc::Gateway::Tests{
 			boost::asio::ip::tcp::acceptor silent{ ctx, {boost::asio::ip::make_address("127.0.0.1"), 0} };
 			let start = steady_clock::now();
 			//over http, as the page sends it:  BadTimeout answers 500, whose body carried the status alone and not the reason.  The row's
-			//requestTimeout is the deadline, short here - the gateway's 10 s fallback was nearly all of QLTests' time.
+			//requestTimeout is the deadline, short here - the gateway's 10 s fallback was nearly all of QLTests' time - since nothing
+			//else has to happen inside it.
+			constexpr milliseconds requestTimeout{ 500 };
 			const string timed{ "testConnection( opc: $opc, url: $url, certificateUri: $certificateUri, requestTimeout: $requestTimeout ){ applicationUri }" };
-			jobject body{ {"query", timed}, {"variables", jobject{{"opc", slug}, {"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"certificateUri", urn}, {"requestTimeout", 2000}}} };
+			jobject body{ {"query", timed}, {"variables", jobject{{"opc", slug}, {"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"certificateUri", urn}, {"requestTimeout", requestTimeout.count()}}} };
 			try{
 				Post( GatewayPort(), "/graphql", serialize(body), Ƒ("{:x}", AppClient()->SessionId()) );
 				ADD_FAILURE() << "a connect to a silent listener succeeded";
@@ -569,8 +571,8 @@ namespace Jde::Opc::Gateway::Tests{
 				EXPECT_NE( e.Res().Body().find("did not complete the connection"), string::npos ) << e.Res().Body();
 			}
 			let elapsed = steady_clock::now()-start;
-			EXPECT_GE( elapsed, 2s ) << "the requestTimeout is the deadline";
-			EXPECT_LT( elapsed, 8s ) << "the row's requestTimeout, 2 s, is the deadline - not the gateway's 10 s.";
+			EXPECT_GE( elapsed, requestTimeout ) << "the requestTimeout is the deadline";
+			EXPECT_LT( elapsed, 8s ) << "the row's requestTimeout, 500 ms, is the deadline - not the gateway's 10 s.";
 		}
 		EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) ) << "a failed test is not the slug's connectionStatus.";
 		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) );

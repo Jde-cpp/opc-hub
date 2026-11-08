@@ -1,15 +1,34 @@
 ﻿#include <jde/fwk/io/FileAwait.h>
-#include <jde/fwk/exceptions/IOException.h>
-#include <jde/fwk/process/execution.h>
+#include <boost/asio/io_context_strand.hpp>
+#include <boost/asio/post.hpp>
 #include "FileOp.h"
 
 #define let const auto
 namespace Jde{
+	struct IoStrand{
+		IoStrand( sp<boost::asio::io_context> ioc )ι: Ioc{ move(ioc) }, Strand{ *Ioc }{}
+		sp<boost::asio::io_context> Ioc;//keeps the io_context alive while a poster holds the strand.
+		boost::asio::io_context::strand Strand;
+	};
+	ABSL_CONST_INIT absl::Mutex _strandMutex{ absl::kConstInit };
+	sp<IoStrand> _strand ABSL_GUARDED_BY(_strandMutex);
+	α IO::Internal::PostIO( absl::AnyInvocable<void()> f )ι->void{
+		sp<IoStrand> strand;
+		{
+			ul _{ _strandMutex };
+			if( !_strand && Execution::Running() )
+				_strand = ms<IoStrand>( Executor() );
+			strand = _strand;
+		}
+		if( strand )//null once the executor has stopped - the work could never run anyway.
+			boost::asio::post( strand->Strand, std::move(f) );
+	}
 	uint32 _chunkSize;
 	α IO::ChunkByteSize()ι->uint32{ return _chunkSize; }
 	uint8 _windowSize;
 	α IO::WindowSize()ι->uint8{ return _windowSize; }
 	α IO::Init()ε->void{
+		Process::AddFinalizeFunction( [](bool){ ul _{ _strandMutex }; _strand = nullptr; } );//after the join:  io still in flight during the stop posts through it.
 		_chunkSize = Settings::FindNumber<uint32>("/workers/io/chunkByteSize").value_or(1 << 19);//512 KB.
 		_windowSize = Settings::FindNumber<uint8>("/workers/io/threads").value_or(5);
 #ifndef _MSC_VER
@@ -39,7 +58,7 @@ namespace IO::Internal{
 	atomic<uint> _inFlight{};
 	α FileOp::InFlight()ι->uint{ return _inFlight; }
 	α FileOp::Send( sp<FileOp> self )ι->void{
-		if( !Executor() ){//finalizing - the io could never run, nor the resume be posted:  Post's drop semantics, on both platforms.
+		if( !Execution::Running() ){//finalizing - the io could never run, nor the resume be posted:  Post's drop semantics, on both platforms.
 			WARN( "[{}]Send after executor teardown - dropping file io.", Path.string() );
 			return;
 		}

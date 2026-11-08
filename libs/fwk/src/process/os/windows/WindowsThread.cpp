@@ -1,7 +1,5 @@
-#include <processthreadsapi.h>
 #include <jde/fwk/process/thread.h>
-#include <jde/fwk/usings.h>
-#include <thread>
+#include "WindowsUtilities.h"
 
 #define let const auto
 constexpr Jde::ELogTags _tags{ Jde::ELogTags::Threads };
@@ -29,12 +27,10 @@ TSetThreadDescription pSetThreadDescription = nullptr;
 
 Ω winSetThreadDscrptn( HANDLE h, Jde::sv ansiDescription )ι->void{
 	using namespace Jde;
-	let count = ::MultiByteToWideChar( CP_UTF8, 0, string{ansiDescription}.c_str() , -1, nullptr, 0 );
-	auto wc = std::make_unique_for_overwrite<wchar_t[]>( count );
-	::MultiByteToWideChar( CP_UTF8, 0, ansiDescription.data(), -1, wc.get(), count );
+	let wc = Windows::ToWString( ansiDescription );
 	if( !pSetThreadDescription )
 		initialize();
-	if( pSetThreadDescription && FAILED((*pSetThreadDescription)(h, wc.get())) )
+	if( pSetThreadDescription && FAILED((*pSetThreadDescription)(h, wc.c_str())) )
 		ERR( "({:x})Could not set name for thread: '{}', h: {:x}", ::GetLastError(), ansiDescription, (uint)h );
 }
 

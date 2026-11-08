@@ -47,7 +47,6 @@ namespace Jde{
 	}
 
 	α DurationTimer::Suspend()ι->void{
-		Execution::Run();
 		auto state = _state;//the handler may resume the awaiter, which destroys this, before the lock below is released.
 		ul _{ state->Mutex };
 		state->Timer.expires_after( _duration );

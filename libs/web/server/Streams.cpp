@@ -39,7 +39,7 @@ namespace Jde::Web::Server{
 
 	template<class TStream>
 	SocketStream<TStream>::SocketStream( typename TStream::next_layer_type&& next, beast::flat_buffer&& buffer )ι:
-		Core{ net::make_strand(executor_type{next.get_executor()}), move(next) },
+		Core{ net::make_strand(next.get_executor().get_inner_executor()), move(next) },
 		_buffer{ move(buffer) }
 	{
 		_ws.binary( true );

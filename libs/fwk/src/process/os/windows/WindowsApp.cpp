@@ -6,6 +6,7 @@
 #include <io.h> //_isatty
 #include <timeapi.h> //timeBeginPeriod - WIN32_LEAN_AND_MEAN leaves it out of windows.h
 #pragma comment( lib, "winmm.lib" )
+#include <jde/fwk/exceptions/IOException.h>
 //#include "WindowsDrive.h"
 #include "WindowsSvc.h"
 #include "WindowsWorker.h"
@@ -192,7 +193,7 @@ namespace Jde{
 			CHECK_NOLOG( ::VerQueryValueW(block.data(), L"\\VarFileInfo\\Translation", (LPVOID*)&lpTranslate, &cbTranslate) && cbTranslate>=sizeof(LANGANDCODEPAGE) );
 			var name = Windows::ToWString( Jde::format("\\StringFileInfo\\{:04x}{:04x}\\{}", lpTranslate[0].wLanguage, lpTranslate[0].wCodePage, key) ); wchar_t* value; UINT chars;
 			CHECK_NOLOG( ::VerQueryValueW(block.data(), name.c_str(), (LPVOID*)&value, &chars) && chars );
-			y = Windows::ToString( std::wstring{value, ::wcsnlen(value, chars)} );//chars counts the terminator - or not, by resource compiler
+			y = Windows::ToString( std::wstring_view{value, ::wcsnlen(value, chars)} );//chars counts the terminator - or not, by resource compiler
 		}
 		catch( const runtime_error& )
 		{}
@@ -224,16 +225,6 @@ namespace Jde{
 	//}
 	α Process::CompanyRootDir()ι->fs::path{ return Process::CompanyName(); }
 
-/*	α IApplication::EnvironmentVariable( str variable, SL sl )ι->optional<string>{
-		char buffer[32767];
-		optional<string> result;
-		if( !::GetEnvironmentVariable(variable.c_str(), buffer, sizeof(buffer)) )
-			Logging::LogOnce( sl, ELogLevel::Information, ELogTags::Settings, "GetEnvironmentVariable('{}') failed:  {}", variable,  Ƒ("{:x}", ::GetLastError()) );
-		else
-			result = buffer;
-
-		return result;
-	}*/
 	α Process::ProgramDataFolder()ι->fs::path{
 		return fs::path{ GetEnv("ProgramData").value_or("") };
 	}
@@ -305,7 +296,7 @@ namespace Jde{
 	}
 #pragma clang diagnostic ignored "-Wmicrosoft-cast"
 	α Process::GetProcAddress( void* pModule, str procName )ε->void*{
-		auto p = ::GetProcAddress( (HMODULE)pModule, procName.c_str() ); CHECK( p );
+		auto p = ::GetProcAddress( (HMODULE)pModule, procName.c_str() ); THROW_IF( !p, "GetProcAddress('{}'): {}", procName, ::GetLastError() );
 		return p;
 	}
 }

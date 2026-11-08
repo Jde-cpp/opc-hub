@@ -10,6 +10,7 @@
 namespace Jde::IO{
 	struct io_uring _ring;
 	int _eventFd{ -1 };//signaled by the kernel when a cqe posts; -1 → fall back to polling.
+	Ω releaseEventSd()ι->void;
 	α Internal::LinuxInit()ε->void{
 		//No file io works without the ring - the polling below replaces only the eventfd.  liburing returns -errno.
 		let ring = io_uring_queue_init( 256, &_ring, 0 );
@@ -23,6 +24,7 @@ namespace Jde::IO{
 				_eventFd = -1;
 			}
 		}
+		Process::AddFinalizeFunction( [](bool){ releaseEventSd(); } );//after the join:  the descriptor must die before the io_context does.
 	}
 	using namespace Internal;
 	constexpr ELogTags _tags{ ELogTags::IO };
@@ -275,13 +277,17 @@ namespace Jde::IO{
 	up<boost::asio::posix::stream_descriptor> _eventSd;
 	uint64_t _eventCount;
 	bool _armed{};//io-strand confined
-	struct EventFdShutdown final : IShutdown{//descriptor must die before the io_context does.
-		α Shutdown( bool /*terminate*/, SL )ι->void override{
-			if( _eventSd ){
-				_eventSd->release();//keeps the eventfd open & registered with the ring in case the executor restarts.
-				_eventSd = nullptr;
-				_armed = false;
-			}
+	Ω releaseEventSd()ι->void{
+		if( _eventSd ){
+			_eventSd->release();//keeps the eventfd open & registered with the ring.
+			_eventSd = nullptr;
+			_armed = false;
+		}
+	}
+	struct EventFdShutdown final : IShutdown{
+		α Shutdown( bool terminate, SL )ι->void override{
+			if( !terminate )//its pending read would keep run() from returning.  A terminate's stop() ends it regardless.
+				PostIO( releaseEventSd );
 		}
 	};
 	EventFdShutdown _eventSdShutdown;

@@ -169,6 +169,7 @@ namespace Jde{
 		Thread::SetName( appName );
 		installFailureHandler( argc ? argv[0] : nullptr );
 		Process::AddSignals();
+		Execution::Start();
 		return values;
 	}
 
@@ -220,11 +221,6 @@ namespace Jde{
 	vector<absl::AnyInvocable<void()>> _exitFunctions;
 	α Process::AddExitFunction( absl::AnyInvocable<void()>&& exit )ι->void{
 		_exitFunctions.push_back( std::move(exit) );
-	}
-
-	up<IShutdown> _executor;
-	α Process::SetExecutor( up<IShutdown>&& executor )ι->void{
-		_executor = move( executor );
 	}
 
 
@@ -290,14 +286,11 @@ namespace Jde{
 		INFOT( ELogTags::App, "Clearing Logger" );
 		std::this_thread::sleep_for( 100ms );
 		_finalizing = true;
-		auto ioc = ExecutorIoc();//keep the io_context alive across teardown so it is destroyed last — after sessions, loggers and timers release their asio objects.
-		if( _executor ){
-			_executor->Shutdown( terminate );
-			_executor = nullptr;//joins the executor's threads.
-		}
+		Execution::Stop( terminate );//joins the executor's threads.
 		for_each( _finalizeFunctions, [=](let& finalize){finalize(terminate);} );
 		_finalizeFunctions.clear();
 		Logging::DestroyLoggers( terminate );
+		auto ioc = Execution::Release();//destroyed last — after sessions, loggers and timers release their asio objects.
 		if( ioc && ioc.use_count()>1 )//everything that used the io_context should have released it by now; a leftover ref means an asio object would otherwise outlive the io_context (use-after-free).
 			std::cout << "WARNING: io_context still has " << ioc.use_count()-1 << " reference(s) at finalize." << std::endl;
 		ioc = nullptr;//io_context destroyed here, deterministically last.

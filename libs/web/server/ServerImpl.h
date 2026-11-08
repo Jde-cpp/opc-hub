@@ -11,6 +11,7 @@ namespace Internal{
 	α Start( sp<IRequestHandler> handler )ε->void;
 	α Stop( sp<IRequestHandler>&& handler, bool terminate, SL sl )ι->void;
 	α RunSocketSession( sp<IWebsocketSession>&& session, const IRequestHandler* handler )ι->void;//handler: the listener that accepted it - Stop closes only its own.
+	α ConnectionCount()ι->uint;//accepted connections still registered for Stop to cancel.
 	α NextConnectionIndex()ι->uint32;//process-wide: socket ids key _socketSessions across every listener in the process.
 	α RemoveSocketSession( SocketId id )ι->void;
 	α CloseSocketSessions( SessionPK sessionId )ι->uint;

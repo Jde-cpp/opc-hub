@@ -23,7 +23,7 @@ namespace Jde{
 		return p;
 	}
 	α Process::GetProcAddress( void* module, str procName )ε->void*{
-		auto p = ::dlsym( module, procName.c_str() ); CHECK( p );
+		auto p = ::dlsym( module, procName.c_str() ); THROW_IF( !p, "dlsym('{}'): {}", procName, dlerror() );
 		return p;
 	}
 	α Process::Install( str /*serviceDescription*/, const vector<string>& /*args*/ )ε->void{

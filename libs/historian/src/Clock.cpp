@@ -49,7 +49,7 @@ namespace Jde::Opc::Hist{
 		private:
 			template<class T, class At> α Arm( At at, absl::AnyInvocable<void()> f )ι->TimerId{
 				auto ctx = Executor();
-				if( !ctx ){
+				if( ctx->stopped() ){
 					WARN( "Schedule after executor teardown - dropping timer." );
 					return {};
 				}
@@ -73,7 +73,6 @@ namespace Jde::Opc::Hist{
 							run( f );
 					});
 				}
-				Execution::Run();
 				return id;
 			}
 			absl::Mutex _mutex;

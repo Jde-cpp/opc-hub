@@ -8,10 +8,7 @@
 #define let const auto
 
 namespace Jde::Tests{
-	struct BlockAwaitTests : public ::testing::Test{
-	protected:
-		Ω SetUpTestCase()ι->void{ Execution::Run(); }
-	};
+	struct BlockAwaitTests : public ::testing::Test{};
 
 	//named apart from AnyAwaitTests' TestException on purpose: both files share this namespace, and two
 	//different classes under one name across TUs is an ODR violation nothing would report.

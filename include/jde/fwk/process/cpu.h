@@ -1,14 +1,12 @@
 #pragma once
 #include <cstdio>
 #include <cstdlib>
-#if defined(__x86_64__) || defined(_M_X64)
-	#ifdef _MSC_VER
-		#include <intrin.h>
-		#define JDE_CPUID( leaf, regs ) __cpuidex( reinterpret_cast<int*>(regs), static_cast<int>(leaf), 0 )
-	#else
-		#include <cpuid.h>
-		#define JDE_CPUID( leaf, regs ) __cpuid_count( leaf, 0, regs[0], regs[1], regs[2], regs[3] )
-	#endif
+#ifdef _MSC_VER
+	#include <intrin.h>
+	#define JDE_CPUID( leaf, regs ) __cpuidex( reinterpret_cast<int*>(regs), static_cast<int>(leaf), 0 )
+#else
+	#include <cpuid.h>
+	#define JDE_CPUID( leaf, regs ) __cpuid_count( leaf, 0, regs[0], regs[1], regs[2], regs[3] )
 #endif
 
 namespace Jde::Process{
@@ -16,22 +14,18 @@ namespace Jde::Process{
 	//first such instruction is a SIGILL with nothing logged.  target + noinline:  compiled with cpuFlags' -march itself, or inlined
 	//into a caller that is, this could fault before it reports - so it calls no inline function either, only macros and libc.
 	//No sanitizer instrumentation: on linux it runs before asan is initialized.
-	[[gnu::target("arch=x86-64"), gnu::noinline, gnu::no_sanitize_address]] Ξ CheckCpu()ι->bool{
+	[[gnu::target("arch=x86-64"), gnu::noinline, gnu::no_sanitize_address]]
+	Ξ CheckCpu()ι->bool{
 		bool ok{ true };
-#if defined(__x86_64__) || defined(_M_X64)
 		enum{ Ecx1, Ebx7, Ecx81, Os };
-		unsigned r[4], regs[4]{ 0, 0, 0, 1 };
+		unsigned r[4], regs[4]{ 0, 0, 0, 1 }; //Os starts true:  a CPU without OSXSAVE reports only that.
 		JDE_CPUID( 0, r ); const unsigned maxLeaf = r[0];
 		JDE_CPUID( 1, r ); regs[Ecx1] = r[2];
 		if( maxLeaf>=7 ){ JDE_CPUID( 7, r ); regs[Ebx7] = r[1]; }
 		JDE_CPUID( 0x80000001, r ); regs[Ecx81] = r[2];
 		if( regs[Ecx1] & (1u << 27) ){ //OSXSAVE:  xgetbv exists, and says whether the OS saves the ymm registers.
 			unsigned xcr0;
-	#if defined(__GNUC__) || defined(__clang__)
 			__asm__( "xgetbv" : "=a"(xcr0) : "c"(0) : "edx" ); //_xgetbv needs the xsave target feature this function is compiled without.
-	#else
-			xcr0 = static_cast<unsigned>( _xgetbv(0) );
-	#endif
 			regs[Os] = (xcr0 & 6)==6;
 		}
 		struct Feature{ unsigned Reg, Bit; const char* Name; };
@@ -50,18 +44,22 @@ namespace Jde::Process{
 		}
 		if( !ok )
 			std::fputs( ".  In a VM, choose a CPU model that passes them through (e.g. host).\n", stderr );
-#endif
 		return ok;
 	}
 }
 #undef JDE_CPUID
-#if defined(__linux__) && defined(__x86_64__)
+#ifdef __linux__
 //main is too late on linux:  the shared libraries' initializers run first, and they are built with cpuFlags too - libabseil_dll's
 //is the one that faulted.  The executable's preinit_array runs before any of them - so include this from an executable's main.cpp
 //only, never a library.
-[[gnu::target("arch=x86-64"), gnu::no_sanitize_address]] inline void JdeCheckCpuPreinit( int, char**, char** )noexcept{
+[[gnu::target("arch=x86-64"), gnu::no_sanitize_address]]
+Ξ JdeCheckCpuPreinit( int, char**, char** )ι->void{
 	if( !Jde::Process::CheckCpu() )
 		std::_Exit( EXIT_FAILURE );
 }
-[[gnu::used, gnu::section(".preinit_array")]] static void (*_jdeCheckCpuPreinit)( int, char**, char** ){ JdeCheckCpuPreinit };
+
+[[gnu::used, gnu::section(".preinit_array")]]
+static void (*_jdeCheckCpuPreinit)( int, char**, char** ){
+	JdeCheckCpuPreinit
+};
 #endif

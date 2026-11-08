@@ -33,7 +33,7 @@ namespace Jde::Web::Server{
 		β DoAccept( TRequestType request, sp<IWebsocketSession> session )ι->void=0;
 		β DoRead( sp<IWebsocketSession> session )ι->void=0;
 		β Close( sp<IWebsocketSession> session )ι->void=0;
-		β Strand()ι->const net::strand<executor_type>& =0;
+		β Strand()ι->const net::strand<io_executor>& =0;
 	};
 
 	//TStream: websocket::stream<StreamType> | websocket::stream<beast::ssl_stream<StreamType>>.  Bodies live in Streams.cpp, explicitly instantiated for both.
@@ -47,7 +47,7 @@ namespace Jde::Web::Server{
 		α DoAccept( TRequestType request, sp<IWebsocketSession> session )ι->void override;
 		α DoRead( sp<IWebsocketSession> session )ι->void override;
 		α Close( sp<IWebsocketSession> session )ι->void override{ Core::Close( move(session) ); }
-		α Strand()ι->const net::strand<executor_type>& override{ return _strand; }
+		α Strand()ι->const net::strand<io_executor>& override{ return _strand; }
 	private:
 		α OnClosed( sp<IWebsocketSession> session, beast::error_code ec )ι->void override;
 		α OnWriteError( sp<IWebsocketSession> session, beast::error_code ec )ι->void override;

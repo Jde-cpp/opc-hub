@@ -29,7 +29,6 @@ namespace Process{
 	Φ IsTerminal()ι->bool; // Where stdout goes.
 	Φ PrepareConsole()ι->bool; // The terminal stdout is on, readied for the console sink:  whether it draws escape sequences (the dev pattern's links).
 	Φ RaiseTimerResolution()ι->void; // For the process's life, to 1 ms:  windows otherwise stretches a shorter wait to its 15.6 ms tick.  A no-op on linux.
-	Φ SetExecutor( up<IShutdown>&& executor )ι->void;
 	Φ MemorySize()ι->uint;
 	Φ ProcessId()ι->uint32;
 	constexpr static sv ProductVersion="2026.02.01";

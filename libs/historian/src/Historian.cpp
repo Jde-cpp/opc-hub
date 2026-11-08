@@ -1,5 +1,4 @@
 #include <jde/historian/Historian.h>
-#include <boost/asio/io_context.hpp>
 #include <jde/fwk/process/execution.h>
 #include "Store.h"
 
@@ -88,7 +87,7 @@ namespace Jde::Opc::Hist{
 			for( let& [_,group] : _groups )
 				groups.push_back( group );
 		}
-		if( let ioc = ExecutorIoc(); ioc && ioc->get_executor().running_in_this_thread() )
+		if( Execution::OnThread() )
 			WARNT( ELogTags::IO, "The historian is ending on an executor thread, which its groups' last flushes may need:  with one, they don't write before hist's stop limit." );
 		for( let& group : groups )
 			group->Stopping();

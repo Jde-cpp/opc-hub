@@ -60,6 +60,5 @@ namespace Jde::DB::MySql{
 				}
 			}
 		);
-		Execution::Run();
 	}
 }

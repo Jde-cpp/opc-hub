@@ -1,17 +1,14 @@
-#include <semaphore>
-#include <jde/fwk/co/Await.h>
-#include <jde/fwk/process/execution.h>
-#include <jde/tests/WaitUntil.h>
 #include <atomic>
-#include <thread>
+#include <semaphore>
+#include <jde/fwk/process/execution.h>
+#include <jde/fwk/process/thread.h>
+#include <jde/tests/Capture.h>
+#include <jde/tests/WaitUntil.h>
 
 #define let const auto
 
 namespace Jde::Tests{
-	struct ExecutionTests : public ::testing::Test{
-	protected:
-		Ω SetUpTestCase()ι->void{ Execution::Run(); }
-	};
+	struct ExecutionTests : public ::testing::Test{};
 
 	//named apart from the other suites' test exceptions: they share this namespace, and two different classes
 	//under one name across TUs is an ODR violation nothing would report.
@@ -21,32 +18,64 @@ namespace Jde::Tests{
 		[[noreturn]] α Throw()->void override{ throw move(*this); }
 	};
 
-	// PostIO exists for the io strand: the io_uring completion path treats _armed as strand-confined, so a plain
-	// context post would let two handlers run at once.  Asio guarantees the serialization - what this pins is the
-	// wiring, that PostIO goes through the strand and not the context.  The counter is deliberately not atomic.
-	TEST_F( ExecutionTests, PostIOSerializes ){
-		constexpr uint threadCount{ 8 }, perThread{ 125 };
-		auto counter = ms<uint>( 0 );
-		auto inside = ms<std::atomic<bool>>();
-		auto overlapped = ms<std::atomic<bool>>();
-		auto completed = ms<std::atomic<uint>>();
-		{
-			vector<std::jthread> threads;
-			for( uint t=0; t<threadCount; ++t )
-				threads.emplace_back( [=]{
-					for( uint i=0; i<perThread; ++i )
-						PostIO( [=]{
-							if( inside->exchange(true) )
-								*overlapped = true;
-							++*counter;
-							*inside = false;
-							++*completed;
-						} );
-				} );
-		}//jthreads join here - every handler is queued.
-		ASSERT_TRUE( WaitUntil([&]{ return completed->load()==threadCount*perThread; }, 10s, 1ms) ) << "only " << completed->load() << " of " << threadCount*perThread << " handlers ran";
-		EXPECT_FALSE( overlapped->load() ) << "two PostIO handlers ran at once - not serialized by the strand";
-		EXPECT_EQ( *counter, threadCount*perThread ) << "a non-atomic increment lost a count, so the handlers overlapped";
+	//Each handler holds its thread until all have arrived, so the names are those of distinct workers.  Null if they never did.
+	Ω heldWorkerNames()ι->optional<flat_set<string>>{
+		struct Held final{
+			mutex Mutex;
+			flat_set<string> Names;
+			atomic<uint> Arrived{};
+			atomic_flag Release;
+		};
+		auto held = ms<Held>();
+		let count = ThreadCount();
+		for( uint i=0; i<count; ++i )
+			Post( [held]{
+				{
+					lg _{ held->Mutex };
+					held->Names.insert( Thread::Name() );
+				}
+				++held->Arrived;
+				held->Release.wait( false );
+			} );
+		let allArrived = WaitUntil( [&]{ return held->Arrived.load()==count; }, 10s, 1ms );
+		held->Release.test_and_set();
+		held->Release.notify_all();
+		if( !allArrived )
+			return nullopt;
+		lg _{ held->Mutex };
+		return held->Names;
+	}
+	Ω expectedWorkerNames()ι->flat_set<string>{
+		flat_set<string> y;
+		for( uint i=0; i<ThreadCount(); ++i )
+			y.insert( Ƒ("Ex[{}]", i) );
+		return y;
+	}
+	TEST_F( ExecutionTests, EveryWorkerRunsUnderItsName ){
+		EXPECT_EQ( heldWorkerNames(), expectedWorkerNames() );
+	}
+
+	TEST_F( ExecutionTests, OnThreadIsTrueOnlyOnAWorker ){
+		EXPECT_FALSE( Execution::OnThread() );
+		EXPECT_TRUE( Execution::Running() );
+		auto onThread = ms<std::atomic<int>>( -1 );
+		Post( [onThread]{ *onThread = Execution::OnThread(); } );
+		ASSERT_TRUE( WaitUntil([&]{ return onThread->load()!=-1; }, 10s, 1ms) );
+		EXPECT_EQ( onThread->load(), 1 );
+	}
+
+	TEST_F( ExecutionTests, AThrowingHandlerLeavesEveryWorkerRunning ){
+		Logging::Capture capture{ ELogLevel::Error };
+		let count = ThreadCount();
+		for( uint i=0; i<count; ++i ){
+			Post( []{ throw PostException{ "posted throw" }; } );
+			Post( []{ throw 1; } );
+		}
+		ASSERT_TRUE( WaitUntil([&]{
+			return capture.Find("posted throw").size()==count
+				&& capture.Find("An Executor event threw.").size()==count*2;
+		}, 10s, 1ms) ) << "the handlers' exceptions were not all caught";
+		EXPECT_EQ( heldWorkerNames(), expectedWorkerNames() );
 	}
 
 	//Post( Handle&&, Exception&& ) is the executor's error-resume path - one caller repo-wide (Subscriptions) and

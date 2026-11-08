@@ -34,7 +34,7 @@ namespace Jde::DB::Sqlite{
 		α Connection( SL sl )ε->sqlite3&; //lazy open.
 		α ExecuteProc( DB::Sql& sql, SL sl, Params& exeParams )ε->uint; //dispatch to SqliteProcs registry inside a transaction.
 
-		flat_map<fs::path,sp<SqliteApi>> _procDlls; //shared with other data sources configured with the same dll - see _dllApis in the .cpp.
+		flat_set<sp<SqliteApi>> _procDlls; //shared with other data sources configured with the same dll - see _dllApis in the .cpp.
 		//Single connection, serialized by _connMutex: an in-memory db is per-connection, so a MySql-style
 		//session pool would hand each caller its own empty database. For file-backed dbs a pool + WAL is an option.
 		sqlite3* _db{};

@@ -1,15 +1,10 @@
 #include <atomic>
+#include <jde/fwk/co/Await.h>
 #include <jde/fwk/co/CoMutex.h>
-#include <jde/fwk/process/execution.h>
 #include <jde/tests/WaitUntil.h>
 
 namespace Jde::Tests{
-	struct CoMutexTests : public ::testing::Test{
-	protected:
-		Ω SetUpTestCase()ι->void{
-			Execution::Run();
-		}
-	};
+	struct CoMutexTests : public ::testing::Test{};
 
 	//TryLock: for callers that cannot wait on a holder that may never resume - e.g. ProtoLog::Shutdown, which runs after
 	//the executor has been destroyed.  A failed attempt takes and queues nothing.

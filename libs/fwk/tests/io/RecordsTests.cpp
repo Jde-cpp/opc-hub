@@ -4,15 +4,14 @@
 #include <fstream>
 #include <ranges>
 #include <jde/fwk/co/BlockAwait.h>
+#include <jde/fwk/io/crc.h>
+#include <jde/fwk/io/durable.h>
+#include <jde/fwk/io/records/FileState.h>
+#include <jde/fwk/io/records/Flushed.h>
 #include <jde/fwk/io/records/Scan.h>
 #include <jde/fwk/io/records/Merge.h>
 #include <jde/fwk/io/records/Rewrite.h>
-#include <jde/fwk/io/records/FileState.h>
-#include <jde/fwk/io/records/Flushed.h>
-#include <jde/fwk/io/durable.h>
-#include <jde/fwk/io/crc.h>
 #include <jde/tests/Capture.h>
-#include <jde/fwk/process/execution.h>
 #ifdef _MSC_VER
 	#include <jde/fwk/process/os/windows/WindowsHandle.h>
 #endif
@@ -126,7 +125,6 @@ namespace Jde::IO::Records::Tests{
 	}
 
 	struct LayerTests : ::testing::Test{
-		Ω SetUpTestCase()ι->void{ Execution::Run(); }
 		α SetUp()->void override{ fs::remove_all( Dir ); fs::create_directories( Dir ); }//a killed run skips TearDown, so its leftovers must not feed this one.
 		α TearDown()->void override{
 			fs::remove_all( Dir );
@@ -1211,8 +1209,8 @@ namespace Jde::IO::Records::Tests{
 		fs::remove( File );
 #ifdef _MSC_VER
 		save( File, Slot(Time, 1) );
-		HandlePtr locker{ WinHandle{::CreateFileW(File.c_str(), GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr)} };
-		ASSERT_TRUE( static_cast<bool>(locker.get()) ) << ::GetLastError();
+		HandlePtr locker{ ::CreateFileW(File.c_str(), GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr) };
+		ASSERT_TRUE( static_cast<bool>(locker) ) << ::GetLastError();
 		OVERLAPPED at{};
 		ASSERT_TRUE( ::LockFileEx(locker.get(), LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY, 0, 2*Flushed::SlotSize, 0, &at) ) << ::GetLastError();
 		EXPECT_EQ( level(), ELogLevel::Error ) << "a read that fails";
