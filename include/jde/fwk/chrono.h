@@ -20,7 +20,10 @@ namespace Jde::Chrono{
 	Ξ LocalYMD( TimePoint time, const time_zone& tz )ι->year_month_day{ return year_month_day{floor<days>(tz.to_local(time))}; };
 	Φ ToDuration( sv iso, SRCE )ε->Duration;//ISO 8601, as ToString writes it:  anything else throws.
 	Φ TryToDuration( sv iso, ELogLevel level=ELogLevel::Debug, SRCE )ι->std::expected<Duration,Exception>;
-	Φ ToTimePoint( string iso, SRCE )ε->TimePoint;
+	Φ ToTimePoint( string iso, SRCE )ε->TimePoint;//a time with 'Z' or an offset is the instant it names;  one with neither reads as UTC.
+	//As above, but a time with neither is a local time in tz, resolved with choose::earliest:  one the clocks skipped is the
+	//instant they jumped to, one they repeat its first.
+	Φ ToTimePoint( string iso, const time_zone& tz, SRCE )ε->TimePoint;
 	Φ ToTimePoint( uint16_t year, uint8 month, uint8 day, uint8 hour=0, uint8 minute=0, uint8 second=0, Duration subseconds=Duration::zero(), SRCE )ε->TimePoint;
 	Φ ToTimeZone( sv name, const std::chrono::time_zone& dflt, ELogLevel level=ELogLevel::Debug, SRCE )ι->const std::chrono::time_zone&;
 	template<class T=Duration>

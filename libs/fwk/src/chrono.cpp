@@ -74,7 +74,9 @@ namespace Jde{
 		return y;
 	}
 
-	α Chrono::ToTimePoint( string iso, SL sl )ε->TimePoint{
+	//The instant, and whether the string named a zone:  without one the fields are read as UTC, so the result's UTC fields
+	//are the string's own, which the zoned overload re-reads as local.
+	Ω parseIso( str iso, SL sl )ε->std::pair<TimePoint,bool>{
 		//%E*S takes any number of fraction digits, %Ez a 'Z' or a ±hh[[:]mm] offset; no zone at all reads as UTC.  Past the 'T' only a
 		//zone holds Z, + or -, so the format is picked up front rather than by a failed parse.
 		let time = iso.find_first_of( "Tt" );
@@ -82,7 +84,14 @@ namespace Jde{
 		absl::Time t; string error;
 		let parsed = absl::ParseTime( zoned ? "%Y-%m-%d%ET%H:%M:%E*S%Ez" : "%Y-%m-%d%ET%H:%M:%E*S", iso, absl::UTCTimeZone(), &t, &error );
 		THROW_IFSL( !parsed, "Could not parse ISO time:  {} - {}", iso, error );
-		return absl::ToChronoTime( t );
+		return { absl::ToChronoTime(t), zoned };
+	}
+	α Chrono::ToTimePoint( string iso, SL sl )ε->TimePoint{
+		return parseIso( iso, sl ).first;
+	}
+	α Chrono::ToTimePoint( string iso, const time_zone& tz, SL sl )ε->TimePoint{
+		let [t, zoned] = parseIso( iso, sl );
+		return zoned ? t : TimePoint{ tz.to_sys(local_time<Duration>{t.time_since_epoch()}, choose::earliest) };
 	}
 
 	α Chrono::ToTimePoint( uint16_t y, uint8_t mnth, uint8_t dayOfMonth, uint8 h, uint8 mnt, uint8 scnd, Duration subseconds, SL sl )ε->TimePoint{
