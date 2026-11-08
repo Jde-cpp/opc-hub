@@ -196,11 +196,18 @@ namespace Jde::Opc::Gateway{
 						//removed only one (subscription-disconnect #15).  This listener joins the item that exists, whose result the ack
 						//reports, and the new item is deleted.
 						let refreshedNode = refreshed.find( *pNode );
-						existing->Listeners.insert_or_assign( dataChange, refreshedNode==refreshed.end() ? parameters.at(*pNode) : refreshedNode->second );
-						if( auto merged = existing->Remerge(); merged )
-							modify.emplace( *pNode, move(*merged) );
+						let& asked = refreshedNode==refreshed.end() ? parameters.at(*pNode) : refreshedNode->second;
+						if( asked.IsEvent()==existing->IsEvent() ){
+							existing->Listeners.insert_or_assign( dataChange, asked );
+							if( auto merged = existing->Remerge(); merged )
+								modify.emplace( *pNode, move(*merged) );
+							TRACE( "[{}.{}]Monitoring '{}' already - joined the existing item, deleting the duplicate.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
+						}
+						else{//the other kind, refused as MonitoredItemsRequest refuses one it can see (spec *Events*).
+							TRACE( "[{}.{}]'{}' is monitored as the other kind - deleting this item.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
+							_errors.try_emplace( {requestId} ).first->second.try_emplace( *pNode, UA_STATUSCODE_BADFILTERNOTALLOWED );
+						}
 						surplus.try_emplace( requestHandle.SubId() ).first->second.emplace( result.monitoredItemId );
-						TRACE( "[{}.{}]Monitoring '{}' already - joined the existing item, deleting the duplicate.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
 					}
 					else{
 						let h = MonitorHandle{ requestHandle.SubId(), result.monitoredItemId };

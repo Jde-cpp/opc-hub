@@ -24,7 +24,8 @@ import { ExtensionObject, Reading, shortestFloat, Structure, toReading, toValue,
 import { Enum } from '../model/enum';
 import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound, qlTime } from '../model/hist';
 import { Revised, WatchParameters } from '../model/watch';
-import { EventFields } from '../model/event';
+import { baseEventFields, EventFields } from '../model/event';
+import { isBad } from '../model/status-code';
 
 type Owner = any;
 
@@ -668,6 +669,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	//A shared item's sampling or queue changed for another listener's join or leave, or the server refused the modify and the item
 	//stands as it was (spec *Watch list*, Opc.FromServer.proto):  every owner of the node hears what it runs at, as a `revised` result.
 	#itemModified( m:FromServer.MonitoredItemModified ):void{
+		if( m.node && isBad( m.statusCode>>>0 ) )
+			this.#eventItemRefused( m.opcId, Gateway.toNode( m.node ), m.statusCode>>>0 );
 		const opcSubscriptions = this.#subscriptions.get( m.opcId );
 		if( !opcSubscriptions || !m.node )
 			return console.debug( `[Opc]MonitoredItemModified for ${m.opcId}, which nothing here watches:  ${JSON.stringify(m)}` );
@@ -791,7 +794,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		const fields:EventFields = e.fields.map( f=>Gateway.toValue( f ) );//a Value with no member, a field the server left empty, is undefined
 		let heard = false;
 		for( const live of this.#events.values() ){
-			if( live.opcId==e.opcId && live.node.equals( node ) ){
+			if( live.opcId==e.opcId && live.node.equals( node ) && fields.length==baseEventFields.length+live.select.length ){//any other length is the list before a chip change's
 				live.subscriber.next( {opcId: e.opcId, node, fields} );
 				heard = true;
 			}
@@ -799,12 +802,18 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		if( !heard )
 			console.debug( `[Opc]EventValues for ${e.opcId} ${node.uaString()}, which nothing here watches.` );
 	}
+	//The server refused a filter this node's item was asked to change to:  the item runs on as it was, so the stream does too.
+	#eventItemRefused( opcId:OpcId, node:NodeId, refused:StatusCode ):void{
+		for( const live of this.#events.values() ){
+			if( live.opcId==opcId && live.node.equals( node ) )
+				live.subscriber.next( {opcId, node, fields: [], refused} );
+		}
+	}
 	#events = new Map<Owner,EventLive>();
 	//historyEvents( opc, node, start, end, select, limit, continuation ){ status continuation events{ fields } } (hist.jsonnet):  a page of
 	//the node's event history from `start`, each event the fields a subscription with `select` delivers, in that order, by POST as the
 	//group questions go (HistoryService.groups).  The status is the node's, as the server answered it - Bad_HistoryOperationUnsupported
-	//from one that keeps no event history - and the continuation reads on from the last event's time, inclusive, so a caller drops
-	//the events it holds by their EventId (toEventRow's key).
+	//from one that keeps no event history, Bad_NotSupported from one with no history service - and the continuation reads on after the last event, opaque to a caller.
 	async historyEvents( opc:CnnctnSlug, node:NodeId, args:HistEventsArgs ):Promise<HistEventsPage>{
 		const {ql, vars} = Gateway.historyEventsQuery( opc, node, args );
 		const data = await this.postQL<any>( ql, vars );
@@ -829,7 +838,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 }
 //An event of an events subscription (spec *Events*):  the node's, with the fields of the subscription's list in its order, undefined
 //where the server left one empty.
-export type EventPush = { opcId:string; node:NodeId; fields:EventFields };
+export type EventPush = { opcId:string; node:NodeId; fields:EventFields; refused?:StatusCode };//refused:  no event, the status a change of the item's filter was refused with
 type EventLive = { opcId:OpcId; node:NodeId; select:string[]; subscriber:Subscriber<EventPush>; acked?:boolean };
 //A historyEvents read:  from `start` to `end`, now when left out, the fields `select` adds to the base eight, at most `limit` events,
 //and the continuation of the page before.

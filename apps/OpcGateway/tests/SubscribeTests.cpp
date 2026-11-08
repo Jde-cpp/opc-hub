@@ -10,6 +10,7 @@
 #include "../src/async/MonitoredItems.h"
 #include "../src/async/UAStrandAwait.h"
 #include "../src/ql/GatewayQL.h"
+#include "../src/ql/HistEventsQLAwait.h"
 #include "../src/UAClient.h"
 #include "../src/types/UAClientException.h"
 #include "utils/GatewayClientSocket.h"
@@ -1585,7 +1586,6 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 
-	//#195 review #4:  an unconvertible reading's failure rode in Value.status_code, which a client reads as a StatusCode reading.
 	//Events (clients spec *Events*, #424):  a socket listener collecting each EventValues, and a listener on the client itself answering a
 	//select list of its own, as the session does from a SubscribeEvents - each event its fields as Variants, null for one the item
 	//did not deliver - and counting the item's modifies, which a join of another select posts.
@@ -1747,6 +1747,23 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( y.at("events").as_array().empty() );
 		EXPECT_TRUE( y.at("continuation").is_null() );
 	}
+	//A server with no history service, as an OpcServer against a hub is, refuses the whole read:  the status says so, as above (424-clients-events W1).
+	TEST_F( SubscribeTests, HistoryEventsAgainstAServerWithNoHistoryServiceIsUnsupported ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		auto& database = UA_Server_getConfig( Server::FindUAServer()->Ptr() )->historyDatabase;
+		let context = database.context;
+		database.context = nullptr;//what the service tests for
+		let now = Clock::now();
+		const jobject vars{ {"opc", OpcServerSlug}, {"node", NodeId{UA_NS0ID_SERVER}.ToJson()}, {"start", UADateTime{now-1h}.ToJson()}, {"end", UADateTime{now}.ToJson()}, {"select", jarray{}} };
+		jobject y;
+		EXPECT_NO_THROW( y = Socket().QuerySync("historyEvents( opc: $opc, node: $node, start: $start, end: $end, select: $select ){ status continuation events{ fields } }", vars).as_object() );
+		database.context = context;
+		ASSERT_TRUE( y.contains("status") ) << serialize( y );
+		EXPECT_EQ( y.at("status").to_number<StatusCode>(), UA_STATUSCODE_BADNOTSUPPORTED ) << serialize( y );
+		EXPECT_TRUE( y.at("events").as_array().empty() );
+		EXPECT_TRUE( y.at("continuation").is_null() );
+	}
 	//A select path the gateway cannot read refuses the SubscribeEvents before any server round trip, and a data-change ask for a
 	//node whose item is an event item is refused in the ack, Bad_FilterNotAllowed, the item standing.
 	TEST_F( SubscribeTests, AnEventSubscriptionRefusesABadFieldAndTheOtherKind ){
@@ -1772,6 +1789,36 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( end.successes_size(), 1 ) << "the event item did not survive the refused join";
 	}
 
+	//A run of events on one tick spans pages (424-clients-events #7):  each page's continuation counts what was returned there.
+	TEST( EventsCursorTests, ARunOnOneTickReadsOnAcrossPages ){
+		const UA_DateTime tick{ 1000 }, later{ 2000 };
+		EventsCursor first;
+		EXPECT_FALSE( first.Passes(tick) );
+		EXPECT_FALSE( first.Passes(tick) );
+		ASSERT_EQ( first.Next(), "1000/2" );
+
+		auto second = EventsCursor::Parse( *first.Next() );
+		ASSERT_TRUE( second );
+		EXPECT_EQ( second->Start(), tick );
+		EXPECT_TRUE( second->Skipping() );
+		EXPECT_TRUE( second->Passes(tick) );
+		EXPECT_TRUE( second->Passes(tick) );
+		EXPECT_FALSE( second->Skipping() );
+		EXPECT_FALSE( second->Passes(tick) );//the third, which neither page before returned
+		EXPECT_EQ( second->Next(), "1000/3" );
+
+		EXPECT_FALSE( second->Passes(later) );
+		EXPECT_EQ( second->Next(), "2000/1" );
+	}
+	TEST( EventsCursorTests, ACursorWithNoTimedEventHasNoNext ){
+		EXPECT_FALSE( EventsCursor{}.Next() );
+	}
+	TEST( EventsCursorTests, TextThatIsNoCursorIsRefused ){
+		for( sv text : {"", "1000", "x/1", "1000/x", "1000/-1"} )
+			EXPECT_FALSE( EventsCursor::Parse(text) ) << text;
+	}
+
+	//#195 review #4:  an unconvertible reading's failure rode in Value.status_code, which a client reads as a StatusCode reading.
 	TEST( FromServerTests, AnUnconvertibleReadingSendsItsCodeAsTheQuality ){
 		UA_DataValue dv{};
 		dv.hasValue = true;

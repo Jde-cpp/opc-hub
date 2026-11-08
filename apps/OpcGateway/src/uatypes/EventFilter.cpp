@@ -1,7 +1,6 @@
 #include "EventFilter.h"
 #include <charconv>
 #include <open62541/util.h>
-#include <jde/opc/uatypes/UAString.h>
 
 #define let const auto
 namespace Jde::Opc::Gateway{

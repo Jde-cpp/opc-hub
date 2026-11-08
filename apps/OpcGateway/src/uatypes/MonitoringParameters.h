@@ -1,5 +1,4 @@
 #pragma once
-#include <open62541/types.h>
 #include "EventFilter.h"
 
 namespace Jde::Opc::Gateway{

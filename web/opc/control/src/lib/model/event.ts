@@ -37,15 +37,44 @@ export function eventFieldText( v:Value|undefined ):string{
 export function selectProblem( path:string ):string|undefined{
 	const t = path.trim();
 	if( !t )
-		return "A field is a browse path, such as Message or 2:Rpm.";
+		return "A field is a browse path, such as Rpm or 2:Rpm.";
 	for( const segment of t.split( '/' ) ){
-		const m = /^(?:(\d+)[:~])?(.+)$/.exec( segment );
-		if( !m || !m[2].trim() )
-			return `'${path}' has an empty segment.`;
-		if( m[1]!==undefined && +m[1]>65535 )
+		const pos = segment.search( /[:~]/ );
+		const digits = pos==-1 ? undefined : segment.slice( 0, pos );
+		if( digits!==undefined && !/^\d+$/.test( digits ) )
+			return `'${path}' has a namespace index that is no number - '${digits}'.`;
+		if( digits!==undefined && +digits>65535 )
 			return `'${path}' names a namespace index over 65535.`;
+		if( !segment.slice( pos+1 ).trim() )
+			return `'${path}' has an empty segment.`;
 	}
 	return undefined;
+}
+//A valid path as the gateway compares one (EventClause::Key):  namespace 0 left out, any other index before a `:`.
+function canonicalPath( path:string ):string{
+	return path.trim().split( '/' ).map( segment=>{
+		const pos = segment.search( /[:~]/ );
+		if( pos==-1 )
+			return segment;
+		const ns = +segment.slice( 0, pos ), name = segment.slice( pos+1 );
+		return ns ? `${ns}:${name}` : name;
+	} ).join( '/' );
+}
+//Whether a path names a base field or one of `select`:  the gateway delivers a field once, so a repeat would shift the columns after it.
+export function repeatsField( path:string, select:string[] ):boolean{
+	const key = canonicalPath( path );
+	return (<readonly string[]>baseEventFields).includes( key ) || select.some( s=>canonicalPath( s )==key );
+}
+//A field list kept on this browser, less what the gateway would refuse and what repeats a field.
+export function keptSelect( kept:unknown ):string[]{
+	const y:string[] = [];
+	if( Array.isArray( kept ) ){
+		for( const path of kept ){
+			if( typeof path=='string' && !selectProblem( path ) && !repeatsField( path, y ) )
+				y.push( path );
+		}
+	}
+	return y;
 }
 //The table's columns for a select list:  the base fields but the EventId, which is the row's key, then the selected paths, each
 //keyed by its place in the field list.

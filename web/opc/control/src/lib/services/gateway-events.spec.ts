@@ -46,6 +46,19 @@ describe( 'Gateway.subscribeEvents', ()=>{
 		expect( pushes[0].fields[8] ).toBe( 1480.5 );
 		expect( pushes[1].fields[8] ).toBeUndefined();
 	} );
+	it( 'drops a push of another list\'s length, as one sent before a chip change is', async ()=>{
+		const { gateway, pushes } = await subscribed( ['Rpm'] );
+		gateway.receive( {eventValues: eventValues( 'old list', 1 )} );
+		expect( pushes ).toEqual( [] );
+	} );
+	it( 'tells the stream of a refused change to the item\'s filter, and keeps it', async ()=>{
+		const s = await subscribed();
+		s.gateway.receive( {monitoredItemModified: {opcId, node: {namespaceIndex: 2, numeric: 5005}, statusCode: 0x80450000, revisedSamplingInterval: 0, revisedQueueSize: 0}} );
+		expect( s.pushes ).toHaveLength( 1 );
+		expect( s.pushes[0].refused ).toBe( 0x80450000 );
+		expect( s.errored ).toBeUndefined();
+		expect( s.gateway.sentOf( 'unsubscribeEvents' ) ).toEqual( [] );
+	} );
 	it( 'errors the stream with the status the ack refused the item with, and sends no unsubscribe for it', async ()=>{
 		const gateway = new AckingGateway();
 		gateway.statusCodes = [0x80450000];//Bad_FilterNotAllowed

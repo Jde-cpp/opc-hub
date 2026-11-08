@@ -29,11 +29,10 @@ namespace Jde::Opc::Gateway{
 	private:
 		struct AtTime final{ UA_ReadAtTimeDetails Details; vector<UA_DateTime> Times; };
 		struct Processed final{ UA_ReadProcessedDetails Details; NodeId Aggregate; vector<UA_NodeId> Aggregates; };//Aggregates:  Aggregate once per node, deep copies the dtor clears.
-		struct Events final{ UA_ReadEventDetails Details; };//its filter's clauses are deep copies the dtor clears.
+		struct Events final{ Owned<UA_ReadEventDetails,UA_TYPES_READEVENTDETAILS> Details; };//Owned:  its filter's clauses are deep copies, moved and cleared with it.
 		HistoryReadRequest( UA_TimestampsToReturn timestamps, bool release, const UA_DataType& type )ι;
 		α SetNodes()ι->void;//_nodes may have reallocated, and _details moved.
 		α Clear()ι->void;
-		Ω DisownEvents( Events* events )ι->void;//a moved-from request's filter set aside:  the variant's move copies its pointers.
 		variant<UA_ReadRawModifiedDetails,AtTime,Processed,Events> _details;
 		vector<UA_HistoryReadValueId> _nodes;
 	};

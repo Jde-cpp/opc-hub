@@ -83,6 +83,18 @@ describe( 'NodeEvents', ()=>{
 		expect( tab.select() ).toEqual( [] );
 		expect( gateway.subscribeEvents ).toHaveBeenLastCalledWith( 'cn', expect.anything(), [], expect.any( String ) );
 	} );
+	it( 'refuses a field that repeats a column, however its namespace is spelled', async ()=>{
+		const { tab, gateway, snackbar } = open();
+		tab.addField( <any>{value: 'Message', chipInput: {clear: ()=>{}}} );
+		expect( snackbar.warn ).toHaveBeenCalledTimes( 1 );
+		tab.addField( <any>{value: 'Rpm', chipInput: {clear: ()=>{}}} );
+		await flush();
+		tab.addField( <any>{value: '0:Rpm', chipInput: {clear: ()=>{}}} );
+		await flush();
+		expect( snackbar.warn ).toHaveBeenCalledTimes( 2 );
+		expect( tab.select() ).toEqual( ['Rpm'] );
+		expect( gateway.subscribeEvents ).toHaveBeenCalledTimes( 2 );
+	} );
 	it( 'keeps the fields chosen for the node on this browser', async ()=>{
 		const first = open();
 		first.tab.addField( <any>{value: 'Rpm', chipInput: {clear: ()=>{}}} );
@@ -110,6 +122,87 @@ describe( 'NodeEvents', ()=>{
 		await unsupported.tab.load();
 		expect( unsupported.tab.historyStatus() ).toContain( '0x80710000' );
 		expect( unsupported.tab.rows() ).toEqual( [] );
+	} );
+	it( 'reads on through every page of the history', async ()=>{
+		const { tab, gateway } = open();
+		gateway.historyEvents.mockReset();
+		gateway.historyEvents
+			.mockResolvedValueOnce( {status: 0, continuation: 'c1', events: [fields( 1, 'a', 1, 1_700_000_000_000 )]} )
+			.mockResolvedValueOnce( {status: 0, events: [fields( 2, 'b', 1, 1_700_000_001_000 )]} );
+		await tab.load();
+		expect( gateway.historyEvents.mock.calls.map( c=>c[2].continuation ) ).toEqual( [undefined, 'c1'] );
+		expect( tab.rows().map( r=>r.key ) ).toEqual( ['02', '01'] );
+		expect( tab.loading() ).toBe( false );
+	} );
+	it( 'drops a page read for the field list before a chip change', async ()=>{
+		const { tab, gateway } = open();
+		tab.select.set( ['A', 'B'] );
+		await flush();
+		let answer!:( p:HistEventsPage )=>void;
+		gateway.historyEvents.mockImplementation( ()=>new Promise<HistEventsPage>( r=>answer = r ) );
+		const loading = tab.load();
+		tab.removeField( 'A' );
+		await flush();
+		answer( {status: 0, continuation: 'c1', events: [fields( 1, 'x', 1, 1_700_000_000_000, ['a', 'b'] )]} );
+		await loading;
+		expect( tab.rows() ).toEqual( [] );
+		expect( gateway.historyEvents ).toHaveBeenCalledTimes( 1 );
+	} );
+	it( 'holds at most maxRows while paused, dropping the oldest', ()=>{
+		const { tab, push } = open();
+		tab.togglePause();
+		for( let i=0; i<NodeEvents.maxRows+2; ++i )
+			push( fields( i%250, `m${i}`, 1, 1_700_000_000_000+i ) );
+		expect( tab.held() ).toBe( NodeEvents.maxRows );
+	} );
+	it( 'shows a Time that is no date as its value and does not stop rendering', ()=>{
+		const { fixture, cells, push } = open();
+		const f = fields( 1, 'a', 1, 1_700_000_000_000 );
+		f[4] = 'not a date';
+		f[5] = 2150891520;
+		push( f );
+		fixture.detectChanges();
+		expect( cells()[0][3] ).toBe( 'not a date' );
+		expect( cells()[0][4] ).toBe( '2150891520' );
+	} );
+	it( 'shows a refused change of the field list and stays subscribed', async ()=>{
+		const { fixture, tab, gateway, cells, push } = open();
+		gateway.events.next( {opcId: 'cn', node: tab.node().nodeId, fields: [], refused: 0x80450000} );
+		await flush();
+		expect( tab.error() ).toContain( '0x80450000' );
+		expect( tab.rows() ).toEqual( [] );
+		expect( tab.live() ).toBe( true );
+		push( fields( 1, 'a', 1, 1_700_000_000_000 ) );
+		fixture.detectChanges();
+		expect( cells() ).toHaveLength( 1 );
+	} );
+	it( 'shows what the gateway said when it refuses, and does not retry', async ()=>{
+		vi.useFakeTimers();
+		try{
+			const { tab, gateway } = open();
+			gateway.events.error( {error: {requestId: 1, message: "The event field 'Foo:Bar' has a bad index.", sc: 0, httpStatus: 400}} );
+			expect( tab.error() ).toContain( 'Foo:Bar' );
+			expect( tab.error() ).not.toContain( 'lost' );
+			await vi.advanceTimersByTimeAsync( 6_000 );
+			expect( gateway.subscribeEvents ).toHaveBeenCalledTimes( 1 );
+		}
+		finally{
+			vi.useRealTimers();
+		}
+	} );
+	it( 'shows what the gateway said when it could not subscribe yet, and tries again', async ()=>{
+		vi.useFakeTimers();
+		try{
+			const { tab, gateway } = open();
+			gateway.events.error( {error: {requestId: 1, message: "Send sessionId before subscribing.", sc: 2083611259, httpStatus: 500}} );
+			expect( tab.error() ).toContain( 'Send sessionId' );
+			expect( tab.error() ).toContain( 'Trying again' );
+			await vi.advanceTimersByTimeAsync( 6_000 );
+			expect( gateway.subscribeEvents ).toHaveBeenCalledTimes( 2 );
+		}
+		finally{
+			vi.useRealTimers();
+		}
 	} );
 	it( 'shows the status a refused subscription ends with, and no empty-table notice', async ()=>{
 		const { fixture, tab, gateway } = open();

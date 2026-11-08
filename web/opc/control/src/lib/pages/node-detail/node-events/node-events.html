@@ -45,7 +45,12 @@
 			<mat-header-cell *matHeaderCellDef>{{ c.label }}</mat-header-cell>
 			<mat-cell *matCellDef="let r">
 				@if( c.key=='Time' || c.key=='ReceiveTime' ){
-					{{ r.fields[c.index] ? (text(r, c.index) | date:'yyyy-MM-dd HH:mm:ss.SSS') : '' }}
+					@if( eventTime(r.fields[c.index]); as time ){
+						{{ time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}
+					}
+					@else{
+						{{ text(r, c.index) }}
+					}
 				}
 				@else if( structured(r.fields[c.index]) ){<!--a structure decoded by member, an array of them, or a body no type explains (clients spec *Structures*)-->
 					<structure-table [value]="r.fields[c.index]" [label]="c.label"></structure-table>

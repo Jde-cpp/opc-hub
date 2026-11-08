@@ -13,7 +13,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { DateUtils, SnackbarService } from 'jde-framework';
 import { LocalPrefs } from 'jde-spa';
-import { eventColumns, eventFieldText, EventFields, EventRow, isLocalizedText, selectProblem, toEventRow } from '../../../model/event';
+import { eventColumns, eventFieldText, EventFields, EventRow, eventTime, isLocalizedText, keptSelect, repeatsField, selectProblem, toEventRow } from '../../../model/event';
 import { UaNode } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { isBad, scHex } from '../../../model/status-code';
@@ -76,8 +76,7 @@ export class NodeEvents implements OnDestroy{
 		this.historyStatus.set( undefined );
 		if( node!==this.#selectNode ){//a new node:  its own list, before this one's is saved under it
 			this.#selectNode = node;
-			const kept = this.#prefs.get<string[]>( NodeEvents.prefsOwner, this.#prefsName( node ), [] );
-			const list = Array.isArray( kept ) ? kept.filter( p=>typeof p=='string' && !selectProblem( p ) ) : [];
+			const list = keptSelect( this.#prefs.get<string[]>( NodeEvents.prefsOwner, this.#prefsName( node ), [] ) );
 			if( list.join( '\n' )!=select.join( '\n' ) ){
 				this.select.set( list );//the effect runs again with it
 				return;
@@ -95,13 +94,13 @@ export class NodeEvents implements OnDestroy{
 			error: ( e:unknown )=>{
 				this.#subscription = undefined;
 				this.live.set( false );
-				if( e instanceof OpcError ){//refused:  the node, or a field, as the gateway or the server read it - no retry would change it
-					this.error.set( `The server refused the subscription:  ${scHex( e.sc )} ${OpcError.text( e.sc )}.` );
-					if( !OpcError.statusCodeText( e.sc ) )
-						gateway.updateErrorCodes().then( ()=>{ if( !this.#destroyed && this.error() ) this.error.set( `The server refused the subscription:  ${scHex( e.sc )} ${OpcError.text( e.sc )}.` ); } );
-				}
-				else{//the socket went:  the gateway has forgotten the item, so it is asked for again once it is back
-					this.error.set( "Connection to the gateway lost.  The subscription resumes once it is back." );
+				const answer = NodeEvents.gatewayAnswer( e );
+				if( e instanceof OpcError )//refused:  the node, or a field, as the server read it - no retry would change it
+					this.#showRefused( e.sc, "the subscription" );
+				else if( answer && answer.httpStatus>=400 && answer.httpStatus<500 )//a field the gateway cannot read, likewise
+					this.error.set( `The gateway refused the subscription:  ${answer.message}` );
+				else{//the socket went, or the gateway could not do it yet - a session not back, a server down:  the item is asked for again
+					this.error.set( answer ? `The gateway could not subscribe:  ${answer.message}  Trying again.` : "Connection to the gateway lost.  The subscription resumes once it is back." );
 					clearTimeout( this.#retry );
 					this.#retry = setTimeout( ()=>{ if( !this.#destroyed && node===this.node() && !this.#subscription ) this.#subscribe( node, this.select() ); }, Gateway.histRetryDelay );
 				}
@@ -109,6 +108,17 @@ export class NodeEvents implements OnDestroy{
 		} );
 		this.live.set( true );
 		this.error.set( undefined );
+	}
+	//what the gateway said, when it answered with an exception (ProtoService.processError):  a lost socket's rejection has no status
+	static gatewayAnswer( e:unknown ):{message:string; httpStatus:number}|undefined{
+		const error = (<{error?:{message?:string; httpStatus?:number}}>e)?.error;
+		return error && 'httpStatus' in error ? { message: error.message ?? "", httpStatus: error.httpStatus ?? 0 } : undefined;
+	}
+	#showRefused( sc:number, what:string ){
+		const text = ()=>`The server refused ${what}:  ${scHex( sc )} ${OpcError.text( sc )}.`;
+		this.error.set( text() );
+		if( !OpcError.statusCodeText( sc ) )
+			this.pageData().gateway.updateErrorCodes().then( ()=>{ if( !this.#destroyed && this.error() ) this.error.set( text() ); } );
 	}
 	#subscription:Subscription|undefined;
 	#retry:ReturnType<typeof setTimeout>|undefined;
@@ -120,9 +130,13 @@ export class NodeEvents implements OnDestroy{
 		this.live.set( false );
 	}
 	#onEvent( e:EventPush ){
+		if( e.refused )
+			return this.#showRefused( e.refused, "the field list" );
 		const row = toEventRow( e.fields );
 		if( this.paused() ){
 			this.#held.push( row );
+			if( this.#held.length>NodeEvents.maxRows )
+				this.#held.shift();
 			this.held.set( this.#held.length );
 			return;
 		}
@@ -168,8 +182,8 @@ export class NodeEvents implements OnDestroy{
 		const problem = selectProblem( path );
 		if( problem )
 			return this.#snackbar.warn( problem );
-		if( this.select().includes( path ) )
-			return;
+		if( repeatsField( path, this.select() ) )
+			return this.#snackbar.warn( `'${path}' is a column already.` );
 		this.select.update( s=>[...s, path] );
 	}
 	removeField( path:string ){ this.select.update( s=>s.filter( p=>p!=path ) ); }
@@ -182,15 +196,19 @@ export class NodeEvents implements OnDestroy{
 		this.loading.set( true );
 		this.historyStatus.set( undefined );
 		try{
-			const page = await gateway.historyEvents( this.cnnctnSlug, node.nodeId, {start: from, select} );
-			if( this.#destroyed || node!==this.node() )
-				return;
-			if( isBad( page.status ) ){
-				this.historyStatus.set( `${scHex( page.status )} ${OpcError.text( page.status )}` );
-				if( !OpcError.statusCodeText( page.status ) )
-					gateway.updateErrorCodes().then( ()=>{ if( !this.#destroyed && this.historyStatus() ) this.historyStatus.set( `${scHex( page.status )} ${OpcError.text( page.status )}` ); } );
-			}
-			this.#add( page.events.map( ( fields:EventFields )=>toEventRow( fields, from ) ) );
+			let continuation:string|undefined;
+			do{
+				const page = await gateway.historyEvents( this.cnnctnSlug, node.nodeId, {start: from, select, continuation} );
+				if( this.#destroyed || node!==this.node() || select!==this.select() )//its fields are the old list's, or the page has moved on
+					return;
+				if( isBad( page.status ) ){
+					this.historyStatus.set( `${scHex( page.status )} ${OpcError.text( page.status )}` );
+					if( !OpcError.statusCodeText( page.status ) )
+						gateway.updateErrorCodes().then( ()=>{ if( !this.#destroyed && this.historyStatus() ) this.historyStatus.set( `${scHex( page.status )} ${OpcError.text( page.status )}` ); } );
+				}
+				this.#add( page.events.map( ( fields:EventFields )=>toEventRow( fields, from ) ) );
+				continuation = page.continuation;
+			}while( continuation );
 		}
 		catch( e ){
 			this.#snackbar.exception( "Could not read the event history.", e );
@@ -201,6 +219,7 @@ export class NodeEvents implements OnDestroy{
 		}
 	}
 	text( r:EventRow, index:number ):string{ return eventFieldText( r.fields[index] ); }
+	readonly eventTime = eventTime;
 	//a field the cell's StructureTable shows (clients spec *Structures*):  a structure, an array of them or a body no type explains - not a LocalizedText, which is text
 	structured( v:unknown ):boolean{ return !isLocalizedText( v ) && StructureTable.shows( v ); }
 	get cnnctnSlug():string{ return this.pageData().server.connection.slug; }

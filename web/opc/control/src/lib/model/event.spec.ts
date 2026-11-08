@@ -1,4 +1,4 @@
-import { baseEventFields, EBaseField, eventColumns, eventFieldText, eventTime, selectProblem, toEventRow } from './event';
+import { baseEventFields, EBaseField, eventColumns, eventFieldText, eventTime, keptSelect, repeatsField, selectProblem, toEventRow } from './event';
 import { NodeId } from './node-id';
 
 //An event's fields as the socket delivers them (clients spec *Events*):  the eight base fields, then the selected ones.
@@ -56,6 +56,31 @@ describe( 'selectProblem', ()=>{
 		expect( selectProblem( '' ) ).toBeDefined();
 		expect( selectProblem( 'Message/' ) ).toBeDefined();
 		expect( selectProblem( '70000:x' ) ).toBeDefined();
+		expect( selectProblem( 'Foo:Bar' ) ).toBeDefined();
+		expect( selectProblem( '2:' ) ).toBeDefined();
+		expect( selectProblem( 'a/~b' ) ).toBeDefined();
+		expect( selectProblem( '2:a:b' ) ).toBeUndefined();
+	} );
+} );
+
+describe( 'repeatsField', ()=>{
+	it( 'finds a base field or a chip, however the namespace is spelled', ()=>{
+		expect( repeatsField( 'Message', [] ) ).toBe( true );
+		expect( repeatsField( '0:Message', [] ) ).toBe( true );
+		expect( repeatsField( '0~Rpm', ['Rpm'] ) ).toBe( true );
+		expect( repeatsField( '2~Rpm', ['2:Rpm'] ) ).toBe( true );
+		expect( repeatsField( '02:Rpm', ['2:Rpm'] ) ).toBe( true );
+	} );
+	it( 'leaves another namespace or a longer path alone', ()=>{
+		expect( repeatsField( '2:Rpm', ['Rpm'] ) ).toBe( false );
+		expect( repeatsField( 'Message/Id', [] ) ).toBe( false );
+	} );
+} );
+
+describe( 'keptSelect', ()=>{
+	it( 'drops what the gateway would refuse and what repeats a field', ()=>{
+		expect( keptSelect( ['Rpm', 'Foo:Bar', 'Message', '0:Rpm', 7, '2:Rpm'] ) ).toEqual( ['Rpm', '2:Rpm'] );
+		expect( keptSelect( 'Rpm' ) ).toEqual( [] );
 	} );
 } );
 

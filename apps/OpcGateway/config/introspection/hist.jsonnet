@@ -61,8 +61,8 @@ local history = {
 };
 local historyEvents = {
 	fields: [
-		{ name: "status", type: NonNull(UInt) }, //the node's, as the server answered it:  Bad_HistoryOperationUnsupported from one that keeps no event history.
-		{ name: "continuation", type: String }, //the last event's Time, to read on from; null when the server had no more.
+		{ name: "status", type: NonNull(UInt) }, //the node's, as the server answered it:  Bad_HistoryOperationUnsupported from one that keeps no event history, Bad_NotSupported or Bad_ServiceUnsupported from one with no history service.
+		{ name: "continuation", type: String }, //where this page ends, to read on from; null when the server had no more.
 		{ name: "events", type: List({ kind: "OBJECT", name: "HistoryEvent" }) } //in the server's order, oldest first.
 	]
 };

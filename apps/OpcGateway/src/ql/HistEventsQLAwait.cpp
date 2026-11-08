@@ -9,6 +9,36 @@
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	constexpr uint TimeField{ 4 };//Time's place among the base fields (EventFilter::Base).
+	Ω noHistoryService( StatusCode sc )ι->bool{ return sc==UA_STATUSCODE_BADNOTSUPPORTED || sc==UA_STATUSCODE_BADSERVICEUNSUPPORTED; }
+
+	α EventsCursor::Parse( sv text )ι->optional<EventsCursor>{
+		let slash = text.find( '/' );
+		if( slash==sv::npos )
+			return nullopt;
+		let start = Str::TryTo<UA_DateTime>( text.substr(0, slash) );
+		let skip = Str::TryTo<uint>( text.substr(slash+1) );
+		if( !start || !skip )
+			return nullopt;
+		EventsCursor y;
+		y._start = *start;
+		y._skip = y._carried = *skip;
+		return y;
+	}
+	α EventsCursor::Passes( UA_DateTime time )ι->bool{
+		if( _skip && time==_start ){
+			--_skip;
+			return true;
+		}
+		if( _last!=time ){
+			_last = time;
+			_lastCount = 0;
+		}
+		++_lastCount;
+		return false;
+	}
+	α EventsCursor::Next()Ι->optional<string>{
+		return _last ? optional<string>{ Ƒ("{}/{}", *_last, _lastCount+(*_last==_start ? _carried : 0)) } : nullopt;
+	}
 
 	HistEventsQLAwait::Args::Args( const QL::Input& input, SL sl )ε{
 		let refuse = [&]( string what ){ return Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "{}:  {}", Command, move(what) }; };
@@ -25,11 +55,12 @@ namespace Jde::Opc::Gateway{
 			throw refuse( "needs a start." );
 		Start = *start;
 		End = end.value_or( 0 );//0:  the server's now, as Part 11 reads an open end.
-		if( let c = input.FindPtr<jstring>("continuation"); c && c->size() ){//the last page's last Time, to read on from.
-			let tick = Str::TryTo<UA_DateTime>( *c );
-			if( !tick )
+		if( let c = input.FindPtr<jstring>("continuation"); c && c->size() ){
+			let cursor = EventsCursor::Parse( *c );
+			if( !cursor )
 				throw UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, "The continuation isn't one of the gateway's.", {ELogLevel::Debug}, sl };
-			Start = *tick;
+			Cursor = *cursor;
+			Start = Cursor.Start();
 		}
 		vector<string> select;
 		if( let p = input.FindPtr<jvalue>("select"); p && !p->is_null() ){
@@ -59,22 +90,37 @@ namespace Jde::Opc::Gateway{
 		try{
 			const Args args{ _query, _sl };
 			node = args.Node;
-			HistoryReadRequest request{ args.Start, args.End, args.Limit, args.Filter };
-			request.Add( args.Node );
-			auto response = co_await HistoryReadAwait{ move(request), _client, _sl };
-			auto& result = response.Result( 0 );
-			point.assign( (const char*)result.continuationPoint.data, result.continuationPoint.length );
+			_cursor = args.Cursor;
+			jarray events;
+			StatusCode status{};
+			do{//a page the cursor passes all of reads on over the server's continuation point.
+				try{
+					HistoryReadRequest request{ args.Start, args.End, args.Limit, args.Filter };
+					request.Add( args.Node, point );
+					auto response = co_await HistoryReadAwait{ move(request), _client, _sl };
+					auto& result = response.Result( 0 );
+					point.assign( (const char*)result.continuationPoint.data, result.continuationPoint.length );
+					status = result.statusCode;
+					events = Read( args, result );
+				}
+				catch( const UAException& e ){//a server with no history service refuses the whole read:  an answer, as one keeping no event history gives.
+					if( !noHistoryService((StatusCode)e.Code()) )
+						throw;
+					status = (StatusCode)e.Code();
+					point.clear();
+				}
+			}while( events.empty() && point.size() && _cursor.Skipping() && !UA_StatusCode_isBad(status) );
 			jobject answer;
-			let status = result.statusCode;
 			if( UA_StatusCode_isBad(status) )
 				DBG( "[{}]historyEvents {} answered {}.", hex(_client->Handle()), args.Node.ToString(), UAException::Message(status) );
 			if( _query.FindColumn("status") )
 				answer["status"] = status;
-			let events = Read( args, result );
 			if( _query.FindTable("events") )
 				answer["events"] = events;
-			if( _query.FindColumn("continuation") )
-				answer["continuation"] = point.size() && _lastTime ? jvalue{ std::to_string(*_lastTime) } : jvalue{};
+			if( _query.FindColumn("continuation") ){
+				let next = point.size() ? _cursor.Next() : nullopt;
+				answer["continuation"] = next ? jvalue{ *next } : jvalue{};
+			}
 			y = _query.TransformResult( move(answer) );
 		}
 		catch( runtime_error& ){
@@ -112,6 +158,9 @@ namespace Jde::Opc::Gateway{
 		let types = _client->Types().get();
 		let count = args.Filter.Select.size();
 		for( let& event : std::span{history.events, history.eventsSize} ){
+			const UA_Variant* time = TimeField<event.eventFieldsSize ? &event.eventFields[TimeField] : nullptr;
+			if( time && UA_Variant_hasScalarType(time, &UA_TYPES[UA_TYPES_DATETIME]) && _cursor.Passes(*static_cast<const UA_DateTime*>(time->data)) )
+				continue;
 			jarray fields;
 			for( uint i=0; i<count; ++i ){
 				const UA_Variant* field = i<event.eventFieldsSize ? &event.eventFields[i] : nullptr;
@@ -119,8 +168,6 @@ namespace Jde::Opc::Gateway{
 					fields.emplace_back( nullptr );
 					continue;
 				}
-				if( i==TimeField && UA_Variant_hasScalarType(field, &UA_TYPES[UA_TYPES_DATETIME]) )
-					_lastTime = *static_cast<const UA_DateTime*>( field->data );
 				try{
 					fields.push_back( Variant{*field}.ToJson(types) );
 				}
