@@ -1,7 +1,7 @@
 #include <jde/opc/server/Condition.h>
 #include <cstring>
-#include <jde/opc/uatypes/UAString.h>
 #include <jde/opc/uatypes/Value.h>
+#include <jde/opc/server/UAAccess.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
@@ -50,17 +50,25 @@ namespace Jde::Opc::Server{
 			auto conditions = static_cast<Conditions*>( methodContext );
 			return conditions && objectId ? conditions->Find( *objectId ) : nullptr;
 		}
+		//Who a method's caller is, for ClientUserId, whose logic Part 9 leaves to the server:  the login the session's token names, open62541's
+		//`clientUserId`;  an issued token names none, so the user it resolved to (UAAccess), and an anonymous session is nobody.
+		Ω clientUser( UA_Server& ua, const UA_NodeId& session, const void* context )ι->string{
+			UA_Variant v; UA_Variant_init( &v );//a view of the session's:  not cleared.
+			if( UA_Server_getSessionAttribute(&ua, &session, UA_QUALIFIEDNAME(0, (char*)"clientUserId"), &v)==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&v, &UA_TYPES[UA_TYPES_STRING]) && static_cast<const UA_String*>(v.data)->length )
+				return ToString( *static_cast<const UA_String*>(v.data) );
+			let ctx = static_cast<const UAAccess::SessionContext*>( context );
+			return ctx && ctx->UserPK.Value ? std::to_string( ctx->UserPK.Value ) : string{};
+		}
 		//Acknowledge, Confirm and AddComment take the same two arguments, the EventId and a Comment, a LocalizedText.  The server has
 		//type-checked them by here, so the shape check is a guard.  Nothing in these throws:  an exception would unwind through the server's C frames.
 		template<auto Method>
-		Ω commentMethod( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void* methodContext, const UA_NodeId* objectId, void*, uint inputSize, const UA_Variant* input, uint, UA_Variant* )ι->UA_StatusCode{
+		Ω commentMethod( UA_Server* ua, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId*, void* methodContext, const UA_NodeId* objectId, void*, uint inputSize, const UA_Variant* input, uint, UA_Variant* )ι->UA_StatusCode{
 			auto condition = conditionOf( methodContext, objectId );
-			if( !condition )
+			if( !condition || !ua || !sessionId )
 				return UA_STATUSCODE_BADNODEIDUNKNOWN;
 			if( inputSize!=2 || !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_BYTESTRING]) || !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]) )
 				return UA_STATUSCODE_BADINVALIDARGUMENT;
-			let& comment = *static_cast<const UA_LocalizedText*>( input[1].data );
-			return (condition->*Method)( *static_cast<const UA_ByteString*>(input[0].data), ToSV(comment.text) );
+			return (condition->*Method)( *static_cast<const UA_ByteString*>(input[0].data), *static_cast<const UA_LocalizedText*>(input[1].data), clientUser(*ua, *sessionId, sessionContext) );
 		}
 		Ω enable( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void* methodContext, const UA_NodeId* objectId, void*, uint, const UA_Variant*, uint, UA_Variant* )ι->UA_StatusCode{
 			return conditionOf( methodContext, objectId ) ? UA_STATUSCODE_BADCONDITIONALREADYENABLED : UA_STATUSCODE_BADNODEIDUNKNOWN;
@@ -103,6 +111,13 @@ namespace Jde::Opc::Server{
 			if( auto condition = conditions ? conditions->FindByInput( *nodeId ) : nullptr; condition )
 				condition->OnInput( *value );
 		}
+		//A write to a watched limit, after the server stored it:  every condition held to it compares its input again.
+		Ω onLimitWrite( UA_Server* ua, const UA_NodeId*, void*, const UA_NodeId* nodeId, void*, const UA_NumericRange*, const UA_DataValue* value )ι->void{
+			if( !ua || !nodeId || !value || !value->hasValue )
+				return;
+			if( auto conditions = Conditions::Of( *ua ); conditions )
+				conditions->OnLimit( *nodeId );
+		}
 	}
 
 	Condition::Condition( UA_Server& ua, NodeId id, NodeId source )ε:
@@ -117,6 +132,7 @@ namespace Jde::Opc::Server{
 			return move( *y );
 		};
 		let twoState = [&]( const char* name )ε->TwoState{ return { variable({name}), variable({name, "Id"}) }; };
+		let stamped = [&]( const char* name )ε->Stamped{ return { variable({name}), variable({name, "SourceTimestamp"}) }; };
 		_enabled = twoState( "EnabledState" );
 		_active = twoState( "ActiveState" );
 		_acked = twoState( "AckedState" );
@@ -125,12 +141,20 @@ namespace Jde::Opc::Server{
 		_retain = variable( {"Retain"} );
 		_severity = variable( {"Severity"} );
 		_message = variable( {"Message"} );
-		_comment = variable( {"Comment"} );
 		_branchId = variable( {"BranchId"} );
+		_clientUserId = variable( {"ClientUserId"} );
+		_suppressedOrShelved = variable( {"SuppressedOrShelved"} );
+		_comment = stamped( "Comment" );
+		_quality = stamped( "Quality" );
+		_lastSeverity = stamped( "LastSeverity" );
 		Write( _enabled, true, "Enabled" );
 		const UA_NodeId null = UA_NODEID_NULL;
 		Write( _branchId, &null, UA_TYPES_NODEID );
+		const UA_Boolean suppressed{ false };
+		Write( _suppressedOrShelved, &suppressed, UA_TYPES_BOOLEAN );
 		WriteState();
+		for( let stamp : {&_comment, &_quality, &_lastSeverity} )
+			Stamp( stamp->Time );
 	}
 	α Condition::Write( const NodeId& node, const void* scalar, uint type )ι->void{
 		UA_Variant v; UA_Variant_init( &v );
@@ -138,9 +162,13 @@ namespace Jde::Opc::Server{
 		if( let sc = UA_Server_writeValue(&_ua, node, v); sc )
 			WARN( "Could not write {} of condition {}:  {}", node.ToString(), _id.ToString(), UA_StatusCode_name(sc) );
 	}
-	α Condition::WriteText( const NodeId& node, sv text )ι->void{
-		const UA_LocalizedText t{ UA_STRING_NULL, ToUV(text) };
+	α Condition::WriteText( const NodeId& node, sv text, sv locale )ι->void{
+		const UA_LocalizedText t{ locale.empty() ? UA_STRING_NULL : ToUV(locale), ToUV(text) };
 		Write( node, &t, UA_TYPES_LOCALIZEDTEXT );
+	}
+	α Condition::Stamp( const NodeId& timestamp )ι->void{
+		let now = UA_DateTime_now();
+		Write( timestamp, &now, UA_TYPES_DATETIME );
 	}
 	α Condition::Write( const TwoState& state, bool value, sv text )ι->void{
 		WriteText( state.Variable, text );
@@ -157,7 +185,11 @@ namespace Jde::Opc::Server{
 		const UA_UInt16 severity{ _state.Severity };
 		Write( _severity, &severity, UA_TYPES_UINT16 );
 		WriteText( _message, _state.Message );
-		WriteText( _comment, _state.Comment );
+		WriteText( _comment.Variable, _state.Comment, _state.CommentLocale );
+		const UA_String user = ToUV( _state.ClientUserId );
+		Write( _clientUserId, &user, UA_TYPES_STRING );
+		Write( _quality.Variable, &_state.Quality, UA_TYPES_STATUSCODE );
+		Write( _lastSeverity.Variable, &_state.LastSeverity, UA_TYPES_UINT16 );
 	}
 	//The event:  the object's type from its source, the instance resolving the condition fields it holds, and in the map the rest, which the
 	//server looks up first - the ConditionId under the key the standard clause prints as, `i=2782#NodeId`, which the build otherwise answers
@@ -170,6 +202,10 @@ namespace Jde::Opc::Server{
 		let now = UA_DateTime_now();
 		if( !replay )
 			_lastTime = now;
+		UA_LocalizedText name; UA_LocalizedText_init( &name );
+		if( UA_Server_readDisplayName(&_ua, _source, &name)==UA_STATUSCODE_GOOD )//the name now:  a client may have renamed the source.
+			_sourceName = ToString( name.text );
+		UA_LocalizedText_clear( &name );
 		UA_KeyValuePair fields[7]; uint count{};
 		let add = [&]( const char* key, const void* scalar, uint type )ι{
 			fields[count].key = UA_QUALIFIEDNAME( 0, (char*)key );
@@ -206,27 +242,43 @@ namespace Jde::Opc::Server{
 	}
 	α Condition::Raise( bool active, UA_UInt16 severity, sv message )ι->UA_StatusCode{
 		_state.Active = active;
-		_state.Severity = severity;
+		if( severity!=_state.Severity ){
+			_state.LastSeverity = _state.Severity;
+			_state.Severity = severity;
+			Stamp( _lastSeverity.Time );
+		}
 		_state.Message = message;
 		if( active ){//a new alarm wants its own acknowledgement:  what was said of the last one goes with it.
 			_state.Acked = false;
 			_state.Confirmed = !_confirmed;
-			_state.Comment.clear();
+			if( _state.Comment.size() || _state.CommentLocale.size() )
+				SetComment( {}, {}, {} );
 		}
 		WriteState();
 		return Emit();
 	}
-	α Condition::Acknowledge( const UA_ByteString& eventId, sv comment )ι->UA_StatusCode{
+	α Condition::SetComment( sv text, sv locale, sv user )ι->void{
+		_state.Comment = text;
+		_state.CommentLocale = locale;
+		_state.ClientUserId = user;
+		Stamp( _comment.Time );
+	}
+	//Part 9:  a comment with text and locale both empty is none, and the last stands;  an empty text with a locale clears it.
+	α Condition::ApplyComment( const UA_LocalizedText& comment, sv user )ι->void{
+		if( comment.text.length || comment.locale.length )
+			SetComment( ToSV(comment.text), ToSV(comment.locale), user );
+	}
+	α Condition::Acknowledge( const UA_ByteString& eventId, const UA_LocalizedText& comment, sv user )ι->UA_StatusCode{
 		if( !IsLast(eventId) )
 			return UA_STATUSCODE_BADEVENTIDUNKNOWN;
 		if( _state.Acked )
 			return UA_STATUSCODE_BADCONDITIONBRANCHALREADYACKED;
 		_state.Acked = true;
-		_state.Comment = comment;
+		ApplyComment( comment, user );
 		WriteState();
 		return Emit();
 	}
-	α Condition::Confirm( const UA_ByteString& eventId, sv comment )ι->UA_StatusCode{
+	α Condition::Confirm( const UA_ByteString& eventId, const UA_LocalizedText& comment, sv user )ι->UA_StatusCode{
 		if( !_confirmed )
 			return UA_STATUSCODE_BADNOTSUPPORTED;
 		if( !IsLast(eventId) )
@@ -236,14 +288,14 @@ namespace Jde::Opc::Server{
 		if( _state.Confirmed )
 			return UA_STATUSCODE_BADCONDITIONBRANCHALREADYCONFIRMED;
 		_state.Confirmed = true;
-		_state.Comment = comment;
+		ApplyComment( comment, user );
 		WriteState();
 		return Emit();
 	}
-	α Condition::AddComment( const UA_ByteString& eventId, sv comment )ι->UA_StatusCode{
+	α Condition::AddComment( const UA_ByteString& eventId, const UA_LocalizedText& comment, sv user )ι->UA_StatusCode{
 		if( !IsLast(eventId) )
 			return UA_STATUSCODE_BADEVENTIDUNKNOWN;
-		_state.Comment = comment;
+		ApplyComment( comment, user );
 		WriteState();
 		return Emit();
 	}
@@ -252,27 +304,49 @@ namespace Jde::Opc::Server{
 	}
 	α Condition::WatchHigh( const NodeId& input, const NodeId& limit, UA_UInt16 severity )ε->void{
 		THROW_IF( _input, "The condition {} already watches {}.", _id.ToString(), _input->ToString() );
+		let conditions = Conditions::Of( _ua );//one value callback a node, and it drives the first condition on the input.
+		THROW_IF( conditions && conditions->FindByInput(input), "{} already drives a condition.", input.ToString() );
 		UA_LocalizedText name; UA_LocalizedText_init( &name );
 		UAε( UA_Server_readDisplayName(&_ua, input, &name) );
 		_inputName = ToString( name.text );
 		UA_LocalizedText_clear( &name );
 		_inputSeverity = severity;
 		_limit = limit;
+		const UA_ValueCallback limitCallback{ .onRead=nullptr, .onWrite=&onLimitWrite };
+		UAε( UA_Server_setVariableNode_valueCallback(&_ua, limit, limitCallback) );
 		const UA_ValueCallback callback{ .onRead=nullptr, .onWrite=&onInputWrite };
 		UAε( UA_Server_setVariableNode_valueCallback(&_ua, input, callback) );
 		_input = input;//last:  the callback finds this condition by it, so a failed install watches nothing.
 	}
-	//Over the limit raises, at or under it clears, each once:  a write that leaves the state as it is raises nothing, nor does one that
-	//isn't a number or a limit that isn't.
+	//Over the limit raises, at or under it clears, each once:  only a change in the input's own verdict drives it, so a Raise by hand holds
+	//until the input next crosses, and even then a state the condition already has raises nothing.  A Bad sample, a value that isn't a finite
+	//number or a limit that isn't says nothing about the process, so the state stands;  the status goes to Quality.
 	α Condition::OnInput( const UA_DataValue& value )ι->void{
 		if( !_limit )
+			return;
+		const UA_StatusCode quality = value.hasStatus ? value.status : UA_STATUSCODE_GOOD;
+		if( quality!=_state.Quality ){
+			_state.Quality = quality;
+			Write( _quality.Variable, &_state.Quality, UA_TYPES_STATUSCODE );
+			Stamp( _quality.Time );
+		}
+		if( UA_StatusCode_isBad(quality) )
 			return;
 		let x = number( value.value );
 		const Value limit = ReadValue( _ua, *_limit );
 		let max = x && limit.hasValue ? number( limit.value ) : optional<double>{};
-		if( !max || (*x>*max)==_state.Active )
+		if( !max || !std::isfinite(*x) || !std::isfinite(*max) )
 			return;
-		Raise( *x>*max, _inputSeverity, Ƒ("{} at {} is {} its limit of {}.", _inputName, *x, *x>*max ? "over" : "within", *max) );
+		let over = *x>*max;
+		let was = _inputOver.value_or( _state.Active );
+		_inputOver = over;
+		if( over==was || over==_state.Active )
+			return;
+		Raise( over, _inputSeverity, Ƒ("{} at {} is {} its limit of {}.", _inputName, *x, over ? "over" : "within", *max) );
+	}
+	α Condition::OnLimit()ι->void{
+		if( _input )
+			OnInput( ReadValue(_ua, *_input) );
 	}
 
 	α Conditions::Add( UA_Server& server, const NodeId& condition, const NodeId& source )ε->Condition&{
@@ -295,6 +369,12 @@ namespace Jde::Opc::Server{
 				return c.get();
 		}
 		return nullptr;
+	}
+	α Conditions::OnLimit( const UA_NodeId& limit )ι->void{
+		for( auto& c : _conditions ){
+			if( c->Limit() && UA_NodeId_equal(&*c->Limit(), &limit) )
+				c->OnLimit();
+		}
 	}
 	α Conditions::Refresh( UA_Server& server, const UA_NodeId& session, UA_UInt32 subscription )ι->UA_StatusCode{
 		let bracket = [&]( UA_UInt32 type )ι->UA_StatusCode{

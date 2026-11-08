@@ -50,10 +50,10 @@ values moving.  Without it every value in the shipped address space is static.
   Anonymous is off by default (`/opc/tokenTypes`).  A session's rights are the hub user's.
 - **Alarms** (the core's `Condition`, [`docs/clients/spec.md`](../../docs/clients/spec.md) *Alarms and conditions*): the
   pumps nodeset declares `pumpManual.overspeed`, an AlarmConditionType object the server library drives, since
-  open62541's own alarms are off in this build.  It goes active when `motorRpm` is written over its `HighLimit`
-  property, or through its `Raise` method.  Acknowledge, Confirm and AddComment are the type's methods on the object,
-  and ConditionRefresh on ConditionType replays the retained conditions to the caller's subscription.  The emulator
-  loads the object as nodes alone.
+  open62541's own alarms are off in this build.  It goes active when `motorRpm` crosses its `HighLimit` property, or
+  through its `Raise` method, which holds until the next crossing.  Acknowledge, Confirm and AddComment are the type's
+  methods on the object, and ConditionRefresh on ConditionType replays the retained conditions to the caller's
+  subscription.  The emulator loads the object as nodes alone.
 - **History** (`src/hist/`, over the core's `UAHistory`): the server keeps the history of every variable a nodeset
   marks `Historizing="true"`.  It serves HistoryRead's raw, modified, at-time and processed reads, and HistoryUpdate's
   edits ([`libs/historian/docs/spec.md`](../../libs/historian/docs/spec.md), *OpcServer*).
@@ -130,7 +130,8 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Server.Tests`.  Its t
 - `HistoryRestartTests`: a restart keeps each node's history index and removes what the nodesets no longer historize.
 - `ConditionTests`: `pumpManual.overspeed` through a UA client - raised and retained on an events subscription,
   acknowledged and confirmed with the refusals, commented, replayed by ConditionRefresh to its own subscription alone,
-  and driven by `motorRpm` written over its limit.
+  driven by `motorRpm` written over its limit or by the limit written, held by a `Raise` against the input, unmoved by a
+  Bad or NaN sample, its mandatory fields, an empty comment, a renamed source and a severity out of range.
 - `CustomMutationTests`: `updateLogSetting` is the only mutation the server answers, gated by Update on its `logs`
   resource.  While that resource is unenforced, anyone may send it, anonymous callers too; once it is enforced,
   anonymous gets 401.  Every other mutation gets 403.

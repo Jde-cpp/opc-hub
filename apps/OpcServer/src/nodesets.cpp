@@ -34,6 +34,7 @@ namespace Jde::Opc{
 		const UA_String s{ (uint)(end-text)+unit.size(), (UA_Byte*)text };
 		return UA_Variant_setScalarCopy( &output[1], &s, &UA_TYPES[UA_TYPES_STRING] );
 	}
+	Ω severityInRange( UA_UInt16 severity )ι->bool{ return severity>=1 && severity<=1000; }//as the methods' InputArguments say.
 	//pumpManual.raiseEvent (clients spec *Events*, #424):  the pumps demo's event source, which an install tries the Events tab on and the
 	//gateway's SubscribeTests raise - `message` String and `severity` UInt16 in, the event's EventId out.  A BaseEventType event from the
 	//pump, the one the method is called on, so pumpManual's own events subscription sees it and the Server object's does (Part 3 7.17),
@@ -45,6 +46,8 @@ namespace Jde::Opc{
 			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		const UA_LocalizedText message{ UA_STRING_NULL, *(const UA_String*)input[0].data };
 		const UA_UInt16 severity = *(const UA_UInt16*)input[1].data;
+		if( !severityInRange(severity) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		const Value rpm = ReadValue( *ua, NodeId{objectId->namespaceIndex, 6054} );//pumpManual.motorRpm;  empty when the read fails, which the field then is.
 		UA_KeyValuePair field{ .key={0, UA_STRING((char*)"/Rpm")}, .value=rpm.value };
 		const UA_KeyValueMap fields{ 1, &field };
@@ -61,6 +64,8 @@ namespace Jde::Opc{
 	//object called on, found through the server's Conditions.  Nothing in it throws, as raiseEvent doesn't.
 	Ω raiseCondition( UA_Server* ua, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId* objectId, void*, uint inputSize, const UA_Variant* input, uint outputSize, UA_Variant* output )ι->UA_StatusCode{
 		if( inputSize!=3 || outputSize!=1 || !objectId || !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_BOOLEAN]) || !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_UINT16]) || !UA_Variant_hasScalarType(&input[2], &UA_TYPES[UA_TYPES_STRING]) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		if( !severityInRange(*(const UA_UInt16*)input[1].data) )
 			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		auto conditions = Server::Conditions::Of( *ua );
 		auto condition = conditions ? conditions->Find( *objectId ) : nullptr;

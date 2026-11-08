@@ -30,7 +30,7 @@
   pumpManual.overspeed is the pumps demo's alarm condition (clients spec *Alarms and conditions*, #425): an AlarmConditionType
   object built by hand, since open62541's own alarms and conditions are off in this build.  The nodeset declares its state
   variables with their ids - EnabledState, ActiveState, AckedState and ConfirmedState with their Id properties, Retain,
-  Severity, Message, Comment, ConditionName and BranchId - and references the type's methods, Acknowledge, Confirm, AddComment,
+  Severity, Message, Comment, ConditionName, ConditionClassId, ConditionClassName and BranchId - and references the type's methods, Acknowledge, Confirm, AddComment,
   Enable and Disable; the loader instantiates the type's other mandatory children with ids of their own.  The OpcServer hands
   the object to the server library after the load (nodesets.cpp ConfigurePumps -> Conditions::Add), which writes its state,
   raises each transition as an event from pumpManual and binds the methods.  Its input is motorRpm over HighLimit (1:HighLimit,
@@ -1035,6 +1035,8 @@
       <Reference ReferenceType="HasProperty">ns=1;i=6100</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6101</Reference>
       <Reference ReferenceType="HasProperty">ns=1;i=6103</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6113</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6114</Reference>
       <Reference ReferenceType="HasProperty">ns=1;i=6104</Reference>
       <Reference ReferenceType="HasProperty">ns=1;i=6105</Reference>
       <Reference ReferenceType="HasProperty">ns=1;i=6106</Reference>
@@ -1150,6 +1152,31 @@
     </References>
     <Value>
       <uax:String>pumpManual.overspeed</uax:String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6113" BrowseName="ConditionClassId" ParentNodeId="ns=1;i=5020" DataType="NodeId">
+    <DisplayName>ConditionClassId</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+    <Value>
+      <uax:NodeId>
+        <uax:Identifier>i=11164</uax:Identifier>
+      </uax:NodeId>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6114" BrowseName="ConditionClassName" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>ConditionClassName</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+    <Value>
+      <uax:LocalizedText>
+        <uax:Locale>en</uax:Locale>
+        <uax:Text>ProcessConditionClassType</uax:Text>
+      </uax:LocalizedText>
     </Value>
   </UAVariable>
   <UAVariable NodeId="ns=1;i=6104" BrowseName="BranchId" ParentNodeId="ns=1;i=5020" DataType="NodeId">

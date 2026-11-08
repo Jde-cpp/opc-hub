@@ -1,9 +1,6 @@
 //Clients 12a (#425):  pumpManual.overspeed, the AlarmConditionType object the pumps nodeset declares and the server library drives
 //(Condition.h), seen by open62541's synchronous client as HistoryTests sees the history - an events subscription with the condition's
 //fields, its Raise, Acknowledge, Confirm and AddComment through Call, ConditionRefresh replaying to the calling session's subscription alone.
-#include <open62541/client.h>
-#include <open62541/client_highlevel.h>
-#include <open62541/client_subscriptions.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
@@ -20,10 +17,10 @@ namespace Jde::Opc::Server::Tests{
 	using namespace std::chrono;
 	using Opc::Tests::UATestClient;
 	namespace{
-		constexpr UA_UInt32 PumpManual{ 5005 }, RpmManual{ 6054 }, Overspeed{ 5020 }, HighLimit{ 6106 }, Raise{ 6110 };
+		constexpr UA_UInt32 PumpManual{ 5005 }, RpmManual{ 6054 }, Overspeed{ 5020 }, HighLimit{ 6106 }, Raise{ 6110 }, RaiseEventMethod{ 6058 };
 		constexpr sv ConditionIdKey{ "i=2782#NodeId" };//how open62541 prints the standard ConditionId clause, ConditionType's NodeId with no path.
 		//The clauses every item here selects, each delivered under the key the client prints it as, "/Retain", "/AckedState/Id".
-		const vector<string> Clauses{ "EventId", "EventType", "SourceNode", "Time", "Message", "Severity", "Retain", "ActiveState/Id", "AckedState/Id", "ConfirmedState/Id", "Comment", "ConditionName" };
+		const vector<string> Clauses{ "EventId", "EventType", "SourceNode", "SourceName", "Time", "Message", "Severity", "Retain", "ActiveState/Id", "AckedState/Id", "ConfirmedState/Id", "Comment", "ConditionName" };
 		using Event = flat_map<string,Value>;
 		//An event item's notifications, filled as the client is pumped (UATestClient::Iterate) on the test's thread.
 		struct Events final{
@@ -51,6 +48,7 @@ namespace Jde::Opc::Server::Tests{
 		}
 		Ω bytes( const Event& e, sv key )ι->string{ let p = e.find( string{key} ); return p!=e.end() && p->second.hasValue && UA_Variant_hasScalarType(&p->second.value, &UA_TYPES[UA_TYPES_BYTESTRING]) ? ToString( p->second.Get<UA_ByteString>(0) ) : string{}; }
 		Ω severity( const Event& e )ι->optional<UA_UInt16>{ let p = e.find( "/Severity" ); return p!=e.end() && p->second.hasValue && UA_Variant_hasScalarType(&p->second.value, &UA_TYPES[UA_TYPES_UINT16]) ? optional<UA_UInt16>{ p->second.Get<UA_UInt16>(0) } : nullopt; }
+		Ω eventTime( const Event& e )ι->optional<UA_DateTime>{ let p = e.find( "/Time" ); return p!=e.end() && p->second.hasValue && UA_Variant_hasScalarType(&p->second.value, &UA_TYPES[UA_TYPES_DATETIME]) ? optional<UA_DateTime>{ p->second.Get<UA_DateTime>(0) } : optional<UA_DateTime>{}; }
 		Ω byteString( str bytes )ι->UA_ByteString{ return { bytes.size(), (UA_Byte*)bytes.data() }; }//a view.
 		struct Called final{ UA_StatusCode Status; vector<Value> Outputs; };
 	}
@@ -79,18 +77,22 @@ namespace Jde::Opc::Server::Tests{
 		}
 		Ω Node( UA_UInt32 id )ι->NodeId{ return NodeId{ _ns, id }; }
 		Ω Condition()ε->Server::Condition&{ auto y = GetUAServer().Conditions().Find( Node(Overspeed) ); THROW_IF( !y, "The condition was not added." ); return *y; }
-		//Each test starts from a condition that is inactive, acknowledged and confirmed - Retain false - whatever the one before left.
+		//Each test starts from a condition that is inactive, acknowledged and confirmed - Retain false - with the limit the nodeset's and the
+		//input under it, whatever the one before left.  Through the client, so the condition is driven on the server's thread (Condition.h);
+		//the reads between are of a server with nothing in flight, each call here being synchronous.
 		α SetUp()ε->void override{
+			ASSERT_EQ( WriteDouble(HighLimit, 1500), UA_STATUSCODE_GOOD );
+			ASSERT_EQ( WriteDouble(RpmManual, 0), UA_STATUSCODE_GOOD );
 			auto& condition = Condition();
 			if( condition.Active() )
-				UAε( condition.Raise(false, 1, "reset") );
+				ASSERT_EQ( RaiseCondition(*_client, false, 1, "reset").first, UA_STATUSCODE_GOOD );
 			if( condition.Retain() ){
-				let eventId = condition.LastEventId();
-				condition.Acknowledge( byteString(eventId), "reset" );
-				condition.Confirm( byteString(condition.LastEventId()), "reset" );
+				Acknowledge( *_client, condition.LastEventId(), "reset" );
+				Confirm( *_client, condition.LastEventId(), "reset" );
 			}
 			ASSERT_FALSE( condition.Retain() );
 		}
+		Ω WriteDouble( UA_UInt32 node, UA_Double value )ε->UA_StatusCode{ return _client->Write( Node(node), &value, UA_TYPES[UA_TYPES_DOUBLE] ); }
 		//An event item on `node` with `Clauses` and the ConditionId clause, as a standard client selects it - ConditionType's NodeId with no
 		//path - on `subscription`:  its notifications land in `into`.  The item's id.
 		Ω MonitorEvents( UATestClient& client, UA_UInt32 subscription, const NodeId& node, Events& into )ε->UA_UInt32{
@@ -149,19 +151,27 @@ namespace Jde::Opc::Server::Tests{
 			return { y.Status, y.Outputs.size()==1 && y.Outputs[0].hasValue ? ToString( y.Outputs[0].Get<UA_ByteString>(0) ) : string{} };
 		}
 		//Acknowledge, Confirm or AddComment, the type's method `method`, on overspeed with `eventId` and `comment`.
-		Ω Comment( UATestClient& client, UA_UInt32 method, str eventId, str comment )ι->UA_StatusCode{
+		Ω Comment( UATestClient& client, UA_UInt32 method, str eventId, str comment, sv locale={} )ι->UA_StatusCode{
 			const UA_ByteString id = byteString( eventId );
-			const UA_LocalizedText text{ UA_STRING_NULL, ToUV(comment) };
+			const UA_LocalizedText text{ locale.empty() ? UA_STRING_NULL : ToUV(locale), ToUV(comment) };
 			return Call( client, Node(Overspeed), NodeId{method}, {Scalar(&id, UA_TYPES_BYTESTRING), Scalar(&text, UA_TYPES_LOCALIZEDTEXT)} ).Status;
 		}
 		Ω Acknowledge( UATestClient& client, str eventId, str comment )ι->UA_StatusCode{ return Comment( client, UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_ACKNOWLEDGE, eventId, comment ); }
 		Ω Confirm( UATestClient& client, str eventId, str comment )ι->UA_StatusCode{ return Comment( client, UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_CONFIRM, eventId, comment ); }
-		Ω AddComment( UATestClient& client, str eventId, str comment )ι->UA_StatusCode{ return Comment( client, UA_NS0ID_CONDITIONTYPE_ADDCOMMENT, eventId, comment ); }
+		Ω AddComment( UATestClient& client, str eventId, str comment, sv locale={} )ι->UA_StatusCode{ return Comment( client, UA_NS0ID_CONDITIONTYPE_ADDCOMMENT, eventId, comment, locale ); }
 		//ConditionRefresh( subscription ) on ConditionType.
 		Ω ConditionRefresh( UATestClient& client, UA_UInt32 subscription )ι->UA_StatusCode{
 			return Call( client, NodeId{UA_NS0ID_CONDITIONTYPE}, NodeId{UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH}, {Scalar(&subscription, UA_TYPES_UINT32)} ).Status;
 		}
-		Ω Unsubscribe( UATestClient& client, UA_UInt32 subscription )ι->void{ UA_Client_Subscriptions_deleteSingle( client, subscription ); }
+		//A subscription deleted at the end of its scope, so declared after the Events its items fill:  a failed ASSERT's early return leaves no
+		//item on the shared client pointing at a dead Events.
+		struct Subscription final{
+			Subscription( UATestClient& client )ε:Client{ client }, Id{ client.Subscribe() }{}
+			~Subscription(){ UA_Client_Subscriptions_deleteSingle( Client, Id ); }
+			operator UA_UInt32()Ι{ return Id; }
+			UATestClient& Client;
+			UA_UInt32 Id;
+		};
 		//The condition's own variable under `path`, read from the server.
 		Ω Variable( std::initializer_list<const char*> path )ε->Value{
 			vector<UA_QualifiedName> names;
@@ -182,7 +192,7 @@ namespace Jde::Opc::Server::Tests{
 	//the standard clause, the ConditionId;  and the instance's variables say the same.
 	TEST_F( ConditionTests, RaiseIsRetainedOnAnEventsSubscription ){
 		Events events;
-		let subscription = _client->Subscribe();
+		const Subscription subscription{ *_client };
 		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
 		let [status, eventId] = RaiseCondition( *_client, true, 700, "too fast" );
 		ASSERT_EQ( status, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( status );
@@ -207,7 +217,6 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_TRUE( Variable({"Retain"}).Get<UA_Boolean>(0) );
 		EXPECT_EQ( Variable({"Severity"}).Get<UA_UInt16>(0), 700 );
 		EXPECT_EQ( ToString(Variable({"EnabledState"}).Get<UA_LocalizedText>(0).text), "Enabled" );
-		Unsubscribe( *_client, subscription );
 	}
 	//Acknowledge then Confirm, each with the last event's EventId and a comment, are transitions seen on the subscription with the comment;  a
 	//second Acknowledge is refused Bad_ConditionBranchAlreadyAcked, the first event's EventId, stale by then, Bad_EventIdUnknown, a Confirm
@@ -215,7 +224,7 @@ namespace Jde::Opc::Server::Tests{
 	//active and drops once it is inactive, acknowledged and confirmed.
 	TEST_F( ConditionTests, AcknowledgeThenConfirmAreTransitions ){
 		Events events;
-		let subscription = _client->Subscribe();
+		const Subscription subscription{ *_client };
 		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
 		let [status, raised] = RaiseCondition( *_client, true, 600, "acknowledge me" );
 		ASSERT_EQ( status, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( status );
@@ -250,13 +259,12 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( boolean(inactive, "/Retain"), optional{false} ) << "inactive, acknowledged and confirmed";
 		EXPECT_EQ( text(inactive, "/Message"), "back to normal" );
 		EXPECT_FALSE( Variable({"Retain"}).Get<UA_Boolean>(0) );
-		Unsubscribe( *_client, subscription );
 	}
 	//AddComment is a transition that changes the comment alone, refused for a stale EventId;  the Enable and Disable the type gives every
 	//instance answer that the condition is enabled for good.
 	TEST_F( ConditionTests, AddCommentKeepsTheState ){
 		Events events;
-		let subscription = _client->Subscribe();
+		const Subscription subscription{ *_client };
 		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
 		let [status, raised] = RaiseCondition( *_client, true, 300, "comment me" );
 		ASSERT_EQ( status, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( status );
@@ -272,22 +280,25 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( ToString(Variable({"Comment"}).Get<UA_LocalizedText>(0).text), "noted" );
 		EXPECT_EQ( Call(*_client, Node(Overspeed), NodeId{UA_NS0ID_CONDITIONTYPE_ENABLE}, {}).Status, UA_STATUSCODE_BADCONDITIONALREADYENABLED );
 		EXPECT_EQ( Call(*_client, Node(Overspeed), NodeId{UA_NS0ID_CONDITIONTYPE_DISABLE}, {}).Status, UA_STATUSCODE_BADNOTSUPPORTED );
-		Unsubscribe( *_client, subscription );
 	}
 	//ConditionRefresh on a fresh subscription replays the retained condition - the last transition's EventId and Time - between RefreshStart and
 	//RefreshEnd on the Server object's item, to an item on the pump the condition alone, and to another session's subscription nothing;  a
 	//subscription that isn't the caller's is refused Bad_SubscriptionIdInvalid, and a condition no longer retained is not replayed.
 	TEST_F( ConditionTests, ConditionRefreshReplaysToItsOwnSubscription ){
+		Events live;
+		const Subscription liveSubscription{ *_client };
+		ASSERT_NO_THROW( MonitorEvents(*_client, liveSubscription, Node(PumpManual), live) );
 		let [status, raised] = RaiseCondition( *_client, true, 800, "retained" );
 		ASSERT_EQ( status, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( status );
-		let raisedTime = Condition().LastEventId();
-		ASSERT_EQ( raisedTime, raised );
+		ASSERT_TRUE( Wait(*_client, live, 1) ) << "the raise never arrived";
+		let raisedTime = eventTime( live.Received[0] );
+		ASSERT_TRUE( raisedTime.has_value() );
 		auto other = Connect();
 		Events mine, pump, theirs;
-		let subscription = _client->Subscribe();
+		const Subscription subscription{ *_client };
 		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, NodeId{UA_NS0ID_SERVER}, mine) );
 		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), pump) );
-		let otherSubscription = other->Subscribe();
+		const Subscription otherSubscription{ *other };
 		ASSERT_NO_THROW( MonitorEvents(*other, otherSubscription, NodeId{UA_NS0ID_SERVER}, theirs) );
 		EXPECT_EQ( ConditionRefresh(*_client, otherSubscription), UA_STATUSCODE_BADSUBSCRIPTIONIDINVALID ) << "another session's subscription";
 		ASSERT_EQ( ConditionRefresh(*_client, subscription), UA_STATUSCODE_GOOD );
@@ -297,6 +308,7 @@ namespace Jde::Opc::Server::Tests{
 		let& replayed = mine.Received[1];
 		EXPECT_EQ( eventType(replayed), NodeId{UA_NS0ID_ALARMCONDITIONTYPE} );
 		EXPECT_EQ( bytes(replayed, "/EventId"), raised ) << "the replay carries the transition's EventId";
+		EXPECT_EQ( eventTime(replayed), raisedTime ) << "and its Time";
 		EXPECT_EQ( node(replayed, ConditionIdKey), Node(Overspeed) );
 		EXPECT_EQ( boolean(replayed, "/Retain"), optional{true} );
 		EXPECT_EQ( text(replayed, "/Message"), "retained" );
@@ -316,14 +328,12 @@ namespace Jde::Opc::Server::Tests{
 		ASSERT_TRUE( Wait(*_client, mine, 8) ) << "RefreshStart and RefreshEnd";
 		EXPECT_EQ( eventType(mine.Received[6]), NodeId{UA_NS0ID_REFRESHSTARTEVENTTYPE} );
 		EXPECT_EQ( eventType(mine.Received[7]), NodeId{UA_NS0ID_REFRESHENDEVENTTYPE} );
-		Unsubscribe( *other, otherSubscription );
-		Unsubscribe( *_client, subscription );
 	}
 	//The pump's motorRpm written over HighLimit raises the condition through the value callback, as the emulator's signals would, with the
 	//input's name and the values in the message;  a write still over it raises nothing more, and one at or under the limit clears it.
 	TEST_F( ConditionTests, TheRpmOverItsLimitRaisesTheCondition ){
 		Events events;
-		let subscription = _client->Subscribe();
+		const Subscription subscription{ *_client };
 		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
 		let limit = _client->Read( Node(HighLimit) );
 		ASSERT_TRUE( limit.hasValue );
@@ -346,6 +356,138 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( text(cleared, "/Message"), "motorRpm at 1500 is within its limit of 1500." );
 		_client->Iterate( 300 );
 		EXPECT_EQ( events.Received.size(), 2u ) << "a write still over the limit is no transition";
-		Unsubscribe( *_client, subscription );
+	}
+	//A Raise by hand holds against samples on the side of the limit they were already on, and yields only when the input next crosses;  a
+	//crossing into the state the condition is already in raises nothing.
+	TEST_F( ConditionTests, ARaiseHoldsUntilTheInputCrosses ){
+		Events events;
+		const Subscription subscription{ *_client };
+		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
+		ASSERT_EQ( WriteDouble(RpmManual, 1000), UA_STATUSCODE_GOOD );
+		ASSERT_EQ( RaiseCondition(*_client, true, 900, "by hand").first, UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 1) );
+		ASSERT_EQ( WriteDouble(RpmManual, 1100), UA_STATUSCODE_GOOD );
+		ASSERT_EQ( WriteDouble(RpmManual, 1600), UA_STATUSCODE_GOOD );
+		_client->Iterate( 300 );
+		EXPECT_EQ( events.Received.size(), 1u ) << "a sample under the limit undid the Raise, or a crossing re-raised an active alarm";
+		EXPECT_TRUE( Variable({"ActiveState", "Id"}).Get<UA_Boolean>(0) );
+		ASSERT_EQ( WriteDouble(RpmManual, 1400), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 2) ) << "the crossing back under the limit cleared nothing";
+		EXPECT_EQ( boolean(events.Received[1], "/ActiveState/Id"), optional{false} );
+		ASSERT_EQ( WriteDouble(RpmManual, 1600), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 3) );
+		ASSERT_EQ( RaiseCondition(*_client, false, 900, "cleared by hand").first, UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 4) );
+		ASSERT_EQ( WriteDouble(RpmManual, 1700), UA_STATUSCODE_GOOD );
+		_client->Iterate( 300 );
+		EXPECT_EQ( events.Received.size(), 4u ) << "a sample over the limit undid the clearing";
+		EXPECT_FALSE( Variable({"ActiveState", "Id"}).Get<UA_Boolean>(0) );
+	}
+	//A NaN and a Bad sample leave the state as it is, the Bad one's status in Quality;  the next good sample decides, and Quality follows it.
+	TEST_F( ConditionTests, ABadOrNanSampleKeepsTheState ){
+		Events events;
+		const Subscription subscription{ *_client };
+		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
+		ASSERT_EQ( WriteDouble(RpmManual, 1600), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 1) );
+		ASSERT_EQ( WriteDouble(RpmManual, std::numeric_limits<UA_Double>::quiet_NaN()), UA_STATUSCODE_GOOD );
+		UA_Double zero{};
+		UA_DataValue bad; UA_DataValue_init( &bad );
+		UA_Variant_setScalar( &bad.value, &zero, &UA_TYPES[UA_TYPES_DOUBLE] );
+		bad.hasValue = true;
+		bad.status = UA_STATUSCODE_BADSENSORFAILURE;
+		bad.hasStatus = true;
+		ASSERT_EQ( UA_Server_writeDataValue(GetUAServer().Ptr(), Node(RpmManual), bad), UA_STATUSCODE_GOOD );//a client's is refused:  no StatusWrite bit.
+		_client->Iterate( 300 );
+		EXPECT_EQ( events.Received.size(), 1u ) << "a sample that says nothing of the process moved the condition";
+		EXPECT_TRUE( Variable({"ActiveState", "Id"}).Get<UA_Boolean>(0) );
+		EXPECT_EQ( Variable({"Quality"}).Get<UA_StatusCode>(0), UA_STATUSCODE_BADSENSORFAILURE );
+		ASSERT_EQ( WriteDouble(RpmManual, 1400), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 2) ) << "the good sample under the limit cleared nothing";
+		EXPECT_EQ( boolean(events.Received[1], "/ActiveState/Id"), optional{false} );
+		EXPECT_EQ( Variable({"Quality"}).Get<UA_StatusCode>(0), UA_STATUSCODE_GOOD );
+	}
+	//The type's mandatory fields a standard client selects all answer:  the nodeset's class, never suppressed, Quality, the severity before the
+	//last, and who last commented with when.
+	TEST_F( ConditionTests, TheMandatoryFieldsHaveValues ){
+		Events events;
+		const Subscription subscription{ *_client };
+		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
+		ASSERT_EQ( RaiseCondition(*_client, true, 400, "first").first, UA_STATUSCODE_GOOD );
+		let [status, raised] = RaiseCondition( *_client, true, 500, "second" );
+		ASSERT_EQ( status, UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 2) );
+		ASSERT_EQ( AddComment(*_client, raised, "noted"), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( NodeId{Variable({"ConditionClassId"}).Get<UA_NodeId>(0)}, NodeId{UA_NS0ID_PROCESSCONDITIONCLASSTYPE} );
+		EXPECT_EQ( ToString(Variable({"ConditionClassName"}).Get<UA_LocalizedText>(0).text), "ProcessConditionClassType" );
+		EXPECT_FALSE( Variable({"SuppressedOrShelved"}).Get<UA_Boolean>(0) );
+		EXPECT_EQ( Variable({"Quality"}).Get<UA_StatusCode>(0), UA_STATUSCODE_GOOD );
+		EXPECT_GT( Variable({"Quality", "SourceTimestamp"}).Get<UA_DateTime>(0), 0 );
+		EXPECT_EQ( Variable({"LastSeverity"}).Get<UA_UInt16>(0), 400 );
+		EXPECT_GT( Variable({"LastSeverity", "SourceTimestamp"}).Get<UA_DateTime>(0), 0 );
+		EXPECT_FALSE( ToString(Variable({"ClientUserId"}).Get<UA_String>(0)).empty() ) << "the commenter, the user the issued token resolved to";
+		EXPECT_GT( Variable({"Comment", "SourceTimestamp"}).Get<UA_DateTime>(0), 0 );
+	}
+	//A comment with text and locale both empty leaves the last, which keeps its locale;  an empty text with a locale clears it (Part 9).
+	TEST_F( ConditionTests, AnEmptyCommentKeepsTheLast ){
+		Events events;
+		const Subscription subscription{ *_client };
+		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
+		let [status, raised] = RaiseCondition( *_client, true, 300, "comment me" );
+		ASSERT_EQ( status, UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 1) );
+		ASSERT_EQ( AddComment(*_client, raised, "bearing hot", "de"), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 2) );
+		EXPECT_EQ( ToString(Variable({"Comment"}).Get<UA_LocalizedText>(0).locale), "de" );
+		ASSERT_EQ( Acknowledge(*_client, bytes(events.Received[1], "/EventId"), ""), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 3) );
+		EXPECT_EQ( text(events.Received[2], "/Comment"), "bearing hot" );
+		EXPECT_EQ( ToString(Variable({"Comment"}).Get<UA_LocalizedText>(0).locale), "de" );
+		ASSERT_EQ( AddComment(*_client, bytes(events.Received[2], "/EventId"), "", "en"), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 4) );
+		EXPECT_EQ( text(events.Received[3], "/Comment"), "" );
+		EXPECT_EQ( ToString(Variable({"Comment"}).Get<UA_LocalizedText>(0).locale), "en" );
+	}
+	//Writing HighLimit compares the input again, with no write to the input.
+	TEST_F( ConditionTests, WritingTheLimitReevaluates ){
+		Events events;
+		const Subscription subscription{ *_client };
+		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
+		ASSERT_EQ( WriteDouble(RpmManual, 1400), UA_STATUSCODE_GOOD );
+		ASSERT_EQ( WriteDouble(HighLimit, 1300), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 1) ) << "the limit lowered under the rpm raised nothing";
+		EXPECT_EQ( boolean(events.Received[0], "/ActiveState/Id"), optional{true} );
+		EXPECT_EQ( text(events.Received[0], "/Message"), "motorRpm at 1400 is over its limit of 1300." );
+		ASSERT_EQ( WriteDouble(HighLimit, 1500), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( Wait(*_client, events, 2) ) << "the limit raised over the rpm cleared nothing";
+		EXPECT_EQ( boolean(events.Received[1], "/ActiveState/Id"), optional{false} );
+	}
+	//The events' SourceName is the source's DisplayName when the event is raised, which a client with the WriteMask may have changed.
+	TEST_F( ConditionTests, SourceNameFollowsARename ){
+		Events events;
+		const Subscription subscription{ *_client };
+		ASSERT_NO_THROW( MonitorEvents(*_client, subscription, Node(PumpManual), events) );
+		let ua = GetUAServer().Ptr();
+		UA_LocalizedText was; UA_LocalizedText_init( &was );
+		ASSERT_EQ( UA_Server_readDisplayName(ua, Node(PumpManual), &was), UA_STATUSCODE_GOOD );
+		const UA_LocalizedText renamed{ was.locale, UA_STRING((char*)"renamed pump") };//in the node's locale:  open62541 keeps one text per locale and reads the first.
+		ASSERT_EQ( UA_Server_writeDisplayName(ua, Node(PumpManual), renamed), UA_STATUSCODE_GOOD );
+		let status = RaiseCondition( *_client, true, 200, "renamed" ).first;
+		let arrived = Wait( *_client, events, 1 );
+		EXPECT_EQ( UA_Server_writeDisplayName(ua, Node(PumpManual), was), UA_STATUSCODE_GOOD );
+		UA_LocalizedText_clear( &was );
+		ASSERT_EQ( status, UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( arrived );
+		EXPECT_EQ( text(events.Received[0], "/SourceName"), "renamed pump" );
+	}
+	//Raise and raiseEvent refuse a severity outside Part 5's 1 to 1000, as their InputArguments say, and take its ends.
+	TEST_F( ConditionTests, ASeverityOutOfRangeIsRefused ){
+		for( const UA_UInt16 severity : {UA_UInt16{0}, UA_UInt16{1001}} ){
+			EXPECT_EQ( RaiseCondition(*_client, true, severity, "out of range").first, UA_STATUSCODE_BADINVALIDARGUMENT ) << severity;
+			const UA_String message = UA_STRING( (char*)"out of range" );
+			EXPECT_EQ( Call(*_client, Node(PumpManual), Node(RaiseEventMethod), {Scalar(&message, UA_TYPES_STRING), Scalar(&severity, UA_TYPES_UINT16)}).Status, UA_STATUSCODE_BADINVALIDARGUMENT ) << severity;
+		}
+		EXPECT_EQ( RaiseCondition(*_client, true, 1, "the bottom").first, UA_STATUSCODE_GOOD );
+		EXPECT_EQ( RaiseCondition(*_client, true, 1000, "the top").first, UA_STATUSCODE_GOOD );
 	}
 }

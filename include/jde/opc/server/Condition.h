@@ -17,48 +17,61 @@ namespace Jde::Opc::Server{
 		α Id()Ι->const NodeId&{ return _id; }
 		α Source()Ι->const NodeId&{ return _source; }
 		α Input()Ι->const optional<NodeId>&{ return _input; }
+		α Limit()Ι->const optional<NodeId>&{ return _limit; }
 		α LastEventId()Ι->str{ return _lastEventId; }//the bytes of the last event's, which Acknowledge and Confirm want;  empty before the first.
 		//Retain, Part 9's:  while the condition is active, unacknowledged or, with a ConfirmedState, unconfirmed.
 		α Retain()Ι->bool{ return _state.Active || !_state.Acked || !_state.Confirmed; }
 		α Active()Ι->bool{ return _state.Active; }
 		//A transition:  active with the severity and message, which unsets AckedState and ConfirmedState again and clears the comment, or
-		//inactive with them.  The event's status;  its EventId is LastEventId.
+		//inactive with them.  A severity that differs moves the last one to LastSeverity.  The event's status;  its EventId is LastEventId.
 		α Raise( bool active, UA_UInt16 severity, sv message )ι->UA_StatusCode;
 		//AcknowledgeableConditionType's Acknowledge and Confirm, ConditionType's AddComment:  Bad_EventIdUnknown for an EventId that isn't the last
 		//event's, Bad_ConditionBranchAlreadyAcked and Bad_ConditionBranchAlreadyConfirmed for a state already held, Bad_InvalidState for a Confirm
 		//before the Acknowledge, Bad_NotSupported for a Confirm on a condition declared without ConfirmedState;  each a transition event.
-		α Acknowledge( const UA_ByteString& eventId, sv comment )ι->UA_StatusCode;
-		α Confirm( const UA_ByteString& eventId, sv comment )ι->UA_StatusCode;
-		α AddComment( const UA_ByteString& eventId, sv comment )ι->UA_StatusCode;
+		//`comment`'s text and locale are kept, with `user` as ClientUserId and its SourceTimestamp;  a comment with both empty leaves the last.
+		α Acknowledge( const UA_ByteString& eventId, const UA_LocalizedText& comment, sv user )ι->UA_StatusCode;
+		α Confirm( const UA_ByteString& eventId, const UA_LocalizedText& comment, sv user )ι->UA_StatusCode;
+		α AddComment( const UA_ByteString& eventId, const UA_LocalizedText& comment, sv user )ι->UA_StatusCode;
 		//The last event again, to the session's subscription alone (Conditions::Refresh):  nothing while Retain is false.
 		α Refresh( const UA_NodeId& session, UA_UInt32 subscription )ι->UA_StatusCode;
-		//The input's value, after the server stored it (WatchHigh's callback):  compared with the limit.
+		//The input's value, after the server stored it (WatchHigh's callback):  its status goes to Quality and its number is compared with the limit.
 		α OnInput( const UA_DataValue& value )ι->void;
+		α OnLimit()ι->void;//the limit was written:  the input's current value is compared with it again.
 		//The condition's input:  a numeric variable whose every write - a client's, the PubSub reader's - is compared with the value of `limit`, a
-		//property the host declares, and raises the condition over it with `severity` and clears it at or under it, when that changes the state.
-		//Through a value callback on `input`, which keeps its value and replaces any notifications it had.
+		//property the host declares, and raises the condition over it with `severity` and clears it at or under it, when the input crosses the
+		//limit and that changes the state.  Through a value callback on `input` and one on `limit`, each of which keeps its value and replaces
+		//any notifications it had.  One condition to an input:  a second is a throw.
 		α WatchHigh( const NodeId& input, const NodeId& limit, UA_UInt16 severity )ε->void;
 	private:
 		friend Conditions;
 		Condition( UA_Server& ua, NodeId id, NodeId source )ε;
 		struct TwoState final{ NodeId Variable; NodeId Id; };
+		struct Stamped final{ NodeId Variable; NodeId Time; };//a ConditionVariableType's value and its SourceTimestamp, the time of its last change.
 		α Emit( const UA_NodeId* session=nullptr, const UA_UInt32* subscription=nullptr )ι->UA_StatusCode;
 		α IsLast( const UA_ByteString& eventId )Ι->bool;
 		α Write( const NodeId& node, const void* scalar, uint type )ι->void;
 		α Write( const TwoState& state, bool value, sv text )ι->void;
-		α WriteText( const NodeId& node, sv text )ι->void;
-		α WriteState()ι->void;//ActiveState, AckedState, ConfirmedState, Retain, Severity, Message and Comment from _state.
-		struct State final{ bool Active{}; bool Acked{ true }; bool Confirmed{ true }; UA_UInt16 Severity{}; string Message; string Comment; };
+		α WriteText( const NodeId& node, sv text, sv locale={} )ι->void;
+		α Stamp( const NodeId& timestamp )ι->void;
+		α ApplyComment( const UA_LocalizedText& comment, sv user )ι->void;
+		α SetComment( sv text, sv locale, sv user )ι->void;
+		α WriteState()ι->void;//ActiveState, AckedState, ConfirmedState, Retain, Severity, Message, Comment, ClientUserId, Quality and LastSeverity from _state.
+		struct State final{
+			bool Active{}; bool Acked{ true }; bool Confirmed{ true }; UA_UInt16 Severity{}; UA_UInt16 LastSeverity{}; UA_StatusCode Quality{ UA_STATUSCODE_GOOD };
+			string Message; string Comment; string CommentLocale; string ClientUserId;
+		};
 		UA_Server& _ua;
 		NodeId _id, _source, _type;
-		string _sourceName;//the source's DisplayName, the events' SourceName.
+		string _sourceName;//the source's DisplayName as of the last event, the events' SourceName.
 		TwoState _enabled, _active, _acked;
 		optional<TwoState> _confirmed;//AcknowledgeableConditionType's optional one.
-		NodeId _retain, _severity, _message, _comment, _branchId;
+		NodeId _retain, _severity, _message, _branchId, _clientUserId, _suppressedOrShelved;
+		Stamped _comment, _quality, _lastSeverity;
 		State _state;
 		string _lastEventId;
 		UA_DateTime _lastTime{};
 		optional<NodeId> _input, _limit;
+		optional<bool> _inputOver;//the input's last verdict against the limit;  none before its first sample.
 		string _inputName;//the input's DisplayName, for the message.
 		UA_UInt16 _inputSeverity{};
 	};
@@ -77,6 +90,7 @@ namespace Jde::Opc::Server{
 		α Add( UA_Server& server, const NodeId& condition, const NodeId& source )ε->Condition&;
 		α Find( const UA_NodeId& condition )ι->Condition*;
 		α FindByInput( const UA_NodeId& input )ι->Condition*;
+		α OnLimit( const UA_NodeId& limit )ι->void;//`limit` was written:  each condition held to it (Condition::OnLimit).
 		α Refresh( UA_Server& server, const UA_NodeId& session, UA_UInt32 subscription )ι->UA_StatusCode;
 		Ω Of( UA_Server& server )ι->Conditions*;//the server's, null before its first Add.
 	private:
