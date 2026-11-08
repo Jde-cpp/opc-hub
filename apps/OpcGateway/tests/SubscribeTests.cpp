@@ -1586,6 +1586,192 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//#195 review #4:  an unconvertible reading's failure rode in Value.status_code, which a client reads as a StatusCode reading.
+	//Events (clients spec *Events*, #424):  a socket listener collecting each EventValues, and a listener on the client itself answering a
+	//select list of its own, as the session does from a SubscribeEvents - each event its fields as Variants, null for one the item
+	//did not deliver - and counting the item's modifies, which a join of another select posts.
+	struct EventListener final : IListener{
+		α OnData( string, NodeId, const Proto::Value& )ι->void override{}
+		α OnEvent( const FromServer::EventValues& event )ι->void override{ lg _{ Mutex }; Events.push_back( event ); ++Count; }
+		α Last()ι->FromServer::EventValues{ lg _{ Mutex }; return Events.back(); }
+		atomic<uint> Count{};
+		mutex Mutex; vector<FromServer::EventValues> Events;
+	};
+	struct EventSelectListener final : IDataChange{
+		EventSelectListener( vector<string> select )ι:Select{ move(select) }{}
+		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value&, const ITypes* )ι->void override{}
+		α SendEvent( const ServerCnnctnNK&, const NodeId&, const vector<const UA_Variant*>& fields, const ITypes* )ι->void override{
+			vector<optional<Variant>> copy;
+			for( let field : fields )
+				copy.push_back( field ? optional<Variant>{Variant{*field}} : nullopt );
+			lg _{ Mutex };
+			Events.push_back( move(copy) );
+			++Count;
+		}
+		α ItemParameters( const ServerCnnctnNK&, const NodeId&, Duration )Ι->MonitoringParameters override{ return MonitoringParameters::ForEvents( EventFilter::Of(Select) ); }
+		α ItemModified( const ServerCnnctnNK&, const NodeId&, const MonitoredItemModifyResult& result, const optional<AskReverted>& )ι->void override{ ModifyStatus = result.Status; ++Modified; }
+		α to_string()Ι->string override{ return "Tests.EventSelectListener"; }
+		α Last()ι->vector<optional<Variant>>{ lg _{ Mutex }; return Events.back(); }
+		vector<string> Select;
+		atomic<uint> Count{}, Modified{};
+		atomic<StatusCode> ModifyStatus{};
+		mutex Mutex; vector<vector<optional<Variant>>> Events;
+	};
+	//pumpManual.raiseEvent through `call` (Pumps.h RaiseEvent):  the EventId the server answered, as its json spells a ByteString, hex.
+	Ω raiseEvent( sv message, uint16 severity )ε->string{
+		const NodeId object{ PumpsNs(), PumpManual }, method{ PumpsNs(), RaiseEvent };
+		const jobject vars{ {"opc", OpcServerSlug}, {"object", object.ToJson()}, {"method", method.ToJson()}, {"args", jarray{message, severity}} };
+		let y = Socket().QuerySync( "call( opc: $opc, object: $object, method: $method, args: $args ){ statusCode outputArguments }", vars ).as_object();
+		THROW_IF( y.at("statusCode").to_number<StatusCode>(), "raiseEvent answered {}", serialize(y) );
+		return string{ y.at("outputArguments").as_array().at(0).as_string() };
+	}
+	Ω subscribeEvents( const NodeId& node, const vector<string>& select, sp<IListener> listener )ε->FromServer::SubscriptionAck{
+		return BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( Socket().SubscribeEvents(OpcServerSlug, node, select, move(listener)) );
+	}
+	Ω unsubscribeEvents( const NodeId& node )ε->FromServer::UnsubscribeAck{
+		return BlockAwait<ClientSocketAwait<FromServer::UnsubscribeAck>,FromServer::UnsubscribeAck>( Socket().UnsubscribeEvents(OpcServerSlug, node) );
+	}
+	Ω text( const UA_Variant& v )ι->string{ return UA_Variant_hasScalarType( &v, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT] ) ? ToString( static_cast<const UA_LocalizedText*>(v.data)->text ) : string{}; }
+
+	//An event the OpcServer's method raises reaches the socket's subscription with the eight base fields and the one selected, in
+	//that order:  the EventId the call answered, BaseEventType, pumpManual as the source with its DisplayName, both times, the message
+	//and severity given, and the pump's rpm.
+	TEST_F( SubscribeTests, AnEventReachesItsSubscriptionWithItsFields ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		const NodeId pump{ PumpsNs(), PumpManual };
+		auto listener = ms<EventListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = subscribeEvents(pump, {"Rpm"}, listener) );
+		ASSERT_EQ( ack.results_size(), 1 );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		let rpm = ReadValue( _client, NodeId{PumpsNs(), RpmManual} ).AsNumber<double>();
+		string eventId;
+		ASSERT_NO_THROW( eventId = raiseEvent("hello", 500) );
+		Stopwatch sw;
+		while( !listener->Count )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the event never reached the subscription";
+		let event = listener->Last();
+		EXPECT_EQ( event.opc_id(), OpcServerSlug );
+		EXPECT_EQ( ProtoUtils::ToNodeId(event.node()), pump );
+		ASSERT_EQ( event.fields_size(), 9 ) << "the eight base fields and Rpm";
+		EXPECT_EQ( Str::ToHex(event.fields(0).byte_string()), eventId );
+		EXPECT_EQ( ProtoUtils::ToNodeId(event.fields(1).node()), NodeId{UA_NS0ID_BASEEVENTTYPE} );
+		EXPECT_EQ( ProtoUtils::ToNodeId(event.fields(2).node()), pump );
+		EXPECT_EQ( event.fields(3).string_value(), "Pump (Manual)" );//SourceName is a String, the source's DisplayName text
+		EXPECT_TRUE( event.fields(4).has_date() ) << "Time";
+		EXPECT_TRUE( event.fields(5).has_date() ) << "ReceiveTime";
+		EXPECT_EQ( event.fields(6).localized_text().text(), "hello" );
+		EXPECT_EQ( event.fields(7).uint16(), 500u );
+		EXPECT_EQ( event.fields(8).double_value(), rpm );
+		FromServer::UnsubscribeAck end;
+		ASSERT_NO_THROW( end = unsubscribeEvents(pump) );
+		EXPECT_EQ( end.successes_size(), 1 ) << "the node was not this session's";
+	}
+	//Two listeners on one node's item with different lists:  the item's clauses are their union, the second's join modifying it in
+	//place, and each is pushed its own list - eight fields for one, nine with the rpm for the other.  One item for the two, and gone
+	//with the last.
+	TEST_F( SubscribeTests, TwoEventListenersEachGetTheirOwnSelect ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		const NodeId pump{ PumpsNs(), PumpManual };
+		auto base = ms<EventSelectListener>( vector<string>{} ), rpmToo = ms<EventSelectListener>( vector<string>{"Rpm"} );
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = SubscribeOn(_client, base, {pump}) );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		ASSERT_NO_THROW( ack = SubscribeOn(_client, rpmToo, {pump}) );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		EXPECT_EQ( _client->MonitoredNodes().Handles({pump}).size(), 1u ) << "one item per node";//Count would catch the test before's item, gone a second after its unsubscribe
+		Stopwatch sw;
+		while( !rpmToo->Modified )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the join's modify never answered";
+		EXPECT_EQ( rpmToo->ModifyStatus.load(), UA_STATUSCODE_GOOD ) << "the server refused the union's filter:  " << UAException::Message( rpmToo->ModifyStatus.load() );
+		EXPECT_GE( base->Modified.load(), 1u ) << "every listener of the item hears its modify";//at least the join's:  the test before's item, a second from its delete, may have taken the first listener's join as a modify too
+		let rpm = ReadValue( _client, NodeId{PumpsNs(), RpmManual} ).AsNumber<double>();
+		ASSERT_NO_THROW( raiseEvent("union", 200) );
+		sw.Reset();
+		while( !base->Count || !rpmToo->Count )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the event never reached both listeners";
+		let eight = base->Last();
+		ASSERT_EQ( eight.size(), 8u );
+		ASSERT_TRUE( eight[6] );
+		EXPECT_EQ( text(*eight[6]), "union" );
+		let nine = rpmToo->Last();
+		ASSERT_EQ( nine.size(), 9u );
+		ASSERT_TRUE( nine[6] );
+		EXPECT_EQ( text(*nine[6]), "union" );
+		ASSERT_TRUE( nine[8] ) << "the selected field was not delivered";
+		ASSERT_TRUE( UA_Variant_hasScalarType(&*nine[8], &UA_TYPES[UA_TYPES_DOUBLE]) );
+		EXPECT_EQ( *static_cast<const double*>(nine[8]->data), rpm );
+		UAClient::Unsubscribe( rpmToo );
+		UAClient::Unsubscribe( base );
+		sw.Reset();
+		while( _client->MonitoredNodes().Handles({pump}).size() )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the event item never went";
+	}
+	//An event item lost with its client is parked and put back on the reconnect's client as an event item - the rebuild asks the
+	//listener's kind - and delivers again.
+	TEST_F( SubscribeTests, AnEventItemSurvivesTheReconnect ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		const NodeId pump{ PumpsNs(), PumpManual };
+		auto listener = ms<EventListener>();
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = subscribeEvents(pump, {"Rpm"}, listener) );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		let lost = _client->Handle();
+		UAClient::ConnectionLost( sp<UAClient>{_client} );
+		let revived = WaitRevived( lost, OpcServerSlug );//the reconnect's first wait, then a connect, subscribe and create.
+		ASSERT_TRUE( revived ) << "no replacement client came up with the event item restored";
+		_client = revived;//the suite shares it: later tests must not reach for the deregistered one.
+		ASSERT_NO_THROW( raiseEvent("again", 300) );
+		Stopwatch sw;
+		while( !listener->Count )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "no event after the client was replaced";
+		let event = listener->Last();
+		ASSERT_EQ( event.fields_size(), 9 ) << "the rebuilt item lost the listener's list";
+		EXPECT_EQ( event.fields(6).localized_text().text(), "again" );
+		EXPECT_EQ( event.fields(7).uint16(), 300u );
+		FromServer::UnsubscribeAck end;
+		ASSERT_NO_THROW( end = unsubscribeEvents(pump) );
+		EXPECT_EQ( end.successes_size(), 1 );
+	}
+	//historyEvents against the OpcServer, which keeps no event history:  the node's status says so, Bad_HistoryOperationUnsupported, with
+	//no events and no continuation - an answer, not a refusal of the read.
+	TEST_F( SubscribeTests, HistoryEventsAgainstTheOpcServerIsUnsupported ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		let now = Clock::now();
+		const jobject vars{ {"opc", OpcServerSlug}, {"node", NodeId{UA_NS0ID_SERVER}.ToJson()}, {"start", UADateTime{now-1h}.ToJson()}, {"end", UADateTime{now}.ToJson()}, {"select", jarray{"Rpm"}} };
+		let y = Socket().QuerySync( "historyEvents( opc: $opc, node: $node, start: $start, end: $end, select: $select ){ status continuation events{ fields } }", vars ).as_object();
+		EXPECT_EQ( y.at("status").to_number<StatusCode>(), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED ) << serialize( y );
+		EXPECT_TRUE( y.at("events").as_array().empty() );
+		EXPECT_TRUE( y.at("continuation").is_null() );
+	}
+	//A select path the gateway cannot read refuses the SubscribeEvents before any server round trip, and a data-change ask for a
+	//node whose item is an event item is refused in the ack, Bad_FilterNotAllowed, the item standing.
+	TEST_F( SubscribeTests, AnEventSubscriptionRefusesABadFieldAndTheOtherKind ){
+		if( !Server::FindUAServer() )
+			GTEST_SKIP() << "Needs the embedded OpcServer.";
+		const NodeId server{ UA_NS0ID_SERVER };
+		auto listener = ms<EventListener>();
+		EXPECT_THROW( subscribeEvents(server, {"70000:x"}, listener), GatewayErrorResponse ) << "a namespace index no UInt16 holds";
+		EXPECT_THROW( subscribeEvents(server, {"Message/"}, listener), GatewayErrorResponse ) << "an empty segment";
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = subscribeEvents(server, {}, listener) );
+		ASSERT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD ) << UAException::Message( ack.results(0).status_code() );
+		auto dataListener = ms<EventListener>();//its OnData takes a push with no value, which the suite's own listener asserts on.
+		try{//the socket fails the await with the one node's status (GatewayClientSocket::onSubscriptionAck)
+			BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( Socket().Subscribe(OpcServerSlug, {server}, dataListener) );
+			FAIL() << "the data-change ask for the event item's node was not refused";
+		}
+		catch( const UAException& e ){
+			EXPECT_EQ( (StatusCode)e.Code(), UA_STATUSCODE_BADFILTERNOTALLOWED ) << e.what();
+		}
+		FromServer::UnsubscribeAck end;
+		ASSERT_NO_THROW( end = unsubscribeEvents(server) );
+		EXPECT_EQ( end.successes_size(), 1 ) << "the event item did not survive the refused join";
+	}
+
 	TEST( FromServerTests, AnUnconvertibleReadingSendsItsCodeAsTheQuality ){
 		UA_DataValue dv{};
 		dv.hasValue = true;

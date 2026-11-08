@@ -118,6 +118,9 @@ namespace Jde::Opc::Gateway::Tests{
 			case kMonitoredItemModified:
 				onModified( m->monitored_item_modified() );
 				break;
+			case kEventValues:
+				onEvent( m->event_values() );
+				break;
 			case kException:{
 				if( duplicateRefused(requestId, m->exception().what()) )
 					break;
@@ -231,6 +234,32 @@ namespace Jde::Opc::Gateway::Tests{
 		ul _{ _subscriptionRequestMutex };
 		_subscriptionRequests.emplace( requestId, make_tuple(slug, nodes, move(listener)) );
 		return await<FromServer::SubscriptionAck>{ FromClientUtils::Subscription(move(slug), nodes, requestId, parameters), requestId, shared_from_this(), sl };
+	}
+
+	α GatewayClientSocket::SubscribeEvents( ServerCnnctnNK slug, const NodeId& node, const vector<string>& select, sp<IListener> listener, SL sl )ε->await<FromServer::SubscriptionAck>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]SubscribeEvents: '{}' {}.", hex(requestId), slug, node.ToString() );
+		ul _{ _subscriptionRequestMutex };
+		_subscriptionRequests.emplace( requestId, make_tuple(slug, vector<NodeId>{node}, move(listener)) );//one node, one result:  the ack is read as a Subscribe's.
+		return await<FromServer::SubscriptionAck>{ FromClientUtils::EventSubscription(move(slug), node, select, requestId), requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::UnsubscribeEvents( ServerCnnctnNK slug, const NodeId& node, SL sl )ε->await<FromServer::UnsubscribeAck>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]UnsubscribeEvents: '{}' {}.", hex(requestId), slug, node.ToString() );
+		{ ul _{ _subscriptionRequestMutex }; _unsubscribeRequests.emplace( requestId, make_tuple(slug, vector<NodeId>{node}) ); }
+		return await<FromServer::UnsubscribeAck>{ FromClientUtils::EventUnsubscription(move(slug), node, requestId), requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::onEvent( const FromServer::EventValues& event )ι->void{
+		rl _{ _subscriptionsMutex };
+		let nodeId = ProtoUtils::ToNodeId( event.node() );
+		if( auto slugNodes = _subscriptions.find(event.opc_id()); slugNodes!=_subscriptions.end() ){
+			if( auto listeners = slugNodes->second.find(nodeId); listeners!=slugNodes->second.end() ){
+				for( let& listener : listeners->second )
+					listener->OnEvent( event );
+				return;
+			}
+		}
+		DBGT( ELogTags::SocketClientRead, "[{},{}]An EventValues for a node nothing here watches.", event.opc_id(), nodeId.ToString() );
 	}
 
 	α GatewayClientSocket::Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SL sl )ε->await<FromServer::UnsubscribeAck>{

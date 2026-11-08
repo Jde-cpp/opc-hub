@@ -11,6 +11,9 @@
 //resolveHistory( group ){ nodes{ templateNode path node status holder{ id name } } } (ql/HistGroupQLAwait.cpp):  retries a group's
 //unresolved template members (*Templates*), answering each member of the template, resolved before, now, or not - and for one
 //whose node another group holds, which.
+//historyEvents( opc, node, start, end, select, limit, continuation ){ status continuation events{ fields } } (ql/HistEventsQLAwait.cpp):
+//a server's own event history of one node, Part 11's ReadEventDetails, each event the fields a SubscribeEvents delivers in the
+//same order - the eight base fields, then the browse paths `select` names (clients spec *Events*).
 //historyGroups( opc, nodes ){ groups{ id name nodes } } (ql/HistGroupInfoQLAwait.cpp):  the groups on the connection that hold
 //any of the nodes, each with those it holds, among the groups the caller may read - where the gateway keeps each node's history.
 //historyCapabilities( group ){ aggregates update delete }:  the aggregates a group computes, and whether the caller may edit
@@ -56,7 +59,21 @@ local history = {
 		{ name: "nodes", type: List({ kind: "OBJECT", name: "HistoryNode" }) } //each node's status, as the server answered it:  for a group's, Bad_NodeIdUnknown for a node it doesn't hold.
 	]
 };
+local historyEvents = {
+	fields: [
+		{ name: "status", type: NonNull(UInt) }, //the node's, as the server answered it:  Bad_HistoryOperationUnsupported from one that keeps no event history.
+		{ name: "continuation", type: String }, //the last event's Time, to read on from; null when the server had no more.
+		{ name: "events", type: List({ kind: "OBJECT", name: "HistoryEvent" }) } //in the server's order, oldest first.
+	]
+};
 {
+	HistoryEvents: historyEvents,
+	historyEvents: historyEvents,
+	HistoryEvent: {
+		fields: [
+			{ name: "fields", type: List(Json) } //one per field of the filter, in its order:  the eight base fields, then those selected;  null where the server left one empty.
+		]
+	},
 	History: history, //the type's canonical name.
 	history: history, //the query's name.
 	HistoryValue: {

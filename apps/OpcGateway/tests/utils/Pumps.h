@@ -22,6 +22,10 @@ namespace Jde::Opc::Gateway::Tests{
 	//OpcServer after the load (Server::ConfigurePumps), which also gives PumpManual - and no other pump - a WriteMask of DisplayName and
 	//Description, the one WriteTests write (#417).
 	constexpr UA_UInt32 ToHertz{ 6055 };
+	//pumpManual.raiseEvent( message: String, severity: UInt16 ) -> ( eventId: ByteString ), the pumps demo's event source (clients spec
+	//*Events*, #424):  a BaseEventType event from pumpManual, whose EventNotifier the nodeset gives the SubscribeToEvents bit, with the
+	//pump's motorRpm as its `Rpm` field;  what SubscribeTests' event tests raise.
+	constexpr UA_UInt32 RaiseEvent{ 6058 };
 	//pumpManual._Test (clients plan, phases 8a and 9):  PumpSampleType, a structure of the server's own - Rpm Double, Running Boolean, Label
 	//String, Limits Range, History Double[] - and `sample` (TestSample), the variable of it the OpcServer writes after the load (ConfigurePumps), which
 	//StructureTests read as fields, write back and read from the historian (#421).

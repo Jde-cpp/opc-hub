@@ -93,6 +93,24 @@ namespace Jde::Opc::Gateway{
 			modified.set_status_code( result.Status );
 		});
 	}
+	α FromServer::EventTrans( const ServerCnnctnNK& opcId, const NodeId& node, const vector<const UA_Variant*>& fields, const ITypes* types )ι->FromServer::Transmission{
+		return set( 0, [&](FromServer::Message& m){
+			auto& event = *m.mutable_event_values();
+			event.set_opc_id( opcId );
+			*event.mutable_node() = ProtoUtils::ToNodeId( node );
+			for( let field : fields ){
+				auto& value = *event.add_fields();
+				if( !field || UA_Variant_isEmpty(field) )
+					continue;
+				try{
+					value = ProtoUtils::ToValue( *field, ProtoUtils::EStructures::Decoded, types );
+				}
+				catch( const UAException& e ){//a DataValue or DiagnosticInfo field, or text that isn't UTF-8:  the field goes empty, as a reading goes without its value.
+					WARNT( IotReadTag, "{} - an event field cannot be sent:  {}", node.ToString(), e.what() );
+				}
+			}
+		});
+	}
 	α FromServer::ToProto( const ServerCnnctnNK& opcId, const NodeId& node, const Opc::Value& v, RequestId requestId, const ITypes* types )ι->FromServer::Message{
 		auto nv = mu<FromServer::NodeValues>();
 		*nv->mutable_node() = ProtoUtils::ToNodeId( node );

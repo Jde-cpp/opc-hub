@@ -10,6 +10,7 @@ import { NodeAccess } from './node-access/node-access';
 import { NodeHistory } from './node-history/node-history';
 import { NodeReferences } from './node-references/node-references';
 import { NodeAttributes } from './node-attributes/node-attributes';
+import { NodeEvents } from './node-events/node-events';
 import { persistedTabIndex } from 'jde-spa';
 import { HistGroupMembers } from '../../model/hist';
 import { OpcStore } from '../../services/opc-store';
@@ -17,7 +18,7 @@ import { OpcStore } from '../../services/opc-store';
 @Component( {
 	templateUrl: './node-detail.html',
 	host: {class:'main-content my-content'},
-	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeAttributes, NodeHistory, NodeReferences]
+	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeAttributes, NodeEvents, NodeHistory, NodeReferences]
 })
 export class NodeDetail implements OnInit{
 	#activatedRoute = inject( ActivatedRoute );

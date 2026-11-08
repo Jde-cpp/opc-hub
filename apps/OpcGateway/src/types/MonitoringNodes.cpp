@@ -32,7 +32,8 @@ namespace Jde::Opc::Gateway{
 	//oldest unless every listener keeps the oldest, and the filter's most inclusive trigger, with the smallest deadband when every
 	//deadband is of one type, else none, since an absolute one and a percentage of a range the gateway hasn't read can't be
 	//ordered.  A listener with no filter asks the server's default, StatusValue and no deadband:  it lifts a deadband, never a
-	//trigger another asked (418-watch-items #1).  More than any one asked, never less.
+	//trigger another asked (418-watch-items #1).  More than any one asked, never less.  An event item's clauses are the union of
+	//its listeners' (spec *Events*), every listener being of that kind (MonitoredItemsRequest refuses the other).
 	Ω merge( const flat_map<sp<IDataChange>,MonitoringParameters>& listeners )ι->MonitoringParameters{
 		ASSERT( listeners.size() );
 		optional<MonitoringParameters> y;
@@ -44,6 +45,11 @@ namespace Jde::Opc::Gateway{
 			y->SamplingInterval = std::min( y->SamplingInterval, p.SamplingInterval );
 			y->QueueSize = std::max( y->QueueSize, p.QueueSize );
 			y->DiscardOldest = y->DiscardOldest || p.DiscardOldest;
+			if( y->Events ){
+				if( p.Events )
+					y->Events->Add( *p.Events );
+				continue;
+			}
 			if( !y->Filter && !p.Filter )
 				continue;
 			auto& filter = y->Filter ? *y->Filter : y->Filter.emplace();
@@ -90,10 +96,19 @@ namespace Jde::Opc::Gateway{
 		//between the read and the registration - and these items were then created on an id the server was about to drop,
 		//acked as successful and never pushed (#11).
 		let subscriptionId = client->SubscriptionId();
-		vector<Subscription*> existing;//into _subscriptions, a flat_map:  an insert moves its elements, so nothing may add to it before these are used (reviews/abseil.md D4).
+		let publishingInterval = client->PublishingInterval();//the server's revised one, once a subscription exists.
+		if( subscriptionId )
+			dataChange->RunsAt( publishingInterval );
+		vector<std::pair<Subscription*,MonitoringParameters>> existing;//into _subscriptions, a flat_map:  an insert moves its elements, so nothing may add to it before these are used (reviews/abseil.md D4).
+		flat_set<NodeId> mismatched;//a join of the other kind:  an event listener on a data-change item, or the reverse (spec *Events*).
 		for( let& n : nodes ){
-			if( auto pSubscription = get<1>(FindNode(n)); pSubscription )
-				existing.push_back( pSubscription );
+			if( auto pSubscription = get<1>(FindNode(n)); pSubscription ){
+				auto asked = dataChange->ItemParameters( client->Slug(), n, publishingInterval );
+				if( asked.IsEvent()==pSubscription->IsEvent() )
+					existing.emplace_back( pSubscription, move(asked) );
+				else
+					mismatched.emplace( n );
+			}
 			else
 				newNodes.emplace( n );
 		}
@@ -105,15 +120,14 @@ namespace Jde::Opc::Gateway{
 			return nullopt;
 		}
 		requestId = MonitorHandle{ subscriptionId, ++_requestId };//never 0:  the low half counts from 1.
-		let publishingInterval = client->PublishingInterval();//the server's revised one, once a subscription exists.
-		if( subscriptionId )
-			dataChange->RunsAt( publishingInterval );
 		flat_map<NodeId,Change> modify;//joins that changed an item's merge (spec *Watch list*).
-		for( auto pSubscription : existing ){
-			pSubscription->Listeners.insert_or_assign( dataChange, dataChange->ItemParameters(client->Slug(), pSubscription->Node, publishingInterval) );
+		for( auto&& [pSubscription,asked] : existing ){
+			pSubscription->Listeners.insert_or_assign( dataChange, move(asked) );
 			if( auto merged = pSubscription->Remerge(); merged )
 				modify.emplace( pSubscription->Node, move(*merged) );
 		}
+		for( let& n : mismatched )
+			_errors.try_emplace( {requestId} ).first->second.try_emplace( n, UA_STATUSCODE_BADFILTERNOTALLOWED );
 		_requests.emplace( requestId, move(nodes) );
 		optional<CreateMonitoredItemsRequest> y;
 		if( newNodes.size() ){
@@ -301,6 +315,27 @@ namespace Jde::Opc::Gateway{
 		}
 		else
 			TRACE( "Could not find subscription:  {}.", hex(h) );
+		return calls;
+	}
+	α UAMonitoringNodes::SendEvent( Handle h, const UA_KeyValueMap& fields )ι->uint{
+		rl _{ _mutex };
+		uint calls{};
+		auto client = _client.lock();
+		if( auto pSubscription = _subscriptions.find(h); client && pSubscription!=_subscriptions.end() ){
+			auto& args = pSubscription->second;
+			let types = client->Types().get();
+			for( let& [listener,parameters] : args.Listeners ){
+				if( !parameters.Events )
+					continue;
+				vector<const UA_Variant*> projected; projected.reserve( parameters.Events->Select.size() );
+				for( let& clause : parameters.Events->Select )
+					projected.push_back( UA_KeyValueMap_get(&fields, UA_QualifiedName{0, ToUV(clause.Key)}) );
+				listener->SendEvent( client->Slug(), args.Node, projected, types );
+				++calls;
+			}
+		}
+		else
+			TRACE( "Could not find the event item:  {}.", hex(h) );
 		return calls;
 	}
 	α UAMonitoringNodes::Unsubscribe( sp<IDataChange> dataChange )ι->void{

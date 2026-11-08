@@ -26,6 +26,18 @@ namespace Jde::Opc::Gateway{
 			DBGT( DataChangesTag, "[{}.{}]Could not find node monitored item.", hex((uint)ua), hex((Handle)MonitorHandle{subId, monId}) );
 	}
 
+	//An event item's notification (spec *Events*):  the fields the item's filter selected, keyed as the clauses print, each borrowed
+	//from the publish response for this call alone (ua_client_subscriptions.c processEventNotification).
+	Ω eventsCallback( UA_Client* ua, SubscriptionId subId, void* /*subContext*/, MonitorId monId, void* /*monContext*/, const UA_KeyValueMap fields )->void{
+		auto pClient = UAClient::TryFind(ua); if(!pClient) return;
+		let h = MonitorHandle{ subId, monId };
+		TRACET( DataChangesTag, "[{}.{}] EventsCallback - {} field(s)", hex((uint)ua), hex((Handle)h), fields.mapSize );
+		for( let& field : std::span{fields.map, fields.mapSize} )
+			NoteMissingTypes( field.value, *pClient->Types() );//a structure field of a type the registry lacks, as a data change's (clients spec *Structures*).
+		if( !pClient->MonitoredNodes().SendEvent(h, fields) )
+			DBGT( DataChangesTag, "[{}.{}]Could not find the event item.", hex((uint)ua), hex((Handle)h) );
+	}
+
 	Ω dataChangesDeleteCallback( UA_Client* ua, SubscriptionId subId, void* /*_subContext_*/, MonitorId monId, void* /*_monContext_*/ )->void{
 		TRACE( "[{}.{}]DataChangesDeleteCallback", hex((uint)ua), hex((Handle)MonitorHandle{subId, monId}) );
 	}
@@ -57,7 +69,15 @@ namespace Jde::Opc::Gateway{
 		let subscriptionId = MonitorHandle{ _monitoredRequestId }.SubId();
 		try{
 			vector<UA_Client_DeleteMonitoredItemCallback> deleteCallbacks{ request->itemsToCreateSize, dataChangesDeleteCallback };
-			vector<UA_Client_DataChangeNotificationCallback> dataChangeCallbacks{ request->itemsToCreateSize, dataChangesCallback };
+			//One callback per item by its kind:  a data change's, or an event's for an item on the EventNotifier attribute (spec *Events*).
+			//open62541 keeps every item's callback as one pointer type and calls it by the item's attribute (ua_client_subscriptions.c
+			//MonitoredItem_createBegin, processEventNotification), and its createEvents_async is createDataChanges_async with the array
+			//cast, so one create carries both kinds - a rebuild's, a session's event tab beside its watch rows.  Through uintptr_t, as
+			//open62541 stores it:  the direct cast is a function-type mismatch to clang.
+			let asEventCallback = reinterpret_cast<UA_Client_DataChangeNotificationCallback>( reinterpret_cast<uintptr_t>(&eventsCallback) );
+			vector<UA_Client_DataChangeNotificationCallback> dataChangeCallbacks( request->itemsToCreateSize );
+			for( uint i=0; i<request->itemsToCreateSize; ++i )
+				dataChangeCallbacks[i] = CreateMonitoredItemsRequest::IsEvent( request->itemsToCreate[i] ) ? asEventCallback : dataChangesCallback;
 			void** contexts = nullptr;
 			request->subscriptionId = subscriptionId;
 

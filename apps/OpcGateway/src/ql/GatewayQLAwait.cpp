@@ -10,6 +10,7 @@
 #include "../types/UAClientException.h"
 #include "CallQLAwait.h"
 #include "HistEditQLAwait.h"
+#include "HistEventsQLAwait.h"
 #include "HistQLAwait.h"
 #include "HistComputedQLAwait.h"
 #include "HistGroupReadQLAwait.h"
@@ -140,7 +141,7 @@ namespace Jde::Opc::Gateway{
 		try{
 			jvalue y;
 			_query.ReturnRaw = true;
-			let readsValues = _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") || _query.JsonName=="history";
+			let readsValues = _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") || _query.JsonName=="history" || _query.JsonName==HistEventsQLAwait::Command;
 			if( readsValues )//the registry's fetch running - a cold connect's - waited out, so its structures read as fields (#7).  AnyVoidAwait.
 				co_await _client->Types()->Settled( _sl );
 			if( _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") )
@@ -165,6 +166,8 @@ namespace Jde::Opc::Gateway{
 				else//at times, or aggregated.
 					y = co_await HistComputedQLAwait{ move(_query), move(_client), _sl };
 			}
+			else if( _query.JsonName==HistEventsQLAwait::Command )//the server's own event history (spec *Events*), over the caller's session.
+				y = co_await HistEventsQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName=="serverDescription" )//connection attributes are sync UA services - run them on the client's strand.
 				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return _query.TransformResult( ServerDescription(_query, _client) ); }, _sl };
 			else if( _query.JsonName=="namespaces" ){

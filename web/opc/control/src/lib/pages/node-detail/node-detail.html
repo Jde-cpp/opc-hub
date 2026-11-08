@@ -26,6 +26,14 @@
 			</ng-template>
 		</mat-tab>
 	}
+	@if( node().notifiesEvents ){<!--an object or view whose EventNotifier has the SubscribeToEvents bit - the Server object always (clients spec *Events*)-->
+		<mat-tab>
+			<ng-template mat-tab-label>Events</ng-template>
+			<ng-template matTabContent>
+				<node-events [pageData]="pageData()" [node]="node()"></node-events>
+			</ng-template>
+		</mat-tab>
+	}
 	@if( pageData().server.applicationName.startsWith("Jde-Cpp OpcServer") ){
 		<mat-tab>
 			<ng-template mat-tab-label>Permissions</ng-template>

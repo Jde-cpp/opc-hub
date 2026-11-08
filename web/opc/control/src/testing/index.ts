@@ -10,7 +10,7 @@ import { UaNode, Variable } from '../lib/model/node';
 import { NodeId, NodeKey } from '../lib/model/node-id';
 import { References } from '../lib/model/reference';
 import { Value } from '../lib/model/value';
-import { Gateway, HistEvent, HistSubscribeArgs, SubscriptionResult } from '../lib/services/gateway-service';
+import { EventPush, Gateway, HistEvent, HistEventsArgs, HistEventsPage, HistSubscribeArgs, SubscriptionResult } from '../lib/services/gateway-service';
 import { OpcStore } from '../lib/services/opc-store';
 import { HighchartsLoader } from '../lib/pages/node-detail/node-history/highcharts-loader';
 
@@ -65,12 +65,15 @@ export class Feed<T, A=unknown>{
 }
 
 //A Gateway for a page or a resolver to read through:  query/queryArray answer from `answers` as qlAnswering does, querySingle
-//nothing, browseObjectsFolder a node's children in `tree` by its key, references and attributes none, and subscribe/histSubscribe
-//open `values`/`histEvents` for the test to feed.  Assign over whatever else a test needs.
+//nothing, browseObjectsFolder a node's children in `tree` by its key, references and attributes none, and subscribe/histSubscribe/
+//subscribeEvents open `values`/`histEvents`/`events` for the test to feed;  historyEvents answers nothing, Good.  Assign over whatever
+//else a test needs.
 export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tree=new Map<NodeKey,UaNode[]>() ){
-	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>();
+	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>(), events = new Feed<EventPush, {node:NodeId; select:string[]}>();
 	return {
-		slug, values, histEvents,
+		slug, values, histEvents, events,
+		subscribeEvents: vi.fn( ( _opc:string, node:NodeId, select:string[], _owner?:string )=>events.open( {node, select} ) ),
+		historyEvents: vi.fn( async ( _opc:string, _node:NodeId, _args:HistEventsArgs ):Promise<HistEventsPage>=>({ status: 0, events: [] }) ),
 		query: qlAnswering( answers ),
 		queryArray: qlAnswering( answers, {unwrapped: true} ),
 		querySingle: vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>null ),
@@ -122,7 +125,7 @@ export class TestGateway extends Gateway{
 		if( !this.acking )
 			return super.sendPromise<T>( m, log );
 		this.sent( m );
-		if( !m.subscribe )
+		if( !m.subscribe && !m.subscribeEvents )
 			return Promise.resolve( undefined as T );
 		if( this.rejectWith )
 			return Promise.reject( this.rejectWith );

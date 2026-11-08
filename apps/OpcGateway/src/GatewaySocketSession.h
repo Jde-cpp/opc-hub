@@ -17,6 +17,7 @@ namespace Jde::Opc::Gateway{
 		GatewaySocketSession( sp<IRestStream> stream, beast::flat_buffer&& buffer, TRequestType&& request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι;
 		α OnRead( FromClient::Transmission&& transmission )ι->void override;
 		α SendDataChange( const ServerCnnctnNK& opcNK, const NodeId& node, const Value& value, const ITypes* types )ι->void override;
+		α SendEvent( const ServerCnnctnNK& opcNK, const NodeId& node, const vector<const UA_Variant*>& fields, const ITypes* types )ι->void override;//the EventValues push (spec *Events*).
 		//What the last Subscribe asked for the node on the connection, the defaults when it named none (spec *Watch list*), and a
 		//negative sampling interval, which asks the publishing interval, as that interval in ms, so the merge can order it.
 		α ItemParameters( const ServerCnnctnNK& opcNK, const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;
@@ -46,8 +47,11 @@ namespace Jde::Opc::Gateway{
 		α SharedFromThis()ι->sp<GatewaySocketSession>{ return std::dynamic_pointer_cast<GatewaySocketSession>(shared_from_this()); }
 
 		α GraphQL( Jde::Proto::Query&& q, uint requestId )ι->TAwait<jvalue>::Task;
-		α Subscribe( ServerCnnctnNK opcId, flat_map<NodeId,MonitoringParameters> asked, uint32 requestId )ι->TAwait<sp<UAClient>>::Task;//by value:  a coroutine keeps a reference parameter as one, and the transmission it names is gone once the connect suspends.
-		α Unsubscribe( ServerCnnctnNK&& opcId, flat_set<NodeId> nodes, uint32 requestId )ι->void;
+		//A Subscribe's, or a SubscribeEvents' (spec *Events*), whose one node asks an event item - MonitoringParameters::IsEvent - and gets
+		//no first read, an object having no Value.  By value:  a coroutine keeps a reference parameter as one, and the transmission it
+		//names is gone once the connect suspends.
+		α Subscribe( ServerCnnctnNK opcId, flat_map<NodeId,MonitoringParameters> asked, uint32 requestId )ι->TAwait<sp<UAClient>>::Task;
+		α Unsubscribe( ServerCnnctnNK&& opcId, flat_set<NodeId> nodes, uint32 requestId )ι->void;//an Unsubscribe's nodes, or an UnsubscribeEvents' one.
 		//A historian subscription (spec *Subscriptions*), defined in hist/HistSubscriber.cpp:  the group's Read gate, the ack
 		//with each node's status, the snapshot's pages, then every record as it is stored, until HistUnsubscribe or the close.
 		α HistSubscribe( FromClient::HistSubscribe&& request, Jde::RequestId requestId )ι->void;

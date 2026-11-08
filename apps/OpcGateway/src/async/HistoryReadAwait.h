@@ -2,13 +2,14 @@
 #include <open62541/client.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include "UAAwait.h"
+#include "../uatypes/EventFilter.h"
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
 	//A HistoryRead for the nodes it names (spec *Pass-through*):  of raw values, Part 11's ReadRawModifiedDetails, at
-	//times, ReadAtTimeDetails, or processed, ReadProcessedDetails.  Owns its node ids and continuation points, deep-copied
-	//as ReadRequest copies its ids, and its details, a member the extension object points at:  move-only, since a copy
-	//would double-free the ids and point at the other's details.
+	//times, ReadAtTimeDetails, processed, ReadProcessedDetails, or of events, ReadEventDetails (spec *Events*).  Owns its node
+	//ids and continuation points, deep-copied as ReadRequest copies its ids, and its details, a member the extension object
+	//points at:  move-only, since a copy would double-free the ids and point at the other's details.
 	struct HistoryReadRequest final : UA_HistoryReadRequest{
 		HistoryReadRequest( const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH, bool release=false )ι;
 		//At times, with useSimpleBounds as given.
@@ -16,6 +17,9 @@ namespace Jde::Opc::Gateway{
 		//Processed:  one aggregate, named for each node Add adds, under the server's defaults (useServerCapabilitiesDefaults).
 		//The interval is in milliseconds, as processingInterval is.
 		HistoryReadRequest( UA_DateTime start, UA_DateTime end, double interval, const UA_NodeId& aggregate, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH, bool release=false )ι;
+		//Events:  from start to end, at most `numValues` per node, with the filter's select clauses and no where clause.  Timestamps
+		//are Neither, as Part 11 has an event read ask (6.4.3.3);  each event's Time and ReceiveTime are its fields.
+		HistoryReadRequest( UA_DateTime start, UA_DateTime end, uint32 numValues, const EventFilter& filter, bool release=false )ι;
 		HistoryReadRequest( HistoryReadRequest&& x )ι;
 		~HistoryReadRequest();
 		α operator=( HistoryReadRequest&& x )ι->HistoryReadRequest&;
@@ -25,10 +29,12 @@ namespace Jde::Opc::Gateway{
 	private:
 		struct AtTime final{ UA_ReadAtTimeDetails Details; vector<UA_DateTime> Times; };
 		struct Processed final{ UA_ReadProcessedDetails Details; NodeId Aggregate; vector<UA_NodeId> Aggregates; };//Aggregates:  Aggregate once per node, deep copies the dtor clears.
+		struct Events final{ UA_ReadEventDetails Details; };//its filter's clauses are deep copies the dtor clears.
 		HistoryReadRequest( UA_TimestampsToReturn timestamps, bool release, const UA_DataType& type )ι;
 		α SetNodes()ι->void;//_nodes may have reallocated, and _details moved.
 		α Clear()ι->void;
-		variant<UA_ReadRawModifiedDetails,AtTime,Processed> _details;
+		Ω DisownEvents( Events* events )ι->void;//a moved-from request's filter set aside:  the variant's move copies its pointers.
+		variant<UA_ReadRawModifiedDetails,AtTime,Processed,Events> _details;
 		vector<UA_HistoryReadValueId> _nodes;
 	};
 	//The response:  results[i] answers the request's i-th node, its historyData decoded by the client to a HistoryData, or

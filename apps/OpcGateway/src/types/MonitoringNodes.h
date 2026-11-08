@@ -25,6 +25,11 @@ namespace Jde::Opc::Gateway{
 		//`types`:  the connection's registry, which a value decoded by the client walks by and a body its chain lacked may decode by - the
 		//client's own, so a push and the read before it decode alike (clients spec *Structures*).
 		β SendDataChange( const ServerCnnctnNK& opcId, const NodeId& node, const Value& value, const ITypes* types )ι->void=0;
+		//An event of the node's event item (spec *Events*):  one field per clause of this listener's own list (ItemParameters'
+		//Events), in its order, projected from the item's union by key - null for one the item did not deliver.  Borrowed from the
+		//publish response:  nothing here may keep a pointer past the call.  Called as SendDataChange is, with the monitoring lock
+		//shared.  A listener of data changes alone leaves it.
+		β SendEvent( const ServerCnnctnNK& /*opcId*/, const NodeId& /*node*/, const vector<const UA_Variant*>& /*fields*/, const ITypes* /*types*/ )ι->void{}
 		//The subscription these nodes were on is gone - the connection failed, or the server dropped the session or the
 		//subscription (SubscriptionStatusChanged) - broken at `when`, the gateway's clock:  when the client first saw its channel
 		//or session go (UAClient::RecordBreak), which can be well before the loss is found, else when it was found.  They are
@@ -42,7 +47,9 @@ namespace Jde::Opc::Gateway{
 		//with the interval the client's subscription runs at (UAClient::PublishingInterval), which sizes a queue.  Asked at every
 		//create, a rebuild's included, at every join of an item that exists, and again at ParametersChanged.  A node several
 		//listeners watch has one item, which takes the strictest of what they ask (UAMonitoringNodes, spec *Watch list*):  a
-		//listener that asks a deadband on a node another watches unfiltered gets the unfiltered stream.  The collector's clients
+		//listener that asks a deadband on a node another watches unfiltered gets the unfiltered stream.  An event item's listeners
+		//answer with `Events`, their select clauses, and the item takes the union (spec *Events*);  a listener answering the other
+		//kind for a node whose item exists is refused the node, Bad_FilterNotAllowed.  The collector's clients
 		//are its own (Credential::Collector), so its items take its parameters alone.  Called with the monitoring lock held
 		//exclusively - on the client's strand from a create, on the caller's from ParametersChanged - as SendDataChange is with it
 		//shared:  neither may call into UAClient or its monitored nodes, nor wait on a lock that is held across such a call - an
@@ -82,6 +89,9 @@ namespace Jde::Opc::Gateway{
 		//the create was sent (418-watch-items #7).  A node with neither is skipped:  its next create asks ItemParameters.
 		α ParametersChanged( const sp<IDataChange>& listener, const flat_set<NodeId>& nodes )ι->void;
 		α SendDataChange( Handle h, const Value&& value )ι->uint;
+		//An event item's notification:  the fields the client delivered, keyed as the item's clauses print, each listener given its
+		//own list's fields in its order (IDataChange::SendEvent).  The listeners told.
+		α SendEvent( Handle h, const UA_KeyValueMap& fields )ι->uint;
 		α OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void;
 		α GetResult( Handle requestId, StatusCode status )ι->FromServer::SubscriptionAck;
 		α Handles( const flat_set<NodeId>& nodes )ι->flat_map<NodeId,MonitorHandle>;//the item each node is monitored on - none for a node that has none.  A snapshot:  good until the next change.
@@ -100,9 +110,10 @@ namespace Jde::Opc::Gateway{
 		//which a refused modify puts back (418-watch-items #9).
 		struct Change{ MonitoringParameters Merged; flat_map<sp<IDataChange>,MonitoringParameters> Asks; };//a modify posted, and the asks it merged.
 		struct Subscription{
-			Subscription( NodeId node, MonitoredItemCreateResult result, sp<IDataChange> listener, MonitoringParameters parameters )ι: Node{ move(node) }, Result{ move(result) }, Requested{ parameters }{ Listeners.emplace( listener, parameters ); Granted.emplace( move(listener), move(parameters) ); }
+			Subscription( NodeId node, MonitoredItemCreateResult result, sp<IDataChange> listener, MonitoringParameters parameters )ι: Node{ move(node) }, Result{ move(result) }, Event{ parameters.IsEvent() }, Requested{ parameters }{ Listeners.emplace( listener, parameters ); Granted.emplace( move(listener), move(parameters) ); }
 			NodeId Node;
 			MonitoredItemCreateResult Result;
+			bool Event;//the item's kind, the create's (spec *Events*):  held with no listener too, while DeleteMonitoring's delay runs.
 			flat_map<sp<IDataChange>,MonitoringParameters> Listeners;
 			optional<MonitoringParameters> Requested;
 			flat_map<sp<IDataChange>,MonitoringParameters> Granted;
@@ -110,6 +121,7 @@ namespace Jde::Opc::Gateway{
 			//The merge recomputed after a listener joined, left or changed its ask:  the parameters to modify the item to when they
 			//differ from Requested, which they replace, with the asks merged.  None means the item stands.
 			α Remerge()ι->optional<Change>;
+			α IsEvent()Ι->bool{ return Event; }
 		};
 		//A create in flight:  the new nodes asked for - in the order the server answers them, so never edited - the listener, the
 		//parameters it asked per node, which the create sent, the nodes that listener unsubscribed while the create was out
