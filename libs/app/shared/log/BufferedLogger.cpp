@@ -1,5 +1,4 @@
 #include <jde/app/log/BufferedLogger.h>
-#include <jde/fwk/process/execution.h>
 #include <thread>
 
 #define let const auto
@@ -8,10 +7,8 @@ namespace Jde::App{
 	BufferedLogger::BufferedLogger( sv name, const jobject& settings, uint maxSize )ε:
 		ILogger{ name, settings },
 		_delay{ std::max<Duration>(Json::FindDuration(settings, "delay", ELogLevel::Error).value_or(1min), Duration::zero()) },//negative: the timer completes inline, under the caller's lock.
-		_maxSize{ maxSize }{
-		Executor();//locks up if started in a round.
-		Execution::Run();
-	}
+		_maxSize{ maxSize }
+	{}
 	//Unbounded, with C10's caveat: a cancel completion posted to an io_context that has already stopped never runs, and then only
 	//the watchdog ends this.
 	α BufferedLogger::Stop()ι->void{

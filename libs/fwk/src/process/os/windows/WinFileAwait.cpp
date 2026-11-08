@@ -25,7 +25,8 @@ namespace Jde::IO{
 		_path{ move(path) }, _impl{ mu<Impl>() }{
 		const HANDLE file = ::CreateFile( winPath(_path).c_str(), GENERIC_READ, shareAll, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr );
 		const DWORD openError = ::GetLastError();
-		_impl->Handle = HandlePtr( WinHandle(file, [&](){ return IOException( _path, openError, "CreateFile", sl ); }) );
+		THROW_IFX( file==INVALID_HANDLE_VALUE, IOException(_path, openError, "CreateFile", sl) );
+		_impl->Handle = HandlePtr{ file };
 		if( ::GetFileType(_impl->Handle.get())!=FILE_TYPE_DISK ){//a pipe or a device has no size to read at offsets.
 			IOException e{ _path, "is not a regular file", sl };
 			e.Error = EIOError::Invalid;
@@ -50,7 +51,7 @@ namespace Jde::IO{
 			OVERLAPPED at{};
 			at.Offset = (DWORD)( offset+y );
 			at.OffsetHigh = (DWORD)( (offset+y)>>32 );
-			at.hEvent = reinterpret_cast<HANDLE>( reinterpret_cast<uintptr_t>((HANDLE)event.get()) | 1 );
+			at.hEvent = reinterpret_cast<HANDLE>( reinterpret_cast<uintptr_t>(event.get()) | 1 );
 			DWORD read{};
 			if( !::ReadFile(_impl->Handle.get(), buffer+y, (DWORD)(size-y), nullptr, &at) && ::GetLastError()!=ERROR_IO_PENDING ){
 				if( ::GetLastError()==ERROR_HANDLE_EOF )
@@ -75,14 +76,15 @@ namespace Jde::IO{
 		lg _{ native.Mutex };
 		if( !native.Shared ){
 			auto executor = Executor();
-			THROW_IFX( !executor, IOException(file.Path(), "no executor to read on", sl) );
-			HANDLE dup;
-			THROW_IFX( !::DuplicateHandle(::GetCurrentProcess(), native.Handle.get(), ::GetCurrentProcess(), &dup, 0, FALSE, DUPLICATE_SAME_ACCESS), IOException(file.Path(), ::GetLastError(), "DuplicateHandle", sl) );
+			THROW_IFX( executor->stopped(), IOException(file.Path(), "no executor to read on", sl) );
+			HANDLE raw;
+			THROW_IFX( !::DuplicateHandle(::GetCurrentProcess(), native.Handle.get(), ::GetCurrentProcess(), &raw, 0, FALSE, DUPLICATE_SAME_ACCESS), IOException(file.Path(), ::GetLastError(), "DuplicateHandle", sl) );
+			HandlePtr dup{ raw };
 			try{
-				native.Shared = ms<OpenFile::Impl::Asio>( move(executor), dup );
+				native.Shared = ms<OpenFile::Impl::Asio>( move(executor), dup.get() );
+				dup.release();//asio's, once registered.
 			}
 			catch( const boost::system::system_error& e ){
-				::CloseHandle( dup );
 				throw IOException{ file.Path(), (uint32)e.code().value(), Ƒ("iocp registration failed: {}", e.what()), sl };
 			}
 		}
@@ -97,13 +99,15 @@ namespace Jde::IO{
 		const DWORD creationDisposition = options.Create && !keepsPrefix ? OPEN_ALWAYS : OPEN_EXISTING;
 		const HANDLE file = ::CreateFile( winPath(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE, nullptr, creationDisposition, FILE_FLAG_OVERLAPPED | FILE_ATTRIBUTE_ARCHIVE, nullptr );
 		const DWORD openError = ::GetLastError();//read before anything else can set it: a failure's code, or ERROR_ALREADY_EXISTS when an open that could create found the file there.
-		impl->Handle = HandlePtr( WinHandle(file, [&](){ return IOException( path, openError, "CreateFile", sl ); }) );
+		THROW_IFX( file==INVALID_HANDLE_VALUE, IOException(path, openError, "CreateFile", sl) );
+		impl->Handle = HandlePtr{ file };
 		let created = creationDisposition==OPEN_ALWAYS && openError!=ERROR_ALREADY_EXISTS;
 		if( options.Sync && created ){//the directory gained the file's name, which Sync covers.  FILE_FLAG_BACKUP_SEMANTICS is what opens a directory, and FlushFileBuffers needs GENERIC_WRITE.
 			let parent = path.parent_path();
 			const HANDLE dir = ::CreateFile( winPath(parent.empty() ? fs::path{"."} : parent).c_str(), GENERIC_WRITE, shareAll, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr );
 			const DWORD dirError = ::GetLastError();
-			impl->NameDirs.emplace_back( WinHandle(dir, [&](){ return IOException( parent, dirError, "CreateFile", sl ); }) );
+			THROW_IFX( dir==INVALID_HANDLE_VALUE, IOException(parent, dirError, "CreateFile", sl) );
+			impl->NameDirs.push_back( HandlePtr{dir} );
 		}
 		if( options.Mode==EWriteMode::Truncate && ::GetFileType(impl->Handle.get())==FILE_TYPE_DISK ){//the file ends at Offset, the bytes kept, and the data follows.  One cut for every Offset, 0 included: without it a shorter write leaves the old file's tail in place.  A device has no length to read or set.
 			LARGE_INTEGER fileSize;
@@ -230,7 +234,7 @@ namespace Jde::IO{
 			return;
 		}
 		auto executor = Executor();
-		if( !executor ){//finalizing - the io could never run; mirror Post's drop semantics.
+		if( executor->stopped() ){//finalizing - the io could never run; mirror Post's drop semantics.
 			WARN( "[{}]Start after executor teardown - dropping file io.", op->Path.string() );
 			return;
 		}
@@ -246,12 +250,13 @@ namespace Jde::IO{
 			}
 		}
 		else{//the write's own, registered here and closed by finish before the resume.
-			HANDLE raw = op->Native().Handle.release();
+			auto file = move( op->Native().Handle );
 			try{
-				handle = ms<RandomAccessHandle>( *executor, raw );
+				handle = ms<RandomAccessHandle>( *executor, file.get() );
+				file.release();//asio's, once registered.
 			}
 			catch( const boost::system::system_error& e ){
-				::CloseHandle( raw );
+				file.reset();//before the resume, as finish closes a registered one.
 				op->Complete( (uint32)e.code().value(), Ƒ("iocp registration failed: {}", e.what()) );
 				return;
 			}

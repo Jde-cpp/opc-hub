@@ -6,7 +6,6 @@ namespace Jde::Web::Server{
 
 	IRequestHandler::IRequestHandler( jobject settings, sp<App::IApp> appServer )ι:
 		_appServer{move(appServer)},
-		_cancelSignal{ ms<net::cancellation_signal>() },
 		_ctx{ ssl::context{ssl::context::tlsv12} },
 		_settings{settings}
 	{}
@@ -30,8 +29,6 @@ namespace Jde::Web::Server{
 		_started.notify_all();
 	}
 	α IRequestHandler::Stop( bool, SL )ι->void{
-		if( _cancelSignal )
-			_cancelSignal->emit( net::cancellation_type::all );
 		_started.store( EStartState::None );
 		_started.notify_all();
 	}

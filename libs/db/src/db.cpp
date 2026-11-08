@@ -54,8 +54,8 @@ namespace Jde{
 	class DataSourceApi{
 		DllHelper _dll;
 	public:
-		DataSourceApi( fs::path path ):
-			_dll{ move(path) },
+		DataSourceApi( const fs::path& path ):
+			_dll{ path },
 			GetDataSourceFunction{ _dll["GetDataSource"] }
 		{}
 		decltype(GetDataSource) *GetDataSourceFunction;

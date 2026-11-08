@@ -25,6 +25,7 @@ namespace Jde::IO{
 
 //The ops behind ReadAwait and WriteAwait, and the chunks they move in:  shared by FileAwait.cpp and the platform files, and nothing a caller sees.
 namespace Jde::IO::Internal{
+	Γ α PostIO( absl::AnyInvocable<void()> f )ι->void;//runs f on the io strand:  initiations and completions never overlap.
 #ifdef _MSC_VER
 	using HFile=HandlePtr;
 #else

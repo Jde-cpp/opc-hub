@@ -25,7 +25,7 @@ namespace Jde::DB::Sqlite{
 		DllHelper _dll;
 		vector<string> _procNames;
 	public:
-		SqliteApi( fs::path path ): _dll{ move(path) }{
+		SqliteApi( const fs::path& path ): _dll{ path }{
 			decltype(RegisterProcs)* registerProcs{ _dll["RegisterProcs"] };
 			registerProcs( *this );
 		}
@@ -64,17 +64,7 @@ namespace Jde::DB::Sqlite{
 					THROW_IFX( !jlib, Exception(SRCE_CUR, {ELogLevel::Critical, ELogTags::App}, "No dynamicLib for {}.{}.{}", catalogName, dbSchemaName, appSchemaName) );
 					if( jlib->is_null() )
 						continue;
-					let lib = Json::AsSV( *jlib );
-					//weakly_canonical: _procDlls and DllApiCache both key on the path as written, so `…/lib/x.so` and
-					//`…/lib/./x.so` would load the same dll twice and register every twin twice over.
-					std::error_code ec;
-					fs::path dynamicLib{ fs::weakly_canonical(fs::path{lib}, ec) };
-					if( ec )
-						dynamicLib = fs::path{ lib }; //unresolvable (a path that does not exist yet): use it as written and let the load report.
-					if( !_procDlls.contains(dynamicLib) ){
-						auto api = _dllApis.Get( dynamicLib ); //ctor loads the dll and registers its procs.
-						_procDlls.emplace( move(dynamicLib), move(api) );
-					}
+					_procDlls.insert( _dllApis.Get(fs::path{Json::AsSV(*jlib)}) ); //the first Get of a dll loads it and registers its procs.
 				}
 			}
 		}

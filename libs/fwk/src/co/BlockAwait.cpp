@@ -1,5 +1,4 @@
 #include <jde/fwk/co/BlockAwait.h>
-#include <boost/asio/io_context.hpp>
 #include <jde/fwk/process/execution.h>
 
 #define let const auto
@@ -22,8 +21,7 @@ namespace Jde::Internal{
 	//says "waiting", not "waiting for itself".  Named once per call site:  db-review3 #1 predicted it, emulator-review W1
 	//watched it take the AppServer's registrations down.
 	Ω warnIfOnExecutor( SL sl )ι->void{
-		//ExecutorIoc, not Executor:  null once finalizing, and a check must not create the io_context.
-		if( auto ioc = ExecutorIoc(); !ioc || !ioc->get_executor().running_in_this_thread() )
+		if( !Execution::OnThread() )
 			return;
 		static concurrent_flat_set<string> _sites;
 		if( _sites.insert(Ƒ("{}:{}", sl.file_name(), sl.line())) )

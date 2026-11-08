@@ -1,37 +1,35 @@
-﻿#include "jde/fwk/log/logTags.h"
-#include "jde/fwk/utils/collections.h"
+﻿#include "jde/fwk/log/log.h"
 #include <jde/fwk/process/execution.h>
 #include <boost/asio.hpp>
-#include <jde/fwk/settings.h>
-#include <jde/fwk/process/process.h>
-#include <jde/fwk/process/thread.h>
 #include <jde/fwk/utils/Vector.h>
+#include <jde/fwk/process/thread.h>
+#include <jde/fwk/settings.h>
 
 #define let const auto
 namespace Jde{
 	constexpr ELogTags _tags{ ELogTags::App };
 	namespace asio = boost::asio;
-	sp<asio::io_context> _ioc;
-	struct IoStrand{
-		IoStrand( sp<asio::io_context> ioc )ι: Ioc{ move(ioc) }, Strand{ *Ioc }{}
-		sp<asio::io_context> Ioc;//keeps the io_context alive while a poster holds the strand.
-		asio::io_context::strand Strand;
+	//Idle -> Running -> Stopped, or Idle -> Stopped; never back, so nothing is rebuilt with nothing left to tear it down.
+	struct Pool final{
+		Ω Instance()ι->Pool&{ static Pool _instance; return _instance; }
+		α Ioc()ι->sp<asio::io_context>;
+		α OnThread()ι->bool{ rl _{ _mutex }; return _ioc && _ioc->get_executor().running_in_this_thread(); }
+		α Running()ι->bool{ rl _{ _mutex }; return _ioc ? !_ioc->stopped() : _state.load()!=EState::Stopped; }
+		α Release()ι->sp<asio::io_context>{ ul _{ _mutex }; return move( _ioc ); }
+		α Start()ι->void;
+		α Stop( bool terminate, SL sl )ι->void;
+	private:
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Make()ι->void;
+		enum class EState : uint8{ Idle, Running, Stopped };
+		atomic<EState> _state{ EState::Idle };
+		absl::Mutex _mutex;
+		sp<asio::io_context> _ioc ABSL_GUARDED_BY(_mutex);
+		up<asio::executor_work_guard<asio::io_context::executor_type>> _keepAlive ABSL_GUARDED_BY(_mutex);
+		vector<std::jthread> _threads ABSL_GUARDED_BY(_mutex);
 	};
-	sp<IoStrand> _ioStrand;
-	mutex _executorMutex;//guards _ioc/_ioStrand creation & teardown - PostIO races the executor thread's shutdown reset.
-	up<asio::executor_work_guard<asio::io_context::executor_type>> _keepAlive;
 }
 α Jde::ThreadCount()ι->unsigned{ return std::max(1u, Settings::FindNumber<unsigned>("/workers/executor/threads").value_or(std::thread::hardware_concurrency())); }
-α Jde::Executor()ι->sp<asio::io_context>{
-	lg _{ _executorMutex };
-	if( !_ioc && !Process::Finalizing() ){//never resurrect after cleanup - a stray Post would otherwise re-create the io_context (and Run a new executor thread) with nothing left to tear them down.
-		_ioc = ms<asio::io_context>( ThreadCount() );
-		_ioStrand = ms<IoStrand>( _ioc );
-		_keepAlive = mu<asio::executor_work_guard<asio::io_context::executor_type>>( _ioc->get_executor() );
-	}
-	return _ioc;
-}
-α Jde::ExecutorIoc()ι->sp<asio::io_context>{ lg _{ _executorMutex }; return _ioc; }
+α Jde::Executor()ι->sp<asio::io_context>{ return Pool::Instance().Ioc(); }
 
 namespace Jde{
 	static up<Vector<IShutdown*>> _shutdowns;
@@ -41,158 +39,104 @@ namespace Jde{
 	 	_shutdowns->push_back( shutdown );
 	}
 
-	struct CancellationSignals final{
-		α Emit( asio::cancellation_type ct = asio::cancellation_type::all )ι->void;
-		α Slot()ι->asio::cancellation_slot;
-		α Signal()ι->sp<asio::cancellation_signal>;
-		α Add( sp<asio::cancellation_signal> s )ι->void{ lg _(_mtx); _sigs.push_back(s); }
-		α Remove( const sp<asio::cancellation_signal>& s )ι->void{ lg _(_mtx); std::erase(_sigs, s); }
-		α Clear()ι->void{ lg _(_mtx); _sigs.clear(); }
-		α Size()ι->uint{ lg _(_mtx); return _sigs.size(); }
-	private:
-		vector<sp<asio::cancellation_signal>> _sigs;
-		mutex _mtx;
-	};
-	CancellationSignals _cancelSignals;
-	α Execution::AddCancelSignal( sp<asio::cancellation_signal> s )ι->void{ _cancelSignals.Add(s); }
-	α Execution::RemoveCancelSignal( const sp<asio::cancellation_signal>& s )ι->void{ _cancelSignals.Remove(s); }
-	α Execution::CancelSignalCount()ι->uint{ return _cancelSignals.Size(); }
+	α Execution::Start()ι->void{ Pool::Instance().Start(); }
+	α Execution::Stop( bool terminate, SL sl )ι->void{ Pool::Instance().Stop( terminate, sl ); }
+	α Execution::Release()ι->sp<asio::io_context>{ return Pool::Instance().Release(); }
+	α Execution::OnThread()ι->bool{ return Pool::Instance().OnThread(); }
+	α Execution::Running()ι->bool{ return Pool::Instance().Running(); }
 
-	α CancelSignals()->CancellationSignals&{ return _cancelSignals; }
-
-	struct ExecutorContext final : IShutdown{
-		ExecutorContext()ι:
-			_thread{ [&](){
-				TRACET( ELogTags::Test, "Ex[0]" );
-				Execute();
-			}}{
-			_started.wait( false );
-			INFO( "Created executor threadCount: {}.", ThreadCount() );
-		}
-		~ExecutorContext()ι{
-			_cancelSignals.Clear();
-		}
-		α Shutdown( bool terminate, SL sl )ι->void override;
-		Ω Started()ι->bool{ return _started.test(); }
-		Ω Ioc()ι->sp<asio::io_context>{ return _ioc; }
-	private:
-		Ω Execute()ι->void;
-		std::jthread _thread;
-		static atomic_flag _started;
-		static atomic_flag _stopped;
-	};
-	atomic_flag ExecutorContext::_started{};
-	atomic_flag ExecutorContext::_stopped{};
-	mutex _runMutex;//serializes first-call construction: concurrent Run()s used to each build an ExecutorContext, and SetExecutor's overwrite joined the loser's thread - parked in ioc->run() - until shutdown.
-	α Execution::Run()->void{
-		if( ExecutorContext::Started() )
-			return;
-		lg _{ _runMutex };
-		if( !ExecutorContext::Started() ){//re-check: another thread may have constructed while this one waited - the ctor returns only after _started is set.
-			if( auto keepAlive = Executor(); keepAlive )//null once finalizing - don't start a new executor thread at teardown.
-				Process::SetExecutor( mu<ExecutorContext>() );
-		}
+	//asio starts a private thread for the first resolve, and it inherits the name of the thread that asked.
+	Ω nameResolverThread( asio::io_context& ioc )ι->void{
+		asio::post( ioc, [&ioc]{
+			let name = Thread::Name();
+			Thread::SetName( "Resolver" );
+			auto resolver = ms<asio::ip::tcp::resolver>( ioc );
+			resolver->async_resolve( "localhost", "12345", [resolver]( auto /*ec*/, auto /*endpoints*/ ){} );
+			Thread::SetName( name );
+		} );
 	}
-
-	α CancellationSignals::Emit( asio::cancellation_type ct )ι->void{
-		lg _( _mtx );
-		for( uint i=0; i<_sigs.size(); ++i ){
-			TRACE( "Emitting cancellation signal {}.", i );
-			_sigs[i]->emit( ct );
-		}
-	}
-	α CancellationSignals::Slot()ι->asio::cancellation_slot{
-		return Signal()->slot();
-	}
-	α CancellationSignals::Signal()ι->sp<asio::cancellation_signal>{
-		lg _( _mtx );
-		auto p = find_if( _sigs, [](auto& sig){return !sig->slot().has_handler();} );
-		return p == _sigs.end() ? _sigs.emplace_back( ms<asio::cancellation_signal>() ) : *p;
-	}
-	α ExecutorContext::Shutdown( bool terminate, SL sl )ι->void{
-		DBG( "Executor Shutdown: instances: {}.", _ioc.use_count() );
-		{//may run twice, or after Execute() tore down - _keepAlive is already null then.
-			lg _{ _executorMutex };
-			if( _keepAlive ){
-				_keepAlive->reset();
-				_keepAlive = nullptr;
+	//An exception leaves run() with the io_context intact, so the thread goes straight back in.
+	Ω runHandlers( asio::io_context& ioc )ι->void{
+		for( ;; ){
+			try{
+				ioc.run();
+				return;
+			}
+			catch( ... ){
+				CRITICAL( "An Executor event threw." );
 			}
 		}
+	}
+	α Pool::Make()ι->void{
+		_ioc = ms<asio::io_context>( ThreadCount() );
+		if( _state.load()==EState::Stopped )//never run, so what is posted to it is only ever destroyed with it.
+			_ioc->stop();
+		else
+			_keepAlive = mu<asio::executor_work_guard<asio::io_context::executor_type>>( _ioc->get_executor() );
+	}
+	α Pool::Ioc()ι->sp<asio::io_context>{
+		ASSERT( _state.load()!=EState::Idle );//Process::Startup starts the executor:  this is before it, and waits for it.
+		ul _{ _mutex };
+		if( !_ioc )
+			Make();
+		return _ioc;
+	}
+	α Pool::Start()ι->void{
+		let count = ThreadCount();
+		{
+			ul _{ _mutex };
+			auto idle = EState::Idle;
+			if( !_state.compare_exchange_strong(idle, EState::Running) )//under the lock, so a Stop that follows finds every thread to join.
+				return;
+			if( !_ioc )
+				Make();
+			auto ioc = _ioc;
+			nameResolverThread( *ioc );
+			_threads.reserve( count );
+			for( uint i=0; i<count; ++i )
+				_threads.emplace_back( [ioc, i]{
+					Thread::SetName( Ƒ("Ex[{}]", i) );
+					runHandlers( *ioc );
+				} );
+		}
+		INFO( "Created executor threadCount: {}.", count );
+	}
+	α Pool::Stop( bool terminate, SL sl )ι->void{
+		if( _state.exchange(EState::Stopped)==EState::Stopped )
+			return;
+		sp<asio::io_context> ioc;
+		{
+			ul _{ _mutex };
+			ioc = _ioc;
+			_keepAlive = nullptr;
+		}
+		DBG( "Executor Shutdown: instances: {}.", ioc.use_count() );
 		if( _shutdowns )
 			_shutdowns->erase( [=](auto p){p->Shutdown(terminate, sl);} );
-		if( _ioc && terminate )
-			_ioc->stop(); // Stop the `io_context`. This will cause `run()` to return immediately, eventually destroying the `io_context` and all of the sockets in it.
-		else{
-			_cancelSignals.Emit( asio::cancellation_type::all );
+		if( ioc && terminate )
+			ioc->stop(); // Stop the `io_context`. This will cause `run()` to return immediately, eventually destroying the `io_context` and all of the sockets in it.
+		vector<std::jthread> threads;
+		{
+			ul _{ _mutex };
+			threads = move( _threads );
 		}
-		//Process::RemoveShutdown( this ); //deadlock
-	}
-	α ExecutorContext::Execute()ι->void{
-		auto threads = Reserve<std::jthread>( ThreadCount() - 1 );
-		Vector<Thread::ProcessThreadId> threadIds;
-		threadIds.push_back( Thread::Id() );
-		auto ioc = _ioc; //keep alive
-		Thread::SetName( "Resolver" );
-		for( auto i = ThreadCount() - 1; i > 0; --i ){
-			threads.emplace_back( [ioc=ioc, &threadIds](){
-				threadIds.push_back( Thread::Id() );
-				ioc->run();
-			});
-		}
-		TRACE( "Executor Started: instances: {}.", ioc.use_count() );
-
-		boost::asio::ip::tcp::resolver resolver( *ioc );
-    resolver.async_resolve( "localhost", "12345", [&](auto /*ec*/, auto /*endpoints*/){
-			while( threadIds.size() < ThreadCount() )
-				std::this_thread::sleep_for( 1ms );
-			uint i=0;
-			threadIds.visit( [&i](auto& id){
-				Thread::SetName( id, Ƒ("Ex[{}]", i++) );
-			});
-		});
-		_stopped.clear();
-		_started.test_and_set();
-		_started.notify_all();
-		ioc->run();
-		{//in-flight PostIO holds its own sp - clearing under the mutex keeps it from posting into a torn-down strand.
-			lg _{ _executorMutex };
-			_ioStrand = nullptr;
-			_ioc.reset();
-		}
-		_started.clear();
+		threads.clear();//joins, outside the lock:  a handler still running may post.
 		if( _shutdowns )
 			_shutdowns->erase( [=](auto p){p->Shutdown(false);} );
 		INFO( "Executor Stopped: instances: {}.", ioc.use_count() );
-		for( auto& t : threads )
-			t.join();
-		DBG( "Removing Executor remaining instances: {}.", ioc.use_count()-1 );
-		ioc.reset(); //need to clear out client connections.
-		_cancelSignals.Clear();
-		_started.clear();
-		_stopped.test_and_set();
-		_stopped.notify_all();
 	}
 }
 α Jde::Post( absl::AnyInvocable<void()> f )ι->void{
 	auto ctx = Executor();
-	if( !ctx ){
+	if( ctx->stopped() ){
 		WARN( "Post after executor teardown - dropping work." );
 		return;
 	}
 	asio::post( *ctx, std::move(f) );
-	Execution::Run();
-}
-α Jde::PostIO( absl::AnyInvocable<void()> f )ι->void{
-	Executor();
-	sp<IoStrand> s;
-	{ lg _{ _executorMutex }; s = _ioStrand; }
-	if( s )//null while shutting down - the io threads are gone & the work could never run anyway.
-		asio::post( s->Strand, std::move(f) );
-	Execution::Run();
 }
 α Jde::Post( VoidAwait::Handle&& h )ι->void{
 	auto ctx = Executor();
-	if( !ctx ){
+	if( ctx->stopped() ){
 		WARN( "Post after executor teardown - coroutine will not resume." );
 		h = nullptr;
 		return;
@@ -202,7 +146,7 @@ namespace Jde{
 }
 α Jde::Post( VoidAwait::Handle&& h, Exception&& e )ι->void{
 	auto ctx = Executor();
-	if( !ctx ){
+	if( ctx->stopped() ){
 		WARN( "Post after executor teardown - coroutine will not resume: {}", e.what() );
 		h = nullptr;
 		return;

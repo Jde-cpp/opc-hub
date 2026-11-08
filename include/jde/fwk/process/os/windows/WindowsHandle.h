@@ -1,31 +1,24 @@
-﻿#pragma once
-#include <jde/fwk/exceptions/IOException.h>
-#include <jde/fwk/process/process.h>
+#pragma once
 
 namespace Jde{
-  struct WinHandle final{
-    WinHandle( std::nullptr_t=nullptr )ι : _value(nullptr) {}
-    explicit WinHandle( HANDLE value )ι : _value(value) {}
-		//TODO: forward exception?
-    WinHandle( HANDLE value, function<IO::IOException()> e )ε:
-      _value( value ){
-      if( _value==INVALID_HANDLE_VALUE )
-				throw e();
-    }
+	//Owns a HANDLE that CloseHandle closes.  Win32 fails with null or with INVALID_HANDLE_VALUE, depending on the call:  either is held as null, the one empty state.
+	struct HandlePtr final{
+		HandlePtr()ι=default;
+		explicit HandlePtr( HANDLE h )ι:_h{ h==INVALID_HANDLE_VALUE ? nullptr : h }{}
+		HandlePtr( HandlePtr&& x )ι:_h{ x.release() }{}
+		α operator=( HandlePtr&& x )ι->HandlePtr&{ reset( x.release() ); return *this; }
+		~HandlePtr(){ reset(); }
 
-    explicit operator bool()Ι{ return _value != nullptr && _value != INVALID_HANDLE_VALUE; }
-    operator HANDLE()Ι{ return _value; }
-		struct Deleter final {
-			using pointer=WinHandle;
-			void operator()( WinHandle handle )Ι{
-				if( handle && !::CloseHandle(handle) )
-					WARNT( ELogTags::App, "CloseHandle returned {}", ::GetLastError() );
-			}
-		};
+		explicit operator bool()Ι{ return _h!=nullptr; }
+		α get()Ι->HANDLE{ return _h; }
+		α release()ι->HANDLE{ return std::exchange( _h, nullptr ); }
+		α reset( HANDLE h=nullptr )ι->void{
+			if( auto old = std::exchange(_h, h==INVALID_HANDLE_VALUE ? nullptr : h); old && !::CloseHandle(old) )
+				WARNT( ELogTags::App, "CloseHandle returned {}", ::GetLastError() );
+		}
 	private:
-    HANDLE _value;
-  };
-  using HandlePtr=std::unique_ptr<WinHandle, WinHandle::Deleter>;
-  //Unnamed, manual-reset, initially unsignaled - null if CreateEvent failed.
-  Ξ ManualResetEvent()ι->HandlePtr{ return HandlePtr{ WinHandle{::CreateEvent(nullptr, TRUE, FALSE, nullptr)} }; }
+		HANDLE _h{};
+	};
+	//Unnamed, manual-reset, initially unsignaled - null if CreateEvent failed.
+	Ξ ManualResetEvent()ι->HandlePtr{ return HandlePtr{ ::CreateEvent(nullptr, TRUE, FALSE, nullptr) }; }
 }

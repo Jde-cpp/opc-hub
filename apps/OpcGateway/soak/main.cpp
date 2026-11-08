@@ -1,7 +1,5 @@
-#include <jde/fwk.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/process/execution.h>
-#include <jde/fwk/process/process.h>
+#include <jde/fwk/process/cpu.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/app/client/IAppClient.h>
@@ -9,7 +7,6 @@
 #include <jde/opc/uatypes/Logger.h>
 #include "../src/UAClient.h"
 #include "SoakRunner.h"
-#include <jde/fwk/process/cpu.h>
 
 #define let const auto
 #ifndef _MSC_VER
@@ -57,7 +54,6 @@ namespace Jde::Opc::Gateway::Soak{
 			auto client = Soak::appClient();
 			client->InitLogging( client );
 			client->Enroll( Settings::AsObject("/http"), Process::ProductName() );//the file name doubles as the subject CN - the soak client's enrollment identity.
-			Execution::Run();//without proto/remote logging or a web server, nothing else starts the executor thread the socket/http awaitables need.
 			BlockAwait( App::Client::ConnectAwait{client, false} );
 			if( Process::FindArg("-grant") ){//soak.sh runs this after OpcServer's first boot declared the nodeIds resource (soft-deleted), then by default restarts OpcServer to load the enforced row and the acl at startup.
 				Soak::EnforceWriteRights( client );

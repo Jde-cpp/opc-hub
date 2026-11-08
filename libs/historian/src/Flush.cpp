@@ -1,6 +1,5 @@
 #include "Edits.h"
 #include <absl/synchronization/notification.h>
-#include <boost/asio/io_context.hpp>
 #include <jde/fwk/process/execution.h>
 #include "Reads.h"
 #include "Store.h"
@@ -20,12 +19,6 @@ namespace Jde::Opc::Hist{
 			added->Ts = ts;
 		else
 			get<NodeRemoved>( change ).Ts = ts;
-	}
-	//A flush's writes return on the executor, so a stop waits for one only while that runs.  ExecutorIoc, not Executor,
-	//which makes an io_context when there is none, and returns one that is winding down.
-	Ω running()ι->bool{
-		let ioc = ExecutorIoc();
-		return ioc && !ioc->stopped();
 	}
 	//BlockAwait's, until deadline:  false when the group's flushes haven't settled by then, as when the io_context stopped
 	//with a write out, which drops its resume.  The coroutine owns the awaitable, so a resume after that is harmless.
@@ -132,7 +125,7 @@ namespace Jde::Opc::Hist{
 					Settle( index, node, now, effects );
 			}
 			ended = std::exchange( _subscribers, {} );//after the settles, which stream:  nothing more is stored for them to hear of.
-			if( running() ){//marked here, so Stopped waits for it however late the executor starts it.
+			if( Execution::Running() ){//marked here, so Stopped waits for it however late the executor starts it.
 				if( _flushing )
 					_again = true;
 				else
@@ -148,7 +141,7 @@ namespace Jde::Opc::Hist{
 			Post( [self=shared_from_this()]{ self->Flushing( self ); } );
 	}
 	α Group::Stopped( steady_clock::time_point deadline )ι->void{
-		let wait = running();
+		let wait = Execution::Running();//a flush's writes return on the executor, so a stop waits for one only while that runs.
 		bool out{};
 		Timers timers;
 		uint held;

@@ -249,11 +249,27 @@ namespace Server{
 		ctx.use_tmp_dh( net::buffer(dh.data(), dh.size()) );
 	}
 
+	//A signal may only be emitted from the strand its coroutine runs on:  it has no lock of its own.
+	struct Connection{ sp<net::cancellation_signal> Signal; executor_type Strand; };
+	struct Listener final{
+		Listener( executor_type strand )ι: Strand{ move(strand) }{}
+		sp<net::cancellation_signal> Signal{ ms<net::cancellation_signal>() };
+		executor_type Strand;
+		concurrent_flat_map<const net::cancellation_signal*, Connection> Connections;
+	};
+	concurrent_flat_map<const IRequestHandler*, sp<Listener>> _listeners;
+	α Internal::ConnectionCount()ι->uint{
+		uint count{};
+		_listeners.cvisit_all( [&count]( let& entry ){ count += entry.second->Connections.size(); } );
+		return count;
+	}
+
 	constexpr auto _acceptBackoff{ std::chrono::milliseconds{100} };// short enough that recovery is prompt, long enough that a wedged accept loop is not a busy wait.
-	Ω listen( tcp::endpoint endpoint, sp<IRequestHandler> handler )ι->net::awaitable<void, executor_type>{
+	Ω listen( tcp::endpoint endpoint, sp<IRequestHandler> handler, sp<Listener> listener )ι->net::awaitable<void, executor_type>{
 		typename tcp::acceptor::rebind_executor<executor_with_default>::other acceptor{ co_await net::this_coro::executor };
 		if( !initListener(acceptor, endpoint) ){
 			DBGT( ELogTags::App, "!initListener" );
+			_listeners.erase( handler.get() );
 			handler->FailStart( Ƒ("could not listen on {}:{}", endpoint.address().to_string(), endpoint.port()) );//this co_return is before handler->Start(), so without it Internal::Start parks in BlockTillStarted forever.
 			co_return;
 		}
@@ -261,7 +277,7 @@ namespace Server{
 		TRACET( ELogTags::App, "Web Server accepting." );
 		handler->Start();
 		while( (co_await net::this_coro::cancellation_state).cancelled() == net::cancellation_type::none ){
-			auto [ec, sock] = co_await acceptor.async_accept();
+			auto [ec, sock] = co_await acceptor.async_accept( executor_with_default{net::make_strand(acceptor.get_executor().get_inner_executor())} );
 			if( ec ){//  Descriptor exhaustion is not a per-connection error - every following
 				//accept fails the same way, so the loop spun at 100% cpu.  Pause long enough for closing sessions on the io
 				//threads to hand descriptors back, and log it: the old `if(!ec)` left the spin with nothing in the log at all.
@@ -274,6 +290,8 @@ namespace Server{
 				}
 			}
 			else{
+				if( (co_await net::this_coro::cancellation_state).cancelled()!=net::cancellation_type::none )
+					break;//Stop has already cancelled the connections, so nothing would end this one.
 				let exec = sock.get_executor();
 				beast::error_code endpointEc;
 				let userEndpoint = sock.remote_endpoint( endpointEc );
@@ -282,23 +300,22 @@ namespace Server{
 					continue;
 				}
 				auto cancelSignal = ms<net::cancellation_signal>();
-				Execution::AddCancelSignal( cancelSignal );
+				listener->Connections.emplace( cancelSignal.get(), Connection{cancelSignal, executor_type{exec}} );
 				net::co_spawn(
 					exec,
 					detectSession( StreamType(move(sock)), move(userEndpoint), handler.get() ),
 					net::bind_cancellation_slot( cancelSignal->slot(),
-					[cancelSignal]( std::exception_ptr e ){
-						Execution::RemoveCancelSignal( cancelSignal );
+					[listener, cancelSignal]( std::exception_ptr e ){
+						listener->Connections.erase( cancelSignal.get() );
 						//Do NOT rethrow: net::detached's handler has an empty body (asio/impl/detached.hpp), so it discards this.
-						//Rethrowing lets the exception escape io_context::run(), which kills the executor thread and wedges
-						//Process::Shutdown joining it - Opc.Tests hung after its last test with exactly that.  Log instead:
+						//Rethrowing would only reach the executor's catch-all, as an unexplained handler failure.  Log instead:
 						//it keeps what detached silently dropped visible without changing who unwinds.
 						if( e ){
 							try{ std::rethrow_exception( e ); }
 							catch( const std::exception& x ){ DBGT( ELogTags::Server|ELogTags::Http, "Session ended with an exception: {}", x.what() ); }
 						}
 					})
-				);// We dont't need a strand, since the awaitable is an implicit strand.
+				);
 			}
 		}
 	}
@@ -334,13 +351,13 @@ namespace Server{
 		let port = handler->Settings().Port();
 		let addressString = handler->Settings().Address();
 		let address = tcp::endpoint{ net::ip::make_address(addressString), port };
+		auto listener = ms<Listener>( net::make_strand(*Executor()) );
+		_listeners.emplace( handler.get(), listener );
 		net::co_spawn(
-			*Executor(),
-			listen( address, handler ),
-			net::bind_cancellation_slot( handler->CancelSignal()->slot(), net::detached )
+			listener->Strand,
+			listen( address, handler, listener ),
+			net::bind_cancellation_slot( listener->Signal->slot(), [listener]( std::exception_ptr ){} )
 		);
-		Execution::AddCancelSignal( handler->CancelSignal() );
-		Execution::Run();
 		handler->BlockTillStarted(); // wait for boost to end.
 		INFOT( ELogTags::App, "Web Server started:  {}:{}.", address.address().to_string(), address.port() );
 	}
@@ -355,6 +372,15 @@ namespace Server{
 		return _connectionIndex.fetch_add( 1, std::memory_order_relaxed );
 	}
 	α Internal::Stop( sp<IRequestHandler>&& handler, bool terminate, SL sl )ι->void{
+		sp<Listener> listener;
+		_listeners.erase_if( handler.get(), [&listener]( let& entry ){ listener = entry.second; return true; } );
+		if( listener )//on the accept loop's strand, so every connection it has registered is here to cancel.
+			net::post( listener->Strand, [listener]{
+				listener->Signal->emit( net::cancellation_type::all );
+				listener->Connections.visit_all( []( auto& entry ){
+					net::post( entry.second.Strand, [signal=entry.second.Signal]{ signal->emit( net::cancellation_type::all ); } );
+				} );
+			} );
 		handler->Stop( terminate, sl );
 		//Close each session, don't just drop the refs: a pending async_read holds the session (and io_context work count)
 		//alive, so a peer that never disconnects (e.g. an abandoned client socket) would keep ioc->run() from returning and

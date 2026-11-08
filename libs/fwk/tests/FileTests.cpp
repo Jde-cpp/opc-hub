@@ -1,16 +1,14 @@
 ﻿#include <fstream>
 #include <latch>
-#include <jde/fwk/io/durable.h>
-#include <jde/fwk/io/file.h>
-#include <jde/tests/Capture.h>
-#include <jde/fwk/io/FileAwait.h>
-#include <jde/fwk/co/CoMutex.h>
-#include <jde/fwk/process/execution.h>
+#include <jde/fwk/chrono.h>
 #include <jde/fwk/utils/Vector.h>
 #include <jde/fwk/process/thread.h>
-#include <jde/fwk/chrono.h>
+#include <jde/fwk/co/CoMutex.h>
+#include <jde/fwk/io/file.h>
+#include <jde/fwk/io/durable.h>
+#include <jde/fwk/io/FileAwait.h>
+#include <jde/tests/Capture.h>
 #include <jde/tests/WaitUntil.h>
-#include <stdexcept>
 //a private header under src/ - IDrive/NativeDrive are not part of the installed surface, and the two platforms spell the
 //concrete type differently.
 #ifdef _MSC_VER
@@ -19,6 +17,7 @@
 	namespace Jde::IO{ using NativeDriveType = WindowsDrive; }
 #else
 	#include "../src/process/os/linux/LinuxDrive.h"
+	#include "../src/io/FileOp.h"//Internal::PostIO.
 	namespace Jde::IO{ using NativeDriveType = Drive::NativeDrive; }
 #endif
 
@@ -39,9 +38,6 @@ namespace Jde::IO::Tests{
 		FileTests(){}
 		~FileTests()override{}
 
-		Ω SetUpTestCase()ι->void{
-			Execution::Run();//io strand threading issue.
-		}
 		α SetUp()->void override{
 			INFO( "{}", file(0).string() );
 			fs::create_directories( file(0).parent_path() );
@@ -663,8 +659,8 @@ namespace Jde::IO::Tests{
 		let content = string{ "0123456789" };
 		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
 		const DWORD shareAll = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;//what ReadAwait's open shares.
-		HandlePtr reader{ WinHandle{::CreateFileA(file.string().c_str(), GENERIC_READ, shareAll, nullptr, OPEN_EXISTING, 0, nullptr)} };
-		ASSERT_TRUE( static_cast<bool>(reader.get()) ) << "the reader's open failed: " << ::GetLastError();
+		HandlePtr reader{ ::CreateFileA(file.string().c_str(), GENERIC_READ, shareAll, nullptr, OPEN_EXISTING, 0, nullptr) };
+		ASSERT_TRUE( static_cast<bool>(reader) ) << "the reader's open failed: " << ::GetLastError();
 		EXPECT_EQ( writeNow(file, "a", {}), "" ) << "an append under a reader";
 		EXPECT_EQ( writeNow(file, "Z", {.Mode=IO::EWriteMode::At}), "" ) << "a write in place under a reader";
 		EXPECT_EQ( writeNow(file, "b", {.Mode=IO::EWriteMode::Truncate, .Offset=content.size()+1}), "" ) << "a cut to a prefix under a reader";
@@ -1149,7 +1145,7 @@ namespace Jde::IO::Tests{
 		fs::remove( file );
 		ASSERT_EQ( writeNow(file, "content", {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
 		auto open = ms<IO::OpenFile>( file );
-		HandlePtr port{ WinHandle{::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1)} };
+		HandlePtr port{ ::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1) };
 		ASSERT_EQ( ::CreateIoCompletionPort(open->Native().Handle.get(), port.get(), 0, 0), port.get() ) << ::GetLastError();
 		EXPECT_TRUE( readNow(open).starts_with("failed: ") );
 		EXPECT_TRUE( readNow(open).starts_with("failed: ") ) << "a later read tries again, and fails the same";
@@ -1166,5 +1162,33 @@ namespace Jde::IO::Tests{
 			threads.emplace_back( [i](){testFile(i);} );
 		for( auto& thread : threads )
 				thread.join();
+	}
+
+	// PostIO exists for the io strand: the io_uring completion path treats _armed as strand-confined, so a plain
+	// context post would let two handlers run at once.  Asio guarantees the serialization - what this pins is the
+	// wiring, that PostIO goes through the strand and not the context.  The counter is deliberately not atomic.
+	TEST_F( FileTests, PostIOSerializes ){
+		constexpr uint threadCount{ 8 }, perThread{ 125 };
+		auto counter = ms<uint>( 0 );
+		auto inside = ms<std::atomic<bool>>();
+		auto overlapped = ms<std::atomic<bool>>();
+		auto completed = ms<std::atomic<uint>>();
+		{
+			vector<std::jthread> threads;
+			for( uint t=0; t<threadCount; ++t )
+				threads.emplace_back( [=]{
+					for( uint i=0; i<perThread; ++i )
+						Internal::PostIO( [=]{
+							if( inside->exchange(true) )
+								*overlapped = true;
+							++*counter;
+							*inside = false;
+							++*completed;
+						} );
+				} );
+		}//jthreads join here - every handler is queued.
+		ASSERT_TRUE( WaitUntil([&]{ return completed->load()==threadCount*perThread; }, 10s, 1ms) ) << "only " << completed->load() << " of " << threadCount*perThread << " handlers ran";
+		EXPECT_FALSE( overlapped->load() ) << "two PostIO handlers ran at once - not serialized by the strand";
+		EXPECT_EQ( *counter, threadCount*perThread ) << "a non-atomic increment lost a count, so the handlers overlapped";
 	}
 }

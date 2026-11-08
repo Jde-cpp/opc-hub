@@ -1,5 +1,4 @@
 #include "WindowsDrive.h"
-#include <jde/fwk/chrono.h>
 #include <jde/fwk/io/file.h>
 #include "WindowsUtilities.h"
 #define let const auto
@@ -30,10 +29,10 @@ namespace Jde::IO{
 		{
 			SYSTEMTIME systemTime;
 			FileTimeToSystemTime( &fInfo.ftCreationTime, &systemTime );
-			CreatedTime = Chrono::ToTimePoint( systemTime.wYear, (uint8)systemTime.wMonth, (uint8)systemTime.wDay, (uint8)systemTime.wHour, (uint8)systemTime.wMinute, (uint8)systemTime.wSecond, std::chrono::milliseconds(systemTime.wMilliseconds) );
+			CreatedTime = Windows::ToTimePoint( systemTime );
 
 			FileTimeToSystemTime( &fInfo.ftLastWriteTime, &systemTime );
-			ModifiedTime = Chrono::ToTimePoint( systemTime.wYear, (uint8)systemTime.wMonth, (uint8)systemTime.wDay, (uint8)systemTime.wHour, (uint8)systemTime.wMinute, (uint8)systemTime.wSecond, std::chrono::milliseconds(systemTime.wMilliseconds) );
+			ModifiedTime = Windows::ToTimePoint( systemTime );
 		}
 	};
 

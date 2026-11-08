@@ -16,7 +16,6 @@ namespace Jde::Web::Server{
 		β WebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<IWebsocketSession>;//null as is:  the upgrade is declined and the connection closed (Internal::RunSocketSession).
 
 		α AppServer()ι->sp<App::IApp>{ return _appServer; }
-		α CancelSignal()ι->sp<net::cancellation_signal>{ return _cancelSignal; }
 		α Context()ι->ssl::context&{ return _ctx; }
 		α SessionInfoAwait( SessionPK sessionPK, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>>{ return _appServer->SessionInfoAwait( sessionPK, sl ); }
 		α Start()ι->void;
@@ -37,7 +36,6 @@ namespace Jde::Web::Server{
 		α Settings()Ι->const WebServerSettings&{ return _settings; }
 	private:
 		sp<App::IApp> _appServer;
-		sp<net::cancellation_signal> _cancelSignal;
 		ssl::context _ctx;
 		WebServerSettings _settings;
 		enum class EStartState : uint8{ None, Started, Failed };//a flag could not say "failed", which is why BlockTillStarted had no way out.

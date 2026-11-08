@@ -1,22 +1,21 @@
-//#include <boost/beast/ssl.hpp>
-#include <jde/fwk/co/BlockAwait.h>
-#include <jde/web/client/ClientSsl.h>
 #include <absl/synchronization/mutex.h>
-#include "jde/fwk/co/Await.h"
-#include "jde/fwk/usings.h"
-#include "mocks/ServerMock.h"
-#include <jde/web/client/http/ClientHttpAwait.h>
-#include <jde/web/Jwt.h>
 #include <jde/fwk/chrono.h>
-#include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/utils/mathUtils.h>
 #include <jde/fwk/utils/Stopwatch.h>
-#include <jde/tests/Capture.h>
 #include <jde/fwk/process/execution.h>
-#include "mocks/ClientSocketSession.h"
+#include <jde/fwk/co/BlockAwait.h>
+#include <jde/fwk/crypto/issue.h>
+#include <jde/web/Jwt.h>
+#include <jde/web/client/ClientSsl.h>
+#include <jde/web/client/http/ClientHttpAwait.h>
+#include <jde/web/client/socket/ClientSocketAwait.h>
 #include <jde/web/server/IHttpRequestAwait.h>
 #include <jde/web/server/Sessions.h>
-#include <jde/web/client/socket/ClientSocketAwait.h>
+#include <jde/tests/Capture.h>
+#include <jde/tests/WaitUntil.h>
+#include "../server/ServerImpl.h"
+#include "mocks/ClientSocketSession.h"
+#include "mocks/ServerMock.h"
 
 #define let const auto
 namespace Jde::Web{
@@ -372,22 +371,45 @@ namespace Jde::Web{
 	//ever removed it - RemoveCancelSignal existed with zero callers.  Without keep-alive each http request is a fresh accept, so a
 	//gateway serving a UI grew by several MB/day and Execution::Stop walked the lot at shutdown.
 	TEST_F( SocketTests, AcceptedConnectionReleasesCancelSignal ){
-		let before = Execution::CancelSignalCount();
+		let before = Server::Internal::ConnectionCount();
 		constexpr uint requests{ 5 };
 		for( uint i=0; i<requests; ++i )//each ping is its own accept: RunSession co_returns rather than handling keep-alive.
 			BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/ping", "", Port, {.Verb=http::verb::post}} );
 		//<=, not ==: connections from earlier tests may still be draining, so the count can legitimately fall.  Growth is the bug -
 		//before the fix this sat at before+5 and never came down.
-		for( uint i=0; i<200 && Execution::CancelSignalCount()>before; ++i )
+		for( uint i=0; i<200 && Server::Internal::ConnectionCount()>before; ++i )
 			std::this_thread::sleep_for( 10ms );
-		EXPECT_LE( Execution::CancelSignalCount(), before ) << Ƒ( "{} accepted connections retained their cancellation_signal", Execution::CancelSignalCount()-before );
+		EXPECT_LE( Server::Internal::ConnectionCount(), before ) << Ƒ( "{} accepted connections retained their cancellation_signal", Server::Internal::ConnectionCount()-before );
 	}
 
 	TEST_F( SocketTests, StartThrowsWhenPortIsHeld ){
 		auto handler = ms<Mock::RequestHandler>( Settings::AsObject("/http") );
 		//no Server::Stop on the failed handler: _socketSessions is process-global, so stopping it would tear down the fixture's
-		//live server too.  The failed start leaves nothing else behind but its cancel signal (that is #12).
+		//live server too.
 		EXPECT_THROW( Server::Start(handler), Exception ) << "a listener that cannot bind must fail Start, not park it";
+	}
+
+	//Internal::Stop closes websockets itself:  a connection that has sent nothing has only its cancel to end it.
+	TEST_F( SocketTests, StopCancelsAnIdleConnection ){
+		net::io_context ioc;
+		PortType port{};
+		{
+			tcp::acceptor probe{ ioc, tcp::endpoint{net::ip::make_address("127.0.0.1"), 0} };
+			port = probe.local_endpoint().port();
+		}
+		auto settings = Settings::AsObject( "/http" );
+		settings["port"] = port;
+		sp<Server::IRequestHandler> handler = ms<Mock::RequestHandler>( settings );
+		Server::Start( handler );
+		let before = Server::Internal::ConnectionCount();
+		tcp::socket idle{ ioc };
+		idle.connect( tcp::endpoint{net::ip::make_address("127.0.0.1"), port} );
+		EXPECT_TRUE( WaitUntil([&]{ return Server::Internal::ConnectionCount()>before; }) ) << "the connection was never accepted";
+		Server::Stop( move(handler) );
+		bool closed{};
+		std::array<char,1> buffer;
+		idle.async_read_some( net::buffer(buffer), [&closed]( boost::system::error_code, uint ){ closed = true; } );
+		EXPECT_TRUE( WaitUntil([&]{ ioc.poll(); return closed; }, 5s) ) << "Stop left the idle connection open";
 	}
 
 	//install-issues #56:  the check a server runs before its database, on the fixture's live listener's port and on one nothing holds.
