@@ -39,7 +39,12 @@ export function editorKind( type:ETypes|undefined, isArray:boolean, enumeration:
 	case ETypes.QualifiedName: return 'qualifiedName';
 	case ETypes.LocalizedText: return 'localizedText';
 	case ETypes.Structure: return isStructure( value ) ? 'structure' : inferKind( value );
-	default: return type!==undefined && numbers.includes( type ) ? 'number' : inferKind( value );
+	default:
+		if( type!==undefined && numbers.includes( type ) )
+			return 'number';
+		//no value to go by - a type of the server's own with none yet, a new edit - is text, as the cell editors had it
+		//(reviews-issue/423-clients-writes.md #7);  a null, an absent member's, stays json
+		return value===undefined ? 'text' : inferKind( value );
 	}
 }
 //the kind a value's own shape says - a type of the server's own that is no enumeration, a BaseDataType variable's, a structure's
@@ -79,7 +84,7 @@ export function inferKind( value:Value|null|undefined ):EditorKind{
 	}
 	return 'json';
 }
-const guidHint = "8-4-4-4-12 hex digits.", hexHint = "Hex digits, two per byte.", nodeIdHint = "ns=2;i=5, ns=2;s=tag, g= or b=.", expandedHint = "svr=1;nsu=urn:x;i=5 - the server index and uri optional.", statusHint = "Hex with 0x, or decimal.", rangeHint = "A whole number.";
+const guidHint = "8-4-4-4-12 hex digits.", hexHint = "Hex digits, two per byte.", nodeIdHint = "ns=2;i=5, ns=2;s=tag, g= or b=.", expandedHint = "svr=1;nsu=urn:x;i=5 - the server index and uri optional.", statusHint = "Hex with 0x, or decimal.";
 
 //A value's editor (clients spec *Values and writes*, #423):  the control its type takes, the value it holds as typed - `undefined` while the
 //text is no value of the type - and, nested in itself, an array as a list of its elements and a structure as its members by name.  The
@@ -141,7 +146,7 @@ export class ValueEditor{
 		case 'nodeId': return nodeIdHint;
 		case 'expandedNodeId': return expandedHint;
 		case 'statusCode': return statusHint;
-		case 'qualifiedName': return `The namespace index:  ${rangeHint}`;
+		case 'qualifiedName': return "The namespace index is 0 to 65535.";//one line under the name field (reviews-issue/423-clients-writes.md W1)
 		case 'json': return "Json.";
 		default: return undefined;
 		}
@@ -194,7 +199,7 @@ export class ValueEditor{
 		case 'statusCode':{ const sc = parseStatus( text ); return sc===null ? undefined : sc; }
 		case 'qualifiedName':{
 			const ns = this.text2().trim();
-			return /^\d*$/.test( ns ) ? <Structure>{ ns: ns ? +ns : 0, name: this.text() } : undefined;}
+			return /^\d*$/.test( ns ) && +ns<=65535 ? <Structure>{ ns: ns ? +ns : 0, name: this.text() } : undefined;}//a UInt16:  the gateway refuses one past it
 		case 'localizedText':{ const locale = this.text2().trim(); return locale ? <Structure>{ locale, text: this.text() } : this.text(); }//a bare text keeps the node's locale (reviews-issue/417-clients-attributes.md)
 		case 'json':
 			if( !text )
@@ -224,17 +229,11 @@ export class ValueEditor{
 		case 'nodeId': this.text.set( v instanceof NodeId ? v.uaString() : isPlain( v ) && jsonShape( v )=='nodeId' ? new NodeId( v ).uaString() : typeof v=='string' ? v : "" ); break;
 		case 'expandedNodeId': this.text.set( v instanceof ExNodeId ? v.uaString() : v instanceof NodeId ? v.uaString() : isPlain( v ) && ['nodeId', 'expandedNodeId'].includes( jsonShape( v )! ) ? new ExNodeId( <any>v ).uaString() : typeof v=='string' ? v : "" ); break;
 		case 'statusCode': this.text.set( typeof v=='number' ? scHex( v ) : v instanceof OpcError ? scHex( v.sc ) : "" ); break;
-		case 'qualifiedName':
-			if( isPlain( v ) && jsonShape( v )=='qualifiedName' ){
-				this.text2.set( `${v['ns'] ?? 0}` );
-				this.text.set( <string>v['name'] );
-			}
-			else{//a push's text, `2:Speed`, or nothing
-				const m = typeof v=='string' ? /^(?:(\d+):)?(.*)$/.exec( v ) : null;
-				this.text2.set( m?.[1] ?? "" );
-				this.text.set( m?.[2] ?? "" );
-			}
-			break;
+		case 'qualifiedName':{//{ns, name}, REST's and a push's alike
+			const q = isPlain( v ) && jsonShape( v )=='qualifiedName' ? v : undefined;
+			this.text2.set( q ? `${q['ns'] ?? 0}` : "" );
+			this.text.set( q ? <string>q['name'] : "" );
+			break;}
 		case 'localizedText':
 			if( isPlain( v ) && typeof v['text']=='string' ){
 				this.text.set( v['text'] );

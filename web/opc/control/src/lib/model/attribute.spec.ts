@@ -16,7 +16,7 @@ describe( 'Attribute.text', ()=>{
 	it( 'leaves a structure that only looks like one as its json', ()=>{
 		expect( text('dataValue', {v: {name: 'Pump', rpm: 3}, sc: 0}) ).toBe( '{"name":"Pump","rpm":3}' );
 		expect( text('dataValue', {v: {s: 'x', count: 1}, sc: 0}) ).toBe( '{"s":"x","count":1}' );
-		expect( text('dataValue', {v: {nsu: 'urn:x', i: 5}, sc: 0}) ).toBe( '{"nsu":"urn:x","i":5}' );//an ExpandedNodeId keeps its uri
+		expect( text('dataValue', {v: {nsu: 'urn:x', i: 5}, sc: 0}) ).toBe( 'nsu=urn:x;i=5' );//an ExpandedNodeId keeps its uri
 		expect( text('dataValue', {v: [{name: 'a', n: 1}, {name: 'b', n: 2}], sc: 0}) ).toBe( '{"name":"a","n":1}, {"name":"b","n":2}' );
 	} );
 } );

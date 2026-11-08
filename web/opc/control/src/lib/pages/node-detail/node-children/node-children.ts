@@ -19,7 +19,7 @@ import { Subscription } from 'rxjs';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { OpcStore } from '../../../services/opc-store';
 import { WatchStore } from '../../../services/watch-store';
-import { Reading, Value, valueString } from '../../../model/value';
+import { Reading } from '../../../model/value';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
 import { ENodeClass, Method, Variable, UaNode }  from '../../../model/node';
@@ -157,15 +157,15 @@ export class NodeChildren implements OnInit, OnDestroy {
 	}
 	//every reading a row takes - a push, a write's echo, a re-read - so the quality travels with the value.  Only a CHANGE of
 	//code asks for its name:  a fault holds its code on every tick it lasts, and the socket has no REST call behind it to bring one.
+	//A StatusCode value whose name hasn't come asks too (Variable.valueName).
 	#setReading( row:Variable, r:Reading ){
 		const previous = row.sc;
 		row.setReading( r );
-		if( row.sc && row.sc!=previous && !OpcError.statusCodeText(row.sc) )
+		if( (row.sc && row.sc!=previous && !OpcError.statusCodeText(row.sc)) || row.valueNamePending() )
 			this._iot.updateErrorCodes().then( ()=>this.#repaint() );
 	}
 
 	toObject( x:ENodeClass ):string{ return ENodeClass[x]; }
-	toString( value:Value|undefined ){ return valueString(value); }//Variable.value is optional - a node the read could not answer for has none
 	readonly structured = StructureTable.shows;//a value the cell's StructureTable shows (clients spec *Structures*)
 	dataType( n:UaNode ):string{ return this.cell( n, "dataType" ); }
 	cell( n:UaNode, column:string ):string{ return NodeView.cellValue( n, column )?.toString() ?? ""; }//a column's text, as the view sorts and filters it

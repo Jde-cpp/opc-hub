@@ -274,14 +274,16 @@ describe( 'NodeChildren subscription values', ()=>{
 		it( 'offers a Write in the cell and on the row menu of a writable row alone', ()=>{
 			const { page, fixture } = create();
 			const writable = row( 5 ), locked = variable( 8, "r", {value: 1, dataType: {i: ETypes.Double}, userAccessLevel: EAccess.Read} );
+			const folder = new OpcObject( <any>{ns: 2, i: 5010, name: '_Test', browse: {ns: 2, name: '_Test'}} );//reviews-issue/423-clients-writes.md #1:  no access level, so readOnly was false
 			page.viewSet.reset( [NodeView.fromConfig( {name: "value", configColumns: ["name", "snapshot"], sort: []}, NodeView.schema )] );
-			page.nodes.set( [writable, locked] );
+			page.nodes.set( [writable, locked, folder] );
 			page.isLoading.set( false );
 			fixture.detectChanges();
 			expect( fixture.nativeElement.querySelector( 'button[aria-label="Write q"]' ) ).not.toBeNull();
 			expect( fixture.nativeElement.querySelector( 'button[aria-label="Write r"]' ) ).toBeNull();
+			expect( fixture.nativeElement.querySelector( 'button[aria-label="Write _Test"]' ) ).toBeNull();//an Object has no Value
 			expect( fixture.nativeElement.querySelector( 'input[type=number]' ) ).toBeNull();//no cell editor
-			expect( [...fixture.nativeElement.querySelectorAll( '.value-text' )].map( e=>e.textContent ) ).toEqual( ['5', '1'] );
+			expect( [...fixture.nativeElement.querySelectorAll( '.value-text' )].map( e=>e.textContent ) ).toEqual( ['5', '1', ''] );
 			const open = vi.spyOn( WriteDialog, 'open' ).mockResolvedValue( undefined );
 			fixture.nativeElement.querySelector( 'button[aria-label="Write q"]' ).click();
 			expect( open.mock.calls[0][1].node ).toBe( writable );
@@ -502,7 +504,7 @@ describe( 'NodeChildren a value of the server\'s own type', ()=>{
 		fixture.detectChanges();
 		const snapshot = ( name:string ):Element=>[...fixture.nativeElement.querySelectorAll( 'mat-row' )]
 			.find( (r:Element)=>r.querySelector('.mat-column-name')?.textContent?.trim()==name )!.querySelector( '.mat-column-snapshot' )!;
-		expect( snapshot('health').querySelector('.value-text')?.textContent ).toBe( 'OK' );//by name (NodeView.enumName)
+		expect( snapshot('health').querySelector('.value-text')?.textContent ).toBe( 'OK' );//by name (Variable.valueName)
 		expect( snapshot('health').querySelector('button[aria-label="Write health"]') ).not.toBeNull();
 		expect( snapshot('sample').querySelector('button[aria-label="Write sample"]') ).not.toBeNull();//member by member, in the dialog
 		const rows = ( table:Element )=>[...table.querySelectorAll( ':scope > tbody > tr' )].map( r=>[r.querySelector('th')!.textContent!.trim(), r.querySelector(':scope > td')!.textContent!.trim().replace( /\s+/g, ' ' )] );

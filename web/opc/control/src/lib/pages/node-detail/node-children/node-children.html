@@ -72,7 +72,7 @@
 							@else{
 								<span class="value-text" [class.stale]="r.stale" [title]="cell(r, 'snapshot')">{{cell(r, "snapshot")}}</span>
 							}
-							@if( !readOnly(r) ){
+							@if( r.isVariable && !readOnly(r) ){<!--a Variable's alone, as the row menu's:  an Object's or a type's has no Value to write-->
 								<button matIconButton type="button" class="write-button" (click)="write(r)" [attr.aria-label]="'Write ' + r.name" matTooltip="Write a value"><mat-icon aria-hidden="true" fontIcon="edit"></mat-icon></button>
 							}
 						}

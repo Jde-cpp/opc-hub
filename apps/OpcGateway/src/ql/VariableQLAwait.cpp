@@ -17,8 +17,11 @@ namespace Jde::Opc::Gateway{
 				let resolved = co_await ValueTypesAwait{ {nodeId}, client, _sl };
 				if( let sc = resolved.Statuses[0]; UA_StatusCode_isBad(sc) )
 					throw UAException{ sc, "Could not read the node's DataType.", {}, _sl };
-				let indexRange = _mutation.FindPtr<jstring>( "indexRange" );//Part 4's "2:4":  the value is the slice (clients spec *Values and writes*, #423)
-				WriteAwait write{ nodeId, Value{_mutation.As<>("value"), resolved.Types[0], _sl}, indexRange ? string{*indexRange} : string{}, client };
+				//Part 4's "2:4":  the value is the slice (clients spec *Values and writes*, #423).  Text or nothing:  a number was dropped, and the
+				//slice written over the whole array.
+				let indexRange = _mutation.FindPtr<jvalue>( "indexRange" );
+				THROW_IF( indexRange && !indexRange->is_null() && !indexRange->is_string(), "indexRange is a NumericRange's text, \"2:4\" or \"2\" - '{}'.", serialize(*indexRange) );
+				WriteAwait write{ nodeId, Value{_mutation.As<>("value"), resolved.Types[0], _sl}, indexRange && indexRange->is_string() ? string{indexRange->get_string()} : string{}, client };
 				co_await Any( write );
 				jvalue y;
 				if( auto& ql = _mutation.ResultRequest; ql ){

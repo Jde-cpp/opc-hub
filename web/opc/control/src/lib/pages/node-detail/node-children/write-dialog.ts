@@ -62,10 +62,15 @@ export class WriteDialog{
 	//the elements the index range names, as the array holds them - the editor's value while a range is typed;  the slice is edited at
 	//its own length
 	range = computed( ()=>this.isArray && this.indexRange().trim() ? indexRangeOf( this.indexRange(), Array.isArray( this.node.value ) ? this.node.value.length : 0 ) : undefined );
+	//the range a write sends:  the slice's, `3:4` for a `3:9` typed past a 5-element array's end, so the value is the size of the range it
+	//names (Part 4 §5.11.4) - one element its index alone, since a range's low is less than its high
+	sentRange = computed<string|undefined>( ()=>{
+		const r = this.range();
+		return r?.count ? ( r.count==1 ? `${r.start}` : `${r.start}:${r.start+r.count-1}` ) : undefined;
+	} );
 	setIndexRange( text:string ){
 		this.indexRange.set( text );
-		const r = this.isArray && text.trim() ? indexRangeOf( text, Array.isArray( this.node.value ) ? this.node.value.length : 0 ) : undefined;
-		const whole = Array.isArray( this.node.value ) ? this.node.value : [];
+		const r = this.range(), whole = Array.isArray( this.node.value ) ? this.node.value : [];
 		this.value.set( r ? whole.slice( r.start, r.start+r.count ) : text.trim() ? undefined : this.node.value );
 	}
 	//why the write can't be sent yet, or nothing
@@ -83,7 +88,7 @@ export class WriteDialog{
 		this.dialogRef.disableClose = true;//Escape or the backdrop would close it on a write the server may still take, and the row never hear of
 		this.error.set( undefined );
 		try{
-			const reading = await this.data.write( <Value>this.value(), this.range() ? this.indexRange().trim() : undefined );
+			const reading = await this.data.write( <Value>this.value(), this.sentRange() );
 			this.dialogRef.close( reading );
 		}
 		catch( e ){

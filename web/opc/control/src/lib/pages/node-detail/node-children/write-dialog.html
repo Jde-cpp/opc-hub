@@ -5,7 +5,7 @@
 		<mat-form-field>
 			<mat-label>Index range</mat-label>
 			<input matInput type="text" [value]="indexRange()" (input)="setIndexRange($any($event.target).value)" [disabled]="busy()" placeholder="whole array">
-			<mat-hint>An index, or low:high, of the elements to write;  blank writes the whole array.</mat-hint>
+			<mat-hint>An index, or low:high;  blank writes the whole array.</mat-hint><!--one line:  the field's subscript hides a second (reviews-issue/423-clients-writes.md W2)-->
 		</mat-form-field>
 	}
 	<value-editor [type]="type" [enumeration]="enumeration" [isArray]="isArray" [fixedLength]="!!range()" [(value)]="value" [label]="isArray && range() ? 'Element' : 'Value'" [disabled]="busy()"></value-editor>

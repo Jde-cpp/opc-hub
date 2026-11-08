@@ -72,6 +72,11 @@ describe( 'valueString', ()=>{
 		expect( valueString(<any>{ns: 2, i: 5}) ).toBe( 'ns=2;i=5' );//REST's NodeId, as a push's NodeId spells it
 		expect( valueString(new NodeId({ns: 2, i: 5})) ).toBe( 'ns=2;i=5' );
 		expect( valueString(<any>{ns: 2, name: "Speed"}) ).toBe( '2:Speed' );
+		//reviews-issue/423-clients-writes.md #6:  a push's ExpandedNodeId and ByteString read as REST's do - the uri kept, the bytes hex
+		expect( valueString(<any>{nsu: 'urn:jde:pumps', i: 5005}) ).toBe( 'nsu=urn:jde:pumps;i=5005' );
+		expect( valueString(new ExNodeId({ns: 0, i: 5005, nsu: 'urn:jde:pumps'})) ).toBe( 'nsu=urn:jde:pumps;i=5005' );
+		expect( valueString(<any>{ns: 3, s: 'a', serverindex: 2}) ).toBe( 'svr=2;ns=3;s=a' );
+		expect( valueString(new Uint8Array([1, 2, 3])) ).toBe( '010203' );
 		expect( valueString(<any>{}) ).toBe( '' );
 	} );
 	//clients plan 8b (#422):  a body no type explains - a pre-1.04 server's, say - says so, never its bytes

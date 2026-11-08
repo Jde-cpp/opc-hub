@@ -92,8 +92,8 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( o.size(), 5u ) << serialize( j );
 	}
 	//Set walks the object back by the same list, so a structure round-trips - a LocalizedText member from its text - and refuses a member
-	//missing or of the wrong kind, naming it.  A member of a kind Set has no arm for yet, Argument's NodeId (clients plan, phase 9),
-	//refuses the whole the same way.
+	//missing or of the wrong kind, naming it.  A member of a kind Set has no arm for, WriteValue's DataValue, refuses the whole the same
+	//way;  Argument's NodeId has one since #423.
 	TEST( StructureTests, SetWalksTheMembersBack ){
 		let range = Value{ parse(R"({"Low":1E0,"High":2E0})"), &UA_TYPES[UA_TYPES_RANGE] };
 		EXPECT_EQ( range.Get<UA_Range>(0).high, 2 );
@@ -103,7 +103,8 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( round.Get<UA_EUInformation>(0).unitId, 4404 );
 		EXPECT_EQ( ToSV(round.Get<UA_EUInformation>(0).displayName.text), "rpm" );
 		EXPECT_EQ( round.ToJson(), units );
-		EXPECT_THROW( Value( parse(R"({"Name":"rpm","DataType":{"i":11},"ValueRank":1,"ArrayDimensions":[],"Description":"d"})"), &UA_TYPES[UA_TYPES_ARGUMENT] ), Exception ) << "a NodeId member has no arm yet";
+		EXPECT_EQ( Value( parse(R"({"Name":"rpm","DataType":{"i":11},"ValueRank":1,"ArrayDimensions":[],"Description":"d"})"), &UA_TYPES[UA_TYPES_ARGUMENT] ).Get<UA_Argument>(0).dataType.identifier.numeric, 11u ) << "a NodeId member";
+		EXPECT_THROW( Value( parse(R"({"NodeId":{"i":85},"AttributeId":13,"IndexRange":"","Value":1})"), &UA_TYPES[UA_TYPES_WRITEVALUE] ), Exception ) << "a DataValue member has no arm";
 		EXPECT_THROW( Value( parse(R"({"Low":1E0})"), &UA_TYPES[UA_TYPES_RANGE] ), Exception ) << "High missing";
 		EXPECT_THROW( Value( parse(R"({"Low":1E0,"High":"x"})"), &UA_TYPES[UA_TYPES_RANGE] ), Exception );
 		EXPECT_THROW( Value( parse(R"([1,2])"), &UA_TYPES[UA_TYPES_RANGE] ), Exception ) << "not an object";

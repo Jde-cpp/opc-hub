@@ -22,11 +22,11 @@ namespace Jde::Opc::Gateway::Tests{
 			UAε( UA_Server_writeValue(ua, node, v) );
 		}
 		//updateVariable's answer:  the value it reads back - the whole of an array written by `indexRange`, Part 4's "2:4".
-		Ω Update( const NodeId& node, jvalue value, sv indexRange={} )ε->jvalue{
+		Ω Update( const NodeId& node, jvalue value, jvalue indexRange={} )ε->jvalue{
 			jobject vars{ {"opc", OpcServerSlug}, {"id", node.ToJson()}, {"value", move(value)} };
 			string query{ "updateVariable( opc: $opc, id: $id, value: $value" };
-			if( indexRange.size() ){
-				vars["indexRange"] = indexRange;
+			if( !indexRange.is_null() ){
+				vars["indexRange"] = move( indexRange );
 				query += ", indexRange: $indexRange";
 			}
 			let written = Socket().QuerySync( query+" ){ value }", vars );
@@ -57,21 +57,24 @@ namespace Jde::Opc::Gateway::Tests{
 	//updateVariable writes each built-in type (clients spec *Values and writes*, #423) to _Test's variable of it (Pumps.h TestVariable), each
 	//from the json ToJson writes for it and read back the same:  a 64-bit integer in the Long form, exact past 2^53;  a ByteString its
 	//hex, or {b: base64} as the web sends one;  a NodeId and an ExpandedNodeId as NodeId::ToJson spells them;  a QualifiedName {ns, name};
-	//a LocalizedText its text, and {locale, text} naming a locale the server keeps (Open questions #11).  The server holds what was sent.
+	//a LocalizedText its text, and {locale, text} naming a locale the server keeps (Open questions #11).  The server holds what was sent, and
+	//each value differs from the one pumps.NodeSet2.xml starts it with, so a write dropped fails the read-back.
 	TEST_F( WriteTests, EveryBuiltInType ){
 		let ns = PumpsNs();
 		struct Case{ UA_UInt32 Type; jvalue Written; jvalue ReadBack; };//ReadBack null:  as written
-		const jobject big{ {"high", 2097152}, {"low", 1}, {"unsigned", false} }, top{ {"high", 0xFFFFFFFF}, {"low", 0xFFFFFFFF}, {"unsigned", true} };
+		let uaText = Ƒ( "ns={};i={}", ns, Pump2 );
+		const jobject big{ {"high", 2097152}, {"low", 3}, {"unsigned", false} }, top{ {"high", 0xFFFFFFFF}, {"low", 0xFFFFFFFD}, {"unsigned", true} };
 		const vector<Case> cases{
-			{ UA_NS0ID_BOOLEAN, false, {} }, { UA_NS0ID_SBYTE, -5, {} }, { UA_NS0ID_BYTE, 200, {} }, { UA_NS0ID_INT16, -300, {} }, { UA_NS0ID_UINT16, 60000, {} },
-			{ UA_NS0ID_INT32, -70000, {} }, { UA_NS0ID_UINT32, 4000000000u, {} }, { UA_NS0ID_INT64, big, {} }, { UA_NS0ID_UINT64, top, {} },
-			{ UA_NS0ID_FLOAT, 1.5, {} }, { UA_NS0ID_DOUBLE, 2.25, {} }, { UA_NS0ID_STRING, "written", {} },
+			{ UA_NS0ID_BOOLEAN, false, {} }, { UA_NS0ID_SBYTE, -6, {} }, { UA_NS0ID_BYTE, 201, {} }, { UA_NS0ID_INT16, -301, {} }, { UA_NS0ID_UINT16, 60001, {} },
+			{ UA_NS0ID_INT32, -70001, {} }, { UA_NS0ID_UINT32, 4000000001u, {} }, { UA_NS0ID_INT64, big, {} }, { UA_NS0ID_UINT64, top, {} },
+			{ UA_NS0ID_FLOAT, 2.5, {} }, { UA_NS0ID_DOUBLE, 3.25, {} }, { UA_NS0ID_STRING, "written", {} },
 			{ UA_NS0ID_DATETIME, jobject{{"seconds", 1800000000}, {"nanos", 500000000}}, {} },
 			{ UA_NS0ID_GUID, "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", {} },
-			{ UA_NS0ID_BYTESTRING, jobject{{"b", "AQID"}}, "010203" }, { UA_NS0ID_BYTESTRING, "0a0b0c", {} },
+			{ UA_NS0ID_BYTESTRING, jobject{{"b", "BAUG"}}, "040506" }, { UA_NS0ID_BYTESTRING, "0a0b0c", {} },
 			{ UA_NS0ID_XMLELEMENT, "<written/>", {} },
-			{ UA_NS0ID_NODEID, jobject{{"ns", ns}, {"i", PumpManual}}, {} }, { UA_NS0ID_NODEID, jobject{{"ns", ns}, {"s", "written"}}, {} },
-			{ UA_NS0ID_EXPANDEDNODEID, jobject{{"nsu", PumpsUri}, {"i", PumpManual}}, jobject{{"ns", ns}, {"i", PumpManual}, {"nsu", PumpsUri}} },//the uri kept, and the index the client's namespace table gives it
+			{ UA_NS0ID_NODEID, jobject{{"ns", ns}, {"i", Pump1}}, {} }, { UA_NS0ID_NODEID, jobject{{"ns", ns}, {"s", "written"}}, {} },
+			{ UA_NS0ID_NODEID, jvalue{uaText}, jobject{{"ns", ns}, {"i", Pump2}} },//the standard's text
+			{ UA_NS0ID_EXPANDEDNODEID, jobject{{"nsu", PumpsUri}, {"i", Pump1}}, jobject{{"ns", ns}, {"i", Pump1}} },//the server holds the uri;  the client reads one it knows as its index (open62541's namespace mapping), as every read of it does (reviews-issue/423-clients-writes.md W4)
 			{ UA_NS0ID_STATUSCODE, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE, {} }, { UA_NS0ID_STATUSCODE, jobject{{"sc", UA_STATUSCODE_GOODCLAMPED}}, UA_STATUSCODE_GOODCLAMPED },
 			{ UA_NS0ID_QUALIFIEDNAME, jobject{{"ns", ns}, {"name", "written"}}, {} },
 			{ UA_NS0ID_LOCALIZEDTEXT, "written", {} }, { UA_NS0ID_LOCALIZEDTEXT, jobject{{"locale", "de"}, {"text", "geschrieben"}}, "geschrieben" } };
@@ -80,8 +83,8 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Update(NodeId{ns, TestVariable(c.Type)}, c.Written), c.ReadBack.is_null() ? c.Written : c.ReadBack );
 		}
 		let held = []( UA_Server* ua, UA_UInt32 type ){ return Opc::ReadValue( *ua, NodeId{PumpsNs(), TestVariable(type)} ); };
-		EXPECT_EQ( held(_ua, UA_NS0ID_INT64).Get<UA_Int64>(0), 9007199254740993ll ) << "past 2^53, exact";
-		EXPECT_EQ( held(_ua, UA_NS0ID_UINT64).Get<UA_UInt64>(0), std::numeric_limits<UA_UInt64>::max() );
+		EXPECT_EQ( held(_ua, UA_NS0ID_INT64).Get<UA_Int64>(0), 9007199254740995ll ) << "past 2^53, exact";
+		EXPECT_EQ( held(_ua, UA_NS0ID_UINT64).Get<UA_UInt64>(0), std::numeric_limits<UA_UInt64>::max()-2 );
 		let text = held( _ua, UA_NS0ID_LOCALIZEDTEXT );
 		EXPECT_EQ( ToSV(text.Get<UA_LocalizedText>(0).locale), "de" ) << "the locale named goes with the text";
 		let bytes = held( _ua, UA_NS0ID_BYTESTRING );
@@ -91,9 +94,11 @@ namespace Jde::Opc::Gateway::Tests{
 	//array, or one the slice doesn't fit, is the server's refusal.
 	TEST_F( WriteTests, AnArrayAndAnIndexRange ){
 		const NodeId node{ PumpsNs(), TestArray };
-		EXPECT_EQ( Update(node, jarray{1, 2, 3, 4, 5}), (jarray{1, 2, 3, 4, 5}) );
-		EXPECT_EQ( Update(node, jarray{20, 30}, "1:2"), (jarray{1, 20, 30, 4, 5}) );
-		EXPECT_EQ( Update(node, jarray{50}, "4"), (jarray{1, 20, 30, 4, 50}) );
+		EXPECT_EQ( Update(node, jarray{5, 4, 3, 2, 1}), (jarray{5, 4, 3, 2, 1}) );//not the nodeset's [1, 2, 3, 4, 5]
+		EXPECT_EQ( Update(node, jarray{20, 30}, "1:2"), (jarray{5, 20, 30, 2, 1}) );
+		EXPECT_EQ( Update(node, jarray{50}, "4"), (jarray{5, 20, 30, 2, 50}) );
+		EXPECT_THROW( Update(node, jarray{60}, 4), Exception ) << "a range that isn't text, which wrote the whole array";
+		EXPECT_EQ( Opc::ReadValue(*_ua, node).value.arrayLength, 5u ) << "the array as it was";
 		EXPECT_EQ( Update(node, jarray{7, 8, 9}), (jarray{7, 8, 9}) ) << "any length";
 		try{
 			Update( node, jarray{1}, "5" );

@@ -3,7 +3,7 @@ import { ETypes, Browse, ILocalizedText, Ns, toLocalizedText, EAccess, StatusCod
 import { Reading, toReading, Value, valueString } from "./value";
 import { Enum } from "./enum";
 import { OpcError } from "./opc-error";
-import { isBad } from "./status-code";
+import { isBad, nameKey } from "./status-code";
 
 export enum ENodeClass{
 	Unspecified = 0,
@@ -172,6 +172,22 @@ export class Variable extends UaNode{
 	get isInteger():boolean{ return [ETypes.SByte, ETypes.Int16, ETypes.Int32, ETypes.Int64].includes(this.dataType!); }
 	get isFloating():boolean{ return [ETypes.Float, ETypes.Double].includes(this.dataType!); }
 	get isUnsigned():boolean{ return [ETypes.Byte, ETypes.UInt16, ETypes.UInt32, ETypes.UInt64].includes(this.dataType!); }
+	//a value of this variable's type by its name:  an enumeration of the server's own by its value's (reviews-issue/423-clients-writes.md
+	//#12), a StatusCode by its code's, as the Status column spells one - OpcError.text, which asks for the name and repaints when it comes
+	//(W3).  Nothing for any other value.  The Children tab's cell (NodeView.cellValue), the watch list's (Watch.valueName) and the History
+	//table's, so the view sorts and filters on what it shows.
+	//a StatusCode value whose name hasn't come:  asking registers it, which is what the page's next updateErrorCodes fetches (W3)
+	valueNamePending( value:unknown = this.value ):boolean{
+		return this.dataType==ETypes.StatusCode && typeof value=="number" && !!nameKey( value ) && !OpcError.statusCodeText( value );
+	}
+	valueName( value:unknown = this.value ):string|undefined{
+		if( typeof value!="number" )
+			return undefined;
+		const custom = this.customDataType;
+		if( custom && "enumValues" in custom )
+			return custom.enumValues.find( v=>v.id==value )?.name;
+		return this.dataType==ETypes.StatusCode ? OpcError.text( value ) : undefined;
+	}
 	//The one way a reading reaches a row - the browse, a subscription push, a write's echo and a re-read all come through
 	//here, so the quality can't be dropped by one of them again.
 	setReading( r:Reading ){
@@ -182,6 +198,7 @@ export class Variable extends UaNode{
 		const usable = r.value instanceof OpcError ? undefined : r.value;//a failure is not a value:  bound into <input type=number> it rendered NaN
 		if( usable!==undefined || !isBad(this.sc) )//Bad with nothing usable keeps the last value the row had
 			this.value = usable;
+		this.valueNamePending();//asks for a StatusCode value's name too, so the fetch that follows a browse or a read brings it
 		//the reading's, so they describe the reading the row shows:  a push carries both, REST (the browse, a write's echo, a
 		//re-read) neither.  A REST reading of the value and quality the row already shows is that push's reading still, and keeps
 		//its times;  any other would be dated by a push that never timed it.

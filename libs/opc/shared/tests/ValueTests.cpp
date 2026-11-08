@@ -303,6 +303,10 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( round(jobject{{"ns", 2}, {"i", 5002}}, UA_TYPES_NODEID), (jobject{{"ns", 2}, {"i", 5002}}) );
 		EXPECT_EQ( round(jobject{{"ns", 2}, {"s", "tag"}}, UA_TYPES_NODEID), (jobject{{"ns", 2}, {"s", "tag"}}) );
 		EXPECT_EQ( round(85, UA_TYPES_NODEID), (jobject{{"ns", 0}, {"i", 85}}) ) << "a bare identifier";
+		EXPECT_EQ( round("ns=2;i=5", UA_TYPES_NODEID), (jobject{{"ns", 2}, {"i", 5}}) ) << "the standard's text";
+		EXPECT_EQ( round("tag", UA_TYPES_NODEID), (jobject{{"ns", 0}, {"s", "tag"}}) ) << "other text, a bare string identifier";
+		EXPECT_EQ( round("svr=1;nsu=urn:x;i=7", UA_TYPES_EXPANDEDNODEID), (jobject{{"nsu", "urn:x"}, {"serverindex", 1}, {"i", 7}}) ) << "the standard's text";
+		EXPECT_EQ( round("tag", UA_TYPES_EXPANDEDNODEID), (jobject{{"s", "tag"}}) ) << "other text, a bare string identifier";
 		EXPECT_EQ( round(jobject{{"nsu", "urn:x"}, {"i", 7}}, UA_TYPES_EXPANDEDNODEID), (jobject{{"nsu", "urn:x"}, {"i", 7}}) );
 		EXPECT_EQ( round(jobject{{"ns", 3}, {"s", "a"}, {"serverindex", 2}}, UA_TYPES_EXPANDEDNODEID), (jobject{{"serverindex", 2}, {"ns", 3}, {"s", "a"}}) );
 		EXPECT_EQ( round(jobject{{"ns", 2}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME), (jobject{{"ns", 2}, {"name", "Speed"}}) );
@@ -317,7 +321,8 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( round(jarray{"0a", "0b"}, UA_TYPES_BYTESTRING), (jarray{"0a", "0b"}) );
 		for( let& [j, type] : vector<std::pair<jvalue,uint>>{ {1, UA_TYPES_GUID}, {"not-a-guid", UA_TYPES_GUID}, {1, UA_TYPES_BYTESTRING}, {"0a0", UA_TYPES_BYTESTRING}, {"zz", UA_TYPES_BYTESTRING},
 			{jobject{{"b", "AQID"}, {"x", 1}}, UA_TYPES_BYTESTRING}, {true, UA_TYPES_NODEID}, {jobject{{"ns", 2}}, UA_TYPES_NODEID}, {"Speed", UA_TYPES_QUALIFIEDNAME}, {jobject{{"ns", 2}, {"x", 1}}, UA_TYPES_QUALIFIEDNAME},
-			{"Good", UA_TYPES_STATUSCODE}, {1, UA_TYPES_XMLELEMENT} } ){
+			{"Good", UA_TYPES_STATUSCODE}, {1, UA_TYPES_XMLELEMENT},
+			{jobject{{"ns", 70000}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME}, {jobject{{"ns", "2"}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME}, {jobject{{"ns", -1}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME} } ){//an `ns` that is no UInt16 refused, not namespace 0
 			EXPECT_THROW( Value( j, &UA_TYPES[type] ), Exception ) << UA_TYPES[type].typeName << ":  " << serialize( j );
 		}
 	}

@@ -35,6 +35,8 @@ describe( 'editorKind', ()=>{
 		expect( editorKind( ETypes.Duration, false, undefined, undefined ) ).toBe( 'number' );
 		expect( editorKind( ETypes.Enumeration, false, undefined, undefined ) ).toBe( 'number' );//the values unknown:  the number it is sent as
 		expect( editorKind( ETypes.String, false, undefined, undefined ) ).toBe( 'text' );
+		expect( editorKind( undefined, false, undefined, undefined ) ).toBe( 'text' );//a type of the server's own, no value yet (reviews-issue/423-clients-writes.md #7)
+		expect( editorKind( undefined, false, undefined, null ) ).toBe( 'json' );//an absent member
 		expect( editorKind( ETypes.XmlElement, false, undefined, undefined ) ).toBe( 'xml' );
 		expect( editorKind( ETypes.UtcTime, false, undefined, undefined ) ).toBe( 'datetime' );
 		expect( editorKind( ETypes.Guid, false, undefined, undefined ) ).toBe( 'guid' );
@@ -186,7 +188,7 @@ describe( 'ValueEditor', ()=>{
 		expect( e.value() ).toBeUndefined();
 		expect( create( {type: ETypes.StatusCode, value: new OpcError( 0x80340000, '', '', undefined )} ).editor.text() ).toBe( '0x80340000' );
 	} );
-	it( 'takes a QualifiedName as its namespace index and name, and shows a push\'s text', ()=>{
+	it( 'takes a QualifiedName as its namespace index and name', ()=>{
 		const e = create( {type: ETypes.QualifiedName, value: {ns: 2, name: 'Speed'}} );
 		expect( [e.editor.text2(), e.editor.text()] ).toEqual( ['2', 'Speed'] );
 		e.editor.setText( 'Rpm' );
@@ -195,7 +197,11 @@ describe( 'ValueEditor', ()=>{
 		expect( e.value() ).toEqual( {ns: 0, name: 'Rpm'} );
 		e.editor.setText2( 'x' );
 		expect( e.value() ).toBeUndefined();
-		expect( create( {type: ETypes.QualifiedName, value: '3:Level'} ).editor.text2() ).toBe( '3' );
+		e.editor.setText2( '70000' );//reviews-issue/423-clients-writes.md #3:  past a UInt16, which the gateway took as namespace 0
+		expect( e.value() ).toBeUndefined();
+		expect( e.editor.invalid() ).toContain( '65535' );
+		const zero = create( {type: ETypes.QualifiedName, value: {ns: 0, name: '12:00'}} );//#10:  a push's {ns, name}, an ns-0 name with a colon kept whole
+		expect( [zero.editor.text2(), zero.editor.text()] ).toEqual( ['0', '12:00'] );
 	} );
 	//Open questions #11:  written as its text, which keeps the locale the value had, or {text, locale} naming one
 	it( 'takes a LocalizedText as its text, with a locale where one is named', ()=>{

@@ -1,11 +1,9 @@
 ﻿#include <jde/opc/uatypes/Value.h>
 #include <charconv>
 #include <jde/opc/UAException.h>
-#include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Members.h>
-#include <jde/opc/uatypes/NodeId.h>
 
 #define let const auto
 
@@ -33,13 +31,28 @@ namespace Jde::Opc{
 		}
 		return y;
 	}
-	//A QualifiedName from the json ToJson writes:  {ns, name}, or {} for an empty one.
+	//A QualifiedName from the json ToJson writes:  {ns, name}, or {} for an empty one.  An `ns` given is a UInt16 or refused, never namespace 0.
 	Ω qualifiedNameFromJson( const jvalue& j, SL sl )ε->UA_QualifiedName{
 		let* o = j.if_object();
 		THROW_IFSL( !o || !std::ranges::all_of(*o, [](let& kv){ return kv.key()=="ns" || kv.key()=="name"; }), "Expected a QualifiedName {{ns, name}} - '{}'.", serialize(j) );
 		let name = Json::FindSV( *o, "name" );
 		THROW_IFSL( o->contains("name") && !name, "Expected a QualifiedName {{ns, name}} - '{}'.", serialize(j) );
-		return UA_QualifiedName{ Json::FindNumber<UA_UInt16>(*o, "ns").value_or(0), name ? ToUV(*name) : UA_STRING_NULL };
+		let* ns = o->if_contains( "ns" );
+		return UA_QualifiedName{ ns ? Json::AsNumber<UA_UInt16>(*ns, sl) : UA_UInt16{}, name ? ToUV(*name) : UA_STRING_NULL };
+	}
+	//A NodeId or an ExpandedNodeId from its json:  text in the standard's spelling, `ns=2;i=5` or `svr=1;nsu=urn:x;i=5`, parsed as such;  other
+	//text a bare string identifier, as NodeId::FromJson reads one, and an object or a number as that reads them.
+	Ω nodeIdFromJson( const jvalue& j )ε->NodeId{
+		NodeId y;
+		if( j.is_string() && UA_NodeId_parse(&y, ToUV(j.get_string()))==UA_STATUSCODE_GOOD )
+			return y;
+		return NodeId{ j };
+	}
+	Ω exNodeIdFromJson( const jvalue& j )ε->ExNodeId{
+		ExNodeId y;
+		if( j.is_string() && UA_ExpandedNodeId_parse(&y, ToUV(j.get_string()))==UA_STATUSCODE_GOOD )
+			return y;
+		return ExNodeId{ j };
 	}
 	//The inverse of Variant.cpp's toJson( double ).  nullopt means "not one of the three", and the caller falls through to the ordinary numeric read, so
 	//any other string still fails there with its own message rather than becoming a silent NaN.
@@ -248,7 +261,7 @@ namespace Jde::Opc{
 			break;}
 		//The rest of the built-in types (clients spec *Values and writes*, #423), each from the json ToJson writes for it:  a Guid its
 		//text;  a ByteString its hex, or {b: base64} as the web sends one;  a NodeId and an ExpandedNodeId the json NodeId::ToJson writes,
-		//or a bare number or string identifier;  a QualifiedName {ns, name};  a StatusCode its number, or {sc} as the web spells a
+		//the standard's text, or a bare number or string identifier;  a QualifiedName {ns, name};  a StatusCode its number, or {sc} as the web spells a
 		//status;  an XmlElement its text.
 		case UA_DATATYPEKIND_GUID:{
 			THROW_IF( !j.is_string(), "Expected a Guid string - '{}'.", serialize(j) );
@@ -259,11 +272,11 @@ namespace Jde::Opc{
 			SetScalar( byteStringFromJson(j, sl).get(), sl );
 			break;
 		case UA_DATATYPEKIND_NODEID:{
-			const NodeId id{ j };
+			let id = nodeIdFromJson( j );
 			SetScalar( &id, sl );
 			break;}
 		case UA_DATATYPEKIND_EXPANDEDNODEID:{
-			const ExNodeId id{ j };
+			let id = exNodeIdFromJson( j );
 			SetScalar( &id, sl );
 			break;}
 		case UA_DATATYPEKIND_QUALIFIEDNAME:{

@@ -1,7 +1,7 @@
 import { OpcObject } from './node';
 import { NodeView } from './node-view';
 import { OpcError } from './opc-error';
-import { EAccess } from './types';
+import { EAccess, ETypes } from './types';
 import { variable } from 'jde-opc/testing';
 
 const bad = 0x808C0000, uncertainHigh = 0x40940600;
@@ -114,6 +114,18 @@ describe( 'NodeView timestamp and browse columns', ()=>{
 		expect( NodeView.cellValue(v, "snapshot") ).toBe( 'Failed' );
 		v.setReading( {value: 7, sc: 0} );
 		expect( NodeView.cellValue(v, "snapshot") ).toBe( 7 );
+	} );
+	//reviews-issue/423-clients-writes.md W3:  a StatusCode value read as a decimal number;  it is spelled as the Status column spells a code,
+	//its severity and hex until the name arrives
+	it( 'shows a StatusCode value by name', ()=>{
+		const v = x( {dataType: {ns: 0, i: ETypes.StatusCode}, value: 0x40920000} );
+		expect( NodeView.cellValue(v, "snapshot") ).toBe( 'Uncertain 0x40920000' );
+		expect( OpcError.emptyMessages() ).toContain( 0x40920000 );//asked for by the reading, so the fetch after a browse brings it
+		OpcError.setMessages( [{sc: 0x40920000, message: "UncertainSubstituteValue"}] );
+		expect( NodeView.cellValue(v, "snapshot") ).toBe( 'UncertainSubstituteValue' );
+		v.setReading( {value: 0, sc: 0} );
+		expect( NodeView.cellValue(v, "snapshot") ).toBe( 'Good' );
+		expect( NodeView.cellValue(x( {dataType: {ns: 0, i: ETypes.UInt32}, value: 0x40920000} ), "snapshot") ).toBe( 0x40920000 );//a number of another type stays one
 	} );
 	it( 'shows the reference type and the type definition as node ids', ()=>{
 		const v = x( {refType: {ns: 0, i: 47}, typeDef: {ns: 2, i: 1002}} );

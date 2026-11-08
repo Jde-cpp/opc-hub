@@ -24,10 +24,14 @@ namespace Jde::QL::Tests{
 		α CustomMutation( MutationQL&, Creds, SL )ι->up<TAwait<jvalue>> override{ ++Answered; return mu<ReadyAwait>( jarray{ jobject{{"id",7},{"name","seven"},{"rowCount",1}} } ); }
 		uint Answered{};
 	};
-	Ω run( sv document, sp<AnsweringQL> ql, bool returnRaw=true )ε->jvalue{
+	//answers as a server's read-back does:  an object column and an array column, neither the shape that was written.
+	struct ReadBackQL final : NullQL{
+		α CustomMutation( MutationQL&, Creds, SL )ι->up<TAwait<jvalue>> override{ return mu<ReadyAwait>( jobject{ {"value", jobject{{"ns",5},{"i",5001}}}, {"items", jarray{1,2,100}} } ); }
+	};
+	Ω run( sv document, sp<IQL> ql, bool returnRaw=true )ε->jvalue{
 		static const vector<sp<DB::AppSchema>> noSchemas;
 		auto request = Parse( string{document}, {}, noSchemas, returnRaw );
-		return BlockAwait<MutationsAwait,jvalue>( MutationsAwait{move(request.Mutations()), Creds{UserPK{UserPK::System}}, sp<IQL>{ql}, SRCE_CUR} );
+		return BlockAwait<MutationsAwait,jvalue>( MutationsAwait{move(request.Mutations()), Creds{UserPK{UserPK::System}}, move(ql), SRCE_CUR} );
 	}
 
 	TEST( MutationsAwaitTests, ResultIsTrimmedToTheRequest ){
@@ -35,6 +39,13 @@ namespace Jde::QL::Tests{
 		let y = run( "mutation createStatus( slug:\"x\" ){ id name }", ql );
 		EXPECT_EQ( y, (jvalue{ jobject{{"id",7},{"name","seven"}} }) ) << serialize(y);//rowCount and the arg are not asked for.
 		EXPECT_EQ( ql->Answered, 1u );
+	}
+	//A column the mutation answered is its answer whole, the arguments filling only the columns it lacks:  merged in, updateVariable's
+	//ExpandedNodeId kept the uri it was written with though the server read it back as an index, and a clamped array gained the
+	//element that was asked for (reviews-issue/423-clients-writes.md W4).
+	TEST( MutationsAwaitTests, AnAnsweredColumnIsNotMergedWithTheArguments ){
+		let y = run( R"(mutation updateStatus( id:7, value:{nsu:"urn:x", i:5001}, items:[1,2,999], slug:"x" ){ value items slug })", ms<ReadBackQL>() );
+		EXPECT_EQ( y, (jvalue{ jobject{{"value", jobject{{"ns",5},{"i",5001}}}, {"items", jarray{1,2,100}}, {"slug","x"}} }) ) << serialize(y);
 	}
 	TEST( MutationsAwaitTests, ANonRawDocumentWrapsInTheCommandName ){
 		auto ql = ms<AnsweringQL>();

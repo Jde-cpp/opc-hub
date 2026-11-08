@@ -630,7 +630,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		if( proto.uint64!=undefined )       return proto.uint64;
 		if( proto.xmlElement!=undefined )   return proto.xmlElement;
 		if( proto.localizedText!=undefined ) return proto.localizedText.text ?? "";//the text alone, as REST gives it
-		if( proto.qualifiedName!=undefined ){ const q = proto.qualifiedName; return q.namespaceIndex ? `${q.namespaceIndex}:${q.name}` : q.name; }
+		if( proto.qualifiedName!=undefined ){ const q = proto.qualifiedName; return <Structure>{ ns: q.namespaceIndex ?? 0, name: q.name ?? "" }; }//{ns, name}, as REST gives it (jsonShape):  the text `ns:name` read an ns-0 `12:00` as namespace 12 (reviews-issue/423-clients-writes.md #10)
 		if( proto.extensionObject!=undefined ){
 			const x = proto.extensionObject;
 			return new ExtensionObject( Gateway.toNode(x.typeId ?? Common.NodeId.create()), x.binary ?? x.xml );

@@ -130,6 +130,12 @@ describe( 'WriteDialog', ()=>{
 		d.dialog.setIndexRange( '' );
 		expect( d.dialog.value() ).toEqual( [1, 2, 3, 4, 5] );
 		expect( d.dialog.problem() ).toBeUndefined();
+		d.dialog.setIndexRange( '3:9' );//reviews-issue/423-clients-writes.md #5:  past the end, the range sent is the slice's, the size of the value
+		expect( d.dialog.value() ).toEqual( [4, 5] );
+		await d.dialog.apply();
+		d.dialog.setIndexRange( '4' );
+		await d.dialog.apply();
+		expect( d.writes().slice( 1 ) ).toEqual( [[[4, 5], '3:4'], [[5], '4']] );
 	} );
 	it( 'renders the index range field for an array alone', ()=>{
 		const scalar = open( {node: writable( 7, 'rpm', {dataType: {i: ETypes.Double}, value: 1})} );

@@ -220,7 +220,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 			row.setReading( r );
 			if( !(r.value instanceof OpcError) )
 				this.buffer.push( row.key, pushValue( row.node, r, new Date(), row.trendKey ) );
-			if( row.sc && row.sc!=previous && !OpcError.statusCodeText( row.sc ) )
+			if( (row.sc && row.sc!=previous && !OpcError.statusCodeText( row.sc )) || row.variable?.valueNamePending( row.value ) )//a StatusCode value's name too (Variable.valueName)
 				this.gateway.updateErrorCodes().then( ()=>this.#repaint() );
 		}
 		this.#repaint();
