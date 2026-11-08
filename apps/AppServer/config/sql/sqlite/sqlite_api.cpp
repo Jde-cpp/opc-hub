@@ -6,6 +6,10 @@
 //calls to the twins registered here (AppServer hosts access, so both proc sets register through this DLL).
 void RegisterProcs( Jde::DB::Sqlite::IProcs& procs ){
 	using namespace Jde::DB::Sqlite;
+	AppProcs::RegisterAppCalendarInsert( procs );
+	AppProcs::RegisterAppCalendarPatternInsert( procs );
+	AppProcs::RegisterAppCalendarShiftInsert( procs );
+	AppProcs::RegisterAppCalendarExceptionInsert( procs );
 	AppProcs::RegisterAppConnectionInsert( procs );
 	AppProcs::RegisterAppHostInsert( procs );
 	AppProcs::RegisterAppInstanceInsert( procs );

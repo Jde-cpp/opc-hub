@@ -79,6 +79,61 @@ local common = import 'common-meta.libsonnet';
 			naturalKeys:[["name"]],
 			ops: ["None"]
 		},
+		//The shift calendar (docs/calendar/spec.md *Tables*):  every stored time a UTC dateTime, a date the instant its production
+		//day starts in the calendar's zone, the shift columns wall-clock minutes.  Every edit of the four is routed by
+		//App::Server::CustomMutation, the hub's HubQL too, to Calendar::Server::CalendarMAwait (libs/calendar/src/server), which
+		//validates the row with the library, reads a zone-less time in the calendar's zone, makes a new calendar's first
+		//pattern, re-anchors the children of a zone or day-start change and purges a row's children before it.  Column names
+		//avoid the words a dialect reserves, which the DDL emits unquoted (Column.cpp):  `effective` not `from`, `finish` not
+		//`end`, `is_open` not `open`.
+		calendars:{
+			comment: "A shift calendar:  a time zone and production-day start, with dated patterns of shifts and dated exceptions",
+			columns: {
+				calendarId: common.pkSequenced,
+				timeZone: common.types.varchar+{ length:64, i:1, comment:"An IANA zone name, America/New_York:  the shifts' wall clock, and the zone a zone-less time is read in." },
+				dayStart: common.types.uint16+{ default:0, i:2, comment:"Minutes after local midnight the production day begins, under 1440:  with 360, Monday's day runs 06:00 Monday to 06:00 Tuesday, and a night shift that starts at 22:00 is Monday's." }
+			}+common.slugColumns,
+			naturalKeys: common.slugNKs
+		},
+		calendarPatterns:{
+			comment: "A calendar's shifts from a date:  a cycle of cycleDays days, 7 by default, anchored on cycleStart.  In effect from its effective to the next pattern's",
+			columns: {
+				calendarPatternId: common.pkSequenced,
+				calendarId: tables.calendars.columns.calendarId+{ pkTable: "calendars", sk:null, updateable:false, i:1 },
+				effective: common.types.dateTime+{ nullable:true, i:2, comment:"The instant the production day the pattern is in effect from begins in the calendar's zone;  null on the calendar's first pattern, in effect from the beginning of time.  A soft-deleted pattern keeps its (calendar_id, effective) until its purge." },
+				cycleDays: common.types.uint8+{ default:7, i:3, comment:"The cycle's length, 1 to 31." },
+				cycleStart: common.types.dateTime+{ nullable:true, i:4, comment:"The start of the production day that is cycle day 0;  null for a 7-day cycle whose day 0 is Monday." },
+				created: common.slugColumns.created+{ i:5 },
+				deleted: common.slugColumns.deleted+{ i:6 }
+			},
+			naturalKeys: [["calendar_id", "effective"]]
+		},
+		calendarShifts:{
+			comment: "A pattern's shift:  the cycle days it runs, its start and length as wall-clock minutes, and its breaks.  No deleted - a shift leaves by purge",
+			columns: {
+				calendarShiftId: common.pkSequenced,
+				calendarPatternId: tables.calendarPatterns.columns.calendarPatternId+{ pkTable: "calendar_patterns", sk:null, updateable:false, i:1 },
+				name: common.valuesColumns.name+{ i:2 },
+				days: common.types.uint+{ i:3, comment:"A bitmask whose bit i is cycle day i, Monday bit 0 on the default cycle.  32 bits:  the web's numbers are exact to 53, and a ulong would not survive the round trip." },
+				start: common.types.uint16+{ i:4, comment:"Minutes after the production day's start, under 1440." },
+				minutes: common.types.uint16+{ i:5, comment:"The shift's length, 1 to 1440.  One that runs past the day's end belongs to the day it starts on." },
+				breaks: common.types.varchar+{ length:2048, nullable:true, i:6, comment:'A json list of {"start","minutes"} offsets from the shift\'s start, [{"start":240,"minutes":30}];  null for none.' }
+			},
+			naturalKeys: [["calendar_pattern_id", "name"]]
+		},
+		calendarExceptions:{
+			comment: "A dated range that closes a calendar's planned time, a holiday or a shutdown, or opens it, an extra Saturday.  Closed beats open",
+			columns: {
+				calendarExceptionId: common.pkSequenced,
+				calendarId: tables.calendars.columns.calendarId+{ pkTable: "calendars", sk:null, updateable:false, i:1 },
+				name: common.valuesColumns.name+{ i:2 },
+				start: common.types.dateTime+{ i:3, comment:"The instant the range begins.  Entered as a local time in the calendar's zone, or with Z or an offset as the instant it names." },
+				finish: common.types.dateTime+{ i:4, comment:"The instant the range ends, after start, entered as start is." },
+				isOpen: common.types.bit+{ default:false, i:5, comment:"False closes the range;  true opens it as planned time with no shift." },
+				created: common.slugColumns.created+{ i:6 },
+				deleted: common.slugColumns.deleted+{ i:7 }
+			}
+		}
 	},
 	//No table behind either, as the OpcServer's nodeIds.  `logs`:  the AppServer's log - its own lines and every forwarded line
 	//whose instance has no resourceSchema - plus its log settings and the stored tag levels of those instances;  each app declares

@@ -122,7 +122,7 @@ namespace Jde{
 		for( let& ev : exceptions ){
 			let& e = Json::AsObject( ev, sl );
 			if( number(e, "calendarId", sl)==_id )
-				_exceptions.push_back( Override{ number(e, "id", sl), _id, Json::AsString(e, "name", sl), time(e, "start", sl), time(e, "end", sl), Json::FindBool(e, "open").value_or(false)} );
+				_exceptions.push_back( Override{ number(e, "id", sl), _id, Json::AsString(e, "name", sl), time(e, "start", sl), time(e, "finish", sl), Json::FindBool(e, "isOpen").value_or(false)} );//finish and isOpen, not end and open, which SQL Server reserves (app-meta.jsonnet).
 		}
 		Finish();
 	}
