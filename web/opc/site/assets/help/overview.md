@@ -10,8 +10,10 @@ It lets you:
 
 ## Sections
 
-- [Gateways](/gateways) - the gateways, their server connections and the node trees behind them. See [Gateways help](/help/gateways).
-- [Access](/access) - users, groups, roles, resources and the permissions that tie them together. See [Access help](/help/access).
+- [Gateways](/gateways) - the gateways, their server connections and the node trees behind them.
+  See [Gateways help](/help/gateways).
+- [Access](/access) - users, groups, roles, resources and the permissions that tie them together.
+  See [Access help](/help/access).
 - [Applications](/apps) - the running services, their logs and their log levels. See [Applications help](/help/apps).
 
 ## First steps
@@ -19,12 +21,15 @@ It lets you:
 ### The bundled OPC server
 
 1. Sign in with Google, using the account button at the right of the top bar.
-2. There is nothing to add. The installer's OPC UA Server component set up the **OpcServer** connection, listed as *Jde OpcServer* at `opc.tcp://127.0.0.1:4840`. Your sign-in reaches it.
+2. There is nothing to add. The installer's OPC UA Server component set up the **OpcServer** connection.
+   It is listed as *Jde OpcServer* at `opc.tcp://127.0.0.1:4840`. Your sign-in reaches it.
 
 ### An OPC UA server of your own
 
-1. Under [Applications](/apps), open the **OpcHub** card (**Gateway** when the gateway runs on its own), press **Add** on its **Connections** tab, fill these in and save:
-   - **Slug** - the short name that stands for the connection in URLs and at sign-in, `plant1` say. It is fixed once saved.
+1. Under [Applications](/apps), open the **OpcHub** card (**Gateway** when the gateway runs on its own), press **Add**
+   on its **Connections** tab, fill these in and save:
+   - **Slug** - the short name that stands for the connection in URLs and at sign-in, `plant1` say.
+     It is fixed once saved.
    - **Name** - what the pages call the connection.
    - **Description** - optional, your own note of what the server is.
    - **URL** - the server's endpoint, `opc.tcp://plant-server:4840` say.
@@ -33,9 +38,16 @@ It lets you:
      Node URLs carry an index only where it differs from this one (`4~Examples`), which keeps the common case readable.
      Set it to the index your server keeps its own nodes under. Its documentation or its address space will say.
      A wrong value is not refused here. It shows up later as node addresses that will not resolve.
+
+   With a URL entered, **Discover** lists what the server offers.
+   Choosing an endpoint fills in the URL and Certificate URI.
+   **Test Connection** checks the form before you save.
+   The fields below Default Namespace can stay empty.
+   They are under [Connection settings](/help/gateways#connection-settings).
 2. Have the hub and the server trust each other's certificates, as [Security](/help/gateways#security) describes.
 3. Sign in as one of that server's users, on the [login page](/login):
-   - **Username** - the connection's slug from step 1, a backslash and the user's name on the server: `plant1\operator1`.
+   - **Username** - the connection's slug from step 1, a backslash and the user's name on the server:
+     `plant1\operator1`.
      The slug prefix is what picks the connection, so give it.
      Without a prefix the hub uses its default connection. That is the bundled server, when that component is installed.
      With no default connection the sign-in is refused with *"No default OPC server connection."*
@@ -48,14 +60,19 @@ It lets you:
 ### Then
 
 1. Open [Gateways](/gateways), pick the gateway, then the server connection, and browse the node tree.
-2. Under [Access](/access), put users into groups and grant the groups roles. The installer seeds these roles to start from:
+2. Under [Access](/access), put users into groups and grant the groups roles.
+   The installer seeds these roles to start from:
    - Viewer
    - Operator
    - Maintenance Technician
    - Engineer
    - System Administrator
    - Owner
-3. Only then turn on a resource's **Enforced** switch, on the [Resources](/access/resources) list - what that changes is under [Access help](/help/access#resources).
+
+   The list also holds **Gateway Instance** and, with the OPC UA Server component, **OPC Server Instance**.
+   They are for the services' own accounts, not for people.
+3. Only then turn on a resource's **Enforced** switch, on the [Resources](/access/resources) list.
+   [Access help](/help/access#resources) says what that changes.
 
 ## Getting around
 
@@ -83,6 +100,7 @@ The hub is two services in one process. That is how the installer sets them up.
 They can also run apart:
 
 - the **application server** (`Jde.App.Server`) signs users in, holds the access database and collects logs
-- separate **OPC gateways** (`Jde.Opc.Gateway`) each hold the connections to their own OPC UA servers, and can be set up for individual locations
+- separate **OPC gateways** (`Jde.Opc.Gateway`) each hold the connections to their own OPC UA servers,
+  and can be set up for individual locations
 
 The pages are the same either way.
