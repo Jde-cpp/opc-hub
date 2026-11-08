@@ -95,7 +95,7 @@ namespace Jde{
 			Log();
 	}
 	α Exception::Log()Ι->void{
-		if( _logged || Level()==ELogLevel::NoLog || Process::Finalizing() )
+		if( _logged || Level()==ELogLevel::NoLog || Process::LoggersGone() )
 			return;
 		_logged = true;
 		if( auto sv = Format(); sv.size() )

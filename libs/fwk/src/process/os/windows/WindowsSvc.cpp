@@ -30,7 +30,7 @@ namespace Jde::Windows{
 		switch(dwCtrl){
 		case SERVICE_CONTROL_STOP:
 			Service::ReportStatus( SERVICE_STOP_PENDING, NO_ERROR, 0 );
-			WindowsWorkerMain::Stop( SERVICE_CONTROL_STOP ); //Loop reports stopped once it returns
+			WindowsWorkerMain::Stop( EXIT_SUCCESS ); //Loop reports stopped once it returns
 			return;
 		case SERVICE_CONTROL_INTERROGATE:
 			break;

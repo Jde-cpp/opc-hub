@@ -1,12 +1,12 @@
+#include <jde/fwk/process/process.h>
 #include <iostream> // !important
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <semaphore.h>
 #include <syslog.h>
 #include <unistd.h>
-#include <execinfo.h>
-#include <dlfcn.h>
-
-#include <jde/fwk/process/process.h>
-#include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/exceptions/IOException.h>
+#include <jde/fwk/io/FileAwait.h>
 
 #define let const auto
 namespace Jde{
@@ -28,9 +28,6 @@ namespace Jde{
 	}
 	α Process::Install( str /*serviceDescription*/, const vector<string>& /*args*/ )ε->void{
 		THROW( "Not Implemented" );
-	}
-	α Process::UnPause()ι->void{
-		::raise( SIGALRM );//handled by ExitHandler - interrupts ::pause(). SIGKILL is uncatchable & would kill the process outright.
 	}
 	α Process::Uninstall()ε->void{
 		THROW( "Not Implemeented");
@@ -54,7 +51,7 @@ namespace Jde{
 			osLevel = LOG_CRIT;
 		syslog( osLevel, "%s",  value.c_str() );
 	}
-	const string _companyName{ "Jde-Cpp" }; string _productName{ "productName" };
+	const string _companyName{ "Jde-Cpp" };
 	α Process::CompanyName()ι->string{ return _companyName; }
 	α Process::MemorySize()ι->uint{//https://stackoverflow.com/questions/669438/how-to-get-memory-usage-at-runtime-using-c
 		uint size = 0;
@@ -79,15 +76,15 @@ namespace Jde{
 
 	α Process::ProcessId()ι->uint{ return getpid(); }
 
+	static sem_t _stopSignals;//counts:  a signal from before Pause - anywhere in the startup - is still here when it waits.
+	constinit static atomic<int> _lastSignal{};//for the log:  the exit reason is an exit code.
+
 	α Process::Pause()ι->int{
 		INFOT( ELogTags::App, "Pausing main thread." );
-		let paused = ::pause(); //-1/EINTR by contract - the signal, recorded by ExitHandler, is the result.
-		let signal = ExitReason().value_or( -1 );
-		INFOT( ELogTags::App, "Pause returned = {} (signal {}).", paused, signal );
-		//A requested stop - SIGTERM (systemctl stop, kill) or ^C - is a clean exit; pause's -1 (exit code 255) had systemd log
-		//every stop as a failure.  Anything else (SIGALRM from UnPause/Kill, SIGUSR1) keeps pause's result as before.
-		let exitCode = signal==SIGTERM || signal==SIGINT ? EXIT_SUCCESS : paused;
-		Shutdown( exitCode );
+		while( ::sem_wait(&_stopSignals)==-1 && errno==EINTR )
+			continue;
+		let exitCode = ExitReason().value_or( -1 );
+		INFOT( ELogTags::App, "Pause ended on signal {}, exit code {}.", _lastSignal.load(), exitCode );
 		return exitCode;
 	}
 
@@ -118,18 +115,14 @@ namespace Jde{
 		return GetEnv("XDG_CONFIG_HOME").value_or( Process::GetEnv("HOME").value_or("/etc/app")+"/.config" );
 	}
 
-	α Process::ExitHandler( int s )->void{
-		//std::cout << "Caught signal " << s << std::endl;
-		if( !Process::ExitReason() )
-			Process::SetExitReason( s, s==SIGTERM );
-		//Handled in main.cpp
-		//ASSERT( false ); //TODO handle
-	//	signal( s, SIG_IGN );
-	//not supposed to log here...
-		//printf( "!!!!!!!!!!!!!!!!!!!!!Caught signal %d!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n",s );
-		//pProcessManager->Stop();
-		//delete pLogger; pLogger = nullptr;
-		//exit( 1 );
+	Ω exitHandler( int s )->void{
+		let savedErrno = errno;//the interrupted code's.
+		_lastSignal = s;
+		//A requested stop - SIGTERM (systemctl stop, kill) or ^C - is a clean exit; a -1 (exit code 255) had systemd log every
+		//stop as a failure.  Anything else (SIGALRM from Kill, SIGUSR1) stays -1.
+		Process::SetExitReason( s==SIGTERM || s==SIGINT ? EXIT_SUCCESS : -1, s==SIGTERM );
+		::sem_post( &_stopSignals );//async-signal-safe, which absl::Notification and its kin are not.
+		errno = savedErrno;
 	}
 
 	α Process::Kill( uint processId )ι->bool{
@@ -158,26 +151,11 @@ namespace Jde{
 	α Process::CompanyRootDir()ι->fs::path{ return Process::CompanyName(); };
 
 	α Process::AddSignals()ε->void{/*ε for windows*/
-/* 		struct sigaction sigIntHandler;//_XOPEN_SOURCE
-		memset( &sigIntHandler, 0, sizeof(sigIntHandler) );
-		sigIntHandler.sa_handler = ExitHandler;
-		sigemptyset( &sigIntHandler.sa_mask );
-		sigIntHandler.sa_flags = 0;*/
-		::signal( SIGINT, Process::ExitHandler );
-		::signal( SIGTERM, Process::ExitHandler );
-		::signal( SIGALRM, Process::ExitHandler );
-		::signal( SIGUSR1, Process::ExitHandler );
-		//sigaction( SIGSTOP, &sigIntHandler, nullptr );
-		//sigaction( SIGKILL, &sigIntHandler, nullptr );
-		//sigaction( SIGTERM, &sigIntHandler, nullptr );
-
-/*		struct sigaction sa;
-		memset( &sa, 0, sizeof(sa) );
-	  sa.sa_flags = SA_RESTART | SA_SIGINFO;
-		sa.sa_sigaction = IO::AioCompletionHandler;
-		sigemptyset( &sa.sa_mask );
-		THROW_IF( ::sigaction(IO::CompletionSignal, &sa, nullptr)==-1,  "init AsyncIO sigaction({}) returned {}", IO::CompletionSignal, errno );
-*/
+		::sem_init( &_stopSignals, 0, 0 );//before the handlers that post it.
+		::signal( SIGINT, exitHandler );
+		::signal( SIGTERM, exitHandler );
+		::signal( SIGALRM, exitHandler );
+		::signal( SIGUSR1, exitHandler );
 	}
 
 	α Process::IsTerminal()ι->bool{ return ::isatty(STDOUT_FILENO)!=0; }

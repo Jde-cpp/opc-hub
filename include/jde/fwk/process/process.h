@@ -24,7 +24,6 @@ namespace Process{
 	/// How the process was launched. ie not a service.  Says nothing about where stdout actually goes.
 	Φ IsConsole()ι->bool;
 	Φ IsDebuggerPresent()ι->bool;
-	Φ SetConsole( bool isConsole )ι->void;
 	Φ SetConsoleTitle( sv title )ι->void;
 	Φ IsTerminal()ι->bool; // Where stdout goes.
 	Φ PrepareConsole()ι->bool; // The terminal stdout is on, readied for the console sink:  whether it draws escape sequences (the dev pattern's links).
@@ -36,11 +35,13 @@ namespace Process{
 	Φ ProductName()ι->sv;
 	Φ StartTime()ι->TimePoint;
 
-	Φ Startup( int argc, char** argv, sv appName, string serviceDescription, optional<bool> console=nullopt )ε->flat_set<string>;
+	//ServiceArgs:  what a service registered by -install starts with, in argv order - everything but -c, -t, -install and -uninstall.
+	struct StartupArgs{ bool Console{}; bool SetTerminate{}; bool Install{}; bool Uninstall{}; vector<string> ServiceArgs; };
+	Φ ParseStartupArgs( const vector<string>& tokens, optional<bool> console )ι->StartupArgs;
+	Φ Startup( int argc, char** argv, sv appName, string serviceDescription, optional<bool> console=nullopt )ε->void;
 	Φ AddSignals()ε->void;
 	Φ AsService()ι->bool;
 	Φ Pause()ι->int;
-	Φ UnPause()ι->void;
 
 	Φ LoadLibrary( const fs::path& path )ε->void*;
 	Φ FreeLibrary( void* p )ι->void;
@@ -55,19 +56,18 @@ namespace Process{
 	Φ AddFinalizeFunction( function<void(bool terminating)>&& finalize )ι->void;
 	//Run by Shutdown last, after the loggers and the io_context have gone - the process holds nothing now:  for telling the outside
 	//it has ended, e.g. a service's stopped.  No logging.
-	Φ AddExitFunction( absl::AnyInvocable<void()>&& exit )ι->void;
+	Φ AddExitFunction( absl::AnyInvocable<void() const>&& exit )ι->void;
 
 	Φ AddShutdown( IShutdown* pShutdown )ι->void; //global unique ptrs
 	Φ RemoveShutdown( IShutdown* pShutdown )ι->void;
 
 	Φ ExitException( std::exception&& e )ι->int;
-	Φ ExitHandler( int s )->void;
-	Φ ExitReason()ι->optional<int>;
+	Φ ExitReason()ι->optional<int>;//the exit code the first cause asked for.
 	Φ OnTerminate()ι->void;
-	Φ SetExitReason( int reason, bool terminate )ι->void;
-	Φ Shutdown( int exitReason )ι->void;
+	α SetExitReason( int exitCode, bool terminate )ι->void;//first cause wins.  Safe in a signal handler.
+	Φ Shutdown( int exitCode )ι->void;
 	Φ ShuttingDown()ι->bool;
-	Φ Finalizing()ι->bool;
+	Φ LoggersGone()ι->bool;
 
 	//The service's ImagePath:  the exe, always quoted, then `args` escaped per CommandLineToArgvW - the parser on the other
 	//end (Args() on windows) - so what the SCM launches parses back to the same tokens.  Pure, split out of Install so it

@@ -22,7 +22,7 @@ namespace Jde{
 		breakFor( level, tags );
 	}
 	α Logging::Log( const Record& record )ι->void{
-		if( Process::Finalizing() || !ShouldLog(record.Level, record.Tags) )
+		if( Process::LoggersGone() || !ShouldLog(record.Level, record.Tags) )
 			return;
 		write( record );
 		if( !record.AppPK )//a forwarded entry is another instance's, not this process's own.

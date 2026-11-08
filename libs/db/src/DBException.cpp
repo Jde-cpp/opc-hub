@@ -46,7 +46,7 @@ namespace Jde::DB{
 	}
 
 	α DBException::Log()Ι->void{
-		if( _logged || Level()==ELogLevel::NoLog || Process::Finalizing() ) //participate in the base _logged protocol: don't re-log a moved-from/BreakLog'd exception, and stay quiet during teardown.
+		if( _logged || Level()==ELogLevel::NoLog || Process::LoggersGone() ) //participate in the base _logged protocol: don't re-log a moved-from/BreakLog'd exception, and stay quiet during teardown.
 			return;
 		_logged = true;
 		DB::Log( Sql, Level(), _inner ? string{_inner->what()} : what(), _sl );

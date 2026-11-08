@@ -61,7 +61,7 @@ namespace Jde::Logging{
 			_dying = true;
 		let trace = !e.stacktrace().empty();
 		string line{ trace ? e.stacktrace() : e.text_message_with_prefix_and_newline() };
-		if( OnDrainThread() || Process::Finalizing() ){//OnDrainThread: a logger the drain thread called logged through abseil - queueing it could feed itself.
+		if( OnDrainThread() || Process::LoggersGone() ){//OnDrainThread: a logger the drain thread called logged through abseil - queueing it could feed itself.
 			std::fwrite( line.data(), 1, line.size(), stderr );
 			return;
 		}
@@ -109,7 +109,7 @@ namespace Jde::Logging{
 					for( let& logger : Loggers() )
 						logger->Shutdown( false );
 				}
-				else if( Process::Finalizing() )//Log would drop it.
+				else if( Process::LoggersGone() )//Log would drop it.
 					std::fwrite( item.Line.data(), 1, item.Line.size(), stderr );
 				else
 					Log( *item.Value );
