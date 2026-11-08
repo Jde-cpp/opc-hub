@@ -3,6 +3,7 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/app/log/LogQLAwait.h>
 #include <jde/app/IApp.h>
+#include <jde/calendar/server/CalendarMAwait.h>
 #include <jde/web/server/SessionGraphQL.h>
 #include <jde/web/server/SettingQL.h>
 #include "../LocalClient.h"
@@ -41,6 +42,8 @@ namespace Jde::App{
 	α Server::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = Access::Server::CustomMutation(m, creds, sl); await )
 			return await;
+		if( Calendar::Server::CalendarMAwait::IsApplicable(m) )//the calendar tables' edits, validated (docs/calendar/spec.md *Validation*);  QLPtr() is the HubQL in the hub.
+			return mu<Calendar::Server::CalendarMAwait>( move(m), move(creds), QLPtr(), sl );
 		if( auto await = AppInstanceMutation(m, sl); await )//start/stopApplicationInstance.
 			return await;
 		if( InstanceTagLevelMAwait::IsApplicable(m) )

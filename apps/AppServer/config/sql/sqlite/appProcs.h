@@ -7,6 +7,11 @@ struct sqlite3;
 //same param order, out params returned as the result row. RegisterProcs (jde/db/sqlite_api.h) registers them all
 //through the driver's IProcs, so this DLL needn't link the driver.
 namespace Jde::DB::Sqlite::AppProcs{
+	//The calendar's four tables (app_calendar_insert.cpp):  twins of the inserts the other dialects generate.
+	α RegisterAppCalendarInsert( IProcs& procs )ι->void;
+	α RegisterAppCalendarPatternInsert( IProcs& procs )ι->void;
+	α RegisterAppCalendarShiftInsert( IProcs& procs )ι->void;
+	α RegisterAppCalendarExceptionInsert( IProcs& procs )ι->void;
 	α RegisterAppConnectionInsert( IProcs& procs )ι->void;
 	α RegisterAppHostInsert( IProcs& procs )ι->void;
 	α RegisterAppInstanceInsert( IProcs& procs )ι->void;

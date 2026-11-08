@@ -39,7 +39,7 @@ namespace Jde::Calendar::Tests{
 		return jobject{ {"id", id}, {"calendarPatternId", patternId}, {"name", name}, {"days", days}, {"start", start}, {"minutes", minutes}, {"breaks", move(breaks)} };
 	}
 	Ξ ExceptionRow( uint32 id, uint32 calendarId, sv name, TimePoint start, TimePoint end, bool open=false )ι->jobject{
-		return jobject{ {"id", id}, {"calendarId", calendarId}, {"name", name}, {"start", Iso(start)}, {"end", Iso(end)}, {"open", open} };
+		return jobject{ {"id", id}, {"calendarId", calendarId}, {"name", name}, {"start", Iso(start)}, {"finish", Iso(end)}, {"isOpen", open} };
 	}
 
 	//Day 06:00-14:00 with a half hour at 10:00, Evening 14:00-22:00 and Night 22:00-06:00, Monday to Friday, on a 06:00 day start.

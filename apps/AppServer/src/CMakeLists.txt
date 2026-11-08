@@ -15,7 +15,7 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
 dbDriverDependencies( ${targetName} Jde.DB.Sqlite.AppServer ) #config/args/sqlite + the 'Debug - sqlite' launch config load these
 
-target_link_libraries( ${targetName} Jde.Access Jde.Web.Server Jde.App.Shared )
+target_link_libraries( ${targetName} Jde.Access Jde.Web.Server Jde.App.Shared Jde.CalendarLib ) #the calendar tables' validation (CalendarMAwait) on the QL's mutation ladder.
 
 target_precompile_headers( ${targetName} PRIVATE
 	<jde/fwk.h>
