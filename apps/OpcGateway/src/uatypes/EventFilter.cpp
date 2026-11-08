@@ -1,6 +1,7 @@
 #include "EventFilter.h"
 #include <charconv>
 #include <open62541/util.h>
+#include <jde/opc/uatypes/UAString.h>
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -21,14 +22,43 @@ namespace Jde::Opc::Gateway{
 			throw refuse( path, "has an empty segment", sl );
 		return BrowseName{ UA_QualifiedName{ns, AllocUAString(text)} };
 	}
+	//The operand's own spelling, `[typeDefinitionId]/path#attribute` (open62541 util.h):  a `#`, or a node id's `=` ahead of any
+	//path - `i=2782#NodeId`, `ns=2;s=Truck/3:Wheel` - where a browse name would carry neither.
+	Ω isOperand( sv path )ι->bool{
+		let first = path.substr( 0, path.find('/') );
+		return path.contains( '#' ) || first.contains( '=' );
+	}
+	Ω parseOperand( sv path, SL sl )ε->EventClause{
+		UA_SimpleAttributeOperand operand; UA_SimpleAttributeOperand_init( &operand );
+		if( let sc = UA_SimpleAttributeOperand_parse(&operand, ToUV(path)); sc ){
+			UA_SimpleAttributeOperand_clear( &operand );
+			throw refuse( path, Ƒ("is no select clause - {}", UA_StatusCode_name(sc)), sl );
+		}
+		EventClause y;
+		y.TypeDefinition = operand.typeDefinitionId;
+		y.Attribute = (UA_AttributeId)operand.attributeId;
+		for( uint i=0; i<operand.browsePathSize; ++i ){
+			UA_QualifiedName name; UA_QualifiedName_copy( &operand.browsePath[i], &name );
+			y.Path.push_back( BrowseName{move(name)} );
+		}
+		let ranged = operand.indexRange.length>0;
+		UA_SimpleAttributeOperand_clear( &operand );
+		if( ranged )
+			throw refuse( path, "has an index range, which an event field cannot take", sl );
+		return y;
+	}
 	α EventClause::Parse( sv path, SL sl )ε->EventClause{
 		EventClause y;
-		for( sv rest = path; ; ){
-			let slash = rest.find( '/' );
-			y.Path.push_back( segment(path, rest.substr(0, slash), sl) );
-			if( slash==sv::npos )
-				break;
-			rest = rest.substr( slash+1 );
+		if( isOperand(path) )
+			y = parseOperand( path, sl );
+		else{
+			for( sv rest = path; ; ){
+				let slash = rest.find( '/' );
+				y.Path.push_back( segment(path, rest.substr(0, slash), sl) );
+				if( slash==sv::npos )
+					break;
+				rest = rest.substr( slash+1 );
+			}
 		}
 		auto operand = y.Operand();
 		UAString key;
@@ -41,8 +71,8 @@ namespace Jde::Opc::Gateway{
 	}
 	α EventClause::Operand()Ι->UA_SimpleAttributeOperand{
 		UA_SimpleAttributeOperand y; UA_SimpleAttributeOperand_init( &y );
-		y.typeDefinitionId = UA_NODEID_NUMERIC( 0, UA_NS0ID_BASEEVENTTYPE );
-		y.attributeId = UA_ATTRIBUTEID_VALUE;
+		UA_NodeId_copy( &TypeDefinition, &y.typeDefinitionId );
+		y.attributeId = Attribute;
 		y.browsePathSize = Path.size();
 		y.browsePath = (UA_QualifiedName*)UA_Array_new( Path.size(), &UA_TYPES[UA_TYPES_QUALIFIEDNAME] );
 		for( uint i=0; i<Path.size(); ++i )

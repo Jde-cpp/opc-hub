@@ -17,7 +17,7 @@ import { eventColumns, eventFieldText, EventFields, EventRow, eventTime, isLocal
 import { UaNode } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { isBad, scHex } from '../../../model/status-code';
-import { Gateway, EventPush } from '../../../services/gateway-service';
+import { Gateway, EventPush, gatewayAnswer } from '../../../services/gateway-service';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { StructureTable } from '../../structure-table/structure-table';
 
@@ -94,7 +94,7 @@ export class NodeEvents implements OnDestroy{
 			error: ( e:unknown )=>{
 				this.#subscription = undefined;
 				this.live.set( false );
-				const answer = NodeEvents.gatewayAnswer( e );
+				const answer = gatewayAnswer( e );
 				if( e instanceof OpcError )//refused:  the node, or a field, as the server read it - no retry would change it
 					this.#showRefused( e.sc, "the subscription" );
 				else if( answer && answer.httpStatus>=400 && answer.httpStatus<500 )//a field the gateway cannot read, likewise
@@ -108,11 +108,6 @@ export class NodeEvents implements OnDestroy{
 		} );
 		this.live.set( true );
 		this.error.set( undefined );
-	}
-	//what the gateway said, when it answered with an exception (ProtoService.processError):  a lost socket's rejection has no status
-	static gatewayAnswer( e:unknown ):{message:string; httpStatus:number}|undefined{
-		const error = (<{error?:{message?:string; httpStatus?:number}}>e)?.error;
-		return error && 'httpStatus' in error ? { message: error.message ?? "", httpStatus: error.httpStatus ?? 0 } : undefined;
 	}
 	#showRefused( sc:number, what:string ){
 		const text = ()=>`The server refused ${what}:  ${scHex( sc )} ${OpcError.text( sc )}.`;
@@ -132,6 +127,8 @@ export class NodeEvents implements OnDestroy{
 	#onEvent( e:EventPush ){
 		if( e.refused )
 			return this.#showRefused( e.refused, "the field list" );
+		if( e.acked )
+			return;
 		const row = toEventRow( e.fields );
 		if( this.paused() ){
 			this.#held.push( row );

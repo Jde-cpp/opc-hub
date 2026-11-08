@@ -26,6 +26,10 @@ namespace Jde::Opc::Gateway::Tests{
 	//*Events*, #424):  a BaseEventType event from pumpManual, whose EventNotifier the nodeset gives the SubscribeToEvents bit, with the
 	//pump's motorRpm as its `Rpm` field;  what SubscribeTests' event tests raise.
 	constexpr UA_UInt32 RaiseEvent{ 6058 };
+	//pumpManual.overspeed (clients spec *Alarms and conditions*, #425), the AlarmConditionType object the server library drives, with its
+	//`Raise( active: Boolean, severity: UInt16, message: String ) -> ( eventId: ByteString )`, a transition by hand, and its `HighLimit`,
+	//which the pump's motorRpm is compared with:  what AlarmTests raise, refresh, acknowledge and confirm through the gateway (#426).
+	constexpr UA_UInt32 Overspeed{ 5020 }, OverspeedRaise{ 6110 }, OverspeedHighLimit{ 6106 };
 	//pumpManual._Test (clients plan, phases 8a and 9):  PumpSampleType, a structure of the server's own - Rpm Double, Running Boolean, Label
 	//String, Limits Range, History Double[] - and `sample` (TestSample), the variable of it the OpcServer writes after the load (ConfigurePumps), which
 	//StructureTests read as fields, write back and read from the historian (#421).

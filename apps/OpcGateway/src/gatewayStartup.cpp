@@ -16,6 +16,7 @@
 #include "WebServer.h"
 #include "async/BlockingPool.h"
 #include "ql/CallQLAwait.h"
+#include "ql/RefreshConditionsQLAwait.h"
 #include "ql/DiscoverQLAwait.h"
 #include "ql/GatewayQL.h"
 #include "ql/GatewayQLAwait.h"
@@ -61,7 +62,7 @@ namespace Jde::Opc{
 				tables.emplace( table );
 		}
 		QL::SetSystemTables( move(tables) );
-		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command}, string{DiscoverQLAwait::Command}, string{TrustServerQLAwait::Command}, string{CallQLAwait::Command} };//resolveHistory, testConnection, discover, trustServer, call:  resolve, test, discover, trust and call are no verbs either.
+		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command}, string{DiscoverQLAwait::Command}, string{TrustServerQLAwait::Command}, string{CallQLAwait::Command}, string{RefreshConditionsQLAwait::Command} };//resolveHistory, testConnection, discover, trustServer, call, refreshConditions:  resolve, test, discover, trust, call and refresh are no verbs either.
 		for( let command : HistQL::EditCommands )
 			mutations.emplace( command );
 		QL::SetSystemMutations( move(mutations) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.

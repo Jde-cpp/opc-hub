@@ -9,6 +9,7 @@
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
 #include "CallQLAwait.h"
+#include "RefreshConditionsQLAwait.h"
 #include "HistEditQLAwait.h"
 #include "HistEventsQLAwait.h"
 #include "HistQLAwait.h"
@@ -121,7 +122,7 @@ namespace Jde::Opc::Gateway{
 	//A hist edit with `group` alone is the gateway historian's (HistGroupEditQLAwait), which needs no client.  One that names
 	//both `opc` and `group`, or neither, is this await's to refuse.
 	α GatewayQLMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
-		return m.JsonTableName=="variable" || m.JsonTableName=="node" || m.CommandName==CallQLAwait::Command || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
+		return m.JsonTableName=="variable" || m.JsonTableName=="node" || m.CommandName==CallQLAwait::Command || m.CommandName==RefreshConditionsQLAwait::Command || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
 	}
 	α GatewayQLMAwait::Suspend()ι->void{
 		if( let edit = HistQL::FindEdit(_query.CommandName); edit && HistQL::Target(_query)==HistQL::ETarget::Neither )
@@ -210,6 +211,8 @@ namespace Jde::Opc::Gateway{
 				y = co_await NodeQLMAwait{ move(_query), move(_client), _sl };
 			else if( _query.CommandName==CallQLAwait::Command )//a method call over the caller's client (clients spec *Methods*).
 				y = co_await CallQLAwait{ move(_query), move(_client), _sl };
+			else if( _query.CommandName==RefreshConditionsQLAwait::Command )//ConditionRefresh with the client's own subscription (clients spec *Alarms and conditions*).
+				y = co_await RefreshConditionsQLAwait{ move(_query), move(_client), _sl };
 			else if( let edit = HistQL::FindEdit(_query.CommandName); edit )//the server's own history, over the caller's session (spec *Pass-through*).
 				y = co_await HistEditQLAwait{ move(_query), *edit, move(_client), _sl };
 			else
