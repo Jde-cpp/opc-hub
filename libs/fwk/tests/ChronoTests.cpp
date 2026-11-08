@@ -86,6 +86,20 @@ namespace Jde::Tests{
 		EXPECT_EQ( Chrono::ToTimePoint("2024-01-02T03:04:05-03:00"), Chrono::ToTimePoint("2024-01-02T06:04:05") );
 	}
 
+	//The zoned overload:  a time with Z or an offset is the instant it names, as above;  one with neither is a local time in
+	//the zone - the calendar's rule for what a form sends - resolved with choose::earliest on the clock-change nights.
+	TEST( ChronoTests, ToTimePointInZone ){
+		let& ny = *locate_zone( "America/New_York" );
+		EXPECT_EQ( Chrono::ToTimePoint("2026-07-01T06:00:00", ny), Chrono::ToTimePoint("2026-07-01T10:00:00Z") ) << "EDT";
+		EXPECT_EQ( Chrono::ToTimePoint("2026-01-15T06:00:00.25", ny), Chrono::ToTimePoint("2026-01-15T11:00:00.25Z") ) << "EST, the fraction kept";
+		EXPECT_EQ( Chrono::ToTimePoint("2026-07-01T06:00:00Z", ny), Chrono::ToTimePoint("2026-07-01T06:00:00Z") ) << "zoned:  taken as it is";
+		EXPECT_EQ( Chrono::ToTimePoint("2026-07-01T06:00:00+02:00", ny), Chrono::ToTimePoint("2026-07-01T04:00:00Z") );
+		EXPECT_EQ( Chrono::ToTimePoint("2026-03-08T02:30:00", ny), Chrono::ToTimePoint("2026-03-08T07:00:00Z") ) << "02:30 never happens:  03:00 EDT, the instant the clocks jumped to";
+		EXPECT_EQ( Chrono::ToTimePoint("2026-11-01T01:30:00", ny), Chrono::ToTimePoint("2026-11-01T05:30:00Z") ) << "01:30 happens twice:  the first, EDT";
+		EXPECT_EQ( Chrono::ToTimePoint("2026-07-01T06:00:00", *locate_zone("UTC")), Chrono::ToTimePoint("2026-07-01T06:00:00") );
+		EXPECT_THROW( Chrono::ToTimePoint("2026-07-01", ny), Exception ) << "the same parse, the same refusals";
+	}
+
 	//every one of these must throw rather than come back as the epoch - an unparseable expiry reading as 1970 is a
 	//permanent "expired" instead of an error someone can see.
 	Ω parseFailure( sv iso )->string{
