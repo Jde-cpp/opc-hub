@@ -1,5 +1,6 @@
 #pragma once
 #include <open62541/server.h>
+#include "Condition.h"
 #include "UAConfig.h"
 #include "UAHistory.h"
 #include "jde/fwk/process/process.h"
@@ -25,6 +26,7 @@ namespace Jde::Opc::Server {
 		α Policies()Ι->vector<std::pair<string,UA_MessageSecurityMode>>;
 		α Ptr()ι->UA_Server*{ return _ua; }
 		α History()ι->UAHistory&{ return _history; }
+		α Conditions()ι->Server::Conditions&{ return _conditions; }//the alarm conditions the host declared and added (Condition.h):  Add before Run.
 		α Trust()ι->UATrust&{ return _config.Trust(); }
 		α OnAsyncCancel( UAConfig::AsyncCancel f )ι->void{ _config.OnAsyncCancel( move(f) ); }//a cancelled async operation's key (UAConfig::OnAsyncCancel);  before Run.
 		α CustomTypes()ι->vector<UA_DataTypeArray>&{ return _customTypes; }//the host's mirrors of the nodeset types, which config.customDataTypes points into.
@@ -38,5 +40,6 @@ namespace Jde::Opc::Server {
 		UA_Server* _ua{};
 		optional<std::jthread> _thread;
 		vector<UA_DataTypeArray> _customTypes;
+		Server::Conditions _conditions;//node ids alone, so its order against _ua is free.
 	};
 }

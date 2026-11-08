@@ -40,15 +40,23 @@ values moving.  Without it every value in the shipped address space is static.
   - `src/access/OpcAuthorize.*` is the `Access::Authorize` that translates our rights into open62541's access-level
     bits, and the UA server core's `INodeAccess`.
 - **Session login** (`UAAccess`, in the UA server core), three token types:
-  - a certificate under `/access/trustedCertDirs`, matched to a hub user by its public key; `UATrust` rescans the
-    dirs without a restart;
-  - an issued token carrying a hub session, its id or a hub JWT - how the gateway role opens sessions for its web users;
-    such a session is renewed against the hub ahead of its lapse;
+  - a certificate under `/access/trustedCertDirs`, matched to a hub user by its public key.  `UATrust` rescans the
+    dirs without a restart.
+  - an issued token carrying a hub session, its id or a hub JWT.  This is how the gateway role opens sessions for its
+    web users.  Such a session is renewed against the hub ahead of its lapse.
+  - a username and password from the `/opc/users` list.  It is opt-in: the token is offered only when that list is
+    not empty, and no shipped config sets it.
 
   Anonymous is off by default (`/opc/tokenTypes`).  A session's rights are the hub user's.
-- **History** (`src/hist/`, over the core's `UAHistory`): the server keeps the history of every variable a nodeset marks `Historizing="true"`.  It
-  serves HistoryRead's raw, modified, at-time and processed reads, and HistoryUpdate's edits
-  ([`libs/historian/docs/spec.md`](../../libs/historian/docs/spec.md), *OpcServer*).
+- **Alarms** (the core's `Condition`, [`docs/clients/spec.md`](../../docs/clients/spec.md) *Alarms and conditions*): the
+  pumps nodeset declares `pumpManual.overspeed`, an AlarmConditionType object the server library drives, since
+  open62541's own alarms are off in this build.  It goes active when `motorRpm` crosses its `HighLimit` property, or
+  through its `Raise` method, which holds until the next crossing.  Acknowledge, Confirm and AddComment are the type's
+  methods on the object, and ConditionRefresh on ConditionType replays the retained conditions to the caller's
+  subscription.  The emulator loads the object as nodes alone.
+- **History** (`src/hist/`, over the core's `UAHistory`): the server keeps the history of every variable a nodeset
+  marks `Historizing="true"`.  It serves HistoryRead's raw, modified, at-time and processed reads, and HistoryUpdate's
+  edits ([`libs/historian/docs/spec.md`](../../libs/historian/docs/spec.md), *OpcServer*).
   - Each such variable is configured by its `HA Configuration` object.  Its keys are `ExceptionDeviation` and its
     format, `MinTimeInterval`, `MaxTimeInterval` and `Stepped`.
   - The server adds what the nodeset leaves out, the object itself included.  Where the nodeset set no HistoryRead, it
@@ -106,18 +114,27 @@ and the Google login.
 
 ## Tests
 
-`Jde.Opc.Server.Tests` ([`tests/`](tests)) embeds an AppServer on 2067 and the server on 2070 / opc.tcp 4940 - the live ports +100, so it
-runs beside a live hub or service.  Under ctest it runs on in-memory sqlite:
-`ctest --timeout 300 -R Jde.Opc.Server.Tests`.
+`Jde.Opc.Server.Tests` ([`tests/`](tests)) embeds an AppServer on 2067 and the server on 2070 / opc.tcp 4940.  These
+are the live ports +100, so it runs beside a live hub or service.
+
+Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Server.Tests`.  Its timeout is `JDE_TEST_TIMEOUT`
+(450 s), set with `-DJDE_TEST_TIMEOUT=<seconds>` at configure; `ctest --timeout` cannot lower it.
 
 - `AccessTests`: sessions and node acls.
+- `EndpointTests`: a client that carries only Basic256Sha256 still connects, and a re-activation with another issued
+  token reaches the access plugin.
+- `ReadUASettingsTests`: the UA settings refuse a config with no `/opcServer/ssl`.
 - `ToAccessTests`: the mapping from hub rights to open62541's access-level bits, without a server.
 - `HistoryTests`: the pumps nodeset's historized variables, written through the server, then read and edited by a UA
   client's HistoryRead and HistoryUpdate; history under `<cwd>/logs/hist/opc-server-tests`, cleared at the start.
 - `HistoryRestartTests`: a restart keeps each node's history index and removes what the nodesets no longer historize.
-- `CustomMutationTests`: `updateLogSetting` is the only mutation the server answers, gated by Update on its `logs` resource.
-  While that resource is unenforced, anyone may send it, anonymous callers too; once it is enforced, anonymous gets 401.
-  Every other mutation gets 403.
+- `ConditionTests`: `pumpManual.overspeed` through a UA client - raised and retained on an events subscription,
+  acknowledged and confirmed with the refusals, commented, replayed by ConditionRefresh to its own subscription alone,
+  driven by `motorRpm` written over its limit or by the limit written, held by a `Raise` against the input, unmoved by a
+  Bad or NaN sample, its mandatory fields, an empty comment, a renamed source and a severity out of range.
+- `CustomMutationTests`: `updateLogSetting` is the only mutation the server answers, gated by Update on its `logs`
+  resource.  While that resource is unenforced, anyone may send it, anonymous callers too; once it is enforced,
+  anonymous gets 401.  Every other mutation gets 403.
 - `UALoadTests`: loads the companion-spec nodesets from `$UA_NODE_SETS`, which must be set.
 - `PubSubTests`: a unicast reader on udp 4849.
 - `TrustListTests`, `UAConfigTests`: the PKI setup.

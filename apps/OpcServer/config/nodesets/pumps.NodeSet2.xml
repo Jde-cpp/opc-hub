@@ -27,6 +27,16 @@
   pumpManual's EventNotifier has the SubscribeToEvents bit, so an events subscription on it is allowed; the Server object
   emits every event besides.  The OpcServer binds the method as it binds toHertz.
 
+  pumpManual.overspeed is the pumps demo's alarm condition (clients spec *Alarms and conditions*, #425): an AlarmConditionType
+  object built by hand, since open62541's own alarms and conditions are off in this build.  The nodeset declares its state
+  variables with their ids - EnabledState, ActiveState, AckedState and ConfirmedState with their Id properties, Retain,
+  Severity, Message, Comment, ConditionName, ConditionClassId, ConditionClassName and BranchId - and references the type's methods, Acknowledge, Confirm, AddComment,
+  Enable and Disable; the loader instantiates the type's other mandatory children with ids of their own.  The OpcServer hands
+  the object to the server library after the load (nodesets.cpp ConfigurePumps -> Conditions::Add), which writes its state,
+  raises each transition as an event from pumpManual and binds the methods.  Its input is motorRpm over HighLimit (1:HighLimit,
+  writable), so the emulator's signals drive it for the demo, and its Raise( active, severity, message ) -> ( eventId ) method,
+  so the suites, which embed the OpcServer and no emulator, drive it themselves.  The emulator loads the object as nodes alone.
+
   pumpManual._Test holds what the gateway's suites need of types the pumps have none of (clients plan, phases 8a and 9):
   PumpSampleType, a structure of the server's own - a Double, a Boolean, a String, a Range and a Double array - and the
   `sample` variable of it, whose value the OpcServer writes after the load (nodesets.cpp ConfigurePumps), since a
@@ -79,6 +89,8 @@
     <Alias Alias="StatusCode">i=19</Alias>
     <Alias Alias="QualifiedName">i=20</Alias>
     <Alias Alias="LocalizedText">i=21</Alias>
+    <Alias Alias="UtcTime">i=294</Alias>
+    <Alias Alias="HasCondition">i=9006</Alias>
   </Aliases>
   <UADataType NodeId="ns=1;i=3001" BrowseName="1:PumpSampleType">
     <DisplayName>PumpSampleType</DisplayName>
@@ -492,6 +504,8 @@
       <Reference ReferenceType="HasComponent">ns=1;i=6055</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6058</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=5010</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=5020</Reference>
+      <Reference ReferenceType="HasCondition">ns=1;i=5020</Reference>
     </References>
   </UAObject>
   <UAObject NodeId="ns=1;i=5010" BrowseName="1:_Test" ParentNodeId="ns=1;i=5005">
@@ -1003,6 +1017,303 @@
     </References>
     <Value>
       <uax:Double>10</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=5020" BrowseName="1:overspeed" ParentNodeId="ns=1;i=5005">
+    <DisplayName>overspeed</DisplayName>
+    <Description Locale="en">The pump's alarm condition: active while motorRpm is over HighLimit, or when raised by Raise.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2915</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
+      <Reference ReferenceType="HasCondition" IsForward="false">ns=1;i=5005</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6090</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6092</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6094</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6096</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6098</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6099</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6100</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6101</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6103</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6113</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6114</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6104</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6105</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6106</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6110</Reference>
+      <Reference ReferenceType="HasComponent">i=9027</Reference>
+      <Reference ReferenceType="HasComponent">i=9028</Reference>
+      <Reference ReferenceType="HasComponent">i=9029</Reference>
+      <Reference ReferenceType="HasComponent">i=9111</Reference>
+      <Reference ReferenceType="HasComponent">i=9113</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=6090" BrowseName="EnabledState" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>EnabledState</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=8995</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5020</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6091</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6091" BrowseName="Id" ParentNodeId="ns=1;i=6090" DataType="Boolean">
+    <DisplayName>Id</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6090</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6092" BrowseName="ActiveState" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>ActiveState</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=8995</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5020</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6093</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6093" BrowseName="Id" ParentNodeId="ns=1;i=6092" DataType="Boolean">
+    <DisplayName>Id</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6092</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6094" BrowseName="AckedState" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>AckedState</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=8995</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5020</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6095</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6095" BrowseName="Id" ParentNodeId="ns=1;i=6094" DataType="Boolean">
+    <DisplayName>Id</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6094</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6096" BrowseName="ConfirmedState" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>ConfirmedState</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=8995</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5020</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6097</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6097" BrowseName="Id" ParentNodeId="ns=1;i=6096" DataType="Boolean">
+    <DisplayName>Id</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6096</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6098" BrowseName="Retain" ParentNodeId="ns=1;i=5020" DataType="Boolean">
+    <DisplayName>Retain</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6099" BrowseName="Severity" ParentNodeId="ns=1;i=5020" DataType="UInt16">
+    <DisplayName>Severity</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6100" BrowseName="Message" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>Message</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6101" BrowseName="Comment" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>Comment</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=9002</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5020</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6102</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6102" BrowseName="SourceTimestamp" ParentNodeId="ns=1;i=6101" DataType="UtcTime">
+    <DisplayName>SourceTimestamp</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6101</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6103" BrowseName="ConditionName" ParentNodeId="ns=1;i=5020" DataType="String">
+    <DisplayName>ConditionName</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+    <Value>
+      <uax:String>pumpManual.overspeed</uax:String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6113" BrowseName="ConditionClassId" ParentNodeId="ns=1;i=5020" DataType="NodeId">
+    <DisplayName>ConditionClassId</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+    <Value>
+      <uax:NodeId>
+        <uax:Identifier>i=11164</uax:Identifier>
+      </uax:NodeId>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6114" BrowseName="ConditionClassName" ParentNodeId="ns=1;i=5020" DataType="LocalizedText">
+    <DisplayName>ConditionClassName</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+    <Value>
+      <uax:LocalizedText>
+        <uax:Locale>en</uax:Locale>
+        <uax:Text>ProcessConditionClassType</uax:Text>
+      </uax:LocalizedText>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6104" BrowseName="BranchId" ParentNodeId="ns=1;i=5020" DataType="NodeId">
+    <DisplayName>BranchId</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6105" BrowseName="InputNode" ParentNodeId="ns=1;i=5020" DataType="NodeId">
+    <DisplayName>InputNode</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+    <Value>
+      <uax:NodeId>
+        <uax:Identifier>ns=1;i=6054</uax:Identifier>
+      </uax:NodeId>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6106" BrowseName="1:HighLimit" ParentNodeId="ns=1;i=5020" DataType="Double" AccessLevel="3">
+    <DisplayName>HighLimit</DisplayName>
+    <Description Locale="en">The motorRpm over which the condition goes active, and at or under which it clears.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+    <Value>
+      <uax:Double>1500</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAMethod NodeId="ns=1;i=6110" BrowseName="1:Raise" ParentNodeId="ns=1;i=5020">
+    <DisplayName>Raise</DisplayName>
+    <Description Locale="en">Drives the condition by hand: active with the severity and message given, or inactive.</Description>
+    <References>
+      <Reference ReferenceType="HasProperty">ns=1;i=6111</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6112</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5020</Reference>
+    </References>
+  </UAMethod>
+  <UAVariable NodeId="ns=1;i=6111" BrowseName="InputArguments" ParentNodeId="ns=1;i=6110" DataType="Argument" ValueRank="1" ArrayDimensions="3">
+    <DisplayName>InputArguments</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6110</Reference>
+    </References>
+    <Value>
+      <uax:ListOfExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=297</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:Argument>
+              <uax:Name>active</uax:Name>
+              <uax:DataType>
+                <uax:Identifier>i=1</uax:Identifier>
+              </uax:DataType>
+              <uax:ValueRank>-1</uax:ValueRank>
+              <uax:ArrayDimensions />
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>true raises the condition, false clears it.</uax:Text>
+              </uax:Description>
+            </uax:Argument>
+          </uax:Body>
+        </uax:ExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=297</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:Argument>
+              <uax:Name>severity</uax:Name>
+              <uax:DataType>
+                <uax:Identifier>i=5</uax:Identifier>
+              </uax:DataType>
+              <uax:ValueRank>-1</uax:ValueRank>
+              <uax:ArrayDimensions />
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>The condition's Severity, 1 to 1000.</uax:Text>
+              </uax:Description>
+            </uax:Argument>
+          </uax:Body>
+        </uax:ExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=297</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:Argument>
+              <uax:Name>message</uax:Name>
+              <uax:DataType>
+                <uax:Identifier>i=12</uax:Identifier>
+              </uax:DataType>
+              <uax:ValueRank>-1</uax:ValueRank>
+              <uax:ArrayDimensions />
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>The condition's Message.</uax:Text>
+              </uax:Description>
+            </uax:Argument>
+          </uax:Body>
+        </uax:ExtensionObject>
+      </uax:ListOfExtensionObject>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6112" BrowseName="OutputArguments" ParentNodeId="ns=1;i=6110" DataType="Argument" ValueRank="1" ArrayDimensions="1">
+    <DisplayName>OutputArguments</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6110</Reference>
+    </References>
+    <Value>
+      <uax:ListOfExtensionObject>
+        <uax:ExtensionObject>
+          <uax:TypeId>
+            <uax:Identifier>i=297</uax:Identifier>
+          </uax:TypeId>
+          <uax:Body>
+            <uax:Argument>
+              <uax:Name>eventId</uax:Name>
+              <uax:DataType>
+                <uax:Identifier>i=15</uax:Identifier>
+              </uax:DataType>
+              <uax:ValueRank>-1</uax:ValueRank>
+              <uax:ArrayDimensions />
+              <uax:Description>
+                <uax:Locale>en</uax:Locale>
+                <uax:Text>The EventId of the transition's event, which Acknowledge and Confirm take.</uax:Text>
+              </uax:Description>
+            </uax:Argument>
+          </uax:Body>
+        </uax:ExtensionObject>
+      </uax:ListOfExtensionObject>
     </Value>
   </UAVariable>
 </UANodeSet>

@@ -34,6 +34,7 @@ namespace Jde::Opc{
 		const UA_String s{ (uint)(end-text)+unit.size(), (UA_Byte*)text };
 		return UA_Variant_setScalarCopy( &output[1], &s, &UA_TYPES[UA_TYPES_STRING] );
 	}
+	Ω severityInRange( UA_UInt16 severity )ι->bool{ return severity>=1 && severity<=1000; }//as the methods' InputArguments say.
 	//pumpManual.raiseEvent (clients spec *Events*, #424):  the pumps demo's event source, which an install tries the Events tab on and the
 	//gateway's SubscribeTests raise - `message` String and `severity` UInt16 in, the event's EventId out.  A BaseEventType event from the
 	//pump, the one the method is called on, so pumpManual's own events subscription sees it and the Server object's does (Part 3 7.17),
@@ -45,6 +46,8 @@ namespace Jde::Opc{
 			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		const UA_LocalizedText message{ UA_STRING_NULL, *(const UA_String*)input[0].data };
 		const UA_UInt16 severity = *(const UA_UInt16*)input[1].data;
+		if( !severityInRange(severity) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		const Value rpm = ReadValue( *ua, NodeId{objectId->namespaceIndex, 6054} );//pumpManual.motorRpm;  empty when the read fails, which the field then is.
 		UA_KeyValuePair field{ .key={0, UA_STRING((char*)"/Rpm")}, .value=rpm.value };
 		const UA_KeyValueMap fields{ 1, &field };
@@ -54,6 +57,24 @@ namespace Jde::Opc{
 		let sc = UA_Variant_setScalarCopy( &output[0], &eventId, &UA_TYPES[UA_TYPES_BYTESTRING] );
 		UA_ByteString_clear( &eventId );
 		return sc;
+	}
+	//pumpManual.overspeed.Raise (clients spec *Alarms and conditions*, #425):  the demo condition driven by hand - `active` Boolean, `severity`
+	//UInt16 and `message` String in, the transition's EventId out, the one Acknowledge and Confirm then take - so the suites, which embed the
+	//OpcServer and no emulator, drive it themselves;  the demo's input is motorRpm over HighLimit (Condition::WatchHigh).  The condition is the
+	//object called on, found through the server's Conditions.  Nothing in it throws, as raiseEvent doesn't.
+	Ω raiseCondition( UA_Server* ua, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId* objectId, void*, uint inputSize, const UA_Variant* input, uint outputSize, UA_Variant* output )ι->UA_StatusCode{
+		if( inputSize!=3 || outputSize!=1 || !objectId || !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_BOOLEAN]) || !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_UINT16]) || !UA_Variant_hasScalarType(&input[2], &UA_TYPES[UA_TYPES_STRING]) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		if( !severityInRange(*(const UA_UInt16*)input[1].data) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		auto conditions = Server::Conditions::Of( *ua );
+		auto condition = conditions ? conditions->Find( *objectId ) : nullptr;
+		if( !condition )
+			return UA_STATUSCODE_BADNODEIDUNKNOWN;
+		if( let sc = condition->Raise( *(const UA_Boolean*)input[0].data, *(const UA_UInt16*)input[1].data, ToSV(*(const UA_String*)input[2].data) ); sc )
+			return sc;
+		const UA_ByteString eventId{ condition->LastEventId().size(), (UA_Byte*)condition->LastEventId().data() };
+		return UA_Variant_setScalarCopy( &output[0], &eventId, &UA_TYPES[UA_TYPES_BYTESTRING] );
 	}
 	//The pumps demo after its nodeset loads.  pumpManual.toHertz's callback - a method without one answers BadInternalError (clients spec
 	//*Methods*, #318) - and raiseEvent's (clients spec *Events*, #424), whose EventNotifier bit the nodeset declares and the loader
@@ -74,6 +95,17 @@ namespace Jde::Opc{
 		const NodeId pumpManual{ (NsIndex)ns, 5005 };
 		if( let sc = UA_Server_writeWriteMask(ua.Ptr(), pumpManual, UA_WRITEMASK_DISPLAYNAME | UA_WRITEMASK_DESCRIPTION); sc )
 			WARNT( ELogTags::App, "Could not set pumpManual's WriteMask ({}):  {}", pumpManual.ToString(), UA_StatusCode_name(sc) );
+		//pumpManual.overspeed (clients spec *Alarms and conditions*, #425):  the demo's alarm condition, declared in the nodeset and taken over by
+		//the server library (Conditions::Add), raised from pumpManual, driven by motorRpm over its HighLimit property and by its Raise method.
+		const NodeId overspeed{ (NsIndex)ns, 5020 }, highLimit{ (NsIndex)ns, 6106 }, raiseCondition_{ (NsIndex)ns, 6110 };
+		try{
+			auto& condition = ua.Conditions().Add( *ua.Ptr(), overspeed, pumpManual );
+			condition.WatchHigh( NodeId{(NsIndex)ns, 6054}, highLimit, 700 );
+			UAε( UA_Server_setMethodNodeCallback(ua.Ptr(), raiseCondition_, &raiseCondition) );
+		}
+		catch( const runtime_error& e ){
+			WARNT( ELogTags::App, "Could not add pumpManual.overspeed ({}):  {}", overspeed.ToString(), e.what() );
+		}
 		//pumpManual._Test.sample's value, a PumpSampleType (clients spec *Structures*, #421):  the type as the loader filed it, its members
 		//from json as a gateway write would set them (Value::Set).  The nodeset carries no value - the loader's xml decode stops short of a
 		//structure of the nodeset's own.
