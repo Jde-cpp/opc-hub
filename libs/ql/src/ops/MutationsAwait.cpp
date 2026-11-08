@@ -21,7 +21,15 @@ namespace Jde::QL{
 				}
 				if( auto array = mutationResult.is_array() ? &mutationResult.get_array() : nullptr; array && array->size() )
 					mutationResult = Json::AsObject( move((*array)[0]) );
-				let available = mutationResult.is_object() ? Combine( mutationResult.get_object(), m.ExtrapolateVariables() ) : m.ExtrapolateVariables();
+				//The columns the mutation answered as it answered them, the arguments only for the columns it has none of - an insert's {id}
+				//beside what was inserted.  Merged in (Combine), a server's read-back took on the arguments' keys and elements:  an
+				//ExpandedNodeId written by uri kept that uri though the server's answer had it as an index, and an array the server clamped
+				//gained the element that was asked for (reviews-issue/423-clients-writes.md W4).
+				auto available = mutationResult.is_object() ? move( mutationResult.get_object() ) : jobject{};
+				for( auto&& [key, value] : m.ExtrapolateVariables() ){
+					if( !available.contains(key) )
+						available.emplace( key, move(value) );
+				}
 				jobject result;
 				auto& returnObject = returnRaw ? result : result[commandName].emplace_object();
 				returnObject = resultRequest->TrimColumns( available );

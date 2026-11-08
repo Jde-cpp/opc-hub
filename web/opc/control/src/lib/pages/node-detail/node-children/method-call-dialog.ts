@@ -5,15 +5,14 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { MatSelectModule } from '@angular/material/select';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { errorMessage } from 'jde-framework';
-import { Argument, argumentValue, CallResult, MethodArguments } from '../../../model/method';
+import { Argument, CallResult, MethodArguments } from '../../../model/method';
 import { Method, UaNode } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { isBad, statusIcon } from '../../../model/status-code';
 import { StatusCode } from '../../../model/types';
 import { Value } from '../../../model/value';
+import { ValueEditor } from '../value-editor/value-editor';
 
 //what the dialog opens on:  the object and its method, how to read the method's arguments and how to call it, so a spec stands
 //in for the gateway with two functions
@@ -25,13 +24,13 @@ export type MethodCallDialogData = {
 	names?:( codes:StatusCode[] )=>void;//asks for the names of the statuses the server answered, so a refusal reads by name
 };
 
-//A Method row's Call (clients spec *Methods*, #318):  one editor per input argument, named and described as the server
-//declares them, the call's status, each argument's where the server refused one, and the outputs by name.  It stays open on
-//an answer, good or refused, for another go with the arguments as they were.
+//A Method row's Call (clients spec *Methods*, #318):  one editor per input argument (ValueEditor, the write dialog's), named and
+//described as the server declares them, the call's status, each argument's where the server refused one, and the outputs by name.
+//It stays open on an answer, good or refused, for another go with the arguments as they were.
 @Component({
 	templateUrl: './method-call-dialog.html',
 	styleUrls: ['./method-call-dialog.scss'],
-	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatSlideToggleModule]
+	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, ValueEditor]
 })
 export class MethodCallDialog implements OnInit{
 	dialogRef = inject<MatDialogRef<MethodCallDialog,CallResult|undefined>>( MatDialogRef );
@@ -41,8 +40,7 @@ export class MethodCallDialog implements OnInit{
 
 	arguments = signal<MethodArguments|undefined>( undefined );
 	loadError = signal<string|undefined>( undefined );//the arguments could not be read
-	texts = signal<string[]>( [] );//each input as typed - a number, string, date or json - or an enumeration's chosen id
-	flags = signal<boolean[]>( [] );//a Boolean input's
+	values = signal<( Value|null|undefined )[]>( [] );//each input as its editor holds it:  undefined while the fields hold none
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );//the gateway's refusal of the call
 	result = signal<CallResult|undefined>( undefined );//the server's answer, kept for another go
@@ -51,18 +49,14 @@ export class MethodCallDialog implements OnInit{
 		try{
 			const a = await this.data.arguments();
 			this.arguments.set( a );
-			this.texts.set( a.inputs.map( ()=>"" ) );
-			this.flags.set( a.inputs.map( ()=>false ) );
+			this.values.set( a.inputs.map( ()=>undefined ) );
 		}
 		catch( e ){
 			this.loadError.set( errorMessage( e ) );
 		}
 	}
 	get inputs():Argument[]{ return this.arguments()?.inputs ?? []; }
-	setText( i:number, text:string ){ this.texts.update( t=>t.map( (x, j)=>j==i ? text : x ) ); }
-	setFlag( i:number, flag:boolean ){ this.flags.update( f=>f.map( (x, j)=>j==i ? flag : x ) ); }
-	//each input's value as typed, undefined where the text is no value of its type
-	values = computed<( Value|undefined )[]>( ()=>this.inputs.map( (a, i)=>argumentValue( a, this.texts()[i] ?? "", this.flags()[i] ?? false ) ) );
+	setValue( i:number, v:Value|null|undefined ){ this.values.update( t=>t.map( (x, j)=>j==i ? v : x ) ); }
 	//why the call can't be sent yet, or nothing
 	problem = computed<string|undefined>( ()=>{
 		if( this.loadError() )
@@ -73,7 +67,6 @@ export class MethodCallDialog implements OnInit{
 		return missing.length ? `Enter ${missing.map( a=>a.name ).join( ", " )}.` : undefined;
 	} );
 	label( a:Argument ):string{ return `${a.name} (${a.typeName}${a.isArray ? "[]" : ""})`; }
-	hint( a:Argument ):string{ return a.editor=='json' ? `${a.description} As json, [1, 2] say.`.trim() : a.description; }
 	async apply(){
 		if( this.problem() || this.busy() )
 			return;

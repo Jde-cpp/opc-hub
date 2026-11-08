@@ -76,7 +76,7 @@ export class NodeView extends View{
 			case "name":        return node.name;
 			case "class":       return ENodeClass[node.nodeClass];
 			case "dataType":    return NodeView.dataType( variable );
-			case "snapshot":    return typeof variable?.value=="number" ? variable.value : variable?.value===undefined ? undefined : valueString( variable?.value );
+			case "snapshot":    return variable?.valueName() ?? ( typeof variable?.value=="number" ? variable.value : variable?.value===undefined ? undefined : valueString( variable?.value ) );
 			case "status":      return NodeView.status( variable );
 			case "sourceTime":  return NodeView.time( variable?.sourceTime );
 			case "serverTime":  return NodeView.time( variable?.serverTime );

@@ -183,7 +183,8 @@ describe( 'Gateway readings', ()=>{
 		push( {qualifiedName: {namespaceIndex: 0, name: "Server"}} );
 		push( {extensionObject: {typeId: {namespaceIndex: 0, numeric: 886}, binary: new Uint8Array([0, 255])}} );
 		push( {array: {values: [{int32: 1}, {stringValue: "x"}], dimensions: [], type: 24}} );
-		expect( results.map(r=>r.value) ).toMatchObject( ["Hello", "", "2:Temperature", "Server", {body: new Uint8Array([0, 255])}, [1, "x"]] );
+		expect( results.map(r=>r.value) ).toMatchObject( ["Hello", "", {ns: 2, name: "Temperature"}, {ns: 0, name: "Server"}, {body: new Uint8Array([0, 255])}, [1, "x"]] );//a QualifiedName as REST's {ns, name} (reviews-issue/423-clients-writes.md #10)
+		expect( results.slice( 2, 4 ).map( r=>valueString( r.value ) ) ).toEqual( ["2:Temperature", "0:Server"] );
 		const x = results[4].value as ExtensionObject;
 		expect( x ).toBeInstanceOf( ExtensionObject );
 		expect( valueString(x) ).toBe( "undecoded i=886" );

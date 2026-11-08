@@ -1,0 +1,50 @@
+:host{
+	display: block;
+	min-width: 0;
+}
+mat-form-field{
+	display: block;
+	width: 100%;
+}
+.value-toggle{
+	display: block;
+	margin: .25rem 0 1.25rem;
+}
+/* two fields of one value:  a QualifiedName's index and name, a LocalizedText's text and locale */
+.pair{
+	display: flex;
+	gap: .75rem;
+	mat-form-field{ flex: 1 1 0; }
+	.narrow{ flex: 0 0 7rem; }
+}
+/* an array:  an editor per element, each with its remove beside it, and the add under them */
+.element{
+	display: flex;
+	align-items: center;
+	gap: .25rem;
+	value-editor{ flex: 1 1 0; }
+}
+.add{
+	margin-bottom: .75rem;
+}
+/* a structure:  its members indented under their group, a nested one further */
+.members{
+	padding-inline-start: .75rem;
+	border-inline-start: 2px solid var(--mat-sys-outline-variant);
+	margin-bottom: .5rem;
+}
+:host(.nested) .value-toggle{
+	margin: .25rem 0 .75rem;
+}
+/* the text is no value of the type:  said in the hint's place, in the error colour */
+mat-hint.invalid{
+	color: var(--mat-sys-error);
+}
+.hint, .undecoded{
+	margin: 0 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+.undecoded{
+	font-style: italic;
+}

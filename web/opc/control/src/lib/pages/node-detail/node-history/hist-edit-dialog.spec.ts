@@ -1,11 +1,13 @@
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import Long from 'long';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { DateUtils } from 'jde-framework';
 import { HistEditArgs, HistEditResult } from '../../../model/hist';
 import { OpcError } from '../../../model/opc-error';
 import { EAccess, ETypes, StatusCode } from '../../../model/types';
-import { HistEditDialog, HistEditDialogData, parseStatus } from './hist-edit-dialog';
+import { ValueEditor } from '../value-editor/value-editor';
+import { HistEditDialog, HistEditDialogData } from './hist-edit-dialog';
 import { variable } from 'jde-opc/testing';
 
 const historized = ( i:number, name:string, dataType:ETypes )=>variable( i, name, {dataType: {i: dataType}, historizing: true, userAccessLevel: EAccess.All} );
@@ -24,21 +26,12 @@ const open = ( data:Partial<HistEditDialogData>&{kind:HistEditDialogData["kind"]
 	const fixture = TestBed.createComponent( HistEditDialog );
 	fixture.detectChanges();
 	return { fixture, dialog: fixture.componentInstance, ref,
+		editor: ()=><ValueEditor>fixture.debugElement.query( By.directive( ValueEditor ) )?.componentInstance,
 		edits: ()=>edit.mock.calls.map( ([args])=>args ),
 		closed: ()=>ref.close.mock.calls.map( ([r])=>r ),
 		names: ()=>names.mock.calls.map( ([codes])=>codes ),
 		answerWith: ( a:HistEditResult|Error )=>{ answer = a; } };
 };
-
-describe( 'parseStatus', ()=>{
-	it( 'takes hex or decimal, blank as Good, and nothing else', ()=>{
-		expect( parseStatus( '' ) ).toBeUndefined();
-		expect( parseStatus( ' 0x40940600 ' ) ).toBe( 0x40940600 );
-		expect( parseStatus( '1082130432' ) ).toBe( 0x40800000 );
-		expect( parseStatus( 'Good' ) ).toBeNull();
-		expect( parseStatus( '0x100000000' ) ).toBeNull();
-	} );
-} );
 
 describe( 'HistEditDialog', ()=>{
 	it( 'opens a Replace on the row it was given and sends its node, time, value and the status typed', async ()=>{
@@ -46,10 +39,12 @@ describe( 'HistEditDialog', ()=>{
 		const d = open( {kind: 'replace', preset: {node: Rpm, time, value: 1500}} );
 		expect( d.dialog.node() ).toBe( Rpm );
 		expect( d.dialog.time() ).toBe( DateUtils.toLocalInput( time ) );
-		expect( d.dialog.text() ).toBe( '1500' );
+		expect( d.dialog.value() ).toBe( 1500 );
+		expect( d.editor().kind() ).toBe( 'number' );//the write dialog's editor, by the node's DataType
+		expect( d.editor().text() ).toBe( '1500' );
 		expect( d.dialog.status() ).toBe( '' );
 		expect( d.dialog.problem() ).toBeUndefined();
-		d.dialog.text.set( '1600' );
+		d.editor().setText( '1600' );
 		d.dialog.status.set( '0x40000000' );
 		d.answerWith( {values: [{node: Rpm.nodeId, source: time, status: 0x00A60000}], nodes: [{node: Rpm.nodeId, status: 0}]} );//Good_EntryReplaced
 		await d.dialog.apply();
@@ -62,7 +57,7 @@ describe( 'HistEditDialog', ()=>{
 	it( "sends a row's time to the tick while the field still shows it", async ()=>{
 		const time = new Date( 1700000000000 ), sourceTime = {seconds: 1700000000, nanos: 123400};
 		const d = open( {kind: 'replace', preset: {node: Rpm, time, sourceTime, value: 1500}} );
-		d.dialog.text.set( '1600' );
+		d.dialog.value.set( 1600 );
 		await d.dialog.apply();
 		expect( d.edits()[0] ).toEqual( {kind: 'replace', values: [{node: Rpm.nodeId, source: sourceTime, value: 1600}]} );
 		const later = new Date( 1700000001000 );
@@ -75,9 +70,10 @@ describe( 'HistEditDialog', ()=>{
 		expect( d.dialog.problem() ).toBe( 'Pick a node.' );
 		d.dialog.onNodes( Rpm );
 		expect( d.dialog.problem() ).toBe( 'Enter a value.' );
-		d.dialog.text.set( 'abc' );
+		d.fixture.detectChanges();
+		d.editor().setText( 'abc' );
 		expect( d.dialog.problem() ).toBe( 'Enter a value.' );//not a number for a Double
-		d.dialog.text.set( '2' );
+		d.editor().setText( '2' );
 		d.dialog.status.set( 'Good' );
 		expect( d.dialog.problem() ).toBe( "The status isn't a code - hex with 0x, or decimal." );
 		d.dialog.status.set( '' );
@@ -85,22 +81,35 @@ describe( 'HistEditDialog', ()=>{
 		expect( d.dialog.problem() ).toBe( 'Enter the source time.' );
 		expect( d.dialog.args() ).toBeUndefined();
 	} );
-	//reviews-issue/412-clients-web-fixes.md #3:  a 64-bit integer went as Number(text), which holds 53 bits
+	//reviews-issue/412-clients-web-fixes.md #3:  a 64-bit integer went as Number(text), which holds 53 bits;  the editor hands the
+	//dialog a Long built from the text (#423)
 	it( 'sends a 64-bit integer as a Long from the text, exact past 2^53', ()=>{
 		const big = historized( 3, 'count', ETypes.Int64 );
 		const d = open( {kind: 'replace', nodes: [big], preset: {node: big, time: new Date(1000)}} );
-		d.dialog.text.set( '9007199254740993' );
+		expect( d.dialog.valueType() ).toBe( ETypes.Int64 );
+		d.editor().setText( '9007199254740993' );
 		const value = d.dialog.value();
 		expect( value ).toBeInstanceOf( Long );
 		expect( value!.toString() ).toBe( '9007199254740993' );
-		d.dialog.text.set( '1.5' );
+		d.editor().setText( '1.5' );
 		expect( d.dialog.problem() ).toBe( 'Enter a value.' );
 	} );
 	it( 'takes a Boolean as a toggle, false included', ()=>{
 		const d = open( {kind: 'update', preset: {node: Running, time: new Date(1000)}} );
-		expect( d.dialog.editor() ).toBe( 'boolean' );
+		expect( d.editor().kind() ).toBe( 'boolean' );
 		expect( d.dialog.problem() ).toBeUndefined();
 		expect( d.dialog.args() ).toEqual( {kind: 'update', values: [{node: Running.nodeId, source: new Date(1000), value: false}]} );
+	} );
+	//the editor follows the node picked:  another node's type, and the preset's value for its own node alone
+	it( 'drops the value for another node picked, and keeps the preset\'s for its own', ()=>{
+		const d = open( {kind: 'replace', preset: {node: Rpm, time: new Date(1000), value: 1500}} );
+		d.dialog.onNodes( Running );
+		d.fixture.detectChanges();
+		expect( d.dialog.valueType() ).toBe( ETypes.Boolean );
+		expect( d.editor().kind() ).toBe( 'boolean' );
+		expect( d.dialog.value() ).toBe( false );
+		d.dialog.onNodes( Rpm );
+		expect( d.dialog.value() ).toBe( 1500 );
 	} );
 	//a value the server refused shows beside the fields, by name once the name arrives, and the dialog stays open for another go
 	it( 'stays open on a refusal and shows it', async ()=>{

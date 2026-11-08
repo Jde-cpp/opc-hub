@@ -1,0 +1,24 @@
+@use '../../status';
+
+mat-form-field{
+	display: block;
+	width: 100%;
+}
+.hint{
+	margin: 0 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+/* the server's or the gateway's refusal */
+.refused{
+	@include status.refused( .75rem 0 0 );
+}
+mat-dialog-actions{
+	gap: 12px;
+	justify-content: flex-end;
+}
+.problem{
+	flex: 1 1 auto;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}

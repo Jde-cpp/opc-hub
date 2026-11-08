@@ -54,11 +54,13 @@ export class HistTable{
 		...(this.modified() ? ['modType', 'modTime', 'modUser'] : ['flags']),
 		...(!this.modified() && this.editable().length ? ['actions'] : [])
 	] );
-	nodeName( id:NodeId ):string{ return this.nodes().find( n=>n.key==id.key )?.name ?? id.toString(); }
+	#byKey = computed( ()=>new Map( this.nodes().map( n=>[n.key, n] ) ) );//a row's node without a scan of them per row (reviews-issue/423-clients-writes.md #12)
+	nodeName( id:NodeId ):string{ return this.#byKey().get( id.key )?.name ?? id.toString(); }
 	status( v:HistValue ):string{ return v.status ? OpcError.text( v.status ) : "Good"; }
 	statusTooltip( v:HistValue ):string{ return v.status ? `${scHex( v.status )} - ${this.status( v )}` : ""; }
 	qualityIcon( v:HistValue ){ return statusIcon( v.status ); }
-	valueText( v:HistValue ):string{ return valueString( v.value ); }
+	//an enumeration of the server's own, or a StatusCode, by its name, as the Children tab's cell and the watch list show one (Variable.valueName)
+	valueText( v:HistValue ):string{ return this.#byKey().get( v.node.key )?.valueName( v.value ) ?? valueString( v.value ); }
 	readonly structured = StructureTable.shows;//a value the cell's StructureTable shows (clients spec *Structures*)
 	//what a value is besides a reading:  a bound returnBounds asked for, a group's heartbeat, or an edit's record in modified mode
 	flags( v:HistValue ):string[]{

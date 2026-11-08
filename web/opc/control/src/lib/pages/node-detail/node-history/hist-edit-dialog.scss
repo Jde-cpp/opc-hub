@@ -20,10 +20,6 @@ mat-form-field{
 	gap: .25rem;
 	mat-form-field{ flex: 1 1 0; }
 }
-.value-toggle{
-	display: block;
-	margin: .25rem 0 1.25rem;
-}
 /* the server's answer */
 .refused, .results li{
 	@include status.refused( 0 );

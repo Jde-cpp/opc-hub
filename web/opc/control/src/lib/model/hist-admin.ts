@@ -101,7 +101,7 @@ export function parseHistNodeText( text:string ):ExNodeId|undefined{
 		}
 	}
 	try{
-		return new ExNodeId( NodeId.fromUaString( t ).toJson() );
+		return ExNodeId.fromUaString( t );//with a `svr=` histNodeText writes for a server index (reviews-issue/423-clients-writes.md #9)
 	}
 	catch{
 		return undefined;

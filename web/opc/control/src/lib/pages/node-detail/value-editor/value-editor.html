@@ -1,0 +1,96 @@
+@switch( kind() ){
+	@case( 'boolean' ){
+		<mat-slide-toggle class="value-toggle" [checked]="flag()" (change)="setFlag($event.checked)" [disabled]="disabled()" [attr.aria-label]="label()">{{ nested() ? "" : label() + ": " }}{{ flag() ? "true" : "false" }}</mat-slide-toggle>
+	}
+	@case( 'enum' ){
+		<mat-form-field>
+			<mat-label>{{ label() }}</mat-label>
+			<mat-select [value]="choice()" (selectionChange)="setChoice($event.value)" [disabled]="disabled()">
+				@for( option of enumValues(); track option.id ){
+					<mat-option [value]="option.id">{{ option.name }}</mat-option>
+				}
+			</mat-select>
+		</mat-form-field>
+	}
+	@case( 'number' ){
+		<mat-form-field>
+			<mat-label>{{ label() }}</mat-label>
+			<input matInput type="number" step="any" [value]="text()" (input)="setText($any($event.target).value)" [disabled]="disabled()">
+			@if( invalid(); as why ){<mat-hint class="invalid">{{ why }}</mat-hint>}
+		</mat-form-field>
+	}
+	@case( 'datetime' ){
+		<mat-form-field>
+			<mat-label>{{ label() }}</mat-label>
+			<input matInput type="datetime-local" step="0.001" [value]="text()" (input)="setText($any($event.target).value)" [disabled]="disabled()">
+			@if( invalid(); as why ){<mat-hint class="invalid">{{ why }}</mat-hint>}
+		</mat-form-field>
+	}
+	@case( 'xml' ){
+		<mat-form-field>
+			<mat-label>{{ label() }}</mat-label>
+			<textarea matInput rows="3" [value]="text()" (input)="setText($any($event.target).value)" [disabled]="disabled()"></textarea>
+		</mat-form-field>
+	}
+	@case( 'qualifiedName' ){<!--Part 3 §8.3:  a namespace index and a name-->
+		<div class="pair">
+			<mat-form-field class="narrow">
+				<mat-label>Namespace</mat-label>
+				<input matInput type="number" min="0" step="1" [value]="text2()" (input)="setText2($any($event.target).value)" [disabled]="disabled()" [attr.aria-label]="label() + ' namespace index'">
+			</mat-form-field>
+			<mat-form-field>
+				<mat-label>{{ label() }}</mat-label>
+				<input matInput type="text" [value]="text()" (input)="setText($any($event.target).value)" [disabled]="disabled()">
+				@if( invalid(); as why ){<mat-hint class="invalid">{{ why }}</mat-hint>}
+			</mat-form-field>
+		</div>
+	}
+	@case( 'localizedText' ){<!--Part 3 §8.5:  a text, and the locale it is in;  none keeps the locale the node's text has-->
+		<div class="pair">
+			<mat-form-field>
+				<mat-label>{{ label() }}</mat-label>
+				<input matInput type="text" [value]="text()" (input)="setText($any($event.target).value)" [disabled]="disabled()">
+			</mat-form-field>
+			<mat-form-field class="narrow">
+				<mat-label>Locale</mat-label>
+				<input matInput type="text" [value]="text2()" (input)="setText2($any($event.target).value)" [disabled]="disabled()" placeholder="as is" [attr.aria-label]="label() + ' locale'">
+			</mat-form-field>
+		</div>
+	}
+	@case( 'array' ){
+		<div class="elements" role="group" [attr.aria-label]="label()">
+			@for( e of elements(); track $index ){
+				<div class="element">
+					<value-editor [type]="elementType()" [enumeration]="enumeration()" [value]="e" (valueChange)="setElement($index, $event)" [label]="label() + ' ' + ($index+1)" [disabled]="disabled()" [nested]="true"></value-editor>
+					@if( !fixedLength() ){
+						<button matIconButton type="button" (click)="removeElement($index)" [disabled]="disabled()" [attr.aria-label]="'Remove ' + label() + ' ' + ($index+1)"><mat-icon aria-hidden="true" fontIcon="remove_circle_outline"></mat-icon></button>
+					}
+				</div>
+			}
+			@if( !fixedLength() ){
+				<button matButton type="button" class="add" (click)="addElement()" [disabled]="disabled()"><mat-icon aria-hidden="true" fontIcon="add"></mat-icon>Add an element</button>
+			}
+			@else if( !elements().length ){
+				<p class="hint">No element in the range.</p>
+			}
+		</div>
+	}
+	@case( 'structure' ){<!--each member as its own value says, a nested structure a group inside (clients spec *Structures*)-->
+		<div class="members" role="group" [attr.aria-label]="label()">
+			@for( m of members(); track m.name ){
+				<value-editor [value]="m.value" (valueChange)="setMember($index, $event)" [label]="m.name" [disabled]="disabled()" [nested]="true"></value-editor>
+			}
+		</div>
+	}
+	@case( 'undecoded' ){<!--a body no type explains:  nothing to edit, and the reason a keyboard reaches too-->
+		<p class="undecoded" tabindex="0" [matTooltip]="undecoded()?.tooltip ?? ''">{{ label() }}: {{ undecoded()?.toString() }}</p>
+	}
+	@default{<!--text, guid, byteString, nodeId, expandedNodeId, statusCode, json:  text in the type's spelling-->
+		<mat-form-field>
+			<mat-label>{{ label() }}</mat-label>
+			<input matInput type="text" [value]="text()" (input)="setText($any($event.target).value)" [disabled]="disabled()" [placeholder]="kind()=='json' ? jsonPlaceholder : ''">
+			@if( invalid(); as why ){<mat-hint class="invalid">{{ why }}</mat-hint>}
+			@else if( hint(kind()); as h ){<mat-hint>{{ h }}</mat-hint>}
+		</mat-form-field>
+	}
+}

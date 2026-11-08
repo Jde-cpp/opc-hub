@@ -1,3 +1,4 @@
+import { ExNodeId } from './ex-node-id';
 import { NodeId } from './node-id';
 
 describe( 'node-id', ()=>{
@@ -37,5 +38,20 @@ describe( 'NodeId.fromUaString', ()=>{
 		expect( ()=>NodeId.fromUaString("pump1") ).toThrow( /not a NodeId/ );
 		for( const s of ["i=abc", "i=", "ns=2;i=1.5", "ns=2;s="] )
 			expect( ()=>NodeId.fromUaString(s) ).toThrow( /not a NodeId/ );
+	} );
+} );
+
+//clients spec *Values and writes* (#423):  the ExpandedNodeId editor's spelling, the standard's, as the gateway prints one
+describe( 'ExNodeId spelling', ()=>{
+	it( 'writes and reads svr= and nsu= ahead of the node, each where set', ()=>{
+		expect( new ExNodeId( {ns: 2, i: 7} ).uaString() ).toBe( 'ns=2;i=7' );
+		expect( new ExNodeId( {ns: 0, i: 7, nsu: 'urn:x'} ).uaString() ).toBe( 'nsu=urn:x;i=7' );
+		expect( new ExNodeId( {ns: 3, s: 'a', nsu: 'urn:x', serverIndex: 1} ).uaString() ).toBe( 'svr=1;nsu=urn:x;s=a' );//the index yields to the uri
+		const x = ExNodeId.fromUaString( ' svr=2;nsu=urn:jde:pumps;i=5005 ' );
+		expect( [x.serverIndex, x.nsu, x.ns, x.id] ).toEqual( [2, 'urn:jde:pumps', 0, 5005] );
+		const plain = ExNodeId.fromUaString( 'ns=2;s=tag' );
+		expect( [plain.serverIndex, plain.nsu, plain.ns, plain.id] ).toEqual( [undefined, undefined, 2, 'tag'] );
+		expect( ()=>ExNodeId.fromUaString( 'nsu=urn:x;nonsense' ) ).toThrow();
+		expect( new ExNodeId( {i: 7, serverindex: 3} ).serverIndex ).toBe( 3 );//the gateway's spelling of the index
 	} );
 } );

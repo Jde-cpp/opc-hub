@@ -1,6 +1,9 @@
 import Long from 'long';
-import { ExtensionObject, isStructure, shortestFloat, toReading, toValue, valueJson, valueString } from './value';
+import { Guid } from 'jde-framework';
+import { bytesOfHex, ExtensionObject, hexOf, isStructure, parseGuid, shortestFloat, toReading, toValue, valueJson, valueString } from './value';
+import { ExNodeId } from './ex-node-id';
 import { NodeId } from './node-id';
+import { OpcError } from './opc-error';
 
 //the gateway's three shapes (Value::ToJson):  the bare value for Good, {v,sc} for any other code that is not Bad, {sc} for Bad.
 describe( 'toReading', ()=>{
@@ -69,6 +72,11 @@ describe( 'valueString', ()=>{
 		expect( valueString(<any>{ns: 2, i: 5}) ).toBe( 'ns=2;i=5' );//REST's NodeId, as a push's NodeId spells it
 		expect( valueString(new NodeId({ns: 2, i: 5})) ).toBe( 'ns=2;i=5' );
 		expect( valueString(<any>{ns: 2, name: "Speed"}) ).toBe( '2:Speed' );
+		//reviews-issue/423-clients-writes.md #6:  a push's ExpandedNodeId and ByteString read as REST's do - the uri kept, the bytes hex
+		expect( valueString(<any>{nsu: 'urn:jde:pumps', i: 5005}) ).toBe( 'nsu=urn:jde:pumps;i=5005' );
+		expect( valueString(new ExNodeId({ns: 0, i: 5005, nsu: 'urn:jde:pumps'})) ).toBe( 'nsu=urn:jde:pumps;i=5005' );
+		expect( valueString(<any>{ns: 3, s: 'a', serverindex: 2}) ).toBe( 'svr=2;ns=3;s=a' );
+		expect( valueString(new Uint8Array([1, 2, 3])) ).toBe( '010203' );
 		expect( valueString(<any>{}) ).toBe( '' );
 	} );
 	//clients plan 8b (#422):  a body no type explains - a pre-1.04 server's, say - says so, never its bytes
@@ -144,5 +152,34 @@ describe( 'valueJson', ()=>{
 		const x = new ExtensionObject( new NodeId({ns: 2, i: 5001}), new Uint8Array([1, 2]) );
 		expect( ()=>valueJson(x) ).toThrow( /ns=2;i=5001/ );
 		expect( ()=>valueJson([1, x]) ).toThrow();
+	} );
+	//clients spec *Values and writes* (#423):  each built-in type as Value::Set reads it - a NodeId whole, with its namespace, where it
+	//went as the identifier alone;  an ExpandedNodeId with its uri and server index, the gateway's spelling;  a Guid its text;  a
+	//ByteString {b: base64};  a structure its members, each this way
+	it( 'spells each kind as the gateway reads it', ()=>{
+		expect( valueJson(new NodeId({ns: 2, s: 'tag'})) ).toEqual( {ns: 2, s: 'tag'} );
+		expect( valueJson(new ExNodeId({ns: 0, i: 7, nsu: 'urn:x', serverIndex: 2})) ).toEqual( {ns: 0, i: 7, nsu: 'urn:x', serverindex: 2} );
+		expect( valueJson(new ExNodeId({ns: 2, i: 7})) ).toEqual( {ns: 2, i: 7} );
+		expect( valueJson(new Guid('0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9')) ).toBe( '0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9' );
+		expect( valueJson(new Uint8Array([1, 2, 3])) ).toEqual( {b: 'AQID'} );
+		expect( valueJson(new OpcError(0x80340000, '', '', undefined)) ).toEqual( {sc: 0x80340000} );
+		expect( valueJson({Rpm: 1, Id: new NodeId({ns: 2, i: 5}), Note: null, Ids: [new NodeId({i: 1})]}) ).toEqual( {Rpm: 1, Id: {ns: 2, i: 5}, Note: null, Ids: [{ns: 0, i: 1}]} );
+		expect( valueJson({ns: 2, name: 'Speed'}) ).toEqual( {ns: 2, name: 'Speed'} );//a QualifiedName, as it is
+	} );
+} );
+
+//the ByteString and Guid editors' text (clients spec *Values and writes*, #423)
+describe( 'hexOf, bytesOfHex and parseGuid', ()=>{
+	it( 'spell bytes as hex and read them back, refusing an odd count or a non-digit', ()=>{
+		expect( hexOf(new Uint8Array([10, 11, 255])) ).toBe( '0a0bff' );
+		expect( bytesOfHex(' 0A0bFF ') ).toEqual( new Uint8Array([10, 11, 255]) );
+		expect( bytesOfHex('') ).toEqual( new Uint8Array([]) );
+		expect( bytesOfHex('0a0') ).toBeUndefined();
+		expect( bytesOfHex('zz') ).toBeUndefined();
+	} );
+	it( 'reads a Guid as 8-4-4-4-12 hex digits', ()=>{
+		expect( parseGuid(' 0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9 ')?.toString() ).toBe( '0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9' );
+		expect( parseGuid('0a1b2c3d-4e5f-6071-8293') ).toBeUndefined();
+		expect( parseGuid('0a1b2c3d4e5f60718293a4b5c6d7e8f9') ).toBeUndefined();
 	} );
 } );

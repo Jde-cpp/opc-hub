@@ -1,9 +1,7 @@
-import { DateUtils, Timestamp } from "jde-framework";
-import { qlTime } from "./hist";
 import { Enum } from "./enum";
 import { NodeId, NodeIdJson } from "./node-id";
 import { ETypes, StatusCode } from "./types";
-import { numberValue, toValue, Value, valueString } from "./value";
+import { toValue, Value, valueString } from "./value";
 
 //One of a method's InputArguments or OutputArguments as `method( opc, id )` answers it (MethodArguments::ToJson):  named, typed
 //and described as the server declares it.  The data type reads as a Variable's does - a namespace-0 id is one of ETypes,
@@ -30,28 +28,9 @@ export class Argument{
 	enum?:Enum;//an enumeration of the server's own:  its values, from `__type` (Gateway.methodArguments)
 	get isArray():boolean{ return this.valueRank>=0; }//Part 3 §8.6:  -1 a scalar, -2 any, -3 a scalar or a one-dimensional array;  0 and up an array
 	get isEnumeration():boolean{ return this.customDataType!==undefined && this.baseType==ETypes.Enumeration; }
-	//the type the editor works in:  the data type, or the base of a type of the server's own
+	//the type the editor works in (ValueEditor):  the data type, or the base of a type of the server's own - none where the server names
+	//no base, and the value is typed as json
 	get valueType():ETypes|undefined{ return this.customDataType ? this.baseType : this.dataType; }
-	//the editor the argument takes, as the Children tab's cells and the hist-edit dialog have it:  an array, or a type with no
-	//editor of its own, as json text (Phase 9's editors replace this);  an enumeration of the server's own as a choice of its values,
-	//or the number it is sent as where the server would not name them;  any other type of the server's own as its base's, and as json
-	//where its base is unknown.
-	get editor():ArgumentEditor{
-		if( this.isArray )
-			return 'json';
-		if( this.isEnumeration )
-			return this.enum?.enumValues.length ? 'enum' : 'number';
-		const t = this.valueType;
-		if( t===undefined )
-			return 'json';
-		if( t==ETypes.Boolean )
-			return 'boolean';
-		if( Argument.numeric.includes( t ) )
-			return 'number';
-		if( t==ETypes.DateTime || t==ETypes.UtcTime )
-			return 'datetime';
-		return 'text';
-	}
 	//what the label says of the type:  the built-in's name, an enumeration's own, or the server's id with the base it goes as
 	get typeName():string{
 		if( !this.customDataType )
@@ -68,25 +47,6 @@ export class Argument{
 			return `[${v.map( x=>this.valueText( x ) ).join( ", " )}]`;
 		const named = this.enum?.enumValues.find( e=>e.id===v );
 		return named ? named.name : valueString( v );
-	}
-	private static readonly numeric = [ETypes.SByte, ETypes.Byte, ETypes.Int16, ETypes.UInt16, ETypes.Int32, ETypes.UInt32, ETypes.Int64, ETypes.UInt64, ETypes.Float, ETypes.Double, ETypes.Number, ETypes.Integer, ETypes.UInteger, ETypes.Enumeration, ETypes.Duration];
-}
-export type ArgumentEditor = 'boolean'|'number'|'enum'|'datetime'|'text'|'json';
-
-//the value an argument's editor holds as typed, or undefined where the text is no value of its type:  a number box's text as a
-//write sends it (numberValue), a date as the Timestamp Value::Set reads, json text parsed for an array
-export function argumentValue( a:Argument, text:string, flag:boolean ):Value|undefined{
-	switch( a.editor ){
-	case 'boolean': return flag;
-	case 'number': return numberValue( text, a.valueType );
-	case 'enum': return text=="" ? undefined : +text;//the chosen value's id, the Int32 the gateway sends
-	case 'datetime':{ const d = DateUtils.fromLocalInput( text ); return d ? <Timestamp>qlTime( d ) : undefined; }//the {seconds,nanos} Value::Set reads, as the hist-edit dialog sends one
-	case 'json':
-		if( !text.trim() )
-			return undefined;
-		try{ return JSON.parse( text ); }
-		catch{ return undefined; }
-	default: return text;
 	}
 }
 

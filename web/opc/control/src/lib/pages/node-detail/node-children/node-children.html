@@ -65,44 +65,21 @@
 						@else if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
 							<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
 						}
-						@else if( structured(r.value) ){<!--a structure the gateway decoded by member, an array of them, or a body no type explains (clients spec *Structures*), whatever the DataType says - a BaseDataType variable's too.  Read-only until the write dialog edits it member by member (clients plan, Phase 9)-->
-							<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.stale"></structure-table>
-						}
-						@else if( r.dataType==ETypes.Boolean && !r.isArray ){
-							<mat-checkbox [checked]="r.value" (change)="toggleValue(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale" [aria-label]="r.name"></mat-checkbox>
-						}
-						@else if( r.isInteger && !r.isArray ){
-							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeDouble(r,$event);">
-						}
-						@else if( r.isUnsigned && !r.isArray ){
-							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeDouble(r,$event);">
-						}
-						@else if( r.isFloating && !r.isArray ){
-							<input type=number [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeDouble(r,$event);">
-						}
-						@else if( [ETypes.String, ETypes.LocalizedText].includes(r.dataType) && !r.isArray ){
-							<input type="text" [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeString(r,$event);">
-						}
-						@else if( r.dataType==ETypes.BaseDataType && !r.isArray ){
-							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
-						}
-						@else if( [ETypes.DateTime, ETypes.UtcTime].includes(r.dataType) && !r.isArray ){<!--date and time, local, to the millisecond-->
-							<input #box type="datetime-local" step="0.001" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (blur)="changeDate(r,$event);" (keydown.enter)="box.blur();">
-						}
-						@else if( isEnum(r) && !r.isArray ){
-							<mat-select [value]=r.value (selectionChange)="changeEnum(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale" [aria-label]="r.name">
-								@for( option of r.customDataType.enumValues; track option.id ){
-									<mat-option [value]=option.id>{{option.name}}</mat-option>
-								}
-							</mat-select>
-						}
-						@else if( r.customDataType ){<!--an enumeration whose values could not be read:  the value as text-->
-							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
+						@else{<!--the reading as text, an enumeration by name (NodeView.enumName), a structure as a table of its members (clients spec *Structures*);  the Write beside it opens the dialog that types the value as the DataType says (clients spec *Values and writes*, #423)-->
+							@if( structured(r.value) ){
+								<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.stale"></structure-table>
+							}
+							@else{
+								<span class="value-text" [class.stale]="r.stale" [title]="cell(r, 'snapshot')">{{cell(r, "snapshot")}}</span>
+							}
+							@if( r.isVariable && !readOnly(r) ){<!--a Variable's alone, as the row menu's:  an Object's or a type's has no Value to write-->
+								<button matIconButton type="button" class="write-button" (click)="write(r)" [attr.aria-label]="'Write ' + r.name" matTooltip="Write a value"><mat-icon aria-hidden="true" fontIcon="edit"></mat-icon></button>
+							}
 						}
 						<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the
-								Gateways help promise, and against a server that reports the node read-only the box simply reverted.  A disabled control
-								takes no pointer events, so the reason cannot ride on the control itself;  it rides on a lock beside it, the same
-								focusable icon-with-tooltip shape the quality icon below uses, so a keyboard reaches it too.-->
+								Gateways help promise, and against a server that reports the node read-only the box simply reverted.  A cell with no
+								Write says why on a lock beside it, the same focusable icon-with-tooltip shape the quality icon below uses, so a keyboard
+								reaches it too.-->
 						@if( readOnlyReason(r); as reason ){
 							<mat-icon class="lock-icon" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="reason" [matTooltip]="reason" fontIcon="lock"></mat-icon>
 						}
@@ -182,6 +159,9 @@
 }
 <mat-menu #rowMenu="matMenu">
 	<ng-template matMenuContent let-row="row">
+		@if( !readOnly(row) ){
+			<button mat-menu-item type="button" (click)="write(row)"><mat-icon aria-hidden="true" fontIcon="edit"></mat-icon>Write…</button>
+		}
 		<button mat-menu-item type="button" (click)="watch(row)"><mat-icon aria-hidden="true" fontIcon="visibility"></mat-icon>Watch</button>
 	</ng-template>
 </mat-menu>

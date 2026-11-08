@@ -266,7 +266,7 @@ export class NodeHistory implements OnDestroy{
 		const page = await this.#history.read( this.gateway, this.histSource(), args );
 		if( !this.#generation.is(generation) )
 			return undefined;
-		this.#fetchNames( [...page.values.map( v=>v.status ), ...page.nodes.map( n=>n.status )] );
+		this.#fetchNames( [...page.values.map( v=>v.status ), ...page.nodes.map( n=>n.status ), ...this.#valueCodes( page.values )] );
 		return page;
 	}
 	//a page's values merged in, or a refresh's in place of what was held
@@ -417,7 +417,7 @@ export class NodeHistory implements OnDestroy{
 		this.values.update( v=>mergeHistValues( v, values ) );
 		if( this.#tail )
 			this.#tail = mergeHistValues( this.#tail, values );
-		this.#fetchNames( values.map( v=>v.status ) );
+		this.#fetchNames( [...values.map( v=>v.status ), ...this.#valueCodes( values )] );
 	}
 	//Load earlier done, or failed, leaves nothing to read before the values:  one targeted there goes in, not to a read
 	#modify( ms:HistPushedModification[] ){
@@ -425,7 +425,8 @@ export class NodeHistory implements OnDestroy{
 		this.values.update( v=>applyHistModifications( v, ms, whole ) );
 		if( this.#tail )
 			this.#tail = applyHistModifications( this.#tail, ms, whole );
-		this.#fetchNames( ms.flatMap( m=>m.value ? [m.value.status] : [] ) );
+		const modified = ms.flatMap( m=>m.value ? [m.value] : [] );
+		this.#fetchNames( [...modified.map( v=>v.status ), ...this.#valueCodes( modified )] );
 	}
 	//a group's snapshot paging in holds `loading` until its last page, a drop or an end, and an unsubscribe lets it go:  Live
 	//turned off mid-snapshot left the tab loading (historian-live-trend #1).  A read's loading is the read's own.
@@ -439,6 +440,11 @@ export class NodeHistory implements OnDestroy{
 		this.dropped.set( false );
 		if( this.#snapshotting )
 			this.#paging( false );
+	}
+	//the values of a StatusCode node, which the table shows by name (Variable.valueName), asked for beside the statuses
+	#valueCodes( values:HistValue[] ):StatusCode[]{
+		const byKey = new Map( this.selected().map( n=>[n.key, n] ) );
+		return values.flatMap( v=>byKey.get( v.node.key )?.valueNamePending( v.value ) ? [<StatusCode>v.value] : [] );
 	}
 	//a code's name comes from the gateway on request - OpcError.statusCodeText registers it, updateErrorCodes fetches the lot - so
 	//one fetch per page, and a repaint when it lands.  Each code registered, not only up to the first unnamed.

@@ -63,24 +63,25 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( StatusCode(missing), UA_STATUSCODE_BADARGUMENTSMISSING ) << serialize( missing );
 	}
 
-	//An argument of a type the gateway cannot encode - a NodeId here - is refused as unsupported in its slot, not as a mismatch of
-	//the user's value (reviews-issue/318-opc-calls.md #5):  no text is a NodeId to it, a valid one included.  The method is added
-	//to the embedded server for the test, under pumpManual;  its callback is never reached.
+	//An argument of a type the gateway cannot encode - a DataValue here, since #423 made every built-in value type settable - is refused
+	//as unsupported in its slot, not as a mismatch of the user's value (reviews-issue/318-opc-calls.md #5):  no json is a DataValue to
+	//it, a plausible one included.  The method is added to the embedded server for the test, under pumpManual;  its callback is never
+	//reached.
 	TEST_F( CallTests, AnArgumentTypeTheGatewayCannotSendIsUnsupported ){
 		auto& ua = Server::GetUAServer();
 		UA_Argument argument; UA_Argument_init( &argument );
-		argument.name = UA_STRING( (char*)"node" );
-		argument.dataType = UA_TYPES[UA_TYPES_NODEID].typeId;
+		argument.name = UA_STRING( (char*)"reading" );
+		argument.dataType = UA_TYPES[UA_TYPES_DATAVALUE].typeId;
 		argument.valueRank = UA_VALUERANK_SCALAR;
 		UA_MethodAttributes attributes = UA_MethodAttributes_default;
 		attributes.executable = attributes.userExecutable = true;
-		const UA_NodeId id = UA_NODEID_STRING( PumpsNs(), (char*)"CallTests.nodeIdArgument" );
+		const UA_NodeId id = UA_NODEID_STRING( PumpsNs(), (char*)"CallTests.dataValueArgument" );
 		const NodeId method{ id };//copied:  from the prvalue it would take the literal, and free it.
-		ASSERT_EQ( UA_Server_addMethodNode(ua.Ptr(), method, _object, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(PumpsNs(), (char*)"nodeIdArgument"), attributes,
+		ASSERT_EQ( UA_Server_addMethodNode(ua.Ptr(), method, _object, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QUALIFIEDNAME(PumpsNs(), (char*)"dataValueArgument"), attributes,
 			[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void*, const UA_NodeId*, void*, uint, const UA_Variant*, uint, UA_Variant* )->UA_StatusCode{ return UA_STATUSCODE_GOOD; },
 			1, &argument, 0, nullptr, nullptr, nullptr), UA_STATUSCODE_GOOD );
 		absl::Cleanup remove = [&]{ UA_Server_deleteNode( ua.Ptr(), method, true ); };
-		let y = Call( _object, method, {"ns=2;i=5"} );
+		let y = Call( _object, method, {jobject{{"v", 1}, {"sc", 0}}} );
 		EXPECT_EQ( StatusCode(y), UA_STATUSCODE_BADINVALIDARGUMENT ) << serialize( y );
 		EXPECT_EQ( InputResults(y), Statuses{UA_STATUSCODE_BADNOTSUPPORTED} ) << serialize( y );
 	}

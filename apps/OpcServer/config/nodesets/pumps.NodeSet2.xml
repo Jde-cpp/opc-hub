@@ -26,7 +26,10 @@
   PumpSampleType, a structure of the server's own - a Double, a Boolean, a String, a Range and a Double array - and the
   `sample` variable of it, whose value the OpcServer writes after the load (nodesets.cpp ConfigurePumps), since a
   nodeset's xml value of a type of its own is more than the loader decodes.  The type's DefaultBinary encoding object is
-  what the loader reads its binary encoding id from.
+  what the loader reads its binary encoding id from.  Beside it a writable variable per built-in type, Boolean (i=1) to
+  LocalizedText (i=21), each at ns=1;i=6061+<type id> and named for its type, and `int32Array` (ns=1;i=6083), an Int32[] of
+  any length:  what WriteTests write each type, an array and an index range to (#423).  Each starts at a value of its type
+  but xmlElement, which open62541 decodes no xml value for.
 -->
 <UANodeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
   <NamespaceUris>
@@ -53,6 +56,24 @@
     <Alias Alias="HasComponent">i=47</Alias>
     <Alias Alias="Argument">i=296</Alias>
     <Alias Alias="HasEncoding">i=38</Alias>
+    <Alias Alias="SByte">i=2</Alias>
+    <Alias Alias="Byte">i=3</Alias>
+    <Alias Alias="Int16">i=4</Alias>
+    <Alias Alias="UInt16">i=5</Alias>
+    <Alias Alias="Int32">i=6</Alias>
+    <Alias Alias="UInt32">i=7</Alias>
+    <Alias Alias="Int64">i=8</Alias>
+    <Alias Alias="UInt64">i=9</Alias>
+    <Alias Alias="Float">i=10</Alias>
+    <Alias Alias="DateTime">i=13</Alias>
+    <Alias Alias="Guid">i=14</Alias>
+    <Alias Alias="ByteString">i=15</Alias>
+    <Alias Alias="XmlElement">i=16</Alias>
+    <Alias Alias="NodeId">i=17</Alias>
+    <Alias Alias="ExpandedNodeId">i=18</Alias>
+    <Alias Alias="StatusCode">i=19</Alias>
+    <Alias Alias="QualifiedName">i=20</Alias>
+    <Alias Alias="LocalizedText">i=21</Alias>
   </Aliases>
   <UADataType NodeId="ns=1;i=3001" BrowseName="1:PumpSampleType">
     <DisplayName>PumpSampleType</DisplayName>
@@ -474,6 +495,28 @@
       <Reference ReferenceType="HasTypeDefinition">i=58</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6061</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6062</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6063</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6064</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6065</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6066</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6067</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6068</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6069</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6070</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6071</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6072</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6073</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6074</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6075</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6076</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6077</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6078</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6079</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6080</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6081</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6082</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6083</Reference>
     </References>
   </UAObject>
   <UAVariable NodeId="ns=1;i=6061" BrowseName="1:sample" ParentNodeId="ns=1;i=5010" DataType="ns=1;i=3001" AccessLevel="3">
@@ -483,6 +526,243 @@
       <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
     </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6062" BrowseName="1:boolean" ParentNodeId="ns=1;i=5010" DataType="Boolean" AccessLevel="3">
+    <DisplayName>boolean</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Boolean>true</uax:Boolean>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6063" BrowseName="1:sbyte" ParentNodeId="ns=1;i=5010" DataType="SByte" AccessLevel="3">
+    <DisplayName>sbyte</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:SByte>-5</uax:SByte>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6064" BrowseName="1:byte" ParentNodeId="ns=1;i=5010" DataType="Byte" AccessLevel="3">
+    <DisplayName>byte</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Byte>200</uax:Byte>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6065" BrowseName="1:int16" ParentNodeId="ns=1;i=5010" DataType="Int16" AccessLevel="3">
+    <DisplayName>int16</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Int16>-300</uax:Int16>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6066" BrowseName="1:uint16" ParentNodeId="ns=1;i=5010" DataType="UInt16" AccessLevel="3">
+    <DisplayName>uint16</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:UInt16>60000</uax:UInt16>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6067" BrowseName="1:int32" ParentNodeId="ns=1;i=5010" DataType="Int32" AccessLevel="3">
+    <DisplayName>int32</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Int32>-70000</uax:Int32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6068" BrowseName="1:uint32" ParentNodeId="ns=1;i=5010" DataType="UInt32" AccessLevel="3">
+    <DisplayName>uint32</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>4000000000</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6069" BrowseName="1:int64" ParentNodeId="ns=1;i=5010" DataType="Int64" AccessLevel="3">
+    <DisplayName>int64</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Int64>9007199254740993</uax:Int64>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6070" BrowseName="1:uint64" ParentNodeId="ns=1;i=5010" DataType="UInt64" AccessLevel="3">
+    <DisplayName>uint64</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:UInt64>18446744073709551615</uax:UInt64>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6071" BrowseName="1:float" ParentNodeId="ns=1;i=5010" DataType="Float" AccessLevel="3">
+    <DisplayName>float</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Float>1.5</uax:Float>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6072" BrowseName="1:double" ParentNodeId="ns=1;i=5010" DataType="Double" AccessLevel="3">
+    <DisplayName>double</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Double>2.25</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6073" BrowseName="1:string" ParentNodeId="ns=1;i=5010" DataType="String" AccessLevel="3">
+    <DisplayName>string</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:String>text</uax:String>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6074" BrowseName="1:dateTime" ParentNodeId="ns=1;i=5010" DataType="DateTime" AccessLevel="3">
+    <DisplayName>dateTime</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:DateTime>2026-01-01T00:00:00Z</uax:DateTime>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6075" BrowseName="1:guid" ParentNodeId="ns=1;i=5010" DataType="Guid" AccessLevel="3">
+    <DisplayName>guid</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:Guid>
+        <uax:String>12345678-1234-5678-1234-567812345678</uax:String>
+      </uax:Guid>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6076" BrowseName="1:byteString" ParentNodeId="ns=1;i=5010" DataType="ByteString" AccessLevel="3">
+    <DisplayName>byteString</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:ByteString>AQID</uax:ByteString>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6077" BrowseName="1:xmlElement" ParentNodeId="ns=1;i=5010" DataType="XmlElement" AccessLevel="3">
+    <DisplayName>xmlElement</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6078" BrowseName="1:nodeId" ParentNodeId="ns=1;i=5010" DataType="NodeId" AccessLevel="3">
+    <DisplayName>nodeId</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:NodeId>
+        <uax:Identifier>ns=1;i=5005</uax:Identifier>
+      </uax:NodeId>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6079" BrowseName="1:expandedNodeId" ParentNodeId="ns=1;i=5010" DataType="ExpandedNodeId" AccessLevel="3">
+    <DisplayName>expandedNodeId</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:ExpandedNodeId>
+        <uax:Identifier>nsu=urn:jde:pumps;i=5005</uax:Identifier>
+      </uax:ExpandedNodeId>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6080" BrowseName="1:statusCode" ParentNodeId="ns=1;i=5010" DataType="StatusCode" AccessLevel="3">
+    <DisplayName>statusCode</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:StatusCode>
+        <uax:Code>1083310080</uax:Code>
+      </uax:StatusCode>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6081" BrowseName="1:qualifiedName" ParentNodeId="ns=1;i=5010" DataType="QualifiedName" AccessLevel="3">
+    <DisplayName>qualifiedName</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:QualifiedName>
+        <uax:NamespaceIndex>1</uax:NamespaceIndex>
+        <uax:Name>motorRpm</uax:Name>
+      </uax:QualifiedName>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6082" BrowseName="1:localizedText" ParentNodeId="ns=1;i=5010" DataType="LocalizedText" AccessLevel="3">
+    <DisplayName>localizedText</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:LocalizedText>
+        <uax:Locale>en</uax:Locale>
+        <uax:Text>Pump</uax:Text>
+      </uax:LocalizedText>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6083" BrowseName="1:int32Array" ParentNodeId="ns=1;i=5010" DataType="Int32" AccessLevel="3" ValueRank="1">
+    <DisplayName>int32Array</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5010</Reference>
+    </References>
+    <Value>
+      <uax:ListOfInt32>
+        <uax:Int32>1</uax:Int32>
+        <uax:Int32>2</uax:Int32>
+        <uax:Int32>3</uax:Int32>
+        <uax:Int32>4</uax:Int32>
+        <uax:Int32>5</uax:Int32>
+      </uax:ListOfInt32>
+    </Value>
   </UAVariable>
   <UAVariable NodeId="ns=1;i=6051" BrowseName="1:manufacturerName" ParentNodeId="ns=1;i=5005" DataType="String" AccessLevel="1">
     <DisplayName>manufacturerName</DisplayName>

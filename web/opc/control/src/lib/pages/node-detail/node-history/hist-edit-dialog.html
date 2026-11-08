@@ -39,39 +39,7 @@
 				<mat-label>Source time</mat-label>
 				<input matInput type="datetime-local" step="0.001" [value]="time()" (input)="time.set($any($event.target).value)" [disabled]="busy()">
 			</mat-form-field>
-			@switch( editor() ){
-				@case( 'boolean' ){
-					<mat-slide-toggle class="value-toggle" [checked]="flag()" (change)="flag.set($event.checked)" [disabled]="busy()">{{ flag() ? "true" : "false" }}</mat-slide-toggle>
-				}
-				@case( 'enum' ){
-					<mat-form-field>
-						<mat-label>Value</mat-label>
-						<mat-select [value]="choice()" (selectionChange)="choice.set($event.value)" [disabled]="busy()">
-							@for( option of enumValues(); track option.id ){
-								<mat-option [value]="option.id">{{ option.name }}</mat-option>
-							}
-						</mat-select>
-					</mat-form-field>
-				}
-				@case( 'number' ){
-					<mat-form-field>
-						<mat-label>Value</mat-label>
-						<input matInput type="number" step="any" [value]="text()" (input)="text.set($any($event.target).value)" [disabled]="busy()">
-					</mat-form-field>
-				}
-				@case( 'datetime' ){
-					<mat-form-field>
-						<mat-label>Value</mat-label>
-						<input matInput type="datetime-local" step="0.001" [value]="text()" (input)="text.set($any($event.target).value)" [disabled]="busy()">
-					</mat-form-field>
-				}
-				@default{
-					<mat-form-field>
-						<mat-label>Value</mat-label>
-						<input matInput type="text" [value]="text()" (input)="text.set($any($event.target).value)" [disabled]="busy()">
-					</mat-form-field>
-				}
-			}
+			<value-editor [type]="valueType()" [enumeration]="enumeration()" [(value)]="value" [disabled]="busy()"></value-editor>
 			<mat-form-field>
 				<mat-label>Status</mat-label>
 				<input matInput type="text" [value]="status()" (input)="status.set($any($event.target).value)" placeholder="Good" [disabled]="busy()">

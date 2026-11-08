@@ -4,9 +4,9 @@ import { ExtensionObject, isStructure, isStructures, Structure, Value, valueStri
 
 //A structure in a value cell (clients spec *Structures*, #422):  a table of its members by name, in the type's order, a member that is
 //a structure a table of its own inside it, an array of structures a table per element, a body no type explains said to be undecoded with
-//why in a tooltip a keyboard reaches too, and any other member as valueString spells it.  Read only, until the write dialog edits a
-//structure member by member (clients plan, Phase 9).  The Children tab's Snapshot, the Attributes tab's Value, the History table's Value
-//and the watch list's Value cells place one where StructureTable.shows( value ), their own text otherwise.
+//why in a tooltip a keyboard reaches too, and any other member as valueString spells it.  The write dialog edits a structure member by
+//member (ValueEditor, #423).  The Children tab's Snapshot, the Attributes tab's Value, the History table's Value and the watch list's
+//Value cells place one where StructureTable.shows( value ), their own text otherwise.
 export type StructureRow = { name:string; value:Value|null; nested:boolean; text?:string };
 @Component({
 	selector: 'structure-table',

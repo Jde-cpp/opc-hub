@@ -75,6 +75,9 @@ describe( 'hist node text', ()=>{
 		const indexed = new ExNodeId( {ns: 3, i: 7} );
 		expect( histNodeJson( indexed ) ).toEqual( {ns: 3, i: 7} );
 		expect( histNodeText( indexed ) ).toBe( 'ns=3;i=7' );
+		const remote = new ExNodeId( {ns: 3, i: 7, serverindex: 1} );//reviews-issue/423-clients-writes.md #9:  the `svr=` its text carries reads back
+		expect( histNodeText( remote ) ).toBe( 'svr=1;ns=3;i=7' );
+		expect( parseHistNodeText( histNodeText( remote ) )?.equals( remote ) ).toBe( true );
 	} );
 } );
 

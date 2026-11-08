@@ -26,6 +26,10 @@ namespace Jde::Opc::Gateway::Tests{
 	//String, Limits Range, History Double[] - and `sample` (TestSample), the variable of it the OpcServer writes after the load (ConfigurePumps), which
 	//StructureTests read as fields, write back and read from the historian (#421).
 	constexpr UA_UInt32 TestObject{ 5010 }, SampleType{ 3001 }, SampleEncoding{ 3002 }, TestSample{ 6061 };
+	//_Test's writable variable of each built-in type, Boolean (i=1) to LocalizedText (i=21), at 6061+<type id> - `TestVariable( UA_NS0ID_GUID )` -
+	//and `int32Array`, an Int32[] of any length:  what WriteTests write each type, an array and an index range to (#423).
+	constexpr UA_UInt32 TestArray{ 6083 };
+	constexpr UA_UInt32 TestVariable( UA_UInt32 builtInTypeId )ι{ return 6061+builtInTypeId; }
 	//The pumps' namespace on the embedded OpcServer;  0 without one.
 	Ξ PumpsNs()ε->NsIndex{
 		const auto ua = Server::FindUAServer();

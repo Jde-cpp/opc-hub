@@ -265,15 +265,16 @@ namespace Jde::Opc::Tests{
 			}
 			EXPECT_EQ( Value::Settable(type), thrown.find("has not been implemented")==string::npos ) << type.typeName << ":  " << thrown;
 		}
-		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_NODEID]) );
+		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_VARIANT]) );
+		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_DATAVALUE]) );
 		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_DURATION]) ) << "a Double";
 	}
-	//A structure is settable when every member is, at any depth (reviews-issue/421-type-registry.md #8):  one holding a NodeId refuses
+	//A structure is settable when every member is, at any depth (reviews-issue/421-type-registry.md #8):  one holding a Variant refuses
 	//before Set is tried, as the gateway's limit;  an enumeration member writes back the number ToJson wrote.
 	TEST( ValueTests, StructureSettableIsItsMembers ){
 		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_RANGE]) );
 		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_EUINFORMATION]) );
-		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_ARGUMENT]) ) << "its DataType is a NodeId";
+		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_ARGUMENT]) ) << "its DataType is a NodeId, which writes since #423";
 		EXPECT_FALSE( Value::Settable(UA_TYPES[UA_TYPES_KEYVALUEPAIR]) ) << "its Value is a Variant";
 		EXPECT_TRUE( Value::Settable(UA_TYPES[UA_TYPES_SERVERSTATUSDATATYPE]) ) << "a ServerState enum and a nested BuildInfo";
 
@@ -289,6 +290,42 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( read.secondsTillShutdown, 7u );
 	}
 
+	//The rest of the built-in types write (clients spec *Values and writes*, #423), each from the json ToJson writes for it, so Set -> ToJson
+	//stays the identity:  a Guid its text;  a ByteString its hex, and {b: base64} as the web sends one;  a NodeId and an ExpandedNodeId the
+	//json NodeId::ToJson writes, or a bare identifier;  a QualifiedName {ns, name}, {} empty;  a StatusCode its number, or the web's {sc};
+	//an XmlElement its text;  and arrays of each through the one element path.  The wrong json kind is refused, naming the type.
+	TEST( ValueTests, TheRemainingBuiltInTypesRoundTrip ){
+		let round = []( const jvalue& j, uint type ){ return Value{ j, &UA_TYPES[type] }.ToJson(); };
+		EXPECT_EQ( round("0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9", UA_TYPES_GUID), jvalue{"0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"} );
+		EXPECT_EQ( round("0a0bff", UA_TYPES_BYTESTRING), jvalue{"0a0bff"} );
+		EXPECT_EQ( round(jobject{{"b", "AQID"}}, UA_TYPES_BYTESTRING), jvalue{"010203"} );
+		EXPECT_EQ( round("", UA_TYPES_BYTESTRING), jvalue{""} );
+		EXPECT_EQ( round(jobject{{"ns", 2}, {"i", 5002}}, UA_TYPES_NODEID), (jobject{{"ns", 2}, {"i", 5002}}) );
+		EXPECT_EQ( round(jobject{{"ns", 2}, {"s", "tag"}}, UA_TYPES_NODEID), (jobject{{"ns", 2}, {"s", "tag"}}) );
+		EXPECT_EQ( round(85, UA_TYPES_NODEID), (jobject{{"ns", 0}, {"i", 85}}) ) << "a bare identifier";
+		EXPECT_EQ( round("ns=2;i=5", UA_TYPES_NODEID), (jobject{{"ns", 2}, {"i", 5}}) ) << "the standard's text";
+		EXPECT_EQ( round("tag", UA_TYPES_NODEID), (jobject{{"ns", 0}, {"s", "tag"}}) ) << "other text, a bare string identifier";
+		EXPECT_EQ( round("svr=1;nsu=urn:x;i=7", UA_TYPES_EXPANDEDNODEID), (jobject{{"nsu", "urn:x"}, {"serverindex", 1}, {"i", 7}}) ) << "the standard's text";
+		EXPECT_EQ( round("tag", UA_TYPES_EXPANDEDNODEID), (jobject{{"s", "tag"}}) ) << "other text, a bare string identifier";
+		EXPECT_EQ( round(jobject{{"nsu", "urn:x"}, {"i", 7}}, UA_TYPES_EXPANDEDNODEID), (jobject{{"nsu", "urn:x"}, {"i", 7}}) );
+		EXPECT_EQ( round(jobject{{"ns", 3}, {"s", "a"}, {"serverindex", 2}}, UA_TYPES_EXPANDEDNODEID), (jobject{{"serverindex", 2}, {"ns", 3}, {"s", "a"}}) );
+		EXPECT_EQ( round(jobject{{"ns", 2}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME), (jobject{{"ns", 2}, {"name", "Speed"}}) );
+		EXPECT_EQ( round(jobject{{"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME), (jobject{{"ns", 0}, {"name", "Speed"}}) );
+		EXPECT_EQ( round(jobject{}, UA_TYPES_QUALIFIEDNAME), jobject{} ) << "an empty name";
+		EXPECT_EQ( round(UA_STATUSCODE_GOODCLAMPED, UA_TYPES_STATUSCODE), jvalue{UA_STATUSCODE_GOODCLAMPED} );
+		EXPECT_EQ( round(jobject{{"sc", UA_STATUSCODE_BADNODEIDUNKNOWN}}, UA_TYPES_STATUSCODE), jvalue{UA_STATUSCODE_BADNODEIDUNKNOWN} ) << "the web's spelling of a status";
+		EXPECT_EQ( round("<a/>", UA_TYPES_XMLELEMENT), jvalue{"<a/>"} );
+		let ids = round( jarray{jobject{{"ns", 2}, {"i", 1}}, jobject{{"ns", 2}, {"i", 2}}}, UA_TYPES_NODEID );
+		ASSERT_TRUE( ids.is_array() );
+		EXPECT_EQ( ids.as_array().size(), 2u );
+		EXPECT_EQ( round(jarray{"0a", "0b"}, UA_TYPES_BYTESTRING), (jarray{"0a", "0b"}) );
+		for( let& [j, type] : vector<std::pair<jvalue,uint>>{ {1, UA_TYPES_GUID}, {"not-a-guid", UA_TYPES_GUID}, {1, UA_TYPES_BYTESTRING}, {"0a0", UA_TYPES_BYTESTRING}, {"zz", UA_TYPES_BYTESTRING},
+			{jobject{{"b", "AQID"}, {"x", 1}}, UA_TYPES_BYTESTRING}, {true, UA_TYPES_NODEID}, {jobject{{"ns", 2}}, UA_TYPES_NODEID}, {"Speed", UA_TYPES_QUALIFIEDNAME}, {jobject{{"ns", 2}, {"x", 1}}, UA_TYPES_QUALIFIEDNAME},
+			{"Good", UA_TYPES_STATUSCODE}, {1, UA_TYPES_XMLELEMENT},
+			{jobject{{"ns", 70000}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME}, {jobject{{"ns", "2"}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME}, {jobject{{"ns", -1}, {"name", "Speed"}}, UA_TYPES_QUALIFIEDNAME} } ){//an `ns` that is no UInt16 refused, not namespace 0
+			EXPECT_THROW( Value( j, &UA_TYPES[type] ), Exception ) << UA_TYPES[type].typeName << ":  " << serialize( j );
+		}
+	}
 	//A typeless Value infers the UA type from the json kind - the path a write takes before the node's DataType is known.
 	TEST( ValueTests, TypelessSetInfers ){
 		EXPECT_FALSE( Value( jvalue{5}, nullptr ).ToJson().at("unsigned").as_bool() ); //int64 -> the Long form.

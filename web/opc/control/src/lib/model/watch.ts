@@ -84,12 +84,9 @@ export class WatchRow{
 			this.error = `${ENodeClass[node.nodeClass]} - only a variable has a value to watch.`;
 	}
 	get variable():Variable|undefined{ return this.uaNode instanceof Variable ? this.uaNode : undefined; }
-	//an enumeration of the server's own by the name of its value, once resolved:  the cell shows it, and the view filters and sorts
-	//on it (419-watch #13)
-	get valueName():string|undefined{
-		const custom = this.variable?.customDataType;
-		return custom && "enumValues" in custom && typeof this.value=="number" ? custom.enumValues.find( v=>v.id==this.value )?.name : undefined;
-	}
+	//an enumeration of the server's own by the name of its value, once resolved, and a StatusCode by its code's (Variable.valueName):
+	//the cell shows it, and the view filters and sorts on it (419-watch #13)
+	get valueName():string|undefined{ return this.variable?.valueName( this.value ); }
 	get name():string{ return this.uaNode?.name || this.node.uaString(); }
 	//every reading the row takes, a push or the describing read, on Variable.setReading's rules (419-watch #6):  a refused subscribe's
 	//OpcError is no value, a Bad reading without one keeps the last - shown stale - and the times are the reading's, bar one without
@@ -100,6 +97,7 @@ export class WatchRow{
 		const usable = r.value instanceof OpcError ? undefined : r.value;
 		if( usable!==undefined || !isBad( this.sc ) )
 			this.value = usable;
+		this.variable?.valueNamePending( this.value );//a StatusCode value's name asked for, as the sc's is
 		if( r.source || r.server || this.#shown!=shown ){
 			this.sourceTime = r.source;
 			this.serverTime = r.server;

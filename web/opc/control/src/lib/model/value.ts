@@ -33,7 +33,7 @@ export function jsonShape( o:Record<string,unknown> ):JsonShape|undefined{
 		return 'qualifiedName';
 	if( nodeIdKeys(o) )
 		return 'nodeId';
-	if( ('nsu' in o || 'serverIndex' in o) && nodeIdKeys(o, ['nsu', 'serverIndex']) )
+	if( ('nsu' in o || 'serverIndex' in o || 'serverindex' in o) && nodeIdKeys(o, ['nsu', 'serverIndex', 'serverindex']) )//the gateway spells the index `serverindex` (ExNodeId.cpp)
 		return 'expandedNodeId';
 	const typeId = o['typeId'];
 	if( isPlain(typeId) && nodeIdKeys(typeId) && within(o, ['typeId', 'body']) )
@@ -54,21 +54,42 @@ export class ExtensionObject{
 	get tooltip():string{ return `The server gives no definition for the type ${this.typeId.uaString()}, so the value cannot be decoded.`; }
 }
 
-export function valueJson( value: Value ):any/*:NodeIdJson*/{
+//A value as a write sends it - the json Value::Set reads for its type (clients spec *Values and writes*):  a NodeId as NodeId::ToJson
+//spells one, an ExpandedNodeId with its uri and server index, a Guid its text, a ByteString {b: base64}, a status {sc};  a structure as
+//its members, each this way.  A body no type explains has no json to write.
+export function valueJson( value: Value ):any{
 	if( value instanceof ExNodeId )
-		return value.toJson();
+		return { ...value.toJson(), ...(value.nsu ? {nsu: value.nsu} : {}), ...(value.serverIndex ? {serverindex: value.serverIndex} : {}) };
 	else if( value instanceof NodeId )
-		return value.id;
+		return value.toJson();
+	else if( value instanceof Guid )
+		return value.toString();
 	else if( value instanceof Uint8Array )
 		return {b: btoa(value.reduce((acc, current) => acc + String.fromCharCode(current), "")) };
 	else if( value instanceof OpcError )
 		return {sc: value.sc };
-	else if( value instanceof ExtensionObject )//Value::Set has no arm for a structure, so refuse it here rather than send the class's fields.
-		throw new Error( `Writing a structure is not supported - ${value.typeId.uaString()}.` );
+	else if( value instanceof ExtensionObject )//the body no type explains:  Value::Set builds a structure from its members, which this has none of
+		throw new Error( `The value is undecoded, so it cannot be written - ${value.typeId.uaString()}.` );
 	else if( Array.isArray(value) )
 		return value.map( x=>valueJson(x) );
+	else if( isStructure(value) )
+		return Object.fromEntries( Object.entries(value).map( ([name, member])=>[name, member===null ? null : valueJson(member)] ) );
 	else
 		return value;
+}
+//A ByteString's text, the hex REST's json gives (ByteStringToJson), and the bytes of such text:  none for an odd count of digits or
+//a character that is no hex digit.  Blank is no bytes.
+export function hexOf( bytes:Uint8Array ):string{ return [...bytes].map( b=>b.toString( 16 ).padStart( 2, '0' ) ).join( '' ); }
+export function bytesOfHex( text:string ):Uint8Array|undefined{
+	const t = text.trim();
+	if( t.length%2 || !/^[0-9a-fA-F]*$/.test( t ) )
+		return undefined;
+	return Uint8Array.from( t.match( /../g ) ?? [], pair=>parseInt( pair, 16 ) );
+}
+//A Guid from its text, 8-4-4-4-12 hex digits as a read spells one;  none for any other text.
+export function parseGuid( text:string ):Guid|undefined{
+	const t = text.trim();
+	return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test( t ) ? new Guid( t.toLowerCase() ) : undefined;
 }
 
 //A Float reading at the fewest digits that are still that float.  The proto's float decodes widened to a double, 21.3 as
@@ -112,7 +133,7 @@ export function valueString( value: Value|undefined ):string{
 	else if( value instanceof Guid )
 		return value.toString();
 	else if( value instanceof Uint8Array )
-		return btoa( value.reduce((acc, current) => acc + String.fromCharCode(current), "") );
+		return hexOf( value );//the hex REST's json gives, so a push doesn't change a cell's text (reviews-issue/423-clients-writes.md #6)
 	else if( Object.hasOwn(value, "seconds") && Object.hasOwn(value, "nanos") && (!isPlain(value) || jsonShape(value)=='timestamp') ){//local time to the millisecond, as every timestamp column and DateTime editor shows one (NodeView.time) - not UTC (reviews-issue/417-clients-attributes.md W1)
 		const date = ProtoUtils.toDate( <Timestamp>value );
 		return date ? DateUtils.toLocalInput( date ).replace( "T", " " ) : "";//unset is seconds==0
@@ -122,7 +143,7 @@ export function valueString( value: Value|undefined ):string{
 	else if( value instanceof ExtensionObject )
 		return value.toString();
 	else if( value instanceof ExNodeId )
-		return JSON.stringify(value.toJson());
+		return value.uaString();//its uri and server index too, as REST's spells (plainText)
 	else if( value instanceof NodeId )
 		return value.uaString();//as REST's {ns,i} spells, so a push doesn't change a cell's text
 	else if( value instanceof OpcError )
@@ -136,12 +157,13 @@ export function valueString( value: Value|undefined ):string{
 }
 //A member's Long, Guid or undecoded body as its text, and the Long form too, should one reach here unconverted.
 const jsonText = ( _:string, v:any )=>v instanceof Long || v instanceof Guid || v instanceof ExtensionObject ? v.toString() : isPlain( v ) && jsonShape( v )=='long' ? new Long( <number>v['low'], <number>v['high'], <boolean>v['unsigned'] ).toString() : v;
-//A plain object as its kind spells it (jsonShape):  a QualifiedName ns:name, a NodeId as the standard writes one, {} as nothing, and a
-//structure - or an ExpandedNodeId, which keeps its uri - as its json.
+//A plain object as its kind spells it (jsonShape):  a QualifiedName ns:name, a NodeId and an ExpandedNodeId as the standard writes one, the
+//latter with its uri and server index, {} as nothing, and a structure as its json.
 function plainText( v:Record<string,unknown> ):string{
 	switch( jsonShape(v) ){
 	case 'qualifiedName': return `${v['ns'] ?? 0}:${v['name']}`;
 	case 'nodeId': return new NodeId( v ).uaString();
+	case 'expandedNodeId': return new ExNodeId( <any>v ).uaString();
 	case 'long': return new Long( <number>v['low'], <number>v['high'], <boolean>v['unsigned'] ).toString();
 	case 'extensionObject': return new ExtensionObject( new NodeId(v['typeId']) ).toString();
 	case 'empty': return "";

@@ -1,12 +1,59 @@
 ﻿#include <jde/opc/uatypes/Value.h>
+#include <charconv>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/DateTime.h>
+#include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Members.h>
-
 
 #define let const auto
 
 namespace Jde::Opc{
+	//A ByteString from its json (clients spec *Values and writes*, #423):  `{b: base64}`, the form a web write and a NodeId's byte-string
+	//identifier spell one in, or the hex ToJson writes (ByteStringToJson), so what was read writes back.
+	Ω byteStringFromJson( const jvalue& j, SL sl )ε->ByteStringPtr{
+		ByteStringPtr y{ UA_ByteString_new(), UA_ByteString_delete };
+		if( let* o = j.if_object(); o ){
+			let b = Json::FindSV( *o, "b" );
+			THROW_IFSL( !b || o->size()!=1, "Expected a ByteString as hex or {{b: base64}} - '{}'.", serialize(j) );
+			let v = ToUV( *b );
+			if( let sc = UA_ByteString_fromBase64(y.get(), &v); sc )
+				throw UAException{ sc, Ƒ("Could not base64-decode the ByteString '{}'.", *b), {}, sl };
+			return y;
+		}
+		THROW_IFSL( !j.is_string(), "Expected a ByteString as hex or {{b: base64}} - '{}'.", serialize(j) );
+		let& hex = j.get_string();
+		THROW_IFSL( hex.size()%2, "A ByteString's hex has an even count of digits - '{}'.", hex );
+		if( let sc = UA_ByteString_allocBuffer(y.get(), hex.size()/2); sc )
+			throw UAException{ sc, Ƒ("Could not allocate {} bytes.", hex.size()/2), {}, sl };
+		for( uint i=0; i<y->length; ++i ){
+			let [end, ec] = std::from_chars( hex.data()+i*2, hex.data()+i*2+2, y->data[i], 16 );
+			THROW_IFSL( ec!=std::errc{} || end!=hex.data()+i*2+2, "'{}' is not hex.", hex );
+		}
+		return y;
+	}
+	//A QualifiedName from the json ToJson writes:  {ns, name}, or {} for an empty one.  An `ns` given is a UInt16 or refused, never namespace 0.
+	Ω qualifiedNameFromJson( const jvalue& j, SL sl )ε->UA_QualifiedName{
+		let* o = j.if_object();
+		THROW_IFSL( !o || !std::ranges::all_of(*o, [](let& kv){ return kv.key()=="ns" || kv.key()=="name"; }), "Expected a QualifiedName {{ns, name}} - '{}'.", serialize(j) );
+		let name = Json::FindSV( *o, "name" );
+		THROW_IFSL( o->contains("name") && !name, "Expected a QualifiedName {{ns, name}} - '{}'.", serialize(j) );
+		let* ns = o->if_contains( "ns" );
+		return UA_QualifiedName{ ns ? Json::AsNumber<UA_UInt16>(*ns, sl) : UA_UInt16{}, name ? ToUV(*name) : UA_STRING_NULL };
+	}
+	//A NodeId or an ExpandedNodeId from its json:  text in the standard's spelling, `ns=2;i=5` or `svr=1;nsu=urn:x;i=5`, parsed as such;  other
+	//text a bare string identifier, as NodeId::FromJson reads one, and an object or a number as that reads them.
+	Ω nodeIdFromJson( const jvalue& j )ε->NodeId{
+		NodeId y;
+		if( j.is_string() && UA_NodeId_parse(&y, ToUV(j.get_string()))==UA_STATUSCODE_GOOD )
+			return y;
+		return NodeId{ j };
+	}
+	Ω exNodeIdFromJson( const jvalue& j )ε->ExNodeId{
+		ExNodeId y;
+		if( j.is_string() && UA_ExpandedNodeId_parse(&y, ToUV(j.get_string()))==UA_STATUSCODE_GOOD )
+			return y;
+		return ExNodeId{ j };
+	}
 	//The inverse of Variant.cpp's toJson( double ).  nullopt means "not one of the three", and the caller falls through to the ordinary numeric read, so
 	//any other string still fails there with its own message rather than becoming a silent NaN.
 	Ω nonFinite( const jvalue& j )ι->optional<double>{
@@ -79,7 +126,8 @@ namespace Jde::Opc{
 		case UA_DATATYPEKIND_BOOLEAN: case UA_DATATYPEKIND_BYTE: case UA_DATATYPEKIND_SBYTE: case UA_DATATYPEKIND_INT16: case UA_DATATYPEKIND_UINT16:
 		case UA_DATATYPEKIND_INT32: case UA_DATATYPEKIND_UINT32: case UA_DATATYPEKIND_INT64: case UA_DATATYPEKIND_UINT64: case UA_DATATYPEKIND_DOUBLE:
 		case UA_DATATYPEKIND_FLOAT: case UA_DATATYPEKIND_STRING: case UA_DATATYPEKIND_LOCALIZEDTEXT: case UA_DATATYPEKIND_DATETIME:
-		case UA_DATATYPEKIND_ENUM:
+		case UA_DATATYPEKIND_ENUM: case UA_DATATYPEKIND_GUID: case UA_DATATYPEKIND_BYTESTRING: case UA_DATATYPEKIND_XMLELEMENT:
+		case UA_DATATYPEKIND_NODEID: case UA_DATATYPEKIND_EXPANDEDNODEID: case UA_DATATYPEKIND_STATUSCODE: case UA_DATATYPEKIND_QUALIFIEDNAME:
 			return true;
 		case UA_DATATYPEKIND_STRUCTURE: case UA_DATATYPEKIND_OPTSTRUCT: case UA_DATATYPEKIND_UNION:{
 			if( std::ranges::find(walking, &type)!=walking.end() )
@@ -210,6 +258,41 @@ namespace Jde::Opc{
 		case UA_DATATYPEKIND_DATETIME:{
 			let v = UADateTime{j}.UA();//SetScalar, not SetNumber: that takes a jvalue, so the int64 was boxed into json
 			SetScalar( &v, sl );//and parsed straight back out.
+			break;}
+		//The rest of the built-in types (clients spec *Values and writes*, #423), each from the json ToJson writes for it:  a Guid its
+		//text;  a ByteString its hex, or {b: base64} as the web sends one;  a NodeId and an ExpandedNodeId the json NodeId::ToJson writes,
+		//the standard's text, or a bare number or string identifier;  a QualifiedName {ns, name};  a StatusCode its number, or {sc} as the web spells a
+		//status;  an XmlElement its text.
+		case UA_DATATYPEKIND_GUID:{
+			THROW_IF( !j.is_string(), "Expected a Guid string - '{}'.", serialize(j) );
+			UA_Guid guid; ToGuid( j.get_string(), guid );
+			SetScalar( &guid, sl );
+			break;}
+		case UA_DATATYPEKIND_BYTESTRING:
+			SetScalar( byteStringFromJson(j, sl).get(), sl );
+			break;
+		case UA_DATATYPEKIND_NODEID:{
+			let id = nodeIdFromJson( j );
+			SetScalar( &id, sl );
+			break;}
+		case UA_DATATYPEKIND_EXPANDEDNODEID:{
+			let id = exNodeIdFromJson( j );
+			SetScalar( &id, sl );
+			break;}
+		case UA_DATATYPEKIND_QUALIFIEDNAME:{
+			let qn = qualifiedNameFromJson( j, sl );
+			SetScalar( &qn, sl );
+			break;}
+		case UA_DATATYPEKIND_STATUSCODE:
+			if( let* o = j.if_object(); o && o->size()==1 && o->contains("sc") )
+				SetNumber<UA_StatusCode>( o->at("sc"), sl );
+			else
+				SetNumber<UA_StatusCode>( j, sl );
+			break;
+		case UA_DATATYPEKIND_XMLELEMENT:{
+			THROW_IF( !j.is_string(), "Expected an XmlElement string - '{}'.", serialize(j) );
+			let xml = ToUV( j.get_string() );
+			SetScalar( &xml, sl );
 			break;}
 		case UA_DATATYPEKIND_STRUCTURE:
 		case UA_DATATYPEKIND_OPTSTRUCT:

@@ -355,9 +355,12 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		const data:any = await super.postQL<any>( q, vars );
 		return toCallResult( data?.["call"] ?? data );//keyed by command name, as write()'s is;  the caller asks for the codes' names
 	}
-	async write( opcId:CnnctnSlug, n:NodeId, v:Value ):Promise<Reading>{
-		const q = `updateVariable( opc: $opc, id: $id, value: $value ){ value }`;
-		const vars = { opc: opcId, id: n.toJson(), value: valueJson(v) };
+	//updateVariable( opc, id, value, indexRange ):  the value typed at the gateway toward the node's DataType (Value::Set), and with
+	//`indexRange`, Part 4's "2:4", the array's slice that the value fills (clients spec *Values and writes*);  the answer is the value
+	//read back whole
+	async write( opcId:CnnctnSlug, n:NodeId, v:Value, indexRange?:string ):Promise<Reading>{
+		const q = `updateVariable( opc: $opc, id: $id, value: $value${indexRange ? ", indexRange: $indexRange" : ""} ){ value }`;
+		const vars = { opc: opcId, id: n.toJson(), value: valueJson(v), ...(indexRange ? {indexRange} : {}) };
 		const data:any = await super.postQL<any>( q, vars );
 		this.updateErrorCodes();
 		//unwrap first, toValue last - mirroring read().  postQL returns the `data` object and the server keys a mutation payload by command name (QLAwait: `result[commandName]`, skipped only for `raw`, which this never requests), so toValue used to run on the wrapper and `["value"]` off its result was always undefined - blanking the cell.  `?? data` keeps the raw/unkeyed shape working too.
@@ -627,7 +630,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		if( proto.uint64!=undefined )       return proto.uint64;
 		if( proto.xmlElement!=undefined )   return proto.xmlElement;
 		if( proto.localizedText!=undefined ) return proto.localizedText.text ?? "";//the text alone, as REST gives it
-		if( proto.qualifiedName!=undefined ){ const q = proto.qualifiedName; return q.namespaceIndex ? `${q.namespaceIndex}:${q.name}` : q.name; }
+		if( proto.qualifiedName!=undefined ){ const q = proto.qualifiedName; return <Structure>{ ns: q.namespaceIndex ?? 0, name: q.name ?? "" }; }//{ns, name}, as REST gives it (jsonShape):  the text `ns:name` read an ns-0 `12:00` as namespace 12 (reviews-issue/423-clients-writes.md #10)
 		if( proto.extensionObject!=undefined ){
 			const x = proto.extensionObject;
 			return new ExtensionObject( Gateway.toNode(x.typeId ?? Common.NodeId.create()), x.binary ?? x.xml );
