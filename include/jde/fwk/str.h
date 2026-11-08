@@ -2,9 +2,7 @@
 #include "jde/fwk/usings.h"
 DISABLE_WARNINGS
 #pragma GCC diagnostic ignored "-Wsubobject-linkage"
-#include <charconv>
 #include <span>
-#include <boost/algorithm/string/trim.hpp>
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
@@ -13,17 +11,13 @@ DISABLE_WARNINGS
 ENABLE_WARNINGS
 
 #define Φ Γ auto
-#define let const auto
 namespace Jde{
-	Ŧ To( sv value )ι->T{ T v{}; std::from_chars(value.data(), value.data()+value.size(), v); return v; }
-	template<> Φ To( sv x )ι->double;
 	Ŧ hex( T number )ι->string{ return Ƒ("{:x}", number); }
 	Φ ToUuid( sv s, SRCE )ε->uuid;
 	Φ ToString( const boost::uuids::uuid& u )ι->string;
 }
 namespace Jde::Str{
 	Φ Empty()ι->str;
-	Ξ Reserve( uint size )ι->string{ string s; s.reserve(size); return s; }
 
 	template<class T=string> α Decode64( sv s, bool fileSafe=false, SRCE )ε->T;//padded or not; fileSafe is base64url.
 	Φ DecodeUri( sv str )ι->string;
@@ -64,7 +58,6 @@ namespace Jde::Str{
 
 	struct ci_traits : public std::char_traits<char>{
 		Ω eq( char c1, char c2 )ι{ return absl::ascii_toupper(c1) == absl::ascii_toupper(c2); }
-		Ω ne( char c1, char c2 )ι{ return absl::ascii_toupper(c1) != absl::ascii_toupper(c2); }
 		Ω lt( char c1, char c2 )ι{ return (unsigned char)absl::ascii_toupper(c1) < (unsigned char)absl::ascii_toupper(c2); }//unsigned, as char_traits<char>::lt orders.
 		Ω compare( const char* s1, const char* s2, uint n )ι->int{
 			int y{};

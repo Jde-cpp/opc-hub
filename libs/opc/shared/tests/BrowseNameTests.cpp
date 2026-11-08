@@ -17,6 +17,12 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( ToSV(defaulted.name), "Tag" );
 	}
 
+	TEST( BrowseNameTests, BadNamespaceThrows ){
+		EXPECT_THROW( (BrowseName{"abc~Tag", 0}), Exception );
+		EXPECT_THROW( (BrowseName{"70000~Tag", 0}), Exception ) << "out of range for a UInt16";
+		EXPECT_THROW( (BrowseName{"~Tag", 0}), Exception );
+	}
+
 	TEST( BrowseNameTests, ToJson ){
 		BrowseName b{ "Tag", 2 };
 		let j = b.ToJson();

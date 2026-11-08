@@ -1,10 +1,13 @@
 #include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/UAString.h>
 
+#define let const auto
 namespace Jde::Opc{
 	BrowseName::BrowseName( sv fqBrowseName, NsIndex defaultNs )ε{
-		auto pos = fqBrowseName.find('~');
-		namespaceIndex = pos==string::npos ? defaultNs : To<NsIndex>( fqBrowseName.substr(0,pos) );
+		let pos = fqBrowseName.find('~');
+		let ns = pos==string::npos ? optional<NsIndex>{ defaultNs } : Str::TryTo<NsIndex>( fqBrowseName.substr(0,pos) );
+		THROW_IF( !ns, "Invalid namespace index in browse name '{}'.", fqBrowseName );
+		namespaceIndex = *ns;
 		name = AllocUAString( pos==string::npos ? fqBrowseName : fqBrowseName.substr( pos+1 ) );
 	}
 	α ToJson( const UA_QualifiedName& qn )ι->jobject{

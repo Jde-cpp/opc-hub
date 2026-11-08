@@ -84,7 +84,7 @@ namespace Jde::Web::Mock{
 			_result = HttpTaskResult{ move(*result), move(_request) };
 		}
 		else if( _request.IsGet("/gzip") ){//#247: compressed only when the client asks, as a real server would.
-			string body( To<uint>(_request["size"]), 'x' );
+			string body( Str::TryTo<uint>(_request["size"]).value_or(0), 'x' );
 			if( _request.Header("accept-encoding").contains("gzip") ){
 				_request.ResponseHeaders.emplace( "Content-Encoding", _request.Contains("coding") ? _request["coding"] : string{"gzip"} );//#248: ?coding= spells it another valid way.
 				body = Gzip( body );
@@ -110,7 +110,7 @@ namespace Jde::Web::Mock{
 		else if( _request.Target()=="/delay" ){
 			_thread = std::jthread( [this,h=_h]()mutable->void {
 				Thread::SetName( "DelayHandler" );
-				uint seconds = To<uint>( _request["seconds"] );
+				uint seconds = Str::TryTo<uint>( _request["seconds"] ).value_or( 0 );
 				DBGT( ELogTags::HttpServerWrite, "server sleeping for {}", seconds );
 				std::this_thread::sleep_for( std::chrono::seconds{seconds} );
 				Promise()->SetValue( {jobject{}, move(_request)} );

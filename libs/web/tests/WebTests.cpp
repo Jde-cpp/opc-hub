@@ -197,7 +197,7 @@ namespace Jde::Web{
 						ClientHttpRes res = co_await ClientHttpAwait{ Host, Ƒ("/echo?{}", idx), Port };
 						--connections;
 						auto jsonResult = Json::Parse( res.Body() )["params"].at(0);
-						let echoIndex = To<SessionPK>( Json::AsString(jsonResult) );
+						let echoIndex = Str::TryTo<SessionPK>( Json::AsString(jsonResult) ).value_or( 0 );
 						if( echoIndex!=idx )
 							THROW( "index={} echoIndex={}", idx, echoIndex );
 						(*pSessionIds)[idx] = *Str::TryTo<SessionPK,16>( res[http::field::authorization] );
