@@ -10,7 +10,9 @@ The application server. It runs:
 [`Jde.Opc.Hub`](../OpcHub/README.md) links this and the OpcGateway into one process. The installers ship the hub.
 
 The standalone `Jde.App.Server` + `Jde.Opc.Gateway` pair still builds, for split deployments with N gateways per
-AppServer. The OpcServer and the PLC emulator run against either.
+AppServer. The OpcServer and the PLC emulator run against either. A split gateway reads the shift calendars
+(`calendars` and its three child tables, [spec](../../docs/calendar/spec.md) *Authorization*) as its own user, so a
+site that enforces those tables grants each gateway's user Read on them; the hub reads its own in-process.
 
 The standalone does not serve the site. Only the hub's config names a site directory (`/http/site`).
 
@@ -24,9 +26,11 @@ The standalone does not serve the site. Only the hub's config names a site direc
 
 ## What it does
 
-- **REST** (`src/HttpRequestAwait.cpp`): `/login` and `/logout` (a bearer JWT in, a session out), `/GoogleAuthClientId`,
-  `/opcGateways` and `/opcServers` (the registered instances the site picks a gateway from), and `/graphql` by GET or
-  POST.  The routes are free functions so a host that serves two apps from one listener (the hub) can call them.
+- **REST** (`src/HttpRequestAwait.cpp`): `/login` (a bearer JWT in, a session out), `/logout`, `/GoogleAuthClientId`,
+  `/opcGateways` and `/opcServers` (the registered instances the site picks a gateway from). The routes are free
+  functions so a host that serves two apps from one listener (the hub) can call them.
+- **GraphQL** (`libs/web/server/ServerImpl.cpp`): `/graphql` by GET or POST. The shared web server answers it before
+  it tries the app's own routes.
 - **The app protocol** (`src/ServerSocketSession.*`, protobuf over a websocket, messages in `libs/app/shared/proto`).
   A process on the socket:
   - registers as an instance and gets its `connections` row;
@@ -35,8 +39,11 @@ The standalone does not serve the site. Only the hub's config names a site direc
   - asks for sessions and JWTs;
   - runs GraphQL.
 
-  Requests also go the other way. The server queries an instance over its socket (`ClientQuery`) for the log-level
-  push and for the delegated admin check an instance's acl asks for.
+  Requests also go the other way. The server queries an instance over its socket (`ClientQuery`) for:
+
+  - the log-level push;
+  - the delegated admin check an instance's acl asks for;
+  - the Web Sessions tab's `sessions(instanceId:…)` query, which the instance answers from its own sessions.
 
   `ForwardExecution`, a client's request to relay an execution to an instance, is in the protocol. Nothing sends it
   today.
@@ -91,7 +98,10 @@ suites:
 - `LogAccessTests`: the `logs` resource an instance's lines and tag levels answer to;
 - `LogSubscriptionTests`: a `logs` subscription over the socket;
 - `WebSessionTests`: the Sessions tab's queries, local and forwarded to an instance;
-- `ConnectionTests`: the connection rows.
+- `WebSessionGateTests`: the `sessions` resource gate, where listing takes Read and purging takes Administer;
+- `ConnectionTests`: the connection rows;
+- `CalendarTests`: the shift calendar's tables, validation and its own operations
+  ([spec](../../docs/calendar/spec.md)).
 
 Under ctest it runs on in-memory sqlite:
 

@@ -28,9 +28,13 @@ namespace Jde::App{
 			return jobject{
 				{"memory", Process::MemorySize()},
 				{"startTime", ToIsoString<seconds>(Process::StartTime())},
-				{"uptimeSeconds", duration_cast<std::chrono::seconds>(Clock::now()-Process::StartTime()).count()}
+				{"uptimeSeconds", duration_cast<std::chrono::seconds>(Clock::now()-Process::StartTime()).count()},
+				{"timeZone", TimeZoneName()}
 			};
 		}
+		//This process's IANA zone, std::chrono::current_zone(), or UTC when it can't be determined, since a throw would take the status
+		//with it:  a new calendar's default zone (docs/calendar/spec.md *Open questions* #8).
+		Ω TimeZoneName()ι->str;
 
 		α LoadLogSettings( SRCE )ι->void;//every log target's instanceTagLevel rows, applied to the loggers this process runs.
 		template<class T=jobject> [[nodiscard]] α Query( string&& q, jobject variables, bool returnRaw=true, SRCE )ε->up<TAwait<T>>;

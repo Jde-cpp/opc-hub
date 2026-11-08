@@ -1,17 +1,51 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/LocalSubscriptions.h>
+#include <jde/app/IApp.h>
+#include <jde/calendar/Schedule.h>
+#include <jde/calendar/validation.h>
 #include "helpers.h"
 #define let const auto
 
 //The calendar tables (config/app-meta.jsonnet) and CalendarMAwait (libs/calendar/src/server), through the AppServer's own QL as
 //the web's forms and /graphql reach them:  the tables sync, the side effects land, a zone-less time is read in the calendar's
 //zone, and each refusal of docs/calendar/spec.md *Validation* that needs the database comes back BadRequest with the library's
-//message.  America/New_York:  EDT is UTC-4 in July, so a 06:00 day start is 10:00Z.
+//message;  then the calendar's own operations, calendarOccurrences and copyCalendarPattern, and the zone on status (*Reads*,
+//*Open questions* #8).  America/New_York:  EDT is UTC-4 in July, so a 06:00 day start is 10:00Z.
 namespace Jde::App::Server::Tests{
 	using namespace std::chrono;
 	constexpr sv NewYork{ "America/New_York" };
 	constexpr uint32 Weekdays{ 31 };
+
+	//A table's resource, enforced from Enforce() to the end of the scope, a throw included:  the mysql run keeps its db.
+	struct ScopedEnforcement final{
+		ScopedEnforcement( sv slug )ε{
+			let resources = Json::AsArray( RunQL(Ƒ(R"(resources( schemaName:"{}", slug:"{}", criteria:null ){{ id deleted }})", Server::AppSchema()->Name, slug)) );
+			let& row = resources.at( 0 );
+			_id = Id( row );
+			WasEnforced = row.as_object().at( "deleted" ).is_null();
+		}
+		~ScopedEnforcement(){
+			if( !_enforced )
+				return;
+			try{
+				RunQL( Ƒ("deleteResource( id:{} )", _id) );
+			}
+			catch( const std::exception& e ){
+				ADD_FAILURE() << e.what();
+			}
+		}
+		α Enforce()ε->void{
+			if( WasEnforced )
+				return;
+			RunQL( Ƒ("restoreResource( id:{} )", _id) );
+			_enforced = true;
+		}
+		bool WasEnforced{};
+	private:
+		uint _id{};
+		bool _enforced{};
+	};
 
 	struct CalendarTests : ::testing::Test{
 		//A calendar of `slug`, created anew:  one an earlier run left behind - the mysql run keeps its db - is purged first.
@@ -26,6 +60,17 @@ namespace Jde::App::Server::Tests{
 		Ω FirstPattern( uint calendarId )ε->uint{ let patterns = Patterns( calendarId ); return patterns.size() ? Id( patterns.front() ) : 0; }
 		Ω Shift( uint patternId, sv name, uint32 days, uint start, uint minutes, sv breaks={} )ε->uint{
 			return Id( RunQL(Ƒ("createCalendarShift( calendarPatternId:{}, name:\"{}\", days:{}, start:{}, minutes:{}{} ){{ id }}", patternId, name, days, start, minutes, breaks.size() ? Ƒ(", breaks:{}", serialize(jvalue{breaks})) : string{})) );
+		}
+		//The calendar as the library reads it, from the four flat reads of spec *Reads*, live rows only.
+		Ω Library( uint calendarId )ε->Calendar::Schedule{
+			let row = RunQL( Ƒ("calendars( id:{} ){{ id name slug timeZone dayStart }}", calendarId) ).as_array().at( 0 ).as_object();
+			let patterns = RunQL( Ƒ("calendarPatterns( calendarId:{}, deleted:null ){{ id calendarId effective cycleDays cycleStart }}", calendarId) ).as_array();
+			jarray shifts;
+			for( let& p : patterns ){
+				for( auto& s : RunQL(Ƒ("calendarShifts( calendarPatternId:{} ){{ id calendarPatternId name days start minutes breaks }}", Id(p))).as_array() )
+					shifts.push_back( move(s) );
+			}
+			return { row, patterns, shifts, RunQL(Ƒ("calendarExceptions( calendarId:{}, deleted:null ){{ id calendarId name start finish isOpen }}", calendarId)).as_array() };
 		}
 		Ω Time( const jvalue& row, sv key )ε->TimePoint{ return Chrono::ToTimePoint( Json::AsString(Json::AsObject(row), key) ); }
 		Ω Utc( int y, unsigned m, unsigned d, int h=0, int min=0 )ι->TimePoint{ return sys_days{year{y}/month{m}/day{d}}+hours{h}+minutes{min}; }
@@ -354,5 +399,171 @@ namespace Jde::App::Server::Tests{
 		EXPECT_EQ( Json::AsSV(row, "name"), "Days" );
 		_.unlock();
 		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//calendarOccurrences answers Schedule::Occurrences from the server's own rows:  a seeded week with a holiday agrees with the
+	//library over the same rows, by slug and by id, and the columns asked for are the ones answered, breaks' included.
+	TEST_F( CalendarTests, OccurrencesAgreeWithTheLibrary ){
+		let calendarId = Fresh( "calOccurrences" );
+		let patternId = FirstPattern( calendarId );
+		Shift( patternId, "Day", Weekdays, 0, 480, R"([{"start":240,"minutes":30}])" );
+		Shift( patternId, "Night", Weekdays, 960, 480 );
+		RunQL( Ƒ(R"(createCalendarException( calendarId:{}, name:"Independence Day", start:"2026-07-03T06:00:00", finish:"2026-07-04T06:00:00" ){{ id }})", calendarId) );
+		let schedule = Library( calendarId );
+		let expected = schedule.Occurrences( schedule.ToTimePoint("2026-06-29T00:00:00"), schedule.ToTimePoint("2026-07-06T00:00:00") );
+		ASSERT_EQ( expected.size(), 8u ) << "Monday to Thursday's Day and Night, Friday's two under the holiday";
+
+		let answered = RunQL( R"(calendarOccurrences( calendar:"calOccurrences", start:"2026-06-29T00:00:00", end:"2026-07-06T00:00:00" ){ shift name day start end breaks{ start end } })" ).as_array();
+		ASSERT_EQ( answered.size(), expected.size() );
+		for( uint i=0; i<expected.size(); ++i )
+			EXPECT_EQ( answered[i], jvalue{Calendar::ToJson(expected[i])} ) << i;
+		EXPECT_EQ( answered[0].as_object().at("breaks").as_array().size(), 1u ) << "Day's break";
+
+		let byId = RunQL( Ƒ(R"(calendarOccurrences( id:{}, start:"2026-06-29T00:00:00", end:"2026-07-06T00:00:00" ){{ name breaks{{ start }} }})", calendarId) ).as_array();
+		ASSERT_EQ( byId.size(), expected.size() );
+		EXPECT_EQ( byId[0].as_object().size(), 2u ) << "the columns asked for:  " << serialize( byId[0] );
+		EXPECT_EQ( Json::AsSV(byId[0].as_object(), "name"), "Day" );
+		EXPECT_EQ( byId[0].as_object().at("breaks").as_array()[0].as_object().size(), 1u ) << "a break's too";
+		let byNumber = RunQL( Ƒ(R"(calendarOccurrences( calendar:{}, start:"2026-06-29T00:00:00Z", end:"2026-07-06T00:00:00Z" ){{ name }})", calendarId) ).as_array();
+		EXPECT_EQ( byNumber.size(), expected.size() ) << "calendar: takes an id too;  the Z bounds move the range four hours into Sunday night, which is planned nowhere";
+		let whole = RunQL( R"(calendarOccurrences( calendar:"calOccurrences", start:"2026-06-29T00:00:00", end:"2026-07-06T00:00:00" ))" ).as_array();
+		ASSERT_EQ( whole.size(), expected.size() );
+		EXPECT_EQ( whole[0].as_object().size(), 6u ) << "no columns named is every column";
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//Each refusal of the read is a BadRequest naming the argument;  a calendar not found, or deleted, is NotFound;  and a year to
+	//the day is answered, a leap year's too.
+	TEST_F( CalendarTests, OccurrencesRefusals ){
+		let calendarId = Fresh( "calOccurrencesRefused" );
+		let query = []( sv args ){ return Ƒ( "calendarOccurrences( {} ){{ name }}", args ); };
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"2026-01-01T00:00:00Z", end:"2027-01-03T00:00:00Z")")), "is over a year" );//367 days.
+		EXPECT_TRUE( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"2028-01-01T00:00:00Z", end:"2029-01-01T00:00:00Z")")).is_array() ) << "366 days, a leap year's";
+		EXPECT_TRUE( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"2027-11-06T00:00:00", end:"2028-11-06T00:00:00")")).is_array() ) << "366 local days, an hour more in instants:  EDT to EST";
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"-150000-01-01T00:00:00Z", end:"150000-01-01T00:00:00Z")")), "start is outside the years" );//further apart than the clock's duration holds.
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"2026-07-06T00:00:00Z", end:"150000-01-01T00:00:00Z")")), "end is outside the years" );
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"-150000-01-01T00:00:00", end:"2026-07-06T00:00:00Z")")), "outside the years 1 to 9999" );//a local one, refused before the zone reads it.
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"999999-01-01T00:00:00", end:"2026-07-06T00:00:00Z")")), "outside the years 1 to 9999" );//past what the clock holds:  to_sys wouldn't come back.
+		EXPECT_NE( Refused([&]{ RunQL(Ƒ(R"(calendarOccurrences( calendar:$typo, id:{}, start:"2026-07-06T00:00:00Z", end:"2026-07-07T00:00:00Z" ){{ name }})", calendarId)); }).second.find("typo"), string::npos ) << "an unbound calendar is not an absent one";
+		EXPECT_NE( Refused([&]{ RunQL(query(R"(calendar:"calOccurrencesRefused", start:$typo, end:"2026-07-06T00:00:00Z")")); }).second.find("typo"), string::npos );
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"2026-07-06T00:00:00Z", end:"2026-07-06T00:00:00Z")")), "end 2026-07-06T00:00:00Z is not after start" );
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"2026-07-06T00:00:00Z")")), "end is required" );
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:"yesterday", end:"2026-07-06T00:00:00Z")")), "start is not an ISO time" );
+		EXPECT_REFUSED( RunQL(query(R"(calendar:"calOccurrencesRefused", start:7, end:"2026-07-06T00:00:00Z")")), "start is a dateTime, not 7" );
+		EXPECT_REFUSED( RunQL(query(R"(start:"2026-07-06T00:00:00Z", end:"2026-07-07T00:00:00Z")")), "needs the calendar" );
+		EXPECT_REFUSED( RunQL(query(R"(calendar:true, start:"2026-07-06T00:00:00Z", end:"2026-07-07T00:00:00Z")")), "calendar is a slug or an id, not true" );
+		EXPECT_EQ( Refused([&]{ RunQL(query(R"(calendar:"calNoSuch", start:"2026-07-06T00:00:00Z", end:"2026-07-07T00:00:00Z")")); }).first, EHttpStatus::NotFound );
+		//Read on calendars:  unenforced, the table passes anyone;  enforced, a user without the grant is refused and an anonymous caller is no known user.
+		let week = query( R"(calendar:"calOccurrencesRefused", start:"2026-07-06T00:00:00Z", end:"2026-07-07T00:00:00Z")" );
+		{
+			ScopedEnforcement enforcement{ "calendars" };
+			let user = User( "calOccurrencesUser" );
+			if( !enforcement.WasEnforced )
+				EXPECT_TRUE( RunQL(week, {}, user).is_array() );
+			enforcement.Enforce();
+			EXPECT_EQ( Status([&]{ RunQL(week, {}, user); }), EHttpStatus::Forbidden );
+			EXPECT_EQ( Status([&]{ RunQL(week, {}, Jde::UserPK{}); }), EHttpStatus::Unauthorized );
+		}
+		RunQL( Ƒ("deleteCalendar( id:{} )", calendarId) );
+		EXPECT_EQ( Refused([&]{ RunQL(query(R"(calendar:"calOccurrencesRefused", start:"2026-07-06T00:00:00Z", end:"2026-07-07T00:00:00Z")")); }).first, EHttpStatus::NotFound ) << "a deleted calendar is found no more";
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//copyCalendarPattern copies a pattern and its shifts to a new date, the date read as a create reads one, and answers the copy;
+	//it takes the date's refusals as a create does, and a refused copy writes nothing.
+	TEST_F( CalendarTests, CopyLandsWhole ){
+		let calendarId = Fresh( "calCopy" );
+		let patternId = FirstPattern( calendarId );
+		Shift( patternId, "Day", Weekdays, 0, 480, R"([{"start":240,"minutes":30}])" );
+		Shift( patternId, "Night", Weekdays, 960, 480 );
+		let copy = RunQL( Ƒ(R"(copyCalendarPattern( id:{}, effective:"2026-08-03T15:00:00" ){{ id calendarId effective cycleDays }})", patternId) );
+		let copyId = Id( copy );
+		EXPECT_NE( copyId, patternId );
+		EXPECT_EQ( Json::AsNumber<uint>(copy.as_object(), "calendarId"), calendarId );
+		EXPECT_TP( Time(copy, "effective"), Utc(2026,8,3,10) ) << "15:00 local Monday, moved back to the production day's start, 06:00 EDT";
+		EXPECT_EQ( Json::AsNumber<uint>(copy.as_object(), "cycleDays"), 7u );
+		EXPECT_FALSE( copy.as_object().contains("cycleStart") ) << "only the columns asked for:  " << serialize( copy );
+		let patterns = Patterns( calendarId );
+		ASSERT_EQ( patterns.size(), 2u );
+		EXPECT_TP( Time(patterns.back(), "effective"), Utc(2026,8,3,10) );
+		let strip = []( jarray rows ){ for( auto& r : rows ) r.as_object().erase( "id" ); return rows; };
+		EXPECT_EQ( Shifts(copyId).size(), 2u );
+		EXPECT_EQ( strip(Shifts(copyId)), strip(Shifts(patternId)) ) << "name, days, start, minutes and breaks, in order";
+
+		let variables = RunQL( "copyCalendarPattern( id:$id, effective:$effective ){ id effective }", {{"id", copyId}, {"effective", "2026-08-10T06:00:00"}} );
+		EXPECT_TP( Time(variables, "effective"), Utc(2026,8,10,10) ) << "through variables, and a copy of a copy";
+		EXPECT_EQ( Shifts(Id(variables)).size(), 2u );
+
+		EXPECT_REFUSED( RunQL(Ƒ(R"(copyCalendarPattern( id:{}, effective:"2026-08-03T06:00:00" ){{ id }})", patternId)), "already has a pattern effective 2026-08-03" );
+		EXPECT_REFUSED( RunQL(Ƒ("copyCalendarPattern( id:{} ){{ id }}", patternId)), "effective is required" );
+		EXPECT_REFUSED( RunQL(Ƒ(R"(copyCalendarPattern( id:{}, effective:"someday" ){{ id }})", patternId)), "effective is not an ISO time" );
+		EXPECT_REFUSED( RunQL(R"(copyCalendarPattern( effective:"2026-08-17T06:00:00" ){ id })"), "needs the row's id" );
+		EXPECT_EQ( Refused([&]{ RunQL(R"(copyCalendarPattern( id:999999, effective:"2026-08-17T06:00:00" ){ id })"); }).first, EHttpStatus::NotFound );
+		EXPECT_EQ( Patterns(calendarId).size(), 3u ) << "a refused copy writes nothing";
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//A copy whose shift is refused leaves no pattern:  Monday's night shift runs 420 minutes into Tuesday, the copy takes effect
+	//that Tuesday, and its Tuesday shift starts first thing - refused at the seam, and the pattern made for it purged.
+	TEST_F( CalendarTests, CopyWhoseShiftFailsLeavesNoPattern ){
+		let calendarId = Fresh( "calCopyFails" );
+		Shift( FirstPattern(calendarId), "Night", 1, 1380, 480 );
+		let sourceId = Id( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-08T06:00:00" ){{ id }})", calendarId)) );//a Wednesday:  the night before it is Tuesday's, which has none.
+		Shift( sourceId, "Early", 2, 0, 60 );
+		EXPECT_REFUSED( RunQL(Ƒ(R"(copyCalendarPattern( id:{}, effective:"2026-07-07T06:00:00" ){{ id }})", sourceId)), "Shift 'Night' runs 420 minutes into 2026-07-07, the first day of a new pattern, past the start of its shift 'Early'" );
+		let patterns = Patterns( calendarId, true );
+		EXPECT_EQ( patterns.size(), 2u ) << "the copy's pattern went with its refusal:  " << serialize( patterns );
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//The copy's rights are the caller's Create on both tables, asked before the first write.  calendarShifts enforced, patterns not.
+	TEST_F( CalendarTests, CopyRightsAreAskedFirst ){
+		let calendarId = Fresh( "calCopyRights" );
+		let patternId = FirstPattern( calendarId );
+		Shift( patternId, "Day", Weekdays, 0, 480 );
+		{
+			ScopedEnforcement enforcement{ "calendarShifts" };
+			enforcement.Enforce();
+			let user = User( "calCopyRightsUser" );
+			EXPECT_EQ( Status([&]{ RunQL(Ƒ(R"(copyCalendarPattern( id:{}, effective:"2026-08-03T06:00:00" ){{ id }})", patternId), {}, user); }), EHttpStatus::Forbidden );
+			EXPECT_EQ( Status([&]{ RunQL(Ƒ("copyCalendarPattern( id:{} ){{ id }}", patternId), {}, user); }), EHttpStatus::Forbidden ) << "before the message that effective is missing";
+			EXPECT_EQ( Patterns(calendarId).size(), 1u ) << "no shift-less copy";
+		}
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//A rotation's anchor is copied as the instant it is:  January's 06:00 EST stays that into a copy taking effect under EDT.  A
+	//deleted source copies too, as a live pattern with its shifts.
+	TEST_F( CalendarTests, CopyKeepsTheAnchorAndTakesADeletedSource ){
+		let calendarId = Fresh( "calCopyAnchor" );
+		let sourceId = Id( RunQL(Ƒ(R"(createCalendarPattern( calendarId:{}, effective:"2026-07-06T06:00:00", cycleDays:14, cycleStart:"2026-01-05T06:00:00" ){{ id }})", calendarId)) );
+		Shift( sourceId, "Day", Weekdays, 0, 480 );
+		let copy = RunQL( Ƒ(R"(copyCalendarPattern( id:{}, effective:"2026-08-03T06:00:00" ){{ id cycleDays cycleStart }})", sourceId) );
+		EXPECT_EQ( Json::AsNumber<uint>(copy.as_object(), "cycleDays"), 14u );
+		EXPECT_TP( Time(copy, "cycleStart"), Utc(2026,1,5,11) ) << "as answered";
+		let stored = RunQL( Ƒ("calendarPatterns( id:{} ){{ cycleStart }}", Id(copy)) ).as_array();
+		ASSERT_EQ( stored.size(), 1u );
+		EXPECT_TP( Time(stored[0], "cycleStart"), Utc(2026,1,5,11) ) << "as stored";
+
+		RunQL( Ƒ("deleteCalendarPattern( id:{} )", sourceId) );
+		let revived = Id( RunQL(Ƒ(R"(copyCalendarPattern( id:{}, effective:"2026-09-07T06:00:00" ){{ id }})", sourceId)) );
+		EXPECT_EQ( Shifts(revived).size(), 1u );
+		let live = Patterns( calendarId );
+		let isLive = [&]( uint id ){ return std::ranges::any_of( live, [id]( const jvalue& p ){ return Id(p)==id; } ); };
+		EXPECT_TRUE( isLive(revived) ) << serialize( live );
+		EXPECT_FALSE( isLive(sourceId) ) << "the source stays deleted:  " << serialize( live );
+		RunQL( Ƒ("purgeCalendar( id:{} )", calendarId) );
+	}
+
+	//status{} carries the server's zone, a new calendar's default (spec *Open questions* #8):  the process's, a name the zone
+	//database knows, or UTC.
+	TEST_F( CalendarTests, StatusCarriesTheZone ){
+		let status = RunQL( "status{ timeZone }" ).as_object();
+		let zone = Json::AsString( status, "timeZone" );
+		string expected{ "UTC" };
+		try{ expected = std::chrono::current_zone()->name(); }catch( const std::exception& ){}
+		EXPECT_EQ( zone, expected );
+		EXPECT_NO_THROW( Calendar::ValidateZone(zone) );
+		EXPECT_EQ( Json::AsString(IApp::Status(), "timeZone"), zone ) << "the one the connections' statuses carry too (ConnectionQLAwait)";
 	}
 }

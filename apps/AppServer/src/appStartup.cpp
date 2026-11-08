@@ -11,6 +11,8 @@
 #include <jde/access/server/accessServer.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/AccessListener.h>
+#include <jde/calendar/server/CalendarMAwait.h>
+#include <jde/calendar/server/OccurrencesQLAwait.h>
 #include <jde/web/server/IRequestHandler.h>
 #include <jde/web/server/Server.h>
 #include <jde/web/server/SettingQL.h>
@@ -207,7 +209,8 @@ namespace Jde::App::Server{
 		Logging::Add<Web::Server::SubscribeLog>( "subscribe", pks.Program, pks.Instance, logGate(pks.Instance) );
 		SetAppPKs( pks );
 
-		QL::SetSystemTables( {"adminCheck", "apps", "connections", "logSetting", "session", "sessions"} );//session(s):  SessionGraphQL (Server::CustomQuery) and InstanceSessionsAwait, over no view.
+		QL::SetSystemTables( {"adminCheck", "apps", "connections", "logSetting", "session", "sessions", string{Calendar::Server::OccurrencesQLAwait::Command}} );//session(s):  SessionGraphQL (Server::CustomQuery) and InstanceSessionsAwait, over no view;  calendarOccurrences:  OccurrencesQLAwait, over none either.
+		QL::SetSystemMutations( {string{Calendar::Server::CalendarMAwait::CopyCommand}} );//copyCalendarPattern, taken whole:  copy is no verb, and its result keeps the await's shape.
 		auto appClient = AppClient();
 		Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(webServerSettings, "ssl") };
 		Crypto::EnsureKeyCertificate( sslSettings );//the listener used to create the key as a side effect, which is why SetPublicKey had to wait for it.

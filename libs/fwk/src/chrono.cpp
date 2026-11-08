@@ -91,7 +91,12 @@ namespace Jde{
 	}
 	α Chrono::ToTimePoint( string iso, const time_zone& tz, SL sl )ε->TimePoint{
 		let [t, zoned] = parseIso( iso, sl );
-		return zoned ? t : TimePoint{ tz.to_sys(local_time<Duration>{t.time_since_epoch()}, choose::earliest) };
+		if( zoned )
+			return t;
+		//to_sys doesn't come back for a year at the clock's limit, and the year is the caller's.
+		constexpr TimePoint first{ sys_days{year{1}/January/1} }, past{ sys_days{year{10000}/January/1} };
+		THROW_IFSL( t<first || t>=past, "Could not read {} as a local time:  outside the years 1 to 9999.", iso );
+		return TimePoint{ tz.to_sys(local_time<Duration>{t.time_since_epoch()}, choose::earliest) };
 	}
 
 	α Chrono::ToTimePoint( uint16_t y, uint8_t mnth, uint8_t dayOfMonth, uint8 h, uint8 mnt, uint8 scnd, Duration subseconds, SL sl )ε->TimePoint{

@@ -1,12 +1,11 @@
 #include <jde/calendar/server/CalendarMAwait.h>
-#include <jde/fwk/str.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
-#include <jde/ql/QLAwait.h>
 #include <jde/ql/ops/MutationAwait.h>
 #include <jde/calendar/validation.h>
 #include "../refuse.h"
 #include "../rows.h"
+#include "reads.h"
 
 #define let const auto
 
@@ -16,8 +15,6 @@ namespace Jde{
 	namespace Calendar::Server{
 		using QL::EMutationQL;
 		using namespace CalendarTable;
-		//A calendar's row and its three child tables' rows, deleted ones among them - what the checks and the side effects read.
-		struct Rows final{ jobject Calendar; jarray Patterns; jarray Shifts; jarray Exceptions; };
 
 		Ω isDeleted( const jvalue& row )ι->bool{
 			let p = row.is_object() ? row.get_object().if_contains( "deleted" ) : nullptr;
@@ -95,19 +92,6 @@ namespace Jde{
 		Ω requireName( const jobject& row, SL sl )ε->void{
 			let p = row.if_contains( "name" );
 			REFUSE_IF( !p || !p->is_string() || p->get_string().empty(), "name is required." );
-		}
-		//A time column named by the mutation, read in the calendar's zone:  null or absent is left alone.
-		Ω namedTime( const QL::MutationQL& m, sv key, const Schedule& c, SL sl )ε->optional<TimePoint>{
-			let p = m.FindPtr<jvalue>( key );
-			if( !p || p->is_null() )
-				return nullopt;
-			REFUSE_IF( !p->is_string(), "{} is a dateTime, not {}.", key, serialize(*p) );
-			try{
-				return c.ToTimePoint( string{p->get_string()}, sl );
-			}
-			catch( const std::exception& e ){
-				REFUSE( "{} is not an ISO time:  {}", key, e.what() );
-			}
 		}
 		Ω iso( TimePoint t )ι->jvalue{ return jvalue{ ToIsoString<seconds>(t) }; }
 		Ω day( TimePoint t, const Schedule& c )ι->string{ return std::format( "{:%F}", c.DayOf(t) ); }
@@ -194,6 +178,8 @@ namespace Jde{
 
 	α Calendar::Server::CalendarMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
 		using enum EMutationQL;
+		if( m.CommandName==CopyCommand )
+			return true;
 		let table = m.TableName();
 		if( table==Shifts )
 			return m.Type==Create || m.Type==Update || m.Type==Purge;
@@ -209,8 +195,7 @@ namespace Jde{
 			let table = _query.TableName();
 			_query.DBTable->Authorize( QL::StockRights(type), UserPK(), sl );//asked first:  a validation message never precedes a refusal, and a purge's children go before its statement.
 			_query.CheckVariables( _sl );//the stock op's check, which comes after those children.
-			auto read = [&]( string query ){ return QL::QLAwait<jvalue>{ move(query), jobject{}, Jde::UserPK{Jde::UserPK::System}, _ql, true, _sl }; };//the server's own reads, not the caller's.
-			auto stock = [&]( sv command, jobject args ){ return QL::MutationAwait{ QL::MutationQL{string{command}, move(args), ms<jobject>(), nullopt, true, _ql->Schemas(), false}, _creds, nullptr, _sl }; };
+			auto stock =[&]( sv command, jobject args ){ return QL::MutationAwait{ QL::MutationQL{string{command}, move(args), ms<jobject>(), nullopt, true, _ql->Schemas(), false}, _creds, nullptr, _sl }; };
 			let args = _query.ExtrapolateVariables();
 
 			//The parent chain up to the calendar, then its rows.
@@ -236,7 +221,7 @@ namespace Jde{
 							patternId = requireParent( _query, "calendarPatternId", _sl );
 						else{
 							let shiftId = rowId( _query, _sl );
-							let shift = one( co_await read(Ƒ("calendarShifts( id:{} ){{ id calendarPatternId }}", shiftId)), "Shift", std::to_string(shiftId), _sl );
+							let shift = one( co_await SystemRead(Ƒ("calendarShifts( id:{} ){{ id calendarPatternId }}", shiftId), _ql, _sl), "Shift", std::to_string(shiftId), _sl );
 							patternId = Json::AsNumber<uint32>( shift, "calendarPatternId", _sl );
 						}
 					}
@@ -244,29 +229,18 @@ namespace Jde{
 						calendarId = requireParent( _query, "calendarId", _sl );
 					else{
 						let exceptionId = rowId( _query, _sl );
-						let exception = one( co_await read(Ƒ("calendarExceptions( id:{} ){{ id calendarId }}", exceptionId)), "Exception", std::to_string(exceptionId), _sl );
+						let exception = one( co_await SystemRead(Ƒ("calendarExceptions( id:{} ){{ id calendarId }}", exceptionId), _ql, _sl), "Exception", std::to_string(exceptionId), _sl );
 						calendarId = Json::AsNumber<uint32>( exception, "calendarId", _sl );
 					}
 					if( patternId && !calendarId ){
-						let pattern = one( co_await read(Ƒ("calendarPatterns( id:{} ){{ id calendarId }}", *patternId)), "Pattern", std::to_string(*patternId), _sl );
+						let pattern = one( co_await SystemRead(Ƒ("calendarPatterns( id:{} ){{ id calendarId }}", *patternId), _ql, _sl), "Pattern", std::to_string(*patternId), _sl );
 						calendarId = Json::AsNumber<uint32>( pattern, "calendarId", _sl );
 					}
 					filter = Ƒ( "id:{}", *calendarId );
 				}
-				rows.Calendar = one( co_await read(Ƒ("calendars( {} ){{ id name slug timeZone dayStart }}", filter)), "Calendar", filter, _sl );
+				rows.Calendar = one( co_await SystemRead(Ƒ("calendars( {} ){{ id name slug timeZone dayStart }}", filter), _ql, _sl), "Calendar", filter, _sl );
 				calendarId = Json::AsNumber<uint32>( rows.Calendar, "id", _sl );
-				auto children = co_await read( Ƒ("{{ calendarPatterns( calendarId:{0} ){{ id calendarId effective cycleDays cycleStart deleted }} calendarExceptions( calendarId:{0} ){{ id calendarId name start finish isOpen deleted }} }}", *calendarId) );
-				auto& o = Json::AsObject( children, _sl );
-				rows.Patterns = move( Json::AsArray(o.at("calendarPatterns"), _sl) );
-				rows.Exceptions = move( Json::AsArray(o.at("calendarExceptions"), _sl) );
-				if( rows.Patterns.size() ){
-					vector<uint32> ids;
-					for( let& p : rows.Patterns )
-						ids.push_back( Json::AsNumber<uint32>(Json::AsObject(p, _sl), "id", _sl) );
-					auto shifts = co_await read( Ƒ("calendarShifts( calendarPatternId:[{}] ){{ id calendarPatternId name days start minutes breaks }}", Str::Join(ids)) );
-					if( shifts.is_array() )
-						rows.Shifts = move( shifts.get_array() );
-				}
+				co_await ReadChildren( *calendarId, false, _ql, rows, _sl );
 				before.emplace( rows.Calendar, live(rows.Patterns), rows.Shifts, live(rows.Exceptions), _sl );
 			}
 
@@ -287,7 +261,7 @@ namespace Jde{
 			}
 			else if( table==Patterns && type!=Purge ){
 				for( sv key : {"effective", "cycleStart"} ){
-					if( let t = namedTime(_query, key, *before, _sl); t )
+					if( let t = FindTimeArg(_query, key, *before, _sl); t )
 						spelled[key] = iso( before->Normalize(*t) );
 				}
 				auto patterns = live( rows.Patterns );//in effect once the row is written.
@@ -362,7 +336,7 @@ namespace Jde{
 			}
 			else if( table==Exceptions && (type==Create || type==Update) ){
 				for( sv key : {"start", "finish"} ){
-					if( let t = namedTime(_query, key, *before, _sl); t )
+					if( let t = FindTimeArg(_query, key, *before, _sl); t )
 						spelled[key] = iso( *t );
 				}
 				jobject row;
@@ -445,6 +419,71 @@ namespace Jde{
 			else if( y.is_number() && spelled.size() )//an update's row count:  these columns answer, and the caller's arguments fill in the rest.
 				y = move( spelled );
 			Resume( move(y) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
+	}
+
+	α Calendar::Server::CalendarMAwait::Suspend()ι->void{
+		if( _query.CommandName==CopyCommand )
+			Copy();
+		else
+			Query();
+	}
+
+	//copyCalendarPattern( id, effective ):  the pattern `id` and its shifts, copied to a pattern in effect from `effective` (spec
+	//*Validation*, *Web*).  The pattern and then each shift are created through the host's QL, which routes them back here, so each
+	//row meets the checks a caller's would - the date moved to its day's start, the natural key's refusals, the seams.  A shift's
+	//refusal purges the copy through this await's purge, the shifts it got first, as System:  the server undoing its own half-done
+	//work, which a caller without Purge could not.  A deleted source copies too:  its hours come back as a live pattern.
+	α Calendar::Server::CalendarMAwait::Copy()ι->TAwait<jvalue>::Task{
+		try{
+			let sl = _sl;//REFUSE's.
+			let& schemas = _ql->Schemas();
+			for( sv table : {Patterns, Shifts} )//first:  a validation message never precedes a refusal.
+				DB::AppSchema::GetTablePtr( schemas, string{table}, _sl )->Authorize( Access::ERights::Create, UserPK(), _sl );
+			_query.CheckVariables( _sl );
+			let sourceId = rowId( _query, _sl );
+			let effective = _query.FindPtr<jvalue>( "effective" );
+			REFUSE_IF( !effective || effective->is_null(), "effective is required:  the day the copy takes effect, a local time in the calendar's zone or with Z or an offset." );
+			auto routed =[&]( sv command, jobject args, QL::Creds creds ){ return QL::MutationAwait{ QL::MutationQL{string{command}, move(args), ms<jobject>(), nullopt, true, schemas, false}, move(creds), _ql, _sl }; };
+			let source = one( co_await SystemRead(Ƒ("calendarPatterns( id:{} ){{ id calendarId cycleDays cycleStart }}", sourceId), _ql, _sl), "Pattern", std::to_string(sourceId), _sl );
+			auto shiftRows = co_await SystemRead( Ƒ("calendarShifts( calendarPatternId:{} ){{ id name days start minutes breaks }}", sourceId), _ql, _sl );
+			let shifts = shiftRows.is_array() ? move( shiftRows.get_array() ) : jarray{};
+
+			auto created = co_await routed( "createCalendarPattern", jobject{ {"calendarId", source.at("calendarId")}, {"effective", *effective}, {"cycleDays", source.at("cycleDays")}, {"cycleStart", source.at("cycleStart")} }, _creds );
+			auto pattern = created.is_array() && created.get_array().size() ? Json::AsObject( created.get_array().front(), _sl ) : jobject{};
+			let newId = Json::FindNumber<uint32>( pattern, "id" ).value_or( 0 );
+			THROW_IFSL( !newId, "createCalendarPattern answered no id:  {}", serialize(created) );
+			std::exception_ptr refused;//a shift's, rethrown once the copy is undone:  no co_await in a handler.
+			for( let& v : shifts ){
+				try{
+					let& s = Json::AsObject( v, _sl );
+					jobject args{ {"calendarPatternId", newId} };
+					for( sv key : {"name", "days", "start", "minutes", "breaks"} )
+						args[key] = s.at( key );
+					co_await routed( "createCalendarShift", move(args), _creds );
+				}
+				catch( const runtime_error& ){
+					refused = std::current_exception();
+					break;
+				}
+			}
+			if( refused ){
+				try{
+					co_await routed( "purgeCalendarPattern", jobject{{"id", newId}}, QL::Creds{Jde::UserPK{Jde::UserPK::System}} );
+				}
+				catch( const std::exception& e ){
+					ERR( "Pattern {}, the copy of {}, could not be undone after its shift was refused:  {}", newId, sourceId, e.what() );
+				}
+				std::rethrow_exception( refused );
+			}
+			for( sv key : {"calendarId", "cycleDays", "cycleStart"} ){//the create answers its id and the columns it spelled;  the rest are the source's.
+				if( !pattern.contains(key) )
+					pattern[key] = source.at( key );
+			}
+			Resume( _query.ResultRequest ? jvalue{_query.ResultRequest->TrimColumns(pattern)} : jvalue{move(pattern)} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
