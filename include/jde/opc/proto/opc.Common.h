@@ -39,4 +39,5 @@ namespace Jde::Opc::ProtoUtils{
 	//type and an extension_object as an encoded ExtensionObject.  A `structure` is rebuilt member by member (FillMembers) as
 	//the type its id names, UA_TYPES' or `types`' chain's, and refused, BadDecodingError, when neither explains it.
 	α ToVariant( const Proto::Value& v, const ITypes* types=nullptr )ε->Variant;
+	α Number( const Proto::Value& v )ι->optional<double>;//a numeric scalar's value:  a Boolean, text or anything else is none.
 }

@@ -1,7 +1,7 @@
 #include <jde/calendar/Schedule.h>
 #include <jde/fwk/str.h>
+#include <jde/fwk/exceptions/refuse.h>
 #include <jde/calendar/validation.h>
-#include "refuse.h"
 #include "rows.h"
 
 #define let const auto

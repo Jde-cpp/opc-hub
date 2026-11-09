@@ -308,6 +308,21 @@ namespace Jde::Opc{
 	#undef STR_CASE
 
 	α ProtoUtils::Utf8( sv text )ι->bool{ return utf8_range_IsValid( text.data(), text.size() ); }//what protobuf's parse checks.
+	α ProtoUtils::Number( const Proto::Value& v )ι->optional<double>{
+		switch( v.of_case() ){
+		case Proto::Value::kDoubleValue: return v.double_value();
+		case Proto::Value::kFloatValue: return (double)v.float_value();
+		case Proto::Value::kSbyte: return (double)v.sbyte();
+		case Proto::Value::kInt16: return (double)v.int16();
+		case Proto::Value::kInt32: return (double)v.int32();
+		case Proto::Value::kInt64: return (double)v.int64();
+		case Proto::Value::kByte: return (double)v.byte();
+		case Proto::Value::kUint16: return (double)v.uint16();
+		case Proto::Value::kUint32: return (double)v.uint32();
+		case Proto::Value::kUint64: return (double)v.uint64();
+		default: return nullopt;
+		}
+	}
 	Ω utf8( const UA_String& s )ι->bool{ return ProtoUtils::Utf8( ToSV(s) ); }
 	Ω utf8( const UA_NodeId& id )ι->bool{ return id.identifierType!=UA_NODEIDTYPE_STRING || utf8( id.identifier.string ); }
 	α ProtoUtils::Utf8( const UA_ExpandedNodeId& id )ι->bool{ return utf8( id.namespaceUri ) && utf8( id.nodeId ); }
