@@ -4,9 +4,20 @@
 
 //the zones and the widths they give way at are .jde-list-toolbar's (_general.scss)
 
-//the tabs row, over the toolbar:  denser than Material's 48px, and a tab as wide as its name
+//The tabs row, over the toolbar:  the tablist as wide as its tabs, paging where they overflow, then `+ New view`.  The row draws the
+//divider Material draws under the tabs alone.
+.tabs-row{
+	position: relative;//the rename box's containing block
+	display: flex;
+	align-items: center;
+	border-bottom: var(--mat-tab-divider-height, 1px) solid var(--mat-tab-divider-color, var(--mat-sys-surface-variant));
+}
+//denser than Material's 48px, and a tab as wide as its name
 .view-tabs{
+	flex: 0 1 auto;
+	min-width: 0;
 	--mat-tab-container-height: 40px;
+	--mat-tab-divider-height: 0;
 	.mat-mdc-tab-link{
 		min-width: 0;
 		padding: 0 16px;
@@ -38,10 +49,14 @@
 		height: 20px;
 	}
 }
-//Rename, in the tab's place
+//Rename, over the tab:  its left edge and width are the tab's, a short name's widened to type in
 .rename{
+	position: absolute;
+	top: 50%;
+	transform: translateY(-50%);
+	z-index: 2;//over the tabs, which Material lifts to 1
 	box-sizing: border-box;
-	width: 10em;
+	min-width: 8em;
 	padding: 2px 6px;
 	border: 1px solid var(--mat-sys-outline);
 	border-radius: 4px;
@@ -50,7 +65,7 @@
 	background: var(--mat-sys-surface);
 }
 .new-view{
-	align-self: center;
+	flex: none;
 	margin-inline-start: 4px;
 	white-space: nowrap;
 }

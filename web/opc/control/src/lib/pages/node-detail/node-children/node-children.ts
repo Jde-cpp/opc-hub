@@ -123,7 +123,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 		}
 	}
 
-	//The view group and settings panel, as ql-list/log-detail have them;  the rows re-derive from view() on their own.
+	//The view tabs and settings panel, as ql-list/log-detail have them;  the rows re-derive from view() on their own.
 	onSortChange( sort:Sort ){
 		this.viewSet.sort( sort );
 	}

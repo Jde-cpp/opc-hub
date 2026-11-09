@@ -1,9 +1,9 @@
-import { Component, ElementRef, effect, inject, input, output, signal, viewChild, viewChildren } from '@angular/core';
+import { Component, ElementRef, computed, effect, inject, input, output, signal, viewChild, viewChildren } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { CdkDrag, CdkDragDrop, CdkDropList } from '@angular/cdk/drag-drop';
 import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
-import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
+import { MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatTabLink, MatTabNav, MatTabNavPanel } from '@angular/material/tabs';
 import { MatToolbar } from '@angular/material/toolbar';
@@ -15,14 +15,15 @@ import { SnackbarService } from '../snackbar/snackbar-service';
 //A ViewSet's face, the same over every list (views spec *The view bar*):  the tabs row - a tab per view, the view menu on the
 //active one's chevron, `+ New view` after them, the tabs dragged into order - over the list toolbar, whose zones are the host's
 //own controls left (`[left]`) and, right, Refresh, the view editor's button, the host's (`[right]`) and the row count, with the
-//reload bar under it.  The toolbar changes the set itself and says when a write failed;  the host hears `viewChange` when the view
-//on screen is another and re-reads, unless its rows are a computed of it.  A pick list has no tabs row:  its menu opens from a
-//button showing the view's name, `Views` first, and nothing that makes, moves or removes a view.
+//reload bar under it.  `+ New view` and the rename box stand outside the tablist, which may hold tabs alone.  The toolbar changes
+//the set itself and says when a write failed;  the host hears `viewChange` when the view on screen is another, and re-reads unless
+//its rows are a computed of it or the view shows the rows it did (View.alike).  A pick list has no tabs row:  its menu opens from
+//a button showing the view's name, `Views` first, and nothing that makes, moves or removes a view.
 @Component({
 	selector: 'view-toolbar',
 	templateUrl: './view-toolbar.html',
 	styleUrl: './view-toolbar.scss',
-	imports: [CdkDrag, CdkDropList, MatButton, MatIcon, MatIconButton, MatMenu, MatMenuItem, MatMenuTrigger, MatProgressBar, MatTabLink, MatTabNav, MatToolbar, MatTooltip, NgTemplateOutlet]
+	imports: [CdkDrag, CdkDropList, MatButton, MatIcon, MatIconButton, MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger, MatProgressBar, MatTabLink, MatTabNav, MatToolbar, MatTooltip, NgTemplateOutlet]
 })
 export class ViewToolbar{
 	#snackbar = inject( SnackbarService );
@@ -44,8 +45,15 @@ export class ViewToolbar{
 	edit = output<void>();
 	refresh = output<void>();
 
-	renaming = signal<View|undefined>( undefined );//the view whose tab is a name box
+	//The view being renamed, by its tab's key:  the set may republish its views meanwhile.  The box lies over the tab, where it was.
+	renaming = signal<string|undefined>( undefined );
+	renamed = computed<View|undefined>( ()=>{
+		const key = this.renaming();
+		return key===undefined ? undefined : this.views().views().find( v=>this.#tabKey(v)==key );
+	} );
+	renameAt = signal<{left:number, width:number}>( {left: 0, width: 0} );
 	renameInput = viewChild<ElementRef<HTMLInputElement>>( 'renameInput' );
+	tabsRow = viewChild<ElementRef<HTMLElement>>( 'tabsRow' );
 	links = viewChildren( MatTabLink );
 
 	label( view:View ):string{ return view.name ?? "Default"; }
@@ -57,16 +65,16 @@ export class ViewToolbar{
 	onDrop( event:CdkDragDrop<unknown> ){
 		const view = this.views().views()[event.previousIndex];
 		if( view && event.previousIndex!=event.currentIndex )
-			this.#change( set=>set.move(view, event.currentIndex), "Could not move view." );
+			this.#change( (set, shown)=>set.move(view, event.currentIndex, shown), "Could not move view." );
 	}
-	//the chevron's and the name box's events, kept from the tab:  its click would select, Space and Enter on it click, and the
-	//arrows move between tabs;  a mouse pressed on either would start a drag
+	//the chevron's events, kept from the tab:  its click would select, Space and Enter on it click, the arrows move between tabs,
+	//and a press on it, by mouse or by touch, would start a drag
 	stop( event:Event ){ event.stopPropagation(); }
 
-	add(){ this.#change( set=>set.add(), "Could not add view." ); }
+	add(){ this.#change( (set, shown)=>set.add(shown), "Could not add view." ); }
 	duplicate(){
 		const view = this.views().current();
-		this.#change( set=>set.duplicate(view), "Could not duplicate view." );
+		this.#change( (set, shown)=>set.duplicate(view, shown), "Could not duplicate view." );
 	}
 	canMove( by:number ):boolean{
 		const at = this.#place( this.views().current() ), to = at+by;
@@ -74,56 +82,56 @@ export class ViewToolbar{
 	}
 	move( by:number ){
 		const view = this.views().current();
-		this.#change( set=>set.move(view, this.#place(view)+by), "Could not move view." );
+		this.#change( (set, shown)=>set.move(view, this.#place(view)+by, shown), "Could not move view." );
 	}
 	remove(){
 		const view = this.views().current();
-		this.#change( set=>set.remove(view), "Could not delete view." );
+		this.#change( (set, shown)=>set.remove(view, shown), "Could not delete view." );
 	}
-	rename(){ this.renaming.set( this.views().current() ); }
+	rename(){
+		const tab = this.links()[this.views().index()]?.elementRef.nativeElement as HTMLElement|undefined, row = this.tabsRow()?.nativeElement;
+		if( tab && row ){
+			const at = tab.getBoundingClientRect();
+			this.renameAt.set( {left: at.left-row.getBoundingClientRect().left, width: at.width} );
+		}
+		this.renaming.set( this.#tabKey(this.views().current()) );
+	}
 	onRenameKey( event:KeyboardEvent ){
-		this.stop( event );
 		if( event.key=="Enter" )
-			this.commitRename( (<HTMLInputElement>event.target).value );
+			this.commitRename( (<HTMLInputElement>event.target).value, true );
 		else if( event.key=="Escape" )
 			this.cancelRename();
 	}
-	//Enter, or leaving the box;  a blank name is no name, and the view keeps its own
-	commitRename( value:string ){
-		const view = this.renaming();
-		if( !view )
-			return;
-		this.#endRename();
+	//Enter, or leaving the box, the focus back on the tab only for Enter:  a blur has sent it somewhere.  A blank name is no name,
+	//and the name the box opened on no change, the unnamed view's *Default* among them.
+	commitRename( value:string, refocus:boolean ){
+		const view = this.renamed();
+		this.#endRename( refocus );
 		const name = value.trim();
-		if( name && name!=view.name )
-			this.#change( set=>set.rename(view, name), "Could not rename view." );
+		if( view && name && name!=this.label(view) )
+			this.#change( (set, shown)=>set.rename(view, name, shown), "Could not rename view." );
 	}
 	cancelRename(){
-		if( this.renaming() )
-			this.#endRename();
+		if( this.renaming()!==undefined )
+			this.#endRename( true );
 	}
-	#endRename(){
+	#endRename( refocus:boolean ){
 		this.renaming.set( undefined );
-		this.links()[this.views().index()]?.focus();
+		if( refocus )
+			this.links()[this.views().index()]?.focus();
 	}
+	//what the tabs row tracks a tab by:  its view's number, the twin's marked, as it shares its view's
+	#tabKey( view:View ):string{ return (view.isAdhoc ? "*" : "")+view.number; }
 	//the tab of the view, a twin's that of the view under it:  the hosts with a tabs row offer every view, so it is the view's
 	//place in the set
 	#place( view:View ):number{ return this.views().views().findIndex( v=>v.number==view.number ); }
-	//A change made at once, its writes awaited and a failure said.  The host hears of the view on screen changing now and - where
-	//the set was still to be read - once the change lands, as LogDetail re-reads its rows.
-	async #change( change:( set:ViewSet<View> )=>Promise<void>, failed:string ){
-		const set = this.views(), before = set.current();
-		const writes = change( set );
-		if( set.current()!==before )
-			this.viewChange.emit();
-		const shown = set.current();
+	//A change through the set, which says when it puts another view on screen (ViewSet), its writes awaited and a failure said
+	async #change( change:( set:ViewSet<View>, shown:()=>void )=>Promise<void>, failed:string ){
 		try{
-			await writes;
+			await change( this.views(), ()=>this.viewChange.emit() );
 		}
 		catch( e ){
 			this.#snackbar.exception( failed, e );
 		}
-		if( set.current()!==shown )
-			this.viewChange.emit();
 	}
 }

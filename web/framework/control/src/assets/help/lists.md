@@ -56,7 +56,7 @@ The view you were last on is remembered in this browser.
 The active tab carries a chevron, which opens the view's menu:
 
 - **Rename** turns the tab's name into a box. Enter keeps the new name, Escape or a blank box leaves the old one.
-- **Duplicate** adds a copy of the view after it, under the same name.
+- **Duplicate** adds a copy of the view, as it was last saved, after it under the same name.
 - **Move left** and **Move right** change the order of the tabs. Dragging a tab does the same.
 - **Delete** removes the view. Deleting the last one brings the list's own views back. It is greyed out on an *(edited)* view, and on a list's own view when that is the only one.
 

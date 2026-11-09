@@ -96,7 +96,9 @@ describe( 'ViewToolbar', ()=>{
 			expect( tabs( element ).map( t=>t.getAttribute( "aria-selected" ) ) ).toEqual( ["false", "false", "true"] );
 			expect( tabs( element ).map( t=>t.getAttribute( "role" ) ) ).toEqual( ["tab", "tab", "tab"] );
 			expect( activeTab( element ).getAttribute( "aria-controls" ) ).toBe( "panel" );
-			expect( text( element.querySelector( '.new-view' )! ) ).toBe( "New view" );
+			const add = element.querySelector( '.new-view' )!;
+			expect( text( add ) ).toBe( "New view" );
+			expect( add.closest( 'nav' ) ).toBeNull();//after the tablist, which may hold tabs alone
 		} );
 
 		it( 'selects the tab clicked and tells the host, and says nothing for the active tab again', async ()=>{
@@ -111,18 +113,23 @@ describe( 'ViewToolbar', ()=>{
 			expect( host.changes ).toBe( 1 );
 		} );
 
-		it( 'carries the chevron on the active tab alone, and keeps its click and keydown from the tab', async ()=>{
+		it( 'carries the chevron on the active tab alone, and keeps its click, its keys and a press on it from the tab', async ()=>{
 			const { element } = await create();
 			const [other, active] = tabs( element );
 			expect( chevron( other ) ).toBeNull();
 			expect( chevron( active ) ).not.toBeNull();
-			const click = vi.fn(), keydown = vi.fn();
+			const click = vi.fn(), keydown = vi.fn(), press = vi.fn();
 			active.addEventListener( 'click', click );
 			active.addEventListener( 'keydown', keydown );
+			active.addEventListener( 'mousedown', press );
+			active.addEventListener( 'touchstart', press );//either starts a drag
 			chevron( active )!.dispatchEvent( new MouseEvent( 'click', {bubbles: true} ) );
 			key( chevron( active )!, " " );
+			chevron( active )!.dispatchEvent( new MouseEvent( 'mousedown', {bubbles: true} ) );
+			chevron( active )!.dispatchEvent( new Event( 'touchstart', {bubbles: true} ) );
 			expect( click ).not.toHaveBeenCalled();
 			expect( keydown ).not.toHaveBeenCalled();
+			expect( press ).not.toHaveBeenCalled();
 		} );
 
 		it( 'drags with the CDK:  a drop moves the tab, the twin alone staying put', async ()=>{
@@ -146,6 +153,19 @@ describe( 'ViewToolbar', ()=>{
 			expect( activeTab( element ) ).toBe( tabs( element )[2] );
 			expect( host.changes ).toBe( 1 );
 		} );
+
+		//#588 review #4:  it said so again once the writes were done, the tab the user picked meanwhile taken for the change's
+		it( 'tells the host of a change once, whatever tab is picked while it writes', async ()=>{
+			const { fixture, element, service, host } = await create();
+			let written!:()=>void;
+			service.save.mockReturnValue( new Promise<void>( done=>{ written = done; } ) );
+			element.querySelector<HTMLButtonElement>( '.new-view' )!.click();
+			tabs( element )[1].click();//Users, while the writes are out
+			expect( host.changes ).toBe( 2 );
+			written();
+			await settle( fixture );
+			expect( host.changes ).toBe( 2 );
+		} );
 	} );
 
 	describe( 'the view menu', ()=>{
@@ -163,7 +183,9 @@ describe( 'ViewToolbar', ()=>{
 			const box = renameBox( element )!;
 			expect( box.value ).toBe( "Users" );
 			expect( document.activeElement ).toBe( box );
+			expect( box.closest( 'nav' ) ).toBeNull();//over the tab, not in it:  a tab's content is presentational
 			expect( chevron( activeTab( element ) ) ).toBeNull();
+			expect( labels( element ) ).toEqual( ["Default", "Users"] );//the tab keeps its name under the box
 			box.value = "People";
 			key( box, "Enter" );
 			await settle( fixture );
@@ -200,14 +222,47 @@ describe( 'ViewToolbar', ()=>{
 			expect( set.current().name ).toBe( "Folk" );
 		} );
 
-		it( 'keeps the keys of the name box from the tab', async ()=>{
-			const { fixture, element } = await create();
+		//#588 review #7:  the blur's commit took the focus back to the tab, so Tab never left the box
+		it( 'leaves the focus where leaving the box sent it', async ()=>{
+			const { fixture, element, set } = await create();
 			openMenu( fixture, chevron( activeTab( element ) )! );
 			await pick( fixture, "Rename" );
-			const keydown = vi.fn();
-			activeTab( element ).addEventListener( 'keydown', keydown );
-			key( renameBox( element )!, "ArrowLeft" );
-			expect( keydown ).not.toHaveBeenCalled();
+			renameBox( element )!.value = "Folk";
+			const refresh = element.querySelector<HTMLButtonElement>( 'button[aria-label="Refresh"]' )!;
+			refresh.focus();
+			await settle( fixture );
+			expect( set.current().name ).toBe( "Folk" );
+			expect( document.activeElement ).toBe( refresh );
+		} );
+
+		//#588 review #1:  the box opens on Default, which an unnamed view's undefined never equalled, so the set was saved
+		it( "commits nothing for the name the box opened on, an unnamed view's Default among them", async ()=>{
+			const { fixture, element, set, service, host } = await create();
+			tabs( element )[0].click();
+			fixture.detectChanges();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Rename" );
+			expect( renameBox( element )!.value ).toBe( "Default" );
+			key( renameBox( element )!, "Enter" );
+			await settle( fixture );
+			expect( set.current().name ).toBeUndefined();
+			expect( service.save ).not.toHaveBeenCalled();
+			expect( host.changes ).toBe( 1 );//the tab click's
+		} );
+
+		//#588 review #9:  the box went with the view object it was opened on
+		it( "keeps the name box while the set puts another object in its view's place", async ()=>{
+			const { fixture, element, set } = await create();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Rename" );
+			await set.save( View.copy( set.current() ) );
+			fixture.detectChanges();
+			const box = renameBox( element )!;
+			expect( box ).not.toBeNull();
+			box.value = "People";
+			key( box, "Enter" );
+			await settle( fixture );
+			expect( set.current().name ).toBe( "People" );
 		} );
 
 		it( 'duplicates the view after itself under its name, and shows the copy', async ()=>{
@@ -249,7 +304,7 @@ describe( 'ViewToolbar', ()=>{
 		it( "has no Delete for the route's only view, nor for a twin", async ()=>{
 			const only = await create( {route: [view( undefined )]} );
 			expect( openMenu( only.fixture, chevron( activeTab( only.element ) )! ).map( e=>[text( e ), e.disabled] ) ).toContainEqual( ["Delete", true] );
-			TestBed.resetTestingModule();
+			TestBed.resetTestingModule();//two toolbars in one test
 			const twin = await create( {twin: true} );
 			expect( openMenu( twin.fixture, chevron( activeTab( twin.element ) )! ).map( e=>[text( e ), e.disabled] ) ).toContainEqual( ["Delete", true] );
 		} );

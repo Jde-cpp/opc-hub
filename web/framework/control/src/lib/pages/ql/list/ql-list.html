@@ -2,35 +2,43 @@
 	@if( isSettings() ){
 		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [canDelete]=profile().canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
 	} @else {
-		<ng-container>
+		<ng-template #toolbar let-panel>
 			<view-toolbar [views]="profile()" [tabPanel]="panel" [tabs]="!selector()" [refreshing]="isRefreshing()" [count]="paged() ? undefined : data().length" (viewChange)="onChangeView()" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--no count on more than a page:  the pager under the table carries the range instead-->
 				@if( canAdd() && !selector() ){
 					<button left [matButton]="addFilled() ? 'filled' : 'tonal'" (click)="onAdd()"><mat-icon>add</mat-icon>Add</button><!--filled only on a genuinely empty list, where Add is the one useful action (addFilled); showEmpty suppresses the flash while a reload has the rows cleared-->
 				}
 			</view-toolbar>
-			<mat-tab-nav-panel #panel><!--the tabs' panel:  the table and what stands in for it-->
-				<div style="align-content: center; margin: auto;  text-align: center">
-					<ql-table [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
+		</ng-template>
+		@if( selector() ){<!--a pick list has no tabs row, so no tab panel:  the record's own tab is around it-->
+			<ng-container [ngTemplateOutlet]="toolbar"/>
+			<ng-container [ngTemplateOutlet]="rows"/>
+		}
+		@else{
+			<ng-container [ngTemplateOutlet]="toolbar" [ngTemplateOutletContext]="{$implicit: panel}"/>
+			<mat-tab-nav-panel #panel><ng-container [ngTemplateOutlet]="rows"/></mat-tab-nav-panel>
+		}
+		<ng-template #rows><!--the table and what stands in for it-->
+			<div style="align-content: center; margin: auto;  text-align: center">
+				<ql-table [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
+			</div>
+			@if( failure(); as f ){
+				<failure-state [failure]=f (retry)="onRefresh()">
+					@if( helpRoute(); as help ){ <a matButton [routerLink]="help">Help</a> }
+				</failure-state>
+			}
+			@else if( showEmpty() ){
+				<div class="jde-empty" role="status">
+					<mat-icon aria-hidden="true">{{ emptyState().icon }}</mat-icon>
+					<p class="title">{{ emptyState().title }}</p>
+					@if( emptyState().detail ){ <p class="detail">{{ emptyState().detail }}</p> }
+					@if( helpRoute(); as help ){ <div class="actions"><a matButton [routerLink]="help">Help</a></div> }
 				</div>
-				@if( failure(); as f ){
-					<failure-state [failure]=f (retry)="onRefresh()">
-						@if( helpRoute(); as help ){ <a matButton [routerLink]="help">Help</a> }
-					</failure-state>
-				}
-				@else if( showEmpty() ){
-					<div class="jde-empty" role="status">
-						<mat-icon aria-hidden="true">{{ emptyState().icon }}</mat-icon>
-						<p class="title">{{ emptyState().title }}</p>
-						@if( emptyState().detail ){ <p class="detail">{{ emptyState().detail }}</p> }
-						@if( helpRoute(); as help ){ <div class="actions"><a matButton [routerLink]="help">Help</a></div> }
-					</div>
-				}
-				@if( paged() ){
-					<div class="jde-pager">
-						<paginator [startIndex]="skip()" [pageSize]="view().limit" [length]="length()" (onPageEvent)="onPage($event)"></paginator>
-					</div>
-				}
-			</mat-tab-nav-panel>
-		</ng-container>
+			}
+			@if( paged() ){
+				<div class="jde-pager">
+					<paginator [startIndex]="skip()" [pageSize]="view().limit" [length]="length()" (onPageEvent)="onPage($event)"></paginator>
+				</div>
+			}
+		</ng-template>
 	}
 }

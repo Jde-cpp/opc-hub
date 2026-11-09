@@ -102,7 +102,7 @@ describe( 'QLList re-query failures reach the user', ()=>{
 		const { snackbar: {exception} } = configure();
 		const page = TestBed.createComponent( QLList ).componentInstance;
 		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
-		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema, profile: viewSet( [view] )} as unknown as QLListData );
+		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema, profile: viewSet( [view, View.fromTable( {columns: ["name"], sort: "slug"}, schema )] )} as unknown as QLListData );
 		page.view.set( view );
 		//the shared failure: QLListResolver.load is where every re-query path ends up
 		vi.spyOn( QLListResolver, 'load' ).mockRejectedValue( new Error("gateway down") );
@@ -113,6 +113,7 @@ describe( 'QLList re-query failures reach the user', ()=>{
 
 	it( 'reports a failed view change', async ()=>{
 		const { page, exception } = create();
+		page.profile().select( 1 );
 		await page.onChangeView();
 		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
 	} );
@@ -131,6 +132,7 @@ describe( 'QLList re-query failures reach the user', ()=>{
 
 	it( 'clears isRefreshing even when the re-query fails', async ()=>{
 		const { page } = create();
+		page.profile().select( 1 );
 		await page.onChangeView();
 		expect( page.isRefreshing() ).toBe( false );
 	} );
@@ -340,6 +342,24 @@ describe( 'QLList paging', ()=>{
 	};
 
 	afterEach( ()=>vi.restoreAllMocks() );
+	//another view, sorted otherwise, picked as the toolbar picks it before it says the view changed
+	const another = ( page:QLList )=>{
+		const profile = page.profile();
+		profile.reset( [...profile.views(), View.fromTable( {columns: ["name"], sort: "slug"}, schema )], schema );
+		profile.select( 1 );
+	};
+
+	//#588 review #11:  a pick list has no tabs row, so a panel there was a tab panel no tab controls
+	it( 'puts its rows in a tab panel only under a tabs row', ()=>{
+		const list = create( rows(3) ).fixture;
+		list.detectChanges();
+		expect( list.nativeElement.querySelector( 'mat-tab-nav-panel ql-table' ) ).not.toBeNull();
+		const pick = create( rows(3) ).fixture;//configure() resets:  a second list in one test
+		pick.componentRef.setInput( 'selector', true );
+		pick.detectChanges();
+		expect( pick.nativeElement.querySelector( 'ql-table' ) ).not.toBeNull();
+		expect( pick.nativeElement.querySelector( 'mat-tab-nav-panel' ) ).toBeNull();
+	} );
 
 	it( 'shows the pager only when there is more than a page', ()=>{
 		expect( create( rows(3) ).page.paged() ).toBe( false );
@@ -392,9 +412,21 @@ describe( 'QLList paging', ()=>{
 	it( 'starts over on a view change', async ()=>{
 		const { page, load } = create( rows(40) );
 		await page.onPage( {startIndex: 25, pageSize: 25} );
+		another( page );
 		await page.onChangeView();
 		expect( load.mock.calls[1][1].skip ).toBe( 0 );
 		expect( page.skip() ).toBe( 0 );
+	} );
+
+	//#588 review #5:  a rename put the list back on its first page
+	it( 'stays on its page for a view that shows the rows it did, renamed or copied', async ()=>{
+		const { page, load } = create( rows(40) );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		await page.profile().rename( page.profile().current(), "Mine" );
+		await page.onChangeView();
+		expect( load ).toHaveBeenCalledTimes( 1 );
+		expect( page.skip() ).toBe( 25 );
+		expect( page.view().name ).toBe( "Mine" );//the editor's, and Delete's
 	} );
 
 	//reviews-issue/231-paging.md #12:  the reset to the first page is refresh()'s alone - Save and Delete go through it too
@@ -424,6 +456,7 @@ describe( 'QLList paging', ()=>{
 			const { page } = create( rows(40) );
 			await page.onPage( {startIndex: 25, pageSize: 25} );
 			expect( stored.get('users/skip') ).toBe( '25' );
+			another( page );
 			await page.onChangeView();
 			expect( stored.has('users/skip') ).toBe( false );
 		} );
@@ -470,12 +503,10 @@ describe( 'QLList paging', ()=>{
 
 		it( 'does not bring back the view a page turn was copied from', async ()=>{
 			const { page, hold } = create( rows(80) );
-			const profile = page.profile();
-			profile.reset( [...profile.views(), View.fromTable( {columns: ["name"], sort: "slug"}, schema )], schema );
 			const pending = hold();
 			const older = turn( page, 25 );
-		profile.select( 1 );//as the toolbar does, before it says the view changed
-		const newer = page.onChangeView();
+			another( page );
+			const newer = page.onChangeView();
 			pending[1].settle();
 			await newer;
 			pending[0].settle();

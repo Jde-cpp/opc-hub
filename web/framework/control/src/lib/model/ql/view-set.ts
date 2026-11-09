@@ -29,7 +29,9 @@ export type ViewSetOptions<V extends View> = {
 //So too for a read made for another:  someone signed in since, the next change reads for them first.  Signed out, a change is made
 //here alone, and the next one signed in writes it too.
 //The array is only ever replaced, so whatever reads current() sees the change, and the host re-queries or, where its rows are a
-//computed of current(), does nothing.  The selected view's number is kept in LocalPrefs, per browser, as it is picked.
+//computed of current(), does nothing.  A change takes `shown`, called where it puts another view on screen:  at once, or - the
+//profile still to be read - once the read lands, so a tab picked in the meantime is not taken for it.  The selected view's number
+//is kept in LocalPrefs, per browser, as it is picked.
 export class ViewSet<V extends View>{
 	constructor( options:ViewSetOptions<V> ){
 		this.#type = options.type;
@@ -96,8 +98,8 @@ export class ViewSet<V extends View>{
 	//Over the view of its number;  under a number that is none of the set's, a new view after the last.  It is the one shown, and
 	//the twin goes.  The returned promise is the profile's writes;  the views have changed when it is returned, unless the
 	//profile is still to be read.
-	save( view:View ):Promise<void>{
-		return this.#change( ()=>{
+	save( view:View, shown?:()=>void ):Promise<void>{
+		return this.#change( shown, ()=>{
 			const saved = this.#type.copy( view );
 			saved.type = ViewType.User;
 			const views = [...this.#members];
@@ -113,17 +115,17 @@ export class ViewSet<V extends View>{
 			this.#set( views );
 		} );
 	}
-	//A copy of the view as the user's, under the next number and its own name, after it and shown:  the menu's Duplicate.  The
-	//twin goes, as it does on a Save or on switching away.
-	duplicate( view:View ):Promise<void>{
-		return this.#change( ()=>{
+	//A copy of the view of its number as the user's, under the next number and its own name, after it and shown:  the menu's
+	//Duplicate.  The view as saved, not its twin, whose edits go, as they do on a Save or on switching away.
+	duplicate( view:View, shown?:()=>void ):Promise<void>{
+		return this.#change( shown, ()=>{
 			const at = this.#members.findIndex( v=>v.number==view.number );
-			this.#insert( this.#type.copy(view), at<0 ? this.#members.length : at+1 );
+			this.#insert( this.#type.copy(this.#members[at] ?? view), at<0 ? this.#members.length : at+1 );
 		} );
 	}
 	//`+ New view`:  a copy of the view shown, its edits included, named for its number and after the last
-	add():Promise<void>{
-		return this.#change( ()=>{
+	add( shown?:()=>void ):Promise<void>{
+		return this.#change( shown, ()=>{
 			const copy = this.#type.copy( this.current() );
 			copy.name = `View ${this.#next}`;
 			this.#insert( copy, this.#members.length );
@@ -135,8 +137,8 @@ export class ViewSet<V extends View>{
 		return !view.isAdhoc && this.#members.some( v=>v.number==view.number ) && ( this.#saved || this.#members.length>1 );
 	}
 	//the view and its twin
-	rename( view:View, name:string|undefined ):Promise<void>{
-		return this.#change( ()=>{
+	rename( view:View, name:string|undefined, shown?:()=>void ):Promise<void>{
+		return this.#change( shown, ()=>{
 			const named = ( v:V )=>{ const y = this.#type.copy( v ); y.name = name; return y; };
 			const at = this.#members.findIndex( v=>v.number==view.number );
 			if( at<0 )
@@ -149,8 +151,8 @@ export class ViewSet<V extends View>{
 		} );
 	}
 	//to the place `to` among the set's views
-	move( view:View, to:number ):Promise<void>{
-		return this.#change( ()=>{
+	move( view:View, to:number, shown?:()=>void ):Promise<void>{
+		return this.#change( shown, ()=>{
 			const from = this.#members.findIndex( v=>v.number==view.number );
 			to = Math.max( 0, Math.min(to, this.#members.length-1) );
 			if( from<0 || from==to )
@@ -161,8 +163,8 @@ export class ViewSet<V extends View>{
 		} );
 	}
 	//The view of its number, and its twin.  The selection stays where it survived, and the last view taken shows the route's again.
-	remove( view:View ):Promise<void>{
-		return this.#change( ()=>{
+	remove( view:View, shown?:()=>void ):Promise<void>{
+		return this.#change( shown, ()=>{
 			if( !this.#members.some( v=>v.number==view.number ) )
 				return;
 			if( this.#twin?.number==view.number )
@@ -172,18 +174,27 @@ export class ViewSet<V extends View>{
 	}
 
 	//A change to the set:  made at once, and its writes queued.  Where the profile is still to be read the read comes first, and
-	//the change is made once it succeeds - unless it found the user's own views, since the change was made to the route's.
-	#change( change:()=>void ):Promise<void>{
+	//the change is made once it succeeds - unless it found the user's own views, since the change was made to the route's, which
+	//puts those on screen.
+	#change( shown:( ()=>void )|undefined, change:()=>void ):Promise<void>{
 		const known = this.#isRead, generation = this.#generation;
-		if( known )
+		const make = ()=>{
+			const before = this.current();
 			change();
+			if( this.current()!==before )
+				shown?.();
+		};
+		if( known )
+			make();
 		const turn = this.#queue.catch( ()=>{} ).then( async ()=>{
 			if( !known ){
 				if( !this.#isRead )
 					await this.#read();
-				if( this.#generation!=generation )
+				if( this.#generation!=generation ){
+					shown?.();
 					throw new Error( "Your saved views have been read:  make the change again." );
-				change();
+				}
+				make();
 			}
 			await this.#write();
 		} );

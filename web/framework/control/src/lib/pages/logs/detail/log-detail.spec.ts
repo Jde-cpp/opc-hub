@@ -324,12 +324,26 @@ describe( 'LogDetail sort', ()=>{
 		const view = page.viewCopy;
 		view.name = 'mine';
 		view.number = 0;
+		view.sort = [{active: 'level', direction: 'asc'}, {active: 'time', direction: 'desc'}];
 		const saving = page.onViewSave( view );
 		expect( page.view().name ).toBe( 'mine' );
 		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
 		written();
 		await saving;
 		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
+	} );
+	//#588 review #5:  a rename cleared every row read and the one selected
+	it( 'keeps its rows for a view that shows the rows it did, renamed or copied', async ()=>{
+		const { page, ql } = await create();
+		const reads = ql.ql.mock.calls.length;
+		const view = page.viewCopy;
+		view.name = 'mine';
+		view.number = 0;//a new view, the one shown under another name
+		await page.onViewSave( view );
+		page.onViewChange();//as the toolbar says of a rename
+		expect( page.view().name ).toBe( 'mine' );
+		expect( ql.ql ).toHaveBeenCalledTimes( reads );
+		expect( page.data.allEntries ).toHaveLength( 2 );
 	} );
 	it( 'saves a view with no sort sorted by time', async ()=>{
 		const { fixture, page, profileStore } = await create();

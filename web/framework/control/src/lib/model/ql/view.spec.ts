@@ -185,4 +185,18 @@ describe( "View statics", ()=>{
 		copy.fieldFilters[0].filter.value.push( "b" );
 		expect( route.fieldFilters[0].filter.value ).toEqual( ["a"] );
 	} );
+
+	//#588 review #5:  a host keeps its rows, and its page, for a view that shows the rows it did
+	it( "take a view renamed, or a copy, as alike, and one sorted, filtered or re-columned as not", ()=>{
+		const copy = View.copy( base );
+		copy.name = "Mine";
+		copy.number = 7;
+		expect( View.alike( copy, base ) ).toBe( true );
+		const sorted = View.copy( base );
+		sorted.sort = [{active: "url", direction: "asc"}];
+		const filtered = View.fromConfig( {configColumns: ["name", "url"], sort: [{active: "name", direction: "asc"}], filters: [{name: "name", value: ["a"]}]}, schema );
+		const fewer = View.fromTable( {columns: ["name"], sort: "name"}, schema );
+		expect( [sorted, filtered, fewer].map( v=>View.alike( v, base ) ) ).toEqual( [false, false, false] );
+		expect( View.alike( base, undefined ) ).toBe( false );
+	} );
 } );

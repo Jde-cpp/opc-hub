@@ -406,6 +406,11 @@ export class View{
 		const keys = ( v:View )=>v.fieldFilters.map( ff=>JSON.stringify([ff.field.name, ff.filter.operator, ff.filter.value]) ).sort();
 		return arraysEqual( keys(a), keys(b) );
 	}
+	//the same but for the name:  a view renamed, or a copy of one, shows the rows it did in the columns it did
+	static alike( a:View, b:View|undefined ):boolean{
+		const json = ( v:View )=>JSON.stringify( {...v.toJson(undefined), name: undefined} );
+		return !!b && json( a )==json( b );
+	}
 	toJson( defaultSettings:TableSettings|undefined ):ViewJson{
 		let fields = [];
 		for( let field of this.fields ){
