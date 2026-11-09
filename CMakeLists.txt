@@ -45,6 +45,7 @@ if( jde_APPS )
 	add_subdirectory( ${libDir}/calendar/src libs/calendar/lib ) #links Jde.App.Shared, so after it.
 	add_subdirectory( ${libDir}/opc/shared/src libs/opc/shared/lib )
 	add_subdirectory( ${libDir}/historian/src libs/historian/lib )
+	add_subdirectory( ${libDir}/oee/src libs/oee/lib ) #links Jde.Opc.HistorianLib and Jde.CalendarLib, so after both.
 	add_subdirectory( ${libDir}/opc/server/src libs/opc/server/lib )
 
 	add_subdirectory( apps/AppServer/src apps/AppServer/lib )
@@ -69,6 +70,7 @@ if( jde_APPS )
 		add_subdirectory( libs/calendar/tests libs/calendar/tests )
 		add_subdirectory( libs/opc/shared/tests libs/opc/shared/tests )
 		add_subdirectory( libs/historian/tests libs/historian/tests )
+		add_subdirectory( libs/oee/tests libs/oee/tests )
 		add_subdirectory( apps/AppServer/tests apps/AppServer/tests )
 		add_subdirectory( apps/OpcServer/tests apps/OpcServer/tests )
 		add_subdirectory( apps/OpcGateway/tests/utils apps/OpcGateway/tests/utils ) #Jde.Opc.TestUtils:  the soak and both OPC suites link it.
