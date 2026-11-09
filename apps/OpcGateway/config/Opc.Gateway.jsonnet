@@ -118,6 +118,7 @@ function( sync=false )
 			limits:: { maxSessions: 100, maxSecureChannels: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }
 		}
 	},
+	calendars:: { retryWait: "PT30S" }, //Calendars.cpp:  how soon a subscribe or read of the shift calendars that failed is tried again.
 	logging:{
 		breakLevel: "Critical",
 		stack:: { default: "Warning" },//open62541's lines (LogStack):  which walk the stack for their file, line and function.

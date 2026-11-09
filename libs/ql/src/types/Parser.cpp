@@ -431,6 +431,8 @@ namespace Jde::QL{
 		vector<Subscription> y;
 		do{
 			y.push_back( LoadSubscription(vars, schemas, remote) );
+			if( Peek()=="}" )//its block's close;  parse trimmed the last block's.
+				Next();
 		}while( Next()=="subscription" );
 
 		return y;

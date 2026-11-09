@@ -112,7 +112,7 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//The calendars resource enforced with no grant for the gateway's user (spec *Authorization*):  the reload an edit raises is
-	//refused, so the cache holds nothing;  opened again, as it ships, the next reload fills it.
+	//refused, so the cache holds nothing;  opened again, as it ships, the retry fills it with no edit to raise an event.
 	TEST_F( CalendarClientTests, ARefusedReadHoldsNothing ){
 		if( !Embedded() )
 			GTEST_SKIP() << "the resource is enforced on the embedded AppServer's own QL.";
@@ -128,8 +128,9 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( WaitUntil([&]{ return !Calendars::Find(id); }) ) << "the read was refused, and the calendar is still held";
 
 		std::move( open ).Invoke();
+		EXPECT_TRUE( WaitUntil([&]{ let held = Calendars::Find( id ); return held && held->Name()=="calRefused2"; }) ) << "opened again, the retry holds it";
 		OnServer( Ƒ(R"(updateCalendar( id:{}, name:"calRefused3" ))", id) );
-		EXPECT_TRUE( WaitUntil([&]{ let held = Calendars::Find( id ); return held && held->Name()=="calRefused3"; }) ) << "opened again, the next reload holds it";
+		EXPECT_TRUE( WaitUntil([&]{ let held = Calendars::Find( id ); return held && held->Name()=="calRefused3"; }) ) << "and an edit is followed";
 		Purge( id );
 	}
 

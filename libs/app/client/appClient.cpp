@@ -41,11 +41,11 @@ namespace Jde::App{
 				co_return;
 			}
 			co_await ConnectAwait{ appClient, true };
-			if( !Client::Subscriptions::Replay(appClient) )
-				co_return;
-			appClient->OnReconnected();//a replay means this is a reconnect:  whatever a client holds of the server's rows has a gap in it, an access snapshot or not.
-			if( appClient->IsAccessConfigured() )
-				reloadAccess( move(appClient) );//the snapshot's gap, which the deltas never filled.
+			Client::Subscriptions::Replay( appClient, [appClient]{
+				appClient->OnReconnected();//a replay means this is a reconnect:  whatever a client holds of the server's rows has a gap in it, an access snapshot or not.
+				if( appClient->IsAccessConfigured() )
+					reloadAccess( appClient );//the snapshot's gap, which the deltas never filled.
+			} );
 		}
 		catch( runtime_error& )
 		{}

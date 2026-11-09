@@ -23,9 +23,13 @@ if( NOT jde_Superbuild )
 	add_subdirectory( ${libDir}/web/client ../../libs/web/client )
 	add_subdirectory( ${libDir}/web/server ../../libs/web/server )
 	add_subdirectory( ${libDir}/app/shared ../../libs/app/shared )
+	add_subdirectory( ${libDir}/calendar/src ../../libs/calendar/lib ) #links Jde.App.Shared, so after it.
 	add_subdirectory( ${libDir}/app/client ../../libs/app/client )
 	add_subdirectory( ${libDir}/opc/shared/src ../../libs/opc/shared/lib )
 	add_subdirectory( ${libDir}/historian/src ../../libs/historian/lib ) #Jde.Opc.GatewayLib links it.
+	if( NOT TARGET Jde.Opc.UAServer ) #Jde.Opc.GatewayLib links it;  a tests block adds it too.
+		add_subdirectory( ${libDir}/opc/server/src ../../libs/opc/server/lib )
+	endif()
 	add_subdirectory( ${jdeRoot}/apps/AppServer/config/sql/sqlite ../../apps/AppServer/config/sql/sqlite )
 	add_subdirectory( ${jdeRoot}/apps/AppServer/src ../../apps/AppServer/lib )
 	add_subdirectory( ${jdeRoot}/apps/OpcGateway/config/sql/sqlite ../../apps/OpcGateway/config/sql/sqlite )

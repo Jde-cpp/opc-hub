@@ -6,6 +6,7 @@ local logsDir = std.extVar("logsDir");
 		tests:: "*"
 	},
 	instanceName: "CalendarTests",
+	calendars:{ retryWait: "PT0.2S" }, //CalendarsClientTests waits on it.
 	logging:{
 		spd:{
 			tags: {

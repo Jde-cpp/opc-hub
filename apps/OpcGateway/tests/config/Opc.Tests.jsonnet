@@ -60,6 +60,7 @@ local logsDir = args.logsDir;
 			}
 		}
 	},
+	calendars:{ retryWait: "PT0.5S" }, //CalendarClientTests.ARefusedReadHoldsNothing waits on it.
 	server:{ port: instance.http.app.port }, //the gateway's and embedded OpcServer's app client (default 1967).
 	//the embedded OpcServer's UA certificate is issued into the test product's one ssl/certs - the same directory the embedded
 	//AppServer anchors enrollment on, but a list of its own (ServerTrust.h) - and a servers dir of its own beside it (under logsDir,

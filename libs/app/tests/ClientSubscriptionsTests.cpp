@@ -2,13 +2,14 @@
 //socket happens to be carrying.  A close drops the second - server-side subscriptions really do die with the socket - so
 //the first has to outlive it or a reconnect has nothing to put back.  Since M1 the second lives on the session that owns
 //it (AppClientSocketSession::ListenRemote/ClearSubscriptions), which is what the session-scoped cases below pin.
-//Replay() itself needs a live session, so it is not driven here; what is, is the bookkeeping it reads.
+//Replay()'s re-issue needs a live session, so it is not driven here; what is, is the bookkeeping it reads and which client's requests it picks.
 #include <gtest/gtest.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/ql/types/Subscription.h>
 #include <jde/web/client/ClientSsl.h>
 #include <jde/app/client/clientSubscriptions.h>
 #include <jde/app/client/AppClientSocketSession.h>
+#include <jde/app/client/IAppClient.h>
 #include "helpers.h"//table(): TableQL has no default ctor.
 #include <thread>
 
@@ -49,6 +50,33 @@ namespace Jde::App::Tests{
 		}
 		sp<Listener> _a, _b;
 	};
+
+	//Each client's are its own:  a session-less client fails each request inside the replay, after the count.
+	TEST_F( ClientSubscriptionsTests, ReplayCarriesOnlyItsOwnClients ){
+		auto a = ms<Client::IAppClient>(); auto b = ms<Client::IAppClient>();
+		Client::Subscriptions::Remember( a.get(), "subscription A{ a{id} }", jobject{}, _a, {1} );
+		Client::Subscriptions::Remember( a.get(), "subscription B{ b{id} }", jobject{}, _b, {2} );
+		Client::Subscriptions::Remember( b.get(), "subscription C{ c{id} }", jobject{}, _a, {3} );
+		bool ran{};
+		EXPECT_EQ( Client::Subscriptions::Replay(a, [&]{ ran=true; }), 2u );
+		EXPECT_TRUE( ran ) << "told when the replay was answered";
+		EXPECT_EQ( Client::Subscriptions::Replay(b), 1u );
+		ran = false;
+		EXPECT_EQ( Client::Subscriptions::Replay(ms<Client::IAppClient>(), [&]{ ran=true; }), 0u );
+		EXPECT_FALSE( ran ) << "nothing was replayed";
+	}
+	//The same listener, text and variables from two clients are two requests, so each is replayed, and dropped, by itself.
+	TEST_F( ClientSubscriptionsTests, ARequestIsPerClient ){
+		auto a = ms<Client::IAppClient>(); auto b = ms<Client::IAppClient>();
+		Client::Subscriptions::Remember( a.get(), "subscription A{ a{id} }", jobject{}, _a, {1} );
+		Client::Subscriptions::Remember( b.get(), "subscription A{ a{id} }", jobject{}, _a, {2} );
+		auto remembered = Client::Subscriptions::Remembered();
+		ASSERT_EQ( remembered.size(), 2u );
+		while( !Client::Subscriptions::NoteReplayFailure(remembered[0]) ){}
+		remembered = Client::Subscriptions::Remembered();
+		ASSERT_EQ( remembered.size(), 1u );
+		EXPECT_EQ( remembered[0].Client, b.get() );
+	}
 
 	TEST_F( ClientSubscriptionsTests, RemembersPerRequest ){
 		Remember( _a, "subscription A{ a{id} }", {1} );

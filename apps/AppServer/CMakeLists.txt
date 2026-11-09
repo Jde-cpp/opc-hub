@@ -18,6 +18,7 @@ if( NOT jde_Superbuild )
 	add_subdirectory( ${jdeRoot}/libs/web/server ../../libs/web/server )
 	add_subdirectory( ${jdeRoot}/libs/web/client ../../libs/web/client )
 	add_subdirectory( ${jdeRoot}/libs/app/shared ../../libs/app/shared )
+	add_subdirectory( ${jdeRoot}/libs/calendar/src ../../libs/calendar/lib ) #links Jde.App.Shared, so after it.
 	add_subdirectory( src lib )
 	if( jde_TESTS )
 		add_subdirectory( tests )

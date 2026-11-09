@@ -8,9 +8,10 @@ namespace Jde::QL{ struct IQL; }
 //subscribes through one QL::IQL, the app client's QLServer(), so nothing here knows a socket:  a split gateway's is its
 //session's ClientQL, read as the session's user, and the hub's is the AppServer's own QL, read as System.
 namespace Jde::Calendar::Client::Calendars{
-	//Subscribes to the four tables' events through `ql` as `executer`, then loads.  Never throws:  a refused subscription or
-	//read, a split gateway without Read on an enforced table, is logged as an Error, and the cache then holds nothing.  Once
-	//per process, at startup.
+	//Subscribes to the four tables' events through `ql` as `executer`, in one request, then loads.  Never throws:  a refused
+	//subscription or read, a split gateway without Read on an enforced table, is logged as an Error, and the cache then holds
+	//nothing.  A subscribe or read that failed is tried again every 30 s (/calendars/retryWait) until it succeeds.  A null `ql`,
+	//the session already gone, waits for Reload.  Once per process, at startup.
 	struct ConfigureAwait final : AnyVoidAwait{
 		ConfigureAwait( sp<QL::IQL> ql, UserPK executer, SRCE )ι:AnyVoidAwait{ sl }, _ql{ move(ql) }, _executer{ executer }{}
 	private:
@@ -21,8 +22,8 @@ namespace Jde::Calendar::Client::Calendars{
 	};
 	α Configure( sp<QL::IQL> ql, UserPK executer, SRCE )ι->ConfigureAwait;
 	//A reconnect's:  `ql` is the new session's, the one Configure was handed having died with the old, and the calendars are
-	//read again through it, since the edits made while the gateway was away raised no event here.  The subscriptions come back
-	//by themselves (App::Client::Subscriptions::Replay).  Nothing before Configure.
+	//read again through it, since the edits made while the gateway was away raised no event here.  A subscribe the server took
+	//comes back by itself (App::Client::Subscriptions::Replay);  one it never took is issued here.  Nothing before Configure.
 	α Reload( sp<QL::IQL> ql )ι->void;
 	α Shutdown( bool terminate, SRCE )ι->void;//stops the reloads and the subscriptions;  what is held stays readable.
 
@@ -31,7 +32,7 @@ namespace Jde::Calendar::Client::Calendars{
 	α Find( uint32 id )ι->sp<const Schedule>;
 	α Find( sv slug )ι->sp<const Schedule>;
 	//`fn` hears the ids a reload changed, compared row for row:  created, edited in any of the four tables, or gone.  Called
-	//on the reload's thread after the swap, so Find already answers with the new rows.  Returns StopListen's handle;  a reload
+	//on an executor thread after the swap, so Find already answers with the new rows.  Returns StopListen's handle;  a reload
 	//in flight may call `fn` once more after StopListen returns.
 	using Listener = function<void( const flat_set<uint32>& changed )>;
 	α Listen( Listener fn )ι->uint;

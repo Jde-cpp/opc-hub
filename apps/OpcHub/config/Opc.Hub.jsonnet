@@ -29,6 +29,7 @@ function( sync=false )
 		trustedCertDirs: if std.objectHas(args, 'access') then args.access.trustedCertDirs else [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator") ]
 	},
 	dbServers: app.dbServers, //args-driven: the hub args mount access + app + gateway and list all three script dirs.
+	calendars:: { retryWait: "PT30S" }, //Calendars.cpp:  how soon a subscribe or read of the shift calendars that failed is tried again.
 	logging:{
 		breakLevel:: "Warning", // Debugging variable
 		stack:: gw.logging.stack,

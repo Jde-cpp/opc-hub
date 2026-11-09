@@ -7,12 +7,12 @@ namespace Jde::App::Client{
 	static constexpr ELogTags _subTags{ ELogTags::QL | ELogTags::Client };
 	static vector<Subscriptions::Request> _requests; static std::mutex _requestMutex;
 	constexpr uint _maxReplayFailures{ 3 };
-	Ω findRequest( vector<Subscriptions::Request>& requests, const sp<QL::IListener>& listener, str query, const jobject& variables )ι->vector<Subscriptions::Request>::iterator{
-		return find_if( requests, [&](let& r){ return r.Listener==listener && r.Query==query && r.Variables==variables; } );
+	Ω findRequest( vector<Subscriptions::Request>& requests, const IAppClient* client, const sp<QL::IListener>& listener, str query, const jobject& variables )ι->vector<Subscriptions::Request>::iterator{
+		return find_if( requests, [&](let& r){ return r.Client==client && r.Listener==listener && r.Query==query && r.Variables==variables; } );
 	}
 	α Subscriptions::Remember( const IAppClient* client, string query, jobject variables, sp<QL::IListener> listener, const flat_set<QL::SubscriptionId>& ids )ι->void{
 		lg _{ _requestMutex };
-		auto p = findRequest( _requests, listener, query, variables );
+		auto p = findRequest( _requests, client, listener, query, variables );
 		if( p==_requests.end() )
 			_requests.push_back( Request{client, move(query), move(variables), move(listener), ids} );
 		else{
@@ -33,7 +33,7 @@ namespace Jde::App::Client{
 	}
 	α Subscriptions::NoteReplayFailure( const Request& request )ι->bool{
 		lg _{ _requestMutex };
-		auto p = findRequest( _requests, request.Listener, request.Query, request.Variables );
+		auto p = findRequest( _requests, request.Client, request.Listener, request.Query, request.Variables );
 		if( p==_requests.end() )
 			return false;//forgotten while the replay was in flight - an Unsubscribe, or a listener that went away.
 		if( ++p->Failures<_maxReplayFailures )
@@ -48,7 +48,7 @@ namespace Jde::App::Client{
 	//Subscribe only builds the await - the write happens when it is suspended on - so each one has to be awaited, and that
 	//has to happen off the connect path.  Sequential rather than fanned out: they share one socket, and an ack has to land
 	//before the next request reuses the id space.
-	Ω replay( sp<IAppClient> client, vector<Subscriptions::Request> requests )ι->Web::Client::ClientSocketAwait<jarray>::Task{
+	Ω replay( sp<IAppClient> client, vector<Subscriptions::Request> requests, function<void()> replayed )ι->Web::Client::ClientSocketAwait<jarray>::Task{
 		uint done{};
 		for( let& r : requests ){
 			try{
@@ -62,13 +62,15 @@ namespace Jde::App::Client{
 			}
 		}
 		INFOT( _subTags, "Replayed {} of {} subscription request(s) on the new session.", done, requests.size() );
+		if( replayed )
+			replayed();
 	}
-	α Subscriptions::Replay( sp<IAppClient> client )ι->uint{
+	α Subscriptions::Replay( sp<IAppClient> client, function<void()> replayed )ι->uint{
 		auto requests = Remembered();
 		std::erase_if( requests, [&]( let& r ){ return r.Client!=client.get(); } );//another client's are its own session's to carry.
 		let count = (uint)requests.size();//answered before any await: Client::Connect needs to know now whether this is a reconnect.
 		if( count )
-			replay( move(client), move(requests) );
+			replay( move(client), move(requests), move(replayed) );
 		return count;
 	}
 }

@@ -413,7 +413,19 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( subs[0].TableName, "calendar_shifts" );
 		EXPECT_EQ( subs[0].Type, EMutationQL::Update );
 		EXPECT_FALSE( subs[0].Fields.DBTable() );
-		EXPECT_THROW( QL::ParseRemoteSubscriptions("calendarShifts{ id }", {}, noSchemas), Exception ) << "a query is no subscription";
+		EXPECT_THROW( QL::ParseRemoteSubscriptions("status{ version }", {}, noSchemas), Exception ) << "a query is no subscription";
+	}
+	//Calendars::subscribe's shape:  every block is taken, not the first alone.
+	TEST( MutationQLTests, OneTextHoldsSeveralSubscriptions ){
+		static const vector<sp<DB::AppSchema>> noSchemas;
+		auto subs = QL::ParseRemoteSubscriptions( "subscription CalendarCreated{ calendarCreated(subscriptionId:65538){ id } } subscription CalendarShiftUpdated{ calendarShiftUpdated(subscriptionId:196612){ id } }", jobject{}, noSchemas );
+		ASSERT_EQ( subs.size(), 2u );
+		EXPECT_EQ( subs[0].Id, 65538u );
+		EXPECT_EQ( subs[0].TableName, "calendars" );
+		EXPECT_EQ( subs[0].Type, EMutationQL::Create );
+		EXPECT_EQ( subs[1].Id, 196612u );
+		EXPECT_EQ( subs[1].TableName, "calendar_shifts" );
+		EXPECT_EQ( subs[1].Type, EMutationQL::Update );
 	}
 
 	//A command SetSystemMutations registers is a mutation though it starts with no verb, bare or under the keyword, and is
