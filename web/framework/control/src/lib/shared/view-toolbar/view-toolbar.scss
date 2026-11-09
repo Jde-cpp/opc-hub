@@ -2,15 +2,82 @@
 	display: block;
 }
 
-//the zones, the centre one's viewport centring and the widths it gives way at are .jde-list-toolbar's (_general.scss)
+//the zones and the widths they give way at are .jde-list-toolbar's (_general.scss)
 
-//Material clips the toggles past the group's width (overflow: hidden);  it scrolls instead.  overflow-y stated, or it follows
-//overflow-x to auto and the 1px borders raise a vertical bar.
-.view-group{
-	max-width: 100%;
-	overflow-x: auto;
-	overflow-y: hidden;
-	scrollbar-width: thin;
+//The tabs row, over the toolbar:  the tablist as wide as its tabs, paging where they overflow, then `+ New view`.  The row draws the
+//divider Material draws under the tabs alone.
+.tabs-row{
+	position: relative;//the rename box's containing block
+	display: flex;
+	align-items: center;
+	border-bottom: var(--mat-tab-divider-height, 1px) solid var(--mat-tab-divider-color, var(--mat-sys-surface-variant));
+}
+//denser than Material's 48px, and a tab as wide as its name
+.view-tabs{
+	flex: 0 1 auto;
+	min-width: 0;
+	--mat-tab-container-height: 40px;
+	--mat-tab-divider-height: 0;
+	.mat-mdc-tab-link{
+		min-width: 0;
+		padding: 0 16px;
+	}
+}
+//the chevron inside the active tab's link
+.view-menu{
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	margin-inline: 4px -8px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: none;
+	color: inherit;
+	cursor: pointer;
+	&:hover{
+		background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, transparent);
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+	}
+	mat-icon{
+		font-size: 20px;
+		width: 20px;
+		height: 20px;
+	}
+}
+//Rename, over the tab:  its left edge and width are the tab's, a short name's widened to type in
+.rename{
+	position: absolute;
+	top: 50%;
+	transform: translateY(-50%);
+	z-index: 2;//over the tabs, which Material lifts to 1
+	box-sizing: border-box;
+	min-width: 8em;
+	padding: 2px 6px;
+	border: 1px solid var(--mat-sys-outline);
+	border-radius: 4px;
+	font: inherit;
+	color: var(--mat-sys-on-surface);
+	background: var(--mat-sys-surface);
+}
+.new-view{
+	flex: none;
+	margin-inline-start: 4px;
+	white-space: nowrap;
+}
+//a tab on its way:  the copy under the pointer, and the gap it left
+.cdk-drag-preview{
+	box-sizing: border-box;
+	border-radius: 4px;
+	box-shadow: var(--mat-sys-level4);
+	background: var(--mat-sys-surface);
+}
+.cdk-drag-placeholder{
+	opacity: .3;
 }
 
 .adhoc{

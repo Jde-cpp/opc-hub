@@ -243,6 +243,51 @@ describe( 'ViewSet', ()=>{
 			expect( JSON.parse(service.rows.get("things/views/1")!) ).toMatchObject( {name: "Z", sort: [{active: "name"}]} );//not the twin's sort
 		} );
 
+		it( "duplicates a view after it, under its name and the next number, and shows the copy as the user's", async ()=>{
+			const { set, writes, held } = await load( stored([[1, make("A")], [3, make("B")]]) );
+			set.sort( {active: "kind", direction: "asc"} );//a twin, which goes with the switch
+			await set.duplicate( set.views()[0] );
+			expect( names(set) ).toEqual( ["1:A", "4:A", "3:B"] );
+			expect( set.current().number ).toBe( 4 );
+			expect( set.current().isUser ).toBe( true );
+			expect( set.current().sort[0].active ).toBe( "name" );//the view's, not its twin's
+			expect( remembered() ).toBe( "4" );
+			expect( writes() ).toEqual( ["things/views/4", "things/views"] );
+			expect( held() ).toEqual( {index: [1, 4, 3], rows: [1, 3, 4]} );
+		} );
+
+		//#588 review #6:  the toolbar's Duplicate passes the view on screen, which on an edited tab is the twin
+		it( 'duplicates the view under a twin, not the twin, whose edits go', async ()=>{
+			const { set } = await load( stored([[1, make("A")]]) );
+			set.sort( {active: "kind", direction: "asc"} );
+			await set.duplicate( set.current() );
+			expect( names(set) ).toEqual( ["1:A", "2:A"] );
+			expect( set.current().sort[0].active ).toBe( "name" );
+		} );
+
+		//#588 review #4:  the host re-reads on it
+		it( 'tells the host at once of a change that puts another view on screen, and of none that leaves it there', async ()=>{
+			const { set } = await load( stored([[1, make("A")], [2, make("B")]]) );
+			const shown = vi.fn();
+			await set.move( set.current(), 1, shown );
+			expect( shown ).not.toHaveBeenCalled();
+			const renamed = set.rename( set.current(), "Z", shown );
+			expect( shown ).toHaveBeenCalledTimes( 1 );//before its write
+			await renamed;
+			expect( shown ).toHaveBeenCalledTimes( 1 );
+		} );
+
+		it( 'adds a copy of the view shown, its edits with it, named for its number and after the last', async ()=>{
+			const { set, writes, held } = await load();
+			set.sort( {active: "kind", direction: "asc"} );
+			await set.add();
+			expect( names(set) ).toEqual( ["1:Default", "2:Users", "3:View 3"] );
+			expect( set.current().sort[0].active ).toBe( "kind" );
+			expect( set.current().isUser ).toBe( true );
+			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views/3", "things/views"] );//a first save:  the whole set
+			expect( held() ).toEqual( {index: [1, 2, 3], rows: [1, 2, 3]} );
+		} );
+
 		it( 'writes nothing for a view that is not in the set', async ()=>{
 			const { set, writes } = await load( stored([[1, make("A")]]) );
 			const stranger = unnumbered( set, "Stranger" );
@@ -448,6 +493,30 @@ describe( 'ViewSet', ()=>{
 			expect( held() ).toEqual( {index: [2], rows: [2]} );
 			await set.rename( set.current(), "Ours" );
 			expect( writes() ).toEqual( ["things/views/2"] );
+		} );
+
+		//#588 review #4:  the host told once the change is made, not of what the user did while the read was out
+		it( 'tells the host of the view a change puts on screen once the read lands, and of no tab picked meanwhile', async ()=>{
+			const { set } = await failing();
+			const shown = vi.fn();
+			const moved = set.move( set.views()[1], 0, shown );
+			set.select( 1 );//the user's, while the read is out
+			await moved;
+			expect( shown ).not.toHaveBeenCalled();
+			expect( names(set) ).toEqual( ["2:Users", "1:Default"] );
+			const unread = await failing();
+			const added = unread.set.add( shown );
+			expect( shown ).not.toHaveBeenCalled();
+			await added;
+			expect( shown ).toHaveBeenCalledTimes( 1 );
+			expect( unread.set.current().name ).toBe( "View 3" );
+		} );
+
+		it( "tells the host of the saved views the read puts on screen in the route's place", async ()=>{
+			const { set } = await failing( stored([[2, make("Mine")]]) );
+			const shown = vi.fn();
+			await expect( set.remove( set.views()[1], shown ) ).rejects.toThrow( 'make the change again' );
+			expect( shown ).toHaveBeenCalledTimes( 1 );
 		} );
 	} );
 

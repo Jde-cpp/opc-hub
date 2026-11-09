@@ -10,6 +10,8 @@ import {MetaObject}  from '../../../model/ql/schema/meta-object';
 import { ComponentPageTitle, Latest, RouteItem, RouteStore, HELP_TOPICS, helpTopics, helpTopicFor, helpTopicRoute } from 'jde-spa';
 import { MatIcon } from '@angular/material/icon';
 import { MatButton } from '@angular/material/button';
+import { MatTabNavPanel } from '@angular/material/tabs';
+import { NgTemplateOutlet } from '@angular/common';
 import { CellText, GraphQLTable } from '../../graphql/table/graphql-table';
 import { EmptyState, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
 import { Failure, failureState } from '../../../utils/errors';
@@ -28,7 +30,7 @@ import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 	selector: 'ql-list',
 	templateUrl: './ql-list.html',
 	host: {class:'main-content my-content'},
-	imports: [FailureState, GraphQLTable, MatButton, MatIcon, Paginator, QLListSettings, RouterLink, ViewToolbar]
+	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, NgTemplateOutlet, Paginator, QLListSettings, RouterLink, ViewToolbar]
 })
 export class QLList implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -42,7 +44,7 @@ export class QLList implements OnInit{
 		if( this.listData() )//embedded (QLSelector):  the host resolved the data itself, there is no route resolver to subscribe to
 			this.init( {data: this.listData()} );
 		else
-			this.#route.data.subscribe( (data)=>{ this.init( data ); } );
+			this.#route.data.subscribe( (data)=>{ this.#queried = undefined; this.init( data ); } );
 	}
 	//The rows of a reload to show checked:  those `prior` checked, by id - a reload builds new row objects - and one at most on a
 	//single-select list, where SelectionModel throws on more.
@@ -178,9 +180,14 @@ export class QLList implements OnInit{
 		this.profile().show( view );
 		await this.#refresh();
 	}
-	async onChangeView( index:number ){
-		if( this.profile().select(index) )
+	//The toolbar put another view on screen:  its rows, unless they are those shown or on their way - the view renamed, or a copy
+	//of it - where the page stays as it is.
+	async onChangeView(){
+		const view = this.profile().current();
+		if( !View.alike(view, this.#queried ?? this.view()) )
 			await this.#refresh();
+		else if( !this.isRefreshing() )
+			this.view.set( view );
 	}
 	//another view, or this one edited, is a different set of pages:  from the first
 	async refresh(){
@@ -193,6 +200,7 @@ export class QLList implements OnInit{
 	//would put back its own page, or the rows of the view it was sent under.
 	async reload(){
 		const id = this.#reloads.next();
+		this.#queried = this.profile().current();
 		this.isRefreshing.set( true );
 		try{
 			const reload = await QLListResolver.load( this.#ql(), {...this.resolvedData(), skip: this.skip()}, null );
@@ -302,6 +310,7 @@ export class QLList implements OnInit{
 	tableSettings = computed<TableSettings>( ()=>this.resolvedData().routing.tableSettings );
 	type = computed<string>( ()=>MetaObject.toTypeFromCollection(this.collectionName()) );
 	view = signal<View>( null as any );//the view the rows were loaded under - profile().current() runs ahead of it while a reload is out
+	#queried:View|undefined;//the view of the last reload sent, whose rows are shown or on their way
 
 	//MVP first-run:  a list with nothing in it, or one the user may not read, showed a bare header.  Three states below the
 	//table now - the route's empty-state words, "no access" for a 403 (the server's line plus what to ask for), and a

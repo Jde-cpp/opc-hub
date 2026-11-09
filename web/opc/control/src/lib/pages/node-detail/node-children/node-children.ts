@@ -8,6 +8,7 @@ import {MatIconModule} from '@angular/material/icon';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatSlideToggleModule} from '@angular/material/slide-toggle';
 import { MatSortModule, Sort } from "@angular/material/sort";
+import {MatTabsModule} from '@angular/material/tabs';
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
@@ -34,7 +35,7 @@ import { StructureTable } from '../../structure-table/structure-table';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTooltipModule,QLListSettings,StructureTable,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,QLListSettings,StructureTable,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -122,7 +123,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 		}
 	}
 
-	//The view group and settings panel, as ql-list/log-detail have them;  the rows re-derive from view() on their own.
+	//The view tabs and settings panel, as ql-list/log-detail have them;  the rows re-derive from view() on their own.
 	onSortChange( sort:Sort ){
 		this.viewSet.sort( sort );
 	}
@@ -137,9 +138,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 	onViewDelete( view:View ){
 		this.viewSet.remove( view ).catch( e=>this.#snackbar.exception("Could not delete view.", e) );
 		this.isSettings.set( false );
-	}
-	onChangeView( index:number ){
-		this.viewSet.select( index );
 	}
 	colSuggestions():Record<string,any[]>{
 		const suggestions:Record<string,any[]> = {};

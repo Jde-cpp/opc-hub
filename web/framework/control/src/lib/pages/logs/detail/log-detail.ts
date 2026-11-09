@@ -2,6 +2,7 @@ import { Component, ElementRef, OnDestroy, OnInit, input, signal, inject, comput
 import { DatePipe } from '@angular/common';
 import { MatTableModule } from '@angular/material/table';
 import {MatSortModule, Sort} from '@angular/material/sort';
+import { MatTabNavPanel } from '@angular/material/tabs';
 import { LogDataSource } from '../log-data-source';
 import {LogSettings} from '../log-settings';
 import { QLListSettings } from '../../ql/list/ql-list-settings/ql-list-settings';
@@ -29,7 +30,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 	selector: 'log-detail',
 	templateUrl: './log-detail.html',
 	styleUrls: ['./log-detail.scss'],
-	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTooltipModule, Paginator, QLListSettings, ViewToolbar]
+	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, Paginator, QLListSettings, ViewToolbar]
 })
 export class LogDetail implements OnInit, OnDestroy{
 	#snackBar = inject( SnackbarService );
@@ -40,6 +41,7 @@ export class LogDetail implements OnInit, OnDestroy{
 		this.profile = new LogSettings( await this.profileStore.load<LogSettings>("logs", new LogSettings()) );
 		this.data.filter = { messageIds: this.profile.hiddenMessages, level: this.profile.level };//assigned straight in, so the level setter did not run;  the messages hidden last time stay hidden
 		await this.viewSet.load( [LogView.default()], LogView.schema );
+		this.#read = this.view();
 		await this.load();//load() sends the profile's level, so the first page already matches the combo
 	}
 	ngOnDestroy(){
@@ -74,8 +76,15 @@ export class LogDetail implements OnInit, OnDestroy{
 	}
 	//re-read from the top.  clear() puts the data source - and the pager bound to it - back on the first page.
 	refresh(){
+		this.#read = this.view();
 		this.data.clear();
 		this.load();
+	}
+	//The view on screen is another:  its rows, unless they are those shown - the view renamed, or a copy of it.  At once, not once
+	//it is written, or the table keeps the last view's rows under this one's columns.
+	onViewChange(){
+		if( !View.alike(this.view(), this.#read) )
+			this.refresh();
 	}
 	//minimum level to show - the level goes into the query, so re-read instead of filtering what is loaded.
 	onMinLevelChange( level:ELogLevel ){
@@ -102,13 +111,9 @@ export class LogDetail implements OnInit, OnDestroy{
 		if( this.data.turnTo(event.startIndex) )
 			this.load( this.data.allEntries.length );
 	}
-	onViewChange( index:number ){
-		if( this.viewSet.select(index) )
-			this.refresh();
-	}
 	onViewSave( view:View ){
 		this.isSettings.set( false );
-		return this.#changeView( ()=>this.viewSet.save(view), "Could not save view." );
+		return this.#changeView( shown=>this.viewSet.save(view, shown), "Could not save view." );
 	}
 	onViewShow( view:View ){
 		this.isSettings.set( false );
@@ -117,24 +122,16 @@ export class LogDetail implements OnInit, OnDestroy{
 	}
 	onViewDelete( view:View ){
 		this.isSettings.set( false );
-		return this.#changeView( ()=>this.viewSet.remove(view), "Could not delete view." );
+		return this.#changeView( shown=>this.viewSet.remove(view, shown), "Could not delete view." );
 	}
-	//Re-read the moment the view is another, not once it is written, or the table keeps the last view's rows under this one's
-	//columns.  Where the views were still to be read the set changes only after the await (ViewSet).
-	async #changeView( change:()=>Promise<void>, failed:string ){
-		const before = this.view();
-		const writes = change();
-		const shown = this.view();
-		if( shown!==before )
-			this.refresh();
+	//the editor's change, through the set, which says when it puts another view on screen (ViewSet), as the toolbar's are
+	async #changeView( change:( shown:()=>void )=>Promise<void>, failed:string ){
 		try{
-			await writes;
+			await change( ()=>this.onViewChange() );
 		}
 		catch( e ){
 			this.#snackBar.exception( failed, e );
 		}
-		if( this.view()!==shown )
-			this.refresh();
 	}
 
 	cellClick( entry:Entry ){
@@ -235,5 +232,6 @@ export class LogDetail implements OnInit, OnDestroy{
 	profileStore = inject(ProfileStore);
 	viewSet = new ViewSet( {type: LogView, key: "logs", profileStore: this.profileStore, prefs: inject(LocalPrefs)} );
 	view = this.viewSet.current;
+	#read:View|undefined;//the view the rows shown were read under, or are being read
 	get viewCopy(){ return LogView.copy( this.view() ); }
 }

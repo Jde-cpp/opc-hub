@@ -13,7 +13,7 @@ A node's **Children** and an application server's **Logs** are not lists of reco
 
 ## Lists
 
-The bar above a list carries **Add**, the refresh button, the views and, when the list fits on one page, the row count.
+Above a list are its views, a row of tabs, and under them the bar with **Add**, the refresh button, the tune button and, when the list fits on one page, the row count.
 
 **Add** starts a new record. A list whose rows are not created by hand has no **Add**.
 
@@ -47,21 +47,32 @@ A list with no rows says why:
 
 A **view** is which rows are filtered out, which columns are shown and in what order, and how the rows are sorted.
 
-The buttons in the middle of the bar switch between a list's views. Every list comes with a *Default* view and some with more. They are a starting set: the first view you save keeps the whole set as your own. From then the buttons show your views alone, to change, add to and delete as you like.
+The tabs above the bar are a list's views; click one to switch. Every list comes with a *Default* view and some with more. They are a starting set: the first change you make to them - a save, a rename, a new view, a move or a deletion - keeps the whole set as your own. From then the tabs are your views alone, to change, add to and delete as you like. Two views may share a name.
 
 The view you were last on is remembered in this browser.
 
-The tune button beside the views edits the current one, over three tabs.
+**New view**, after the last tab, adds a copy of the view you are on, named *View* and its number, and switches to it.
+
+The active tab carries a chevron, which opens the view's menu:
+
+- **Rename** turns the tab's name into a box. Enter keeps the new name, Escape or a blank box leaves the old one.
+- **Duplicate** adds a copy of the view, as it was last saved, after it under the same name.
+- **Move left** and **Move right** change the order of the tabs. Dragging a tab does the same.
+- **Delete** removes the view. Deleting the last one brings the list's own views back. It is greyed out on an *(edited)* view, and on a list's own view when that is the only one.
+
+The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between.
+
+The tune button in the bar edits the current view, over three tabs.
 
 - **Filter** - add a column, then pick an operator and the values. *In* and *Not In* take one or more values, typed or picked from those already in the list, with `<null>` and `<not null>` offered where a column can be empty. `<` and `>` compare against one. A date column offers only `<` and `>`, with an **End Date** or **Start Date** to match. A date column that can be empty also has *null* and *not null* boxes, which on **Deleted** read *Not deleted* and *Deleted*.
 - **Display** - tick the columns to show and drag them into order. **Page Size** is how many rows a page holds: 25 on a list and 21 on **Logs**, unless the view says otherwise. A node's **Children** are not read a page at a time, so their views have no Page Size.
 - **Sort** - the columns to sort by, in order, each ascending or descending.
 
-The bar above the tabs:
+The editor's bar:
 
-- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others. Two views may share a name, but a view needs one.
-- **Show** applies the changes without saving them, and the view's button reads *(edited)*.
-- **Delete** removes the view. Deleting the last one brings the list's own views back. It is greyed out on an *(edited)* view, and on a list's own view when that is the only one.
+- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others. A view needs a name.
+- **Show** applies the changes without saving them, and the view's tab reads *(edited)*.
+- **Delete** removes the view, as the view menu's does.
 - **Cancel** returns to the list unchanged.
 
 Saved views are kept with your profile, so they follow you between browsers.

@@ -1,31 +1,66 @@
+@if( tabs() ){
+	<div #tabsRow class="tabs-row">
+		<nav mat-tab-nav-bar mat-stretch-tabs="false" class="view-tabs" aria-label="Views" [tabPanel]="tabPanel()!" cdkDropList cdkDropListOrientation="horizontal" cdkDropListLockAxis="x" (cdkDropListDropped)="onDrop($event)">
+			@for( view of views().views(); track (view.isAdhoc ? "*" : "")+view.number; let i=$index ){<!--by number, so a rename keeps its tab, and the focus on it-->
+				<a mat-tab-link [active]="i==views().index()" cdkDrag [cdkDragDisabled]="view.isAdhoc" (click)="onTab(i)">
+					<ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: view}"/>
+					@if( i==views().index() && renamed()!==view ){<!--a button inside the tab's link:  the AXE failure the views spec accepts-->
+						<button type="button" class="view-menu" aria-label="View menu" [matMenuTriggerFor]="viewMenu" (click)="stop($event)" (keydown)="stop($event)" (mousedown)="stop($event)" (touchstart)="stop($event)"><mat-icon aria-hidden="true">expand_more</mat-icon></button>
+					}
+				</a>
+			}
+		</nav>
+		@if( renamed(); as view ){<!--over its tab, not in it:  a tab's content is presentational, and a field there a second nested control-->
+			<input #renameInput class="rename" type="text" aria-label="View name" [value]="label(view)" [style.left.px]="renameAt().left" [style.width.px]="renameAt().width" (keydown)="onRenameKey($event)" (blur)="commitRename($any($event.target).value, false)">
+		}
+		<button matButton type="button" class="new-view" (click)="add()"><mat-icon aria-hidden="true">add</mat-icon>New view</button>
+	</div>
+}
 <mat-toolbar class="jde-list-toolbar">
-	<div class="bar-left"><ng-content select="[left]"/></div>
-	@if( !isExtraSmall() ){
-		<ng-container [ngTemplateOutlet]="center"/>
-	}
+	<div class="bar-left">
+		@if( !tabs() ){
+			<button matButton type="button" class="view-button" matTooltip="View menu" [matMenuTriggerFor]="viewMenu"><ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: views().current()}"/><mat-icon aria-hidden="true" iconPositionEnd>expand_more</mat-icon></button>
+		}
+		<ng-content select="[left]"/>
+	</div>
 	<div class="bar-right">
+		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="refreshing()" (click)="refresh.emit()">
+			<mat-icon>refresh</mat-icon>
+		</button>
+		<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="edit.emit()">
+			<mat-icon>tune</mat-icon>
+		</button>
 		<ng-content select="[right]"/>
 		@if( count()!==undefined ){
 			<span class="row-count">{{ count() }} {{ count()==1 ? "row" : "rows" }}</span>
 		}
 	</div>
-	@if( isExtraSmall() ){<!--a phone's centre zone is the toolbar's second row, so it follows the right zone in the tab order too-->
-		<ng-container [ngTemplateOutlet]="center"/>
-	}
 </mat-toolbar>
 <mat-progress-bar class="refresh-bar" [mode]="refreshing() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Refreshing"></mat-progress-bar>
-<ng-template #center>
-	<div class="bar-center"><!--the two icon buttons are equal width, so they bracket the group symmetrically and it lands dead centre-->
-		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="refreshing()" (click)="refresh.emit()">
-			<mat-icon>refresh</mat-icon>
-		</button>
-		<mat-button-toggle-group class="view-group" aria-label="View" hideSingleSelectionIndicator [value]="views().index()" (change)="viewChange.emit($event.value)">
-			@for( view of views().views(); track view; let i=$index ){
-				<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "Default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
-			}
-		</mat-button-toggle-group>
-		<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="edit.emit()">
-			<mat-icon>tune</mat-icon>
-		</button>
-	</div>
-</ng-template>
+<ng-template #name let-view>{{ label(view) }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</ng-template>
+<!--the view menu:  the active tab's, or a pick list's button's with the views first.  The entries of the later phases join it.
+Both menus build their entries only while open (matMenuContent).-->
+<mat-menu #viewMenu="matMenu">
+	<ng-template matMenuContent>
+		@if( tabs() ){
+			<button mat-menu-item type="button" (click)="rename()">Rename</button>
+			<button mat-menu-item type="button" (click)="duplicate()">Duplicate</button>
+			<button mat-menu-item type="button" [disabled]="!canMove(-1)" (click)="move(-1)">Move left</button>
+			<button mat-menu-item type="button" [disabled]="!canMove(1)" (click)="move(1)">Move right</button>
+			<button mat-menu-item type="button" [disabled]="!views().canRemove(views().current())" (click)="remove()">Delete</button>
+		}
+		@else{
+			<button mat-menu-item type="button" [matMenuTriggerFor]="viewsMenu">Views</button>
+		}
+	</ng-template>
+</mat-menu>
+<mat-menu #viewsMenu="matMenu">
+	<ng-template matMenuContent>
+		@for( view of views().views(); track view; let i=$index ){
+			<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="i==views().index()" (click)="onTab(i)">
+				<mat-icon aria-hidden="true">{{ i==views().index() ? "check" : "" }}</mat-icon>
+				<ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: view}"/>
+			</button>
+		}
+	</ng-template>
+</mat-menu>

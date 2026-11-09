@@ -15,7 +15,7 @@ import { QLRow } from '../model/ql/slug-row';
 //list to a row's page where they are not its slug alone - a resource's slug repeats across schemas, so its page is schema/slug.
 //Its `fields` are the row fields `segments` reads:  every view queries them, displayed or not, as it does id and slug.  No
 //segments:  the row has no page - a click does nothing, and the row is no sidenav child.
-//viewName: the toggle label of the default view ("Default" when unset);  filters: the default view's, same vocabulary as a
+//viewName: the tab label of the default view ("Default" when unset);  filters: the default view's, same vocabulary as a
 //ViewSettings filter (resources opens on the table rows, criteria null);  views: further system views, see ViewSettings
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
 export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };

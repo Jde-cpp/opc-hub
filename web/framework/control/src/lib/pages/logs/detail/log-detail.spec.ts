@@ -136,7 +136,7 @@ describe( 'LogDetail paging', ()=>{
 		await tick();
 		expect( range(fixture) ).toBe( '1 – 21' );
 		page.onPagerChange( {startIndex: 21, pageSize: 21} );
-		page.onViewChange( 0 );
+		page.refresh();//a view change:  the toolbar selects the view, and the page re-reads
 		await tick();
 		expect( range(fixture) ).toBe( '1 – 21' );
 	} );
@@ -324,12 +324,26 @@ describe( 'LogDetail sort', ()=>{
 		const view = page.viewCopy;
 		view.name = 'mine';
 		view.number = 0;
+		view.sort = [{active: 'level', direction: 'asc'}, {active: 'time', direction: 'desc'}];
 		const saving = page.onViewSave( view );
 		expect( page.view().name ).toBe( 'mine' );
 		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
 		written();
 		await saving;
 		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
+	} );
+	//#588 review #5:  a rename cleared every row read and the one selected
+	it( 'keeps its rows for a view that shows the rows it did, renamed or copied', async ()=>{
+		const { page, ql } = await create();
+		const reads = ql.ql.mock.calls.length;
+		const view = page.viewCopy;
+		view.name = 'mine';
+		view.number = 0;//a new view, the one shown under another name
+		await page.onViewSave( view );
+		page.onViewChange();//as the toolbar says of a rename
+		expect( page.view().name ).toBe( 'mine' );
+		expect( ql.ql ).toHaveBeenCalledTimes( reads );
+		expect( page.data.allEntries ).toHaveLength( 2 );
 	} );
 	it( 'saves a view with no sort sorted by time', async ()=>{
 		const { fixture, page, profileStore } = await create();
@@ -343,7 +357,8 @@ describe( 'LogDetail sort', ()=>{
 	} );
 	it( 'repairs a view saved with no sort as it loads', async ()=>{
 		const { fixture, page, snackbar } = await create( [{...LogView.default().toJson( undefined ), name: 'mine', sort: []}] );
-		page.onViewChange( 0 );//the saved view is the set
+		page.viewSet.select( 0 );//the saved view is the set
+		page.refresh();
 		await tick();
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
 		expect( page.view().name ).toBe( 'mine' );
