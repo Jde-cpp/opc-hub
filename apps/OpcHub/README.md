@@ -18,16 +18,17 @@ The standalone `Jde.App.Server` and `Jde.Opc.Gateway` still build, for split dep
 
 The one port serves:
 
-- `/` - the AppServer's REST and app-protocol socket.
-- `/opc` - the gateway's REST and OPC socket.
+- `/` - the REST routes of both roles, and the AppServer's app-protocol socket.
+- `/opc` - the gateway's OPC socket.
 - `/graphql` - one endpoint over access, app and gateway.
 
 Beside it, the gateway role's own OPC UA endpoint, `opc.tcp://<host>:4841` (`Opc.Gateway.jsonnet` `gateway.server`,
-[`docs/servers/spec.md`](../../docs/servers/spec.md)): a SCADA or a UA client browses what the hub collects, with the hub's
-sessions behind it.  It presents the hub's own certificate, trusts the client certificates under
+[`docs/servers/spec.md`](../../docs/servers/spec.md)): a SCADA or a UA client browses what the hub collects, with the
+hub's sessions behind it.  It presents the hub's own certificate, trusts the client certificates under
 `<ProgramData>/Jde-Cpp/OpcHub/ssl/servers/clients`, and writes one it refuses to `ssl/servers/rejected` for you to move
 over.  Its `users` list, the user-name logins, is plain text at rest, as the collector's `hist.credentials` are: put a
-secret through the `$(ENV)` expansion the key passcodes use (`"$(OPERATOR_PASSWORD)"`), set in the service's environment.
+secret through the `$(ENV)` expansion the key passcodes use (`"$(OPERATOR_PASSWORD)"`), set in the service's
+environment.
 
 ## Run
 
@@ -66,22 +67,29 @@ Certs: `Process::ProductName()` (on Windows the `.rc`'s `JdeProductName`) puts t
 TLS, so against a hub they need the overlays
 `apps/OpcServer/config/Opc.Server.Hub.jsonnet` / `apps/OpcServer/emulator/config/Opc.PlcEmulator.Hub.jsonnet`
 (`caFile` = the hub's `OpcHub.pem`); the OpcServer's args already trust `certsDir("OpcHub")` for the gateway role's
-OPC client certs.  The installed args (`config/args/install`, the OpcServer's too) trust only what the installer ships -
-the hub the OpcServer's dir, the OpcServer the hub's - so the emulator, or a split gateway, run against an installed
-product is its dir added to that args file (the comment there) and the service restarted; a listed dir that is never
-created is a warning in the log.
+OPC client certs.
+
+The installed args (`config/args/install`, and the OpcServer's) trust only what the installer ships:
+
+- the hub trusts the OpcServer's dir;
+- the OpcServer trusts the hub's.
+
+To run the emulator or a split gateway against an installed product, add its dir to that args file (see the
+comment there) and restart the service.  A listed dir that is never created logs a warning.
 
 ## Tests
 
 `Jde.Opc.Hub.Tests` (`tests/`) embeds the hub (1973) plus an OpcServer (1975, opc.tcp 4975) - ports nothing else binds,
-so it runs beside a live hub.  `ctest --timeout 300 -R Jde.Opc.Hub.Tests`.
+so it runs beside a live hub.  `ctest --timeout 300 -R Jde.Opc.Hub.Tests`.  `CalendarClientTests` is the gateway
+role's cache of the shift calendars, filled and kept current in-process
+([spec](../../docs/calendar/spec.md) *The client*).
 
 ## Frontend
 
-Unchanged endpoint (`applicationServer` 1967).  The SPA discovers the gateway role through `/opcGateways` (same host:port)
-and opens its OPC websocket on `/opc` (`Gateway.socketPath` in `web/opc/control/.../gateway-service.ts`); a standalone
-gateway ignores the path, so one build serves both deployments.  The hub's one `connections{}` row (`Jde.OpcHub`) routes to
-the gateway page (`app-resolver.ts`).
+Unchanged endpoint (`applicationServer` 1967).  The SPA discovers the gateway role through `/opcGateways` (same
+host:port) and opens its OPC websocket on `/opc` (`Gateway.socketPath` in `web/opc/control/.../gateway-service.ts`); a
+standalone gateway ignores the path, so one build serves both deployments.  The hub's one `connections{}` row
+(`Jde.OpcHub`) routes to the gateway page (`app-resolver.ts`).
 
 ## Install
 
@@ -115,25 +123,30 @@ The settings they ship:
        connection.
      - the Web UI.
      - Start at logon, current-user installs only, off by default.  It starts the selected products when you log on.
-   - The finish page's "Start now" box starts the products; later, `net start Jde.OpcHub` / `net start Jde.OpcServer`, or
-     the Start Menu shortcuts (a console window each).  The database is sqlite, one file per product under
+   - The finish page's "Start now" box starts the products; later, `net start Jde.OpcHub` / `net start Jde.OpcServer`,
+     or the Start Menu shortcuts (a console window each).  The database is sqlite, one file per product under
      `C:\ProgramData\Jde-Cpp\<Product>`, created on the first start - no SQL Server, no setup script.
-2) Browse to http://localhost:1967/ (the finish page's link) - from another machine, `http://<hub>:1967/`; the page calls
-   the hub by the name it was browsed by.  The all-users installer allows inbound TCP 1967 (and 4840 with the OPC UA
-   Server) through Windows Firewall; a current-user install cannot open a port, so it listens on loopback only (no firewall
-   prompt) and the products answer that machine alone - for another machine, install for all users, or set
-   `listenAddress: null` in its `args/install-user` and have an administrator open the ports.
-   `https://<hub>:1967/` works too:  the hub answers TLS on the same port, and a page browsed that way calls it over https
-   and wss.  Its certificate is self-signed for `localhost`, the machine's name and `127.0.0.1` (or your own pair -
-   [`setup/README.md`](setup/README.md) "Notes"), so another machine's browser has to trust it first.
+2) Browse to http://localhost:1967/ (the finish page's link) - from another machine, `http://<hub>:1967/`; the page
+   calls the hub by the name it was browsed by.  The all-users installer allows inbound TCP 1967 (and 4840 with the
+   OPC UA Server) through Windows Firewall; a current-user install cannot open a port, so it listens on loopback only
+   (no firewall prompt) and the products answer that machine alone - for another machine, install for all users, or
+   set `listenAddress: null` in both products' `args/install-user` (the hub's and the OpcServer's) and have an
+   administrator open the ports.
+   `https://<hub>:1967/` works too:  the hub answers TLS on the same port, and a page browsed that way calls it over
+   https and wss.  Its certificate is self-signed for `localhost`, the machine's name and `127.0.0.1` (or your own
+   pair - [`setup/README.md`](setup/README.md) "Notes"), so another machine's browser has to trust it first.
 3) Log in.  Which login you have depends on step 1's components - [`setup/README.md`](setup/README.md) "First login":
    - **With the OPC UA Server component**, it is **Google**, seeded ready to use along with the bundled server as the
      default connection.  The site's origin must be registered under the OAuth client id the hub serves, which the
      project's default covers for `http://localhost:1967` only - any other host needs its own client id.
-   - **Without it**, the login is **an OPC server's own**, and adding the connection is what creates it: on
-     [Applications](http://localhost:1967/apps) > the OpcHub card > *Connections* > *Add*, save the connection while still
-     signed out, have the two sides trust each other's certificates, then sign in as **`<slug>\<user>`** -
-     `plant1\operator1` - with that user's password on the server.  The Web UI's *Overview* help walks it as *First steps*.
+   - **Without it**, the login is **an OPC server's own**.  Adding the connection is what creates it:
+     1. On [Applications](http://localhost:1967/apps) > the OpcHub card > *Connections* > *Add*, save the connection
+        while still signed out.
+     2. Have the two sides trust each other's certificates.
+     3. Sign in as **`<slug>\<user>`**, for example `plant1\operator1`, with that user's password on the server.
+
+     The Web UI's *Overview* help walks it as *First steps*.
+
      Walked against a KEPServerEX 6.12 on 2026-09-20: signed in 11 minutes from the start of the install, a value
      streaming at 13.
 4) Uninstall: Settings > Apps (a current-user install also has an Uninstall shortcut in its Start Menu folder).  The
@@ -154,8 +167,8 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
    `sudo systemctl enable --now jde-opcserver`.  The database is sqlite under `/var/lib/Jde-Cpp/<Product>`, created on
    the first start.  Without root, the tarball's `install.sh` installs under your account and runs the products as
    `systemctl --user` units (`--opcserver` for the server).  Like the Windows current-user mode, it listens on
-   `127.0.0.1` only.  To reach it from another machine, use the `.deb`, or set `listenAddress: null` in its
-   `args/install-user` and open the ports.
+   `127.0.0.1` only.  To reach it from another machine, use the `.deb`, or set `listenAddress: null` in both
+   products' `args/install-user` (the hub's and the OpcServer's) and open the ports.
 2) Browse to http://localhost:1967/ - the hub serves the site; the packaged nginx site on 8071 is optional
    (`sudo ln -s /etc/jde-cpp/nginx-opchub.conf /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`).
 3) Log in, as above - Google with the OPC UA Server component, otherwise a connection's own `<slug>\<user>`.
@@ -168,7 +181,7 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
 With the OPC UA Server component, `Jde.OpcServer` is the hub's default connection.  Gateways in the Web UI lists it
 under the hub's gateway.  Browse to a node to see its value:
 
-- Snapshot re-reads it.
+- The Snapshot column shows its value.  The toolbar's Refresh button re-reads it.
 - The checkbox beside it streams it.
 - A typed value writes it, where the server reports the node writable for you.  A lock beside a cell means it is not.
 
@@ -185,5 +198,5 @@ Roles are seeded, but the first grant is manual.  Every resource ships unenforce
 
 ## Not done here
 
-Soak support (`apps/OpcGateway/soak/soak.sh` launches the split deployment's three servers - the AppServer, the gateway and the
-OpcServer - not the hub), source consolidation under this directory.
+Soak support (`apps/OpcGateway/soak/soak.sh` launches the split deployment's three servers - the AppServer, the gateway
+and the OpcServer - not the hub), source consolidation under this directory.

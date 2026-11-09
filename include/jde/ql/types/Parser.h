@@ -27,12 +27,12 @@ namespace Jde::QL{
 
 		α LoadMutations( string&& command, sp<jobject> variables, bool returnRaw, const vector<sp<DB::AppSchema>>& schemas )ε->vector<MutationQL>;
 		α LoadTables( string jsonName, sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw, SRCE )ε->vector<TableQL>;
-		α LoadSubscriptions( sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas )ε->vector<Subscription>;
+		α LoadSubscriptions( sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas, bool remote=false )ε->vector<Subscription>;//remote:  QL::ParseRemoteSubscriptions.
 		α LoadUnsubscriptions()ε->vector<SubscriptionId>;
 	private:
 		α LoadTable( string jsonName, sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas, bool system=false, uint depth=0, SRCE )ε->TableQL;
 
-		α LoadSubscription( sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas )ε->Subscription;
+		α LoadSubscription( sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas, bool remote )ε->Subscription;
 		α ParseArgs()ε->jobject;
 		α SkipWhitespace()ι->void;
 		uint _i{0};

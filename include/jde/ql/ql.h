@@ -32,6 +32,9 @@ namespace Jde::QL{
 	α ParseM( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw=true, SRCE )ε->MutationQL;
 	α ParseQuery( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw=true, SRCE )ε->TableQL;
 	α ParseSubscriptions( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, SRCE )ε->vector<Subscription>;
+	//As ParseSubscriptions, for a subscription another process serves:  a table none of `schemas` holds resolves no view where
+	//ParseSubscriptions throws, since the server that owns the table is what can say it has none, and refuses it.
+	α ParseRemoteSubscriptions( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, SRCE )ε->vector<Subscription>;
 	α SelectStatement( const TableQL& qlTable, bool includeWhere=true )ε->DB::Statement;
 }
 namespace Jde{

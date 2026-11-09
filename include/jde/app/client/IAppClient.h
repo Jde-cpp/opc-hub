@@ -29,6 +29,9 @@ namespace Jde::App::Client{
 		α IsAccessConfigured()Ι->bool{ return _accessContext.has_value(); }//the reconnect path asks before reloading - not every app client has a snapshot to refresh.
 		α InitLogging( sp<App::Client::IAppClient> client )ι->void;
 		β Connected()Ι->bool{ return LoadSession()!=nullptr; }
+		//Called by Client::Connect once a session replaces one that dropped, its subscriptions being re-issued:  what a client holds
+		//of the AppServer's rows has a gap the events never filled, and a QLServer() kept from the old session died with it.
+		β OnReconnected()ι->void{}
 		//Virtual with QLServer/AddSession so an embedded client (OpcHub: the gateway hosted beside the AppServer) can answer
 		//in-process - the socket bodies stay the default.
 		β UserPK()Ι->Jde::UserPK{ auto p=LoadSession(); return p ? p->UserPK() : Jde::UserPK{0}; }

@@ -23,14 +23,15 @@ namespace Jde{
 		return name.starts_with("__") || name.starts_with("setting") || name=="status" || name=="logs" || _systemTables.contains(name) || _systemMutations.contains(name);
 	}
 
-	α QL::Parse( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw, SL /*sl*/ )ε->RequestQL{
+	Ω parse( string&& query, jobject&& variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw, bool remote )ε->QL::RequestQL{
+		using namespace QL;
 		Parser parser{ Str::TrimFirstLast(move(query), '{', '}'), "{}()," };
 		if( parser.Trim("query") )
 			returnRaw = true;
 		auto name = parser.Next();
 		auto vars = ms<jobject>( move(variables) );
 		if( name=="subscription" )
-			return RequestQL{ parser.LoadSubscriptions(vars, schemas) };
+			return RequestQL{ parser.LoadSubscriptions(vars, schemas, remote) };
 		else if( name=="unsubscribe" )
 			return RequestQL{ parser.LoadUnsubscriptions() };
 		else if( MutationQL::IsMutation(name) ){
@@ -40,8 +41,15 @@ namespace Jde{
 		}else
 			return RequestQL{ parser.LoadTables(move(name), vars, schemas, returnRaw) };
 	}
+	α QL::Parse( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw, SL /*sl*/ )ε->RequestQL{
+		return parse( move(query), move(variables), schemas, returnRaw, false );
+	}
 	α QL::ParseSubscriptions( string query, jobject vars, const vector<sp<DB::AppSchema>>& schemas, SL sl )ε->vector<Subscription>{
 		auto request = Parse( move(query), move(vars), schemas, true, sl ); THROW_IFSL( !request.IsSubscription(), "Expected subscription query." );
+		return request.Subscriptions();
+	}
+	α QL::ParseRemoteSubscriptions( string query, jobject vars, const vector<sp<DB::AppSchema>>& schemas, SL sl )ε->vector<Subscription>{
+		auto request = parse( move(query), move(vars), schemas, true, true ); THROW_IFSL( !request.IsSubscription(), "Expected subscription query." );
 		return request.Subscriptions();
 	}
 
@@ -401,7 +409,7 @@ namespace Jde::QL{
 		for( let& t : table.Tables )
 			warnUnknownColumns( t, subscription );
 	}
-	α Parser::LoadSubscription( sp<jobject> vars, const vector<sp<DB::AppSchema>>& schemas )ε->Subscription{
+	α Parser::LoadSubscription( sp<jobject> vars, const vector<sp<DB::AppSchema>>& schemas, bool remote )ε->Subscription{
 		let name = Next();
 		optional<EMutationQL> type; string tableName;
 		for( uint i=0; !type && i<MutationQLNames.size(); ++i ){//the participle of the verb the mutation starts with - one table, see usings.h.
@@ -414,15 +422,17 @@ namespace Jde::QL{
 		THROW_IF( !type, "Could not find subscription type for '{}'", name );
 		Next();	//{
 		Next(); //[userCreated]
-		auto table = LoadTable( tableName, vars, schemas, tableName=="logs" );
+		auto table = LoadTable( tableName, vars, schemas, remote || tableName=="logs" );//remote:  the FindView path, so a table these schemas lack resolves none, as a system table does.
 		warnUnknownColumns( table, name );
 		return Subscription{ move(tableName), *type, move(table) };
 
 	}
-	α Parser::LoadSubscriptions( sp<jobject> vars, const vector<sp<DB::AppSchema>>& schemas )ε->vector<Subscription>{
+	α Parser::LoadSubscriptions( sp<jobject> vars, const vector<sp<DB::AppSchema>>& schemas, bool remote )ε->vector<Subscription>{
 		vector<Subscription> y;
 		do{
-			y.push_back( LoadSubscription(vars, schemas) );
+			y.push_back( LoadSubscription(vars, schemas, remote) );
+			if( Peek()=="}" )//its block's close;  parse trimmed the last block's.
+				Next();
 		}while( Next()=="subscription" );
 
 		return y;

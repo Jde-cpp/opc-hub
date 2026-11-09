@@ -8,5 +8,6 @@ namespace Jde::Opc::Gateway{
 
 	struct GatewayAppClient : App::Client::IAppClient{
 		α ClientQuery( QL::RequestQL&& q, Jde::UserPK executer, SL sl )ε->up<TAwait<jvalue>> override;
+		α OnReconnected()ι->void override;//the calendars, read again on the new session.
 	};
 }

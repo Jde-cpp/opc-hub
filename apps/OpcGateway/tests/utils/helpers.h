@@ -73,6 +73,10 @@ namespace Jde::Opc::Gateway::Tests{
 	struct GatewayClientSocket;
 	α Socket()ι->GatewayClientSocket&;//the suites' shared socket to the gateway, connected on first use as the AppClient's session.
 	α Jwt()ε->const Web::Jwt&;//the AppClient's, fetched on first use:  its payload is the token the suites present, its user the session's.
+	//Socket() and Jwt() forgotten, each made again on its next use:  for a test that drops the gateway's app session.  The AppServer
+	//removes an instance's session with its socket (ServerSocketSession::OnClose), which closes every socket bound to the id, and
+	//in this process, one session map for the AppServer and the gateway, Socket() is one of them.
+	α ForgetAppSession()ι->void;
 	α SessionCredential( optional<UserPK> user={} )ε->Credential;//Jwt()'s payload, with `user` set when given - Jwt().UserPK for the session's own.
 	//What a detached awaiter answered:  Result or Error, then Done.  Shared with its coroutine, so a test that stops waiting - an ASSERT
 	//that returns on a timeout - leaves the coroutine its own copy to write into, never the test's frame (#353 review #6).
