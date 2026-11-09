@@ -87,12 +87,14 @@ describe( 'CalendarDetail', ()=>{
 	it( "lists the browser's zones with the server's and the row's, and keeps a zone picked first", async ()=>{
 		const d = await create( {}, {serverZone: 'Mars/Olympus_Mons'} );
 		expect( d.page.zones() ).toContain( 'America/New_York' );
+		expect( d.page.zones() ).toContain( 'UTC' );//which V8's list leaves out
 		expect( d.page.zones() ).toContain( 'Mars/Olympus_Mons' );//the server's refusal is the final word on a name
 		expect( d.page.excludedFields ).toBe( d.page.excludedFields );//one array, not a new one for Properties each check
 		TestBed.resetTestingModule();//the second page of this test
 		const other = await create( {id: 3, name: 'Plant', slug: 'plant', timeZone: 'Etc/Plant', dayStart: 0} );
 		expect( other.page.zones() ).toContain( 'Etc/Plant' );
 		expect( other.page.zone() ).toBe( 'UTC' );//a zone the browser lacks:  the times show in UTC
+		expect( other.page.zoneLacking() ).toBe( true );
 		expect( other.service.serverTimeZone ).not.toHaveBeenCalled();//an existing row keeps its own
 	} );
 	it( 'leaves a new calendar without a zone where the server gives none', async ()=>{
@@ -184,6 +186,27 @@ describe( 'CalendarDetail', ()=>{
 		expect( d.page.patterns.error() ).toBe( "It is the calendar's only pattern." );
 		expect( d.page.patterns.busy() ).toBe( false );
 		expect( d.service.patterns ).toHaveBeenCalledTimes( reads+1 );
+	} );
+
+	it( 'takes today afresh on a refresh', async ()=>{
+		const d = await create( row );
+		d.page.today.set( june );
+		expect( d.page.inEffect()?.id ).toBe( 4 );
+		await d.page.refreshPatterns();
+		expect( d.page.inEffect()?.id ).toBe( 5 );
+	} );
+	it( "leaves no other pattern's shifts under a selection whose own can't be read", async ()=>{
+		const d = await create( row );
+		d.page.today.set( june );
+		await d.page.refreshShifts();
+		d.service.shifts.mockRejectedValueOnce( new Error( 'down' ) );
+		await d.page.refreshShifts();
+		expect( d.page.shifts.rows().map( s=>s.name ) ).toEqual( ['Day', 'Night'] );//the same pattern's:  still its own
+		d.service.shifts.mockRejectedValueOnce( new Error( 'down' ) );
+		d.page.selectedId.set( 5 );
+		await d.page.refreshShifts();
+		expect( d.page.shifts.rows() ).toEqual( [] );
+		expect( d.page.shifts.error() ).toContain( 'down' );
 	} );
 
 	//Shifts:  each a table mutation of its own, through the form
@@ -296,6 +319,26 @@ describe( 'CalendarDetail', ()=>{
 		expect( [d.page.patterns.rows(), d.page.shifts.rows(), d.page.exceptions.rows()] ).toEqual( [[], [], []] );
 		expect( d.page.selected() ).toBeUndefined();
 		expect( d.page.patterns.error() ).toBeUndefined();
+	} );
+
+	it( 'goes to Properties to say a refused Save, which shows only there', async ()=>{
+		const d = await create( row );
+		d.page.tabIndex.set( 2 );
+		d.app.mutate.mockRejectedValueOnce( new Error( 'The slug is taken.' ) );
+		await d.page.onSubmitClick();
+		expect( d.page.tabIndex() ).toBe( 0 );
+		expect( d.page.saveError() ).toContain( 'The slug is taken.' );
+	} );
+	it( 'offers no exception edit for a zone the browser lacks, whose times the server would read in another', async ()=>{
+		const d = await create( {...row, timeZone: 'Etc/Plant'}, {render: true} );
+		d.page.tabIndex.set( 2 );
+		d.fixture.detectChanges( false );
+		await flush( 3 );
+		d.fixture.detectChanges( false );
+		const root:HTMLElement = d.fixture.nativeElement;
+		expect( root.querySelector( '.tab-body .hint' )?.textContent ).toContain( "doesn't know Etc/Plant" );
+		expect( root.querySelector<HTMLButtonElement>( '.tab-toolbar button' )?.disabled ).toBe( true );
+		expect( root.querySelector<HTMLButtonElement>( '[aria-label="Edit this exception"]' )?.disabled ).toBe( true );
 	} );
 
 	const tabs = ( root:HTMLElement )=>[...root.querySelectorAll( '.mdc-tab__text-label' )].map( e=>e.textContent!.trim() );

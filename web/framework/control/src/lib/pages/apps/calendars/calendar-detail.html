@@ -125,9 +125,9 @@
 			<ng-template mat-tab-label>Exceptions</ng-template>
 			<ng-template matTabContent>
 				<div class="tab-body">
-					<p class="hint">A dated range that closes planned time, a holiday or a shutdown, or opens it, an extra Saturday.  Where the two meet, closed wins.  Times are {{ zone() }}'s.</p>
+					<p class="hint">A dated range that closes planned time, a holiday or a shutdown, or opens it, an extra Saturday.  Where the two meet, closed wins.  Times are {{ zone() }}'s.@if( zoneLacking() ){  This browser doesn't know {{ row.timeZone }}, so an exception can't be added or edited here.}</p>
 					<div class="tab-toolbar">
-						<button matButton="tonal" type="button" (click)="addException()" [disabled]="exceptions.busy()"><mat-icon>add</mat-icon>Add exception</button>
+						<button matButton="tonal" type="button" (click)="addException()" [disabled]="exceptions.busy() || zoneLacking()"><mat-icon>add</mat-icon>Add exception</button>
 						<mat-slide-toggle [checked]="showDeletedExceptions()" (change)="setShowDeletedExceptions($event.checked)">Show deleted</mat-slide-toggle>
 						<button matIconButton type="button" (click)="refreshExceptions()" [disabled]="exceptions.loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
 						<span class="count">{{ exceptions.rows().length }} {{ exceptions.rows().length==1 ? 'exception' : 'exceptions' }}</span>
@@ -157,7 +157,7 @@
 									<button matIconButton type="button" class="purge" (click)="purgeException(e)" [disabled]="exceptions.busy()" aria-label="Purge this exception" matTooltip="Purge"><mat-icon>delete_forever</mat-icon></button>
 								}
 								@else{
-									<button matIconButton type="button" (click)="editException(e)" [disabled]="exceptions.busy()" aria-label="Edit this exception" matTooltip="Edit"><mat-icon>edit</mat-icon></button>
+									<button matIconButton type="button" (click)="editException(e)" [disabled]="exceptions.busy() || zoneLacking()" aria-label="Edit this exception" matTooltip="Edit"><mat-icon>edit</mat-icon></button>
 								}
 								<button matIconButton type="button" (click)="deleteException(e)" [disabled]="exceptions.busy()" [attr.aria-label]="e.deleted ? 'Restore this exception' : 'Delete this exception'" [matTooltip]="e.deleted ? 'Restore' : 'Delete'"><mat-icon>{{ e.deleted ? 'restore' : 'delete' }}</mat-icon></button>
 							</mat-cell>

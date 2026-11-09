@@ -1,11 +1,12 @@
 import { inject, Injectable } from '@angular/core';
-import { ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resolve, Router, RouterStateSnapshot } from '@angular/router';
+import { ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot } from '@angular/router';
 import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 import { Calendar } from '../../model/calendar';
 import { calendarListRoute, calendarsPath } from '../../pages/apps/calendars/calendar-list-route';
 import { SnackbarService } from '../../shared/snackbar/snackbar-service';
 import { AppService } from '../app/app-service';
 import { DetailResolver, DetailResolverData, DetailRoute, SlugNotFoundError } from '../detail-resolver';
+import { QLListResolver } from '../ql-list-resolver';
 
 //A calendar's row for its page (#396), under an instance page's `calendars/:slug` route, as HistAdminResolver resolves a historian
 //group's:  the row is DetailResolver's query of the application server's table, and the siblings are the rows the page's list put
@@ -40,7 +41,7 @@ export class CalendarResolver implements Resolve<DetailResolverData<Calendar>>{
 			}
 			else
 				this.#snackbar.exception( `Could not load '${slug}'`, e );
-			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, ['..'] ) ).catch( e=>console.warn( "The redirect failed.", e ) );//<page>/calendars, which redirects to the page
+			QLListResolver.redirectUp( this.#router, route );//<page>/calendars, which redirects to the page
 			return null as unknown as DetailResolverData<Calendar>;
 		}
 	}

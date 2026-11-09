@@ -1,6 +1,6 @@
-import { Component, DestroyRef, Directive, TemplateRef, booleanAttribute, computed, contentChildren, effect, inject, input, model } from '@angular/core';
+import { Component, DestroyRef, Directive, TemplateRef, booleanAttribute, computed, contentChildren, effect, inject, input, model, viewChildren } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import { MatTabsModule } from '@angular/material/tabs';
+import { MatTab, MatTabsModule } from '@angular/material/tabs';
 import { HelpAnchor } from 'jde-spa';
 import { AppService } from '../../../services/app/app-service';
 import { IGraphQL } from '../../../services/graphql';
@@ -37,11 +37,12 @@ export class InstanceTabs{
 	tabs = contentChildren( InstanceTab );
 	leading = computed( ()=>this.tabs().filter( t=>!t.after() ) );
 	trailing = computed( ()=>this.tabs().filter( t=>t.after() ) );
+	rendered = viewChildren( MatTab );
 	appService = inject( AppService );
 	constructor(){
 		const anchor = inject( HelpAnchor );
-		effect( ()=>{//the page's tab at the index, on either side of the shared three, which name no section
-			const index = this.selectedIndex(), shared = 3;
+		effect( ()=>{//the page's tab at the index, on either side of the shared ones, which name no section
+			const index = this.selectedIndex(), shared = this.rendered().length-this.leading().length-this.trailing().length;
 			anchor.fragment.set( (this.leading()[index] ?? this.trailing()[index-this.leading().length-shared])?.help() );
 		} );
 		inject( DestroyRef ).onDestroy( ()=>anchor.fragment.set( undefined ) );

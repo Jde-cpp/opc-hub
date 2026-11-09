@@ -56,11 +56,15 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance) );
 	}
 
-	async instancePK( instanceName:string, programName?:string ):Promise<number|undefined>{
+	async instancePK( instanceName:string, programName?:string ):Promise<number|undefined>{ return (await this.instancePKs( instanceName, [programName] ))[0]; }
+	//each program's registration of the instance, from the one read
+	async instancePKs( instanceName:string, programNames:(string|undefined)[] ):Promise<(number|undefined)[]>{
 		const connections = await this.queryArray<{id?:number, instanceId?:number, instanceName:string, programName:string}>( "connections(deleted:null){instanceId instanceName programName}" );
 		const strip = ( p:string )=> p?.startsWith("Jde.") ? p.substring(4) : p;
-		const match = connections.find( c=>c.instanceName==instanceName && (!programName || strip(c.programName)==strip(programName)) );//instance names are only unique per program — "Debug" exists for both the AppServer and the gateway
-		return match?.instanceId ?? match?.id;//servers whose connections view predates the instanceId column emit the instance pk under 'id'
+		return programNames.map( programName=>{
+			const match = connections.find( c=>c.instanceName==instanceName && (!programName || strip(c.programName)==strip(programName)) );//instance names are only unique per program — "Debug" exists for both the AppServer and the gateway
+			return match?.instanceId ?? match?.id;//servers whose connections view predates the instanceId column emit the instance pk under 'id'
+		} );
 	}
 
 	async login( user:User ):Promise<void>{

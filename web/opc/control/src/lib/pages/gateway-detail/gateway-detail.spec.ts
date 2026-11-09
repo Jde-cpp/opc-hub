@@ -40,6 +40,7 @@ describe( 'GatewayDetail switching gateway', ()=>{
 	const open = async ( tab:number )=>{
 		let instance = 'A';
 		const down = new Set<string>();//a lookup that rejects:  the gateway's by its name, its instance id's by `<name>#pk`
+		const held = new Map<string, Promise<void>>();//a gateway's lookup that waits for the test
 		const data = new BehaviorSubject<object>( routeData('A') );
 		//the sidenav route's segments, as the router parses them from the url it shows, which percent-encodes the instance
 		const parent = { get snapshot(){ return {url: new DefaultUrlSerializer().parse( `/apps/gateways/${encodeURIComponent( instance )}` ).root.children[PRIMARY_OUTLET].segments}; } };
@@ -47,12 +48,13 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		TestBed.configureTestingModule({ providers: [
 			provideRoute( {data, parent} ),
 			pageTitleStub,
-			{ provide: AppService, useValue: {instancePK: async ( name:string, program:string )=>{
+			{ provide: AppService, useValue: {instancePKs: async ( name:string, programs:string[] )=>{
 				if( down.has(`${name}#pk`) )
 					throw new Error( `${name} is not registered` );
-				return program=="OpcGateway" ? ids[name] : program=="OpcHub" ? hubIds[name] : undefined;
+				return programs.map( program=>program=="OpcGateway" ? ids[name] : program=="OpcHub" ? hubIds[name] : undefined );
 			}} },
 			{ provide: GatewayService, useValue: {gateway: async ( name:string )=>{
+				await held.get( name );
 				if( down.has(name) )
 					throw new Error( `${name} is down` );
 				return gateways[name];
@@ -66,7 +68,12 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		fixture.componentInstance.tabIndex.set( tab );
 		await stable( fixture );
 		const go = async ( to:string )=>{ instance = to; data.next( routeData(to) ); await stable( fixture ); };
-		return { fixture, go, logTabs, created: ()=>created.mock.calls.map( ([c])=>c ), fail: ( lookup:string )=>down.add( lookup ) };
+		const hold = ( name:string )=>{
+			let release!:()=>void;
+			held.set( name, new Promise<void>( resolve=>release = resolve ) );
+			return release;
+		};
+		return { fixture, go, hold, logTabs, created: ()=>created.mock.calls.map( ([c])=>c ), fail: ( lookup:string )=>down.add( lookup ) };
 	};
 
 	//the tabs:  Connections, Templates, Groups, Endpoint, Watch, Logs, Log Settings (#337 put the two historian tabs beside Connections, #388 the endpoint after them, #419 the watch list's)
@@ -127,6 +134,28 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		await go( 'A' );
 		expect( fixture.componentInstance.isHub() ).toBe( false );
 		expect( labels(fixture) ).not.toContain( 'Calendars' );
+	} );
+
+	//the router reuses the page, so a slow lookup answers after the page has moved on
+	it( 'keeps the gateway it switched to when an earlier one answers last', async ()=>{
+		const { fixture, go, hold } = await open( 0 );
+		const release = hold( 'B' );
+		await go( 'B' );
+		await go( 'Hub' );
+		release();
+		await stable( fixture );
+		const page = fixture.componentInstance;
+		expect( [page.gateway(), page.url(), page.isHub(), page.instanceId()] ).toEqual( [gateways['Hub'], 'apps/gateways/Hub', true, 4] );
+	} );
+	it( "and says nothing of an earlier one's failure", async ()=>{
+		const { fixture, go, hold, fail } = await open( 0 );
+		const release = hold( 'B' );
+		fail( 'B' );
+		await go( 'B' );
+		await go( 'A' );
+		release();
+		await stable( fixture );
+		expect( fixture.componentInstance.error() ).toBeUndefined();
 	} );
 
 	//reviews-issue/web-refactor-review.md #4:  a rejected lookup went unhandled inside the subscription, and the page stayed blank

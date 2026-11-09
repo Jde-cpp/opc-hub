@@ -208,6 +208,15 @@ export function wholeDays( start:string, finish:string, dayStart:number ):{from:
 	const from = start.substring( 0, 10 ), until = finish.substring( 0, 10 );
 	return start.substring( 11, 16 )==time && finish.substring( 11, 16 )==time && start.length==16 && finish.length==16 && until>from ? { from, to: addDays( until, -1 ) } : undefined;
 }
+//the production days a range of local date-times touches, last inclusive:  its end is exclusive, so one on a day's start isn't in that day
+export function productionDays( start:string, finish:string, dayStart:number ):{from:string; to:string}{
+	const day = ( local:string, less:number )=>{
+		const at = Date.parse( `${local}Z` );
+		return isNaN( at ) ? local.substring( 0, 10 ) : new Date( at-dayStart*60000-less ).toISOString().substring( 0, 10 );
+	};
+	const from = day( start, 0 ), to = day( finish, 1 );
+	return { from, to: to<from ? from : to };
+}
 export function wholeDayRange( from:string, to:string, dayStart:number ):{start:string; finish:string}{
 	const time = minutesToTime( dayStart );
 	return { start: `${from}T${time}`, finish: `${addDays( to, 1 )}T${time}` };

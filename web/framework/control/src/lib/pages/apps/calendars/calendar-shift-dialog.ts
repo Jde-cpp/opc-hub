@@ -53,12 +53,17 @@ export class CalendarShiftDialog{
 	addBreak():void{
 		const m = this.model(), start = timeToMinutes( m.start ) ?? 0, minutes = shiftMinutes( m ) ?? 0;
 		this.model.set( {...m, breaks: [...m.breaks, {start: minutesToTime( start+Math.floor( minutes/120 )*60 ), minutes: 30}]} );
+		this.f().markAsDirty();//a write to the model doesn't, and the form says what is wrong only once it is edited
 	}
-	removeBreak( index:number ):void{ this.model.update( m=>({...m, breaks: m.breaks.filter( ( _, i )=>i!=index )}) ); }
+	removeBreak( index:number ):void{
+		this.model.update( m=>({...m, breaks: m.breaks.filter( ( _, i )=>i!=index )}) );
+		this.f().markAsDirty();
+	}
 	async save():Promise<void>{
 		if( this.problem() || this.busy() )
 			return;
 		this.busy.set( true );
+		this.#ref.disableClose = true;//Escape or the backdrop would close it on a save the server may still take, and the page never read again
 		this.error.set( undefined );
 		try{
 			await this.data.save( toShiftArgs( this.model(), this.data.dayStart ) );
@@ -68,6 +73,7 @@ export class CalendarShiftDialog{
 			this.error.set( errorMessage(e) );
 		}
 		finally{
+			this.#ref.disableClose = false;
 			this.busy.set( false );
 		}
 	}

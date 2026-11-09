@@ -1,4 +1,4 @@
-import { addDays, breaksText, Calendar, changedArgs, cycleDayNames, daysDetail, daysMask, daysText, durationText, exceptionArgsOf, exceptionProblem, exceptionRange, isWeekly, maskDays, minutesToTime, patternDate, patternInEffect, shiftArgsOf, shiftClock, ShiftForm, shiftMinutes, shiftProblem, timeToMinutes, toCalendarException, toCalendarPattern, toCalendarShift, toExceptionArgs, toExceptionForm, toShiftArgs, toShiftForm, wholeDayRange, wholeDays, zoneInstant, zoneLess, zoneLocal } from './calendar';
+import { addDays, breaksText, Calendar, changedArgs, cycleDayNames, daysDetail, daysMask, daysText, durationText, exceptionArgsOf, exceptionProblem, exceptionRange, isWeekly, maskDays, minutesToTime, patternDate, patternInEffect, productionDays, shiftArgsOf, shiftClock, ShiftForm, shiftMinutes, shiftProblem, timeToMinutes, toCalendarException, toCalendarPattern, toCalendarShift, toExceptionArgs, toExceptionForm, toShiftArgs, toShiftForm, wholeDayRange, wholeDays, zoneInstant, zoneLess, zoneLocal } from './calendar';
 
 //America/New_York, as the server's suites:  EDT is UTC-4 from 2026-03-08 to 2026-11-01, so a 06:00 day start is 10:00Z in July.
 const NewYork = 'America/New_York';
@@ -192,6 +192,13 @@ describe( 'an exception', ()=>{
 		expect( wholeDays( '2026-07-04T06:00', '2026-07-05T18:00', 360 ) ).toBeUndefined();//ends inside a day
 		expect( wholeDays( '2026-07-04T00:00', '2026-07-05T00:00', 360 ) ).toBeUndefined();//midnight is not this calendar's day
 		expect( wholeDays( '2026-07-04T06:00', '2026-07-04T06:00', 360 ) ).toBeUndefined();
+	} );
+	it( 'finds the production days a range touches', ()=>{
+		expect( productionDays( '2026-07-04T02:00', '2026-07-04T05:00', 360 ) ).toEqual( {from: '2026-07-03', to: '2026-07-03'} );//before the day start:  the day before's
+		expect( productionDays( '2026-07-04T06:00', '2026-07-06T06:00', 360 ) ).toEqual( {from: '2026-07-04', to: '2026-07-05'} );//aligned
+		expect( productionDays( '2026-07-04T10:00', '2026-07-05T06:00', 360 ) ).toEqual( {from: '2026-07-04', to: '2026-07-04'} );//an end on a day's start isn't in that day
+		expect( productionDays( '2026-07-04T10:00', '2026-07-05T00:00', 0 ) ).toEqual( {from: '2026-07-04', to: '2026-07-04'} );
+		expect( productionDays( '2026-07-04T10:00', '', 360 ) ).toEqual( {from: '2026-07-04', to: '2026-07-04'} );//no end yet
 	} );
 	it( "fills its form on the calendar's wall clock, whole days where its range is", ()=>{
 		expect( toExceptionForm( holiday, NewYork, 360 ) ).toEqual( {name: 'Independence Day', whole: true, from: '2026-07-04', to: '2026-07-04', start: '2026-07-04T06:00', finish: '2026-07-05T06:00', isOpen: false} );

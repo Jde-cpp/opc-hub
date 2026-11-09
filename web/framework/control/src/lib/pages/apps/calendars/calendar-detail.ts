@@ -51,7 +51,6 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		this.shifts.reset();
 		this.exceptions.reset();
 		this.selectedId.set( undefined );
-		this.today.set( new Date() );
 		if( this.row.id )
 			this.refresh();
 		else
@@ -59,11 +58,14 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	}
 	protected override upsert():Calendar{ return new Calendar( this.properties() ); }
 	protected override get title(){ return this.row.name ? `${this.row.name} - Calendar` : 'New Calendar'; }
-	protected override saveFailed( e:unknown ):void{ this.#refusal.set( {of: this.properties(), text: errorMessage(e)} ); }
+	protected override saveFailed( e:unknown ):void{//said on Properties alone, and Save is on every tab
+		this.#refusal.set( {of: this.properties(), text: errorMessage(e)} );
+		this.tabIndex.set( 0 );
+	}
 	protected override get deleteWarning(){ return `${sharedCalendarLine}  Restore brings it back.`; }
 	protected override get purgeWarning(){ return `Its patterns, shifts and exceptions go with it.  ${sharedCalendarLine}`; }
 	ql = inject( AppService );
-	service = inject( CalendarService );
+	#service = inject( CalendarService );
 
 	readonly fieldOrder = ['slug', 'name', 'description'];
 	readonly excludedFields = excluded;
@@ -75,10 +77,11 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	#refusal = signal<{of:unknown; text:string}|undefined>( undefined );
 	saveError = computed( ()=>this.#refusal()?.of===this.properties() ? this.#refusal()!.text : undefined );
 	serverZone = signal<string|undefined>( undefined );
-	//the browser's zones, with the row's and the server's where it lacks them:  the server's refusal is the final word on a name
+	//the browser's zones, with UTC, which V8's list leaves out, and the row's and the server's where it lacks them:  the server's
+	//refusal is the final word on a name
 	zones = computed<string[]>( ()=>{
 		const zones = new Set<string>( Intl.supportedValuesOf( 'timeZone' ) );
-		for( const zone of [this.calendar?.timeZone, this.serverZone()] ){
+		for( const zone of ['UTC', this.calendar?.timeZone, this.serverZone()] ){
 			if( zone )
 				zones.add( zone );
 		}
@@ -91,6 +94,7 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	showDeletedPatterns = signal( false );
 	showDeletedExceptions = signal( false );
 	selectedId = signal<number|undefined>( undefined );//the pattern picked;  none, and the one in effect shows
+	#shiftsOf:number|undefined;//the pattern `shifts` holds the rows of
 	inEffect = computed( ()=>patternInEffect( this.patterns.rows(), this.today() ) );
 	selected = computed<CalendarPattern|undefined>( ()=>this.patterns.rows().find( p=>p.id==this.selectedId() ) ?? this.inEffect() ?? this.patterns.rows()[0] );
 
@@ -99,7 +103,7 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	async #offerServerZone():Promise<void>{
 		const row = this.row;
 		try{
-			const zone = await this.service.serverTimeZone( this.ql );
+			const zone = await this.#service.serverTimeZone( this.ql );
 			if( !zone || row!==this.row )
 				return;
 			this.serverZone.set( zone );
@@ -121,8 +125,10 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	}
 
 	//The zone and day start every time on the page is read in:  the saved row's, which the stored instants were resolved under, not
-	//an edit of them not saved yet.  UTC for a zone this browser lacks.
-	zone = computed( ()=>{ const zone = this.row?.timeZone; return zone && isTimeZone( zone ) ? zone : 'UTC'; } );
+	//an edit of them not saved yet.  UTC for a zone this browser lacks, which shows the times but can't enter an exception's, as the
+	//server reads a zone-less time in the calendar's own.
+	zoneLacking = computed( ()=>{ const zone = this.row?.timeZone; return !!zone && !isTimeZone( zone ); } );
+	zone = computed( ()=>this.zoneLacking() || !this.row?.timeZone ? 'UTC' : this.row.timeZone );
 	get dayStart():number{ return this.row.dayStart ?? 0; }
 	clock( instant:Date ):string{ return zoneLocal( instant, this.zone() ).replace( 'T', ' ' ); }
 
@@ -133,7 +139,8 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		const id = this.row?.id, deleted = this.showDeletedPatterns();
 		if( !id )
 			return;
-		await this.patterns.read( ()=>this.service.patterns( this.ql, id, deleted ),
+		this.today.set( new Date() );
+		await this.patterns.read( ()=>this.#service.patterns( this.ql, id, deleted ),
 			rows=>this.patterns.rows.set( rows.sort( ( a, b )=>(a.effective?.getTime() ?? -Infinity)-(b.effective?.getTime() ?? -Infinity) || a.id-b.id ) ),
 			()=>this.row?.id==id );
 		await this.refreshShifts();
@@ -142,7 +149,11 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		const pattern = this.selected(), id = this.row?.id;
 		if( !pattern )
 			return this.shifts.reset();
-		await this.shifts.read( ()=>this.service.shifts( this.ql, pattern.id ),
+		if( pattern.id!=this.#shiftsOf ){//none of another pattern's stay under this one's heading, should the read fail
+			this.#shiftsOf = pattern.id;
+			this.shifts.rows.set( [] );
+		}
+		await this.shifts.read( ()=>this.#service.shifts( this.ql, pattern.id ),
 			rows=>this.shifts.rows.set( rows.sort( ( a, b )=>a.start-b.start || a.name.localeCompare( b.name ) ) ),
 			()=>this.row?.id==id && this.selected()?.id==pattern.id );
 	}
@@ -154,7 +165,6 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		if( pattern.id==this.selected()?.id )
 			return;
 		this.selectedId.set( pattern.id );
-		this.shifts.rows.set( [] );
 		await this.refreshShifts();
 	}
 	fromText( p:CalendarPattern ):string{ return patternDate( p, this.zone() ) ?? 'The beginning'; }
@@ -180,7 +190,7 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	}
 	async #remove( rows:CalendarRows<any>, type:CalendarChild, id:number, how:'delete'|'restore'|'purge', then:()=>Promise<void> ):Promise<void>{
 		await rows.act( async ()=>{
-			await this.service.remove( this.ql, type, id, how );
+			await this.#service.remove( this.ql, type, id, how );
 			await then();
 		} );
 	}
@@ -197,14 +207,14 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		if( !pattern )
 			return;
 		const last = Math.max( 0, ...this.shifts.rows().map( s=>s.start+s.minutes ) );//on from the latest, while the day has room
-		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, startAt: last<minutesPerDay ? last : 0, save: args=>this.service.createShift( this.ql, pattern.id, args ) } ) )
+		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, startAt: last<minutesPerDay ? last : 0, save: args=>this.#service.createShift( this.ql, pattern.id, args ) } ) )
 			await this.refreshShifts();
 	}
 	async editShift( shift:CalendarShift ):Promise<void>{
 		const pattern = this.selected();
 		if( !pattern )
 			return;
-		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, shift, save: args=>this.service.updateShift( this.ql, shift.id, changedArgs( args, shiftArgsOf( shift ) ) ) } ) )
+		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, shift, save: args=>this.#service.updateShift( this.ql, shift.id, changedArgs( args, shiftArgsOf( shift ) ) ) } ) )
 			await this.refreshShifts();
 	}
 	//a purge:  a shift has no soft delete
@@ -212,7 +222,7 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		if( !await confirm( this.dialog, {title: `Remove ${shift.name}?`, message: `The shift is removed for good:  a shift has no Restore.  Every gateway's planned time changes with it, for as long as the pattern has been in effect.`, confirm: 'Remove', destructive: true} ) )
 			return;
 		await this.shifts.act( async ()=>{
-			await this.service.purgeShift( this.ql, shift.id );
+			await this.#service.purgeShift( this.ql, shift.id );
 			await this.refreshShifts();
 		} );
 	}
@@ -222,7 +232,7 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		const id = this.row?.id, deleted = this.showDeletedExceptions();
 		if( !id )
 			return;
-		await this.exceptions.read( ()=>this.service.exceptions( this.ql, id, deleted ),
+		await this.exceptions.read( ()=>this.#service.exceptions( this.ql, id, deleted ),
 			rows=>this.exceptions.rows.set( rows.sort( ( a, b )=>a.start.getTime()-b.start.getTime() || a.id-b.id ) ),
 			()=>this.row?.id==id );
 	}
@@ -232,12 +242,12 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	}
 	async addException():Promise<void>{
 		const id = this.row.id;
-		if( await CalendarExceptionDialog.open( this.dialog, { zone: this.zone(), dayStart: this.dayStart, save: args=>this.service.createException( this.ql, id, args ) } ) )
+		if( await CalendarExceptionDialog.open( this.dialog, { zone: this.zone(), dayStart: this.dayStart, save: args=>this.#service.createException( this.ql, id, args ) } ) )
 			await this.refreshExceptions();
 	}
 	async editException( exception:CalendarException ):Promise<void>{
 		const zone = this.zone();
-		if( await CalendarExceptionDialog.open( this.dialog, { zone, dayStart: this.dayStart, exception, save: args=>this.service.updateException( this.ql, exception.id, changedArgs( args, exceptionArgsOf( exception, zone ) ) ) } ) )
+		if( await CalendarExceptionDialog.open( this.dialog, { zone, dayStart: this.dayStart, exception, save: args=>this.#service.updateException( this.ql, exception.id, changedArgs( args, exceptionArgsOf( exception, zone ) ) ) } ) )
 			await this.refreshExceptions();
 	}
 	async deleteException( e:CalendarException ):Promise<void>{ await this.#remove( this.exceptions, 'CalendarException', e.id, e.deleted ? 'restore' : 'delete', ()=>this.refreshExceptions() ); }

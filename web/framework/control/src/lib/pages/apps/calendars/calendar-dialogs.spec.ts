@@ -12,9 +12,9 @@ const holiday = toCalendarException( {id: 9, calendarId: 3, name: 'Independence 
 
 //a form over its data, with `save` recorded and the ref's close;  `type` sets a control as a user typing in it does
 const open = <T extends {save:unknown}>( component:new()=>any, data:Omit<T,'save'>, save=vi.fn( async ( _args:unknown ):Promise<unknown>=>({}) ) )=>{
-	const close = vi.fn( ( _y:unknown )=>{} );
+	const close = vi.fn( ( _y:unknown )=>{} ), ref = { disableClose: <boolean|undefined>undefined, close };
 	TestBed.configureTestingModule({ providers: [
-		{ provide: MatDialogRef, useValue: {close} },
+		{ provide: MatDialogRef, useValue: ref },
 		{ provide: MAT_DIALOG_DATA, useValue: {...data, save} }
 	]});
 	const fixture = TestBed.createComponent( component );
@@ -27,7 +27,7 @@ const open = <T extends {save:unknown}>( component:new()=>any, data:Omit<T,'save
 		await settle();
 	};
 	const saveButton = ()=><HTMLButtonElement>[...root.querySelectorAll( 'mat-dialog-actions button' )].at( -1 );
-	return { fixture, dialog: fixture.componentInstance, root, save, close, settle, type, saveButton, inputs: ( selector='input' )=><HTMLInputElement[]>[...root.querySelectorAll( selector )] };
+	return { fixture, dialog: fixture.componentInstance, root, save, close, ref, settle, type, saveButton, inputs: ( selector='input' )=><HTMLInputElement[]>[...root.querySelectorAll( selector )] };
 };
 
 describe( 'CalendarShiftDialog', ()=>{
@@ -91,6 +91,24 @@ describe( 'CalendarShiftDialog', ()=>{
 		await d.dialog.save();
 		expect( d.save ).not.toHaveBeenCalled();
 	} );
+	it( 'says why Save is off once a break is added', async ()=>{
+		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360, shift: day} );
+		await d.settle();
+		d.dialog.addBreak();//midway, on the one already there
+		await d.settle();
+		expect( d.saveButton().disabled ).toBe( true );
+		expect( d.root.querySelector( '.problem' )?.textContent ).toBe( 'The breaks at 10:00 and 10:00 overlap.' );
+	} );
+	it( 'holds the dialog open while a save is out', async ()=>{
+		let answer!:( y:unknown )=>void;
+		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360, shift: day}, vi.fn( ()=>new Promise<unknown>( resolve=>answer = resolve ) ) );
+		await d.settle();
+		const saving = d.dialog.save();
+		expect( d.ref.disableClose ).toBe( true );
+		answer( {} );
+		await saving;
+		expect( d.ref.disableClose ).toBe( false );
+	} );
 	//a refusal shows as the form's error, and the dialog stays for the fix
 	it( "shows the server's refusal on the form and stays open", async ()=>{
 		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360, shift: day}, vi.fn( async ()=>{ throw new Error( "Shifts 'Day' on Monday and 'Night' on Monday overlap." ); } ) );
@@ -132,6 +150,31 @@ describe( 'CalendarExceptionDialog', ()=>{
 		expect( d.save ).toHaveBeenCalledWith( {name: 'Independence Day', start: '2026-07-04T06:00:00', finish: '2026-07-04T18:00:00', isOpen: false} );
 		d.dialog.setWhole( true );//back:  the days the times touch
 		expect( [d.dialog.model().from, d.dialog.model().to] ).toEqual( ['2026-07-04', '2026-07-04'] );
+	} );
+	it( 'keeps the times when Whole days is unticked with a day blank', async ()=>{
+		const d = open<CalendarExceptionDialogData>( CalendarExceptionDialog, {zone: NewYork, dayStart: 360, exception: holiday} );
+		await d.settle();
+		d.dialog.model.update( m=>({...m, to: ''}) );
+		d.dialog.setWhole( false );
+		expect( d.dialog.model() ).toMatchObject( {whole: false, start: '2026-07-04T06:00', finish: '2026-07-05T06:00'} );
+	} );
+	it( 'takes the times to the production days they are in', async ()=>{
+		const d = open<CalendarExceptionDialogData>( CalendarExceptionDialog, {zone: NewYork, dayStart: 360, exception: holiday} );
+		await d.settle();
+		d.dialog.setWhole( false );
+		d.dialog.model.update( m=>({...m, start: '2026-07-04T02:00', finish: '2026-07-04T05:00'}) );
+		d.dialog.setWhole( true );
+		expect( [d.dialog.model().from, d.dialog.model().to] ).toEqual( ['2026-07-03', '2026-07-03'] );
+	} );
+	it( 'holds the dialog open while a save is out', async ()=>{
+		let answer!:( y:unknown )=>void;
+		const d = open<CalendarExceptionDialogData>( CalendarExceptionDialog, {zone: NewYork, dayStart: 360, exception: holiday}, vi.fn( ()=>new Promise<unknown>( resolve=>answer = resolve ) ) );
+		await d.settle();
+		const saving = d.dialog.save();
+		expect( d.ref.disableClose ).toBe( true );
+		answer( {} );
+		await saving;
+		expect( d.ref.disableClose ).toBe( false );
 	} );
 	it( "opens a new exception closed, on today's production day", async ()=>{
 		const d = open<CalendarExceptionDialogData>( CalendarExceptionDialog, {zone: NewYork, dayStart: 360} );

@@ -2,7 +2,7 @@ import { Component, OnInit, signal, model, inject } from '@angular/core';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
-import { ComponentPageTitle, persistedTabIndex } from 'jde-spa';
+import { ComponentPageTitle, Latest, persistedTabIndex } from 'jde-spa';
 import { AppService, CalendarList, errorMessage, InstanceTab, InstanceTabs, QLList, QLListData } from 'jde-framework';
 import { RouteItem } from 'jde-spa';
 import { GatewayService } from '../../services/gateway-service';
@@ -18,9 +18,11 @@ import { GatewayHistList } from './hist-admin/gateway-hist-list';
 export class GatewayDetail implements OnInit{
 	#route = inject( ActivatedRoute );
 	#componentPageTitle = inject( ComponentPageTitle );
+	#loads = new Latest();//the page is reused across gateways:  a slower earlier one must not land on the one now shown
 
 	ngOnInit(): void {
 		this.#route.data.subscribe( async (routeData)=>{
+			const load = this.#loads.next();
 			this.pageData = <QLListData>routeData["data"];
 			this.sideNav.set( this.pageData.routing );
 			const instanceName = this.pageData.routing.path.split('/').slice(-1)[0];
@@ -30,15 +32,18 @@ export class GatewayDetail implements OnInit{
 			try{
 				const gateway = await this.gatewayService.gateway( instanceName );
 				//ahead of the tabs, which a hub has one more of, its last:  shown without it, the group clamps the index kept for it
-				const gatewayId = await this.appService.instancePK( instanceName, "OpcGateway" );
-				const hubId = gatewayId===undefined ? await this.appService.instancePK( instanceName, "OpcHub" ) : undefined;//a hub registers under its own program name
+				const [gatewayId, hubId] = await this.appService.instancePKs( instanceName, ["OpcGateway", "OpcHub"] );//a hub registers under its own program name
+				if( !this.#loads.is( load ) )
+					return;
 				this.url.set( url );//with the gateway, so a tab's list never pairs one gateway's key with the other's rows
 				this.gateway.set( gateway );
-				this.isHub.set( hubId!==undefined );
+				this.isHub.set( gatewayId===undefined && hubId!==undefined );
 				this.instanceId.set( gatewayId ?? hubId );
 				this.isLoading.set( false );
 			}
 			catch( e ){//as OpcServerDetail:  unhandled, a rejection left the page blank behind isLoading (reviews-issue/web-refactor-review.md #4)
+				if( !this.#loads.is( load ) )
+					return;
 				this.error.set( errorMessage(e, "Could not load the gateway.") );
 				this.isLoading.set( false );
 			}

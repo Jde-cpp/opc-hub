@@ -7,7 +7,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
-import { CalendarException, changedArgs, ExceptionArgs, exceptionArgsOf, ExceptionForm, exceptionProblem, exceptionRange, toExceptionArgs, toExceptionForm, wholeDays } from '../../../model/calendar';
+import { CalendarException, changedArgs, ExceptionArgs, exceptionArgsOf, ExceptionForm, exceptionProblem, exceptionRange, productionDays, toExceptionArgs, toExceptionForm } from '../../../model/calendar';
 import { errorMessage } from '../../../utils/errors';
 
 //`zone` and `dayStart`:  the calendar's, as saved.  `exception`:  the one edited, none for a new one.  `save` sends the form's
@@ -44,21 +44,22 @@ export class CalendarExceptionDialog{
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );
 
-	//the range carried from one way of entering it to the other:  the days as their times, and the times as the days they touch
+	//the range carried from one way of entering it to the other:  the days as their times, while they are days, and the times as the
+	//production days they touch
 	setWhole( whole:boolean ):void{
 		const m = this.model(), dayStart = this.data.dayStart;
-		if( whole ){
-			const days = wholeDays( m.start, m.finish, dayStart );
-			const from = days?.from ?? m.start.substring( 0, 10 ), to = days?.to ?? m.finish.substring( 0, 10 );
-			this.model.set( {...m, whole, from, to: to<from ? from : to} );
+		if( whole )
+			this.model.set( {...m, whole, ...productionDays( m.start, m.finish, dayStart )} );
+		else{
+			const days = {...m, name: 'named', whole: true};
+			this.model.set( {...m, whole, ...(exceptionProblem( days, this.data.zone, dayStart ) ? {} : exceptionRange( days, dayStart ))} );
 		}
-		else
-			this.model.set( {...m, whole, ...exceptionRange( {...m, whole: true}, dayStart )} );
 	}
 	async save():Promise<void>{
 		if( this.problem() || this.busy() )
 			return;
 		this.busy.set( true );
+		this.#ref.disableClose = true;//Escape or the backdrop would close it on a save the server may still take, and the page never read again
 		this.error.set( undefined );
 		try{
 			await this.data.save( toExceptionArgs( this.model(), this.data.dayStart ) );
@@ -68,6 +69,7 @@ export class CalendarExceptionDialog{
 			this.error.set( errorMessage(e) );
 		}
 		finally{
+			this.#ref.disableClose = false;
 			this.busy.set( false );
 		}
 	}
