@@ -1,0 +1,50 @@
+<h2 mat-dialog-title>{{ data.exception ? 'Edit ' + data.exception.name : 'Add an exception' }}</h2>
+<mat-dialog-content>
+	<mat-form-field class="wide">
+		<mat-label>Name</mat-label>
+		<input matInput cdkFocusInitial [formField]="f.name" placeholder="Independence Day">
+	</mat-form-field>
+	<mat-form-field class="wide">
+		<mat-label>Planned time</mat-label>
+		<mat-select [formField]="f.isOpen">
+			<mat-option [value]="false">Closed - a holiday or a shutdown</mat-option>
+			<mat-option [value]="true">Open - an extra day, with no shift</mat-option>
+		</mat-select>
+	</mat-form-field>
+	<mat-checkbox [checked]="model().whole" (change)="setWhole($event.checked)">Whole days</mat-checkbox>
+	<div class="pair">
+		@if( model().whole ){
+			<mat-form-field>
+				<mat-label>First day</mat-label>
+				<input matInput type="date" [formField]="f.from">
+			</mat-form-field>
+			<mat-form-field>
+				<mat-label>Last day</mat-label>
+				<input matInput type="date" [formField]="f.to">
+			</mat-form-field>
+		}
+		@else{
+			<mat-form-field>
+				<mat-label>Start</mat-label>
+				<input matInput type="datetime-local" [formField]="f.start">
+			</mat-form-field>
+			<mat-form-field>
+				<mat-label>End</mat-label>
+				<input matInput type="datetime-local" [formField]="f.finish">
+			</mat-form-field>
+		}
+	</div>
+	@if( rangeText(); as range ){
+		<p class="hint">{{ range }}</p>
+	}
+	@if( f().dirty() && problem(); as p ){
+		<p class="problem" role="alert">{{ p }}</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<button matButton="outlined" type="button" mat-dialog-close [disabled]="busy()">Cancel</button>
+	<button matButton="filled" type="button" (click)="save()" [disabled]="busy() || !!problem() || !changed()">Save</button>
+</mat-dialog-actions>

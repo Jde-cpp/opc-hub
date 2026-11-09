@@ -1,4 +1,4 @@
-import { Component, DestroyRef, Directive, TemplateRef, contentChildren, effect, inject, input, model } from '@angular/core';
+import { Component, DestroyRef, Directive, TemplateRef, booleanAttribute, computed, contentChildren, effect, inject, input, model } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { MatTabsModule } from '@angular/material/tabs';
 import { HelpAnchor } from 'jde-spa';
@@ -9,16 +9,19 @@ import { LogSettingsPanel } from '../../logs/settings/log-settings-panel';
 import { WebSessions } from '../web-sessions/web-sessions';
 
 //A page's own tab ahead of the shared ones:  `<ng-template instanceTab="Connections">…</ng-template>`.  instanceTabHelp names its section
-//in the page's help topic, which the navbar's ? button opens while the tab is selected.
+//in the page's help topic, which the navbar's ? button opens while the tab is selected.  instanceTabAfter puts it after the shared
+//ones instead:  a tab only some instances have (Calendars, #396 - the application server's, and a hub's) then moves no other, so
+//the index a page keeps means the same tab on each.
 @Directive( {selector: 'ng-template[instanceTab]'} )
 export class InstanceTab{
 	label = input.required<string>( {alias: 'instanceTab'} );
 	help = input<string>( undefined, {alias: 'instanceTabHelp'} );
+	after = input( false, {alias: 'instanceTabAfter', transform: booleanAttribute} );
 	template = inject( TemplateRef );
 }
 
 //The tab group the three application-instance pages share - app-server, opc-server and gateway:  each page's own tabs
-//(InstanceTab), then Logs, Log Settings and Web Sessions.  A whole group rather than the three tabs alone, because a
+//(InstanceTab), then Logs, Log Settings and Web Sessions, then the page's tabs marked instanceTabAfter.  A whole group rather than the three tabs alone, because a
 //mat-tab-group only finds the tabs written in its own template, never ones a child component renders.
 @Component( {
 	selector: 'instance-tabs',
@@ -32,10 +35,15 @@ export class InstanceTabs{
 	noun = input<string>( "server" );//what the instance is, for the tabs' no-registration line
 	selectedIndex = model<number>( 0 );
 	tabs = contentChildren( InstanceTab );
+	leading = computed( ()=>this.tabs().filter( t=>!t.after() ) );
+	trailing = computed( ()=>this.tabs().filter( t=>t.after() ) );
 	appService = inject( AppService );
 	constructor(){
 		const anchor = inject( HelpAnchor );
-		effect( ()=>anchor.fragment.set( this.tabs()[this.selectedIndex()]?.help() ) );
+		effect( ()=>{//the page's tab at the index, on either side of the shared three, which name no section
+			const index = this.selectedIndex(), shared = 3;
+			anchor.fragment.set( (this.leading()[index] ?? this.trailing()[index-this.leading().length-shared])?.help() );
+		} );
 		inject( DestroyRef ).onDestroy( ()=>anchor.fragment.set( undefined ) );
 	}
 }

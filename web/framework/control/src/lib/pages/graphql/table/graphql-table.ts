@@ -13,8 +13,8 @@ import { Style, ViewField } from '../../../model/ql/view';
 import { QLRow } from '../../../model/ql/slug-row';
 import { capitalize } from 'jde-spa';
 
-//A host's text for a text cell in place of the row's value, or undefined to show the value:  a group's root by its browse path.  One
-//that reads a signal redraws the cell when the signal changes.
+//A host's text for a text or a number cell in place of the row's value, or undefined to show the value:  a group's root by its browse
+//path, a calendar's day start as a time of day.  One that reads a signal redraws the cell when the signal changes.
 export type CellText = ( column:string, row:QLRow )=>string|undefined;
 
 @Component({

@@ -21,6 +21,7 @@ class SessionsStub{ service = input<unknown>(); instanceId = input<number>(); }
 	imports: [InstanceTab, InstanceTabs],
 	template: `<instance-tabs [logs]="logs()" [instanceId]="instanceId()" noun="gateway" [(selectedIndex)]="index">
 		<ng-template instanceTab="Connections"><p class="mine">{{ name }}</p></ng-template>
+		<ng-template instanceTab="Calendars" instanceTabHelp="calendars" instanceTabAfter>calendars</ng-template>
 		<ng-template instanceTab="Templates" instanceTabHelp="historian">templates</ng-template>
 	</instance-tabs>`
 })
@@ -46,10 +47,12 @@ describe( 'InstanceTabs', ()=>{
 	};
 	const body = ( root:HTMLElement )=>root.querySelector( '.mat-mdc-tab-body-active' )!.textContent!.trim();
 
-	it( "puts the page's tabs ahead of the shared three", async ()=>{
+	//#396:  a tab only some instances have goes after the shared three, where it moves none of the others
+	it( "puts the page's tabs ahead of the shared three, and one marked after them last", async ()=>{
 		const root = await create( 0, 7 );
-		expect( [...root.querySelectorAll('.mdc-tab__text-label')].map( l=>l.textContent!.trim() ) ).toEqual( ["Connections", "Templates", "Logs", "Log Settings", "Web Sessions"] );
+		expect( [...root.querySelectorAll('.mdc-tab__text-label')].map( l=>l.textContent!.trim() ) ).toEqual( ["Connections", "Templates", "Logs", "Log Settings", "Web Sessions", "Calendars"] );
 		expect( root.querySelector( '.mat-mdc-tab-body-active .mine' )?.textContent ).toBe( "the page's own" );//rendered in the page's context
+		expect( body(await create( 5, 7 )) ).toBe( "calendars" );
 	} );
 
 	//reviews-issue/web-refactor-review.md #10:  `[logs()]` iterated once whatever the value, and `s!` handed LogDetail an undefined
@@ -65,6 +68,12 @@ describe( 'InstanceTabs', ()=>{
 		const anchor = TestBed.inject( HelpAnchor );
 		expect( anchor.fragment() ).toBe( "historian" );
 		fixture.componentInstance.index.set( 0 );
+		await stable( fixture );
+		expect( anchor.fragment() ).toBeUndefined();
+		fixture.componentInstance.index.set( 5 );//past the shared three
+		await stable( fixture );
+		expect( anchor.fragment() ).toBe( "calendars" );
+		fixture.componentInstance.index.set( 3 );//a shared tab names none
 		await stable( fixture );
 		expect( anchor.fragment() ).toBeUndefined();
 		fixture.componentInstance.index.set( 1 );

@@ -10,12 +10,12 @@ import { stable } from 'jde-spa/testing';
 //The gateway's Connections list: a text column, and the grafted count that reads as a number.
 const schema = schemaOf( "ServerConnection", required("name"), scalar("deleted", "DateTime"), object("opcSessions", "OpcSessions") );
 
-const build = ( columns:any[], rows:any[] = [] )=>{
+const build = ( columns:any[], rows:any[] = [], tableSchema=schema )=>{
 	TestBed.resetTestingModule();//a test may build two
 	TestBed.configureTestingModule({ providers: [{ provide: SnackbarService, useValue: snackbarStub() }] });
 	const fixture = TestBed.createComponent( GraphQLTable );
 	fixture.componentRef.setInput( 'dataSource', rows );
-	fixture.componentRef.setInput( 'displayedFields', View.fromTable({columns, sort: "name"}, schema).fields );
+	fixture.componentRef.setInput( 'displayedFields', View.fromTable({columns, sort: "name"}, tableSchema).fields );
 	fixture.componentRef.setInput( 'selections', new SelectionModel<any>(false, []) );
 	return fixture;
 };
@@ -161,5 +161,16 @@ describe( 'GraphQLTable columns', ()=>{
 		placed.set( new Map( [["b", "Objects/b"]] ) );
 		await stable( fixture, 1 );
 		expect( cells() ).toEqual( ["a", "Objects/b"] );
+	} );
+
+	//#396:  a number cell takes the host's text too - a calendar's day start, minutes in the column, as a time of day
+	it( "shows a host's text for a number", async ()=>{
+		const fixture = build( ["dayStart"], [{id: 1, dayStart: 360}, {id: 2, dayStart: 0}], schemaOf( "Calendar", required("name"), required("dayStart", "UInt") ) );
+		await stable( fixture, 1 );
+		const cells = ()=>[...fixture.nativeElement.querySelectorAll( 'mat-cell' )].map( (c:Element)=>c.textContent!.trim() );
+		expect( cells() ).toEqual( ["360", "0"] );
+		fixture.componentRef.setInput( 'cellText', <CellText>(( column, row )=>column=="dayStart" ? `${<number>row['dayStart']/60}:00` : undefined) );
+		await stable( fixture, 1 );
+		expect( cells() ).toEqual( ["6:00", "0:00"] );
 	} );
 } );

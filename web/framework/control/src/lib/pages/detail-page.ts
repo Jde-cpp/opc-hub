@@ -68,7 +68,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 			this.router.navigate( ['..'], {relativeTo: this.route} );
 		}
 		catch( e ){
-			this.snackbar.exception( "Save failed.", e );
+			this.saveFailed( e );
 		}
 	}
 	onCancelClick(){ this.router.navigate( ['..'], {relativeTo: this.route} ); }
@@ -79,6 +79,9 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	//had no copy had no Delete at all.  A page opts in by putting the button in its template.
 	async onDeleteClick(){
 		const restore = this.isDeleted;
+		const warning = restore ? undefined : this.deleteWarning;
+		if( warning && !await confirm(this.dialog, {title: `Delete ${this.row.name ?? this.row.slug}?`, message: warning, confirm: "Delete", destructive: true}) )
+			return;
 		try{
 			await this.ql.mutate( `${restore ? "restore" : "delete"}${this.row.type}(id:${this.row.id})` );
 			this.afterMutate();
@@ -95,7 +98,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	//live is one click from destruction - and behind a confirmation naming the row.  A page opts in via its template.
 	async onPurgeClick(){
 		const name = this.row.name ?? this.row.slug;
-		if( !await confirm(this.dialog, {title: `Purge ${name}?`, message: `${name} will be permanently removed. This cannot be undone - a purged row has no Restore.`, confirm: "Purge", destructive: true}) )
+		if( !await confirm(this.dialog, {title: `Purge ${name}?`, message: `${name} will be permanently removed. This cannot be undone - a purged row has no Restore.${this.purgeWarning ? `  ${this.purgeWarning}` : ""}`, confirm: "Purge", destructive: true}) )
 			return;
 		try{
 			await this.ql.mutate( `purge${this.row.type}(id:${this.row.id})` );
@@ -109,6 +112,9 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	protected abstract get ctor():new (item:any)=>T;//a constructor cannot be reached through T, and a subclass field would initialise too late for #load
 	protected abstract upsert():T;//the edited row to save - the one thing every page assembles differently
 	protected abstract onRow():void;//per-page state off the freshly loaded `row`
+	protected saveFailed( e:unknown ):void{ this.snackbar.exception( "Save failed.", e ); }//a page that says a refusal on its form (CalendarDetail)
+	protected get deleteWarning():string|undefined{ return undefined; }//what a Delete costs beyond the row, which it then confirms with:  none, and a Delete is one click, as a Restore undoes it
+	protected get purgeWarning():string{ return ""; }//the same for the Purge's confirmation, after its own words
 	protected afterMutate():void{}//a save, delete, restore or purge landed - for a page whose row something else caches (ClientDetail, reviews/m3-closing.md #5)
 	protected get onlyPropertiesTab():boolean{ return !this.row.id; }
 	protected get title():string{ return this.row.name; }

@@ -69,7 +69,7 @@
 	@for( column of columnNames().uint; track column ){
 		<ng-container [matColumnDef]="column">
 			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let element"> {{element[column]}} </mat-cell>
+			<mat-cell *matCellDef="let element"> {{stringValue(column,element)}} </mat-cell>
 		</ng-container>
 	}
 	<mat-header-row *matHeaderRowDef="displayedColumnNames(); sticky: true"></mat-header-row>

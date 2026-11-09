@@ -1,6 +1,8 @@
 # Applications
 
-The [Applications](/apps) page shows every service that is registered with the application server. Each card shows:
+The [Applications](/apps) page shows every service that is registered with the application server.
+
+Each card shows:
 
 - the program
 - the instance name
@@ -18,7 +20,20 @@ The installer's layout: the application server and the gateway run as one proces
 
 ### OpcHub
 
-The **OpcHub** card comes first. It is the process this site is served by. Its page has eight tabs: **Connections**, the OPC UA servers the hub talks to, **Templates** and **Groups**, its historian's, **Endpoint**, its own OPC UA endpoint and the sessions on it, and **Watch**, which opens the watch list, described under [Gateways](/help/gateways), [Historian groups and templates](/help/gateways/groups) and [Watching](/help/gateways#watching), then [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions). There is no application server card beside it: the hub's log and log levels are the application server's as well.
+The **OpcHub** card comes first. It is the process this site is served by.
+
+Its page has nine tabs:
+
+- **Connections**, the OPC UA servers the hub talks to, described under [Gateways](/help/gateways)
+- **Templates** and **Groups**, its historian's, described under [Historian groups and templates](/help/gateways/groups)
+- **Endpoint**, its own OPC UA endpoint and the sessions on it, described under [Gateways](/help/gateways)
+- **Watch**, which opens the watch list, described under [Watching](/help/gateways#watching)
+- [Logs](#logs)
+- [Log Settings](#log-settings)
+- [Web Sessions](#web-sessions)
+- [Calendars](#calendars)
+
+There is no application server card beside it. The hub's calendars, log and log levels are the application server's as well.
 
 ## Distributed
 
@@ -26,17 +41,23 @@ The application server and the gateways run apart, and each registers on its own
 
 ### Application server
 
-An application server instance's page has three tabs, [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions).
+An application server instance's page has four tabs, [Logs](#logs), [Log Settings](#log-settings), [Web Sessions](#web-sessions) and [Calendars](#calendars).
 
 ### Gateways
 
-A gateway instance's page has the [hub's eight tabs](#opchub).
+A gateway instance's page has the [hub's tabs](#opchub) but Calendars, which are on its application server's page.
 
 ### OPC servers
 
-An OPC server instance's page has the [application server's three tabs](#application-server).
+An OPC server instance's page has three tabs, [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions).
 
-The installer can add an OPC server of its own. On Windows it is the optional **OPC UA Server** component, off by default. On Linux the `.deb` ships it but leaves it stopped until `sudo systemctl enable --now jde-opcserver`, and the tarball's `install.sh` starts it only with `--opcserver`. Once it runs, its card shows beside the hub's.
+The installer can add an OPC server of its own:
+
+- On Windows it is the optional **OPC UA Server** component, off by default.
+- On Linux the `.deb` ships it but leaves it stopped until `sudo systemctl enable --now jde-opcserver`.
+- The tarball's `install.sh` starts it only with `--opcserver`.
+
+Once it runs, its card shows beside the hub's.
 
 A **PLC Emulator** card shows the same uptime, memory and host as the others. It is marked *No details page*, because there is no page to open.
 
@@ -67,7 +88,9 @@ The pager under the table turns the pages; the view's **Page Size** sets how man
 
 ## Log Settings
 
-The log levels the instance is running with, by tag. Rows marked *Configured* come from the instance's own configuration; rows marked *Override* were saved for this instance from this page and replace the configured level until they are removed.
+The log levels the instance is running with, by tag.
+
+Rows marked *Configured* come from the instance's own configuration. Rows marked *Override* were saved for this instance from this page. An override replaces the configured level until it is removed.
 
 Each log the instance writes has its own tab:
 
@@ -87,10 +110,25 @@ An instance that is not connected cannot report what it runs with, so only its s
 
 ## Web Sessions
 
-The web sessions the instance holds: one for each signed-in browser or service, and one for each address that has called it without signing in. A row shows the user, or *anonymous*, the address the session came from, when it last made a request and when it expires if it makes no more. The refresh button reloads the list.
+The web sessions the instance holds: one for each signed-in browser or service, and one for each address that has called it without signing in.
+
+A row shows:
+
+- the user, or *anonymous*
+- the address the session came from
+- when it last made a request
+- when it expires if it makes no more
+
+The refresh button reloads the list.
 
 Every page asks the application server, which answers for its own instance and asks a stand-alone gateway or an OPC server over the socket it registered on; an instance that is not connected cannot be listed.
 
 Once the `app/sessions` resource is enforced, listing needs **Read** on it. It is not the gateway's `gateway/sessions`, which gates the gateway's OPC sessions.
 
 A session cannot be ended from this page. The id that ends one is the session's own credential, which the page never shows.
+
+## Calendars
+
+The shift calendars: when a plant is planned to run. They belong to the application server and are shared with every gateway, so the tab is on the application server's page, and on a hub's.
+
+The list shows each calendar's time zone and the start of its production day. Press **Add** for a new one, or open a row for its shifts and holidays. See [Shift calendars](/help/calendars).

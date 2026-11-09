@@ -1,0 +1,65 @@
+/* The shift's and the exception's forms. */
+mat-dialog-content{
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+mat-dialog-actions{
+	gap: 12px;
+	justify-content: flex-end;
+}
+.wide{
+	width: 100%;
+}
+.pair{
+	display: grid;
+	grid-template-columns: repeat( auto-fit, minmax( min(100%, 180px), 1fr ) );
+	gap: 0 12px;
+}
+fieldset{
+	margin: 0 0 12px;
+	padding: 4px 12px 8px;
+	border: 1px solid var(--mat-sys-outline-variant);
+	border-radius: 8px;
+	legend{
+		padding: 0 4px;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+}
+.days{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 8px;
+}
+.break{
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 0 12px;
+	margin-bottom: 8px;
+}
+.hint{
+	margin: 0 0 .5rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+	font-variant-numeric: tabular-nums;
+}
+.problem{
+	margin: 0;
+	color: var(--mat-sys-error);
+	font: var(--mat-sys-body-small);
+}
+.refused{
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: .25rem 0 0;
+	mat-icon{
+		flex: 0 0 auto;
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+		color: var(--mat-sys-error);
+	}
+}

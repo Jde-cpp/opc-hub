@@ -30,6 +30,13 @@
 					<div class="actions"><a matButton="filled" [routerLink]="['./watch']">Open the watch list</a></div>
 				</div>
 			</ng-template>
+			@if( isHub() ){<!--the shift calendars (#396) are the application server's, whose page a hub's is too:  a stand-alone gateway's are on its application server's page.  After the shared tabs, so the other tabs' indexes are a gateway's-->
+				<ng-template instanceTab="Calendars" instanceTabHelp="calendars" instanceTabAfter>
+					@for( u of [url()]; track u ){
+						<calendar-list [url]=u></calendar-list>
+					}
+				</ng-template>
+			}
 		</instance-tabs>
 	}
 }

@@ -1,6 +1,6 @@
 import {Routes} from '@angular/router';
 
-import{ DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
+import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
 import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
@@ -8,6 +8,21 @@ import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctn
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
 const helpProvider = { provide: IROUTE_SERVICE, useClass: HelpRouteService };
+//The shift calendars (#396), under the application server's page and under a hub's, which is its gateway's:  the list is a tab of
+//the page, so the bare list url - Back and Cancel from a detail land on it - redirects there, as the historian's lists do.  The
+//page and its resolver talk to AppService themselves, so the routes provide no IGRAPHQL.
+const calendarRoutes:Routes = [
+	{ path: 'calendars', pathMatch: 'full', redirectTo: '' },
+	{
+		path: 'calendars/:slug',
+		loadComponent: loadCalendarDetail,
+		providers: [ CalendarResolver ],
+		canActivate: [AuthGuard],
+		data: { summary: "Shift calendar" },
+		resolve: { pageData: CalendarResolver },
+		runGuardsAndResolvers: "paramsChange"
+	}
+];
 
 //Pages load through each library's <lib>-pages.ts loaders, never `import('jde-…')`:  this file imports every barrel statically,
 //so a dynamic import of one splits nothing off.  What else keeps a page in main:  web/CLAUDE.md, "Routed pages are loaders".
@@ -133,6 +148,7 @@ export const routes: Routes = [
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},
+			...calendarRoutes,//ahead of ':connection' too
 			{//the watch list (#419):  rows from any of the gateway's connections, ahead of ':connection', which would take the segment for one
 				path: 'watch',
 				loadComponent: loadGatewayWatch,
@@ -160,7 +176,8 @@ export const routes: Routes = [
 				loadComponent: loadAppServerDetail,
 				canActivate: [AuthGuard],
 				data: { summary: "Application Server" }
-			}
+			},
+			...calendarRoutes
 		]
 	},
 	{

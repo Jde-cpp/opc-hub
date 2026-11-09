@@ -3,7 +3,7 @@ import { ActivatedRoute, RouterModule } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { ComponentPageTitle, persistedTabIndex } from 'jde-spa';
-import { AppService, errorMessage, InstanceTab, InstanceTabs, QLList, QLListData } from 'jde-framework';
+import { AppService, CalendarList, errorMessage, InstanceTab, InstanceTabs, QLList, QLListData } from 'jde-framework';
 import { RouteItem } from 'jde-spa';
 import { GatewayService } from '../../services/gateway-service';
 import { Gateway } from '../../services/gateway-service';
@@ -13,7 +13,7 @@ import { GatewayHistList } from './hist-admin/gateway-hist-list';
 @Component( {
 		templateUrl: './gateway-detail.html',
 		host: {class:'main-content my-content'},
-		imports: [RouterModule, MatButtonModule, MatIconModule, InstanceTab, InstanceTabs, QLList, GatewayHistList, GatewayEndpoint]
+		imports: [RouterModule, MatButtonModule, MatIconModule, CalendarList, InstanceTab, InstanceTabs, QLList, GatewayHistList, GatewayEndpoint]
 })
 export class GatewayDetail implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -29,10 +29,14 @@ export class GatewayDetail implements OnInit{
 			this.error.set( undefined );//the page is reused across gateways:  a failed one's message must not outlive the switch
 			try{
 				const gateway = await this.gatewayService.gateway( instanceName );
+				//ahead of the tabs, which a hub has one more of, its last:  shown without it, the group clamps the index kept for it
+				const gatewayId = await this.appService.instancePK( instanceName, "OpcGateway" );
+				const hubId = gatewayId===undefined ? await this.appService.instancePK( instanceName, "OpcHub" ) : undefined;//a hub registers under its own program name
 				this.url.set( url );//with the gateway, so a tab's list never pairs one gateway's key with the other's rows
 				this.gateway.set( gateway );
+				this.isHub.set( hubId!==undefined );
+				this.instanceId.set( gatewayId ?? hubId );
 				this.isLoading.set( false );
-				this.instanceId.set( await this.appService.instancePK(instanceName, "OpcGateway") ?? await this.appService.instancePK(instanceName, "OpcHub") );//a hub registers under its own program name
 			}
 			catch( e ){//as OpcServerDetail:  unhandled, a rejection left the page blank behind isLoading (reviews-issue/web-refactor-review.md #4)
 				this.error.set( errorMessage(e, "Could not load the gateway.") );
@@ -53,6 +57,7 @@ export class GatewayDetail implements OnInit{
 	gatewayService = inject(GatewayService);
 	appService = inject(AppService);
 	instanceId = signal<number|undefined>( undefined );
+	isHub = signal( false );//the application server and the gateway in one process, whose page this then is for both:  it has the application server's Calendars tab
 	error = signal<string|undefined>( undefined );
 	isLoading = signal<boolean>( true );
 }

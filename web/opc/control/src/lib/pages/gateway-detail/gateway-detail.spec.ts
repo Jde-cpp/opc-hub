@@ -1,9 +1,10 @@
 import { Component, inject, InjectionToken, input, model, OnInit } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { By } from '@angular/platform-browser';
 import { DefaultUrlSerializer, PRIMARY_OUTLET } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
-import { AppService, QLList } from 'jde-framework';
+import { AppService, CalendarList, QLList } from 'jde-framework';
 import { GatewayService } from '../../services/gateway-service';
 import { GatewayDetail } from './gateway-detail';
 import { GatewayEndpoint } from './gateway-endpoint/gateway-endpoint';
@@ -25,12 +26,15 @@ class HistListStub implements OnInit{
 }
 @Component( {selector: 'gateway-endpoint', template: ''} )
 class EndpointStub{ gateway = input<unknown>(); }
+@Component( {selector: 'calendar-list', template: ''} )
+class CalendarListStub{ url = input<string>(); }
 
 //reviews/m3-closing.md #31:  the router reuses this page from one gateway to the next, and the log tabs loaded once - after a
 //switch they kept A's levels and entries under B's title, and a Save sent the edits, diffed against A's, to B's id.
 describe( 'GatewayDetail switching gateway', ()=>{
-	const gateways:Record<string, object> = { A: {slug: 'A'}, B: {slug: 'B'}, 'My Hub': {slug: 'My Hub'} };
+	const gateways:Record<string, object> = { A: {slug: 'A'}, B: {slug: 'B'}, 'My Hub': {slug: 'My Hub'}, Hub: {slug: 'Hub'} };
 	const ids:Record<string, number> = { A: 1, B: 2, 'My Hub': 3 };
+	const hubIds:Record<string, number> = { Hub: 4 };//registered as an OpcHub, not as a gateway
 	const routeData = ( instance:string )=>({ data: {routing: {path: `gateways/${instance}`}} });
 	//the page on `tab`, with `go` to switch its gateway and `created`, told each historian list built
 	const open = async ( tab:number )=>{
@@ -46,16 +50,17 @@ describe( 'GatewayDetail switching gateway', ()=>{
 			{ provide: AppService, useValue: {instancePK: async ( name:string, program:string )=>{
 				if( down.has(`${name}#pk`) )
 					throw new Error( `${name} is not registered` );
-				return program=="OpcGateway" ? ids[name] : undefined;
+				return program=="OpcGateway" ? ids[name] : program=="OpcHub" ? hubIds[name] : undefined;
 			}} },
 			{ provide: GatewayService, useValue: {gateway: async ( name:string )=>{
 				if( down.has(name) )
 					throw new Error( `${name} is down` );
 				return gateways[name];
 			}} },
-			{ provide: HIST_LIST_CREATED, useValue: created }
+			{ provide: HIST_LIST_CREATED, useValue: created },
+			{ provide: MAT_TABS_CONFIG, useValue: {animationDuration: '0ms'} }//a tab switch completes in its pass, not on a fallback timer
 		]});
-		TestBed.overrideComponent( GatewayDetail, {remove: {imports: [QLList, GatewayHistList, GatewayEndpoint]}, add: {imports: [ListStub, HistListStub, EndpointStub]}} );
+		TestBed.overrideComponent( GatewayDetail, {remove: {imports: [QLList, GatewayHistList, GatewayEndpoint, CalendarList]}, add: {imports: [ListStub, HistListStub, EndpointStub, CalendarListStub]}} );
 		const logTabs = stubLogTabs();
 		const fixture = TestBed.createComponent( GatewayDetail );
 		fixture.componentInstance.tabIndex.set( tab );
@@ -104,6 +109,24 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		const { go, created } = await open( 1 );
 		await go( 'My Hub' );
 		expect( created()[1].url ).toBe( 'apps/gateways/My Hub' );
+	} );
+
+	//#396:  the shift calendars are the application server's, whose page a hub's is too.  A hub's page has their tab, last, so the
+	//others keep a gateway's indexes, keyed under its url as the application server's is;  a stand-alone gateway's has none.
+	const labels = ( fixture:{ nativeElement:HTMLElement } )=>[...fixture.nativeElement.querySelectorAll( '.mdc-tab__text-label' )].map( l=>l.textContent!.trim() );
+	it( "has the Calendars tab on a hub's page, and not on a gateway's", async ()=>{
+		const { fixture, go } = await open( 5 );
+		expect( labels(fixture) ).toEqual( ['Connections', 'Templates', 'Groups', 'Endpoint', 'Watch', 'Logs', 'Log Settings', 'Web Sessions'] );
+		await go( 'Hub' );
+		expect( labels(fixture) ).toEqual( ['Connections', 'Templates', 'Groups', 'Endpoint', 'Watch', 'Logs', 'Log Settings', 'Web Sessions', 'Calendars'] );
+		expect( fixture.componentInstance.instanceId() ).toBe( 4 );
+		expect( fixture.componentInstance.tabIndex() ).toBe( 5 );//still on Logs
+		fixture.componentInstance.tabIndex.set( 8 );
+		await stable( fixture );
+		expect( fixture.debugElement.queryAll( By.directive(CalendarListStub) ).map( e=>e.componentInstance.url() ) ).toEqual( ['apps/gateways/Hub'] );
+		await go( 'A' );
+		expect( fixture.componentInstance.isHub() ).toBe( false );
+		expect( labels(fixture) ).not.toContain( 'Calendars' );
 	} );
 
 	//reviews-issue/web-refactor-review.md #4:  a rejected lookup went unhandled inside the subscription, and the page stayed blank

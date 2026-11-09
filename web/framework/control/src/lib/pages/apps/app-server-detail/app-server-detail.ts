@@ -4,7 +4,8 @@ import { ComponentPageTitle, persistedTabIndex, RouteItem, RouteStore } from 'jd
 import { AppService } from '../../../services/app/app-service';
 import { errorMessage } from '../../../utils/errors';
 import { instanceRouteItem } from '../../../services/resolvers/app-resolver';
-import { InstanceTabs } from '../instance-tabs/instance-tabs';
+import { CalendarList } from '../calendars/calendar-list';
+import { InstanceTab, InstanceTabs } from '../instance-tabs/instance-tabs';
 
 //All the tabs talk to AppService itself.  Unlike the gateway/opc-server pages there is no per-instance service to build:
 //the AppServer publishes no /appServers discovery endpoint (only /opcGateways and /opcServers), and the environment's
@@ -16,7 +17,7 @@ import { InstanceTabs } from '../instance-tabs/instance-tabs';
 		//prototype members, template decls) into its style-encapsulation id and deliberately leaves the class name out,
 		//so this page and its opc-server-detail twin - identical in every one of those - collided with NG0912.
 		host: {class:'main-content my-content app-server-detail'},
-		imports: [InstanceTabs]
+		imports: [CalendarList, InstanceTab, InstanceTabs]
 })
 export class AppServerDetail implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -29,6 +30,7 @@ export class AppServerDetail implements OnInit{
 			this.error.set( undefined );//the page is reused across instances:  a failed one's banner must not outlive the switch
 			this.#componentPageTitle.title = `${instanceName} - AppServer`;
 			this.sideNav.set( instanceRouteItem('appServers', instanceName, this.routeStore) );
+			this.url.set( this.#route.parent!.snapshot.url.map( s=>s.path ).join( '/' ) );
 			try{
 				const id = await this.appService.instancePK( instanceName, "AppServer" );
 				if( id===undefined )//never fall through to the tabs:  log-detail would answer with the *connected* server's logs under this instance's name
@@ -44,6 +46,7 @@ export class AppServerDetail implements OnInit{
 
 
 	tabIndex = persistedTabIndex( 'app-server-detail' );
+	url = signal( '' );//the page's url, apps/appServers/<instance>, by its route's segments:  the RouteStore key of the Calendars tab's rows, with `/calendars`
 	sideNav = model.required<RouteItem>();
 
 	instanceId = signal<number|undefined>( undefined );

@@ -1,0 +1,121 @@
+/* The page's tabs, as the historian's admin pages lay theirs out (jde-opc's hist-admin-shared.scss, which a sheet here can't
+   @use):  a hint line, a toolbar, a .jde-dense table, and the empty and refused states. */
+.tab-body{
+	box-sizing: border-box;
+	padding: 16px 24px 0;
+}
+.hint{
+	margin: 0 0 .75rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+.tab-toolbar{
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px 16px;
+	margin-bottom: 4px;
+	.count{
+		margin-left: auto;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+}
+.refresh-bar{
+	--mat-progress-bar-track-height: 2px;
+	--mat-progress-bar-active-indicator-height: 2px;
+}
+mat-radio-group{
+	display: block;
+}
+mat-table{
+	width: 100%;
+}
+mat-cell, mat-header-cell{
+	min-width: 0;
+	padding-inline: 5px;
+}
+.mat-column-from{
+	flex: 1 1 180px;
+	padding-inline: 0 5px;
+}
+.mat-column-name{
+	flex: 2 1 160px;
+	padding-inline: 16px 5px;
+}
+.mat-column-start, .mat-column-finish, .mat-column-length, .mat-column-days{
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.mat-column-breaks{
+	flex: 2 1 160px;
+}
+.mat-column-actions{
+	flex: 0 0 96px;
+	padding-inline: 0;
+	justify-content: flex-end;
+}
+/* the week's letters under each other from row to row */
+.days{
+	font-family: 'Roboto Mono', monospace;
+}
+mat-row.selected{
+	background: var(--mat-sys-surface-container);
+}
+mat-row.deleted mat-cell:not(.mat-column-actions){
+	color: var(--mat-sys-on-surface-variant);
+}
+.current{
+	color: var(--mat-sys-primary);
+	font-weight: 500;
+}
+.muted{
+	color: var(--mat-sys-on-surface-variant);
+}
+.purge{
+	color: var(--mat-sys-error);
+}
+.shifts{
+	margin-top: 1.25rem;
+	h3{
+		margin: 0 0 .5rem;
+		font: var(--mat-sys-title-small);
+	}
+}
+.empty{
+	margin: .75rem 0 0;
+	color: var(--mat-sys-on-surface-variant);
+}
+.refused{
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: .75rem 0 0;
+	mat-icon{
+		flex: 0 0 auto;
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+		color: var(--mat-sys-error);
+	}
+}
+/* the section under Properties:  the same inset as the properties form (properties.ts :host) */
+.form-section{
+	box-sizing: content-box;
+	max-width: var(--jde-form-max-width);
+	padding: 0 24px;
+	margin-top: .5rem;
+	h3{
+		margin: 0 0 .25rem;
+		font: var(--mat-sys-title-small);
+	}
+	/* two columns, one below 452px */
+	.fields{
+		display: grid;
+		grid-template-columns: repeat( auto-fit, minmax( max(220px, calc((100% - .75rem) / 2)), 1fr ) );
+		gap: .5rem .75rem;
+		mat-form-field{
+			width: 100%;
+		}
+	}
+}

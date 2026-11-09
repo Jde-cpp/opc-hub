@@ -1,0 +1,179 @@
+<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
+	[(selectedIndex)]="tabIndex">
+	<mat-tab>
+		<ng-template mat-tab-label>Properties</ng-template>
+		<ng-template matTabContent>
+			<properties [ctor]=ctor [(record)]=properties type="calendar" [schema]=schema [order]=fieldOrder [readonlyFields]="isNew ? [] : ['slug']" [excludedColumns]=excludedFields></properties>
+			<section class="form-section" aria-label="Production day">
+				<h3>Production day</h3>
+				<p class="hint">The plant's wall clock, and when its day begins:  with a day start of 06:00, Monday runs from 06:00 Monday to 06:00 Tuesday, and a night shift that starts at 22:00 is Monday's.@if( !isNew ){  A change keeps every date and exception at the local time it was entered as.  Shifts are held from the day's start, so they move with it.}</p>
+				<div class="fields">
+					<mat-form-field>
+						<mat-label>Time zone</mat-label>
+						<mat-select [value]="calendar.timeZone" (selectionChange)="setTimeZone($event.value)" required>
+							@for( zone of zones(); track zone ){
+								<mat-option [value]="zone">{{ zone }}</mat-option>
+							}
+						</mat-select>
+						@if( isNew && serverZone(); as zone ){ <mat-hint>The server's is {{ zone }}</mat-hint> }
+					</mat-form-field>
+					<mat-form-field>
+						<mat-label>Day start</mat-label>
+						<!--not while it is half typed, which reads blank and would write blank back over it-->
+						<input matInput type="time" [value]="dayStartText()" (input)="$any($event.target).validity.badInput || setDayStart($any($event.target).value)" required>
+					</mat-form-field>
+				</div>
+				@if( saveError(); as e ){
+					<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+				}
+			</section>
+		</ng-template>
+	</mat-tab>
+	@if( !isNew ){<!--a pattern and an exception are rows under the calendar's id, and its first pattern is made with it:  nothing to show until it is saved-->
+		<mat-tab>
+			<ng-template mat-tab-label>Pattern</ng-template>
+			<ng-template matTabContent>
+				<div class="tab-body">
+					<p class="hint">A pattern is the calendar's shifts from a date, in effect until the next pattern's.  Times are {{ zone() }}'s.</p>
+					<div class="tab-toolbar">
+						<mat-slide-toggle [checked]="showDeletedPatterns()" (change)="setShowDeletedPatterns($event.checked)">Show deleted</mat-slide-toggle>
+						<button matIconButton type="button" (click)="refreshPatterns()" [disabled]="patterns.loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+						<span class="count">{{ patterns.rows().length }} {{ patterns.rows().length==1 ? 'pattern' : 'patterns' }}</span>
+					</div>
+					<mat-progress-bar class="refresh-bar" [mode]="patterns.loading() || patterns.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the patterns"></mat-progress-bar>
+					<mat-radio-group aria-label="The pattern whose shifts show" [value]="selected()?.id">
+						<mat-table [dataSource]="patterns.rows()" class="mat-elevation-z2 jde-dense">
+							<ng-container matColumnDef="from">
+								<mat-header-cell *matHeaderCellDef>From</mat-header-cell>
+								<mat-cell *matCellDef="let p"><mat-radio-button [value]="p.id" (change)="select(p)">{{ fromText(p) }}</mat-radio-button></mat-cell>
+							</ng-container>
+							<ng-container matColumnDef="cycle">
+								<mat-header-cell *matHeaderCellDef>Cycle</mat-header-cell>
+								<mat-cell *matCellDef="let p">{{ cycleText(p) }}</mat-cell>
+							</ng-container>
+							<ng-container matColumnDef="state">
+								<mat-header-cell *matHeaderCellDef>Status</mat-header-cell>
+								<mat-cell *matCellDef="let p"><span [class.current]="stateText(p)=='In effect'" [class.muted]="stateText(p)!='In effect'">{{ stateText(p) }}</span></mat-cell>
+							</ng-container>
+							<ng-container matColumnDef="actions">
+								<mat-header-cell *matHeaderCellDef></mat-header-cell>
+								<mat-cell *matCellDef="let p">
+									@if( p.deleted ){
+										<button matIconButton type="button" class="purge" (click)="purgePattern(p)" [disabled]="patterns.busy()" aria-label="Purge this pattern" matTooltip="Purge"><mat-icon>delete_forever</mat-icon></button>
+									}
+									<button matIconButton type="button" (click)="deletePattern(p)" [disabled]="patterns.busy()" [attr.aria-label]="p.deleted ? 'Restore this pattern' : 'Delete this pattern'" [matTooltip]="p.deleted ? 'Restore' : 'Delete'"><mat-icon>{{ p.deleted ? 'restore' : 'delete' }}</mat-icon></button>
+								</mat-cell>
+							</ng-container>
+							<mat-header-row *matHeaderRowDef="patternColumns"></mat-header-row>
+							<mat-row *matRowDef="let row; columns: patternColumns" [class.selected]="selected()?.id==row.id" [class.deleted]="!!row.deleted"></mat-row>
+						</mat-table>
+					</mat-radio-group>
+					@if( patterns.error(); as e ){
+						<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+					}
+					@if( selected(); as pattern ){
+						<section class="shifts" aria-label="Shifts">
+							<h3>Shifts from {{ fromText(pattern).toLowerCase() }}</h3>
+							<div class="tab-toolbar">
+								<button matButton="tonal" type="button" (click)="addShift()" [disabled]="shifts.busy()"><mat-icon>add</mat-icon>Add shift</button>
+								<span class="count">{{ shifts.rows().length }} {{ shifts.rows().length==1 ? 'shift' : 'shifts' }}</span>
+							</div>
+							<mat-progress-bar class="refresh-bar" [mode]="shifts.loading() || shifts.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the shifts"></mat-progress-bar>
+							<mat-table [dataSource]="shifts.rows()" class="mat-elevation-z2 jde-dense">
+								<ng-container matColumnDef="name">
+									<mat-header-cell *matHeaderCellDef>Shift</mat-header-cell>
+									<mat-cell *matCellDef="let s">{{ s.name }}</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="days">
+									<mat-header-cell *matHeaderCellDef>Days</mat-header-cell>
+									<mat-cell *matCellDef="let s"><span class="days" tabindex="0" [attr.aria-label]="daysDetail(s)" [matTooltip]="daysDetail(s)">{{ daysText(s) }}</span></mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="start">
+									<mat-header-cell *matHeaderCellDef>Start</mat-header-cell>
+									<mat-cell *matCellDef="let s">{{ startText(s) }}</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="length">
+									<mat-header-cell *matHeaderCellDef>Length</mat-header-cell>
+									<mat-cell *matCellDef="let s"><span tabindex="0" [matTooltip]="endText(s)">{{ lengthText(s) }}</span></mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="breaks">
+									<mat-header-cell *matHeaderCellDef>Breaks</mat-header-cell>
+									<mat-cell *matCellDef="let s"><span [class.muted]="!s.breaks.length">{{ breaksText(s) || 'none' }}</span></mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="actions">
+									<mat-header-cell *matHeaderCellDef></mat-header-cell>
+									<mat-cell *matCellDef="let s">
+										<button matIconButton type="button" (click)="editShift(s)" [disabled]="shifts.busy()" aria-label="Edit this shift" matTooltip="Edit"><mat-icon>edit</mat-icon></button>
+										<button matIconButton type="button" (click)="removeShift(s)" [disabled]="shifts.busy()" aria-label="Remove this shift" matTooltip="Remove"><mat-icon>delete</mat-icon></button>
+									</mat-cell>
+								</ng-container>
+								<mat-header-row *matHeaderRowDef="shiftColumns"></mat-header-row>
+								<mat-row *matRowDef="let row; columns: shiftColumns"></mat-row>
+							</mat-table>
+							@if( !shifts.loading() && !shifts.rows().length && !shifts.error() ){
+								<p class="empty" role="status">The pattern has no shifts, so nothing is planned under it.  Use Add shift to enter one.</p>
+							}
+							@if( shifts.error(); as e ){
+								<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+							}
+						</section>
+					}
+				</div>
+			</ng-template>
+		</mat-tab>
+		<mat-tab>
+			<ng-template mat-tab-label>Exceptions</ng-template>
+			<ng-template matTabContent>
+				<div class="tab-body">
+					<p class="hint">A dated range that closes planned time, a holiday or a shutdown, or opens it, an extra Saturday.  Where the two meet, closed wins.  Times are {{ zone() }}'s.</p>
+					<div class="tab-toolbar">
+						<button matButton="tonal" type="button" (click)="addException()" [disabled]="exceptions.busy()"><mat-icon>add</mat-icon>Add exception</button>
+						<mat-slide-toggle [checked]="showDeletedExceptions()" (change)="setShowDeletedExceptions($event.checked)">Show deleted</mat-slide-toggle>
+						<button matIconButton type="button" (click)="refreshExceptions()" [disabled]="exceptions.loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+						<span class="count">{{ exceptions.rows().length }} {{ exceptions.rows().length==1 ? 'exception' : 'exceptions' }}</span>
+					</div>
+					<mat-progress-bar class="refresh-bar" [mode]="exceptions.loading() || exceptions.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the exceptions"></mat-progress-bar>
+					<mat-table [dataSource]="exceptions.rows()" class="mat-elevation-z2 jde-dense">
+						<ng-container matColumnDef="name">
+							<mat-header-cell *matHeaderCellDef>Exception</mat-header-cell>
+							<mat-cell *matCellDef="let e">{{ e.name }}@if( e.deleted ){ <span class="muted">, deleted</span>}</mat-cell>
+						</ng-container>
+						<ng-container matColumnDef="start">
+							<mat-header-cell *matHeaderCellDef>From</mat-header-cell>
+							<mat-cell *matCellDef="let e">{{ clock(e.start) }}</mat-cell>
+						</ng-container>
+						<ng-container matColumnDef="finish">
+							<mat-header-cell *matHeaderCellDef>To</mat-header-cell>
+							<mat-cell *matCellDef="let e">{{ clock(e.finish) }}</mat-cell>
+						</ng-container>
+						<ng-container matColumnDef="kind">
+							<mat-header-cell *matHeaderCellDef>Planned time</mat-header-cell>
+							<mat-cell *matCellDef="let e">{{ e.isOpen ? 'Open' : 'Closed' }}</mat-cell>
+						</ng-container>
+						<ng-container matColumnDef="actions">
+							<mat-header-cell *matHeaderCellDef></mat-header-cell>
+							<mat-cell *matCellDef="let e">
+								@if( e.deleted ){
+									<button matIconButton type="button" class="purge" (click)="purgeException(e)" [disabled]="exceptions.busy()" aria-label="Purge this exception" matTooltip="Purge"><mat-icon>delete_forever</mat-icon></button>
+								}
+								@else{
+									<button matIconButton type="button" (click)="editException(e)" [disabled]="exceptions.busy()" aria-label="Edit this exception" matTooltip="Edit"><mat-icon>edit</mat-icon></button>
+								}
+								<button matIconButton type="button" (click)="deleteException(e)" [disabled]="exceptions.busy()" [attr.aria-label]="e.deleted ? 'Restore this exception' : 'Delete this exception'" [matTooltip]="e.deleted ? 'Restore' : 'Delete'"><mat-icon>{{ e.deleted ? 'restore' : 'delete' }}</mat-icon></button>
+							</mat-cell>
+						</ng-container>
+						<mat-header-row *matHeaderRowDef="exceptionColumns"></mat-header-row>
+						<mat-row *matRowDef="let row; columns: exceptionColumns" [class.deleted]="!!row.deleted"></mat-row>
+					</mat-table>
+					@if( !exceptions.loading() && !exceptions.rows().length && !exceptions.error() ){
+						<p class="empty" role="status">The calendar has no exceptions:  it runs by its pattern every day.  Use Add exception for a holiday, a shutdown or an extra day.</p>
+					}
+					@if( exceptions.error(); as e ){
+						<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+					}
+				</div>
+			</ng-template>
+		</mat-tab>
+	}
+</mat-tab-group>
+<detail-actions [page]="this"/><!--a deleted calendar keeps its rows, and leaves every gateway's cache (spec *Open questions* #9):  Delete and Purge say so first-->

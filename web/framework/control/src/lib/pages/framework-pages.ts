@@ -4,3 +4,4 @@ export const loadLoginPage = ()=>import( './authorization/login-page/login-page'
 export const loadQLList = ()=>import( './ql/list/ql-list' ).then( m=>m.QLList );
 export const loadApps = ()=>import( './apps/apps' ).then( m=>m.Apps );
 export const loadAppServerDetail = ()=>import( './apps/app-server-detail/app-server-detail' ).then( m=>m.AppServerDetail );
+export const loadCalendarDetail = ()=>import( './apps/calendars/calendar-detail' ).then( m=>m.CalendarDetail );
