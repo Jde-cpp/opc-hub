@@ -1,0 +1,33 @@
+<h2 mat-dialog-title>Cycle</h2>
+<mat-dialog-content>
+	<mat-form-field class="wide">
+		<mat-label>The shifts repeat</mat-label>
+		<mat-select cdkFocusInitial [formField]="f.rotation">
+			<mat-option [value]="false">Weekly - Monday to Sunday</mat-option>
+			<mat-option [value]="true">On a rotation - a cycle of days from a date</mat-option>
+		</mat-select>
+	</mat-form-field>
+	@if( model().rotation ){
+		<div class="pair">
+			<mat-form-field>
+				<mat-label>Days in the cycle</mat-label>
+				<input matInput type="number" [formField]="f.days">
+			</mat-form-field>
+			<mat-form-field>
+				<mat-label>Day 1 on</mat-label>
+				<input matInput type="date" [formField]="f.anchor">
+			</mat-form-field>
+		</div>
+		<p class="hint">The cycle repeats from that date, before it and after.  A 2-2-3 pattern is 14 days, four-on-four-off is 8.</p>
+	}
+	@if( f().dirty() && problem(); as p ){
+		<p class="problem" role="alert">{{ p }}</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<button matButton="outlined" type="button" mat-dialog-close [disabled]="busy()">Cancel</button>
+	<button matButton="filled" type="button" (click)="save()" [disabled]="busy() || !!problem() || !changed()">Save</button>
+</mat-dialog-actions>

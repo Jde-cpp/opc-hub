@@ -1,0 +1,189 @@
+/* The grid:  the hours' axis, then a column per day, each as tall as its 24 hours (--hour, the host's).  It scrolls sideways by
+   itself where a rotation's days are more than the pane has room for. */
+:host{
+	display: block;
+	container-type: inline-size;
+	--axis: 3.25rem;
+	--column-min: 4.5rem;
+	--line: var(--mat-sys-outline-variant);
+}
+.scroller{
+	overflow-x: auto;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--mat-sys-surface);
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: 1px;
+	}
+}
+.grid{
+	display: grid;
+	grid-template-columns: var(--axis) repeat( var(--columns), minmax( var(--column-min), 1fr ) );
+}
+.corner, .head{
+	border-bottom: 1px solid var(--line);
+}
+.head{
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-width: 0;
+	padding: 6px 2px;
+	border-left: 1px solid var(--line);
+	font: var(--mat-sys-label-large);
+	.short{
+		display: none;
+	}
+	.sub{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-label-small);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	&.current{
+		color: var(--mat-sys-primary);
+	}
+}
+/* the week's names in full only where its seven columns have the room */
+@container (max-width: 700px){
+	.head{
+		.full{
+			display: none;
+		}
+		.short{
+			display: inline;
+		}
+	}
+}
+.axis{
+	position: relative;
+	span{
+		position: absolute;
+		right: 6px;
+		padding-top: 2px;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-label-small);
+		font-variant-numeric: tabular-nums;
+	}
+}
+.column{
+	position: relative;
+	min-width: 0;
+	border-left: 1px solid var(--line);
+	/* a line at each hour, the first under the head's own border */
+	background-image: repeating-linear-gradient( to bottom, transparent 0, transparent calc( var(--hour) - 1px ), var(--line) calc( var(--hour) - 1px ), var(--line) var(--hour) );
+	&.current{
+		background-color: color-mix( in srgb, var(--mat-sys-primary) 6%, transparent );
+	}
+	&.editable{
+		cursor: crosshair;
+		user-select: none;
+	}
+}
+.bar{
+	touch-action: pan-x pan-y !important;//over matTooltip's inline none on a touch platform, which stops a swipe on a bar scrolling
+	position: absolute;
+	left: 2px;
+	right: 2px;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 2px 4px;
+	border: 0;
+	border-radius: 4px;
+	overflow: hidden;
+	text-align: left;
+	font: var(--mat-sys-label-small);
+	line-height: 1.25;
+	/* the day's first shift meets the one before it:  a hairline between them */
+	box-shadow: inset 0 1px 0 var(--mat-sys-surface);
+	&.continued{
+		border-top-left-radius: 0;
+		border-top-right-radius: 0;
+		box-shadow: none;
+	}
+	&.continues{
+		border-bottom-left-radius: 0;
+		border-bottom-right-radius: 0;
+	}
+	.name{
+		font-weight: 600;
+	}
+	.name, .times, .note{
+		position: relative;
+		z-index: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.times, .note{
+		font-variant-numeric: tabular-nums;
+	}
+	/* a break:  the column showing through, hatched so it reads as part of the shift */
+	.cut{
+		position: absolute;
+		left: 0;
+		right: 0;
+		background: repeating-linear-gradient( 135deg, var(--mat-sys-surface) 0, var(--mat-sys-surface) 3px, color-mix( in srgb, var(--mat-sys-surface) 55%, transparent ) 3px, color-mix( in srgb, var(--mat-sys-surface) 55%, transparent ) 6px );
+	}
+}
+button.bar{
+	min-height: 12px;//a short shift's bar stays a target, over the top of the next
+	cursor: pointer;
+	&:hover{
+		filter: brightness( .96 );
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: 1px;
+		z-index: 2;
+	}
+}
+.tone-0{
+	background: var(--mat-sys-primary-container);
+	color: var(--mat-sys-on-primary-container);
+}
+.tone-1{
+	background: var(--mat-sys-secondary-container);
+	color: var(--mat-sys-on-secondary-container);
+}
+.tone-2{
+	background: var(--mat-sys-tertiary-container);
+	color: var(--mat-sys-on-tertiary-container);
+}
+/* an open exception's:  planned time with no shift */
+.tone-3{
+	background: var(--mat-sys-surface-container-highest);
+	color: var(--mat-sys-on-surface);
+	outline: 1px dashed var(--mat-sys-outline);
+	outline-offset: -1px;
+}
+/* a closed exception, behind whatever is left of the day */
+.band{
+	position: absolute;
+	left: 0;
+	right: 0;
+	box-sizing: border-box;
+	padding: 2px 4px;
+	overflow: hidden;
+	background: repeating-linear-gradient( 135deg, color-mix( in srgb, var(--mat-sys-error) 14%, transparent ) 0, color-mix( in srgb, var(--mat-sys-error) 14%, transparent ) 6px, transparent 6px, transparent 12px );
+	color: var(--mat-sys-on-surface);
+	font: var(--mat-sys-label-small);
+	pointer-events: none;
+}
+.drawing{
+	position: absolute;
+	left: 2px;
+	right: 2px;
+	box-sizing: border-box;
+	padding: 2px 4px;
+	border: 1px dashed var(--mat-sys-primary);
+	border-radius: 4px;
+	background: color-mix( in srgb, var(--mat-sys-primary) 22%, transparent );
+	color: var(--mat-sys-on-surface);
+	font: var(--mat-sys-label-small);
+	font-variant-numeric: tabular-nums;
+	pointer-events: none;
+}

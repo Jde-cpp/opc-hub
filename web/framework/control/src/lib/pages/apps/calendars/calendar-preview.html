@@ -1,0 +1,29 @@
+<div class="tab-body">
+	<p class="hint">The week as it resolves:  the pattern in effect each day, with the exceptions applied.  A closed exception is hatched, and an open one's time is a bar under its name.  Times are {{ zone() }}'s.</p>
+	@if( lacking(); as name ){
+		<p class="empty" role="status">This browser doesn't know {{ name }}, so the week can't be drawn here.</p>
+	}
+	@else{
+		<div class="tab-toolbar">
+			<button matIconButton type="button" (click)="step(-1)" aria-label="The week before" matTooltip="The week before"><mat-icon>chevron_left</mat-icon></button>
+			<mat-form-field class="date" subscriptSizing="dynamic">
+				<mat-label>Week of</mat-label>
+				<input matInput type="date" #weekOf [value]="monday()" (dateCommit)="setWeek(weekOf)">
+			</mat-form-field>
+			<button matIconButton type="button" (click)="step(1)" aria-label="The week after" matTooltip="The week after"><mat-icon>chevron_right</mat-icon></button>
+			@if( week() ){
+				<button matButton type="button" (click)="week.set(undefined)">This week</button>
+			}
+			<button matIconButton type="button" (click)="reload()" [disabled]="occurrences.loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+			<span class="count">{{ monday() }} to {{ sunday() }}</span>
+		</div>
+		<mat-progress-bar class="refresh-bar" [mode]="occurrences.loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the week"></mat-progress-bar>
+		<calendar-grid [columns]="columns()" [dayStart]="dayStart()" [bars]="bars()" [bands]="bands()" label="The week's planned time"/>
+		@if( !occurrences.loading() && !occurrences.rows().length && !occurrences.error() ){
+			<p class="empty" role="status">Nothing is planned in this week.</p>
+		}
+		@if( occurrences.error(); as e ){
+			<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+		}
+	}
+</div>

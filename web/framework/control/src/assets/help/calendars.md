@@ -33,11 +33,29 @@ Changing the zone or the day start keeps each pattern's date and each exception 
 
 A **pattern** is the calendar's shifts from a date. It is in effect from that date until the next pattern's. The first pattern has no date: it is in effect from the beginning.
 
-The **Pattern** tab lists the patterns, with the one in effect today selected. Pick another to see its shifts.
+The **Pattern** tab lists the patterns and shows one of them on the grid.
+
+**Pattern on** picks it by date: the pattern in effect on that production day. It starts on today. **Today** goes back to it.
+
+Picking a pattern from the list shows that one instead, until another date is picked.
+
+### The grid
+
+The grid has a column for each day of the pattern's cycle and the hours down the side, from the day start.
+
+A shift is a bar on each day it runs. Its breaks show as hatched bands across the bar.
+
+A shift that runs past the end of the production day continues at the top of the next day's column.
+
+To add a shift, drag down an empty part of a day. The form opens on the hours dragged, to the quarter hour, on that day. **Add shift** opens the same form without a drag, and is the way in from a keyboard or a touch screen.
+
+To change a shift, pick one of its bars.
+
+A shift set to run on no day has no bar. It is listed under the grid, and opens from there.
 
 ### Shifts
 
-**Add shift** and the edit button open the shift's form:
+The shift's form:
 
 - **Name** - *Day*, *Night*. A name is used once in a pattern.
 - **Days** - the days of the cycle the shift runs.
@@ -48,17 +66,25 @@ A pattern's shifts may not overlap, since the shift at any instant must have one
 
 Each save is applied at once, on every gateway.
 
-The remove button takes a shift out for good. A shift has no restore.
+**Remove**, on the form of an existing shift, takes the shift out for good after a confirmation. A shift has no restore.
 
 ### The cycle
 
 A pattern's shifts repeat over its **cycle**.
 
-The default cycle is the week, Monday to Sunday. The **Days** column shows the week's letters, with a dot for a day off: `M T W T F · ·`.
+The default cycle is the week, Monday to Sunday. The grid's columns are the seven weekdays.
 
-A rotation is a cycle of another length, from 1 to 31 days, anchored on a date that was its first day. A 2-2-3 pattern is 14 days and four-on-four-off is 8. Its days are numbered from 1, and the column shows the numbers: `1-2, 5-7`.
+A rotation is a cycle of another length, from 1 to 31 days, anchored on a date that was its first day. A 2-2-3 pattern is 14 days and four-on-four-off is 8.
+
+A rotation's columns are **Day 1** to **Day n**. Under each is the weekday and date it falls on, in the cycle that holds the date picked in **Pattern on**.
 
 A rotation counts in dates, not in hours, so a clock change does not shift it.
+
+**Cycle…** sets the selected pattern's cycle: weekly, or a rotation with its length and the date of its day 1.
+
+A shift keeps its days by number. Turning a week into a rotation whose day 1 is a Monday leaves each shift on the days it was on.
+
+A cycle cannot be made shorter than a day some shift runs on. The server refuses it and the form says so.
 
 ### Pattern changes
 
@@ -66,7 +92,11 @@ A change of hours from a date is a **new pattern** from that date. Last month's 
 
 A correction is an **edit** of the pattern in effect. It changes past reports as well, at their next read.
 
-A new pattern is made as a copy of an existing one from a date, with the `copyCalendarPattern` mutation on the application server's `/graphql`. The copy then shows in the list for its shifts to be edited.
+**Change from…** makes the new pattern. It asks for the day the change takes effect and copies the pattern showing, with its shifts, to a new pattern from that day.
+
+The copy then shows on the grid for its shifts to be edited. The pattern it was copied from is not changed.
+
+The server refuses a day that already has a pattern, and a copy whose first day would overlap a shift still running from the day before. Nothing is copied then, and the form says why.
 
 ### Deleting a pattern
 
@@ -93,6 +123,22 @@ Where a closed and an open exception meet, closed wins.
 Both are the calendar's wall clock, whatever zone your browser is in. The line under the fields shows the range as it will be saved.
 
 The delete button deletes an exception. **Show deleted** lists the deleted ones, each with **Restore** and **Purge**.
+
+## Preview
+
+The **Preview** tab draws a week as the server resolves it: the pattern in effect on each day, with the exceptions applied.
+
+**Week of** picks the week, Monday to Sunday, from any date in it. The arrows step a week at a time and **This week** comes back.
+
+- A shift shows as a bar, as on the grid, shortened or split where a closed exception cuts into it.
+- A closed exception's range is hatched, under its name.
+- An open exception's time is a bar with a dashed outline, under the exception's name.
+
+Use it to check a holiday week, or the week of a clock change, before a report depends on it.
+
+Bars are placed by the wall clock. On the night the clocks change, a shift is as tall as on any other night, and the bar says how long it really ran: `7 h, clock change`.
+
+The preview reads the week again each time the tab is opened.
 
 ## Deleting a calendar
 

@@ -7,6 +7,11 @@ mat-dialog-content{
 mat-dialog-actions{
 	gap: 12px;
 	justify-content: flex-end;
+	/* a shift's Remove, apart from Cancel and Save */
+	.remove{
+		margin-right: auto;
+		color: var(--mat-sys-error);
+	}
 }
 .wide{
 	width: 100%;

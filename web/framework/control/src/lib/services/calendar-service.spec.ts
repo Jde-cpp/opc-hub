@@ -70,6 +70,32 @@ describe( 'CalendarService', ()=>{
 		await service.remove( app, 'CalendarException', 9, 'purge' );
 		expect( app.postQL ).toHaveBeenLastCalledWith( 'mutation purgeCalendarException( id: $id )', {id: 9} );
 	} );
+	//#397:  the calendar's own two operations, and a pattern's cycle
+	it( 'asks for the occurrences of a range, its bounds with no zone', async ()=>{
+		const app = stub( {calendarOccurrences: [
+			{shift: 7, name: 'Day', day: '2026-07-03', start: '2026-07-03T10:00:00Z', end: '2026-07-03T12:00:00Z', breaks: []},
+			{shift: null, name: 'Extra Saturday', day: '2026-07-04', start: '2026-07-04T10:00:00Z', end: '2026-07-04T18:00:00Z', breaks: []}
+		]} );
+		const [day, extra] = await service.occurrences( app, 3, '2026-06-29T06:00:00', '2026-07-06T06:00:00' );
+		expect( [day.shift, day.name, day.day, day.start.toISOString(), day.end.toISOString()] ).toEqual( [7, 'Day', '2026-07-03', '2026-07-03T10:00:00.000Z', '2026-07-03T12:00:00.000Z'] );
+		expect( [extra.shift, extra.name] ).toEqual( [undefined, 'Extra Saturday'] );
+		expect( app.query ).toHaveBeenCalledWith( 'calendarOccurrences( id: $id, start: $start, end: $end ){ shift name day start end breaks{ start end } }', {id: 3, start: '2026-06-29T06:00:00', end: '2026-07-06T06:00:00'} );
+		expect( await service.occurrences( stub( null ), 3, '2026-06-29T06:00:00', '2026-07-06T06:00:00' ) ).toEqual( [] );
+	} );
+	it( 'copies a pattern to a date and answers the copy', async ()=>{
+		const app = stub( {copyCalendarPattern: {id: 6, calendarId: 3, effective: '2026-08-03T10:00:00Z', cycleDays: 7, cycleStart: null}} );
+		const copy = await service.copyPattern( app, 4, '2026-08-03T06:00:00' );
+		expect( [copy.id, copy.calendarId, copy.effective?.toISOString(), copy.cycleDays, copy.cycleStart] ).toEqual( [6, 3, '2026-08-03T10:00:00.000Z', 7, undefined] );
+		expect( app.postQL ).toHaveBeenCalledWith( 'mutation copyCalendarPattern( id: $id, effective: $effective ){ id calendarId effective cycleDays cycleStart }', {id: 4, effective: '2026-08-03T06:00:00'} );
+		await expect( service.copyPattern( stub( {} ), 4, '2026-08-03T06:00:00' ) ).rejects.toThrow( 'no copy' );
+	} );
+	it( "updates a pattern's cycle, a null anchor the week's", async ()=>{
+		const app = stub( {} );
+		await service.updatePattern( app, 5, {cycleDays: 14, cycleStart: '2026-07-01T06:00:00'} );
+		expect( app.postQL ).toHaveBeenLastCalledWith( 'mutation updateCalendarPattern( id: $id, cycleDays: $cycleDays, cycleStart: $cycleStart )', {id: 5, cycleDays: 14, cycleStart: '2026-07-01T06:00:00'} );
+		await service.updatePattern( app, 5, {cycleDays: 7, cycleStart: null} );
+		expect( app.postQL ).toHaveBeenLastCalledWith( 'mutation updateCalendarPattern( id: $id, cycleDays: $cycleDays, cycleStart: $cycleStart )', {id: 5, cycleDays: 7, cycleStart: null} );
+	} );
 	it( "hands back the server's refusal", async ()=>{
 		const app = { postQL: vi.fn( async ()=>{ throw new Error( "Shifts 'Day' on Monday and 'Overlap' on Monday overlap." ); } ) };
 		await expect( service.createShift( app, 4, {name: 'Overlap', days: 31, start: 470, minutes: 480, breaks: null} ) ).rejects.toThrow( 'overlap' );
