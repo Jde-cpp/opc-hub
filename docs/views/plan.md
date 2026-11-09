@@ -30,6 +30,17 @@ The built-in views become a starting set. `systemNames` and the rule that a save
 
 Tests: [`view-set.spec.ts`](../../web/framework/control/src/lib/model/ql/view-set.spec.ts) for number-keyed find and replace, two views of one name, the starting set against a saved set, a row the index does not name, an index entry with no row, each write order, two changes made in one turn, a failed read refusing a write and the retry, the last view deleted, and a view not offered kept by a first save; [`profile-store.spec.ts`](../../web/spa/control/src/lib/services/profile/profile-store.spec.ts) for the many-row read, its one cache entry, a save under the prefix and a failed read; [`ql-list.spec.ts`](../../web/framework/control/src/lib/pages/ql/list/ql-list.spec.ts) for the empty state under a reordered set; and [`ProfileTests.cpp`](../../libs/access/tests/ProfileTests.cpp) for the plural `profiles` with a `glob`, which no test reads today: the index and the rows in one answer, another user's left out.
 
+Built 2026-11-09, where it differs from the text above:
+
+- **The editor's Save makes the new views until 1b.** The settings panel stays until Phase 5, and before `+ New view` and `Duplicate` it is the one way to make a view: `Save` under the name the view had writes over its number, and under another name the panel emits the view with no number, which `ViewSet.save` adds after the last. No name is refused, so two views may share one from here on.
+- **`rename` and `move` are in the model**, with no control yet: the writes the phase refuses and the orders it tests need them, and 1b's menu calls them. `duplicate` waits for 1b.
+- **A change's writes are a reconciliation**, not a script per change. The change is made at once, and in its turn behind the last change's writes the set is compared with what the profile is known to hold: the rows that differ go first, then the index where it differs, then the rows the set no longer has. The spec's orders fall out of that, two changes made together write once, a change that undoes the last writes nothing, and a failed write is made again by the next change.
+- **A retry that finds saved views refuses the change.** A change made on the route's views while the profile was unread cannot be made to the user's set the retry read found - its numbers are another set's - so it is refused with *make the change again*, and the saved views show. A retry that finds none makes the change, as the text says.
+- **An unreadable row is a failed read**, not an ignored one: the route's views show and nothing is written until a read succeeds, where ignoring it would have had the first save write over the set.
+- **Nothing is copied on the first save.** The views the change leaves alone stay the objects they were, so a host re-queries only where the view on screen is another; a saved copy of a built-in reads as `User` after a reload, not before.
+- **`load` shows nothing before the read settles**, as it did not; `reset` is its first half, the route's views alone with the profile unread, and is what the specs seed a set with.
+- **`LogDetail` awaits its saves and deletes**, as `QLList` did, since a change made while the profile is unread lands only when the read does.
+
 ## Phase 1b - the tabs row and the view menu (piece 1, the face)
 
 Issue [#588].

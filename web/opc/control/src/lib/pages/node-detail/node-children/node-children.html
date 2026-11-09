@@ -1,6 +1,6 @@
 @if( !isLoading() ){
 	@if( isSettings() ){
-		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns [view]=viewCopy() [schema]=schema [paged]=false (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
+		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns [view]=viewCopy() [schema]=schema [paged]=false [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
 	} @else {
 		<view-toolbar [views]="viewSet" [refreshing]="isRefreshing()" [count]="rows().length" (viewChange)="onChangeView($event)" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--the browse carries every value, so Refresh is the only reader-->
 			<mat-slide-toggle left class="system-toggle" [checked]="showSystem()" (change)="setShowSystem($event.checked)" matTooltip="Show the nodes of the OPC UA standard's own namespace - the Server object and the type trees">System nodes</mat-slide-toggle>

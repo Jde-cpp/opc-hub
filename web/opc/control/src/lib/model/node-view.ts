@@ -9,7 +9,7 @@ import { valueString } from './value';
 //A browsed node list has no GraphQL collection behind it, so - as LogView does for the log stream - the view runs over a
 //hand-built schema and applies its filters and sort in the browser rather than through query().
 export class NodeView extends View{
-	static readonly collectionName = "opcNodes";//profile keys `opcNodes/views` and `opcNodes/viewIndex`:  one set of views for every node on every connection, the way a ql-list collection has one
+	static readonly collectionName = "opcNodes";//the profile rows under `opcNodes/views` and the browser's `opcNodes/viewNumber`:  one set of views for every node on every connection, the way a ql-list collection has one
 	static columns:Record<string,string> = { id: "ID", name: "Name", class: "Class", dataType: "Data Type", snapshot: "Snapshot", status: "Status", sourceTime: "Source Time", serverTime: "Server Time", access: "Access", refType: "Reference Type", typeDef: "Type Definition", description: "Description" };
 	//every column a non-null String:  ids and values are of mixed types and are filtered on their cell text, and NON_NULL keeps the <null>/<not null> suggestions out of the filter tab
 	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: {kind: FieldKind.SCALAR, name: "String"}}) ) } );
@@ -46,7 +46,7 @@ export class NodeView extends View{
 	static viewSet( profileStore:ProfileStore, prefs:LocalPrefs ):ViewSet<NodeView>{
 		return new ViewSet( {type: NodeView, key: NodeView.collectionName, profileStore, prefs} );
 	}
-	//the default first, then the user's saved views, with the remembered selection
+	//the user's saved views, or the default while there is none, with the remembered selection
 	static loadViews( views:ViewSet<NodeView> ):Promise<void>{
 		return views.load( [NodeView.default()], NodeView.schema );
 	}

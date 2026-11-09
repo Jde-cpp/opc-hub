@@ -76,6 +76,40 @@ namespace Jde::Access::Tests{
 		PurgeUser( user, root );
 	}
 
+	//#587:  a list's views are a row each under `qlList/<collection>/views/<n>`, the index at the prefix itself, and the web reads them
+	//together with the plural `profiles` under a glob - the one read of the table that answers many rows, scoped to the executer by
+	//the stock select (serverInternal.cpp CustomQuery) as the singular is.
+	TEST_F( ProfileTests, GlobReadsTheUsersRows ){
+		let root = GetRoot();
+		const UserPK userA{ GetId(GetUser("profileGlobA", root)) };
+		const UserPK userB{ GetId(GetUser("profileGlobB", root)) };
+		upsertProfile( "qlList/things/views", "\"[2,1]\"", userA );
+		upsertProfile( "qlList/things/views/1", "\"{\\\"name\\\":\\\"A\\\"}\"", userA );
+		upsertProfile( "qlList/things/views/2", "\"{\\\"name\\\":\\\"B\\\"}\"", userA );
+		upsertProfile( "qlList/thingsList/views/1", "\"another list\"", userA );//`things/views*` is not `thingsList/views`
+		upsertProfile( "qlList/things/views/1", "\"B's own\"", userB );
+		auto read = []( UserPK user ){
+			flat_map<string,string> y;
+			for( let& row : QL().QuerySync<jarray>("profiles( url:{glob:\"qlList/things/views*\"} ){ url value }", {}, user) )
+				y.emplace( AsString(row.get_object(), "url"), AsString(row.get_object(), "value") );
+			return y;
+		};
+		let rowsA = read( userA );
+		ASSERT_EQ( rowsA.size(), 3u );
+		EXPECT_EQ( rowsA.at("qlList/things/views"), "[2,1]" );
+		EXPECT_EQ( rowsA.at("qlList/things/views/1"), "{\"name\":\"A\"}" );
+		EXPECT_EQ( rowsA.at("qlList/things/views/2"), "{\"name\":\"B\"}" );
+		let rowsB = read( userB );
+		ASSERT_EQ( rowsB.size(), 1u );
+		EXPECT_EQ( rowsB.at("qlList/things/views/1"), "B's own" );
+		for( sv url : {"qlList/things/views", "qlList/things/views/1", "qlList/things/views/2", "qlList/thingsList/views/1"} )
+			deleteProfile( url, userA );
+		deleteProfile( "qlList/things/views/1", userB );
+		EXPECT_TRUE( read(userA).empty() );
+		PurgeUser( userA, root );
+		PurgeUser( userB, root );
+	}
+
 	TEST_F( ProfileTests, Anonymous ){
 		EXPECT_THROW( upsertProfile("anonKey", "\"v\"", UserPK{}), Exception );
 		EXPECT_THROW( upsertProfile("anonKey", "\"v\"", UserPK{UserPK::System}), Exception );

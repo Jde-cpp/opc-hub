@@ -211,8 +211,8 @@ export class QLList implements OnInit{
 				this.isRefreshing.set( false );
 		}
 	}
-	//As LogDetail:  awaited, said as a delete, and a re-query only where the view on screen went with it - remove() takes nothing but
-	//a User view (reviews-issue/web-refactor-review.md #6)
+	//As LogDetail:  awaited, said as a delete, and a re-query only where the view on screen went with it
+	//(reviews-issue/web-refactor-review.md #6)
 	async onViewDelete( view:View ){
 		const current = this.profile().current();
 		try{
@@ -313,8 +313,9 @@ export class QLList implements OnInit{
 	});
 	//the rows the view's filters narrowed:  they are not the default view's.  Against the default, not against none - the
 	//resources page's default filters on criteria <null>, and a database no service has started against must still say so.
+	//The route's default, not the first tab, which is whichever view the user put there.
 	viewFiltered = computed<boolean>( ()=>{
-		const home = this.profile().views()[0];
+		const home = this.profile().routeDefault;
 		return !!home && !!this.view() && !View.sameFilters( this.view(), home );
 	});
 	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilters?.length, selector: this.selector()}) );

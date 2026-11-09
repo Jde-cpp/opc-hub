@@ -283,7 +283,9 @@ describe( 'LogDetail sort', ()=>{
 	const create = async ( saved:object[]=[] )=>{
 		const ql = { ql: vi.fn( async ()=>({logs: {entries: [logEntry(1), logEntry(2)], strings: []}}) ) };
 		const snackbar = snackbarStub();
-		const profileStore = { ...profileStoreStub(), loadArray: async ( _key:string, revive:( json:any )=>unknown )=>saved.map( revive ) };
+		//the saved views as the profile holds them:  a row each, numbered from 1, and the index
+		const rows:[string,string][] = saved.length ? [["logs/views", JSON.stringify( saved.map( (_, i)=>i+1 ) )], ...saved.map( (view, i):[string,string]=>[`logs/views/${i+1}`, JSON.stringify( view )] )] : [];
+		const profileStore = { ...profileStoreStub(), loadRows: async ()=>new Map( rows ) };
 		TestBed.configureTestingModule({ providers: [
 			screenSize(),
 			{ provide: SnackbarService, useValue: snackbar },
@@ -295,7 +297,7 @@ describe( 'LogDetail sort', ()=>{
 		await tick();
 		fixture.detectChanges();
 		await tick();
-		return { fixture, page: fixture.componentInstance, snackbar, profileStore };
+		return { fixture, page: fixture.componentInstance, snackbar, profileStore, ql };
 	};
 	const unsorted = ( page:LogDetail )=>{
 		const view = page.viewCopy;
@@ -313,18 +315,35 @@ describe( 'LogDetail sort', ()=>{
 		expect( page.data.allEntries ).toHaveLength( 2 );
 		expect( snackbar.exception ).not.toHaveBeenCalled();
 	} );
+	//review #10:  the view changes at once, and awaiting the writes first left the old rows under its columns
+	it( 're-reads as soon as the view is another, once, before its writes are done', async ()=>{
+		const { page, profileStore, ql } = await create();
+		let written!:()=>void;
+		profileStore.save.mockReturnValue( new Promise<void>( done=>{ written = done; } ) );
+		const reads = ql.ql.mock.calls.length;
+		const view = page.viewCopy;
+		view.name = 'mine';
+		view.number = 0;
+		const saving = page.onViewSave( view );
+		expect( page.view().name ).toBe( 'mine' );
+		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
+		written();
+		await saving;
+		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
+	} );
 	it( 'saves a view with no sort sorted by time', async ()=>{
 		const { fixture, page, profileStore } = await create();
 		const view = unsorted( page );
 		view.name = 'mine';
+		view.number = 0;//as the settings panel emits a view under another name:  a new one
 		page.onViewSave( view );
 		await tick();
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
-		expect( profileStore.save.mock.calls.find( ([key])=>key=='logs/views' )![1][0].sort ).toEqual( [time] );
+		expect( JSON.parse(profileStore.save.mock.calls.find( ([key])=>key=='logs/views/2' )![1]).sort ).toEqual( [time] );
 	} );
 	it( 'repairs a view saved with no sort as it loads', async ()=>{
 		const { fixture, page, snackbar } = await create( [{...LogView.default().toJson( undefined ), name: 'mine', sort: []}] );
-		page.onViewChange( 1 );
+		page.onViewChange( 0 );//the saved view is the set
 		await tick();
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
 		expect( page.view().name ).toBe( 'mine' );

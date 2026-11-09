@@ -139,21 +139,147 @@ describe( 'ProfileStore', ()=>{
 		await expect( store.load('k', 'd') ).resolves.toBe( 'b-data' );
 		expect( service.load ).toHaveBeenCalledTimes( 2 );
 	});
-
-	it( 'loadArray revives each item', async ()=>{
-		class Item{
-			constructor( public json:{n:number}, public extra:string ){}
-		}
-		const service = new MockProfileService();
-		service.rows.set( 'k', JSON.stringify([{n:1},{n:2}]) );
-		const store = createStore( service );
-		const items = await store.loadArray( 'k', json=>new Item(json, 'x') );
-		expect( items ).toHaveLength( 2 );
-		expect( items[0] ).toBeInstanceOf( Item );
-		expect( items[1].json.n ).toBe( 2 );
-		expect( items[0].extra ).toBe( 'x' );
-	});
 });
+
+//#587:  a list's views are a row each under `<list>/views`, with the index at the prefix itself.  One read answers them all and is
+//one cache entry, which a save under the prefix keeps current;  and it rejects where load() answers a default, since a caller
+//that took a failed read for no rows would write its starting set over the user's.
+describe( 'ProfileStore.loadRows', ()=>{
+	const create = ()=>{
+		const service = new MockProfileService();
+		service.rows.set( 'things/views', '[2,1]' );
+		service.rows.set( 'things/views/1', '{"a":1}' );
+		service.rows.set( 'things/views/2', '{"a":2}' );
+		service.rows.set( 'things', '"not a view"' );
+		return { service, store: createStore( service ) };
+	};
+	//the cache's other entries:  `count` keys read, each one entry
+	const fill = async ( store:ProfileStore, count:number, from=0 )=>{
+		for( let i=from; i<from+count; ++i )
+			await store.load( `k${i}`, 'd' );
+	};
+
+	//other prefixes' rows:  `count` of them, each one entry
+	const fillRows = async ( store:ProfileStore, count:number, from=0 )=>{
+		for( let i=from; i<from+count; ++i )
+			await store.loadRows( `p${i}` );
+	};
+
+	it( 'reads every row under the prefix in one fetch, and answers the next read from the cache with a copy', async ()=>{
+		const { service, store } = create();
+		const rows = await store.loadRows( 'things/views' );
+		expect( [...rows] ).toEqual( [['things/views', '[2,1]'], ['things/views/1', '{"a":1}'], ['things/views/2', '{"a":2}']] );
+		rows.delete( 'things/views/1' );//the caller's copy
+		expect( (await store.loadRows( 'things/views' )).size ).toBe( 3 );
+		expect( service.loadRows ).toHaveBeenCalledTimes( 1 );
+		expect( service.loadRows ).toHaveBeenCalledWith( 'things/views' );
+	} );
+
+	it( "holds a list's rows as one of ten sets of rows, apart from the keys' ten", async ()=>{
+		const { service, store } = create();
+		const reads = ( prefix:string )=>service.loadRows.mock.calls.filter( ([p])=>p==prefix ).length;
+		await store.loadRows( 'things/views' );
+		await fill( store, 10 );
+		await fillRows( store, 9 );
+		await store.loadRows( 'things/views' );//the tenth, and now the latest
+		await fillRows( store, 1, 9 );//evicts p0
+		await store.loadRows( 'things/views' );
+		expect( reads('things/views') ).toBe( 1 );
+		await store.loadRows( 'p0' );
+		expect( reads('p0') ).toBe( 2 );
+	} );
+
+	it( 'answers a load from the rows, as a save under the prefix left them', async ()=>{
+		const { service, store } = create();
+		await store.loadRows( 'things/views' );
+		await store.save( 'things/views/1', {a: 9} );
+		expect( await store.load( 'things/views/1', null ) ).toEqual( {a: 9} );
+		expect( await store.load( 'things/views/7', 'd' ) ).toBe( 'd' );//every row is among them, so it is known-absent
+		expect( service.load ).not.toHaveBeenCalled();
+	} );
+
+	it( 'keeps the rows current through an update under the prefix', async ()=>{
+		const { service, store } = create();
+		await store.loadRows( 'things/views' );
+		await store.update<{a:number}>( 'things/views/1', {a: 0}, v=>({a: v.a+1}) );
+		expect( (await store.loadRows( 'things/views' )).get( 'things/views/1' ) ).toBe( '{"a":2}' );
+		expect( service.loadRows ).toHaveBeenCalledTimes( 1 );
+	} );
+
+	it( 'names whoever is signed in, and nobody signed out', ()=>{
+		const { service, store } = create();
+		expect( store.userKey ).toBe( 'u1' );
+		service.setUser( undefined );
+		expect( store.userKey ).toBeUndefined();
+		expect( createStore().userKey ).toBeUndefined();
+	} );
+
+	it( 'a save under the prefix changes the entry, and is skipped as a no-op against it', async ()=>{
+		const { service, store } = create();
+		await store.loadRows( 'things/views' );
+		await store.save( 'things/views/1', {a: 1} );//as the server holds it
+		await store.save( 'things/views/9', null );//no such row
+		expect( service.save ).not.toHaveBeenCalled();
+		await store.save( 'things/views/3', {a: 3} );
+		await store.save( 'things/views', [2, 1, 3] );
+		await store.save( 'things/views/2', null );
+		expect( service.save.mock.calls ).toEqual( [['things/views/3', '{"a":3}'], ['things/views', '[2,1,3]'], ['things/views/2', null]] );
+		expect( [...await store.loadRows( 'things/views' )] ).toEqual( [['things/views', '[2,1,3]'], ['things/views/1', '{"a":1}'], ['things/views/3', '{"a":3}']] );
+		expect( service.loadRows ).toHaveBeenCalledTimes( 1 );
+	} );
+
+	it( 'rejects a failed read, and caches nothing of it', async ()=>{
+		const { service, store } = create();
+		service.loadRows.mockRejectedValueOnce( new Error('down') );
+		await expect( store.loadRows('things/views') ).rejects.toThrow( 'down' );
+		expect( (await store.loadRows( 'things/views' )).size ).toBe( 3 );
+		expect( service.loadRows ).toHaveBeenCalledTimes( 2 );
+	} );
+
+	it( 'drops the entry on a failed save under the prefix, and the next read replaces it whole', async ()=>{
+		const { service, store } = create();
+		await store.loadRows( 'things/views' );
+		service.save.mockRejectedValueOnce( new Error('down') );
+		await expect( store.save('things/views/1', {a: 9}) ).rejects.toThrow( 'down' );
+		service.rows.delete( 'things/views/2' );//another tab's deletion
+		expect( [...(await store.loadRows( 'things/views' )).keys()] ).toEqual( ['things/views', 'things/views/1'] );
+		expect( service.loadRows ).toHaveBeenCalledTimes( 2 );
+		await store.save( 'things/views/1', {a: 9} );//not deduped against the value that never landed
+		expect( service.rows.get('things/views/1') ).toBe( '{"a":9}' );
+	} );
+
+	//the row's own entry, made while the rows were not cached, would outlive them and dedupe a later save against a stale value
+	it( 'leaves a row no entry of its own beside the rows', async ()=>{
+		const { service, store } = create();
+		await store.save( 'things/views/1', 'A' );
+		await store.loadRows( 'things/views' );
+		await store.save( 'things/views/1', 'B' );
+		await fillRows( store, 10 );//the rows are evicted
+		await store.save( 'things/views/1', 'A' );
+		expect( service.rows.get('things/views/1') ).toBe( 'A' );
+	} );
+
+	it( 'logged out, there are no rows and nothing is asked', async ()=>{
+		const { service, store } = create();
+		service.setUser( undefined );
+		expect( (await store.loadRows( 'things/views' )).size ).toBe( 0 );
+		expect( service.loadRows ).not.toHaveBeenCalled();
+	} );
+
+	//as load() (reviews/m3-closing.md #17):  the anonymous answer is no rows, which cached would be the user's own
+	it( 'rejects where the user changed while it read, and caches nothing', async ()=>{
+		const { service, store } = create();
+		let answer!:( rows:Map<string,string> )=>void;
+		service.loadRows.mockImplementationOnce( ()=>new Promise( resolve=>{ answer = resolve; } ) );
+		const read = store.loadRows( 'things/views' );
+		await flush();//past the writes it waits out
+		service.setUser( undefined );
+		answer( new Map() );
+		await expect( read ).rejects.toThrow( 'The user changed' );
+		service.setUser( 'u1' );
+		expect( (await store.loadRows( 'things/views' )).size ).toBe( 3 );
+	} );
+} );
 
 //reviews/m3-closing.md #17:  a returning user whose server session had lapsed was reset to anonymous while their profile loaded,
 //A whole-value save of what one page read dropped what another page or tab wrote since (419-watch #9):  update changes the

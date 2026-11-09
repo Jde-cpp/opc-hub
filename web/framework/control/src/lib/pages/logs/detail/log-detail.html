@@ -1,6 +1,6 @@
 @if( !isLoading() ) {
 	@if( isSettings() ){
-		<ql-list-settings [suggestions]={} [columns]=columns [view]=viewCopy [schema]=schema (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event)
+		<ql-list-settings [suggestions]={} [columns]=columns [view]=viewCopy [schema]=schema [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event)
 			(onCancel)="isSettings.set( false )"></ql-list-settings>
 	} @else {
 		<view-toolbar [views]="viewSet" [refreshing]="isRefreshing()" (viewChange)="onViewChange($event)" (edit)="isSettings.set(true)" (refresh)="refresh()">

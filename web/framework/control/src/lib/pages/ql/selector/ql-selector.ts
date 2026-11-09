@@ -79,10 +79,9 @@ export class QLSelector{
 			//the collection's columns/sort/exclusions sit on the sibling ':collectionDisplay' route, where DetailResolver finds them too
 			const collections:CollectionItem[] = this.#route.snapshot.parent?.routeConfig?.children?.find( x=>x.path==":collectionDisplay" )?.data?.["collections"] ?? [];
 			const collectionName = this.collectionName();
-			let data = await QLListResolver.data( this.ql(), ListRoute.find(collectionName, collections), this.#profileStore, this.#prefs );
-			const current = data.profile.current();//a deleted identity is not something to add to a group, even where the collection's own list was last left on Deleted
-			const views = data.profile.views().filter( v=>!QLListResolver.isDeletedView(v) );
-			data.profile.reset( views, views.indexOf(current) );
+			//A deleted identity is not something to add to a group, even where the collection's own list was last left on Deleted.
+			//Not offered rather than taken out of the set:  the set is the list page's too, and a first save from here writes it whole.
+			let data = await QLListResolver.data( this.ql(), ListRoute.find(collectionName, collections), this.#profileStore, this.#prefs, v=>!QLListResolver.isDeletedView(v) );
 			if( excludedIds.length )
 				data.fixedFilters = [{ field: data.schema.fields.find(f=>f.name=="id")!, filter: {operator: Operator.NotIn, value: excludedIds} }];
 			data = await QLListResolver.load( this.ql(), data, null );

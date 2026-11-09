@@ -9,7 +9,7 @@ import { User } from 'jde-spa';
 
 describe( 'ProfileService', ()=>{
 	const create = ()=>{
-		const app = { user: signal<User|undefined>( undefined ), querySingle: vi.fn(), mutate: vi.fn() };
+		const app = { user: signal<User|undefined>( undefined ), querySingle: vi.fn(), queryArray: vi.fn(), mutate: vi.fn() };
 		TestBed.configureTestingModule( { providers: [{provide: AppService, useValue: app}, ProfileService] } );
 		return { app, service: TestBed.inject( ProfileService ) };
 	};
@@ -36,6 +36,15 @@ describe( 'ProfileService', ()=>{
 		const { app, service } = create();
 		app.querySingle.mockResolvedValue( null );
 		await expect( service.load('k') ).resolves.toBeNull();
+	});
+
+	//#587:  a list's index and its views' rows in one read
+	it( 'loadRows globs the prefix and keys each value by its url', async ()=>{
+		const { app, service } = create();
+		app.queryArray.mockResolvedValue( [{url: 'qlList/users/views', value: '[2,1]'}, {url: 'qlList/users/views/1', value: '{"a":1}'}] );
+		const rows = await service.loadRows( 'qlList/users/views' );
+		expect( app.queryArray ).toHaveBeenCalledWith( 'profiles( url:{glob:"qlList/users/views*"} ){ url value }' );
+		expect( [...rows] ).toEqual( [['qlList/users/views', '[2,1]'], ['qlList/users/views/1', '{"a":1}']] );
 	});
 
 	it( 'save mutates updateProfile with the escaped value', async ()=>{

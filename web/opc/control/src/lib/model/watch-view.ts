@@ -9,7 +9,7 @@ import { valueString } from './value';
 //and sort applied in the browser.  Its columns are the spec's:  the connection, the node, the reading and its status and times,
 //what the row asks and what the server revised it to, and the discard rule and filter.
 export class WatchView extends View{
-	static readonly collectionName = "opcWatch";//profile keys `opcWatch/views` and `opcWatch/viewIndex`:  one set of views for every gateway's list
+	static readonly collectionName = "opcWatch";//the profile rows under `opcWatch/views` and the browser's `opcWatch/viewNumber`:  one set of views for every gateway's list
 	static columns:Record<string,string> = { connection: "Connection", node: "Node", value: "Value", status: "Status", sourceTime: "Source Time", serverTime: "Server Time", sampling: "Sampling (ms)", revisedSampling: "Revised Sampling", queue: "Queue", revisedQueue: "Revised Queue", discard: "Discard", filter: "Filter" };
 	static schema:TableSchema = new TableSchema( { name: "OpcWatch", fields: Object.keys( WatchView.columns ).map( name=>new Field({name, ofType: {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	static default():WatchView{

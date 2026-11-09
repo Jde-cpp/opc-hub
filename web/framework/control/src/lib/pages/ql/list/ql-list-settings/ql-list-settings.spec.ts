@@ -8,7 +8,7 @@ import { stable } from 'jde-spa/testing';
 const schema = schemaOf( "User", id(), required("name"), scalar("slug"), scalar("deleted", "DateTime") );
 
 //review3 C10: the View Name field was the workspace's last [(ngModel)].  It binds [value]/(input) against the `name`
-//signal now - the same signal disableSave() and getView() already read - so this pins that the round trip still works.
+//signal now - the same signal getView() already reads - so this pins that the round trip still works.
 describe( 'QLListSettings view name', ()=>{
 	const create = ()=>{
 		const fixture = TestBed.createComponent( QLListSettings );
@@ -29,6 +29,25 @@ describe( 'QLListSettings view name', ()=>{
 		expect( input(create()).value ).toBe( "Mine" );
 	} );
 
+	const button = ( fixture:any, text:string ):HTMLButtonElement=>[...fixture.nativeElement.querySelectorAll( 'mat-toolbar button' )].find( ( b:any )=>b.textContent.includes(text) ) as HTMLButtonElement;
+
+	//review #12:  it made a view named "", a button with no text
+	it( 'offers no Save for a blank name', ()=>{
+		const fixture = create();
+		expect( button(fixture, "Save").disabled ).toBe( false );
+		fixture.componentInstance.name.set( "   " );
+		fixture.detectChanges();
+		expect( button(fixture, "Save").disabled ).toBe( true );
+	} );
+
+	it( 'offers Delete where its host says there is a view to take', ()=>{
+		const fixture = create();
+		expect( button(fixture, "Delete").disabled ).toBe( true );
+		fixture.componentRef.setInput( 'canDelete', true );
+		fixture.detectChanges();
+		expect( button(fixture, "Delete").disabled ).toBe( false );
+	} );
+
 	it( 'writes typing back into the signal', ()=>{
 		const fixture = create();
 		const el = input( fixture );
@@ -46,51 +65,49 @@ describe( 'QLListSettings view name', ()=>{
 	} );
 } );
 
-//reviews-issue/317-deleted-rows.md #10:  the Default view saved as "Deleted" stayed a System view, replaced the built-in Deleted
-//view for the session and was never persisted.  A host's system view names are reserved now.
-describe( 'QLListSettings reserved names', ()=>{
-	const create = ( name:string|undefined, type:ViewType )=>{
+//#587:  a view is known by its number and names repeat, so no name is reserved (reviews-issue/317-deleted-rows.md #10,
+//reviews-issue/web-refactor-review.md #3).  Save writes a view over its number, and a view under another name is a new one.
+describe( 'QLListSettings Save and Delete', ()=>{
+	const create = ( name:string|undefined, type:ViewType, number=2 )=>{
 		const fixture = TestBed.createComponent( QLListSettings );
 		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		view.name = name;
 		view.type = type;
+		view.number = number;
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
 		fixture.componentRef.setInput( 'columns', {name: "Name"} );
 		fixture.componentRef.setInput( 'suggestions', {} );
-		fixture.componentRef.setInput( 'reservedNames', ["Users", "Deleted"] );
 		fixture.componentInstance.ngOnInit();
 		fixture.detectChanges();
-		return fixture;
+		return fixture.componentInstance;
 	};
-	const rename = ( fixture:any, name:string )=>{
-		fixture.componentInstance.name.set( name );
-		fixture.detectChanges();
-		return fixture;
+	const saved = ( settings:QLListSettings, name?:string )=>{
+		if( name!==undefined )
+			settings.name.set( name );
+		const view = settings.getView( false );
+		return [view.number, view.name];
 	};
-	const hint = ( fixture:any ):string|undefined=>fixture.nativeElement.querySelector( 'mat-hint' )?.textContent.trim();
 
-	it( 'will not save under a system view\'s name, and says why', ()=>{
-		const fixture = rename( create(undefined, ViewType.System), "Deleted" );
-		expect( fixture.componentInstance.disableSave() ).toBe( true );
-		expect( hint(fixture) ).toBe( "Deleted is a built-in view" );
+	it( "saves a view the list came with over its number, a built-in's name and all", ()=>{
+		expect( saved(create("Deleted", ViewType.System)) ).toEqual( [2, "Deleted"] );
 	} );
-	it( 'saves under any other name', ()=>{
-		const fixture = rename( create(undefined, ViewType.System), "Mine" );
-		expect( fixture.componentInstance.disableSave() ).toBe( false );
-		expect( hint(fixture) ).toBeUndefined();
+	it( "saves a twin over its view", ()=>{
+		expect( saved(create("Users", ViewType.Adhoc)) ).toEqual( [2, "Users"] );
 	} );
-	//reviews-issue/web-refactor-review.md #3:  Save on the twin of the System view Users, its name untouched, was live, and made a User view
-	//of the name
-	it( "will not save a system view's twin under its name, and says why", ()=>{
-		const fixture = create( "Users", ViewType.Adhoc );
-		expect( fixture.componentInstance.disableSave() ).toBe( true );
-		expect( hint(fixture) ).toBe( "Users is a built-in view" );
-		expect( rename( fixture, "Mine" ).componentInstance.disableSave() ).toBe( false );
+	it( 'leaves an unnamed view unnamed, twin or not', ()=>{
+		expect( saved(create(undefined, ViewType.System)) ).toEqual( [2, undefined] );
+		expect( saved(create(undefined, ViewType.Adhoc)) ).toEqual( [2, undefined] );
 	} );
-	it( 'still saves a user view under the name it already has', ()=>{
-		const fixture = rename( create("Deleted", ViewType.User), "Deleted" );
-		expect( fixture.componentInstance.reservedName() ).toBe( false );
+	it( "saves under another name as a new view, another view's name or not", ()=>{
+		expect( saved(create(undefined, ViewType.System), "Deleted") ).toEqual( [0, "Deleted"] );
+		expect( saved(create("Mine", ViewType.User), "Yours") ).toEqual( [0, "Yours"] );
+	} );
+	it( 'shows a view under its number, whatever the name box says', ()=>{
+		const settings = create( "Mine", ViewType.User );
+		settings.name.set( "Yours" );
+		const shown = settings.getView( true );
+		expect( [shown.number, shown.name] ).toEqual( [2, "Mine"] );
 	} );
 } );
 

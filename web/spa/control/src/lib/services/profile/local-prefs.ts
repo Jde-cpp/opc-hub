@@ -27,8 +27,9 @@ export class LocalPrefs{
 	}
 	tabIndex( owner:string ):number{ return this.get( owner, "tabIndex", 0 ); }
 	setTabIndex( owner:string, index:number ):void{ this.set( owner, "tabIndex", index || null ); }
-	viewIndex( owner:string ):number{ return this.get( owner, "viewIndex", 0 ); }
-	setViewIndex( owner:string, index:number ):void{ this.set( owner, "viewIndex", index || null ); }
+	//the view a list was left on, by its number:  tabs reorder and names repeat.  0, and no entry, for none.
+	viewNumber( owner:string ):number{ return this.get( owner, "viewNumber", 0 ); }
+	setViewNumber( owner:string, number:number ):void{ this.set( owner, "viewNumber", number || null ); }
 
 	#key( owner:string, name:string ):string{ return `${owner}/${name}`; }
 }

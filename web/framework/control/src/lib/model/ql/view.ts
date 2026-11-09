@@ -210,6 +210,7 @@ export class View{
 		return { operator: filter.operator, value: (filter.value ?? []).map( v=>v instanceof Days ? Days.fromJson({days:v.days}) : v instanceof Date ? new Date(v) : v ) };//`?? []` so a stale persisted view without a value array can't turn a copy into a load-time crash
 	}
 	private copyFrom( view:View ):void{
+		this.number = view.number;
 		this.name = view.name;
 		this.collectionName = view.collectionName;
 		this.limit = view.limit;
@@ -428,6 +429,7 @@ export class View{
 		};
 	}
 	fieldFilters:FieldFilter[] = [];
+	number:number = 0;//what its ViewSet knows it by, since names repeat:  the key of its profile row, never in the row.  0 until it is one of a set's.
 	name:string|undefined;
 	collectionName!:string;
 	fields:ViewField[]=[];

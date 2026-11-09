@@ -107,9 +107,8 @@ export class LogDetail implements OnInit, OnDestroy{
 			this.refresh();
 	}
 	onViewSave( view:View ){
-		this.viewSet.save( view ).catch( e=>this.#snackBar.exception("Could not save view.", e) );
-		this.refresh();
 		this.isSettings.set( false );
+		return this.#changeView( ()=>this.viewSet.save(view), "Could not save view." );
 	}
 	onViewShow( view:View ){
 		this.isSettings.set( false );
@@ -117,11 +116,25 @@ export class LogDetail implements OnInit, OnDestroy{
 		this.refresh();
 	}
 	onViewDelete( view:View ){
-		const current = this.view();
-		this.viewSet.remove( view ).catch( e=>this.#snackBar.exception("Could not delete view.", e) );
-		if( this.view()!==current )//without this the table keeps the deleted view's rows under another view's columns
-			this.refresh();
 		this.isSettings.set( false );
+		return this.#changeView( ()=>this.viewSet.remove(view), "Could not delete view." );
+	}
+	//Re-read the moment the view is another, not once it is written, or the table keeps the last view's rows under this one's
+	//columns.  Where the views were still to be read the set changes only after the await (ViewSet).
+	async #changeView( change:()=>Promise<void>, failed:string ){
+		const before = this.view();
+		const writes = change();
+		const shown = this.view();
+		if( shown!==before )
+			this.refresh();
+		try{
+			await writes;
+		}
+		catch( e ){
+			this.#snackBar.exception( failed, e );
+		}
+		if( this.view()!==shown )
+			this.refresh();
 	}
 
 	cellClick( entry:Entry ){
