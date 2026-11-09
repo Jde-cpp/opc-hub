@@ -1,0 +1,184 @@
+# Views implementation plan - 2026-11-09
+
+A plan for [`spec.md`](spec.md) (2026-11-08), whose open questions were ruled and whose review ([`views-spec.md`](../../../reviews-issue/views-spec.md), 15 findings and 7 smaller points) was folded on 2026-11-09. The plan's own review, 15 findings and 9 smaller points from `/code-review xhigh` the same day, is folded in below, and the four choices it left were ruled as recommended that day: several bare words, the page size, `has:` and `no:` on a live-toggle column, and Phase 1a's size. It has the shape of the other specs' plans ([`../calendar/plan.md`](../calendar/plan.md), [`../clients/plan.md`](../clients/plan.md)): the spec's pieces in dependency order, each phase a PR or two with its own tests, and three milestones. The issues were filed on 2026-11-09 under [#586]: each phase names its own, in the milestones Views I, II and III, and an issue's body is the plan's text at filing, so a fold that changes a phase refreshes its issue.
+
+Line numbers cite opc-hub2 at `f267753f`, main, on which the `views` branch has no commits yet.
+
+Seven things the spec's piece table does not say:
+
+- **Only two phases touch C++.** The where clause's `nin` and a list of patterns under `glob` (Phase 3a) and the QL's `groupBy` (Phase 6a). Everything else is `web/framework/control`, with the hosts in `web/opc/control` and the two route settings in `web/access/control`.
+- **Piece 1 is two phases**, the store and the face. View numbers and a row per view change `ViewSet` and the profile services under every host and can be tested with no new control, and the tabs row then has a settled model to draw.
+- **Pieces 3 and 6 are two phases each**, the logic and the page: the filter's parser and compiler are pure functions with table-driven tests, landed before anything reads them, and the QL's `groupBy` is C++ with a test suite of its own.
+- **The work stays off `main` until Phase 8.** The spec says it ships whole, and a release can be cut from `main` at any time, so the phases merge to the `views` branch and that branch merges to `main` once. Provisional: if you would rather merge each phase to `main` and hold releases, nothing below changes but this line.
+- **The page size needs a new home.** The Display tab is the only place that sets it ([`ql-list-settings.ts:37`](../../web/framework/control/src/lib/pages/ql/list/ql-list-settings/ql-list-settings.ts#L37)), and the spec removes the tab without moving it. The pager's own box, hidden behind `hidePageLength` ([`paginator.html:2`](../../web/framework/control/src/lib/shared/paginator/paginator.html#L2)), cannot take it. The pager is drawn only while the list runs past one page ([`ql-list.html:27`](../../web/framework/control/src/lib/pages/ql/list/ql-list.html#L27)), so a list that fits would have no control, and a size set too large could not be set back. The box also sends a number on every keystroke, 0 when it is cleared ([`paginator.html:4`](../../web/framework/control/src/lib/shared/paginator/paginator.html#L4)), which `View.query` reads as no limit ([`view.ts:345`](../../web/framework/control/src/lib/model/ql/view.ts#L345)). So Phase 2 adds `Page size` to the view menu of the two hosts that page, `QLList` and the logs: a submenu of 10, 25, 50, 100, 250 and 500, and the view's own size where it is none of those, as the logs' 21 is. A pick is a draft change like any other. Ruled 2026-11-09.
+- **A pick list and its collection's list page share drafts.** `QLSelector` builds its `ViewSet` under the collection's key, as the list page does ([`ql-list-resolver.ts:147`](../../web/framework/control/src/lib/services/ql-list-resolver.ts#L147)), and the remembered view is already shared that way. Drafts follow the key, so a filter half-typed on a Groups tab shows on the Groups page. Provisional: a suffix on the key would separate them.
+- **Several bare words need the QL.** `pump station` is two patterns on the name column, and one argument cannot hold them: the QL keys a filter by column and an operator object by operator ([`Input.cpp:15`](../../libs/ql/src/types/Input.cpp#L15)), and `glob` refuses a list ([`Syntax.cpp:64`](../../libs/db/src/generators/Syntax.cpp#L64)). Phase 3a lets `glob` take a list of patterns, all of which must match, so the two words compile to `name:{glob:["*pump*","*station*"]}` and find *Station pump 3*, as the node and watch lists do by testing each word. Ruled 2026-11-09, over the alternative with no C++, which reads a run of bare words as one phrase, `*pump station*`.
+
+## Phase 1a - view numbers and a row per view (piece 1, the store)
+
+Issue [#587].
+
+One PR. `View` gains its number, and `ViewSet` finds, replaces and removes by number where it compares names today ([`view-set.ts:91`](../../web/framework/control/src/lib/model/ql/view-set.ts#L91)), so two views may share a name. The tab's memory in `LocalPrefs` becomes the view's number rather than its place ([`local-prefs.ts:30`](../../web/spa/control/src/lib/services/profile/local-prefs.ts#L30)).
+
+The store becomes the spec's *Persistence*. `IProfileService` ([`profile/profile-service.ts:4`](../../web/spa/control/src/lib/services/profile/profile-service.ts#L4)) gains a read of many rows, implemented in [`services/profile-service.ts:15`](../../web/framework/control/src/lib/services/profile-service.ts#L15) as `profiles( url:{glob:"qlList/<collection>/views*"} ){ url value }`, and `ProfileStore` gains the call that uses it beside `loadArray` ([`profile-store.ts:35`](../../web/spa/control/src/lib/services/profile/profile-store.ts#L35)). The answer is cached whole, as one entry under the user and the prefix. A list is then one of the ten entries the cache holds ([`profile-store.ts:127`](../../web/spa/control/src/lib/services/profile/profile-store.ts#L127)) rather than one per view, and a return from a record or a second pick list on a page reads no server, as `loadArray` reads none today. A save under the prefix updates the entry and is skipped as a no-op against it ([`profile-store.ts:49`](../../web/spa/control/src/lib/services/profile/profile-store.ts#L49)), and a fresh read replaces it, so a row another browser tab deleted is not remembered. Unlike `load`, which answers its default when the fetch fails ([`profile-store.ts:23`](../../web/spa/control/src/lib/services/profile/profile-store.ts#L23)), the call rejects: no rows and a failed read must not look alike, since the first save of a starting set writes every row.
+
+`ViewSet.load` ([`view-set.ts:32`](../../web/framework/control/src/lib/model/ql/view-set.ts#L32)) reads the index and the rows from that one answer, shows the saved views where the index has an entry and the route's where it does not, and ignores a row the index does not name and an index entry that has no row. When the read fails it shows the route's views and refuses every write, a save, a rename, a move or a deletion, with the read's error, until a read succeeds, which the next write tries first. It also keeps the route's views after loading. Deleting the last saved view deletes the index row and shows them again at once, so `current()` is never empty, a state the code notes no host allows today ([`view-set.ts:85`](../../web/framework/control/src/lib/model/ql/view-set.ts#L85)) and `QLList` throws on ([`ql-list.ts:56`](../../web/framework/control/src/lib/pages/ql/list/ql-list.ts#L56)). The empty state's test compares the view with the route's default view where it reads the first tab today ([`ql-list.ts:316`](../../web/framework/control/src/lib/pages/ql/list/ql-list.ts#L316)), since the first tab is whichever the user dragged there.
+
+`#persist` ([`view-set.ts:88`](../../web/framework/control/src/lib/model/ql/view-set.ts#L88)) writes one row per change, a new view's row before the index, a deletion's index before its row, and a first save every row and the index last. `ProfileStore` orders the writes of one key alone ([`profile-store.ts:52`](../../web/spa/control/src/lib/services/profile/profile-store.ts#L52)), so `ViewSet` queues its changes: a change's writes start when the previous change's have finished. A duplicate followed at once by a move, or a new view by its deletion, then leaves the index and the rows agreeing. `ViewJson` ([`view.ts:181`](../../web/framework/control/src/lib/model/ql/view.ts#L181)) loses nothing yet: `filter`, `groupBy`, `sliceBy` and `sums` join it with the phases that use them.
+
+The built-in views become a starting set. `systemNames` and the rule that a saved view may not take a built-in's name ([`ql-list-settings.ts:51`](../../web/framework/control/src/lib/pages/ql/list/ql-list-settings/ql-list-settings.ts#L51)) go, and `isDeletedView` ([`ql-list-resolver.ts:164`](../../web/framework/control/src/lib/services/ql-list-resolver.ts#L164)) stops matching by name: it asks whether the view filters on `deleted`. `QLSelector` stops cutting its `ViewSet` down with `reset` ([`ql-selector.ts:84`](../../web/framework/control/src/lib/pages/ql/selector/ql-selector.ts#L84)): a first save from a pick list would write the set without those views, and the collection's own page would lose its *Deleted* tab. `ViewSetOptions` takes a test for the views a host does not offer instead. They stay out of `views()` and of the selection, and in what `#persist` writes. A pick list whose remembered view is not offered opens on the first that is, without writing the selection, and on the route's default view where none is. No existing profile row is converted, since dev boxes recreate theirs.
+
+Tests: [`view-set.spec.ts`](../../web/framework/control/src/lib/model/ql/view-set.spec.ts) for number-keyed find and replace, two views of one name, the starting set against a saved set, a row the index does not name, an index entry with no row, each write order, two changes made in one turn, a failed read refusing a write and the retry, the last view deleted, and a view not offered kept by a first save; [`profile-store.spec.ts`](../../web/spa/control/src/lib/services/profile/profile-store.spec.ts) for the many-row read, its one cache entry, a save under the prefix and a failed read; [`ql-list.spec.ts`](../../web/framework/control/src/lib/pages/ql/list/ql-list.spec.ts) for the empty state under a reordered set; and [`ProfileTests.cpp`](../../libs/access/tests/ProfileTests.cpp) for the plural `profiles` with a `glob`, which no test reads today: the index and the rows in one answer, another user's left out.
+
+## Phase 1b - the tabs row and the view menu (piece 1, the face)
+
+Issue [#588].
+
+After 1a. One PR. `ViewToolbar` replaces its toggle group ([`view-toolbar.html:22`](../../web/framework/control/src/lib/shared/view-toolbar/view-toolbar.html#L22)) with a `mat-tab-nav-bar`, each view a `mat-tab-link`, and `+ New view` after them. Material requires a `mat-tab-nav-panel` (it throws in dev mode without one), and the table lives in the host, so each of the four hosts wraps its table in the panel and passes it to the toolbar as an input: [`ql-list.html:12`](../../web/framework/control/src/lib/pages/ql/list/ql-list.html#L12), [`log-detail.html:6`](../../web/framework/control/src/lib/pages/logs/detail/log-detail.html#L6), [`node-children.html:5`](../../web/opc/control/src/lib/pages/node-detail/node-children/node-children.html#L5), [`gateway-watch.html:14`](../../web/opc/control/src/lib/pages/gateway-detail/watch/gateway-watch.html#L14).
+
+The active tab carries the chevron, a real button inside the link, an AXE failure the spec records as accepted. It stops its click and keydown from reaching the tab, or the tab's Space handling cancels the press. The view menu has `Rename` in place, `Duplicate`, `Move left`, `Move right` and `Delete`; `Fields`, `Group by`, `Sort by`, `Slice by` and `Field sum` arrive with their phases, as do `Save changes` and `Discard changes` in Phase 2. Tabs drag with CDK drag-drop.
+
+The toolbar's zones are re-let as the spec's *The view bar* says. The toggle group goes in this phase and the tune button stays until Phase 5. A toolbar input names what the host takes, so the logs can leave out the filter, group, slice and sum entries as those arrive. A pick list has no tabs row: its menu opens from a `mat-menu` button in the left zone showing the current view's name, with `Views` first and `Rename`, `Duplicate`, the two moves, `Delete`, `+ New view` and tab drag left out.
+
+Tests: [`view-toolbar.spec.ts`](../../web/framework/control/src/lib/shared/view-toolbar/view-toolbar.spec.ts) rewritten for the tabs, the chevron on the active tab alone, each menu entry, `Delete` on the only tab bringing the route's views back, and a pick list's button and shorter menu. The first check with `ng build my-workspace --stats-json` belongs here: `MatTabsModule` and CDK drag-drop must land in lazy chunks, since the budget fails at 1.4 MB.
+
+## Phase 2 - the draft (piece 2)
+
+Issue [#589].
+
+After 1b. One PR. `View.copy` becomes a full copy: `copyFrom` maps `new ViewField(f)` ([`view.ts:216`](../../web/framework/control/src/lib/model/ql/view.ts#L216)), the `ViewField` copy takes `new Style(...)` ([`view.ts:116`](../../web/framework/control/src/lib/model/ql/view.ts#L116)), and the `Style` copy makes a `Flex` of its own, which its `Object.assign` shares today ([`view.ts:103`](../../web/framework/control/src/lib/model/ql/view.ts#L103)). `deletedView` then compares by name, because its `f===deleted` ([`ql-list-resolver.ts:175`](../../web/framework/control/src/lib/services/ql-list-resolver.ts#L175)) can no longer match.
+
+Every control changes the view by replacing it with its twin, through `ViewSet` as a header sort does now ([`ql-list.ts:80`](../../web/framework/control/src/lib/pages/ql/list/ql-list.ts#L80)). `select` stops discarding the twin of the tab left, so there is one draft per view. The drafts of a list are written on each change to `LocalPrefs` ([`local-prefs.ts:6`](../../web/spa/control/src/lib/services/profile/local-prefs.ts#L6)) under the user's key and the `ViewSet` key, each with its view's number, and `ViewSet.load` reads them back, dropping one whose view is gone. `LocalPrefs` is the browser's and its keys name no user ([`local-prefs.ts:33`](../../web/spa/control/src/lib/services/profile/local-prefs.ts#L33)). On a shared station one user's draft would otherwise open on another's view of the same number, and that user's `Save` would write it, which is why `ProfileStore` scopes its cache by user ([`profile-store.ts:108`](../../web/spa/control/src/lib/services/profile/profile-store.ts#L108)). The slice value and the collapsed groups of the later phases go under the same key. A view's deletion drops its draft at once, since the next new view can take its number. A draft does not carry the name: `Rename` changes the view and its twin together and writes the view's row as it was saved, so a later `Save` does not put the old name back. The tab shows its dot in place of *(edited)*, and `Save` and `Discard` appear at the filter box's place in the toolbar. A `Save` on a built-in view saves the whole set as the user's with that view changed.
+
+The page size moves to the view menu's `Page size`, as above, on `QLList` and the logs. The url is not touched, so no resolver re-runs.
+
+Tests: [`view.spec.ts`](../../web/framework/control/src/lib/model/ql/view.spec.ts) for the copy's independence, field, style and flex alike; [`view-set.spec.ts`](../../web/framework/control/src/lib/model/ql/view-set.spec.ts) for a draft per tab, `Save` and `Discard`, a reload rebuilding every tab's draft, a draft whose view was deleted and a new view taking its number, a rename under a draft, and a second user's drafts kept apart; [`ql-list.spec.ts`](../../web/framework/control/src/lib/pages/ql/list/ql-list.spec.ts) that a Deleted view still shows its column; [`view-toolbar.spec.ts`](../../web/framework/control/src/lib/shared/view-toolbar/view-toolbar.spec.ts) for `Page size` and its absence on a host with no pager.
+
+## Phase 3a - the where clause and the filter's logic (piece 3, first half)
+
+Issue [#590].
+
+After 2. One PR. **C++:** `WhereClause::Add` ([`WhereClause.cpp:94`](../../libs/db/src/generators/WhereClause.cpp#L94)) gives `nin` without a null on a nullable column `(x not in(?) or x is null)`; a `nin` with a null, and any `nin` on a non-null column, stay as they are. [`WhereClauseTests.cpp:83`](../../libs/ql/tests/WhereClauseTests.cpp#L83) keeps passing on the primary key, and the new case uses the nullable `color` ([`qlTests-meta.jsonnet:26`](../../libs/ql/tests/config/qlTests-meta.jsonnet#L26)). `glob` takes a list: `Syntax::FormatOperator` writes one clause per pattern, anded, where it throws on any count but one today ([`Syntax.cpp:64`](../../libs/db/src/generators/Syntax.cpp#L64)). The three databases share that function and differ in the pattern operator alone, so one change serves them. The in-memory match takes the list too ([`FilterQL.cpp:192`](../../libs/ql/src/types/FilterQL.cpp#L192)), so a subscription's filter reads it the same way.
+
+**The parser and compiler** are a new `filter-query` module beside [`view.ts`](../../web/framework/control/src/lib/model/ql/view.ts), pure functions from text and schema to terms and errors, and from terms to QL arguments or a predicate. Nothing reads the module in this phase. `View` keeps `fieldFilters` until 3b, because the Filter tab, the routes' filters, the *Deleted* view, the pick lists' fixed filters and the node and watch predicates all read it and have to move together. The module implements the spec's grammar table, the merging of a column's terms into one argument with a variable per operator, the bare word as an escaped `glob` on the name column with several words as a list, the whole-day date rules with `start(d)` built from date parts, and the terms the box refuses. Two of those the plan's review added to the spec, the second by the owner's ruling. A term on a column of OBJECT kind is refused, by the test `sortable` makes for `orderBy` ([`graphql-table.ts:78`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.ts#L78)): the gateway grafts a connection's status and counts onto its rows after the select ([`OpcSessionsQLAwait.cpp:198`](../../apps/OpcGateway/src/ql/OpcSessionsQLAwait.cpp#L198)), so the server has no column to filter. On a live-toggle column `has:` and `no:` change places, since the header names the live state and a row is live when the column is null ([`graphql-table.ts:84`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.ts#L84)): on the Resources page `has:enforced` compiles to `deleted:[null]`, and no other term is read on that column.
+
+Tests owed by the two reviews, each to be run here: `in` and `nin` in one operator object, two variables in one operator object, a `nin` on a nullable column on every database, a list under `glob` on every database and in the in-memory match, and a typed `[` written as `[[]` on MySQL, which goes through `GlobToRegex` unchanged ([`Syntax.cpp:125`](../../libs/db/src/generators/Syntax.cpp#L125)) and which ICU may refuse, in which case `GlobToRegex` escapes it. Whether every QL view's columns set `nullable` also needs an audit: the access views copy whole column definitions ([`access-meta.jsonnet:58`](../../libs/access/config/access-meta.jsonnet#L58)), so theirs do. The TypeScript tests are tables of text against expected arguments, run under a fixed `TZ`: a daylight-saving day, two bare words, `has:` and `no:` on *Enforced*, and a term on a connection's status refused.
+
+## Phase 3b - the filter box (piece 3, second half)
+
+Issue [#591].
+
+After 3a. One PR. The parsed form replaces `fieldFilters` ([`view.ts:430`](../../web/framework/control/src/lib/model/ql/view.ts#L430)) and `View.query` compiles it ([`view.ts:341`](../../web/framework/control/src/lib/model/ql/view.ts#L341)); `filter` joins `ViewJson` as the typed text, in place of `filters`. Everything that reads `fieldFilters` moves with it: `copyFrom`, `fromJson` and `toJson`, `sameFilters` ([`view.ts:404`](../../web/framework/control/src/lib/model/ql/view.ts#L404)), the routes' filters through `fromConfig` ([`view.ts:230`](../../web/framework/control/src/lib/model/ql/view.ts#L230)), `deletedView` ([`ql-list-resolver.ts:176`](../../web/framework/control/src/lib/services/ql-list-resolver.ts#L176)) and the pick lists' fixed filters ([`ql-list-resolver.ts:47`](../../web/framework/control/src/lib/services/ql-list-resolver.ts#L47)). Those become fixed terms, merged with the view's as a repeated field is: `-id:…` for the ids a pick list leaves out ([`ql-selector.ts:87`](../../web/framework/control/src/lib/pages/ql/selector/ql-selector.ts#L87)) and `no:deleted`, so `has:deleted` typed in a pick list's box lists nothing.
+
+The box goes in the toolbar's centre zone: a `mat-form-field` with a `mat-autocomplete`, parsing on every keystroke and querying on Enter, on a suggestion taken and 400 ms after the last keystroke, with a bad term underlined, named in the hint and left out. Suggestions come from the headers, the schema's enums ([`ql-list.ts:294`](../../web/framework/control/src/lib/pages/ql/list/ql-list.ts#L294)) and the rows ([`ql-list.ts:229`](../../web/framework/control/src/lib/pages/ql/list/ql-list.ts#L229)). A chip click adds and removes a term, on a column the box can filter; a grafted column's chip is no click target.
+
+The route filters are rewritten in the grammar ([`user-table-settings.ts:18`](../../web/access/control/src/lib/pages/users/user-table-settings.ts#L18), [`resource-table-settings.ts:23`](../../web/access/control/src/lib/pages/resources/resource-table-settings.ts#L23)), `<null>` and `<not null>` go from `ViewFilterSettings` ([`view.ts:176`](../../web/framework/control/src/lib/model/ql/view.ts#L176)), and the *Deleted* view filters on `has:deleted`.
+
+`NodeView` and `WatchView` get real column types ([`node-view.ts:15`](../../web/opc/control/src/lib/model/node-view.ts#L15), [`watch-view.ts:14`](../../web/opc/control/src/lib/model/watch-view.ts#L14)) and compile the terms to their predicates ([`node-view.ts:54`](../../web/opc/control/src/lib/model/node-view.ts#L54)), with time bounds formatted by `NodeView.time`. An empty cell matches no comparison, as a null matches none in SQL, where today's `<` and `<=` take one ([`node-view.ts:63`](../../web/opc/control/src/lib/model/node-view.ts#L63)). The logs get no box. The Filter tab and its spec go, and [`lists.md`](../../web/framework/control/src/assets/help/lists.md) gains the grammar.
+
+Tests: the box's error underline and hint, the debounce under fake timers, a suggestion's quoting, a chip click twice and a grafted column's chip inert, a pick list's fixed terms beside a typed `has:deleted`; [`node-view.spec.ts`](../../web/opc/control/src/lib/model/node-view.spec.ts) for the declared types, a numeric comparison on a String column, an empty cell under `<`, and whole days on a time column.
+
+## Phase 4 - fields (piece 4)
+
+Issue [#592].
+
+After 2, in either order with 3. One PR. The `Fields` checklist joins the view menu. The header gains its menu on hover and focus, through `ql-table` for the GraphQL lists ([`graphql-table.ts:26`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.ts#L26)) and through a directive on the hand-built tables' headers. Entries that belong to later phases arrive with them, `Filter by…` with Phase 5.
+
+The menu button and the resize handle cannot go inside the sort header. Material's sort header sorts on any click within its host and wraps what it is given in a `role=button` container with a tab stop, so either control would re-sort the column and be a nested control like the chevron. `mat-sort-header` therefore moves off the header cell ([`graphql-table.html:22`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.html#L22)) to a span around the label, with the menu button and the handle beside it in the cell. The cell binds `aria-sort` itself, which is valid on a columnheader alone. The hand-built tables' headers change the same way.
+
+Column order is CDK drag along the header row, with `Move left` and `Move right` in the menu. Width is an 8px handle writing `Style.flex` as a fixed basis ([`view.ts:98`](../../web/framework/control/src/lib/model/ql/view.ts#L98)), a double-click returning the route's width, with `Wider` and `Narrower` in the menu. The floor is 64px, room for the menu button and the handle, held where the width is written: the 100px minimum is a rule for a class Material no longer sets ([`graphql-table.scss:1`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.scss#L1)), so nothing stops a column at 0 today, and the rule goes. `ql-table` binds the style to the header and the cell alike ([`graphql-table.ts:63`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.ts#L63)). The hand-built tables size their columns in their own sheets ([`gateway-watch.scss:28`](../../web/opc/control/src/lib/pages/gateway-detail/watch/gateway-watch.scss#L28), [`log-detail.scss:11`](../../web/framework/control/src/lib/pages/logs/detail/log-detail.scss#L11)) and bind none, so there the directive goes on the cells as well as the headers: it sets `flex` inline where the view's field has a width and nothing where it has none, and the sheet's rule is the route's width a double-click returns to. The name column goes sticky, over the selector where there is one, and the selector becomes a *Select* field the checklist offers. The Display tab goes.
+
+Tests: [`graphql-table.spec.ts`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.spec.ts) for the menu, `Hide field`, each move, a click on the menu button and on the handle leaving the sort alone, a width written to the style, held at the floor and restored, and the directive on one hand-built table, header and cells. Sticky columns and the drag are checked in the browser.
+
+## Phase 5 - sort, and the editor goes (piece 5)
+
+Issue [#593].
+
+After 3b and 4. One PR. The header menu's two sorts, `Sort by` in the view menu with its ticks, `No sorting`, `Move up` and `Move down`, and a dragged order. A column `sortable` refuses is absent from both ([`graphql-table.ts:78`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.ts#L78)). The pager's hidden `id` tiebreak stays ([`ql-list-resolver.ts:190`](../../web/framework/control/src/lib/services/ql-list-resolver.ts#L190)), and the logs keep time in the sort as `LogView` does already. `Filter by…` joins the header menu here, the first phase with both the menu and the box: on a chip, enum or boolean column the box can filter it lists the column's values, and a pick adds or removes the term as a chip click does.
+
+`matSort` holds one active column, and the tables bind the first sort to it, so the second and later indicators are drawn by the table rather than by Material.
+
+With the Sort tab gone the editor has nothing left: `ql-list-settings` and its specs are deleted, the four hosts lose their `isSettings` branch ([`ql-list.html:3`](../../web/framework/control/src/lib/pages/ql/list/ql-list.html#L3), [`log-detail.html:3`](../../web/framework/control/src/lib/pages/logs/detail/log-detail.html#L3), [`node-children.html:3`](../../web/opc/control/src/lib/pages/node-detail/node-children/node-children.html#L3), [`gateway-watch.html:11`](../../web/opc/control/src/lib/pages/gateway-detail/watch/gateway-watch.html#L11)), and the toolbar loses the tune button and its `edit` output.
+
+Tests: the ordered sort reaching `View.query`, the numbered indicator, `Filter by…` adding and removing a term, and that each host renders with no editor.
+
+## Phase 6a - the QL's groupBy (piece 6, first half)
+
+Issue [#594].
+
+Any time. One PR, C++. `Input` gains `GroupBy()` beside `Limit` and `OrderByJson` ([`Input.h:27`](../../include/jde/ql/types/Input.h#L27)), and `groupBy` joins the arguments that are not column filters, in both places that list them ([`FilterQL.cpp:324`](../../libs/ql/src/types/FilterQL.cpp#L324), [`LocalSubscriptions.cpp:110`](../../libs/ql/src/LocalSubscriptions.cpp#L110)), or it would be read as a filter on a column of that name. `DB::Statement` gains `GroupBy` ([`Statement.h:19`](../../include/jde/db/generators/Statement.h#L19)), written before `order by` in `Move` ([`Statement.cpp:21`](../../libs/db/src/generators/Statement.cpp#L21)). `SelectAwait` selects the column with the `count` it already answers ([`ops/SelectAwait.cpp:136`](../../libs/ql/src/ops/SelectAwait.cpp#L136)) and groups by the column it selected, the one `addColumn` resolves. For an enum that is the joined view's `name` ([`ops/SelectAwait.cpp:129`](../../libs/ql/src/ops/SelectAwait.cpp#L129)), not the id column `FilterColumn` gives: SQL Server refuses a select-list column that is not grouped and sqlite does not, so a local run would pass. A grouped query answers a row per value, so `orderBy`, `limit` and `skip` beside `groupBy` are refused, and the statement orders by the grouped column.
+
+Tests in `Jde.QL.Tests`: a count per value, a nullable column's null group, a filter narrowing the counts, an enum grouped by its display name, an aliased pair of queries, an unknown column refused, and `orderBy` or `limit` beside `groupBy` refused. Windows and the three databases through CI, as ever, which is where the enum case is proved.
+
+## Phase 6b - the slice panel (piece 6, second half)
+
+Issue [#595].
+
+After 6a, 3b and 4. One PR. `Slice by` in the view menu and the header menu, offering number, boolean and enum columns and never `ID`. A 240px panel at the left with *All* and one row per value, its count honouring the filter box. `QLList` runs the `groupBy` query with the view's filter and none of its sort or page, and the node and watch lists count their rows. The chosen value is kept beside the drafts and never saved. `sliceBy` joins `ViewJson` and `TableSettings` ([`ql-list-resolver.ts:23`](../../web/framework/control/src/lib/services/ql-list-resolver.ts#L23)). The panel folds to a `Slice` button on a small screen and is absent on a phone, in jde-spa's breakpoints as [`web/CLAUDE.md`](../../web/CLAUDE.md) requires.
+
+Tests: the panel's counts and narrowing, the second click, a filter changing the counts, a slice surviving a reload but not a `Save`.
+
+## Phase 7 - group by and sums (piece 7)
+
+Issue [#596].
+
+After 6a, 3b and 4. One PR. `Group by` and `Field sum` in the menus, the same column rule. The group field becomes the view's first sort, ahead of the user's, and the rows gain a header per value through a second `matRowDef` with a `when`, over a data source flattened to headers and rows. The header is sticky and shows the value as the cell would, *No <field>* for null, the page's count, the chosen sums, and *12 of 40* from a `groupBy` query on the group field. A page break inside a group repeats its header. The collapsed set is kept beside the drafts. `groupBy` and `sums` join `ViewJson` and `TableSettings`. The node and watch lists cut the same groups from their applied rows; a shared helper does the flattening for `ql-table` and the hand-built tables alike. The selection reads the rows alone: `toggleAll` and `isAllSelected` ([`graphql-table.ts:44`](../../web/framework/control/src/lib/pages/graphql/table/graphql-table.ts#L44)) take the rows before the flattening, or the header rows would be selected and counted.
+
+Tests: the flattening as a pure function, including a page break, null and collapse; the whole-list count with and without a slice; a sum leaving out `ID` columns; select-all over a grouped page.
+
+## Phase 8 - keyboard (piece 8)
+
+Issue [#597].
+
+After the rest. One PR. A grid directive on every table: `role=grid`, a roving `tabindex`, arrows, Home and End, Ctrl+Home and Ctrl+End, PageDown and PageUp turning the pager's pages, Enter opening a row, Space and Shift+Space for selection, and Enter on a header cell opening its menu. Inside a header cell the sort button and the menu button leave the tab order, the directive overriding the `tabindex=0` Material's sort header gives its container, so the grid stays one tab stop. `Ctrl+\` focuses the filter box, `Cmd+\` on a Mac, beside the navbar's `/` ([`navbar.ts:176`](../../web/spa/control/src/lib/shared/navbar/navbar.ts#L176)). Tests: each key on `ql-table` and one hand-built table, and focus returning from a menu. [`lists.md`](../../web/framework/control/src/assets/help/lists.md) gains the key table.
+
+## Help
+
+Each phase rewrites its part of [`lists.md`](../../web/framework/control/src/assets/help/lists.md), and Phase 5 takes out the Filter, Display and Sort tabs and `Show`. Two other pages describe the old controls and are rewritten with the phases that remove them: [`apps.md:54`](../../web/framework/control/src/assets/help/apps.md#L54) for the logs' tune button and [`:66`](../../web/framework/control/src/assets/help/apps.md#L66) for their **Page Size**, and [`gateways.md:28`](../../web/opc/control/src/assets/help/gateways.md#L28), [`:62`](../../web/opc/control/src/assets/help/gateways.md#L62) and [`:101`](../../web/opc/control/src/assets/help/gateways.md#L101) for the view buttons, the tune button and the view editor on the node and watch lists.
+
+## Order and milestones
+
+1a, then 1b, then 2. 3a after 2, 3b after 3a. 4 after 2. 5 after 3b and 4. 6a any time, 6b and 7 after 6a, 3b and 4. 8 last.
+
+| Phase | Size |
+| --- | --- |
+| 1a, 1b | L, M |
+| 2 | M |
+| 3a, 3b | M, L |
+| 4 | M |
+| 5 | S |
+| 6a, 6b | M, M |
+| 7 | M |
+| 8 | M |
+
+Three milestones, each merged to the `views` branch end to end before the next starts:
+
+| Milestone | Phases | What it proves |
+| --- | --- | --- |
+| **I**, the view bar and the draft | 1a, 1b, 2 | every list shows its views as tabs, with numbers, repeated names and a row per view; every change is a draft with a dot, kept across a reload and a visit to a record, and `Save` and `Discard` work |
+| **II**, the controls | 3a, 3b, 4, 5 | a filter is typed rather than built, columns are shown, moved and resized from the header, sort is in the menus, and the full-page editor is gone from all four hosts |
+| **III**, groups, slices and keys | 6a, 6b, 7, 8 | a list can be sliced and grouped with counts over the whole list, and every table is a keyboard grid |
+
+`views` merges to `main` after Milestone III.
+
+## Risks
+
+- **Other specs add routes meanwhile.** Calendar, OEE, flows and Open Protocol add `QLList` routes, and any with a `filters:` setting is written in the old form until `views` merges. The merge has to rewrite those, and the branch needs regular merges from `main`.
+- **Dragging inside Material's tab header.** The header scrolls its links with a transform of its own, and CDK drag-drop inside it is untested. `Move left` and `Move right` cover the function if the drag proves awkward.
+- **AXE.** The chevron is the one accepted failure, and the header's menu button and handle sit beside the sort button so that they are not a second. No AXE harness is installed in the workspace, so WCAG AA on everything else rests on review until one is.
+- **Nullable metadata.** A QL view column that does not set `nullable` still drops nulls on `nin`. The audit in 3a settles it; the fallback is to emit the `or` on every column but a primary key.
+- **Two browser tabs.** They share one set of drafts, and the later write wins, as the saved views already do. A fresh read replaces the cached rows, so a tab that reloads sees what the other saved.
+- **The initial bundle.** The filter module is imported by `View`, which the resolvers load statically, so it lands in `main`. It has to stay small, and the budget fails the build if it does not.
+
+[#586]: https://github.com/Jde-cpp/opc-hub/issues/586
+[#587]: https://github.com/Jde-cpp/opc-hub/issues/587
+[#588]: https://github.com/Jde-cpp/opc-hub/issues/588
+[#589]: https://github.com/Jde-cpp/opc-hub/issues/589
+[#590]: https://github.com/Jde-cpp/opc-hub/issues/590
+[#591]: https://github.com/Jde-cpp/opc-hub/issues/591
+[#592]: https://github.com/Jde-cpp/opc-hub/issues/592
+[#593]: https://github.com/Jde-cpp/opc-hub/issues/593
+[#594]: https://github.com/Jde-cpp/opc-hub/issues/594
+[#595]: https://github.com/Jde-cpp/opc-hub/issues/595
+[#596]: https://github.com/Jde-cpp/opc-hub/issues/596
+[#597]: https://github.com/Jde-cpp/opc-hub/issues/597
