@@ -1,6 +1,7 @@
 ---
 name: md-file-refs
-description: How to cite repo files in markdown docs (code reviews, findings, design notes) so the refs are clickable in the VS Code preview — relative links with #L anchors, never file:// or root-relative — plus linkify.py, which converts and validates them. Use when writing or updating any markdown doc that cites source files by path:line.
+description: >-
+  How to cite repo files in markdown docs (code reviews, findings, design notes) so the refs are clickable in the VS Code preview — relative links with #L anchors, never file:// or root-relative — plus linkify.py, which converts and validates them. Use when writing or updating any markdown doc that cites source files by path:line.
 ---
 
 # File references in markdown docs

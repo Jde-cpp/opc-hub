@@ -149,7 +149,9 @@ namespace Client{
 		return Request<jvalue>( ELogLevel::Debug, ELogTags::SocketClientWrite, sl, [&]( RequestId id ){ return FromClient::Query( move(q), move(variables), id, returnRaw ); }, "[{}]{}.", text );
 	}
 	α AppClientSocketSession::Subscribe( string&& q, jobject vars, sp<QL::IListener> listener, SL sl )ε->await<jarray>{
-		auto subscriptions = QL::ParseSubscriptions( q, vars, _appClient->SubscriptionSchemas, sl );//throws before an id is spent.
+		//Parsed for its ids alone, and so malformed text throws before an id is spent.  Remote:  the AppServer serves it, so a table
+		//SubscriptionSchemas doesn't hold, the calendars' in the app schema a split gateway mounts no meta for, is the server's to refuse.
+		auto subscriptions = QL::ParseRemoteSubscriptions( q, vars, _appClient->SubscriptionSchemas, sl );
 		let text = sv{ q }.substr( 0, Web::MaxLogLength() );
 		return Request<jarray>( ELogLevel::Debug, ELogTags::SocketClientWriteSub, sl, [&]( RequestId id ){
 			_subscriptionRequests.emplace( id, SubscriptionRequest{listener, move(subscriptions), q, vars} );
@@ -259,7 +261,7 @@ namespace Client{
 					}
 					//Remembered on the ack, not on the request: this is the point at which the subscription is known to
 					//exist, and it is what a reconnect re-issues.  Clear() drops the ids above; this outlives them.
-					Subscriptions::Remember( move(request.Query), move(request.Variables), request.Listener, ids );
+					Subscriptions::Remember( _appClient.get(), move(request.Query), move(request.Variables), request.Listener, ids );
 					return true;
 				}) ){ //request not found.
 					Fail( move(task), Exception{"SubscriptionAck: '{}' not found.", requestId}, requestId );

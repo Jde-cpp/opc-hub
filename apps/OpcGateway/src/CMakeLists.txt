@@ -16,7 +16,7 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.OpcGateway ) #config/args/sqlite + the 'Debug - Sqlite' launch config load these
 linkConfigFile( "${jdeRoot}/libs/db/config/common-meta.libsonnet" "${jdeRoot}/apps/OpcGateway/config/common-meta.libsonnet" ) #here, not in an exe:  the gateway's, the hub's and the superbuild all configure this dir.
 
-target_link_libraries( ${targetName} Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.HistorianLib Jde.Opc.UAServer ) #the historian:  the pass-through's continuation (ql/HistQL.h) and the gateway's groups;  the UA server library:  the gateway's endpoint (server/GatewayServer.h), which is how the hub gets it.
+target_link_libraries( ${targetName} Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.HistorianLib Jde.Opc.UAServer Jde.CalendarLib ) #the historian:  the pass-through's continuation (ql/HistQL.h) and the gateway's groups;  the UA server library:  the gateway's endpoint (server/GatewayServer.h), which is how the hub gets it;  the calendar library:  its client, the cache of every calendar (gatewayStartup.cpp).
 
 target_precompile_headers(${targetName}
 	PRIVATE

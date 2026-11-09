@@ -10,11 +10,11 @@ namespace Jde::App::Client{
 	Ω findRequest( vector<Subscriptions::Request>& requests, const sp<QL::IListener>& listener, str query, const jobject& variables )ι->vector<Subscriptions::Request>::iterator{
 		return find_if( requests, [&](let& r){ return r.Listener==listener && r.Query==query && r.Variables==variables; } );
 	}
-	α Subscriptions::Remember( string query, jobject variables, sp<QL::IListener> listener, const flat_set<QL::SubscriptionId>& ids )ι->void{
+	α Subscriptions::Remember( const IAppClient* client, string query, jobject variables, sp<QL::IListener> listener, const flat_set<QL::SubscriptionId>& ids )ι->void{
 		lg _{ _requestMutex };
 		auto p = findRequest( _requests, listener, query, variables );
 		if( p==_requests.end() )
-			_requests.push_back( Request{move(query), move(variables), move(listener), ids} );
+			_requests.push_back( Request{client, move(query), move(variables), move(listener), ids} );
 		else{
 			p->Ids = ids;
 			p->Failures = 0;//L5: this only runs on an ack, so reaching here is the server accepting the request - the count starts over.
@@ -65,6 +65,7 @@ namespace Jde::App::Client{
 	}
 	α Subscriptions::Replay( sp<IAppClient> client )ι->uint{
 		auto requests = Remembered();
+		std::erase_if( requests, [&]( let& r ){ return r.Client!=client.get(); } );//another client's are its own session's to carry.
 		let count = (uint)requests.size();//answered before any await: Client::Connect needs to know now whether this is a reconnect.
 		if( count )
 			replay( move(client), move(requests) );

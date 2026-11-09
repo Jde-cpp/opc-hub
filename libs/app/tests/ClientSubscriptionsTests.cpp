@@ -32,7 +32,7 @@ namespace Jde::App::Tests{
 				Client::Subscriptions::Forget( r.Listener, {} );
 		}
 		α Remember( sp<Listener> listener, sv query, flat_set<QL::SubscriptionId> ids )ι->void{
-			Client::Subscriptions::Remember( string{query}, jobject{{"id", 1}}, move(listener), ids );
+			Client::Subscriptions::Remember( nullptr, string{query}, jobject{{"id", 1}}, move(listener), ids );
 		}
 		α Queries()ι->vector<string>{
 			vector<string> y;

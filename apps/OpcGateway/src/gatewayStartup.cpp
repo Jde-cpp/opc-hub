@@ -8,6 +8,7 @@
 #include <jde/access/Authorize.h>
 #include <jde/app/client/appClient.h>
 #include <jde/app/client/IAppClient.h>
+#include <jde/calendar/client/Calendars.h>
 #include <jde/opc/ServerTrust.h>
 #include "jde/fwk/settings.h"
 #include "GatewayAppClient.h"
@@ -89,6 +90,10 @@ namespace Jde::Opc{
 	}
 	α Gateway::Connect( sp<DB::AppSchema> schema )ε->void{
 		App::Client::ConnectAccess( AppClient(), {move(schema)}, {}, false );
+		//The shift calendars (docs/calendar/spec.md *The client*), after the access snapshot and before the historian starts:
+		//subscribed and loaded through the app client's QL, blocking as the snapshot does.  A refusal is logged, not thrown.
+		BlockAwait( Calendar::Client::Calendars::Configure(AppClient()->QLServer(), AppClient()->UserPK()) );
+		Process::AddShutdownFunction( [](bool terminate, SL sl){ Calendar::Client::Calendars::Shutdown(terminate, sl); } );//its listener's, as ConnectAccess registered the access listener's.
 		//Registration order is run order (process.cpp):  the endpoint first, so its sessions are gone before the historian and the UA
 		//clients it reports on;  then the historian, before the UA clients go:  the collectors' items are dropped on live clients, and
 		//the groups' last flushes run while the executor still does.

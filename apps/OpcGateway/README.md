@@ -36,21 +36,38 @@ installed.
   The secure channel uses a certificate the gateway issues per connection (`/gateway/issuedCerts`).  Its SAN is the
   gateway's applicationUri.  Every server's certificate is checked against `/gateway/trustedCertDirs`, unless
   `/gateway/verifyServerCertificate` is off.
+- **The historian** (`src/hist/`, `/gateway/hist`, [`libs/historian/docs/spec.md`](../../libs/historian/docs/spec.md)):
+  groups of nodes the gateway collects and stores under `/gateway/hist/path`.  Groups and templates are the
+  `histGroups`, `histGroupNodes`, `histTemplates` and `histTemplateNodes` tables.  No `hist` block, no historian.
 - **The OPC UA endpoint** (`src/server/`, `/gateway/server`, [`docs/servers/spec.md`](../../docs/servers/spec.md)): the
-  gateway as a server, on 4841, over the shared UA server library (`libs/opc/server`).  Its sessions are hub sessions, by
-  certificate, issued token or user name; its address space is a folder per connection, each with a `_Connection` object
-  (`Connected`, `Since`, `Url`, `LastError`, `Reconnects`), and under it every historian group's members at their paths on the
-  source, in a namespace per connection and remote URI, each serving the last value the collector delivered with the source's
-  timestamps, `Bad_NoCommunication` through a connection's loss.  Their history follows ([plan](../../docs/servers/plan.md)).  No
-  block, no endpoint.  `endpoint{ url policies trustedCertDirs rejectedCertDir served sessions }` describes it for the web's
-  Endpoint tab and a group's page ([`src/ql/OpcSessionsQLAwait.h`](src/ql/OpcSessionsQLAwait.h)), null without one.
-- **GraphQL** (`src/ql/`): `serverConnections`, `opcSessions`, `node` and `nodes` for browse and read, `updateVariable`
-  for a write, `call( opc, object, method, args )` for a method call with `method( opc, id )` for its arguments, read from
-  the InputArguments/OutputArguments properties and cached per connection (`src/MethodArguments.*`) - an argument of a type of
-  the server's own goes as the namespace-0 type it derives from (`src/BaseTypeCache.*`) - `refreshConditions( opc, node )` for
-  ConditionRefresh with the caller's own subscription (`src/ql/RefreshConditionsQLAwait.*`), `search` over a
-  per-connection name index crawled on the first search (`src/NodeIndex.*`), and `__type(opc, ns, i)` for a server's
-  enumerations, read from its DataType nodes (`src/EnumTypeCache.*`).
+  gateway as a server, on 4841, over the shared UA server library (`libs/opc/server`).  No block, no endpoint.
+
+  Its sessions are hub sessions, by certificate, issued token or user name.
+
+  Its address space is a folder per connection, each with a `_Connection` object (`Connected`, `Since`, `Url`,
+  `LastError`, `Reconnects`).  Under it are every historian group's members at their paths on the source, in a
+  namespace per connection and remote URI.
+
+  Each member serves the last value the collector delivered, with the source's timestamps, and `Bad_NoCommunication`
+  through a connection's loss.  It also serves the group's history (`src/server/GatewayHistoryHost.*`) and writes
+  through to the source (`src/server/ServedWrites.*`).
+
+  `endpoint{ url policies trustedCertDirs rejectedCertDir served sessions }` describes it for the web's Endpoint tab
+  and a group's page ([`src/ql/OpcSessionsQLAwait.h`](src/ql/OpcSessionsQLAwait.h)), null without one.
+- **GraphQL** (`src/ql/`):
+  - `serverConnections`, `opcSessions`, and `node` and `nodes` for browse and read.
+  - `updateVariable` for a write, and `testConnection` to try a connection's settings before they are saved.
+  - `call( opc, object, method, args )` for a method call, with `method( opc, id )` for its arguments.  They are read
+    from the InputArguments/OutputArguments properties and cached per connection (`src/MethodArguments.*`).  An
+    argument of a type of the server's own goes as the namespace-0 type it derives from (`src/BaseTypeCache.*`).
+  - `refreshConditions( opc, node )` for ConditionRefresh with the caller's own subscription
+    (`src/ql/RefreshConditionsQLAwait.*`).
+  - `search` over a per-connection name index crawled on the first search (`src/NodeIndex.*`).
+  - `__type(opc, ns, i)` for a server's enumerations, read from its DataType nodes (`src/EnumTypeCache.*`).
+  - `history`, a server's own or a group's with `group`, and the `createHistory`/`updateHistory`/`upsertHistory`/
+    `purgeHistory` edits.
+  - `historyGroups` and `resolveHistory` for the historian.
+
   `config/introspection/*.jsonnet` extends the schema the site sees.
 - **The OPC websocket** (`src/GatewaySocketSession.*`, protobuf, `src/types/proto`): subscribe and unsubscribe by node,
   the data changes pushed back, and GraphQL over the socket too.  The REST side is `POST /login`, `POST /logout` and
@@ -72,29 +89,47 @@ The executable is `<buildDir>/apps/OpcGateway/exe/Jde.Opc.Gateway`.  Run it from
 puts the log under the working directory's `logs/`, beside a split AppServer from the same tree, never a hub:
 
 ```bash
-../apps/OpcGateway/exe/Jde.Opc.Gateway -c -tests -settings=$JDE_DIR/apps/OpcGateway/config/Opc.Gateway.jsonnet \
-  -include=args/sqlite -arg path=<file>
+REPO_SOURCE_DIR=$JDE_DIR REPO_BUILD_DIR=$(dirname <buildDir>) ../apps/OpcGateway/exe/Jde.Opc.Gateway -c -tests \
+  -settings=$JDE_DIR/apps/OpcGateway/config/Opc.Gateway.jsonnet -include=args/sqlite -arg path=<file>
 ```
+
+`REPO_SOURCE_DIR` and `REPO_BUILD_DIR`, the build dir's parent, fill the paths `args/sqlite` reads.  ctest sets them
+itself.
 
 `-c` is console output.  `-tests` binds the ext vars the dev configs read; it is not a test mode.
 
 ## Tests
 
 `Jde.Opc.Tests` ([`tests/`](tests)) embeds an AppServer on 2067, an OpcServer on 2070 / opc.tcp 4940 and the gateway on
-2068 in one process - the live ports +100, so it runs beside a live hub or service.  The embedded server loads the DI and IA nodesets
-from `$UA_NODE_SETS`, which must be set.  Under ctest it runs on in-memory sqlite:
-`ctest --timeout 300 -R Jde.Opc.Tests`.
+2068, its endpoint on 4941, in one process.  These are the live ports +100, so it runs beside a live hub or service.
+The embedded server loads the DI and IA nodesets from `$UA_NODE_SETS`, which must be set.
+
+Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops it after `JDE_TEST_TIMEOUT` seconds
+(450 by default).  `ctest --timeout` does not change that; raise it at configure with `-DJDE_TEST_TIMEOUT=<seconds>`.
 
 - `SubscribeTests`, `BrowseTests`, `ReadRequestTests`, `WriteTests`: the OPC operations end to end.
 - `QLTests`: the GraphQL surface, the introspection extensions included.
 - `HistTests`, `HistEditTests`: a server's own history, read and edited through the gateway's QL.
 - The gateway's historian:
   - `CredentialTests`, `CollectorTests`: the collector's own credential, and the client of its own it gets.
-  - `HistGroupTests`: groups and templates - the tables, each edit's live side and `resolveHistory`.
-  - `HistCollectorTests`: a group collecting, read and edited with `group`, beside a pass-through read of the same range.
-  - `HistSubscribeTests`: historian subscriptions over the socket - snapshot pages, then the records as stored.
+  - `HistGroupTests`, `HistPathTests`: groups and templates.  They cover the tables, each edit's live side,
+    `resolveHistory` and a node's path.
+  - `HistCollectorTests`: a group collecting, read and edited with `group`, beside a pass-through read of the same
+    range.
+  - `HistSubscribeTests`: historian subscriptions over the socket.  Snapshot pages come first, then the records as
+    stored.
+- The gateway's OPC UA endpoint:
+  - `GatewayServerTests`: logins by issued token, certificate and user name, and the `_Connection` folders.
+  - `GatewayNodesTests`: a group's members served at their paths, with their attributes and rights.
+  - `GatewayValuesTests`: live values, checked against the group's last record.
+  - `GatewayHistoryTests`: raw and processed HistoryRead, checked against the QL `history` with `group`, and
+    HistoryUpdate through the endpoint.
+  - `GatewayWritesTests`: a client's Write, held for the source's answer.
 - `AppClientTests`, `ConnectCoalesceTests`, `RemoveClientTests`, `KeepAliveTests`: the AppServer link and the client
   life cycle.
+- `CalendarClientTests`: the cache of the AppServer's shift calendars
+  ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
+  a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.
 - [`auth/`](tests/auth): credentials, certificates and server trust.  `TokenTests`, `PasswordTests`,
   `PlaintextPasswordTests`, `NoSecurityTests`, `SecurityPolicyTests`, `CertTests`, `CertFileTests`, `TrustReloadTests`,
   `ApplicationUriTests`, `ServerTrustTests`, `ServerTrustLiveTests`, `RefusedCertificateTests`,
@@ -114,8 +149,8 @@ shaped around the three split exes, not the hub.
   cert tree, and prints the file an external server has to trust.
 - `-grant`: grants the soak user AllAccess on the OpcServer's `nodeIds` resource.  `soak.sh` runs it after the
   OpcServer's first boot, then restarts the OpcServer to load it.
-- No mode flag: the run itself - writes on every leg, a check that each push comes back, status samples, and the
-  summary the verdict reads.
+- No mode flag: the run itself.  It writes on every leg, checks that each push comes back, samples status and writes
+  the summary the verdict reads.
 
 `soak.sh --smoke` is a 10-minute validation run.  `--duration`, `--external*`, `--session-timeout` and the rest are
 documented at the top of [`soak.sh`](soak/soak.sh), with the verdict criteria.  `UA_NODE_SETS` must be set, as for the

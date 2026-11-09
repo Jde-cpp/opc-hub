@@ -10,17 +10,18 @@ namespace Jde::App::Client::Subscriptions{
 	//*request* has to outlive them or nothing can be put back afterwards.  Kept per (query, variables, listener) rather than per
 	//subscription id, because one query can ack into several ids and replaying it re-creates all of them.
 	struct Request final{
+		const IAppClient* Client;//whose session acked it:  a process that hosts several app clients (Jde.Opc.Tests, the gateway's beside the OpcServer's) replays each one's own.
 		string Query;
 		jobject Variables;
 		sp<QL::IListener> Listener;
 		flat_set<QL::SubscriptionId> Ids;//what this request acked into, so Forget can drop it by id.
 		uint Failures{};//L5: consecutive replays the server has refused.  Reset by Remember, which only runs on an ack.
 	};
-	α Remember( string query, jobject variables, sp<QL::IListener> listener, const flat_set<QL::SubscriptionId>& ids )ι->void;
+	α Remember( const IAppClient* client, string query, jobject variables, sp<QL::IListener> listener, const flat_set<QL::SubscriptionId>& ids )ι->void;
 	α Forget( const sp<QL::IListener>& listener, const flat_set<QL::SubscriptionId>& ids )ι->void;//ids empty = every request of listener's.
 	α Remembered()ι->vector<Request>;
 	α NoteReplayFailure( const Request& request )ι->bool;
-	//Re-issues every Remembered request on a session that has just come up.  Returns the number replayed, 0 on a first
-	//connect - which is what tells Client::Connect to run the initial subscribe instead.
+	//Re-issues every request Remembered for `client` on its session, which has just come up.  Returns the number replayed, 0 on
+	//a first connect - which is what tells Client::Connect to run the initial subscribe instead.
 	α Replay( sp<IAppClient> client )ι->uint;
 }

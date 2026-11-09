@@ -401,6 +401,21 @@ namespace Jde::QL::Tests{
 		}
 	}
 
+	//A subscription another process serves (an app client's, over its socket):  a table the client's schemas don't hold parses
+	//for its id and resolves no view, where the serving side's parse refuses it.
+	TEST( MutationQLTests, ARemoteSubscriptionNeedsNoView ){
+		static const vector<sp<DB::AppSchema>> noSchemas;
+		const string text{ "subscription CalendarShiftUpdated{ calendarShiftUpdated(subscriptionId:$id){ id } }" };
+		EXPECT_THROW( QL::ParseSubscriptions(text, jobject{{"id", 0x30002}}, noSchemas), Exception );
+		auto subs = QL::ParseRemoteSubscriptions( text, jobject{{"id", 0x30002}}, noSchemas );
+		ASSERT_EQ( subs.size(), 1u );
+		EXPECT_EQ( subs[0].Id, 0x30002u );
+		EXPECT_EQ( subs[0].TableName, "calendar_shifts" );
+		EXPECT_EQ( subs[0].Type, EMutationQL::Update );
+		EXPECT_FALSE( subs[0].Fields.DBTable() );
+		EXPECT_THROW( QL::ParseRemoteSubscriptions("calendarShifts{ id }", {}, noSchemas), Exception ) << "a query is no subscription";
+	}
+
 	//A command SetSystemMutations registers is a mutation though it starts with no verb, bare or under the keyword, and is
 	//taken whole though it starts with one:  an Execute named by the whole command, resolving no table, so a POST is still
 	//what may run it.

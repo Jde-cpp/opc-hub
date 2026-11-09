@@ -95,6 +95,10 @@ namespace Jde::Opc::Gateway{
 			_jwt = BlockAwait<Web::Client::ClientSocketAwait<Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 		return *_jwt;
 	}
+	α Tests::ForgetAppSession()ι->void{
+		_session = nullptr;
+		_jwt.reset();
+	}
 	α Tests::SessionCredential( optional<UserPK> user )ε->Credential{
 		Credential y{ Jwt().Payload() };
 		if( user )
