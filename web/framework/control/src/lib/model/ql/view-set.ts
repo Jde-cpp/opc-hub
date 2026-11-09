@@ -103,7 +103,7 @@ export class ViewSet<V extends View>{
 			const views = [...this.#members];
 			const at = views.findIndex( v=>v.number==saved.number );
 			if( at<0 ){
-				saved.number = Math.max( 0, ...views.map( v=>v.number ) )+1;
+				saved.number = this.#next;
 				views.push( saved );
 			}
 			else
@@ -111,6 +111,22 @@ export class ViewSet<V extends View>{
 			this.#twin = undefined;
 			this.#selected = saved.number;
 			this.#set( views );
+		} );
+	}
+	//A copy of the view as the user's, under the next number and its own name, after it and shown:  the menu's Duplicate.  The
+	//twin goes, as it does on a Save or on switching away.
+	duplicate( view:View ):Promise<void>{
+		return this.#change( ()=>{
+			const at = this.#members.findIndex( v=>v.number==view.number );
+			this.#insert( this.#type.copy(view), at<0 ? this.#members.length : at+1 );
+		} );
+	}
+	//`+ New view`:  a copy of the view shown, its edits included, named for its number and after the last
+	add():Promise<void>{
+		return this.#change( ()=>{
+			const copy = this.#type.copy( this.current() );
+			copy.name = `View ${this.#next}`;
+			this.#insert( copy, this.#members.length );
 		} );
 	}
 	//Delete has a view to take:  one of the set, and not a twin, whose Delete would take the view under it where the user may mean
@@ -226,6 +242,16 @@ export class ViewSet<V extends View>{
 	}
 	#rowKey( number:number ):string{ return `${this.#viewsKey}/${number}`; }
 	#json( view:V ):string{ return JSON.stringify( view.toJson(this.#settings) ); }
+	#insert( copy:V, at:number ):void{
+		copy.type = ViewType.User;
+		copy.number = this.#next;
+		const views = [...this.#members];
+		views.splice( at, 0, copy );
+		this.#twin = undefined;
+		this.#selected = copy.number;
+		this.#set( views );
+	}
+	get #next():number{ return Math.max( 0, ...this.#members.map( v=>v.number ) )+1; }
 	//The set replaced, and so the user's - or the route's again where none is left.  A view the change left alone is the object it
 	//was, so a host re-reads its rows only where the view on screen is another.
 	#set( views:V[] ){

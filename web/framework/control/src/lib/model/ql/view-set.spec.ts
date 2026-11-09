@@ -243,6 +243,30 @@ describe( 'ViewSet', ()=>{
 			expect( JSON.parse(service.rows.get("things/views/1")!) ).toMatchObject( {name: "Z", sort: [{active: "name"}]} );//not the twin's sort
 		} );
 
+		it( "duplicates a view after it, under its name and the next number, and shows the copy as the user's", async ()=>{
+			const { set, writes, held } = await load( stored([[1, make("A")], [3, make("B")]]) );
+			set.sort( {active: "kind", direction: "asc"} );//a twin, which goes with the switch
+			await set.duplicate( set.views()[0] );
+			expect( names(set) ).toEqual( ["1:A", "4:A", "3:B"] );
+			expect( set.current().number ).toBe( 4 );
+			expect( set.current().isUser ).toBe( true );
+			expect( set.current().sort[0].active ).toBe( "name" );//the view's, not its twin's
+			expect( remembered() ).toBe( "4" );
+			expect( writes() ).toEqual( ["things/views/4", "things/views"] );
+			expect( held() ).toEqual( {index: [1, 4, 3], rows: [1, 3, 4]} );
+		} );
+
+		it( 'adds a copy of the view shown, its edits with it, named for its number and after the last', async ()=>{
+			const { set, writes, held } = await load();
+			set.sort( {active: "kind", direction: "asc"} );
+			await set.add();
+			expect( names(set) ).toEqual( ["1:Default", "2:Users", "3:View 3"] );
+			expect( set.current().sort[0].active ).toBe( "kind" );
+			expect( set.current().isUser ).toBe( true );
+			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views/3", "things/views"] );//a first save:  the whole set
+			expect( held() ).toEqual( {index: [1, 2, 3], rows: [1, 2, 3]} );
+		} );
+
 		it( 'writes nothing for a view that is not in the set', async ()=>{
 			const { set, writes } = await load( stored([[1, make("A")]]) );
 			const stranger = unnumbered( set, "Stranger" );

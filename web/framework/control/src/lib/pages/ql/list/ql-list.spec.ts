@@ -113,7 +113,7 @@ describe( 'QLList re-query failures reach the user', ()=>{
 
 	it( 'reports a failed view change', async ()=>{
 		const { page, exception } = create();
-		await page.onChangeView( 0 );
+		await page.onChangeView();
 		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
 	} );
 
@@ -131,7 +131,7 @@ describe( 'QLList re-query failures reach the user', ()=>{
 
 	it( 'clears isRefreshing even when the re-query fails', async ()=>{
 		const { page } = create();
-		await page.onChangeView( 0 );
+		await page.onChangeView();
 		expect( page.isRefreshing() ).toBe( false );
 	} );
 } );
@@ -392,7 +392,7 @@ describe( 'QLList paging', ()=>{
 	it( 'starts over on a view change', async ()=>{
 		const { page, load } = create( rows(40) );
 		await page.onPage( {startIndex: 25, pageSize: 25} );
-		await page.onChangeView( 0 );
+		await page.onChangeView();
 		expect( load.mock.calls[1][1].skip ).toBe( 0 );
 		expect( page.skip() ).toBe( 0 );
 	} );
@@ -424,7 +424,7 @@ describe( 'QLList paging', ()=>{
 			const { page } = create( rows(40) );
 			await page.onPage( {startIndex: 25, pageSize: 25} );
 			expect( stored.get('users/skip') ).toBe( '25' );
-			await page.onChangeView( 0 );
+			await page.onChangeView();
 			expect( stored.has('users/skip') ).toBe( false );
 		} );
 
@@ -473,7 +473,9 @@ describe( 'QLList paging', ()=>{
 			const profile = page.profile();
 			profile.reset( [...profile.views(), View.fromTable( {columns: ["name"], sort: "slug"}, schema )], schema );
 			const pending = hold();
-			const older = turn( page, 25 ), newer = page.onChangeView( 1 );
+			const older = turn( page, 25 );
+		profile.select( 1 );//as the toolbar does, before it says the view changed
+		const newer = page.onChangeView();
 			pending[1].settle();
 			await newer;
 			pending[0].settle();

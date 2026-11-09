@@ -53,6 +53,17 @@ The toolbar's zones are re-let as the spec's *The view bar* says. The toggle gro
 
 Tests: [`view-toolbar.spec.ts`](../../web/framework/control/src/lib/shared/view-toolbar/view-toolbar.spec.ts) rewritten for the tabs, the chevron on the active tab alone, each menu entry, `Delete` on the only tab bringing the route's views back, and a pick list's button and shorter menu. The first check with `ng build my-workspace --stats-json` belongs here: `MatTabsModule` and CDK drag-drop must land in lazy chunks, since the budget fails at 1.4 MB.
 
+Built 2026-11-09, where it differs from the text above:
+
+- **The toolbar changes the set itself.** A tab click, `Rename`, `Duplicate`, the moves, a drop, `Delete` and `+ New view` call `ViewSet` from `ViewToolbar`, which says what failed through the snackbar, and `viewChange` carries no index: it says the view on screen is another, at once or - where the set was still to be read - once the change lands, as `LogDetail` re-read after its own changes. `QLList` and the logs re-read on it, and the node and watch lists, whose rows are a computed of the view, bind nothing. A rename re-reads too, since the renamed view is another object. The editor's Save, Show and Delete stay the hosts'.
+- **`ViewSet.duplicate` and `add` make the copies**, as the user's under the next number and shown at once: a duplicate after its view under its name, a new view after the last named *View N*. Both drop the twin, as a save does, so `+ New view` on an edited view carries the edits into the new one.
+- **Refresh and the tune button are in the right zone**, ahead of the host's right-hand controls and the row count, and the centre zone is gone until the filter box takes it in 3b. The tabs row is 40px high, Material's 48 trimmed.
+- **The input naming what the host takes is `tabs`**, false for a pick list, which also drops the entries that make, move or remove a view; one naming the menu's entries comes with the first host that leaves one out, the logs in 3b. A pick list's `Views` submenu marks the current view as a `menuitemradio`.
+- **The twin is still a tab of its own**, reading *(edited)* after its view and not draggable, until Phase 2 folds it into its view's tab with the dot. A tab is tracked by its view's number, so a rename keeps its tab and the focus on it.
+- **Rename commits on Enter or on leaving the box**; Escape or a blank name leaves the view's. `Delete` asks nothing, as the editor's did not.
+- **`mat-tab-nav-panel` is a block** by a global rule in `_general.scss`, since Material leaves the element inline and every host's table sits in one.
+- **The metafile check:** CDK drag-drop and the toolbar land in a lazy chunk, and the initial bundle is 1.17 MB. Material's tabs module was in the initial bundle before this phase and stays there: `app.config.ts` imports `MAT_TABS_CONFIG` from it to turn the tab animations off, and esbuild cannot split a module.
+
 ## Phase 2 - the draft (piece 2)
 
 Issue [#589].

@@ -136,7 +136,7 @@ describe( 'LogDetail paging', ()=>{
 		await tick();
 		expect( range(fixture) ).toBe( '1 – 21' );
 		page.onPagerChange( {startIndex: 21, pageSize: 21} );
-		page.onViewChange( 0 );
+		page.refresh();//a view change:  the toolbar selects the view, and the page re-reads
 		await tick();
 		expect( range(fixture) ).toBe( '1 – 21' );
 	} );
@@ -343,7 +343,8 @@ describe( 'LogDetail sort', ()=>{
 	} );
 	it( 'repairs a view saved with no sort as it loads', async ()=>{
 		const { fixture, page, snackbar } = await create( [{...LogView.default().toJson( undefined ), name: 'mine', sort: []}] );
-		page.onViewChange( 0 );//the saved view is the set
+		page.viewSet.select( 0 );//the saved view is the set
+		page.refresh();
 		await tick();
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
 		expect( page.view().name ).toBe( 'mine' );

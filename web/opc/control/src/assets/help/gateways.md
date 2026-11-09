@@ -25,7 +25,7 @@ An enumeration shows the name of its value, here, in the history table and on th
 
 A variable's page lists the variable itself first, with its value, status and subscribe box. Then come its properties, such as the EURange, EngineeringUnits or EnumStrings a server declares, and on a structured variable its member variables, each with a page of its own. A variable the server keeps history for may list its **HA Configuration** too.
 
-The refresh button re-reads the values. The view buttons switch between saved views, and the tune button beside them sets a view's columns, filters and sort; see [Views](/help/lists#views).
+The refresh button re-reads the values. The tabs above the bar switch between saved views, and the tune button sets a view's columns, filters and sort; see [Views](/help/lists#views).
 
 A method row has a **Call** button, in the Snapshot column or beside the method's name where a view hides that column. Its dialog takes a value per input argument, named and described as the server declares them; an enumeration of the server's own is a choice of its values. It shows the call's status, each argument's where the server refused one, and the outputs.
 
@@ -98,7 +98,7 @@ The columns:
 - **Sampling** and **Queue**: what the row asks, with **Revised** beside each, what the server answered
 - **Discard** and **Filter**
 
-The view buttons and the tune button choose the columns, sort and filters, saved as the node tables' views are; see [Views](/help/lists#views). **Refresh** reads each node's description again. The values are the subscription's, and need no refresh.
+The view tabs and the tune button choose the columns, sort and filters, saved as the node tables' views are; see [Views](/help/lists#views). **Refresh** reads each node's description again. The values are the subscription's, and need no refresh.
 
 The tune button on a row sets its **parameters**, what the row's item asks its server for: the **sampling interval**, in milliseconds, 0 for the server's fastest; the **queue size**, how many samples the server queues between publishes; **discard**, which sample a full queue drops; and the data-change filter - the **trigger**, whether the server reports a change of status alone, of status or value, or of those and the timestamp, and the **deadband** a value change has to clear, absolute, in the value's units, or a percent of the node's EURange. Blank is the gateway's default: 500 ms, a queue of one, oldest discarded, no filter, which is the server's own StatusValue trigger and no deadband. The server may revise the sampling and the queue to what it supports, and refuse a filter it cannot apply - a percent deadband on a node with no EURange, for one: the row's status says so, and the row stands as it was. A change takes effect as it is applied, and the saved list keeps it.
 

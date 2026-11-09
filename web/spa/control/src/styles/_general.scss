@@ -156,6 +156,12 @@ mat-toolbar.jde-list-toolbar {
 	}
 }
 
+// The tabs' panel the four list hosts put around their table (ViewToolbar's mat-tab-nav-bar requires one):  a block, as Material
+// leaves the element inline.
+mat-tab-nav-panel {
+	display: block;
+}
+
 // Sticky pins against the nearest scroll container - any box whose overflow is not visible or clip, whether or not it ever
 // scrolls.  The pane that scrolls is the shell's mat-sidenav-content, but the page hosts borrowed Material's
 // mat-drawer-container class for its colours and display, which is overflow:hidden, and a detail page's tab group clips its

@@ -331,7 +331,6 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	onViewShow( view:View ){ this.isSettings.set( false ); this.viewSet.show( view ); }
 	onViewSave( view:View ){ this.viewSet.save( view ).catch( e=>this.#snackbar.exception( "Could not save view.", e ) ); this.isSettings.set( false ); }
 	onViewDelete( view:View ){ this.viewSet.remove( view ).catch( e=>this.#snackbar.exception( "Could not delete view.", e ) ); this.isSettings.set( false ); }
-	onChangeView( index:number ){ this.viewSet.select( index ); }
 	colSuggestions():Record<string,any[]>{
 		const suggestions:Record<string,any[]> = {};
 		for( const name of Object.keys( WatchView.columns ) ){

@@ -2,6 +2,7 @@ import { Component, ElementRef, OnDestroy, OnInit, input, signal, inject, comput
 import { DatePipe } from '@angular/common';
 import { MatTableModule } from '@angular/material/table';
 import {MatSortModule, Sort} from '@angular/material/sort';
+import { MatTabNavPanel } from '@angular/material/tabs';
 import { LogDataSource } from '../log-data-source';
 import {LogSettings} from '../log-settings';
 import { QLListSettings } from '../../ql/list/ql-list-settings/ql-list-settings';
@@ -29,7 +30,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 	selector: 'log-detail',
 	templateUrl: './log-detail.html',
 	styleUrls: ['./log-detail.scss'],
-	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTooltipModule, Paginator, QLListSettings, ViewToolbar]
+	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, Paginator, QLListSettings, ViewToolbar]
 })
 export class LogDetail implements OnInit, OnDestroy{
 	#snackBar = inject( SnackbarService );
@@ -101,10 +102,6 @@ export class LogDetail implements OnInit, OnDestroy{
 		Paginator.showFirstRow( this.#el.nativeElement, this.data.startIndex(), event.startIndex );
 		if( this.data.turnTo(event.startIndex) )
 			this.load( this.data.allEntries.length );
-	}
-	onViewChange( index:number ){
-		if( this.viewSet.select(index) )
-			this.refresh();
 	}
 	onViewSave( view:View ){
 		this.isSettings.set( false );

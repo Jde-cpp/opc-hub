@@ -3,7 +3,7 @@
 		<ql-list-settings [suggestions]={} [columns]=columns [view]=viewCopy [schema]=schema [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event)
 			(onCancel)="isSettings.set( false )"></ql-list-settings>
 	} @else {
-		<view-toolbar [views]="viewSet" [refreshing]="isRefreshing()" (viewChange)="onViewChange($event)" (edit)="isSettings.set(true)" (refresh)="refresh()">
+		<view-toolbar [views]="viewSet" [tabPanel]="panel" [refreshing]="isRefreshing()" (viewChange)="refresh()" (edit)="isSettings.set(true)" (refresh)="refresh()">
 			<mat-form-field left subscriptSizing="dynamic" class="level-field">
 				<mat-label>Level</mat-label>
 				<mat-select [value]="level" (selectionChange)="onMinLevelChange($event.value)">
@@ -17,48 +17,50 @@
 			<button right matIconButton type="button" aria-label="Next of this message" matTooltip="The next row of the selected message" [disabled]="!selectedEntry" (click)="navigateNext()"><mat-icon>navigate_next</mat-icon></button>
 			<button right matIconButton type="button" aria-label="Show hidden messages" [matTooltip]="hiddenTooltip()" [disabled]="!profile.hiddenMessages.length" (click)="clearHiddenMessages()"><mat-icon>layers_clear</mat-icon></button>
 		</view-toolbar>
-		<mat-table [dataSource]="data" class="mat-elevation-z8" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction">
-			<ng-container matColumnDef="time">
-				<mat-header-cell mat-sort-header *matHeaderCellDef> Time </mat-header-cell>
-				<mat-cell style="text-align: left" title="{{element.time | date }}" mat-cell *matCellDef="let element"> {{element.time | date: "HH:mm:ss.SSS"}} </mat-cell>
-			</ng-container>
-			<ng-container matColumnDef="level">
-				<mat-header-cell mat-sort-header *matHeaderCellDef> Level </mat-header-cell>
-				<mat-cell mat-cell *matCellDef="let entry"><mat-chip [class]="levelClass(entry)">{{toLevel(entry.level)}}</mat-chip></mat-cell>
-			</ng-container>
-			<ng-container matColumnDef="message">
-				<mat-header-cell mat-sort-header *matHeaderCellDef> Message </mat-header-cell>
-				<mat-cell mat-cell *matCellDef="let entry"><span class="clip" (mouseenter)="overflowTitle($event)">{{message(entry)}}</span></mat-cell>
-			</ng-container>
-			<ng-container matColumnDef="file">
-				<mat-header-cell mat-sort-header *matHeaderCellDef [style.flex]="'0 0 200px'"> File </mat-header-cell>
-				<mat-cell mat-cell *matCellDef="let element" [style.flex]="'0 0 200px'" title="{{fileName(element)}}"><span class="path"><bdi>{{fileName(element)}}</bdi></span></mat-cell>
-			</ng-container>
-			<ng-container matColumnDef="function">
-				<mat-header-cell mat-sort-header *matHeaderCellDef class="function"> Function </mat-header-cell>
-				<mat-cell mat-cell *matCellDef="let element" class="function"><span class="clip" (mouseenter)="overflowTitle($event)">{{functionName(element)}}</span></mat-cell>
-			</ng-container>
-			<ng-container matColumnDef="line">
-				<mat-header-cell *matHeaderCellDef class="number"> Line </mat-header-cell>
-				<mat-cell mat-cell *matCellDef="let element" class="number"> {{element.line}} </mat-cell>
-			</ng-container>
-			<ng-container matColumnDef="tags">
-				<mat-header-cell mat-sort-header *matHeaderCellDef> Tags </mat-header-cell>
-				<mat-cell mat-cell *matCellDef="let entry" [title]="tagList(entry)">
-					@for( tag of tags(entry); track tag ){
-						<mat-chip>{{tagName(tag)}}</mat-chip>
-					}
-				</mat-cell>
-			</ng-container>
-			<ng-container matColumnDef="user">
-				<mat-header-cell mat-sort-header *matHeaderCellDef class="number"> User </mat-header-cell>
-				<mat-cell mat-cell *matCellDef="let entry" class="number"> {{entry.user}} </mat-cell>
-			</ng-container>
-			<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
-			<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" tabindex="0" (click)="cellClick(row)" (keydown.enter)="cellClick(row)"></mat-row>
-		</mat-table>
-		<div class="jde-pager">
-			<paginator (onPageEvent)="onPagerChange($event)" [startIndex]="data.startIndex()" [length]="data.length()" [pageSize]="view().limit"></paginator>
-		</div>
+		<mat-tab-nav-panel #panel>
+			<mat-table [dataSource]="data" class="mat-elevation-z8" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction">
+				<ng-container matColumnDef="time">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Time </mat-header-cell>
+					<mat-cell style="text-align: left" title="{{element.time | date }}" mat-cell *matCellDef="let element"> {{element.time | date: "HH:mm:ss.SSS"}} </mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="level">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Level </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let entry"><mat-chip [class]="levelClass(entry)">{{toLevel(entry.level)}}</mat-chip></mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="message">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Message </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let entry"><span class="clip" (mouseenter)="overflowTitle($event)">{{message(entry)}}</span></mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="file">
+					<mat-header-cell mat-sort-header *matHeaderCellDef [style.flex]="'0 0 200px'"> File </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let element" [style.flex]="'0 0 200px'" title="{{fileName(element)}}"><span class="path"><bdi>{{fileName(element)}}</bdi></span></mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="function">
+					<mat-header-cell mat-sort-header *matHeaderCellDef class="function"> Function </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let element" class="function"><span class="clip" (mouseenter)="overflowTitle($event)">{{functionName(element)}}</span></mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="line">
+					<mat-header-cell *matHeaderCellDef class="number"> Line </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let element" class="number"> {{element.line}} </mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="tags">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Tags </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let entry" [title]="tagList(entry)">
+						@for( tag of tags(entry); track tag ){
+							<mat-chip>{{tagName(tag)}}</mat-chip>
+						}
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="user">
+					<mat-header-cell mat-sort-header *matHeaderCellDef class="number"> User </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let entry" class="number"> {{entry.user}} </mat-cell>
+				</ng-container>
+				<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
+				<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" tabindex="0" (click)="cellClick(row)" (keydown.enter)="cellClick(row)"></mat-row>
+			</mat-table>
+			<div class="jde-pager">
+				<paginator (onPageEvent)="onPagerChange($event)" [startIndex]="data.startIndex()" [length]="data.length()" [pageSize]="view().limit"></paginator>
+			</div>
+		</mat-tab-nav-panel>
 	}
 }

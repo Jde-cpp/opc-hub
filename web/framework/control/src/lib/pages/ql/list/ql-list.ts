@@ -10,6 +10,7 @@ import {MetaObject}  from '../../../model/ql/schema/meta-object';
 import { ComponentPageTitle, Latest, RouteItem, RouteStore, HELP_TOPICS, helpTopics, helpTopicFor, helpTopicRoute } from 'jde-spa';
 import { MatIcon } from '@angular/material/icon';
 import { MatButton } from '@angular/material/button';
+import { MatTabNavPanel } from '@angular/material/tabs';
 import { CellText, GraphQLTable } from '../../graphql/table/graphql-table';
 import { EmptyState, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
 import { Failure, failureState } from '../../../utils/errors';
@@ -28,7 +29,7 @@ import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 	selector: 'ql-list',
 	templateUrl: './ql-list.html',
 	host: {class:'main-content my-content'},
-	imports: [FailureState, GraphQLTable, MatButton, MatIcon, Paginator, QLListSettings, RouterLink, ViewToolbar]
+	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, Paginator, QLListSettings, RouterLink, ViewToolbar]
 })
 export class QLList implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -178,9 +179,9 @@ export class QLList implements OnInit{
 		this.profile().show( view );
 		await this.#refresh();
 	}
-	async onChangeView( index:number ){
-		if( this.profile().select(index) )
-			await this.#refresh();
+	//the toolbar put another view on screen:  its rows
+	async onChangeView(){
+		await this.#refresh();
 	}
 	//another view, or this one edited, is a different set of pages:  from the first
 	async refresh(){

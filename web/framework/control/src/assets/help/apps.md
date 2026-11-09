@@ -67,11 +67,10 @@ The entries this instance has logged, newest first, a page at a time. There is n
 
 The hub's log also holds the lines each connected application sends it. You see only those of applications whose log you may read: the `logs` resource on the Resources page, once it is enforced.
 
-The toolbar holds:
+The tabs above the toolbar switch between saved views. The toolbar holds:
 
 - the *Level* filter, which hides everything below the level picked
 - the refresh button, which reloads from the top
-- the view buttons, which switch between saved views
 - the tune button, which chooses the columns shown and their sort, and saves that as a view
 - on the right, three buttons that act on the row you select by clicking it, or with Enter:
   - the hide button hides every entry with the selected entry's message
