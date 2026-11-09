@@ -4,7 +4,9 @@
   Loaded by both processes via /opcServer/configFiles and /emulator/plc/nodeset so the emulated PLC's address space
   mirrors the server's.  PumpType.status is the run command (written by the UI, subscribed by the emulator);
   PumpType.motorRpm is the process value the emulator publishes (config/pubsub/pumps.libsonnet lists the fields).
-  NodeSet2 does not instantiate types, so every pump declares its own status/motorRpm variables.
+  PumpType.totalCount and rejectCount, UInt32 counters, and reasonCode, an Int32 that is 0 while nothing explains a stop, are
+  what OEE reads of a pump beside its status (docs/oee/spec.md *Emulator*): a machine's Total, Reject and Reason signals.
+  NodeSet2 does not instantiate types, so every pump declares its own variables.
 
   The variables marked Historizing="true" are the ones the OpcServer keeps the history of (libs/historian/docs/spec.md,
   *OpcServer*), each under the thresholds of its HA Configuration object.  Between them they cover every
@@ -15,6 +17,7 @@
     pump3.motorRpm      1 PERCENT_OF_RANGE (2) of its InstrumentRange, 0-1500: 15 rpm.
     pump4.motorRpm      0.5 PERCENT_OF_EU_RANGE (3) of its EURange, 0-3000: 15 rpm.
     pumpManual.motorRpm 10, with no format: the server adds ABSOLUTE_VALUE.
+    totalCount, rejectCount, reasonCode  on each pump, with no HA Configuration, as pump1.status: every change is stored.
   The PLC emulator loads the file too and keeps no history: there the attribute and the objects are only nodes.
 
   pumpManual.toHertz is the pumps demo's method (clients spec *Methods*, #318): what an install has to try the Call dialog on,
@@ -121,8 +124,47 @@
       <Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=1002</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=1003</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1004</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1005</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1006</Reference>
     </References>
   </UAObjectType>
+  <UAVariable NodeId="ns=1;i=1004" BrowseName="1:totalCount" ParentNodeId="ns=1;i=1001" DataType="UInt32" AccessLevel="3">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=1005" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=1001" DataType="UInt32" AccessLevel="3">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=1006" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=1001" DataType="Int32" AccessLevel="3">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the pump is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
   <UAVariable NodeId="ns=1;i=1002" BrowseName="1:status" ParentNodeId="ns=1;i=1001" DataType="Boolean" AccessLevel="3">
     <DisplayName>status</DisplayName>
     <References>
@@ -153,8 +195,44 @@
       <Reference ReferenceType="Organizes" IsForward="false">i=85</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6011</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6012</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6013</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6014</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6015</Reference>
     </References>
   </UAObject>
+  <UAVariable NodeId="ns=1;i=6013" BrowseName="1:totalCount" ParentNodeId="ns=1;i=5001" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6014" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=5001" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6015" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=5001" DataType="Int32" AccessLevel="3" Historizing="true">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the pump is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
   <UAVariable NodeId="ns=1;i=6011" BrowseName="1:status" ParentNodeId="ns=1;i=5001" DataType="Boolean" AccessLevel="3" Historizing="true">
     <DisplayName>status</DisplayName>
     <Description Locale="en">Run command: on starts the motor.</Description>
@@ -236,8 +314,44 @@
       <Reference ReferenceType="Organizes" IsForward="false">i=85</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6021</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6022</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6023</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6024</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6025</Reference>
     </References>
   </UAObject>
+  <UAVariable NodeId="ns=1;i=6023" BrowseName="1:totalCount" ParentNodeId="ns=1;i=5002" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5002</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6024" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=5002" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5002</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6025" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=5002" DataType="Int32" AccessLevel="3" Historizing="true">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the pump is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5002</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
   <UAVariable NodeId="ns=1;i=6021" BrowseName="1:status" ParentNodeId="ns=1;i=5002" DataType="Boolean" AccessLevel="3">
     <DisplayName>status</DisplayName>
     <References>
@@ -317,8 +431,44 @@
       <Reference ReferenceType="Organizes" IsForward="false">i=85</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6031</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6032</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6033</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6034</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6035</Reference>
     </References>
   </UAObject>
+  <UAVariable NodeId="ns=1;i=6033" BrowseName="1:totalCount" ParentNodeId="ns=1;i=5003" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5003</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6034" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=5003" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5003</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6035" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=5003" DataType="Int32" AccessLevel="3" Historizing="true">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the pump is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5003</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
   <UAVariable NodeId="ns=1;i=6031" BrowseName="1:status" ParentNodeId="ns=1;i=5003" DataType="Boolean" AccessLevel="3">
     <DisplayName>status</DisplayName>
     <References>
@@ -418,8 +568,44 @@
       <Reference ReferenceType="Organizes" IsForward="false">i=85</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6041</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=6042</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6043</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6044</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6045</Reference>
     </References>
   </UAObject>
+  <UAVariable NodeId="ns=1;i=6043" BrowseName="1:totalCount" ParentNodeId="ns=1;i=5004" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5004</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6044" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=5004" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5004</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6045" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=5004" DataType="Int32" AccessLevel="3" Historizing="true">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the pump is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5004</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
   <UAVariable NodeId="ns=1;i=6041" BrowseName="1:status" ParentNodeId="ns=1;i=5004" DataType="Boolean" AccessLevel="3">
     <DisplayName>status</DisplayName>
     <References>
@@ -506,8 +692,44 @@
       <Reference ReferenceType="HasComponent">ns=1;i=5010</Reference>
       <Reference ReferenceType="HasComponent">ns=1;i=5020</Reference>
       <Reference ReferenceType="HasCondition">ns=1;i=5020</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6120</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6121</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6122</Reference>
     </References>
   </UAObject>
+  <UAVariable NodeId="ns=1;i=6120" BrowseName="1:totalCount" ParentNodeId="ns=1;i=5005" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6121" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=5005" DataType="UInt32" AccessLevel="3" Historizing="true">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6122" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=5005" DataType="Int32" AccessLevel="3" Historizing="true">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the pump is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
   <UAObject NodeId="ns=1;i=5010" BrowseName="1:_Test" ParentNodeId="ns=1;i=5005">
     <DisplayName>_Test</DisplayName>
     <Description Locale="en">Variables of types the pumps have none of, for the gateway's suites.</Description>

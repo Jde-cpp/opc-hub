@@ -96,6 +96,91 @@ local attributes( i ) = {
 			//The unique (connection, node) index.  No `deleted`:  a node leaves its group by purge, which frees the index for another
 			//group, and rejoining is a new row and so a new node_index (spec *Collection*).
 			naturalKeys: [["server_connection_id", "node"]]
+		},
+		//OEE on the historian (docs/oee/spec.md *Machines*, *Stops*, *Intervals*, *Reasons and codings*).  Every edit of the six is
+		//routed by Gateway::CustomMutation, the hub's HubQL too, to ql/OeeMAwait, which checks the row with libs/oee's rules, refuses
+		//every generic mutation of the engine's three - oeeStops, oeeIntervals, oeeCodings - and runs the live side in src/oee.  A time
+		//the engine writes is a `long` of UA DateTime ticks, 100 ns from 1601 UTC, as the group's records are stamped:  a dateTime
+		//column holds whole seconds on sqlite and mysql, and a stop begins and ends at a record's source time.  `finish` and `width`
+		//are the spec's end and interval:  SQL Server reserves END and mysql INTERVAL, and column names are emitted unquoted.
+		oeeMachines:{
+			comment: "A machine:  one historian group whose members are given roles (oee_machine_signals), with its thresholds, its rows' width and its shift calendar",
+			columns: {
+				oeeMachineId: common.pkSequenced,
+				histGroupId: tables.histGroups.columns.histGroupId+{ pkTable: "hist_groups", sk:null, updateable:false, i:1, comment:"The group whose records the engine reads, a foreign key and unique:  a group has at most one machine, deleted ones counted.  OeeMAwait refuses the group's delete and purge while the row stands;  the key is the backstop.  Not updateable:  purge the machine and create it again." },
+				calendarId: common.types.uint+{ nullable:true, i:2, comment:"The AppServer calendar's id as a value, not a foreign key:  the calendar is another schema's row and, in a split deployment, another process's.  Checked against the calendar client's cache when set.  Null plans every minute." },
+				idealCycle: common.types.float+{ nullable:true, i:3, comment:"Milliseconds per unit, as UA's Duration is.  Null measures no performance." },
+				countUnit: common.types.varchar+{ length:64, nullable:true, i:4, comment:"What a count is, for the pages:  bottles, cases." },
+				smallStop: common.types.uint+{ default:300000, i:5, comment:"Milliseconds:  a stop shorter than this is a small stop, a performance loss.  Applied when a figure is read." },
+				idleTimeout: common.types.uint+{ nullable:true, i:6, comment:"Milliseconds without a count before a machine with no State signal is stopped, from its last count.  Required without a State signal." },
+				width: common.types.uint+{ default:60000, i:7, comment:"The spec's interval:  the width of the machine's oee_intervals rows in milliseconds, 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60 minutes.  A change takes effect at the next boundary both widths share." },
+				processed: common.types.dateTime+{ nullable:true, insertable:false, updateable:false, i:8, comment:"The end of the last interval the engine wrote, where a restart resumes:  the `from` a create names, to the second, now by default, then a boundary of the width.  Written by the engine alone." }
+			}+common.slugColumns,
+			naturalKeys: [common.valuesNK, ["slug"], ["hist_group_id"]]
+		},
+		oeeMachineSignals:{
+			comment: "A machine's signal:  a member of its group in a role.  No deleted - a signal leaves by purge",
+			columns: {
+				oeeMachineSignalId: common.pkSequenced,
+				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, updateable:false, i:1 },
+				role: common.types.varchar+{ length:8, updateable:false, i:2, comment:"State, Total, Rate, Good, Reject or Reason;  one row per role." },
+				histGroupNodeId: tables.histGroupNodes.columns.histGroupNodeId+{ pkTable: "hist_group_nodes", sk:null, i:3, comment:"The member, which must be the machine's group's:  a foreign key, so a member a machine uses cannot leave its group until the signal does.  OeeMAwait refuses the member's purge first." },
+				running: common.types.varchar+{ length:1024, nullable:true, i:4, comment:"A State signal's values that mean running, a json list of Booleans, numbers and strings:  [2,3] for a code.  Null is [true]." },
+				ratePeriod: common.types.uint+{ default:60000, i:5, comment:"A Rate signal's time unit in milliseconds:  60000 for a per-minute rate." }
+			},
+			naturalKeys: [["oee_machine_id", "role"]]
+		},
+		oeeStops:{
+			comment: "The engine's:  a machine's stop, from the record that left running to the record that returned, or with unknown a span of unknown time.  No generic mutation",
+			columns: {
+				oeeStopId: common.pkSequenced,
+				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, updateable:false, i:1 },
+				start: common.types.long+{ i:2, comment:"UA ticks:  the source time of the record that left running, or of the Bad record or the gap's start." },
+				finish: common.types.long+{ nullable:true, i:3, comment:"The spec's end, UA ticks;  null while the stop is in progress." },
+				code: common.types.long+{ nullable:true, i:4, comment:"The Reason signal's value at the stop's start when that is non-zero, else its first non-zero value before the stop's end." },
+				unknown: common.types.bit+{ default:false, i:5, comment:"True for a span of unknown time, which is not a stop:  the reads' sums never count it." }
+			},
+			naturalKeys: [["oee_machine_id", "start"]]
+		},
+		oeeIntervals:{
+			comment: "The engine's:  one row per machine per interval, every one written.  An absent row means the engine has not reached it.  No generic mutation",
+			columns: {
+				oeeIntervalId: common.longSequenced,
+				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, updateable:false, i:1 },
+				start: common.types.long+{ i:2, comment:"UA ticks:  a boundary of the row's width, but for a machine's first row, which starts where its engine did." },
+				ms: common.types.uint+{ i:3, comment:"The row's width in milliseconds." },
+				run: common.types.uint+{ i:4, comment:"Milliseconds running;  run, stop and unknown sum to ms." },
+				stop: common.types.uint+{ i:5, comment:"Milliseconds stopped." },
+				unknown: common.types.uint+{ i:6, comment:"Milliseconds unknown." },
+				total: common.types.float+{ i:7, comment:"The count in the row, a float since a Rate integrates fractions." },
+				good: common.types.float+{ i:8, comment:"Signed as the signals give it:  a reject recorded a row after its count makes that row's negative, and a read nets a bucket." },
+				reject: common.types.float+{ i:9 }
+			},
+			naturalKeys: [["oee_machine_id", "start"]]
+		},
+		oeeReasons:{
+			comment: "A stop reason, one list per gateway:  its category and the code the Reason signal reports for it",
+			columns: {
+				oeeReasonId: common.pkSequenced,
+				category: common.types.varchar+{ length:16, i:1, comment:"Unplanned, Planned or Excluded." },
+				code: common.types.long+{ nullable:true, i:2, comment:"The Reason signal's value for it, unique among the reasons, deleted ones counted, since a deleted reason keeps resolving.  OeeMAwait's check, not an index:  SQL Server's unique index holds one null." }
+			}+common.slugColumns,
+			naturalKeys: common.slugNKs
+		},
+		oeeCodings:{
+			comment: "An operator's reason over a range of a machine's time.  Written by codeOee and uncodeOee alone;  the engine never touches one.  No generic mutation, and no deleted",
+			columns: {
+				oeeCodingId: common.pkSequenced,
+				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, updateable:false, i:1 },
+				start: common.types.long+{ i:2, comment:"UA ticks.  A machine's codings do not overlap." },
+				finish: common.types.long+{ i:3, comment:"The spec's end, UA ticks, after start." },
+				oeeReasonId: tables.oeeReasons.columns.oeeReasonId+{ pkTable: "oee_reasons", sk:null, i:4 },
+				comment: common.types.varchar+{ length:2048, nullable:true, i:5 },
+				identityId: common.types.uint+{ i:6, comment:"The operator's identity as a value, the historian's identity rule:  never a key into the access schema, which a split gateway's database does not hold.  0 for an anonymous session." },
+				userName: common.types.varchar+{ length:256, i:7, comment:"The operator's name as it was then." },
+				created: common.slugColumns.created+{ i:8 }
+			},
+			naturalKeys: [["oee_machine_id", "start"]]
 		}
 	},
 	//The gateway's other two Authorize::Test gates (reviews/m2-closing.md #8).  `opcSessions` and `search` are QL *system*

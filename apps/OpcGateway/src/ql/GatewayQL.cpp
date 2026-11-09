@@ -3,6 +3,7 @@
 #include "GatewayQLAwait.h"
 #include "HistGroupEditQLAwait.h"
 #include "HistGroupQLAwait.h"
+#include "OeeMAwait.h"
 #include "ServerCnnctnMAwait.h"
 #include "TestConnectionQLAwait.h"
 #include "TrustServerQLAwait.h"
@@ -39,6 +40,8 @@ namespace Jde::Opc{
 		return GatewayQLAwait::Test( q, move(creds), sl );
 	}
 	α Gateway::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
+		if( auto await = OeeMAwait::Test(m, creds, sl); await )//OEE's tables, and ahead of the historian's:  a group's delete or purge while a machine holds it, and a member's purge while a signal names it.
+			return await;
 		if( auto await = HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory.
 			return await;
 		if( auto await = HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits.
