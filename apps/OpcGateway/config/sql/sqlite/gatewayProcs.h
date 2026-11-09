@@ -17,4 +17,5 @@ namespace Jde::DB::Sqlite::GatewayProcs{
 	α RegisterGatewayOeeMachineSignalInsert( IProcs& procs )ι->void;
 	α RegisterGatewayOeeReasonInsert( IProcs& procs )ι->void;
 	α RegisterGatewayOeeCodingInsert( IProcs& procs )ι->void;
+	α RegisterGatewayOeeMachinePurge( IProcs& procs )ι->void;//gateway_oee_machine_purge.cpp.
 }

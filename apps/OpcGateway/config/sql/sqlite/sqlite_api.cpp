@@ -13,4 +13,5 @@ void RegisterProcs( Jde::DB::Sqlite::IProcs& procs ){
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeMachineSignalInsert( procs );
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeReasonInsert( procs );
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeCodingInsert( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeMachinePurge( procs );
 }

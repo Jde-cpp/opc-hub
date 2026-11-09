@@ -236,6 +236,31 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NO_THROW( Oee().TestEnabled() );
 	}
 
+	//A template member one of whose members a machine's signal names:  refused before any group's member goes.
+	TEST_F( OeeTests, ATemplateMemberAMachineUsesStays ){
+		let itemsBefore = Items();
+		let templateId = Id( Mutate("createHistTemplate( name:$name, slug:$slug ){ id }", {{"name", "OEE template"}, {"slug", "oeeTemplate"}}) );
+		absl::Cleanup purgeTemplate = [=]{ try{ Mutate( "purgeHistTemplate( id:$id )", {{"id", templateId}} ); }catch( const std::exception& e ){ ADD_FAILURE() << e.what(); } };
+		let member = Id( Mutate("createHistTemplateNode( histTemplateId:$t, path:$path ){ id }", {{"t", templateId}, {"path", serialize(jarray{jobject{{"nsu", PumpsUri}, {"name", "status"}}})}}) );
+		let group = [&]( sv slug, UA_UInt32 root ){
+			return Id( Mutate("createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection, histTemplateId:$template, root:$root ){ id }", {{"name", slug}, {"slug", slug}, {"connection", _connection}, {"template", templateId}, {"root", serialize(Ex(root))}}) );
+		};
+		let first = group( "oeeTemplateFirst", Pump3 );
+		absl::Cleanup purgeFirst = [=]{ Purge( first, itemsBefore ); };
+		let second = group( "oeeTemplateSecond", Pump4 );
+		absl::Cleanup purgeSecond = [=]{ try{ Mutate( "purgeHistGroup( id:$id )", {{"id", second}} ); }catch( const std::exception& e ){ ADD_FAILURE() << e.what(); } };
+		let nodes = [&]( uint32 id ){ return Mutate( "histGroupNodes( histGroupId:$group ){ id }", {{"group", id}} ).as_array(); };
+		ASSERT_EQ( nodes(first).size(), 1u );
+		ASSERT_EQ( nodes(second).size(), 1u );
+		let machine = Id( Mutate("createOeeMachine( name:$name, slug:$slug, histGroupId:$group ){ id }", {{"name", "OEE template machine"}, {"slug", "oeeTemplateMachine"}, {"group", second}}) );
+		absl::Cleanup purgeMachine = [=]{ try{ Mutate( "purgeOeeMachine( id:$id )", {{"id", machine}} ); }catch( const std::exception& e ){ ADD_FAILURE() << e.what(); } };
+		Mutate( "createOeeMachineSignal( oeeMachineId:$machine, role:\"State\", histGroupNodeId:$node ){ id }", {{"machine", machine}, {"node", Id(nodes(second)[0])}} );
+
+		EXPECT_NE( Refused([&]{ Mutate( "purgeHistTemplateNode( id:$id )", {{"id", member}} ); }).find("purge the signal"), string::npos );
+		EXPECT_EQ( nodes(first).size(), 1u ) << "refused before the first group's member went";
+		EXPECT_EQ( nodes(second).size(), 1u );
+	}
+
 	//A machine over the pumps group with its signals, made through the QL:  its `processed` is the `from` its create named, its
 	//rows hold the group, and its engine starts `settle` after its last signal, not before.
 	TEST_F( OeeTests, AMachineOverThePumpsGroup ){
@@ -314,7 +339,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Mutate( "restoreOeeReason( id:$id )", {{"id", jam}} );
 		DS()->ExecuteSync( {Ƒ("insert into {}( oee_machine_id, start, finish, oee_reason_id, identity_id, user_name, created ) values( ?, ?, ?, ?, ?, ?, {} )", GetViewPtr(OeeTable::Codings)->SqlName(), DS()->Syntax().UtcNow()), {DB::Value{(uint)id}, OeeTicks(t0), OeeTicks(t0+1min), DB::Value{(uint)jam}, DB::Value{(uint)0}, DB::Value{"tests"}}} );
 		EXPECT_NE( Refused([&]{ Mutate( "purgeOeeReason( id:$id )", {{"id", jam}} ); }).find("coding"), string::npos );
-		DS()->ExecuteSync( OeeSql::DeleteOf(OeeTable::Codings, id) );
+		DS()->ExecuteSync( {Ƒ("delete from {} where oee_machine_id=?", GetViewPtr(OeeTable::Codings)->SqlName()), {DB::Value{(uint)id}}} );
 
 		EXPECT_NE( Refused([&]{ Mutate( "deleteHistGroup( id:$id )", {{"id", pump.Group}} ); }).find("purge the machine"), string::npos );
 		EXPECT_NE( Refused([&]{ Mutate( "deleteHistGroup( slug:$slug )", {{"slug", pump.Slug}} ); }).find("purge the machine"), string::npos ) << "keyed by its slug";

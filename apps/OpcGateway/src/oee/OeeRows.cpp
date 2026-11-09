@@ -65,8 +65,6 @@ namespace Jde::Opc{
 			where.Add( view->GetColumnPtr("deleted"), nullptr );
 		if( filter.Key )
 			where.Add( view->GetColumnPtr(filter.Key->IsPK() ? "oee_machine_id" : "slug"), filter.Key->IsPK() ? DB::Value{filter.Key->PK()} : DB::Value{filter.Key->NK()} );
-		if( filter.Group )
-			where.Add( view->GetColumnPtr("hist_group_id"), (uint)*filter.Group );
 		return { select(OeeTable::Machines, {"oee_machine_id", "hist_group_id", "calendar_id", "ideal_cycle", "small_stop", "idle_timeout", "width", "processed", "name", "deleted"}, move(where), sl), machineRow, sl };
 	}
 	α Gateway::SelectOeeSignals( OeeSignalFilter filter, SL sl )ι->HistRowsAwait<OeeSignalRow>{
@@ -109,8 +107,11 @@ namespace Jde::Opc{
 			{DB::Value{(uint)machine}, OeeTicks(stop.Start), stop.End ? OeeTicks(*stop.End) : DB::Value{}, stop.Code ? DB::Value{(_int)*stop.Code} : DB::Value{}, DB::Value{stop.Unknown}} };
 	}
 	α Gateway::OeeSql::UpdateStop( OeeMachinePK machine, const Oee::Stop& stop )ε->DB::Sql{
-		return { Ƒ("update {} set finish=?, code=? where oee_machine_id=? and start=?", name(OeeTable::Stops)),
-			{stop.End ? OeeTicks(*stop.End) : DB::Value{}, stop.Code ? DB::Value{(_int)*stop.Code} : DB::Value{}, DB::Value{(uint)machine}, OeeTicks(stop.Start)} };
+		return { Ƒ("update {} set finish=?, code=?, unknown=? where oee_machine_id=? and start=?", name(OeeTable::Stops)),
+			{stop.End ? OeeTicks(*stop.End) : DB::Value{}, stop.Code ? DB::Value{(_int)*stop.Code} : DB::Value{}, DB::Value{stop.Unknown}, DB::Value{(uint)machine}, OeeTicks(stop.Start)} };
+	}
+	α Gateway::OeeSql::DeleteStop( OeeMachinePK machine, TimePoint start )ε->DB::Sql{
+		return { Ƒ("delete from {} where oee_machine_id=? and start=?", name(OeeTable::Stops)), {DB::Value{(uint)machine}, OeeTicks(start)} };
 	}
 	α Gateway::OeeSql::ClearStopFinish( OeeMachinePK machine, TimePoint start )ε->DB::Sql{
 		return { Ƒ("update {} set finish=null where oee_machine_id=? and start=?", name(OeeTable::Stops)), {DB::Value{(uint)machine}, OeeTicks(start)} };
@@ -127,10 +128,13 @@ namespace Jde::Opc{
 	α Gateway::OeeSql::ToStop( const DB::Row& r )ι->Oee::Stop{
 		return { .Start=ticks(r, 0), .End=r.IsNull(1) ? nullopt : optional<TimePoint>{ticks(r, 1)}, .Code=r.GetOpt<int64_t>(2), .Unknown=r.GetBit(3), .Id=r.Get<uint32>(4) };
 	}
-	α Gateway::OeeSql::DeleteOf( sv table, OeeMachinePK machine )ε->DB::Sql{
-		return { Ƒ("delete from {} where oee_machine_id=?", name(table)), {DB::Value{(uint)machine}} };
-	}
 	α Gateway::OeeSql::CountCodings( uint32 reason )ε->DB::Sql{
 		return { Ƒ("select count(*) from {} where oee_reason_id=?", name(OeeTable::Codings)), {DB::Value{(uint)reason}} };
+	}
+	α Gateway::OeeSql::ReasonsCoded( int64_t code )ε->DB::Sql{
+		return { Ƒ("select oee_reason_id, name, deleted from {} where code=?", name(OeeTable::Reasons)), {DB::Value{(_int)code}} };
+	}
+	α Gateway::OeeSql::ReasonId( const DB::Key& key )ε->DB::Sql{
+		return { Ƒ("select oee_reason_id from {} where {}=?", name(OeeTable::Reasons), key.IsPK() ? "oee_reason_id" : "slug"), {DB::Value::FromKey(key)} };
 	}
 }

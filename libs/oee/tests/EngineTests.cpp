@@ -575,6 +575,43 @@ namespace Jde::Opc::Oee::Tests{
 		Time->AdvanceTo( At(6,3) );
 		EXPECT_EQ( Sink->Table(), Table{"05:58:00-"} );
 	}
+	//A restart before `processed` reaches an idle stop's finding:  the bound reads running, and the row is the replay's to find again.
+	TEST_F( Streams, RestartInsideAnIdleTimeoutFindsTheStopAgain ){
+		Sink->Stops.emplace( At(5,55,30), Stop{At(5,55,30)} );
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };
+		config.IdleTimeout = 5min;
+		Open( config, {At(6), {Count(TotalNode, At(5,55,30), 100)}, Stop{At(5,55,30)}} );
+		Machine->Finish( At(6,1) );
+		EXPECT_EQ( Sink->Table(), Table{"05:55:30-"} );
+		EXPECT_TRUE( Sink->Calls.empty() ) << Sink->Calls[0];
+	}
+	//As above, with a call between the opening and the timeout:  the row goes, and the timeout writes it again.
+	TEST_F( Streams, RestartInsideAnIdleTimeoutAcrossACall ){
+		Sink->Stops.emplace( At(5,55,30), Stop{At(5,55,30)} );
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };
+		config.IdleTimeout = 5min;
+		Open( config, {At(6), {Count(TotalNode, At(5,55,30), 100)}, Stop{At(5,55,30)}} );
+		Replay( {} );
+		EXPECT_TRUE( Sink->Table().empty() );
+		Machine->Finish( At(6,1) );
+		EXPECT_EQ( Sink->Table(), Table{"05:55:30-"} );
+	}
+	//A count on its way when the restart came:  the machine never stopped, so the row is gone.
+	TEST_F( Streams, RestartInsideAnIdleTimeoutACountTakesItBack ){
+		Sink->Stops.emplace( At(5,55,30), Stop{At(5,55,30)} );
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };
+		config.IdleTimeout = 5min;
+		Open( config, {At(6), {Count(TotalNode, At(5,55,30), 100)}, Stop{At(5,55,30)}} );
+		Replay( {Count(TotalNode, At(6,0,10), 110)} );
+		Machine->Finish( At(6,1) );
+		EXPECT_TRUE( Sink->Table().empty() );
+	}
+	//A call's stop rows before its interval rows:  `processed` moves with those, and a restart never writes a stop behind it again.
+	TEST_F( Streams, AStopIsToldBeforeTheRowsOfItsCall ){
+		Counting();
+		Replay( {Flag(StateNode, At(6,0,30), false), Flag(StateNode, At(6,1,30), true), Count(TotalNode, At(6,2,30), 110)} );
+		EXPECT_EQ( Sink->Order, "srr" );
+	}
 	//A count that was idle before the opening is stopped from it:  nothing before the opening is this run's to rewrite.
 	TEST_F( Streams, IdleBeforeTheOpening ){
 		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };

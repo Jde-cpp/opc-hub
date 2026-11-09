@@ -30,6 +30,8 @@ namespace Jde::Opc::Gateway{
 			let id = m.FindId<uint32>();
 			return id && host.UserOf( *id );
 		}
+		if( table==HistTable::TemplateNodes && m.Type==Purge )//Query reads the members made from it.
+			return m.FindId<uint32>() && host.HasMachines();
 		return false;
 	}
 	α OeeMAwait::Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
@@ -37,11 +39,6 @@ namespace Jde::Opc::Gateway{
 	}
 
 	[[noreturn]] Ω notFound( string what, SL sl )ε->void{ throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "{}", move(what) }; }
-	Ω rowId( const QL::MutationQL& m, SL sl )ε->uint32{
-		let id = m.FindId<uint32>();
-		REFUSE_IF( !id, "'{}' needs the row's id.", m.CommandName );
-		return *id;
-	}
 	Ω rowKey( const QL::MutationQL& m, SL sl )ε->DB::Key{
 		let key = m.FindKey();
 		REFUSE_IF( !key, "'{}' needs the row's id or slug.", m.CommandName );
@@ -137,12 +134,6 @@ namespace Jde::Opc::Gateway{
 			y.emplace_back( Ƒ("Member {} has a MinTimeInterval of {}, past the {} an interval waits for its records (settle):  each value it holds is stored late, and is a rebuild.", signal.Node, Chrono::ToString(thresholds->MinTimeInterval), Chrono::ToString(settle)) );
 		return y;
 	}
-	Ω reasonsNamed( int64_t code )ε->DB::Sql{
-		return { Ƒ("select oee_reason_id, name, deleted from {} where code=?", GetViewPtr(Reasons)->SqlName()), {DB::Value{(_int)code}} };
-	}
-	Ω reasonId( const DB::Key& key )ε->DB::Sql{
-		return { Ƒ("select oee_reason_id from {} where {}=?", GetViewPtr(Reasons)->SqlName(), key.IsPK() ? "oee_reason_id" : "slug"), {DB::Value::FromKey(key)} };
-	}
 
 	α OeeMAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
@@ -162,10 +153,18 @@ namespace Jde::Opc::Gateway{
 				y = co_await HistGroupMAwait{ QL::MutationQL{_query}, _creds, sl };
 			}
 			else if( table==HistTable::GroupNodes ){
-				let node = rowId( _query, sl );
+				let node = MutationRowId( _query, sl );
 				if( let user = host.UserOf(node); user ){
 					let p = std::ranges::find( user->Signals, node, &OeeSignalRow::Node );
 					REFUSE( "Member {} is machine '{}'s {} signal:  purge the signal before the member.", node, user->Row.Name, p->Role ? Oee::ToString(*p->Role) : sv{} );
+				}
+				y = co_await HistGroupMAwait{ QL::MutationQL{_query}, _creds, sl };
+			}
+			else if( table==HistTable::TemplateNodes ){//before any group's member goes.
+				let templateNode = MutationRowId( _query, sl );
+				for( let& node : co_await Any(SelectHistGroupNodes({.TemplateNode=templateNode})) ){
+					if( let user = host.UserOf(node.Id); user )
+						REFUSE( "Template member {} made member {}, a signal of machine '{}':  purge the signal before the template member.", templateNode, node.Id, user->Row.Name );
 				}
 				y = co_await HistGroupMAwait{ QL::MutationQL{_query}, _creds, sl };
 			}
@@ -205,7 +204,7 @@ namespace Jde::Opc::Gateway{
 					else{
 						machineKey = rowKey( _query, sl );
 						if( type==Purge )
-							purging = rowId( _query, sl );
+							purging = MutationRowId( _query, sl );
 						auto rows = co_await Any( SelectOeeMachines({.Key=*machineKey, .IncludeDeleted=true}) );
 						if( rows.empty() )
 							notFound( Ƒ("Machine {} not found.", machineKey->IsPK() ? std::to_string(machineKey->PK()) : machineKey->NK()), sl );
@@ -221,7 +220,7 @@ namespace Jde::Opc::Gateway{
 					REFUSE_IF( type==Delete || type==Restore, "A signal has no deleted:  purge it." );
 					optional<OeeSignalRow> row;
 					if( type!=Create ){
-						let id = rowId( _query, sl );
+						let id = MutationRowId( _query, sl );
 						auto rows = co_await Any( SelectOeeSignals({.Id=id}) );
 						if( rows.empty() )
 							notFound( Ƒ("Signal {} not found.", id), sl );
@@ -260,17 +259,17 @@ namespace Jde::Opc::Gateway{
 						REFUSE_IF( !code, "code is the Reason signal's value for the reason, a whole number, not {}.", serialize(*p) );
 						optional<uint32> self;
 						if( type==Update ){
-							auto ids = co_await Any( DS()->SelectAsync(reasonId(rowKey(_query, sl))) );
+							auto ids = co_await Any( DS()->SelectAsync(OeeSql::ReasonId(rowKey(_query, sl))) );
 							if( ids.size() )
 								self = ids.front().Get<uint32>( 0 );
 						}
-						for( let& other : co_await Any(DS()->SelectAsync(reasonsNamed(*code))) ){
+						for( let& other : co_await Any(DS()->SelectAsync(OeeSql::ReasonsCoded(*code))) ){
 							if( other.Get<uint32>(0)!=self )
 								REFUSE( "code {} is reason '{}'s{}:  a code names one reason.", *code, other.GetString(1), other.IsNull(2) ? "" : ", which is deleted and still resolves the stops it coded" );
 						}
 					}
 					if( type==Purge ){
-						let id = rowId( _query, sl );
+						let id = MutationRowId( _query, sl );
 						auto counted = co_await Any( DS()->SelectAsync(OeeSql::CountCodings(id)) );
 						let codings = counted.size() ? counted.front().Get<uint>( 0 ) : 0;
 						REFUSE_IF( codings, "Reason {} is named by {} coding{}:  a reason a coding names is deleted, not purged, and keeps resolving.", id, codings, codings==1 ? "" : "s" );

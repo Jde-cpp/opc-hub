@@ -97,13 +97,6 @@ namespace Jde::Opc::Gateway{
 		auto p = _machines.find( id );
 		return p==_machines.end() ? nullopt : optional<Machine>{ p->second.Rows };
 	}
-	α OeeHost::Machines()Ι->vector<Machine>{
-		lg _{ _mutex };
-		auto y = Reserve<Machine>( _machines.size() );
-		for( let& [_,entry] : _machines )
-			y.push_back( entry.Rows );
-		return y;
-	}
 	α OeeHost::HolderOf( HistGroupPK group )Ι->optional<Machine>{
 		lg _{ _mutex };
 		for( let& [_,entry] : _machines ){
@@ -186,7 +179,6 @@ namespace Jde::Opc::Gateway{
 			auto p = _machines.find( id );
 			return _stopped || p==_machines.end() || p->second.Serial!=serial || p->second.Engine ? nullptr : &p->second;
 		};
-		string name;
 		try{
 			{
 				lg _{ _mutex };
@@ -194,7 +186,6 @@ namespace Jde::Opc::Gateway{
 				if( !entry )
 					co_return;
 				entry->Timer = 0;
-				name = entry->Rows.Row.Name;
 			}
 			auto rows = co_await Any( SelectOeeMachines({.Key=DB::Key{(uint)id}, .IncludeDeleted=true}) );
 			if( rows.empty() )
@@ -242,6 +233,11 @@ namespace Jde::Opc::Gateway{
 		co_await MachineChanged( DB::Key{(uint)id} );
 	}
 	α OeeHost::MachineChanged( DB::Key key )ι->AnyVoidTask{
+		uint read;
+		{
+			lg _{ _mutex };
+			read = ++_reads;
+		}
 		auto rows = co_await Any( SelectOeeMachines({.Key=key, .IncludeDeleted=true}) );
 		if( rows.empty() ){
 			if( key.IsPK() )
@@ -255,6 +251,9 @@ namespace Jde::Opc::Gateway{
 		{
 			lg _{ _mutex };
 			auto& entry = _machines[id];
+			if( read<entry.Read )//a later edit's rows are in, and its engine decided.
+				co_return;
+			entry.Read = read;
 			entry.Rows = machine;
 			++entry.Serial;//a start it was waiting for is this edit's to ask for again.
 			if( auto timer = std::exchange(entry.Timer, 0); timer && _clock )
@@ -296,8 +295,6 @@ namespace Jde::Opc::Gateway{
 			engine->End();
 			co_await engine->Quiet();
 		}
-		for( let table : {OeeTable::Intervals, OeeTable::Stops, OeeTable::Codings, OeeTable::Signals} )
-			co_await Any( DS()->Execute(OeeSql::DeleteOf(table, id)) );
 	}
 	α OeeHost::MachinePurged( OeeMachinePK id )ι->void{
 		lg _{ _mutex };

@@ -14,7 +14,7 @@ namespace Jde::Opc::Gateway{
 		//The settings and the rows, then each machine's engine, on the executor.  Blocks on the rows' load:  Gateway::Connect's
 		//thread, after the historian's start.  `clock`:  the engines' and the timers', the system's when none - a test hands a manual one.
 		α Start( sp<Hist::IClock> clock={} )ε->void;
-		//Every engine ends and its write in flight is waited for:  before the historian's stop, while the executor still runs.
+		//Every engine ends and its start and write in flight are waited for:  before the historian's stop, while the executor still runs.
 		α Stop()ι->void;
 		α Enabled()Ι->bool;
 		//What an OEE field answers while the gateway computes none:  ServiceUnavailable, saying why - no oee block, no historian, or
@@ -25,7 +25,6 @@ namespace Jde::Opc::Gateway{
 
 		struct Machine final{ OeeMachineRow Row; vector<OeeSignalRow> Signals; };
 		α Find( OeeMachinePK id )Ι->optional<Machine>;
-		α Machines()Ι->vector<Machine>;
 		α HasMachines()Ι->bool{ lg _{ _mutex }; return !_machines.empty(); }
 		α HolderOf( HistGroupPK group )Ι->optional<Machine>;//the machine over a group, a deleted one too:  its row holds the group.
 		α UserOf( HistGroupNodePK node )Ι->optional<Machine>;//a machine with a signal that names the member.
@@ -37,12 +36,12 @@ namespace Jde::Opc::Gateway{
 		//A machine edited, deleted or restored, or a signal of its created, edited or purged:  its rows read again, and its engine
 		//ended, given the new width, or started `settle` on, as they now say.
 		α MachineChanged( DB::Key key )ι->AnyVoidTask;
-		//Before its statement:  its engine ends and its stops, intervals, codings and signals go, which the keys would refuse.
+		//Before its statement, whose proc takes the machine's stops, intervals, codings and signals with it:  its engine ends.
 		α MachinePurging( OeeMachinePK id )ι->AnyVoidTask;
 		α MachinePurged( OeeMachinePK id )ι->void;
 		static constexpr Duration RetryInterval{ 30s };//how soon a machine whose start or write failed is started again.
 	private:
-		struct Entry final{ Machine Rows; sp<OeeMachineHost> Engine; Hist::IClock::TimerId Timer{}; uint Serial{}; };
+		struct Entry final{ Machine Rows; sp<OeeMachineHost> Engine; Hist::IClock::TimerId Timer{}; uint Serial{}; uint Read{}; };//Read:  the MachineChanged whose rows these are.
 		α Loading( AnyVoidAwait& await )ι->VoidTask;
 		//Why the rows can't run, empty when they can.
 		α Blocked( const Machine& machine )Ι->string;
@@ -58,5 +57,6 @@ namespace Jde::Opc::Gateway{
 		sp<Hist::IClock> _clock;
 		Duration _settle{ 5s };
 		bool _configured{}, _stopped{};
+		uint _reads{};//MachineChanged's, so an older read that finishes last changes nothing.
 	};
 }

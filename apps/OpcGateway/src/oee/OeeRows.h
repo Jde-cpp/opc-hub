@@ -27,8 +27,8 @@ namespace Jde::Opc::Gateway{
 	//The rows' signals, as the library takes them;  one with no role is left out.
 	α ToSignals( const vector<OeeSignalRow>& rows )ι->vector<Oee::Signal>;
 
-	//oee_machines:  by key, by group, or all;  deleted rows only when asked.
-	struct OeeMachineFilter final{ optional<DB::Key> Key; optional<HistGroupPK> Group; bool IncludeDeleted{}; };
+	//oee_machines:  by key, or all;  deleted rows only when asked.
+	struct OeeMachineFilter final{ optional<DB::Key> Key; bool IncludeDeleted{}; };
 	α SelectOeeMachines( OeeMachineFilter filter={}, SRCE )ι->HistRowsAwait<OeeMachineRow>;
 	//oee_machine_signals:  by row, by machine, or all.
 	struct OeeSignalFilter final{ optional<OeeSignalPK> Id; optional<OeeMachinePK> Machine; };
@@ -44,14 +44,16 @@ namespace Jde::Opc::Gateway{
 		α InsertIntervals( OeeMachinePK machine, std::span<const Oee::Interval> rows )ε->DB::Sql;//IntervalsPerInsert at most.
 		α SetProcessed( OeeMachinePK machine, TimePoint processed )ε->DB::Sql;
 		α InsertStop( OeeMachinePK machine, const Oee::Stop& stop )ε->DB::Sql;
-		α UpdateStop( OeeMachinePK machine, const Oee::Stop& stop )ε->DB::Sql;//its finish and code, the row at its start.
+		α UpdateStop( OeeMachinePK machine, const Oee::Stop& stop )ε->DB::Sql;//its finish, code and unknown, the row at its start.
+		α DeleteStop( OeeMachinePK machine, TimePoint start )ε->DB::Sql;
 		α ClearStopFinish( OeeMachinePK machine, TimePoint start )ε->DB::Sql;
 		α DeleteStopsFrom( OeeMachinePK machine, TimePoint from )ε->DB::Sql;//start at or after.
 		α DeleteIntervalsFrom( OeeMachinePK machine, TimePoint from )ε->DB::Sql;
 		//The stop row over `at`:  its start before it and its finish null or after it.  start, finish, code, unknown, id.
 		α SelectStopOver( OeeMachinePK machine, TimePoint at )ε->DB::Sql;
 		α ToStop( const DB::Row& row )ι->Oee::Stop;//SelectStopOver's.
-		α DeleteOf( sv table, OeeMachinePK machine )ε->DB::Sql;//every row of the machine's in a child table:  its purge's.
 		α CountCodings( uint32 reason )ε->DB::Sql;
+		α ReasonsCoded( int64_t code )ε->DB::Sql;//oee_reason_id, name, deleted.
+		α ReasonId( const DB::Key& key )ε->DB::Sql;
 	}
 }

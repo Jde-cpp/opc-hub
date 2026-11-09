@@ -1,4 +1,5 @@
 #include "OeeMachineHost.h"
+#include <absl/cleanup/cleanup.h>
 #include <boost/asio/post.hpp>
 #include <jde/opc/uatypes/DateTime.h>
 #include "../async/ExecutorAwait.h"
@@ -15,14 +16,14 @@ namespace Jde::Opc::Gateway{
 	struct OeeMachineHost::Writer final : Oee::ISink, std::enable_shared_from_this<Writer>{
 		struct StopOpened final{ Oee::Stop Row; };
 		struct StopClosed final{ Oee::Stop Row; };
-		struct StopsRewritten final{ TimePoint From; vector<Oee::Stop> Rows; };
+		struct StopsRewritten final{ vector<Oee::Stop> Rows; vector<TimePoint> Held; };
 		using Op = std::variant<Oee::Interval,StopOpened,StopClosed,StopsRewritten>;
 		Writer( OeeMachinePK machine, string name )ι:_machine{ machine }, _name{ move(name) }{}
 
 		α Closed( const Oee::Interval& row )ι->void override{ Queue( row ); }
 		α Opened( const Oee::Stop& stop )ι->void override{ Queue( StopOpened{stop} ); }
 		α Closed( const Oee::Stop& stop )ι->void override{ Queue( StopClosed{stop} ); }
-		α Rewritten( TimePoint from, const vector<Oee::Stop>& stops )ι->void override{ Queue( StopsRewritten{from, stops} ); }
+		α Rewritten( TimePoint, const vector<Oee::Stop>& stops, const vector<TimePoint>& held )ι->void override{ Queue( StopsRewritten{stops, held} ); }
 		//Nothing runs one yet (#401):  the rows a late record, an edit or an idle stop reaches stay as they were written.
 		α Rebuild( uint32 node, Oee::Span span )ι->void override{
 			++_rebuilds;
@@ -32,16 +33,40 @@ namespace Jde::Opc::Gateway{
 
 		α End()ι->void{ lg _{ _mutex }; _ended = true; _ops.clear(); }
 		α Idle()Ι->bool{ lg _{ _mutex }; return !_writing && _ops.empty(); }
-		α Writing()Ι->bool{ lg _{ _mutex }; return _writing; }
-		α Wait( QuietAwait* waiter )ι->bool{//false when no write is running:  nothing to wait for.
+		α Busy( bool writesOnly )Ι->bool{ lg _{ _mutex }; return _writing || (_starting && !writesOnly); }
+		α Wait( QuietAwait* waiter )ι->bool{//false when nothing it waits for is running.
 			lg _{ _mutex };
-			if( _writing )
+			let busy = _writing || (_starting && !waiter->WritesOnly);
+			if( busy )
 				_waiters.push_back( waiter );
-			return _writing;
+			return busy;
+		}
+		α StartBegan()ι->void{ lg _{ _mutex }; _starting = true; }
+		α StartEnded()ι->void{
+			vector<QuietAwait*> waiters;
+			{
+				lg _{ _mutex };
+				_starting = false;
+				waiters = Released();
+			}
+			for( auto waiter : waiters )
+				waiter->Resume();
 		}
 		α Rebuilds()Ι->uint{ return _rebuilds; }
 		function<void( string why )> OnFailure;//set before the engine is made, so before anything is queued.
 	private:
+		α Released()ι->vector<QuietAwait*>{//under _mutex:  the waiters nothing holds now.
+			vector<QuietAwait*> y;
+			if( _writing )
+				return y;
+			std::erase_if( _waiters, [&]( QuietAwait* waiter ){
+				let released = !_starting || waiter->WritesOnly;
+				if( released )
+					y.push_back( waiter );
+				return released;
+			} );
+			return y;
+		}
 		α Queue( Op&& op )ι->void{
 			{
 				lg _{ _mutex };
@@ -76,9 +101,12 @@ namespace Jde::Opc::Gateway{
 					y.push_back( OeeSql::UpdateStop(_machine, closed->Row) );
 				else{
 					let& rewritten = std::get<StopsRewritten>( op );
-					y.push_back( OeeSql::DeleteStopsFrom(_machine, rewritten.From) );
+					for( let start : rewritten.Held ){
+						if( !std::ranges::contains(rewritten.Rows, start, &Oee::Stop::Start) )
+							y.push_back( OeeSql::DeleteStop(_machine, start) );
+					}
 					for( let& stop : rewritten.Rows )
-						y.push_back( OeeSql::InsertStop(_machine, stop) );
+						y.push_back( std::ranges::contains(rewritten.Held, stop.Start) ? OeeSql::UpdateStop(_machine, stop) : OeeSql::InsertStop(_machine, stop) );
 				}
 			}
 			flush();
@@ -98,7 +126,7 @@ namespace Jde::Opc::Gateway{
 					}
 					if( _ended || _ops.empty() ){
 						_writing = false;
-						waiters = std::exchange( _waiters, {} );
+						waiters = Released();
 					}
 					else
 						batch = std::exchange( _ops, {} );
@@ -129,16 +157,16 @@ namespace Jde::Opc::Gateway{
 		mutable std::mutex _mutex;
 		vector<Op> _ops;
 		vector<QuietAwait*> _waiters;
-		bool _writing{}, _ended{};
+		bool _writing{}, _ended{}, _starting{};
 		std::atomic<uint> _rebuilds{};
 	};
-	α OeeMachineHost::QuietAwait::await_ready()ι->bool{ return !_writer->Writing(); }
+	α OeeMachineHost::QuietAwait::await_ready()ι->bool{ return !_writer->Busy( WritesOnly ); }
 	α OeeMachineHost::QuietAwait::Suspend()ι->void{
 		if( !_writer->Wait(this) )//the write ended since await_ready.
 			Resume();
 	}
 
-	Ω good( const Hist::Proto::DataValue& v )ι->bool{ return v.has_value() && !UA_StatusCode_isBad( v.status() ) && !UA_StatusCode_isUncertain( v.status() ); }
+	Ω good( const Hist::Proto::DataValue& v )ι->bool{ return v.has_value() && Oee::IsGood( v.status() ); }
 	//Each counter whose bound is there and isn't Good:  its last Good value before it, read back from the group, later first
 	//(spec *The engine*), which is what its first Good value after the gap counts against.
 	Ω lastGood( Hist::Group& group, const vector<Oee::Signal>& signals, const vector<Hist::Proto::DataValue>& bounds, UA_DateTime before, uint limit )ε->vector<Hist::Proto::DataValue>{
@@ -167,7 +195,7 @@ namespace Jde::Opc::Gateway{
 
 	OeeMachineHost::OeeMachineHost( OeeMachineRow row, Inputs inputs, sp<HistGroupHost> group, sp<Hist::IClock> clock, Settings settings )ι:
 		_row{ move(row) }, _inputs{ move(inputs) }, _group{ move(group) }, _clock{ move(clock) }, _settings{ settings },
-		_writer{ ms<Writer>(_row.Id, _row.Name) }, _strand{ boost::asio::make_strand(*Executor()) }
+		_writer{ ms<Writer>(_row.Id, _row.Name) }, _strand{ boost::asio::make_strand(*Executor()) }, _width{ _row.Width }
 	{}
 	OeeMachineHost::~OeeMachineHost(){ End(); }
 
@@ -178,21 +206,29 @@ namespace Jde::Opc::Gateway{
 				failed( self->Id(), self.get(), move(why) );
 			}
 		};
+		_writer->StartBegan();
 		Post( [self=shared_from_this(), failed=move(failed)]()mutable{ self->Starting( move(failed) ); } );
 	}
 	α OeeMachineHost::Starting( Failed failed )ι->VoidTask{
 		let self = shared_from_this();
+		absl::Cleanup started = [this]{ _writer->StartEnded(); };
 		string failure;
 		try{
 			THROW_IF( !_row.Processed, "it has no `processed`:  its create's live side didn't run." );
 			let from = *_row.Processed;
 			//What a run before this one wrote past `processed` is about to be replayed.
+			if( _ended )
+				co_return;
 			co_await Any( DS()->Execute(OeeSql::DeleteIntervalsFrom(Id(), from)) );
+			if( _ended )
+				co_return;
 			co_await Any( DS()->Execute(OeeSql::DeleteStopsFrom(Id(), from)) );
+			if( _ended )
+				co_return;
 			Oee::Opening opening{ .From=from };
 			if( auto over = co_await Any( DS()->SelectAsync(OeeSql::SelectStopOver(Id(), from)) ); over.size() ){
 				opening.Open = OeeSql::ToStop( over.front() );
-				if( opening.Open->End )//the replay ends it again.
+				if( opening.Open->End && !_ended )//the replay ends it again.
 					co_await Any( DS()->Execute(OeeSql::ClearStopFinish(Id(), opening.Open->Start)) );
 			}
 			//One tick before:  a read flags a record at its start as the bound, and one stamped `processed` has to replay.
@@ -205,17 +241,21 @@ namespace Jde::Opc::Gateway{
 			opening.LastGood = co_await ExecutorAwait<vector<Hist::Proto::DataValue>>{ [&]{ return lastGood( *_group->Group(), _inputs.Signals, opening.Bounds, start, _settings.ReadLimit ); } };
 			auto engine = ms<Oee::Engine>( Oee::EngineConfig{_inputs.Signals, _inputs.SmallStop, _inputs.IdleTimeout, _row.Width, _settings.Settle}, move(opening), _writer, _clock );
 			vector<Hist::Proto::HistoryRecord> early;
+			Duration width;
 			{
 				lg _{ _queueMutex };
 				if( _ended )
 					co_return;
 				_engine = engine;
 				early = move( _early );
+				width = _width;
 			}
+			if( width!=_row.Width )
+				engine->SetWidth( width );
 			engine->Records( move(early) );//held until Live, as what OnRecords hands it from here on is.
 			for( ;; ){
 				co_await ExecutorAwait<void>{ [&]{ engine->Replay( page.Values ); } };
-				co_await Quiet();//a page's rows are written before the next is read:  a year's backfill queues a page's worth.
+				co_await Written();//a page's rows are written before the next is read:  a year's backfill queues a page's worth.
 				if( page.Continuation.empty() || _ended )
 					break;
 				page = co_await ExecutorAwait<Hist::ReadResult>{ [&]{ return Next(); } };
@@ -270,7 +310,8 @@ namespace Jde::Opc::Gateway{
 		if( _subscription )
 			_subscription->End();
 	}
-	α OeeMachineHost::Quiet( SL sl )ι->QuietAwait{ return QuietAwait{ _writer, sl }; }
+	α OeeMachineHost::Quiet( SL sl )ι->QuietAwait{ return QuietAwait{ _writer, false, sl }; }
+	α OeeMachineHost::Written( SL sl )ι->QuietAwait{ return QuietAwait{ _writer, true, sl }; }
 	α OeeMachineHost::Idle()Ι->bool{ return _writer->Idle(); }
 	α OeeMachineHost::State()Ι->optional<Oee::LiveState>{
 		sp<Oee::Engine> engine;
@@ -284,6 +325,7 @@ namespace Jde::Opc::Gateway{
 		sp<Oee::Engine> engine;
 		{
 			lg _{ _queueMutex };
+			_width = width;
 			engine = _engine;
 		}
 		if( engine )

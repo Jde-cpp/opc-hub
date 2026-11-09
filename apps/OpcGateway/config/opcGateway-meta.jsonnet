@@ -105,6 +105,7 @@ local attributes( i ) = {
 		//are the spec's end and interval:  SQL Server reserves END and mysql INTERVAL, and column names are emitted unquoted.
 		oeeMachines:{
 			comment: "A machine:  one historian group whose members are given roles (oee_machine_signals), with its thresholds, its rows' width and its shift calendar",
+			purgeProc: "oee_machine_purge", //its stops, intervals, codings and signals go with it, in one transaction:  codings are operator-entered and nothing restores them.
 			columns: {
 				oeeMachineId: common.pkSequenced,
 				histGroupId: tables.histGroups.columns.histGroupId+{ pkTable: "hist_groups", sk:null, updateable:false, i:1, comment:"The group whose records the engine reads, a foreign key and unique:  a group has at most one machine, deleted ones counted.  OeeMAwait refuses the group's delete and purge while the row stands;  the key is the backstop.  Not updateable:  purge the machine and create it again." },

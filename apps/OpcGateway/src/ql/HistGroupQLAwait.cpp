@@ -35,12 +35,6 @@ namespace Jde::Opc::Gateway{
 		return AppClient()->Acl()->Check( "gateway", "histGroups", guid, Access::ERights::Read, by, sl ).has_value();
 	}
 
-	Ω rowId( const QL::MutationQL& m, SL sl )ε->uint32{
-		let id = m.FindId<uint32>();
-		if( !id )
-			refuse( Ƒ("'{}' needs the row's id.", m.CommandName), sl );
-		return *id;
-	}
 	//What the library or the tables would refuse, before anything is written.
 	Ω check( const QL::MutationQL& m, SL sl )ε->void{
 		using enum EMutationQL;
@@ -91,7 +85,7 @@ namespace Jde::Opc::Gateway{
 			return nullopt;
 		auto& host = HistHost::Instance();
 		let table = m.TableName();
-		let pk = rowId( m, sl );
+		let pk = MutationRowId( m, sl );
 		if( table==Groups )
 			return host.GroupPurging( pk, by, guid );
 		if( table==GroupNodes )
@@ -130,11 +124,11 @@ namespace Jde::Opc::Gateway{
 				return host.GroupRestored( key, by );
 		}
 		else if( m.Type==Update && table==GroupNodes ){
-			let pk = rowId( m, sl );
+			let pk = MutationRowId( m, sl );
 			return host.NodeEdited( pk );
 		}
 		else if( m.Type==Update && table==TemplateNodes ){
-			let pk = rowId( m, sl );
+			let pk = MutationRowId( m, sl );
 			return host.TemplateNodeEdited( pk );
 		}
 		return nullopt;
@@ -296,5 +290,13 @@ namespace Jde::Opc::Gateway{
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
+	}
+}
+namespace Jde::Opc{
+	α Gateway::MutationRowId( const QL::MutationQL& m, SL sl )ε->uint32{
+		let id = m.FindId<uint32>();
+		if( !id )
+			refuse( Ƒ("'{}' needs the row's id.", m.CommandName), sl );
+		return *id;
 	}
 }

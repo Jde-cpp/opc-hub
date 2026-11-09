@@ -6,6 +6,7 @@
 //and no database.  A host subscribes to the group, hands the engine the snapshot and then the stream, and writes what the
 //sink is told.
 namespace Jde::Opc::Oee{
+	Ξ IsGood( uint32_t status )ι->bool{ return !UA_StatusCode_isBad( status ) && !UA_StatusCode_isUncertain( status ); }//Uncertain is Bad, as the aggregates' TreatUncertainAsBad has it.
 	struct EngineConfig final{
 		vector<Signal> Signals;
 		Duration SmallStop{};//for the live state alone:  a read classes a stop.
@@ -18,7 +19,8 @@ namespace Jde::Opc::Oee{
 	//host reads from one tick before From and a record stamped From replays.  A signal with none, or Bad_BoundNotFound,
 	//starts unknown, and a bound after From, the read's closing one, is skipped.
 	//Open is the row a restart found over From, its start before it and its end null or after it, which the host clears in
-	//the table too, the replay being what ends it;  where the State bound says otherwise the bound wins, and the row ends at From.
+	//the table too, the replay being what ends it;  where the State bound says otherwise the bound wins, and the row ends at From, but for
+	//an idle stop whose timeout runs past From, which the replay finds again or a count takes back.
 	//LastGood is each counter's last Good value before From, for a counter whose bound is not Good:  what the first Good
 	//value after the gap counts against.
 	struct Opening final{
@@ -39,7 +41,8 @@ namespace Jde::Opc::Oee{
 		Duration Offset{};//the source offset:  what a host hands the engine that takes over after a rebuild.
 		vector<Interval> Rows;//the rows not yet written, the last still filling, its Width the time it holds so far.
 	};
-	//Called under the engine's lock, in order, so an implementation only queues or posts and never calls the engine.
+	//Called under the engine's lock, in order, so an implementation only queues or posts and never calls the engine.  A call's
+	//stop rows come before its interval rows:  `processed` moves with those, and a restart never writes a stop behind it again.
 	struct ISink{
 		virtual ~ISink()=default;
 		β Closed( const Interval& row )ι->void=0;//an interval's row, once:  a record in it from here on is a Rebuild.
@@ -47,8 +50,9 @@ namespace Jde::Opc::Oee{
 		β Opened( const Stop& stop )ι->void=0;
 		β Closed( const Stop& stop )ι->void=0;//one the sink was told had begun ended:  the row at Start, as it now reads.
 		//The rows that start at or after `from` are these and no others:  an open stop's code learned, an idle stop a marker
-		//takes back, a record out of order.
-		β Rewritten( TimePoint from, const vector<Stop>& stops )ι->void=0;
+		//takes back, a record out of order.  `held`:  the starts of the rows the sink was told of from `from` on, so one that
+		//keeps its start is updated, not deleted and written again, and a write cut short leaves it.
+		β Rewritten( TimePoint from, const vector<Stop>& stops, const vector<TimePoint>& held )ι->void=0;
 		//A record of `node` in a written interval, late or a Modification, or an idle stop that began in one:  the rows over
 		//`span` are to be rebuilt from the group's history.  The span ends no later than the node's next record:  at the newest
 		//of its records the engine has let go, else at its next the engine holds short of the clock, which the host narrows to the next one stored.

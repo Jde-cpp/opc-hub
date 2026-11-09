@@ -20,8 +20,9 @@ namespace Jde::Opc::Gateway{
 		using Failed = function<void( OeeMachinePK machine, const OeeMachineHost* host, string why )>;
 		struct Writer;
 		struct QuietAwait final : AnyVoidAwait{
-			QuietAwait( sp<Writer> writer, SL sl )ι:AnyVoidAwait{ sl }, _writer{ move(writer) }{}
+			QuietAwait( sp<Writer> writer, bool writesOnly, SL sl )ι:AnyVoidAwait{ sl }, WritesOnly{ writesOnly }, _writer{ move(writer) }{}
 			α await_ready()ι->bool override;
+			const bool WritesOnly;//Starting's own wait, which can't wait for Starting.
 		protected:
 			α Suspend()ι->void override;
 		private:
@@ -35,7 +36,7 @@ namespace Jde::Opc::Gateway{
 		α Start( Failed failed )ι->void;
 		//Nothing more is taken, told or queued, and the write in flight is the last:  a statement already out finishes.
 		α End()ι->void;
-		α Quiet( SRCE )ι->QuietAwait;//resumes once no write is running, on the thread that ended the last.
+		α Quiet( SRCE )ι->QuietAwait;//resumes once no write is running and Starting has returned, on the thread that ended the last.
 		α Idle()Ι->bool;//nothing queued and no write running - for tests and diagnostics.
 		α Live()Ι->bool{ return _live; }//the snapshot is replayed and the engine runs on the clock.
 		α State()Ι->optional<Oee::LiveState>;//none before the engine is made, and after the end.
@@ -48,6 +49,7 @@ namespace Jde::Opc::Gateway{
 		α Starting( Failed failed )ι->VoidTask;
 		α Subscribe( UA_DateTime from )ε->Hist::ReadResult;//registers, and the snapshot's first page, which opens with the bounds.
 		α Next()ε->Hist::ReadResult;
+		α Written( SRCE )ι->QuietAwait;//Quiet, but for Starting.
 
 		const OeeMachineRow _row;
 		const Inputs _inputs;
@@ -62,5 +64,6 @@ namespace Jde::Opc::Gateway{
 		mutable std::mutex _queueMutex;//the engine and what arrived before it:  never held over a page.
 		sp<Oee::Engine> _engine;
 		vector<Hist::Proto::HistoryRecord> _early;
+		Duration _width;//an edit while the engine is being made is its to apply.
 	};
 }

@@ -112,21 +112,29 @@ namespace Jde::Opc::Oee::Tests{
 			if( !Rows.empty() )
 				EXPECT_TP( row.Start, Rows.back().End() );
 			Rows.push_back( row );
+			Order += 'r';
 		}
 		α Opened( const Stop& stop )ι->void override{
 			Calls.push_back( "opened "+Text(stop) );
+			Order += 's';
 			EXPECT_TRUE( Stops.emplace(stop.Start, stop).second ) << "a second row at " << Iso( stop.Start );
 		}
 		α Closed( const Stop& stop )ι->void override{
 			Calls.push_back( "closed "+Text(stop) );
+			Order += 's';
 			let p = Stops.find( stop.Start );
 			if( p==Stops.end() || p->second.End || !stop.End )
 				ADD_FAILURE() << "closed a row that was not open:  " << Text( stop );
 			else
 				p->second = stop;
 		}
-		α Rewritten( TimePoint from, const vector<Stop>& stops )ι->void override{
+		α Rewritten( TimePoint from, const vector<Stop>& stops, const vector<TimePoint>& held )ι->void override{
 			auto call = "rewritten "+Iso( from );
+			Order += 's';
+			vector<TimePoint> holding;
+			for( auto p = Stops.lower_bound(from); p!=Stops.end(); ++p )
+				holding.push_back( p->first );
+			EXPECT_TRUE( holding==held ) << call << " named " << held.size() << " held rows of " << holding.size();
 			Stops.erase( Stops.lower_bound(from), Stops.end() );
 			for( let& stop : stops ){
 				call += " "+Text( stop );
@@ -165,6 +173,7 @@ namespace Jde::Opc::Oee::Tests{
 		vector<Interval> Rows;
 		std::map<TimePoint,Stop> Stops;
 		vector<string> Calls;
+		string Order;//each row told, 'r' an interval's and 's' a stop's.
 		vector<std::pair<uint32,Span>> Rebuilds;
 		vector<LiveState> States;
 	};
