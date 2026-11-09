@@ -240,6 +240,17 @@ namespace Jde::Opc::Oee::Tests{
 		EXPECT_EQ( Row(5), Minute(5, 40s, 20s, {}, 1) );
 		EXPECT_TRUE( Sink->Rebuilds.empty() );
 	}
+	//Another signal's records carry the replay past a row's end before the timeout has passed:  the row waits to learn it was stopped.
+	TEST_F( Streams, ReplayHoldsARowTheIdleCanTakeBack ){
+		auto& engine = CountOnly( 3min, {{ERole::Reason, ReasonNode}} );
+		Replay( {Count(TotalNode, At(6,0,10), 101), Code(ReasonNode, At(6,1,30), 0), Code(ReasonNode, At(6,2,30), 0), Count(TotalNode, At(6,5,20), 102)} );
+		engine.Finish( At(6,6) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:10-06:05:20"} );
+		ASSERT_EQ( Sink->Rows.size(), 6u );
+		EXPECT_EQ( Row(0), Minute(0, 10s, 50s, {}, 1) );
+		EXPECT_EQ( Row(1), Minute(1, {}, 1min) );
+		EXPECT_TRUE( Sink->Rebuilds.empty() );
+	}
 	//An idle stop that began in an interval not yet written takes back what was tallied as run, and no rebuild.
 	TEST_F( Streams, IdleInsideTheOpenInterval ){
 		auto& engine = CountOnly( 52s, {{ERole::Reason, ReasonNode}} );
@@ -288,6 +299,51 @@ namespace Jde::Opc::Oee::Tests{
 		EXPECT_EQ( Sink->Calls.back(), "rewritten 2026-03-09T06:00:10Z 06:00:20-06:00:50?" );
 		Time->AdvanceTo( At(6,1,5) );
 		EXPECT_EQ( Row(0), Minute(0, 30s, {}, 30s, 4) );
+		EXPECT_TRUE( Sink->Rebuilds.empty() );
+	}
+
+	//A count on its way when the timeout passed:  the stop was never one, and the minute it began in is run again as it was.
+	TEST_F( Streams, CountInFlightTakesBackTheIdleStop ){
+		auto& engine = CountOnly( 5min );
+		engine.Live();
+		Arrive( Count(TotalNode, At(6,0,10), 101) );
+		Time->AdvanceTo( At(6,5,10) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:10-"} );
+		Time->AdvanceTo( At(6,5,11) );
+		engine.Records( Stream({Count(TotalNode, At(6,5,8), 102)}) );
+		EXPECT_TRUE( Sink->Table().empty() );
+		EXPECT_EQ( engine.State().State, EState::Running );
+		Time->AdvanceTo( At(6,6,5) );
+		EXPECT_EQ( Row(5), Minute(5, 1min, {}, {}, 1) );
+	}
+	//As MarkerTakesBackTheIdleStop, with a minute's snapshot between the stop's start and the marker.
+	TEST_F( Streams, MarkerTakesBackTheIdleStopAcrossAMinute ){
+		auto& engine = CountOnly( 20s );
+		engine.Live();
+		for( let [second, count] : {std::pair{10, 101u}, {25, 102u}, {40, 103u}, {50, 104u}} )
+			Arrive( Count(TotalNode, At(6,0,second), count) );
+		Time->AdvanceTo( At(6,1,10) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:50-"} );
+		Time->AdvanceTo( At(6,1,30) );
+		engine.Records( Stream({Bad(TotalNode, At(6,1,5)), Count(TotalNode, At(6,1,30), 105)}) );
+		EXPECT_EQ( Sink->Table(), Table{"06:01:05-06:01:30?"} );
+	}
+	//Taken back with the rows it took time from still unwritten:  they read as they did before it.
+	TEST_F( Streams, TakenBackIdleRestoresItsRows ){
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };
+		config.IdleTimeout = 70s;
+		config.Settle = 40s;
+		auto& engine = Open( config, {At(6), {Count(TotalNode, At(5,59,55), 100)}} );
+		engine.Live();
+		Arrive( Count(TotalNode, At(6,0,10), 101) );
+		Time->AdvanceTo( At(6,1,20) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:10-"} );
+		EXPECT_TRUE( Sink->Rows.empty() ) << "row 06:00 is held by settle";
+		engine.Records( Stream({Count(TotalNode, At(6,1,15), 102)}) );
+		EXPECT_TRUE( Sink->Table().empty() );
+		Time->AdvanceTo( At(6,1,40) );
+		ASSERT_EQ( Sink->Rows.size(), 1u );
+		EXPECT_EQ( Row(0), Minute(0, 1min, {}, {}, 1) );
 		EXPECT_TRUE( Sink->Rebuilds.empty() );
 	}
 
@@ -365,6 +421,33 @@ namespace Jde::Opc::Oee::Tests{
 		Machine->Finish( At(6,7) );
 		EXPECT_EQ( Sink->Table(), (Table{"06:01:00-06:02:00#7", "06:03:00-06:04:00#8", "06:05:00-06:06:00"}) );
 	}
+	//An idle stop's too:  from its start, whatever the signal reads when the timeout finds the stop.
+	TEST_F( Streams, IdleStopCodeIsTheReasonAtItsStart ){
+		auto& engine = CountOnly( 3min, {{ERole::Reason, ReasonNode}} );
+		Replay( {Code(ReasonNode, At(6,0,5), 7), Count(TotalNode, At(6,0,10), 101), Code(ReasonNode, At(6,2), 9), Count(TotalNode, At(6,5,20), 102)} );
+		engine.Finish( At(6,6) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:10-06:05:20#7"} );
+	}
+	TEST_F( Streams, IdleStopCodeOutlivesTheReasonClearing ){
+		auto& engine = CountOnly( 3min, {{ERole::Reason, ReasonNode}} );
+		Replay( {Code(ReasonNode, At(6,0,5), 7), Count(TotalNode, At(6,0,10), 101), Code(ReasonNode, At(6,2), 0), Count(TotalNode, At(6,5,20), 102)} );
+		engine.Finish( At(6,6) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:10-06:05:20#7"} );
+	}
+	TEST_F( Streams, IdleStopCodeIsTheFirstAfterItsStart ){
+		auto& engine = CountOnly( 3min, {{ERole::Reason, ReasonNode}} );
+		Replay( {Count(TotalNode, At(6,0,10), 101), Code(ReasonNode, At(6,1), 4), Code(ReasonNode, At(6,2), 9), Count(TotalNode, At(6,5,20), 102)} );
+		engine.Finish( At(6,6) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:10-06:05:20#4"} );
+	}
+	TEST_F( Streams, IdleStopCodeFromTheBounds ){
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}, {ERole::Reason, ReasonNode}}) };
+		config.IdleTimeout = 3min;
+		auto& engine = Open( config, {At(6), {Count(TotalNode, At(5,59,55), 100), Code(ReasonNode, At(5,59), 7)}} );
+		Replay( {Code(ReasonNode, At(6,1), 0)} );
+		engine.Finish( At(6,4) );
+		EXPECT_EQ( Sink->Table(), Table{"05:59:55-#7"} );
+	}
 	//Live, a stop's row is written as it begins, its code once the signal gives one, and its end when it ends.
 	TEST_F( Streams, StopOpenedCodedAndClosed ){
 		Open( {Signals({{ERole::State, StateNode}, {ERole::Reason, ReasonNode}})}, {At(6), {Flag(StateNode, At(5), true), Code(ReasonNode, At(5), 0)}} );
@@ -385,6 +468,23 @@ namespace Jde::Opc::Oee::Tests{
 		Replay( {Code(StateNode, At(6,1), 1), Code(StateNode, At(6,1,30), 5), Code(StateNode, At(6,2), 3), Flag(StateNode, At(6,2,30), true), text} );
 		Machine->Finish( At(6,4) );
 		EXPECT_EQ( Sink->Table(), (Table{"06:01:00-06:02:00", "06:02:30-06:03:00"}) ) << "any other Good value is stopped, and one stop holds through two of them";
+	}
+
+	//A Good record with no value the engine can read says nothing of the machine:  unknown time, not a stop.
+	TEST_F( Streams, UnreadableStateIsUnknown ){
+		Open( {Signals({{ERole::State, StateNode}})}, {At(6), {Flag(StateNode, At(5,50), true)}} );
+		auto date = Stamp( StateNode, At(6,2) );
+		date.mutable_value()->mutable_date()->set_seconds( 1 );
+		Replay( {Stamp(StateNode, At(6,1)), Flag(StateNode, At(6,1,30), true), date, Flag(StateNode, At(6,2,30), true)} );
+		Machine->Finish( At(6,3) );
+		EXPECT_EQ( Sink->Table(), (Table{"06:01:00-06:01:30?", "06:02:00-06:02:30?"}) );
+		EXPECT_EQ( Row(1), Minute(1, 30s, {}, 30s) );
+	}
+	TEST_F( Streams, UnreadableBoundIsUnknown ){
+		Open( {Signals({{ERole::State, StateNode}})}, {At(6), {Stamp(StateNode, At(5,55))}} );
+		Machine->Finish( At(6,1) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:00-?"} );
+		EXPECT_EQ( Row(0), Minute(0, {}, {}, 1min) );
 	}
 
 	//The row a restart found open goes on where the bound agrees, and ends at the opening where it does not.
@@ -414,6 +514,66 @@ namespace Jde::Opc::Oee::Tests{
 		ASSERT_EQ( Sink->Rows.size(), 2u );
 		EXPECT_EQ( Sink->Rows[0], (Interval{At(6,0,20), 40s, 20s, {}, 20s, 10, 10, 0}) );
 		EXPECT_EQ( Sink->Rows[1], Minute(1, 1min) );
+	}
+	//A counter's Bad bound:  the first Good value after the gap counts against the last Good one before it, so a machine with no State signal reads running from it.
+	TEST_F( Streams, BadBoundCountsAgainstTheLastGood ){
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };
+		config.IdleTimeout = 2min;
+		auto& engine = Open( config, {At(6), {Bad(TotalNode, At(5,58))}, {}, {Count(TotalNode, At(5,57), 1000)}} );
+		Replay( {Count(TotalNode, At(6,0,30), 1500)} );
+		engine.Finish( At(6,1) );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:00-06:00:30?"} );
+		EXPECT_EQ( Row(0), Minute(0, 30s, {}, 30s, 500) );
+	}
+	TEST_F( Streams, GoodBoundOutranksLastGood ){
+		auto& engine = Open( {Signals({{ERole::State, StateNode}, {ERole::Total, TotalNode}})}, {At(6), {Flag(StateNode, At(5,50), true), Count(TotalNode, At(5,59), 100)}, {}, {Count(TotalNode, At(5,57), 50)}} );
+		Replay( {Count(TotalNode, At(6,0,30), 110)} );
+		engine.Finish( At(6,1) );
+		EXPECT_EQ( Row(0).Total, 10 );
+	}
+	TEST_F( Streams, LastGoodMustBeGood ){
+		auto& engine = Open( {Signals({{ERole::State, StateNode}, {ERole::Total, TotalNode}})}, {At(6), {Flag(StateNode, At(5,50), true), Bad(TotalNode, At(5,59))}, {}, {Bad(TotalNode, At(5,57))}} );
+		Replay( {Count(TotalNode, At(6,0,30), 110)} );
+		engine.Finish( At(6,1) );
+		EXPECT_EQ( Row(0).Total, 0 ) << "nothing to count against";
+	}
+	//A record stamped at the opening is the run's:  the host reads from a tick before it, so it comes as a record and not the bound.
+	TEST_F( Streams, RecordAtTheOpeningCounts ){
+		auto& engine = Counting();
+		Replay( {Count(TotalNode, At(6), 150)} );
+		engine.Finish( At(6,1) );
+		EXPECT_EQ( Row(0).Total, 50 );
+	}
+	//The row over the opening had ended after it:  it goes on, and the replay ends it again, with no second row.
+	TEST_F( Streams, RestartReplaysAStopThatEndedAfterTheOpening ){
+		Sink->Stops.emplace( At(6,0,30), Stop{At(6,0,30)} );
+		Open( {Signals({{ERole::State, StateNode}})}, {At(6,2), {Flag(StateNode, At(6,0,30), false)}, Stop{At(6,0,30), At(6,2,20)}} );
+		Replay( {Flag(StateNode, At(6,2,20), true)} );
+		EXPECT_EQ( Sink->Calls, Table{"closed 06:00:30-06:02:20"} );
+		EXPECT_EQ( Sink->Table(), Table{"06:00:30-06:02:20"} );
+	}
+	//A heartbeat bound's own time is the timer's:  the count was when the value it repeats came.
+	TEST_F( Streams, HeartbeatBoundContinuesTheStop ){
+		Sink->Stops.emplace( At(5), Stop{At(5)} );
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };
+		config.IdleTimeout = 5min;
+		Open( config, {At(6), {Beat(Count(TotalNode, At(5), 100), At(5,59,30))}, Stop{At(5)}} );
+		Machine->Finish( At(6,1) );
+		EXPECT_TRUE( Sink->Calls.empty() );
+		EXPECT_TP( Machine->State().Since, At(5) );
+		EXPECT_EQ( Row(0), Minute(0, {}, 1min) );
+		EXPECT_TRUE( Sink->Rebuilds.empty() );
+	}
+	TEST_F( Streams, HeartbeatBoundTimesTheIdleFromItsValue ){
+		EngineConfig config{ Signals({{ERole::Total, TotalNode}}) };
+		config.IdleTimeout = 5min;
+		Open( config, {At(6), {Beat(Count(TotalNode, At(5,58), 100), At(5,59,30))}} );
+		Machine->Live();
+		EXPECT_EQ( Machine->State().State, EState::Running );
+		Time->AdvanceTo( At(6,2,59) );
+		EXPECT_TRUE( Sink->Table().empty() );
+		Time->AdvanceTo( At(6,3) );
+		EXPECT_EQ( Sink->Table(), Table{"05:58:00-"} );
 	}
 	//A count that was idle before the opening is stopped from it:  nothing before the opening is this run's to rewrite.
 	TEST_F( Streams, IdleBeforeTheOpening ){
@@ -500,6 +660,43 @@ namespace Jde::Opc::Oee::Tests{
 		Time->AdvanceTo( At(6,12) );
 		EXPECT_EQ( Sink->Rows.size(), 10u ) << "the engine's clock is the source's now";
 	}
+	//A record ahead of the rest would run the clock fast, writing rows early and making the records on time late.
+	TEST_F( Streams, RecordAheadDoubted ){
+		auto& engine = Counting();
+		engine.Live();
+		Arrive( Count(TotalNode, At(6,0,10), 110) );
+		Time->AdvanceTo( At(6,0,20) );
+		engine.Records( Stream({Count(TotalNode, At(6,1,10), 115)}) );
+		EXPECT_EQ( engine.State().Offset, 0s );
+		EXPECT_TRUE( Sink->Rows.empty() ) << "no row before its end";
+		Arrive( Count(TotalNode, At(6,0,40), 112) );
+		EXPECT_EQ( engine.State().Offset, 0s ) << "the next disagrees";
+		EXPECT_TRUE( Sink->Rebuilds.empty() ) << "on time, so not late";
+		Time->AdvanceTo( At(6,1,5) );
+		ASSERT_EQ( Sink->Rows.size(), 1u );
+		EXPECT_EQ( Row(0), Minute(0, 1min, {}, {}, 12) );
+	}
+	//The source's clock stepped forward:  the second record that agrees is believed.
+	TEST_F( Streams, ClockStepAheadLearned ){
+		auto& engine = Counting();
+		engine.Live();
+		Arrive( Count(TotalNode, At(6,0,10), 110) );
+		Time->AdvanceTo( At(6,0,20) );
+		engine.Records( Stream({Count(TotalNode, At(6,1,10), 115)}) );
+		EXPECT_EQ( engine.State().Offset, 0s );
+		Time->AdvanceTo( At(6,0,30) );
+		engine.Records( Stream({Count(TotalNode, At(6,1,20), 116)}) );
+		EXPECT_EQ( engine.State().Offset, -50s );
+		EXPECT_EQ( Sink->Rows.size(), 1u ) << "the engine's clock is the source's now";
+	}
+	//Less than settle ahead can't write a row before its end, so it counts at once.
+	TEST_F( Streams, RecordSlightlyAheadBelieved ){
+		auto& engine = Counting();
+		engine.Live();
+		Time->AdvanceTo( At(6,0,20) );
+		engine.Records( Stream({Count(TotalNode, At(6,0,23), 110)}) );
+		EXPECT_EQ( engine.State().Offset, -3s );
+	}
 	//One record stamped decades ahead, a PLC's unset clock, moves neither the tallies nor the engine's clock.
 	TEST_F( Streams, RecordFarAhead ){
 		auto& engine = Counting();
@@ -514,6 +711,17 @@ namespace Jde::Opc::Oee::Tests{
 		EXPECT_EQ( Row(0), Minute(0, 1min, {}, {}, 12) );
 		EXPECT_TRUE( Sink->Rebuilds.empty() );
 	}
+	//A record held for the clock is no one's next record:  the rebuild's span stops at the engine's time.
+	TEST_F( Streams, RebuildSpanStopsShortOfAHeldRecord ){
+		auto& engine = Counting();
+		engine.Live();
+		Arrive( Count(TotalNode, At(6,0,30), 110) );
+		engine.Records( Stream({Count(TotalNode, sys_days{2100y/January/1}, 999)}) );
+		Time->AdvanceTo( At(6,1,6) );
+		engine.Records( Stream({Count(TotalNode, At(6,0,40), 105)}) );
+		ASSERT_EQ( Sink->Rebuilds.size(), 1u );
+		EXPECT_EQ( Sink->Rebuilds[0], (Rebuilt{TotalNode, {At(6,0,40), At(6,1,6)}}) );
+	}
 	//A backfill's too:  the stream is the clock only as far as the wall clock.
 	TEST_F( Streams, ReplayedRecordFarAhead ){
 		auto& engine = Counting();
@@ -522,6 +730,19 @@ namespace Jde::Opc::Oee::Tests{
 		engine.Live();
 		EXPECT_EQ( Sink->Rows.size(), 2u );
 		EXPECT_TP( engine.Processed(), At(6,2) );
+	}
+
+	//A rebuild never goes live, so its stream is its only clock:  what waited for the wall clock is applied to the end it's given, and none past it.
+	TEST_F( Streams, FinishAppliesWhatWaited ){
+		auto& engine = Counting();
+		Time->AdvanceTo( At(6,0,10) );
+		engine.Replay( Page({Count(TotalNode, At(6,0,30), 110), Flag(StateNode, At(6,2,30), false), Count(TotalNode, At(6,2,40), 120), Count(TotalNode, sys_days{2100y/January/1}, 999)}) );
+		engine.Finish( At(6,3) );
+		ASSERT_EQ( Sink->Rows.size(), 3u );
+		EXPECT_EQ( Row(0), Minute(0, 1min, {}, {}, 10) );
+		EXPECT_EQ( Row(2), Minute(2, 30s, 30s, {}, 10) );
+		EXPECT_EQ( Sink->Table(), Table{"06:02:30-"} );
+		EXPECT_TP( engine.Processed(), At(6,3) );
 	}
 
 	TEST_F( Streams, EndedTakesNothing ){

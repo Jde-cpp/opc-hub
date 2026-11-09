@@ -1,5 +1,6 @@
 #include <jde/oee/Engine.h>
 #include <jde/opc/uatypes/DateTime.h>
+#include <jde/opc/proto/opc.Common.h>
 #include <jde/oee/rules.h>
 
 #define let const auto
@@ -11,6 +12,7 @@ namespace Jde::Opc::Oee{
 		//A record as the engine keeps it, by its source time.
 		struct Sample final{ TimePoint Time; uint32 Node; bool Good; Reading Value; bool Applied{}; };
 		constexpr uint8 TotalCount{ 0 }, GoodCount{ 1 }, RejectCount{ 2 };
+		constexpr std::array Counters{ std::pair{ERole::Total, TotalCount}, std::pair{ERole::Good, GoodCount}, std::pair{ERole::Reject, RejectCount} };
 		//How far a record may be ahead of the engine's clock, or its offset from the one held, before it is doubted.
 		constexpr Duration Skew{ minutes{1} };
 		constexpr uint Recent{ 8 };//the values the source offset is the least of.
@@ -22,6 +24,7 @@ namespace Jde::Opc::Oee{
 			TimePoint Since;
 			optional<Stop> Open;//the stop, or the span of unknown time, in progress:  the last of the rows.
 			optional<TimePoint> Quiet;//with no State signal, a running machine's last count:  the idle timeout runs from it.
+			optional<int64_t> QuietCode;//the Reason held at Quiet, else the first above zero since:  the idle stop's code.
 			optional<TimePoint> LastCount;
 			std::array<optional<double>,3> Last;//each counter's last Good value.
 			optional<double> Rate;//the Rate, while it is Good.
@@ -47,26 +50,17 @@ namespace Jde::Opc::Oee{
 			if( !v.has_value() )
 				return {};
 			let& x = v.value();
-			using V = Opc::Proto::Value;
-			switch( x.of_case() ){
-			case V::kBoolean: return x.boolean() ? 1.0 : 0.0;
-			case V::kDoubleValue: return x.double_value();
-			case V::kFloatValue: return (double)x.float_value();
-			case V::kSbyte: return (double)x.sbyte();
-			case V::kInt16: return (double)x.int16();
-			case V::kInt32: return (double)x.int32();
-			case V::kInt64: return (double)x.int64();
-			case V::kByte: return (double)x.byte();
-			case V::kUint16: return (double)x.uint16();
-			case V::kUint32: return (double)x.uint32();
-			case V::kUint64: return (double)x.uint64();
-			case V::kStringValue: return x.string_value();
-			default: return {};
-			}
+			if( x.of_case()==Opc::Proto::Value::kBoolean )
+				return x.boolean() ? 1.0 : 0.0;
+			if( x.of_case()==Opc::Proto::Value::kStringValue )
+				return x.string_value();
+			let n = ProtoUtils::Number( x );
+			return n ? Reading{ *n } : Reading{};
 		}
 		Ω sample( const Hist::Proto::DataValue& v, TimePoint t )ι->Sample{
-			let ok = isGood( v.status() );
-			return Sample{ t, v.node_index(), ok, ok ? reading(v) : Reading{} };
+			auto value = isGood( v.status() ) ? reading( v ) : Reading{};
+			let good = !std::holds_alternative<std::monostate>( value );//a Good status with no value to read says nothing of the machine either.
+			return Sample{ t, v.node_index(), good, move(value) };
 		}
 		Ω number( const Sample& s )ι->optional<double>{
 			let p = std::get_if<double>( &s.Value );
@@ -104,6 +98,7 @@ namespace Jde::Opc::Oee{
 		α Horizon()Ι->TimePoint{ return _clock->Now()-_offset+Skew; }//a record past it waits for the clock.
 		α Code( const Core& c )Ι->optional<int64_t>{ return c.Reason ? optional<int64_t>{ c.Reason } : nullopt; }
 		α Small( TimePoint now )Ι->bool{ return _core.Open && !_core.Open->Unknown && now-_core.Open->Start<_config.SmallStop; }
+		α IdleDue( const Core& c )Ι->optional<TimePoint>{ return _config.IdleTimeout && c.Quiet && c.State==EState::Running ? optional<TimePoint>{ *c.Quiet+*_config.IdleTimeout } : nullopt; }
 		α WidthAt( TimePoint t )Ι->Duration;
 		α Next( TimePoint start )Ι->Interval;
 		α Derive( const Core& c )Ι->Interval;
@@ -117,10 +112,10 @@ namespace Jde::Opc::Oee{
 		α Late( uint32 node, TimePoint t )ι->void;
 		α Ask( uint32 node, Span span )ι->void;
 		α Run()ι->void;
+		α Drain( TimePoint through )ι->void;
 		α Rerun( TimePoint t )ι->void;
 		α Advance( TimePoint to )ι->void;
 		α Roll()ι->void;
-		α CheckIdle( TimePoint now )ι->void;
 		α Idle()ι->void;
 		α Apply( const Sample& s )ι->void;
 		α Enter( EState state, TimePoint t )ι->void;
@@ -158,7 +153,7 @@ namespace Jde::Opc::Oee{
 		vector<Hist::Proto::HistoryRecord> _queued;//the stream's, until Live.
 		Duration _offset{};//the source offset:  the least of _offsets, or what Live was given.
 		vector<Duration> _offsets;//arrival less source time, of the last Recent Good values the stream delivered.
-		optional<Duration> _doubted;//the last value's, when it was more than Skew from _offset.
+		optional<Duration> _doubted;//the last value's, when it was too far from _offset to believe alone.
 		IClock::TimerId _timer{};
 		TimePoint _timerDue;
 	};
@@ -192,12 +187,13 @@ namespace Jde::Opc::Oee{
 			_pruned[b.node_index()] = t;
 			let s = sample( b, t );
 			let n = s.Good ? number( s ) : nullopt;
+			let counted = b.has_heartbeat() ? UADateTime{ UA_DateTime{b.heartbeat()} }.Time() : t;//a heartbeat's own time is the timer's, not the count's.
 			let roles = p->second;
 			if( roles & bit(ERole::State) )
 				state = !s.Good ? EState::Unknown : matches( _running, s.Value ) ? EState::Running : EState::Stopped;
 			if( (roles & bit(ERole::Total)) && n ){
 				c.Last[TotalCount] = *n;
-				c.LastCount = t;
+				c.LastCount = counted;
 			}
 			if( (roles & bit(ERole::Good)) && n )
 				c.Last[GoodCount] = *n;
@@ -208,11 +204,20 @@ namespace Jde::Opc::Oee{
 			if( !_state && (roles & (bit(ERole::Total)|bit(ERole::Rate))) ){//the count is the state.
 				state = n ? EState::Running : EState::Unknown;
 				if( n && !((roles & bit(ERole::Rate)) && *n>0) )
-					c.Quiet = t;
+					c.Quiet = counted;
 			}
 			if( roles & bit(ERole::Reason) )
 				c.Reason = n ? std::llround( *n ) : 0;
 		}
+		for( let& v : opening.LastGood ){
+			let p = _roles.find( v.node_index() );
+			let n = p==_roles.end() ? nullopt : number( sample(v, from) );
+			for( let [role, i] : Counters ){
+				if( n && (p->second & bit(role)) && !c.Last[i] )
+					c.Last[i] = *n;
+			}
+		}
+		c.QuietCode = Code( c );
 		if( c.Quiet && _config.IdleTimeout && from-*c.Quiet>=*_config.IdleTimeout ){//idle before it opened:  stopped from here, nothing before From being its to rewrite.
 			state = EState::Stopped;
 			c.Quiet.reset();
@@ -327,7 +332,9 @@ namespace Jde::Opc::Oee{
 		ul _{ _mutex };
 		if( _ended || _live )
 			return;
+		Drain( end );//the stream is its clock, so what waited for the wall clock is applied.
 		Advance( end );
+		Write( end );
 		Emit();
 	}
 	α Engine::Impl::Records( vector<Hist::Proto::HistoryRecord>&& records )ι->void{
@@ -377,12 +384,12 @@ namespace Jde::Opc::Oee{
 		Run();
 	}
 	//The source offset, from a Good value as it arrives:  the least of the last few, since a value that was held back says
-	//the offset is no more than its own.  One more than Skew from the offset, an unset clock's, counts only once the next
-	//agrees with it:  the source's clock stepped.
+	//the offset is no more than its own.  One more than Skew above the offset, an unset clock's, or more than Settle below
+	//it, which would write rows before they end, counts only once the next agrees with it:  the source's clock stepped.
 	α Engine::Impl::Clocked( TimePoint t, TimePoint arrival )ι->void{
 		let offset = arrival-t;
 		auto near = []( Duration a, Duration b ){ return a-b<=Skew && b-a<=Skew; };
-		if( near(offset, _offset) ){
+		if( offset-_offset<=Skew && _offset-offset<=_config.Settle ){
 			if( _offsets.size()==Recent )
 				_offsets.erase( _offsets.begin() );
 			_offsets.push_back( offset );
@@ -425,7 +432,7 @@ namespace Jde::Opc::Oee{
 	α Engine::Impl::Late( uint32 node, TimePoint t )ι->void{
 		if( let p = _pruned.find(node); p!=_pruned.end() && p->second>t )
 			return Ask( node, {t, p->second} );
-		let next = std::ranges::find_if( _samples, [&]( const Sample& s ){ return s.Node==node && s.Time>t; } );
+		let next = std::ranges::find_if( _samples, [&, horizon=Horizon()]( const Sample& s ){ return s.Node==node && s.Time>t && s.Time<=horizon; } );
 		Ask( node, {t, next==_samples.end() ? Now() : next->Time} );
 	}
 	α Engine::Impl::Ask( uint32 node, Span span )ι->void{
@@ -438,8 +445,10 @@ namespace Jde::Opc::Oee{
 	α Engine::Impl::Run()ι->void{
 		if( let t = std::exchange(_dirty, nullopt); t )
 			return Rerun( *t );
-		let horizon = Horizon();
-		for( auto p = std::ranges::lower_bound(_samples, _core.At, {}, &Sample::Time); p!=_samples.end() && p->Time<=horizon; ++p ){
+		Drain( Horizon() );
+	}
+	α Engine::Impl::Drain( TimePoint through )ι->void{
+		for( auto p = std::ranges::lower_bound(_samples, _core.At, {}, &Sample::Time); p!=_samples.end() && p->Time<=through; ++p ){
 			if( p->Applied )
 				continue;
 			Advance( p->Time );
@@ -447,12 +456,22 @@ namespace Jde::Opc::Oee{
 			p->Applied = true;
 		}
 	}
-	//From the newest snapshot at or before t:  the samples from there on applied again, in time order.
+	//From the newest snapshot at or before t:  the samples from there on applied again, in time order.  An idle stop found
+	//after that snapshot is found again, or not, so from before it began:  the rows it took run time from are made again too.
 	α Engine::Impl::Rerun( TimePoint t )ι->void{
-		auto p = _snapshots.end();
-		while( std::prev(p)!=_snapshots.begin() && std::prev(p)->At>t )
-			--p;
-		--p;
+		auto at = [this]( TimePoint time ){
+			auto y = _snapshots.end();
+			while( std::prev(y)!=_snapshots.begin() && std::prev(y)->At>time )
+				--y;
+			return std::prev( y );
+		};
+		auto p = at( t );
+		if( _config.IdleTimeout && !_state ){
+			for( let& s : _rows | std::views::reverse ){
+				if( !s.Unknown && s.Start<p->At && s.Start+*_config.IdleTimeout>p->At )
+					p = at( s.Start );
+			}
+		}
 		let to = _core.At;
 		_core = *p;
 		_snapshots.erase( std::next(p), _snapshots.end() );
@@ -477,14 +496,19 @@ namespace Jde::Opc::Oee{
 		}
 		Advance( to );
 	}
-	//Tallies to `to`:  a snapshot at each minute it crosses and a row at each interval's end, which are minutes too.
+	//Tallies to `to`:  a snapshot at each minute it crosses and a row at each interval's end, which are minutes too.  The
+	//idle timeout resolves as it's crossed, so a snapshot before it holds the machine as running and a rerun decides it again.
 	α Engine::Impl::Advance( TimePoint to )ι->void{
-		CheckIdle( to );
 		auto& c = _core;
 		while( c.At<to ){
-			let next = std::min( {to, c.Row.End(), minute(c.At)+minutes{1}} );
+			auto next = std::min( {to, c.Row.End(), minute(c.At)+minutes{1}} );
+			let due = IdleDue( c );
+			if( due && *due<next )
+				next = std::max( *due, c.At );
 			Tally( c, next-c.At );
 			c.At = next;
+			if( due && *due<=c.At )
+				Idle();
 			if( c.At==c.Row.End() )
 				Roll();
 			if( c.At==minute(c.At) )
@@ -497,33 +521,22 @@ namespace Jde::Opc::Oee{
 			_done.push_back( move(row) );
 		c.Row = Next( c.At );
 		c.Counts = {};
-		if( !_live )//the stream is the clock:  a record past its end was seen.
-			Write( c.At );
-	}
-	α Engine::Impl::CheckIdle( TimePoint now )ι->void{
-		let& c = _core;
-		if( _config.IdleTimeout && c.Quiet && c.State==EState::Running && *c.Quiet+*_config.IdleTimeout<=now )
-			Idle();
+		if( !_live )//the stream is the clock:  a record past its end was seen.  A row the idle timeout may yet take back waits for it.
+			Write( c.Quiet.value_or(c.At) );
 	}
 	//The timeout passed with no count:  stopped since the last one, so what was tallied as run since then is stop time, and
 	//the rows written since are to be rebuilt.
 	α Engine::Impl::Idle()ι->void{
 		auto& c = _core;
-		const Stop stop{ *c.Quiet, nullopt, Code(c) };
-		auto stopped = [&stop]( Core& x ){
-			if( let from = std::max(stop.Start, x.Row.Start); x.At>from ){
-				x.Row.Run -= x.At-from;
-				x.Row.Stop += x.At-from;
-			}
-			x.State = EState::Stopped;
-			x.Since = stop.Start;
-			x.Open = stop;
-			x.Quiet.reset();
-		};
-		for( auto& s : _snapshots ){
-			if( s.At>stop.Start )
-				stopped( s );
+		const Stop stop{ *c.Quiet, nullopt, c.QuietCode };
+		if( let from = std::max(stop.Start, c.Row.Start); c.At>from ){
+			c.Row.Run -= c.At-from;
+			c.Row.Stop += c.At-from;
 		}
+		c.State = EState::Stopped;
+		c.Since = stop.Start;
+		c.Open = stop;
+		c.Quiet.reset();
 		for( auto& row : _done ){
 			if( row.End()>stop.Start ){
 				let d = row.End()-std::max( stop.Start, row.Start );
@@ -531,7 +544,6 @@ namespace Jde::Opc::Oee{
 				row.Stop += d;
 			}
 		}
-		stopped( c );
 		_rows.push_back( stop );
 		if( stop.Start<_processed && _idleAsked!=stop.Start ){
 			_idleAsked = stop.Start;
@@ -544,7 +556,7 @@ namespace Jde::Opc::Oee{
 		let n = s.Good ? number( s ) : nullopt;
 		if( roles & bit(ERole::State) )
 			Enter( !s.Good ? EState::Unknown : matches(_running, s.Value) ? EState::Running : EState::Stopped, s.Time );
-		for( let [role, i] : {std::pair{ERole::Total, TotalCount}, std::pair{ERole::Good, GoodCount}, std::pair{ERole::Reject, RejectCount}} ){
+		for( let [role, i] : Counters ){
 			if( !(roles & bit(role)) )
 				continue;
 			if( n ){//below the last is a reset, which counts whole;  the first has nothing to count against.
@@ -568,6 +580,8 @@ namespace Jde::Opc::Oee{
 		}
 		if( roles & bit(ERole::Reason) ){
 			c.Reason = n ? std::llround( *n ) : 0;
+			if( c.Quiet && !c.QuietCode )
+				c.QuietCode = Code( c );
 			if( c.Reason && c.Open && !c.Open->Unknown && !c.Open->Code ){//the first value above zero before the stop's end.
 				c.Open->Code = c.Reason;
 				_rows.back().Code = c.Reason;
@@ -602,11 +616,14 @@ namespace Jde::Opc::Oee{
 		if( positive ){
 			Enter( EState::Running, t );
 			c.Quiet = rate ? nullopt : optional<TimePoint>{ t };
+			c.QuietCode = Code( c );
 		}
 		else if( c.State==EState::Unknown )
 			Enter( EState::Stopped, t );
-		else if( rate && c.State==EState::Running && !c.Quiet )
+		else if( rate && c.State==EState::Running && !c.Quiet ){
 			c.Quiet = t;
+			c.QuietCode = Code( c );
+		}
 	}
 	α Engine::Impl::Write( TimePoint through )ι->void{
 		for( ; !_done.empty() && _done.front().End()<=through; _done.pop_front() ){
@@ -618,8 +635,9 @@ namespace Jde::Opc::Oee{
 	}
 	α Engine::Impl::Settle()ι->void{
 		Run();//what waited for the clock.
-		let now = Now();
-		CheckIdle( now );
+		let now = _clock->Now()-_offset;//not Now():  a record ahead of the clock moves the engine's time, and no row is due for that.
+		if( let due = IdleDue(_core); due && *due<=now )
+			Advance( *due );//found by the clock, not a Settle later:  a record still on its way reruns it.
 		let through = now-_config.Settle;
 		do{//a row at a time, so a quiet year's rows are written as they are made.
 			Advance( std::min(through, _core.Row.End()) );
@@ -631,8 +649,8 @@ namespace Jde::Opc::Oee{
 	α Engine::Impl::Arm( TimePoint now )ι->void{
 		let& c = _core;
 		auto due = ( _done.empty() ? c.Row.End() : _done.front().End() )+_config.Settle;
-		if( _config.IdleTimeout && c.Quiet && c.State==EState::Running )
-			due = std::min( due, *c.Quiet+*_config.IdleTimeout );
+		if( let idle = IdleDue(c); idle )
+			due = std::min( due, *idle );
 		if( Small(now) )
 			due = std::min( due, c.Open->Start+_config.SmallStop );
 		let wall = due+_offset;

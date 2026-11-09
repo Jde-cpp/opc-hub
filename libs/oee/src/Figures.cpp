@@ -1,5 +1,5 @@
 #include <jde/oee/Figures.h>
-#include "refuse.h"
+#include <jde/fwk/exceptions/refuse.h>
 
 #define let const auto
 
@@ -126,13 +126,9 @@ namespace Jde::Opc{
 			for( let& span : shifts )
 				calendar += length( span );
 			auto counted = shifts;//planned time less the Excluded stops:  what the counts are within.
-			for( let& p : stops ){
-				if( p.At.End<=at.Start )
-					continue;
-				if( p.At.Start>=at.End )
-					break;
-				let kind = classOf( p );
-				for( let& part : inside(shifts, p.At) ){
+			for( auto p = std::ranges::upper_bound(stops, at.Start, {}, []( const Piece& x ){ return x.At.End; }); p!=stops.end() && p->At.Start<at.End; ++p ){
+				let kind = classOf( *p );
+				for( let& part : inside(shifts, p->At) ){
 					let d = length( part );
 					switch( kind ){
 					case EClass::Excluded: y.Excluded += d; counted = subtract( counted, part ); break;
@@ -155,6 +151,9 @@ namespace Jde::Opc{
 				y.Reject += row->Reject*in;
 				y.Outside += row->Total*( share(length(clip(span, at)), row->Width)-in );
 			}
+			//Here, not on a row:  a count and its reject can land in different rows, and it's the negative row that nets them.
+			y.Good = std::max( std::min(y.Good, y.Total), 0.0 );
+			y.Reject = std::max( std::min(y.Reject, y.Total), 0.0 );
 			y.Unknown = Duration{ (Duration::rep)std::llround(unknown) };
 			y.Partial = y.Partial || y.Unknown>Duration::zero();
 			y.Planned = std::max( calendar-y.Excluded-y.Unknown, Duration::zero() );

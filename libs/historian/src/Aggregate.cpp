@@ -4,6 +4,7 @@
 #include <absl/functional/function_ref.h>
 #include <jde/fwk/io/crc.h>
 #include <jde/opc/UAException.h>
+#include <jde/opc/proto/opc.Common.h>
 #include "Store.h"
 #include "io/DayFiles.h"
 #include "io/Records.h"
@@ -46,22 +47,7 @@ namespace Jde::Opc::Hist{
 			return treatUncertainAsBad ? EClass::Bad : EClass::Uncertain;
 		return EClass::Good;
 	}
-	Ω number( const Opc::Proto::Value& v )ι->optional<double>{
-		switch( v.of_case() ){
-		case Opc::Proto::Value::kDoubleValue: return v.double_value();
-		case Opc::Proto::Value::kFloatValue: return (double)v.float_value();
-		case Opc::Proto::Value::kSbyte: return (double)v.sbyte();
-		case Opc::Proto::Value::kInt16: return (double)v.int16();
-		case Opc::Proto::Value::kInt32: return (double)v.int32();
-		case Opc::Proto::Value::kInt64: return (double)v.int64();
-		case Opc::Proto::Value::kByte: return (double)v.byte();
-		case Opc::Proto::Value::kUint16: return (double)v.uint16();
-		case Opc::Proto::Value::kUint32: return (double)v.uint32();
-		case Opc::Proto::Value::kUint64: return (double)v.uint64();
-		default: return nullopt;
-		}
-	}
-	Ω number( const Proto::DataValue& v )ι->optional<double>{ return v.has_value() ? number( v.value() ) : nullopt; }
+	Ω number( const Proto::DataValue& v )ι->optional<double>{ return v.has_value() ? ProtoUtils::Number( v.value() ) : nullopt; }
 	//d as the source's type, for a result Part 13 types "Same as Source":  an integer rounds to the nearest inside
 	//its range.
 	Ω numberAs( double d, const Opc::Proto::Value& like )ι->Opc::Proto::Value{

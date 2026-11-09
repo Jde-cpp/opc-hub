@@ -284,6 +284,32 @@ namespace Jde::Opc::Oee::Tests{
 		EXPECT_FALSE( b.Partial );
 	}
 
+	//A reject recorded in a later row than its count:  the rows keep the sign, so a range over both nets out, and only a
+	//bucket cut between them is held at zero.
+	TEST( FiguresTests, RejectInALaterRow ){
+		auto rows = RunRows( At(6), 1min, {50, 0} );
+		rows[1].Reject = 4;
+		rows[1].Good = -4;
+		let read = [&rows]( TimePoint from, TimePoint to ){ return Figures( Pump, {rows, {}, {}, Reasons}, nullptr, from, to )[0]; };
+		let both = read( At(6), At(6,2) );
+		EXPECT_DOUBLE_EQ( both.Good, 46 );
+		EXPECT_DOUBLE_EQ( both.Reject, 4 );
+		EXPECT_DOUBLE_EQ( *both.Quality, 0.92 );
+		let later = read( At(6,1), At(6,2) );
+		EXPECT_DOUBLE_EQ( later.Good, 0 );
+		EXPECT_DOUBLE_EQ( later.Reject, 0 );
+	}
+	//With Total and Good signals it is the good that can run ahead of its total.
+	TEST( FiguresTests, GoodHeldToTheTotal ){
+		auto rows = RunRows( At(6), 1min, {50} );
+		rows[0].Good = 54;
+		rows[0].Reject = -4;
+		let b = Figures( Pump, {rows, {}, {}, Reasons}, nullptr, At(6), At(6,1) )[0];
+		EXPECT_DOUBLE_EQ( b.Good, 50 );
+		EXPECT_DOUBLE_EQ( b.Reject, 0 );
+		EXPECT_DOUBLE_EQ( *b.Quality, 1 );
+	}
+
 	//With no calendar every minute is planned, the days begin at midnight UTC, and by shift is refused.
 	TEST( FiguresTests, CalendarLess ){
 		auto rows = RunRows( At(0)-24h, 1h, {} );

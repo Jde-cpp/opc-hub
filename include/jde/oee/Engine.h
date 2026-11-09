@@ -14,13 +14,18 @@ namespace Jde::Opc::Oee{
 		Duration Settle{ seconds{5} };//how long after an interval ends its row is written.
 	};
 	//Where a run starts.  Bounds are each signal's value before From, as a subscription's snapshot and a bounded read open
-	//with them:  the stepped state and the counters' last values.  A signal with none, or Bad_BoundNotFound, starts unknown,
-	//and a bound after From, the read's closing one, is skipped.
-	//Open is the row a restart found with no end;  where the State bound says otherwise the bound wins, and the row ends at From.
+	//with them:  the stepped state and the counters' last values.  A read flags a record at its start as the bound, so the
+	//host reads from one tick before From and a record stamped From replays.  A signal with none, or Bad_BoundNotFound,
+	//starts unknown, and a bound after From, the read's closing one, is skipped.
+	//Open is the row a restart found over From, its start before it and its end null or after it, which the host clears in
+	//the table too, the replay being what ends it;  where the State bound says otherwise the bound wins, and the row ends at From.
+	//LastGood is each counter's last Good value before From, for a counter whose bound is not Good:  what the first Good
+	//value after the gap counts against.
 	struct Opening final{
 		TimePoint From;//the machine's `processed`:  the first row starts here and runs to the next boundary of the width.
 		vector<Hist::Proto::DataValue> Bounds;
 		optional<Stop> Open;
+		vector<Hist::Proto::DataValue> LastGood;
 	};
 	//What a tile shows, and what the shift's figures add to the stored rows.
 	struct LiveState final{
@@ -46,7 +51,7 @@ namespace Jde::Opc::Oee{
 		β Rewritten( TimePoint from, const vector<Stop>& stops )ι->void=0;
 		//A record of `node` in a written interval, late or a Modification, or an idle stop that began in one:  the rows over
 		//`span` are to be rebuilt from the group's history.  The span ends no later than the node's next record:  at the newest
-		//of its records the engine has let go, else at its next the engine holds, which the host narrows to the next one stored.
+		//of its records the engine has let go, else at its next the engine holds short of the clock, which the host narrows to the next one stored.
 		//With neither it ends at the engine's time:  it reaches the open interval, and a fresh engine takes over.
 		β Rebuild( uint32 node, Span span )ι->void=0;
 		β Live( const LiveState& state )ι->void=0;//the state, the row in progress or Small changed.
@@ -60,7 +65,7 @@ namespace Jde::Opc::Oee{
 		Engine( EngineConfig config, Opening opening, sp<ISink> sink, sp<Hist::IClock> clock, SRCE )ε;//throws what ValidateSignals and ValidateWidth do.
 		~Engine();
 		//A page of the snapshot, in source-time order.  The stream is the clock:  an interval closes once a record past its
-		//end is seen.  A value flagged Bound is skipped, the opening having taken it, and so is a heartbeat.
+		//end is seen, one the idle timeout may yet take back once that's resolved.  A value flagged Bound is skipped, the opening having taken it, and so is a heartbeat.
 		α Replay( const vector<Hist::ReadValue>& page )ι->void;
 		//The snapshot's end.  From here the clock is the wall clock less the source offset, so a server whose clock lags is not
 		//late by the lag:  `offset` to begin with, what the historian keeps for the signals' nodes when the host has it, then
@@ -68,7 +73,8 @@ namespace Jde::Opc::Oee{
 		//believed once the next agrees.  An interval closes once that clock passes its end by Settle, and the idle timeout and
 		//SmallStop are timers.  Applies what Records held.
 		α Live( Duration offset={} )ι->void;
-		//The end of a rebuild's run, which never goes live:  the stream's clock moves to `end`, closing each interval up to it.
+		//The end of a rebuild's run, which never goes live:  the stream's clock moves to `end`, applying every record up to it,
+		//those a live clock would still hold included, and closing each interval up to it.
 		α Finish( TimePoint end )ι->void;
 		//The stream:  ISubscriber::OnRecords'.  Held until Live.  A heartbeat is skipped and a Modification placed by the
 		//time it targets.
