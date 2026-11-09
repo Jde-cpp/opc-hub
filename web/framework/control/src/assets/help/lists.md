@@ -59,9 +59,9 @@ The tune button beside the views edits the current one, over three tabs.
 
 The bar above the tabs:
 
-- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others. Two views may share a name.
+- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others. Two views may share a name, but a view needs one.
 - **Show** applies the changes without saving them, and the view's button reads *(edited)*.
-- **Delete** removes the view. Deleting the last one brings the list's own views back.
+- **Delete** removes the view. Deleting the last one brings the list's own views back. It is greyed out on an *(edited)* view, and on a list's own view when that is the only one.
 - **Cancel** returns to the list unchanged.
 
 Saved views are kept with your profile, so they follow you between browsers.

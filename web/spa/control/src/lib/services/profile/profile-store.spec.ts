@@ -159,6 +159,12 @@ describe( 'ProfileStore.loadRows', ()=>{
 			await store.load( `k${i}`, 'd' );
 	};
 
+	//other prefixes' rows:  `count` of them, each one entry
+	const fillRows = async ( store:ProfileStore, count:number, from=0 )=>{
+		for( let i=from; i<from+count; ++i )
+			await store.loadRows( `p${i}` );
+	};
+
 	it( 'reads every row under the prefix in one fetch, and answers the next read from the cache with a copy', async ()=>{
 		const { service, store } = create();
 		const rows = await store.loadRows( 'things/views' );
@@ -169,16 +175,43 @@ describe( 'ProfileStore.loadRows', ()=>{
 		expect( service.loadRows ).toHaveBeenCalledWith( 'things/views' );
 	} );
 
-	it( "holds a list's rows as one of the cache's ten entries, not one a view", async ()=>{
+	it( "holds a list's rows as one of ten sets of rows, apart from the keys' ten", async ()=>{
+		const { service, store } = create();
+		const reads = ( prefix:string )=>service.loadRows.mock.calls.filter( ([p])=>p==prefix ).length;
+		await store.loadRows( 'things/views' );
+		await fill( store, 10 );
+		await fillRows( store, 9 );
+		await store.loadRows( 'things/views' );//the tenth, and now the latest
+		await fillRows( store, 1, 9 );//evicts p0
+		await store.loadRows( 'things/views' );
+		expect( reads('things/views') ).toBe( 1 );
+		await store.loadRows( 'p0' );
+		expect( reads('p0') ).toBe( 2 );
+	} );
+
+	it( 'answers a load from the rows, as a save under the prefix left them', async ()=>{
 		const { service, store } = create();
 		await store.loadRows( 'things/views' );
-		await fill( store, 9 );
-		await store.loadRows( 'things/views' );//the tenth entry, and now the latest
-		await fill( store, 1, 9 );//evicts k0
+		await store.save( 'things/views/1', {a: 9} );
+		expect( await store.load( 'things/views/1', null ) ).toEqual( {a: 9} );
+		expect( await store.load( 'things/views/7', 'd' ) ).toBe( 'd' );//every row is among them, so it is known-absent
+		expect( service.load ).not.toHaveBeenCalled();
+	} );
+
+	it( 'keeps the rows current through an update under the prefix', async ()=>{
+		const { service, store } = create();
 		await store.loadRows( 'things/views' );
+		await store.update<{a:number}>( 'things/views/1', {a: 0}, v=>({a: v.a+1}) );
+		expect( (await store.loadRows( 'things/views' )).get( 'things/views/1' ) ).toBe( '{"a":2}' );
 		expect( service.loadRows ).toHaveBeenCalledTimes( 1 );
-		await store.load( 'k0', 'd' );
-		expect( service.load ).toHaveBeenCalledTimes( 11 );
+	} );
+
+	it( 'names whoever is signed in, and nobody signed out', ()=>{
+		const { service, store } = create();
+		expect( store.userKey ).toBe( 'u1' );
+		service.setUser( undefined );
+		expect( store.userKey ).toBeUndefined();
+		expect( createStore().userKey ).toBeUndefined();
 	} );
 
 	it( 'a save under the prefix changes the entry, and is skipped as a no-op against it', async ()=>{
@@ -221,7 +254,7 @@ describe( 'ProfileStore.loadRows', ()=>{
 		await store.save( 'things/views/1', 'A' );
 		await store.loadRows( 'things/views' );
 		await store.save( 'things/views/1', 'B' );
-		await fill( store, 10 );//the rows are evicted
+		await fillRows( store, 10 );//the rows are evicted
 		await store.save( 'things/views/1', 'A' );
 		expect( service.rows.get('things/views/1') ).toBe( 'A' );
 	} );

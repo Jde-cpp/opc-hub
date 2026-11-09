@@ -106,32 +106,34 @@ export class LogDetail implements OnInit, OnDestroy{
 		if( this.viewSet.select(index) )
 			this.refresh();
 	}
-	//awaited, as QLList's:  where the views were still to be read, the set changes only once they are (ViewSet)
-	async onViewSave( view:View ){
+	onViewSave( view:View ){
 		this.isSettings.set( false );
-		try{
-			await this.viewSet.save( view );
-		}
-		catch( e ){
-			this.#snackBar.exception( "Could not save view.", e );
-		}
-		this.refresh();
+		return this.#changeView( ()=>this.viewSet.save(view), "Could not save view." );
 	}
 	onViewShow( view:View ){
 		this.isSettings.set( false );
 		this.viewSet.show( view );
 		this.refresh();
 	}
-	async onViewDelete( view:View ){
-		const current = this.view();
+	onViewDelete( view:View ){
 		this.isSettings.set( false );
+		return this.#changeView( ()=>this.viewSet.remove(view), "Could not delete view." );
+	}
+	//Re-read the moment the view is another, not once it is written, or the table keeps the last view's rows under this one's
+	//columns.  Where the views were still to be read the set changes only after the await (ViewSet).
+	async #changeView( change:()=>Promise<void>, failed:string ){
+		const before = this.view();
+		const writes = change();
+		const shown = this.view();
+		if( shown!==before )
+			this.refresh();
 		try{
-			await this.viewSet.remove( view );
+			await writes;
 		}
 		catch( e ){
-			this.#snackBar.exception( "Could not delete view.", e );
+			this.#snackBar.exception( failed, e );
 		}
-		if( this.view()!==current )//without this the table keeps the deleted view's rows under another view's columns
+		if( this.view()!==shown )
 			this.refresh();
 	}
 

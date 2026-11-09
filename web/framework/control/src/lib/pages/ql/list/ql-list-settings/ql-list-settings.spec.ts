@@ -29,6 +29,25 @@ describe( 'QLListSettings view name', ()=>{
 		expect( input(create()).value ).toBe( "Mine" );
 	} );
 
+	const button = ( fixture:any, text:string ):HTMLButtonElement=>[...fixture.nativeElement.querySelectorAll( 'mat-toolbar button' )].find( ( b:any )=>b.textContent.includes(text) ) as HTMLButtonElement;
+
+	//review #12:  it made a view named "", a button with no text
+	it( 'offers no Save for a blank name', ()=>{
+		const fixture = create();
+		expect( button(fixture, "Save").disabled ).toBe( false );
+		fixture.componentInstance.name.set( "   " );
+		fixture.detectChanges();
+		expect( button(fixture, "Save").disabled ).toBe( true );
+	} );
+
+	it( 'offers Delete where its host says there is a view to take', ()=>{
+		const fixture = create();
+		expect( button(fixture, "Delete").disabled ).toBe( true );
+		fixture.componentRef.setInput( 'canDelete', true );
+		fixture.detectChanges();
+		expect( button(fixture, "Delete").disabled ).toBe( false );
+	} );
+
 	it( 'writes typing back into the signal', ()=>{
 		const fixture = create();
 		const el = input( fixture );
@@ -89,11 +108,6 @@ describe( 'QLListSettings Save and Delete', ()=>{
 		settings.name.set( "Yours" );
 		const shown = settings.getView( true );
 		expect( [shown.number, shown.name] ).toEqual( [2, "Mine"] );
-	} );
-	it( "deletes any view of the set, and not one under no number", ()=>{
-		expect( create("Deleted", ViewType.System).disableDelete() ).toBe( false );
-		expect( create("Users", ViewType.Adhoc).disableDelete() ).toBe( false );
-		expect( create(undefined, ViewType.System, 0).disableDelete() ).toBe( true );//the default a pick list falls back on
 	} );
 } );
 

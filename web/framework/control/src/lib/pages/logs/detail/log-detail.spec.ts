@@ -297,7 +297,7 @@ describe( 'LogDetail sort', ()=>{
 		await tick();
 		fixture.detectChanges();
 		await tick();
-		return { fixture, page: fixture.componentInstance, snackbar, profileStore };
+		return { fixture, page: fixture.componentInstance, snackbar, profileStore, ql };
 	};
 	const unsorted = ( page:LogDetail )=>{
 		const view = page.viewCopy;
@@ -314,6 +314,22 @@ describe( 'LogDetail sort', ()=>{
 		expect( page.sort ).toEqual( [time] );
 		expect( page.data.allEntries ).toHaveLength( 2 );
 		expect( snackbar.exception ).not.toHaveBeenCalled();
+	} );
+	//review #10:  the view changes at once, and awaiting the writes first left the old rows under its columns
+	it( 're-reads as soon as the view is another, once, before its writes are done', async ()=>{
+		const { page, profileStore, ql } = await create();
+		let written!:()=>void;
+		profileStore.save.mockReturnValue( new Promise<void>( done=>{ written = done; } ) );
+		const reads = ql.ql.mock.calls.length;
+		const view = page.viewCopy;
+		view.name = 'mine';
+		view.number = 0;
+		const saving = page.onViewSave( view );
+		expect( page.view().name ).toBe( 'mine' );
+		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
+		written();
+		await saving;
+		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
 	} );
 	it( 'saves a view with no sort sorted by time', async ()=>{
 		const { fixture, page, profileStore } = await create();

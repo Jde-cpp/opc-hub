@@ -26,6 +26,8 @@ export type ViewSetOptions<V extends View> = {
 //its writes wait for the last change's, and say what the set is by then, so two changes made together leave the two agreeing.
 //Where the profile could not be read the route's views show, and every change is refused with the read's error until a read
 //succeeds, which the next change tries first:  a first save writes every row, and must not write them over a set it has not seen.
+//So too for a read made for another:  someone signed in since, the next change reads for them first.  Signed out, a change is made
+//here alone, and the next one signed in writes it too.
 //The array is only ever replaced, so whatever reads current() sees the change, and the host re-queries or, where its rows are a
 //computed of current(), does nothing.  The selected view's number is kept in LocalPrefs, per browser, as it is picked.
 export class ViewSet<V extends View>{
@@ -111,6 +113,11 @@ export class ViewSet<V extends View>{
 			this.#set( views );
 		} );
 	}
+	//Delete has a view to take:  one of the set, and not a twin, whose Delete would take the view under it where the user may mean
+	//only to drop the edits;  nor the one view of a set that is still the route's, which would come straight back.
+	canRemove( view:View ):boolean{
+		return !view.isAdhoc && this.#members.some( v=>v.number==view.number ) && ( this.#saved || this.#members.length>1 );
+	}
 	//the view and its twin
 	rename( view:View, name:string|undefined ):Promise<void>{
 		return this.#change( ()=>{
@@ -151,12 +158,12 @@ export class ViewSet<V extends View>{
 	//A change to the set:  made at once, and its writes queued.  Where the profile is still to be read the read comes first, and
 	//the change is made once it succeeds - unless it found the user's own views, since the change was made to the route's.
 	#change( change:()=>void ):Promise<void>{
-		const known = this.#known, generation = this.#generation;
+		const known = this.#isRead, generation = this.#generation;
 		if( known )
 			change();
 		const turn = this.#queue.catch( ()=>{} ).then( async ()=>{
 			if( !known ){
-				if( !this.#known )
+				if( !this.#isRead )
 					await this.#read();
 				if( this.#generation!=generation )
 					throw new Error( "Your saved views have been read:  make the change again." );
@@ -166,6 +173,11 @@ export class ViewSet<V extends View>{
 		} );
 		this.#queue = turn;
 		return turn;
+	}
+	//Read for whoever is signed in.  Signed out there is nobody to read for, and a read would answer no rows.
+	get #isRead():boolean{
+		const user = this.#profileStore.userKey;
+		return this.#known && ( !user || user==this.#reader );
 	}
 	//THROWS where the read fails or a row cannot be made a view of:  the set is then not known, and nothing is written over it
 	async #read():Promise<void>{
@@ -185,36 +197,32 @@ export class ViewSet<V extends View>{
 			saved.push( view );
 		}
 		this.#known = true;
-		this.#stored = new Map( saved.map( v=>[v.number, this.#json(v)] ) );
-		this.#storedIndex = index ?? null;//as it is held:  one naming a row that is not there is put right by the next change
-		if( !saved.length )
+		this.#reader = this.#profileStore.userKey;
+		this.#written = new Set( saved.map( v=>v.number ) );
+		if( !saved.length && !this.#saved )
 			return;
 		++this.#generation;
-		this.#members = saved;
-		this.#saved = true;
-		this.#twin = undefined;//the route's
+		this.#saved = saved.length>0;
+		this.#members = this.#saved ? saved : this.#route;//none saved, over a set that was:  the last user's, not this one's
+		this.#twin = undefined;//of the set replaced
 		this.#selected = this.#prefs.viewNumber( this.#key );
 		this.#publish();
 	}
-	//What the set is now against what the profile holds:  the rows that differ, then the index, then the rows no longer in it.
-	//What it holds is only what was written, so a failed write is made again by the next change.
+	//The set as this turn starts:  its rows, then the index, then the rows no longer in it, ProfileStore skipping what it already
+	//holds.  A later change's view is named only by the index of its own turn, which has written its row.  A failed write leaves the
+	//store not knowing what the server holds, so the next change makes it again.
 	async #write():Promise<void>{
+		if( this.#profileStore.userKey!=this.#reader )//signed out since the read
+			return;
 		const rows = new Map<number,string>( this.#saved ? this.#members.map( v=>[v.number, this.#json(v)] ) : [] );
-		for( const [number, json] of rows ){
-			if( this.#stored.get(number)===json )
-				continue;
-			await this.#profileStore.save( this.#rowKey(number), json );
-			this.#stored.set( number, json );
-		}
-		const index = this.#saved ? JSON.stringify( this.#members.map( v=>v.number ) ) : null;//none saved:  no index row
-		if( index!==this.#storedIndex ){
-			await this.#profileStore.save( this.#viewsKey, index );
-			this.#storedIndex = index;
-		}
-		for( const number of [...this.#stored.keys()].filter( n=>!rows.has(n) ) ){
+		for( const number of rows.keys() )
+			this.#written.add( number );//before the write:  one that failed may have landed
+		await Promise.all( [...rows].map( ([number, json])=>this.#profileStore.save(this.#rowKey(number), json) ) );
+		await this.#profileStore.save( this.#viewsKey, rows.size ? JSON.stringify( [...rows.keys()] ) : null );//none saved:  no index row
+		await Promise.all( [...this.#written].filter( n=>!rows.has(n) ).map( async number=>{
 			await this.#profileStore.save( this.#rowKey(number), null );
-			this.#stored.delete( number );
-		}
+			this.#written.delete( number );
+		} ) );
 	}
 	#rowKey( number:number ):string{ return `${this.#viewsKey}/${number}`; }
 	#json( view:V ):string{ return JSON.stringify( view.toJson(this.#settings) ); }
@@ -264,9 +272,9 @@ export class ViewSet<V extends View>{
 	#selected = 0;//the number of the view shown
 	#onTwin = false;
 	#known = false;//the profile's rows were read
+	#reader:string|undefined;//for whom:  undefined signed out
 	#generation = 0;//of the set a read put in the route's place
-	#stored = new Map<number,string>();//the profile's rows, as they were read and written since
-	#storedIndex:string|null = null;
+	#written = new Set<number>();//the numbers whose rows the profile may hold, which a removal deletes.  A row the read found no index entry for is not among them.
 	#queue:Promise<void> = Promise.resolve();
 	readonly #type:ViewSetOptions<V>["type"];
 	readonly #key:string;

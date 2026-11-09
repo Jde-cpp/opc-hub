@@ -254,10 +254,16 @@ describe( 'ViewSet', ()=>{
 
 	//ProfileStore orders the writes of one key alone:  a change's writes wait for the last change's, and say what the set is by then
 	describe( 'two changes in one turn', ()=>{
-		it( "holds the second's writes until the first's are done, and leaves the index and the rows agreeing", async ()=>{
-			const { set, service, writes, held } = await load( stored([[1, make("A")], [2, make("B")]]) );
+		//the next write held on its way:  the function returned lets it land
+		const holdNext = ( service:MockProfileService )=>{
 			let release!:()=>void;
 			service.save.mockImplementationOnce( ( key:string, value:string|null )=>new Promise<void>( done=>{ release = ()=>{ service.rows.set( key, value! ); done(); }; } ) );
+			return ()=>release();
+		};
+
+		it( "holds the second's writes until the first's are done, and leaves the index and the rows agreeing", async ()=>{
+			const { set, service, writes, held } = await load( stored([[1, make("A")], [2, make("B")]]) );
+			const release = holdNext( service );
 			const added = set.save( unnumbered(set, "New") ), moved = set.move( set.current(), 0 );
 			expect( names(set) ).toEqual( ["3:New", "1:A", "2:B"] );
 			await flush();
@@ -285,8 +291,117 @@ describe( 'ViewSet', ()=>{
 			expect( writes() ).toEqual( ["things/views/3"] );
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );//the index never named the row that is not there
 			await set.move( set.views()[0], 1 );
-			expect( writes() ).toEqual( ["things/views/3", "things/views"] );
+			expect( writes() ).toEqual( ["things/views/2", "things/views/1", "things/views/3", "things/views"] );//in the new order:  the store no longer knows what the server holds
 			expect( held() ).toEqual( {index: [2, 1, 3], rows: [1, 2, 3]} );
+		} );
+
+		//review #2:  the index came from the set as it stood after the row writes, so it named a view whose row was still to come
+		it( "names in a change's index no view added while its rows were written", async ()=>{
+			const { set, service, writes, held } = await load( stored([[1, make("A")]]) );
+			const release = holdNext( service );
+			const renamed = set.rename( set.current(), "Z" );
+			await flush();
+			const added = set.save( unnumbered(set, "New") );
+			release();
+			await renamed;
+			expect( held() ).toEqual( {index: [1], rows: [1]} );
+			await added;
+			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views"] );
+			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );
+		} );
+
+		//review #13:  one round trip a row, on a page that shows nothing until they finish
+		it( 'writes the rows together, and then the index', async ()=>{
+			const { set, service, writes } = await load();
+			const release = holdNext( service );
+			const renamed = set.rename( set.views()[1], "Mine" );
+			await flush();
+			expect( service.save.mock.calls.map( ([key])=>key ) ).toEqual( ["things/views/1", "things/views/2"] );//the first is still on its way
+			release();
+			await renamed;
+			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views"] );
+		} );
+	} );
+
+	//review #1 and #5:  signed out, a read answers no rows and a write goes nowhere, and neither may pass for the profile
+	describe( 'signing in and out', ()=>{
+		it( "reads for whoever signed in since, and shows their views in place of the route's", async ()=>{
+			const { set, service, writes, held } = create( stored([[1, make("Mine")]]) );
+			service.setUser( undefined );
+			await set.load( route(), schema );
+			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
+			service.setUser( 'u1' );
+			await expect( set.remove( set.views()[1] ) ).rejects.toThrow( 'make the change again' );
+			expect( names(set) ).toEqual( ["1:Mine"] );
+			expect( writes() ).toEqual( [] );
+			expect( held() ).toEqual( {index: [1], rows: [1]} );
+		} );
+
+		it( "makes the change for one who signed in with no views saved", async ()=>{
+			const { set, service, writes } = create();
+			service.setUser( undefined );
+			await set.load( route(), schema );
+			service.setUser( 'u1' );
+			await set.rename( set.views()[1], "Mine" );
+			expect( names(set) ).toEqual( ["1:Default", "2:Mine"] );
+			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views"] );
+		} );
+
+		it( 'keeps a change made signed out here, and writes it with the next one signed in', async ()=>{
+			const { set, service, writes, held } = await load( stored([[1, make("A")], [2, make("B")]]) );
+			service.setUser( undefined );
+			await set.save( unnumbered(set, "New") );
+			await set.remove( set.views()[0] );
+			expect( names(set) ).toEqual( ["2:B", "3:New"] );
+			expect( writes() ).toEqual( [] );
+			service.setUser( 'u1' );
+			await set.move( set.views()[1], 0 );
+			expect( names(set) ).toEqual( ["3:New", "2:B"] );
+			expect( held() ).toEqual( {index: [3, 2], rows: [2, 3]} );
+			expect( service.loadRows ).toHaveBeenCalledTimes( 1 );//the same user's:  no read
+		} );
+
+		it( "does not carry one user's views over to another who has none", async ()=>{
+			const { set, service, writes } = await load( stored([[1, make("A")]]) );
+			service.rows.clear();
+			service.setUser( 'u2' );
+			await expect( set.rename( set.current(), "x" ) ).rejects.toThrow( 'make the change again' );
+			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
+			expect( writes() ).toEqual( [] );
+		} );
+	} );
+
+	describe( 'canRemove', ()=>{
+		it( 'takes a view of a saved set, the last of them too', async ()=>{
+			const { set } = await load( stored([[1, make("A")]]) );
+			expect( set.canRemove( set.current() ) ).toBe( true );
+		} );
+
+		it( "takes one of a route's several", async ()=>{
+			const { set } = await load();
+			expect( set.canRemove( set.views()[1] ) ).toBe( true );
+		} );
+
+		//review #7:  it would come straight back
+		it( "does not take the route's only view", async ()=>{
+			const { set } = create();
+			await set.load( [make(undefined)], schema );
+			expect( set.canRemove( set.current() ) ).toBe( false );
+		} );
+
+		//review #6:  the view under the twin would go
+		it( 'does not take a twin', async ()=>{
+			const { set } = await load( stored([[1, make("A")], [2, make("B")]]) );
+			set.sort( {active: "kind", direction: "asc"} );
+			expect( set.current().isAdhoc ).toBe( true );
+			expect( set.canRemove( set.current() ) ).toBe( false );
+			expect( set.canRemove( View.copy(set.current()) ) ).toBe( false );//the copy the settings panel edits
+		} );
+
+		it( 'does not take the fallback a pick list shows under no number', async ()=>{
+			const { set } = await load( stored([[1, trash()]]), {offered} );
+			expect( set.current().number ).toBe( 0 );
+			expect( set.canRemove( set.current() ) ).toBe( false );
 		} );
 	} );
 

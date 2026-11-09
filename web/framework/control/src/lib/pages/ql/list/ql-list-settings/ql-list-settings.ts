@@ -42,12 +42,10 @@ export class QLListSettings implements OnInit{
 		return view;
 	}
 
-	//Delete takes any view of the set, the route's among them (ViewSet.remove) - not the route's default a pick list falls back
-	//on where it offers none, which is under no number.
-	disableDelete():boolean{ return !this.view().number; }
 	onNameInput( event:Event ){ this.name.set( (<HTMLInputElement>event.target).value ); }
 	onNameFocus( event:FocusEvent ){ (<HTMLInputElement>event.target).select(); }//was `$event.target.select()` in the template, which type-checks only because EventTarget is loose there
 	excludedColumns = input<string[]>([]);
+	canDelete = input<boolean>( false );//ViewSet.canRemove, of the view
 	paged = input<boolean>( true );//false where the host does not page - a node's Children - so it offers no Page Size
 	suggestions = input.required<Record<string,any[]>>();
 	schema = input.required<TableSchema>();
