@@ -3,7 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { defer, of } from 'rxjs';
 import { IGraphQL } from '../services/graphql';
 import { DetailPage } from './detail-page';
-import { configureDetailPage, Widget } from 'jde-framework/testing';
+import { MatDialog } from '@angular/material/dialog';
+import { configureDetailPage, dialogStub, Widget } from 'jde-framework/testing';
 
 @Component( {template: '', host: {class: 'detail-page-spec'}} )
 class TestPage extends DetailPage<Widget>{
@@ -120,6 +121,54 @@ describe( 'DetailPage', ()=>{
 		await page.onSubmitClick();
 		await page.onDeleteClick();
 		expect( page.mutated ).toHaveBeenCalledTimes( 2 );
+	} );
+
+	//#396:  a page whose rows others plan by (CalendarDetail) says what a Delete costs first, and its refusals on its form
+	it( 'asks before a delete where the page gives a warning, never before a restore, and adds its words to the purge', async ()=>{
+		@Component( {template: '', host: {class: 'detail-page-warning-spec'}} )
+		class WarningPage extends TestPage{
+			protected override get deleteWarning(){ return 'Others use it.'; }
+			protected override get purgeWarning(){ return 'Its children go too.'; }
+			protected override saveFailed( e:unknown ){ this.refused( e ); }
+			refused = vi.fn();
+		}
+		const open = ( row:object, answer:boolean )=>{
+			TestBed.resetTestingModule();//a page per answer
+			const dialog = dialogStub( answer );
+			const { snackbar } = configureDetailPage( row, {providers: [{ provide: MatDialog, useValue: dialog }]} );
+			const page = TestBed.createComponent( WarningPage ).componentInstance;
+			page.ngOnInit();
+			return { page, dialog, snackbar, asked: ()=>dialog.open.mock.calls.map( ([, config])=><{title:string; message:string}>config!.data ) };
+		};
+		const refused = open( {id: 3, name: 'w', slug: 'w'}, false );
+		await refused.page.onDeleteClick();
+		expect( refused.asked() ).toEqual( [{title: 'Delete w?', message: 'Others use it.', confirm: 'Delete', destructive: true}] );
+		expect( refused.page.ql.mutate ).not.toHaveBeenCalled();
+
+		const confirmed = open( {id: 3, name: 'w', slug: 'w'}, true );
+		await confirmed.page.onDeleteClick();
+		expect( confirmed.page.ql.mutate ).toHaveBeenCalledWith( 'deleteWidget(id:3)' );
+		(<any>confirmed.page.ql.mutate).mockRejectedValue( new Error("denied") );
+		confirmed.page.properties.set( new Widget({id: 3, name: 'renamed', slug: 'w'}) );
+		await confirmed.page.onSubmitClick();
+		expect( confirmed.page.refused ).toHaveBeenCalledWith( expect.any(Error) );//the page's own say, in place of the toast
+		expect( confirmed.snackbar.exception ).not.toHaveBeenCalled();
+
+		const deleted = open( {id: 3, name: 'w', slug: 'w', deleted: '2026-01-01T00:00:00Z'}, true );
+		await deleted.page.onDeleteClick();
+		expect( deleted.asked() ).toEqual( [] );
+		expect( deleted.page.ql.mutate ).toHaveBeenCalledWith( 'restoreWidget(id:3)' );
+		await deleted.page.onPurgeClick();
+		expect( deleted.asked()[0].message ).toBe( 'w will be permanently removed. This cannot be undone - a purged row has no Restore.  Its children go too.' );
+	} );
+	it( 'deletes at once, and purges with its own words alone, where the page gives none', async ()=>{
+		TestBed.resetTestingModule();
+		const dialog = dialogStub( true );
+		configureDetailPage( {id: 3, name: 'w', slug: 'w', deleted: '2026-01-01T00:00:00Z'}, {providers: [{ provide: MatDialog, useValue: dialog }]} );
+		const page = TestBed.createComponent( TestPage ).componentInstance;
+		page.ngOnInit();
+		await page.onPurgeClick();
+		expect( (<{message:string}>dialog.open.mock.calls[0][1]!.data).message ).toBe( 'w will be permanently removed. This cannot be undone - a purged row has no Restore.' );
 	} );
 
 	it( 'cancels back to the list', ()=>{

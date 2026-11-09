@@ -3,6 +3,12 @@
 		<p>{{error()}}</p>
 	}
 	@else{
-		<instance-tabs [logs]=appService [instanceId]=instanceId() [(selectedIndex)]="tabIndex"/>
+		<instance-tabs [logs]=appService [instanceId]=instanceId() [(selectedIndex)]="tabIndex">
+			<ng-template instanceTab="Calendars" instanceTabHelp="calendars" instanceTabAfter><!--the shift calendars (#396):  a list the tab resolves itself, keyed on the page's url as the shared tabs are on the instance-->
+				@for( u of [url()]; track u ){
+					<calendar-list [url]=u></calendar-list>
+				}
+			</ng-template>
+		</instance-tabs>
 	}
 }

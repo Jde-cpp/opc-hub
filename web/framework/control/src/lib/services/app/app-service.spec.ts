@@ -72,3 +72,15 @@ describe( 'AppService transport', ()=>{
 		expect( (service as any).socketUrl ).toBe( 'wss://localhost:1967' );
 	} );
 } );
+
+//a hub registers under its own program name, so a gateway's page asks for both
+describe( 'AppService.instancePKs', ()=>{
+	it( 'answers each program from the one read', async ()=>{
+		const service = create();
+		const read = vi.fn( async ()=>[{instanceId: 3, instanceName: 'Hub', programName: 'Jde.OpcHub'}, {id: 4, instanceName: 'Other', programName: 'OpcGateway'}] );
+		(service as any).queryArray = read;
+		expect( await service.instancePKs( 'Hub', ['OpcGateway', 'OpcHub'] ) ).toEqual( [undefined, 3] );
+		expect( read ).toHaveBeenCalledTimes( 1 );
+		expect( await service.instancePK( 'Other', 'OpcGateway' ) ).toBe( 4 );
+	} );
+} );

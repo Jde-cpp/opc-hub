@@ -110,7 +110,7 @@ The **Trend** tab draws the rows ticked in the list's **Trend** column, up to ei
 
 ## Instances
 
-Under [Applications](/apps), a gateway instance's page has the eight tabs [Applications help](/help/apps#opchub) lists. Its own five:
+Under [Applications](/apps), a gateway instance's page has the tabs [Applications help](/help/apps#opchub) lists. Its own five:
 
 - **Connections** lists its server connections. The **Status** column reads *Connected*, *Idle* or *Error*. Press **Add** to connect the gateway to another OPC server, or open a row to edit one.
 - **Templates** and **Groups** are the gateway historian's: what it stores, and by what rules. See [Historian groups and templates](/help/gateways/groups).
@@ -126,6 +126,10 @@ A connection's page holds its **URL**, **Certificate URI** and **Default Namespa
 The **Server** tab reads the server's own diagnostics, as any OPC UA client's diagnostics view does: its *ServerStatus* - state, start time, build - the counts of its *ServerDiagnosticsSummary*, and the sessions and subscriptions it lists, this gateway's among them. A server may leave the two lists empty, and the tab says so. A session's id shows under its name where the two differ: it is how a subscription names its session. Under them, **Gateway client** is the gateway's own session with the server for your sign-in: when it first connected, how many breaks it came back from and when the last was, the age of the session now up, the items it monitors, and for the connection as a whole the items a lost session is holding for its reconnect, whether a reconnect is waiting to retry, and how many clients the gateway holds for it - one per credential. While a lost session waits to reconnect, the panel says *Reconnecting* and shows the lost session's figures, with no session age and the items it was monitoring counted as parked. *No session* means the gateway holds none for your sign-in; the tab's own server reads open one, so a **Refresh** that reaches the server shows it. **Test Connection** does not, since it opens no lasting session. The tab reads when it is shown and on **Refresh**; the server's reads need a session with it, and fail together where the connection does, while the gateway's own figures still show. Once an admin enforces it, the gateway's figures need *Read* on its `sessions` resource, as the Connections list's status does.
 
 An OPC server instance's page is under [Applications help](/help/apps#opc-servers).
+
+### Calendars
+
+A hub's page has a **Calendars** tab as well: the shift calendars, which are the application server's and shared with every gateway. A stand-alone gateway's are on its application server's page. See [Shift calendars](/help/calendars).
 
 ### Endpoint
 

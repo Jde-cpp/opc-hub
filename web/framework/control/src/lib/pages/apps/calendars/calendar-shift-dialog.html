@@ -1,0 +1,52 @@
+<h2 mat-dialog-title>{{ data.shift ? 'Edit ' + data.shift.name : 'Add a shift' }}</h2>
+<mat-dialog-content>
+	<mat-form-field class="wide">
+		<mat-label>Name</mat-label>
+		<input matInput cdkFocusInitial [formField]="f.name" placeholder="Day">
+	</mat-form-field>
+	<fieldset class="days">
+		<legend>Days</legend>
+		@for( day of f.days; track $index ){
+			<mat-checkbox [formField]="day">{{ dayNames[$index] }}</mat-checkbox>
+		}
+	</fieldset>
+	<div class="pair">
+		<mat-form-field>
+			<mat-label>Start</mat-label>
+			<input matInput type="time" [formField]="f.start">
+		</mat-form-field>
+		<mat-form-field>
+			<mat-label>End</mat-label>
+			<input matInput type="time" [formField]="f.end">
+			<mat-hint>{{ lengthText() }}</mat-hint>
+		</mat-form-field>
+	</div>
+	<fieldset class="breaks">
+		<legend>Breaks</legend>
+		@for( b of f.breaks; track $index ){
+			<div class="break">
+				<mat-form-field subscriptSizing="dynamic">
+					<mat-label>Start</mat-label>
+					<input matInput type="time" [formField]="b.start">
+				</mat-form-field>
+				<mat-form-field subscriptSizing="dynamic">
+					<mat-label>Length</mat-label>
+					<input matInput type="number" [formField]="b.minutes">
+					<span matTextSuffix>min</span>
+				</mat-form-field>
+				<button matIconButton type="button" (click)="removeBreak($index)" aria-label="Remove this break" matTooltip="Remove"><mat-icon>close</mat-icon></button>
+			</div>
+		}
+		<button matButton type="button" (click)="addBreak()"><mat-icon>add</mat-icon>Add break</button>
+	</fieldset>
+	@if( f().dirty() && problem(); as p ){
+		<p class="problem" role="alert">{{ p }}</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<button matButton="outlined" type="button" mat-dialog-close [disabled]="busy()">Cancel</button>
+	<button matButton="filled" type="button" (click)="save()" [disabled]="busy() || !!problem() || !changed()">Save</button>
+</mat-dialog-actions>
