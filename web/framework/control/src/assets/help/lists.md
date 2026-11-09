@@ -3,7 +3,7 @@
 Most of the site is a **list** of records that opens onto a page for one **record**. The lists are:
 
 - the users, groups, roles and resources under [Access](/access)
-- a gateway's server connections, on the **Connections** tab of the gateway's page under [Applications](/apps)
+- a gateway's server connections and its historian templates and groups, on the **Connections**, **Templates** and **Groups** tabs of the gateway's page under [Applications](/apps)
 
 They all work the same way, which is described here.
 
@@ -21,12 +21,16 @@ The refresh button re-reads the list; the rows stay on screen while it runs.
 
 Click a row to open the record. Two kinds of list differ:
 
-- **Resources** under [Access](/access) has no record page, so a row click does nothing.
+- A **Resources** row under [Access](/access) opens a read-only page of who holds rights on it, not an editable record.
 - The pick lists on a record's tabs (a group's **Users**, say) have no **Add**. A click ticks the row, and the record's **Save** keeps the picks.
 
 Click a column header to sort by that column, which counts as an unsaved change to the view.
 
-A list longer than its view's **Page Size** is read a page at a time. The pager under the table steps through the pages - or through the rows one at a time, with the inner pair of buttons - and reads which rows are showing; the total is known, and shown, once the last page has been reached. Switching or editing the view returns to the first page; the refresh button keeps the page you are on, and so does opening a record and coming back, for as long as the browser tab stays open.
+A list longer than its view's **Page Size** is read a page at a time.
+
+The pager under the table steps through the pages. Its inner pair of buttons steps one row at a time. It shows which rows are on screen, and the total once the last page has been reached.
+
+Switching or editing the view returns to the first page. The refresh button keeps the page you are on. So does opening a record and coming back, for as long as the browser tab stays open.
 
 Deleted records are left out of every view that does not filter on **Deleted**. The **Deleted** view, after a list's other built-in views, lists only them. It is the only way to reach one and restore it.
 
@@ -41,7 +45,11 @@ A list with no rows says why:
 
 ## Views
 
-A **view** is which rows are filtered out, which columns are shown and in what order, and how the rows are sorted. The buttons in the middle of the bar switch between a list's views: every list has a *Default* view, some come with more, and the ones you save are added beside them. The view you were last on is remembered in this browser.
+A **view** is which rows are filtered out, which columns are shown and in what order, and how the rows are sorted.
+
+The buttons in the middle of the bar switch between a list's views. Every list comes with a *Default* view and some with more. They are a starting set: the first view you save keeps the whole set as your own. From then the buttons show your views alone, to change, add to and delete as you like.
+
+The view you were last on is remembered in this browser.
 
 The tune button beside the views edits the current one, over three tabs.
 
@@ -51,9 +59,9 @@ The tune button beside the views edits the current one, over three tabs.
 
 The bar above the tabs:
 
-- **Save** keeps the view under the name in the box. A view the list came with cannot be overwritten: give it a new name and it is saved as your own.
+- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others. Two views may share a name.
 - **Show** applies the changes without saving them, and the view's button reads *(edited)*.
-- **Delete** removes a view you saved.
+- **Delete** removes the view. Deleting the last one brings the list's own views back.
 - **Cancel** returns to the list unchanged.
 
 Saved views are kept with your profile, so they follow you between browsers.

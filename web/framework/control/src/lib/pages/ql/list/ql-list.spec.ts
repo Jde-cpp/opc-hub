@@ -5,7 +5,7 @@ import { HELP_TOPICS, LocalPrefs, ProfileStore, RouteStore } from 'jde-spa';
 import { IGRAPHQL } from '../../../services/graphql';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
-import { DbScalar, FieldFilter, Operator, View, ViewType } from '../../../model/ql/view';
+import { DbScalar, FieldFilter, Operator, View } from '../../../model/ql/view';
 import { Field } from '../../../model/ql/schema/field';
 import { QLList } from './ql-list';
 import { Paginator } from '../../../shared/paginator/paginator';
@@ -29,9 +29,10 @@ const configure = ( url?:string, ...providers:Provider[] )=>{
 	]});
 	return { router, snackbar };
 };
+//`views` as the route's, the profile unread:  the store has no provider, so the read a change makes first finds no rows
 const viewSet = ( views:View[] )=>{
-	const set = QLListResolver.viewSet( "users", TestBed.inject(ProfileStore), TestBed.inject(LocalPrefs), {} );
-	set.reset( views );
+	const set = QLListResolver.viewSet( "users", TestBed.inject(ProfileStore), TestBed.inject(LocalPrefs), {columns: []} );
+	set.reset( views, schemaOf("User") );
 	return set;
 };
 
@@ -136,7 +137,7 @@ describe( 'QLList re-query failures reach the user', ()=>{
 } );
 
 //reviews-issue/web-refactor-review.md #6:  Delete did not await the profile write, said "Could not save view." when it failed, and
-//re-queried whatever it was given - a System or Adhoc view, which remove() never takes, re-read the same rows.
+//re-queried whatever it was given, the view on screen left as it was or not.
 describe( 'QLList Delete', ()=>{
 	const schema = schemaOf( "User", id(), required("name"), scalar("slug") );
 	const create = ()=>{
@@ -145,7 +146,6 @@ describe( 'QLList Delete', ()=>{
 		const system = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		const mine = View.copy( system );
 		mine.name = "Mine";
-		mine.type = ViewType.User;
 		const profile = viewSet( [system, mine] );
 		profile.select( 1 );
 		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema, profile} as unknown as QLListData );
@@ -156,7 +156,7 @@ describe( 'QLList Delete', ()=>{
 	};
 	afterEach( ()=>vi.restoreAllMocks() );
 
-	it( 'takes a saved view, and re-queries under the view left', async ()=>{
+	it( 'takes the view on screen, and re-queries under the view left', async ()=>{
 		const { page, profile, mine, load, exception } = create();
 		await page.onViewDelete( mine );
 		expect( profile.views().map( v=>v.name ) ).toEqual( [undefined] );
@@ -164,11 +164,11 @@ describe( 'QLList Delete', ()=>{
 		expect( page.isSettings() ).toBe( false );
 		expect( exception ).not.toHaveBeenCalled();
 	} );
-	it( 'leaves the rows alone for a view it does not take', async ()=>{
-		const { page, profile, system, load } = create();
+	it( 'leaves the rows alone where the view on screen stays', async ()=>{
+		const { page, profile, system, mine, load } = create();
 		profile.select( 0 );
-		await page.onViewDelete( system );
-		expect( profile.views() ).toHaveLength( 2 );
+		await page.onViewDelete( mine );
+		expect( profile.views() ).toEqual( [system] );
 		expect( load ).not.toHaveBeenCalled();
 		expect( page.isSettings() ).toBe( false );
 	} );
@@ -285,6 +285,19 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 		expect( page.emptyState().detail ).toBe( "" );
 	} );
 
+	//#587:  the first tab is whichever view the user put there, so the test is against the route's default view
+	it( "compares with the route's default view, not the first tab", async ()=>{
+		const all = view( [] ), certs = view( [["provider", Operator.In, ["Key"]]] );
+		const page = create( users, {views: [all, certs]} );
+		await page.profile().move( certs, 0 );
+		expect( page.profile().views() ).toEqual( [certs, all] );
+		page.view.set( certs );
+		expect( page.emptyState().title ).toBe( "No users match this view." );
+		page.view.set( all );
+		expect( page.emptyState().title ).toBe( "No users yet." );
+		expect( page.addFilled() ).toBe( true );
+	} );
+
 	it( 'fills Add only on a genuinely empty list', ()=>{
 		expect( create(users).addFilled() ).toBe( true );
 		const certs = view( [["provider", Operator.In, ["Key"]]] );
@@ -392,10 +405,11 @@ describe( 'QLList paging', ()=>{
 		expect( load.mock.calls[1][1].skip ).toBe( 50 );
 		const mine = View.copy( page.view() );
 		mine.name = "Mine";
+		mine.number = 0;//as the settings panel emits a view under another name:  a new one
 		await page.onViewSave( mine );
 		expect( load.mock.calls[2][1].skip ).toBe( 0 );
 		await page.onPage( {startIndex: 25, pageSize: 25} );
-		await page.onViewDelete( page.profile().current() );//a saved view:  Delete leaves anything else where it is (#6)
+		await page.onViewDelete( page.profile().current() );//the view on screen:  Delete leaves the rows where it stays (#6)
 		expect( load.mock.calls[4][1].skip ).toBe( 0 );
 		expect( page.skip() ).toBe( 0 );
 	} );
@@ -457,7 +471,7 @@ describe( 'QLList paging', ()=>{
 		it( 'does not bring back the view a page turn was copied from', async ()=>{
 			const { page, hold } = create( rows(80) );
 			const profile = page.profile();
-			profile.reset( [...profile.views(), View.fromTable( {columns: ["name"], sort: "slug"}, schema )] );
+			profile.reset( [...profile.views(), View.fromTable( {columns: ["name"], sort: "slug"}, schema )], schema );
 			const pending = hold();
 			const older = turn( page, 25 ), newer = page.onChangeView( 1 );
 			pending[1].settle();

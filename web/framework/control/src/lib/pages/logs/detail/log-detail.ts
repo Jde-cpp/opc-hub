@@ -106,22 +106,33 @@ export class LogDetail implements OnInit, OnDestroy{
 		if( this.viewSet.select(index) )
 			this.refresh();
 	}
-	onViewSave( view:View ){
-		this.viewSet.save( view ).catch( e=>this.#snackBar.exception("Could not save view.", e) );
-		this.refresh();
+	//awaited, as QLList's:  where the views were still to be read, the set changes only once they are (ViewSet)
+	async onViewSave( view:View ){
 		this.isSettings.set( false );
+		try{
+			await this.viewSet.save( view );
+		}
+		catch( e ){
+			this.#snackBar.exception( "Could not save view.", e );
+		}
+		this.refresh();
 	}
 	onViewShow( view:View ){
 		this.isSettings.set( false );
 		this.viewSet.show( view );
 		this.refresh();
 	}
-	onViewDelete( view:View ){
+	async onViewDelete( view:View ){
 		const current = this.view();
-		this.viewSet.remove( view ).catch( e=>this.#snackBar.exception("Could not delete view.", e) );
+		this.isSettings.set( false );
+		try{
+			await this.viewSet.remove( view );
+		}
+		catch( e ){
+			this.#snackBar.exception( "Could not delete view.", e );
+		}
 		if( this.view()!==current )//without this the table keeps the deleted view's rows under another view's columns
 			this.refresh();
-		this.isSettings.set( false );
 	}
 
 	cellClick( entry:Entry ){

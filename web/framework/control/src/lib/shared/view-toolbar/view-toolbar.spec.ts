@@ -1,14 +1,15 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { View, ViewType } from '../../model/ql/view';
+import { View } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 import { ViewToolbar } from './view-toolbar';
 import { screenSize } from 'jde-spa/testing';
 import { schemaOf } from 'jde-framework/testing';
 
 //reviews/angular-refactor.md A2:  QLList, LogDetail and NodeChildren each carried a copy of this toolbar and its stylesheet.
-const view = ( name:string|undefined, type=ViewType.System )=>{ const v = View.fromConfig( {configColumns: [], sort: []}, schemaOf("Thing") ); v.name = name; v.type = type; return v; };
+const schema = schemaOf( "Thing" );
+const view = ( name:string|undefined )=>{ const v = View.fromConfig( {configColumns: [], sort: []}, schema ); v.name = name; return v; };
 
 @Component({
 	imports: [ViewToolbar],
@@ -30,7 +31,10 @@ describe( 'ViewToolbar', ()=>{
 	const create = ( width:'wide'|'extra-small'='wide' )=>{
 		TestBed.configureTestingModule( {providers: [screenSize( width )]} );
 		const fixture = TestBed.createComponent( Host );
-		fixture.componentInstance.views.reset( [view( undefined ), view( "Users" ), view( "Users", ViewType.Adhoc )], 2 );
+		const views = fixture.componentInstance.views;
+		views.reset( [view( undefined ), view( "Users" )], schema );
+		views.select( 1 );
+		views.show( views.current() );//its twin, last
 		fixture.detectChanges();
 		return fixture;
 	};

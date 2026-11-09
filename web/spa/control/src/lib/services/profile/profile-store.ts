@@ -31,10 +31,27 @@ export class ProfileStore{
 		return json==null ? defaultValue : JSON.parse( json ) as T;//parse per call - callers never share mutable objects.
 	}
 
-	//an array saved as JSON, each item revived - a ViewSet's views through View.fromJson
-	async loadArray<T>( key:string, revive:( json:any )=>T ):Promise<T[]>{
-		const json = await this.load<unknown[]>( key, [] );
-		return json.map( revive );
+	//Every row whose key starts with `prefix`, its raw JSON by key - a ViewSet's index and its views' rows in one read.  The
+	//answer is one cache entry:  a save under the prefix changes it and a read replaces it whole, so a row another tab deleted is
+	//not remembered.  THROWS on a failed read, where load() answers its default:  no rows and a failed read must not look alike
+	//to a caller that then writes every row.  Logged out, or with no provider, there are none.
+	async loadRows( prefix:string ):Promise<Map<string,string>>{
+		const service = this.#profileService, userKey = service?.userKey();
+		if( !service || !userKey )
+			return new Map();
+		const cacheKey = ProfileStore.rowsKey( userKey, prefix );
+		let rows = this.cacheGet<Map<string,string>>( cacheKey );
+		if( !rows ){
+			const under = ProfileStore.cacheKey( userKey, prefix );
+			await Promise.all( [...this.#writes].filter( ([key])=>key.startsWith(under) ).map( ([, write])=>write.catch( ()=>{} ) ) );//a write on its way is in the answer
+			rows = await service.loadRows( prefix );
+			if( service.userKey()!=userKey )//as load():  an anonymous answer has no rows, and cached it would be this user's
+				throw new Error( "The user changed while the profile was read." );
+			for( const key of [...this.cache.keys()].filter( key=>key.startsWith(under) ) )//a row has no entry of its own beside these:  save() would compare with it once they were evicted
+				this.cache.delete( key );
+			this.cacheSet( cacheKey, rows );
+		}
+		return new Map( rows );//a copy per call, as load() parses per call
 	}
 
 	//THROWS on a failed write.  Catching and warning here made every caller's error handling dead code:  the promise
@@ -46,9 +63,9 @@ export class ProfileStore{
 			return;
 		const json = ProfileStore.json( value );
 		const cacheKey = ProfileStore.cacheKey( userKey, key );
-		if( this.cacheGet(cacheKey)===json )//save-as-needed: skip no-op mutations (e.g. unchanged ngOnDestroy saves).
+		if( this.#held(cacheKey, key)===json )//save-as-needed: skip no-op mutations (e.g. unchanged ngOnDestroy saves).
 			return;
-		this.cacheSet( cacheKey, json );
+		this.#hold( cacheKey, key, json );
 		//A key's writes go one at a time, in the order made:  two in flight landed in either order, and two ticks in a row on a
 		//node's children left the server holding the first.
 		const previous = this.#writes.get( cacheKey );
@@ -58,8 +75,8 @@ export class ProfileStore{
 			await write;
 		}
 		catch( e ){
-			if( this.cache.get(cacheKey)===json )//not a later save's value
-				this.cache.delete( cacheKey );//the row is not what we just cached:  drop it so the next save retries instead of being deduped away.
+			if( this.#held(cacheKey, key)===json )//not a later save's value
+				this.cache.delete( this.#rowsOver(cacheKey) ?? cacheKey );//the row is not what we just cached:  drop it - with the rows it is among, which no longer say what the server holds - so the next save retries instead of being deduped away.
 			throw e;
 		}
 		finally{
@@ -108,21 +125,46 @@ export class ProfileStore{
 	private static cacheKey( userKey:string, key:string ):string{
 		return `${userKey}\u0000${key}`;//user-scoped so re-login as another user can't hit stale entries.
 	}
-	private cacheGet( key:string ):string|null|undefined{//undefined ⇒ miss, null ⇒ known-absent on the server.
+	private static rowsKey( userKey:string, prefix:string ):string{
+		return `${ProfileStore.cacheKey( userKey, prefix )}\u0000`;//apart from the entry of the key that is the prefix itself
+	}
+	//the entry of the rows a key is among (loadRows), if they are cached
+	#rowsOver( cacheKey:string ):string|undefined{
+		for( const [entry, value] of this.cache ){
+			if( value instanceof Map && cacheKey.startsWith(entry.slice(0, -1)) )
+				return entry;
+		}
+		return undefined;
+	}
+	//what the cache holds for a key:  its row among the rows it is under, else its own entry
+	#held( cacheKey:string, key:string ):string|null|undefined{
+		const rows = this.#rowsOver( cacheKey );
+		return rows ? this.cacheGet<Map<string,string>>( rows )!.get( key ) ?? null : this.cacheGet( cacheKey );//the rows are every row under the prefix, so one they lack is known-absent
+	}
+	#hold( cacheKey:string, key:string, json:string|null ):void{
+		const rows = this.#rowsOver( cacheKey );
+		if( !rows )
+			this.cacheSet( cacheKey, json );
+		else if( json==null )
+			this.cacheGet<Map<string,string>>( rows )!.delete( key );
+		else
+			this.cacheGet<Map<string,string>>( rows )!.set( key, json );
+	}
+	private cacheGet<T extends string|null|Map<string,string> = string|null>( key:string ):T|undefined{//undefined ⇒ miss, null ⇒ known-absent on the server.
 		if( !this.cache.has(key) )
 			return undefined;
 		const value = this.cache.get( key )!;
 		this.cache.delete( key );//re-insert: Map insertion order doubles as recency.
 		this.cache.set( key, value );
-		return value;
+		return value as T;
 	}
-	private cacheSet( key:string, value:string|null ):void{
+	private cacheSet( key:string, value:string|null|Map<string,string> ):void{
 		this.cache.delete( key );
 		this.cache.set( key, value );
 		while( this.cache.size>ProfileStore.cacheLimit )
 			this.cache.delete( this.cache.keys().next().value! );
 	}
-	private cache = new Map<string,string|null>();
+	private cache = new Map<string,string|null|Map<string,string>>();//a key's JSON, or the rows under a prefix
 	#writes = new Map<string,Promise<void>>();//per cache key, the last write queued
-	private static readonly cacheLimit = 10;//last N profiles kept in memory so page visits don't refetch.
+	private static readonly cacheLimit = 10;//last N profiles kept in memory so page visits don't refetch - a list's views are one of them, not one each.
 }

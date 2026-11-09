@@ -1,5 +1,5 @@
 //reviews/angular-refactor.md B14:  ProfileStore also kept the browser-local half - a static reader and an instance writer for the
-//navbar, and the tab and view indexes under two key schemes, a page's bare key and `<collection>/viewIndex`.  LocalPrefs is that
+//navbar, and the tab and view indexes under two key schemes, a page's bare key and `<collection>/viewIndex` (since `viewNumber`).  LocalPrefs is that
 //half on its own, every entry `<owner>/<name>` as JSON.
 import { TestBed } from '@angular/core/testing';
 import { LocalPrefs, persistedTabIndex } from './local-prefs';
@@ -24,15 +24,18 @@ describe( 'LocalPrefs', ()=>{
 		expect( prefs.get( 'gatewayWatch', 'trendWindow', 10 ) ).toBe( 10 );
 		vi.restoreAllMocks();
 	} );
-	it( 'keeps an owner\'s tab and view indexes apart, and the first of each as no entry', ()=>{
+	//#587:  the view is remembered by its number, not its place - tabs reorder and names repeat
+	it( 'keeps an owner\'s tab index and view number apart, and none of either as no entry', ()=>{
 		prefs.setTabIndex( 'users', 2 );
-		prefs.setViewIndex( 'users', 1 );
+		prefs.setViewNumber( 'users', 3 );
 		expect( localStorage.getItem('users/tabIndex') ).toBe( '2' );
-		expect( localStorage.getItem('users/viewIndex') ).toBe( '1' );
-		expect( [prefs.tabIndex('users'), prefs.viewIndex('users')] ).toEqual( [2, 1] );
+		expect( localStorage.getItem('users/viewNumber') ).toBe( '3' );
+		expect( [prefs.tabIndex('users'), prefs.viewNumber('users')] ).toEqual( [2, 3] );
 		prefs.setTabIndex( 'users', 0 );
+		prefs.setViewNumber( 'users', 0 );
 		expect( localStorage.getItem('users/tabIndex') ).toBeNull();
-		expect( prefs.tabIndex('users') ).toBe( 0 );
+		expect( localStorage.getItem('users/viewNumber') ).toBeNull();
+		expect( [prefs.tabIndex('users'), prefs.viewNumber('users')] ).toEqual( [0, 0] );
 	} );
 } );
 

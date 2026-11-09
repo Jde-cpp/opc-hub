@@ -283,7 +283,9 @@ describe( 'LogDetail sort', ()=>{
 	const create = async ( saved:object[]=[] )=>{
 		const ql = { ql: vi.fn( async ()=>({logs: {entries: [logEntry(1), logEntry(2)], strings: []}}) ) };
 		const snackbar = snackbarStub();
-		const profileStore = { ...profileStoreStub(), loadArray: async ( _key:string, revive:( json:any )=>unknown )=>saved.map( revive ) };
+		//the saved views as the profile holds them:  a row each, numbered from 1, and the index
+		const rows:[string,string][] = saved.length ? [["logs/views", JSON.stringify( saved.map( (_, i)=>i+1 ) )], ...saved.map( (view, i):[string,string]=>[`logs/views/${i+1}`, JSON.stringify( view )] )] : [];
+		const profileStore = { ...profileStoreStub(), loadRows: async ()=>new Map( rows ) };
 		TestBed.configureTestingModule({ providers: [
 			screenSize(),
 			{ provide: SnackbarService, useValue: snackbar },
@@ -317,14 +319,15 @@ describe( 'LogDetail sort', ()=>{
 		const { fixture, page, profileStore } = await create();
 		const view = unsorted( page );
 		view.name = 'mine';
+		view.number = 0;//as the settings panel emits a view under another name:  a new one
 		page.onViewSave( view );
 		await tick();
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
-		expect( profileStore.save.mock.calls.find( ([key])=>key=='logs/views' )![1][0].sort ).toEqual( [time] );
+		expect( JSON.parse(profileStore.save.mock.calls.find( ([key])=>key=='logs/views/2' )![1]).sort ).toEqual( [time] );
 	} );
 	it( 'repairs a view saved with no sort as it loads', async ()=>{
 		const { fixture, page, snackbar } = await create( [{...LogView.default().toJson( undefined ), name: 'mine', sort: []}] );
-		page.onViewChange( 1 );
+		page.onViewChange( 0 );//the saved view is the set
 		await tick();
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
 		expect( page.view().name ).toBe( 'mine' );

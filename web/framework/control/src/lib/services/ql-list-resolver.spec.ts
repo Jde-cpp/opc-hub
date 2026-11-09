@@ -157,7 +157,7 @@ describe( 'QLListResolver.loadOrFail', ()=>{
 		const refused = new Error( "no" );
 		const ql = { query: async ()=>{ throw refused; } } as any;
 		const profile = QLListResolver.viewSet( "things", {} as ProfileStore, new LocalPrefs(), {} );
-		profile.reset( [View.fromTable({columns: ["name"], sort: "name"}, schema)] );
+		profile.reset( [View.fromTable({columns: ["name"], sort: "name"}, schema)], schema );
 		const data = { schema, profile, routing: new ListRoute("things"), columns: {} } as unknown as QLListData;
 		const y = await QLListResolver.loadOrFail( ql, data, null );
 		expect( y.error ).toBe( refused );
@@ -236,7 +236,7 @@ describe( 'QLListResolver.load pages', ()=>{
 		const profile = QLListResolver.viewSet( "things", {} as ProfileStore, new LocalPrefs(), {} );
 		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		view.limit = limit;
-		profile.reset( [view] );
+		profile.reset( [view], schema );
 		return { schema, profile, routing: new ListRoute("things"), columns: {}, skip } as unknown as QLListData;
 	};
 	const ql = ( available:any[] )=>{

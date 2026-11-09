@@ -1,6 +1,6 @@
 @if( !isLoading() ) {
 	@if( isSettings() ){
-		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [reservedNames]=profile().systemNames() (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
+		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
 	} @else {
 		<ng-container>
 			<view-toolbar [views]="profile()" [refreshing]="isRefreshing()" [count]="paged() ? undefined : data().length" (viewChange)="onChangeView($event)" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--no count on more than a page:  the pager under the table carries the range instead-->

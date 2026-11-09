@@ -133,19 +133,20 @@ export class QLListResolver implements Resolve<QLListData> {
 		const add = narrowed.selector || settings.canAdd===false ? "" : settings.empty?.add ?? (settings.empty?.detail ? "" : "Use Add to create the first one.");//a route's own detail with no `add` is the whole text, as before `add` existed
 		return { title: settings.empty?.title ?? `No ${noun} yet.`, detail: [settings.empty?.detail, add].filter( s=>s ).join( "  " ), icon };
 	}
-	//everything but the rows:  the schema, the default view plus the user's saved ones, and the column display names.
-	//QLSelector builds a collection's list the same way, so it lives here rather than in resolve().
-	static async data( ql:IGraphQL, routing:ListRoute, profileStore:ProfileStore, prefs:LocalPrefs ):Promise<QLListData>{
+	//everything but the rows:  the schema, the user's saved views or the route's, and the column display names.
+	//QLSelector builds a collection's list the same way, so it lives here rather than in resolve();  `offered` is its test for the
+	//views a pick list shows (ViewSetOptions).
+	static async data( ql:IGraphQL, routing:ListRoute, profileStore:ProfileStore, prefs:LocalPrefs, offered?:( view:View )=>boolean ):Promise<QLListData>{
 		const collectionName = routing.collectionName;
 		const schema = await ql.schemaWithEnums( MetaObject.toTypeFromCollection(collectionName) );
 		const systemViews = QLListResolver.systemViews( schema, routing.tableSettings );
-		const profile = QLListResolver.viewSet( collectionName, profileStore, prefs, routing.tableSettings );
+		const profile = QLListResolver.viewSet( collectionName, profileStore, prefs, routing.tableSettings, offered );
 		await profile.load( systemViews, schema );
 		return {profile, schema, results: null, routing, columns: QLListResolver.columns(schema, routing.tableSettings.columns!, routing.tableSettings.excludedColumns)};
 	}
 	//a collection's views - GatewayResolver's Connections tab keeps its own the same way
-	static viewSet( collectionName:string, profileStore:ProfileStore, prefs:LocalPrefs, settings:TableSettings ):ViewSet<View>{
-		return new ViewSet( {type: View, key: collectionName, viewsKey: `qlList/${collectionName}/views`, profileStore, prefs, settings} );
+	static viewSet( collectionName:string, profileStore:ProfileStore, prefs:LocalPrefs, settings:TableSettings, offered?:( view:View )=>boolean ):ViewSet<View>{
+		return new ViewSet( {type: View, key: collectionName, viewsKey: `qlList/${collectionName}/views`, profileStore, prefs, settings, offered} );
 	}
 	//the default view first, then the route's declared ones - each falling back to the default's columns and sort for what it leaves unset - then Deleted
 	static systemViews( schema:TableSchema, settings:TableSettings ):View[]{
@@ -161,7 +162,8 @@ export class QLListResolver implements Resolve<QLListData> {
 		return views;
 	}
 	static readonly deletedViewName = "Deleted";
-	static isDeletedView( view:View ):boolean{ return view.isSystem && view.name==QLListResolver.deletedViewName; }
+	//a view that lists deleted rows, whatever it is called and whoever saved it:  one that filters on `deleted`, as View.query reads it
+	static isDeletedView( view:View ):boolean{ return view.fieldFilters.some( ff=>ff.field.name=="deleted" && ff.filter.value.length>0 ); }
 	//The default view's columns and filters, plus the deleted rows View.query otherwise leaves out - and their deleted date.
 	//None where `deleted` is a live toggle (the Resources page's Enforced):  that list shows every row already.
 	static deletedView( base:View ):View|undefined{

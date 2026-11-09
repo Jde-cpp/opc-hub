@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { config } from 'rxjs';
-import { SnackbarService, ViewType } from 'jde-framework';
+import { SnackbarService } from 'jde-framework';
 import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
 import { Enum } from '../../../model/enum';
@@ -82,7 +82,7 @@ describe( 'NodeChildren subscription values', ()=>{
 		} );
 		it( 'are named by what the header box does', ()=>{
 			const { page, setNodes } = create();
-			page.viewSet.reset( [NodeView.default()] );//the rows are the view's
+			page.viewSet.reset( [NodeView.default()], NodeView.schema );//the rows are the view's
 			setNodes( [X, Y], true );
 			expect( page.checkboxLabel() ).toBe( 'select all' );
 			page.selections.select( X );
@@ -232,9 +232,9 @@ describe( 'NodeChildren subscription values', ()=>{
 		it( 'leaves the quality to the Status column where the view shows one', ()=>{
 			const { page } = subscribed();
 			const views = [NodeView.default(), NodeView.fromConfig({name: "quality", configColumns: ["id", "name", "snapshot", "status"], sort: []}, NodeView.schema)];
-			page.viewSet.reset( views );
+			page.viewSet.reset( views, NodeView.schema );
 			expect( page.statusShown() ).toBe( false );//the default view hides Status, so the icon is what says it
-			page.viewSet.reset( views, 1 );
+			page.viewSet.select( 1 );
 			expect( page.statusShown() ).toBe( true );
 		} );
 
@@ -275,7 +275,7 @@ describe( 'NodeChildren subscription values', ()=>{
 			const { page, fixture } = create();
 			const writable = row( 5 ), locked = variable( 8, "r", {value: 1, dataType: {i: ETypes.Double}, userAccessLevel: EAccess.Read} );
 			const folder = new OpcObject( <any>{ns: 2, i: 5010, name: '_Test', browse: {ns: 2, name: '_Test'}} );//reviews-issue/423-clients-writes.md #1:  no access level, so readOnly was false
-			page.viewSet.reset( [NodeView.fromConfig( {name: "value", configColumns: ["name", "snapshot"], sort: []}, NodeView.schema )] );
+			page.viewSet.reset( [NodeView.fromConfig( {name: "value", configColumns: ["name", "snapshot"], sort: []}, NodeView.schema )], NodeView.schema );
 			page.nodes.set( [writable, locked, folder] );
 			page.isLoading.set( false );
 			fixture.detectChanges();
@@ -379,7 +379,7 @@ describe( 'NodeChildren watch', ()=>{
 
 	it( 'shows the row menu last, whatever the view', ()=>{
 		const { page } = create();
-		page.viewSet.reset( [NodeView.default()] );
+		page.viewSet.reset( [NodeView.default()], NodeView.schema );
 		expect( page.displayedColumns().at( -1 ) ).toBe( 'menu' );
 	} );
 } );
@@ -420,8 +420,8 @@ describe( 'NodeChildren Delete', ()=>{
 		const page = TestBed.createComponent( NodeChildren ).componentInstance;
 		const mine = NodeView.copy( NodeView.default() );
 		mine.name = "Mine";
-		mine.type = ViewType.User;
-		page.viewSet.reset( [NodeView.default(), mine], 1 );
+		page.viewSet.reset( [NodeView.default(), mine], NodeView.schema );
+		page.viewSet.select( 1 );
 		vi.spyOn( TestBed.inject(ProfileStore), 'save' ).mockRejectedValue( new Error( 'offline' ) );
 		page.onViewDelete( mine );
 		await flush();
@@ -468,10 +468,10 @@ describe( 'NodeChildren a Method\'s Call button', ()=>{
 		const views = [NodeView.default(), NodeView.fromConfig({name: "no snapshot", configColumns: ["id", "name", "description"], sort: []}, NodeView.schema)];
 		const cell = ( b:Element )=>b.closest( 'mat-cell' )?.classList.contains( 'mat-column-name' ) ? 'name' : b.closest( 'mat-cell' )?.classList.contains( 'mat-column-snapshot' ) ? 'snapshot' : '?';
 		const calls = ()=>[...fixture.nativeElement.querySelectorAll( 'button[aria-label="Call toHertz"]' )].map( cell );
-		page.viewSet.reset( views );
+		page.viewSet.reset( views, NodeView.schema );
 		fixture.detectChanges();
 		expect( calls() ).toEqual( ['snapshot'] );
-		page.viewSet.reset( views, 1 );
+		page.viewSet.select( 1 );
 		fixture.detectChanges();
 		expect( page.snapshotShown() ).toBe( false );
 		expect( calls() ).toEqual( ['name'] );
@@ -500,7 +500,7 @@ describe( 'NodeChildren a value of the server\'s own type', ()=>{
 		fixture.componentRef.setInput( 'node', new OpcObject(<any>{ns: 2, i: 5010, name: '_Test', browse: {ns: 2, name: '_Test'}}) );
 		(<any>page).setNodes( [health, sample, opaque, any, args], false );
 		page.isLoading.set( false );//the route's load, which provideRoute() leaves out
-		page.viewSet.reset( [NodeView.default()] );
+		page.viewSet.reset( [NodeView.default()], NodeView.schema );
 		fixture.detectChanges();
 		const snapshot = ( name:string ):Element=>[...fixture.nativeElement.querySelectorAll( 'mat-row' )]
 			.find( (r:Element)=>r.querySelector('.mat-column-name')?.textContent?.trim()==name )!.querySelector( '.mat-column-snapshot' )!;
@@ -533,7 +533,7 @@ describe( 'NodeChildren the System nodes toggle', ()=>{
 		page.pageData = { gateway: fakeGateway( 'local' ), route, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
 		page.profile = { subscriptions: [] } as any;
 		fixture.componentRef.setInput( 'node', self );
-		page.viewSet.reset( [NodeView.default()] );
+		page.viewSet.reset( [NodeView.default()], NodeView.schema );
 		return { fixture, page, self };
 	};
 

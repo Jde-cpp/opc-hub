@@ -16,7 +16,7 @@ describe( 'GatewayResolver', ()=>{
 	const schema = schemaOf( "ServerConnection", scalar("id", "ID"), scalar("name"), scalar("slug") );
 	const data = ():GatewayData=>{
 		const profile = QLListResolver.viewSet( "serverConnections", {} as ProfileStore, new LocalPrefs(), gatewayTableSettings );
-		profile.reset( [View.fromTable({columns: ["name"], sort: "name"}, schema)] );
+		profile.reset( [View.fromTable({columns: ["name"], sort: "name"}, schema)], schema );
 		return { schema, profile, routing: new AppInstanceRoute("gateways", "opchub", gatewayTableSettings), columns: {}, results: undefined };
 	};
 	const routeStore = ()=>({ setChildren: vi.fn(), getChildren: ()=>[] }) as unknown as RouteStore;
