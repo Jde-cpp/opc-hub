@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
-import { toCalendarException, toCalendarShift } from '../../../model/calendar';
+import { toCalendarException, toCalendarPattern, toCalendarShift } from '../../../model/calendar';
+import { CalendarChangeDialog, CalendarChangeDialogData } from './calendar-change-dialog';
+import { CalendarCycleDialog, CalendarCycleDialogData } from './calendar-cycle-dialog';
 import { CalendarExceptionDialog, CalendarExceptionDialogData } from './calendar-exception-dialog';
 import { CalendarShiftDialog, CalendarShiftDialogData } from './calendar-shift-dialog';
 import { flush } from 'jde-spa/testing';
@@ -48,6 +50,20 @@ describe( 'CalendarShiftDialog', ()=>{
 		expect( [...d.root.querySelectorAll( 'mat-checkbox' )].map( c=>c.textContent!.trim() ) ).toEqual( ['Day 1', 'Day 2', 'Day 3', 'Day 4'] );
 		expect( d.dialog.model().days ).toEqual( [false, false, false, false] );
 		expect( d.dialog.model().start ).toBe( '06:00' );
+	} );
+	//#397:  the grid's drag gives the hours and the day
+	it( 'opens a new shift on the hours and the day dragged', async ()=>{
+		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360, startAt: 240, minutes: 495, days: [2]} );
+		await d.settle();
+		expect( d.dialog.model() ).toEqual( {name: '', days: [false, false, true, false, false, false, false], start: '10:00', end: '18:15', breaks: []} );
+		expect( d.root.querySelector( '.remove' ) ).toBeNull();//nothing to remove yet
+	} );
+	it( 'offers Remove on an edit, which closes the form for the page to confirm', async ()=>{
+		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360, shift: day} );
+		await d.settle();
+		d.root.querySelector<HTMLButtonElement>( '.remove' )!.click();
+		expect( d.close ).toHaveBeenCalledWith( 'remove' );
+		expect( d.save ).not.toHaveBeenCalled();
 	} );
 	it( 'saves what was typed as the columns, and closes', async ()=>{
 		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360} );
@@ -200,6 +216,82 @@ describe( 'CalendarExceptionDialog', ()=>{
 		d.saveButton().click();
 		await d.settle();
 		expect( d.root.querySelector( '.refused' )?.textContent ).toContain( '(403)Forbidden' );
+		expect( d.close ).not.toHaveBeenCalled();
+	} );
+} );
+
+//#397:  Change from… takes a date, and its save copies the pattern
+describe( 'CalendarChangeDialog', ()=>{
+	const copy = toCalendarPattern( {id: 11, calendarId: 3, effective: '2026-08-03T10:00:00Z', cycleDays: 7, cycleStart: null} );
+	const data = { source: '2026-07-06', from: '2026-08-01', zone: NewYork };
+	it( 'takes the day the change is in effect from, and closes with the copy', async ()=>{
+		const d = open<CalendarChangeDialogData>( CalendarChangeDialog, data, vi.fn( async ()=>copy ) );
+		await d.settle();
+		expect( d.root.querySelector( '.hint' )?.textContent ).toContain( 'the pattern from 2026-07-06' );
+		const [date] = d.inputs( 'input[type=date]' );
+		expect( date.value ).toBe( '2026-08-01' );
+		await d.type( date, '2026-08-03' );
+		d.saveButton().click();
+		await d.settle();
+		expect( d.save ).toHaveBeenCalledWith( '2026-08-03' );
+		expect( d.close ).toHaveBeenCalledWith( copy );
+	} );
+	it( "has nothing to copy to without a day, and shows the server's refusal with the form still open", async ()=>{
+		const d = open<CalendarChangeDialogData>( CalendarChangeDialog, data, vi.fn( async ()=>{ throw new Error( "Calendar 'Plant' already has a pattern effective 2026-08-03." ); } ) );
+		await d.settle();
+		const [date] = d.inputs( 'input[type=date]' );
+		await d.type( date, '' );
+		expect( d.saveButton().disabled ).toBe( true );
+		expect( d.root.querySelector( '.problem' )?.textContent ).toBe( 'Pick the day the change takes effect.' );
+		await d.type( date, '2026-08-03' );
+		d.saveButton().click();
+		await d.settle();
+		expect( d.root.querySelector( '.refused' )?.textContent ).toContain( 'already has a pattern effective 2026-08-03' );
+		expect( d.close ).not.toHaveBeenCalled();
+		expect( [d.dialog.busy(), d.ref.disableClose] ).toEqual( [false, false] );
+	} );
+} );
+
+describe( 'CalendarCycleDialog', ()=>{
+	const rotation = { cycleDays: 14, cycleStart: new Date( '2026-07-01T10:00:00Z' ) };
+	it( 'makes a weekly pattern a rotation from the day offered', async ()=>{
+		const d = open<CalendarCycleDialogData>( CalendarCycleDialog, {pattern: weekly, zone: NewYork, dayStart: 360, anchor: '2026-07-20'} );
+		await d.settle();
+		expect( d.dialog.model() ).toEqual( {rotation: false, days: 7, anchor: '2026-07-20'} );
+		expect( d.inputs( 'input' ) ).toEqual( [] );//the week has neither a length nor an anchor to enter
+		expect( d.saveButton().disabled ).toBe( true );//nothing changed
+		d.dialog.model.update( m=>({...m, rotation: true}) );
+		await d.settle();
+		const [days] = d.inputs( 'input[type=number]' );
+		expect( [days.value, d.inputs( 'input[type=date]' )[0].value] ).toEqual( ['7', '2026-07-20'] );
+		await d.type( days, '14' );
+		d.saveButton().click();
+		await d.settle();
+		expect( d.save ).toHaveBeenCalledWith( {cycleDays: 14, cycleStart: '2026-07-20T06:00:00'} );
+		expect( d.close ).toHaveBeenCalledWith( true );
+	} );
+	it( "fills a rotation's length and anchor, and takes it back to the week", async ()=>{
+		const d = open<CalendarCycleDialogData>( CalendarCycleDialog, {pattern: rotation, zone: NewYork, dayStart: 360, anchor: '2026-07-20'} );
+		await d.settle();
+		expect( [d.inputs( 'input[type=number]' )[0].value, d.inputs( 'input[type=date]' )[0].value] ).toEqual( ['14', '2026-07-01'] );//its own anchor, not the one offered
+		expect( d.saveButton().disabled ).toBe( true );
+		d.dialog.model.update( m=>({...m, rotation: false}) );
+		await d.settle();
+		d.saveButton().click();
+		await d.settle();
+		expect( d.save ).toHaveBeenCalledWith( {cycleDays: 7, cycleStart: null} );
+	} );
+	it( "says a length that is no rotation, and the server's refusal, on the form", async ()=>{
+		const d = open<CalendarCycleDialogData>( CalendarCycleDialog, {pattern: rotation, zone: NewYork, dayStart: 360, anchor: '2026-07-20'}, vi.fn( async ()=>{ throw new Error( "Shift 'Day' runs on day 9, past a 8-day cycle." ); } ) );
+		await d.settle();
+		const [days] = d.inputs( 'input[type=number]' );
+		await d.type( days, '40' );
+		expect( d.root.querySelector( '.problem' )?.textContent ).toBe( 'A rotation is 1 to 31 days long.' );
+		expect( d.saveButton().disabled ).toBe( true );
+		await d.type( days, '8' );
+		d.saveButton().click();
+		await d.settle();
+		expect( d.root.querySelector( '.refused' )?.textContent ).toContain( 'past a 8-day cycle' );
 		expect( d.close ).not.toHaveBeenCalled();
 	} );
 } );

@@ -10,7 +10,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTableModule } from '@angular/material/table';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { breaksText, Calendar, CalendarException, CalendarPattern, CalendarShift, changedArgs, daysDetail, daysText, durationText, exceptionArgsOf, isTimeZone, isWeekly, minutesPerDay, minutesToTime, patternDate, patternInEffect, shiftArgsOf, shiftClock, timeToMinutes, zoneLocal } from '../../../model/calendar';
+import { addDays, Calendar, CalendarException, CalendarPattern, CalendarShift, changedArgs, cycleArgsOf, dayStartInstant, exceptionArgsOf, GridDraw, isDate, isTimeZone, isWeekly, minutesPerDay, minutesToTime, mondayOf, patternBars, patternColumns, patternDate, patternInEffect, productionDay, shiftArgsOf, timeToMinutes, zoneLocal } from '../../../model/calendar';
 import { AppService } from '../../../services/app/app-service';
 import { CalendarChild, CalendarService } from '../../../services/calendar-service';
 import { confirm } from '../../../shared/confirm/confirm-dialog';
@@ -18,9 +18,13 @@ import { errorMessage } from '../../../utils/errors';
 import { DetailActions } from '../../detail-actions/detail-actions';
 import { DetailPage } from '../../detail-page';
 import { Properties } from '../../graphql/properties/properties';
+import { CalendarChangeDialog } from './calendar-change-dialog';
+import { CalendarCycleDialog } from './calendar-cycle-dialog';
 import { CalendarExceptionDialog } from './calendar-exception-dialog';
+import { CalendarGrid } from './calendar-grid';
+import { CalendarPreview } from './calendar-preview';
 import { CalendarRows } from './calendar-rows';
-import { CalendarShiftDialog } from './calendar-shift-dialog';
+import { CalendarShiftDialog, CalendarShiftDialogData } from './calendar-shift-dialog';
 
 //The fields the form leaves out:  the zone and the day start have controls of their own below it.  A constant, as the binding is
 //read each check and a new array has Properties rebuild its fields.
@@ -30,17 +34,19 @@ export const sharedCalendarLine = "Calendars are shared:  every gateway plans by
 
 //A shift calendar's page (#396, docs/calendar/spec.md *Web*), under the application server's page - a hub's is its gateway's.
 //Properties is the row with its zone and day start, saved as any record is, a refusal said under the form.  Pattern lists the
-//calendar's patterns, the one in effect today selected, with the selected one's shifts;  Exceptions the holidays, shutdowns and
-//extra days.  A shift's and an exception's edits are each a mutation of its own, applied as it is made, not held for Save.  Every
-//time shows on the calendar's wall clock, in the zone the row was saved with, and goes back with no zone for the server to read
-//there.  The grid, Change from… and the Preview are #397's.
+//calendar's patterns, the one in effect on the date picked selected - today's, until one is - with its shifts on the grid (#397):
+//a bar opens the shift's form, a drag on empty space or Add shift a new one's, Cycle sets the week or a rotation, and Change
+//from… copies the pattern to a new one from a date.  Exceptions lists the holidays, shutdowns and extra days, and Preview draws a
+//week as the server resolves it.  A shift's, a pattern's and an exception's edits are each a mutation of its own, applied as it
+//is made, not held for Save.  Every time shows on the calendar's wall clock, in the zone the row was saved with, and goes back
+//with no zone for the server to read there.
 @Component({
 	templateUrl: './calendar-detail.html',
 	styleUrl: './calendar-detail.scss',
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content my-content calendar-detail'},
-	imports: [DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatRadioModule, MatSelectModule, MatSlideToggleModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties]
+	imports: [CalendarGrid, CalendarPreview, DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatRadioModule, MatSelectModule, MatSlideToggleModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties]
 })
 export class CalendarDetail extends DetailPage<Calendar>{
 	constructor(){ super( 'calendar-detail' ); }
@@ -51,6 +57,7 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		this.shifts.reset();
 		this.exceptions.reset();
 		this.selectedId.set( undefined );
+		this.date.set( undefined );
 		if( this.row.id )
 			this.refresh();
 		else
@@ -70,7 +77,6 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	readonly fieldOrder = ['slug', 'name', 'description'];
 	readonly excludedFields = excluded;
 	readonly patternColumns = ['from', 'cycle', 'state', 'actions'];
-	readonly shiftColumns = ['name', 'days', 'start', 'length', 'breaks', 'actions'];
 	readonly exceptionColumns = ['name', 'start', 'finish', 'kind', 'actions'];
 	get calendar():Calendar{ return <Calendar>this.properties(); }
 	//the server's refusal of the last Save, said while the form is as it was sent:  an edit answers it
@@ -93,10 +99,17 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	exceptions = new CalendarRows<CalendarException>();
 	showDeletedPatterns = signal( false );
 	showDeletedExceptions = signal( false );
-	selectedId = signal<number|undefined>( undefined );//the pattern picked;  none, and the one in effect shows
+	date = signal<string|undefined>( undefined );//the production day picked;  none, and today's
+	selectedId = signal<number|undefined>( undefined );//the pattern picked from the list;  none, and the one in effect on the date shows
 	#shiftsOf:number|undefined;//the pattern `shifts` holds the rows of
-	inEffect = computed( ()=>patternInEffect( this.patterns.rows(), this.today() ) );
-	selected = computed<CalendarPattern|undefined>( ()=>this.patterns.rows().find( p=>p.id==this.selectedId() ) ?? this.inEffect() ?? this.patterns.rows()[0] );
+	inEffect = computed( ()=>patternInEffect( this.patterns.rows(), this.today() ) );//now:  what the list's Status says
+	dateText = computed( ()=>this.date() ?? productionDay( this.today(), this.zone(), this.dayStart ) );
+	//the instant the pattern is picked at:  the picked day's start, or now
+	#at = computed( ()=>{ const date = this.date(); return (date ? dayStartInstant( date, this.zone(), this.dayStart ) : undefined) ?? this.today(); } );
+	selected = computed<CalendarPattern|undefined>( ()=>this.patterns.rows().find( p=>p.id==this.selectedId() ) ?? patternInEffect( this.patterns.rows(), this.#at() ) ?? this.patterns.rows()[0] );
+	//the grid:  the selected pattern's cycle days, a rotation's under the dates of the cycle the picked day is in, and its shifts
+	columns = computed( ()=>{ const p = this.selected(); return p ? patternColumns( p, this.dateText(), this.zone() ) : []; } );
+	bars = computed( ()=>{ const p = this.selected(); return p ? patternBars( this.shifts.rows(), p, this.dayStart ) : []; } );
 
 	//Properties
 	//a new calendar's zone is the server's own, the plant's wall clock (spec *Open questions* #8), unless one is picked meanwhile
@@ -167,6 +180,40 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		this.selectedId.set( pattern.id );
 		await this.refreshShifts();
 	}
+	//The date picker picks the pattern in effect:  on the day picked, over one picked from the list;  blank, or today, is today
+	//again.  `input`:  the field, which shows the day in use whatever was typed.
+	async setDate( input:{value:string} ):Promise<void>{
+		const now = new Date();
+		this.today.set( now );
+		this.date.set( isDate( input.value ) && input.value!=productionDay( now, this.zone(), this.dayStart ) ? input.value : undefined );
+		input.value = this.dateText();
+		this.selectedId.set( undefined );
+		if( this.selected()?.id!=this.#shiftsOf )
+			await this.refreshShifts();
+	}
+	//Change from…:  the pattern showing and its shifts copied to a new pattern from a day, which then shows.  The day offered is
+	//the one picked, or tomorrow.
+	async changeFrom():Promise<void>{
+		const source = this.selected();
+		if( !source )
+			return;
+		const zone = this.zone(), time = minutesToTime( this.dayStart );
+		const copy = await CalendarChangeDialog.open( this.dialog, { source: this.fromText( source ).toLowerCase(), from: this.date() ?? addDays( this.dateText(), 1 ), zone, save: date=>this.#service.copyPattern( this.ql, source.id, `${date}T${time}:00` ) } );
+		if( !copy )
+			return;
+		this.selectedId.set( copy.id );
+		this.date.set( patternDate( copy, zone ) );
+		await this.refreshPatterns();
+	}
+	//the selected pattern's cycle:  the week, or a rotation, whose day 1 is offered as the Monday of the picked day's week
+	async editCycle():Promise<void>{
+		const pattern = this.selected();
+		if( !pattern )
+			return;
+		const zone = this.zone();
+		if( await CalendarCycleDialog.open( this.dialog, { pattern, zone, dayStart: this.dayStart, anchor: mondayOf( this.dateText() ), save: args=>this.#service.updatePattern( this.ql, pattern.id, changedArgs( args, cycleArgsOf( pattern, zone ) ) ) } ) )
+			await this.refreshPatterns();
+	}
 	fromText( p:CalendarPattern ):string{ return patternDate( p, this.zone() ) ?? 'The beginning'; }
 	cycleText( p:CalendarPattern ):string{
 		if( isWeekly( p ) )
@@ -195,26 +242,33 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		} );
 	}
 
-	//Shifts, of the selected pattern
-	daysText( s:CalendarShift ):string{ const p = this.selected(); return p ? daysText( s.days, p ) : ''; }
-	daysDetail( s:CalendarShift ):string{ const p = this.selected(); return p ? daysDetail( s.days, p ) : ''; }
-	startText( s:CalendarShift ):string{ return shiftClock( s, this.dayStart ); }
-	endText( s:CalendarShift ):string{ return `Ends ${minutesToTime( this.dayStart+s.start+s.minutes )}${( (this.dayStart+s.start) % minutesPerDay )+s.minutes>minutesPerDay ? ' the next day' : ''}`; }
-	lengthText( s:CalendarShift ):string{ return durationText( s.minutes ); }
-	breaksText( s:CalendarShift ):string{ return breaksText( s, this.dayStart ); }
+	//Shifts, of the selected pattern:  on the grid
 	async addShift():Promise<void>{
-		const pattern = this.selected();
-		if( !pattern )
-			return;
 		const last = Math.max( 0, ...this.shifts.rows().map( s=>s.start+s.minutes ) );//on from the latest, while the day has room
-		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, startAt: last<minutesPerDay ? last : 0, save: args=>this.#service.createShift( this.ql, pattern.id, args ) } ) )
+		await this.#newShift( {startAt: last<minutesPerDay ? last : 0} );
+	}
+	//the hours dragged on a day of the cycle, which the form opens on
+	async drawShift( drawn:GridDraw ):Promise<void>{ await this.#newShift( {startAt: drawn.start, minutes: drawn.minutes, days: [drawn.day]} ); }
+	async #newShift( at:Pick<CalendarShiftDialogData,'startAt'|'minutes'|'days'> ):Promise<void>{
+		const pattern = this.selected();
+		if( !pattern || this.shifts.busy() )//the grid stays live through an edit, so a bar keeps the focus its form hands back
+			return;
+		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, ...at, save: args=>this.#service.createShift( this.ql, pattern.id, args ) } ) )
 			await this.refreshShifts();
+	}
+	async openShift( id:number ):Promise<void>{
+		const shift = this.shifts.rows().find( s=>s.id==id );
+		if( shift && !this.shifts.busy() )
+			await this.editShift( shift );
 	}
 	async editShift( shift:CalendarShift ):Promise<void>{
 		const pattern = this.selected();
 		if( !pattern )
 			return;
-		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, shift, save: args=>this.#service.updateShift( this.ql, shift.id, changedArgs( args, shiftArgsOf( shift ) ) ) } ) )
+		const done = await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, shift, save: args=>this.#service.updateShift( this.ql, shift.id, changedArgs( args, shiftArgsOf( shift ) ) ) } );
+		if( done=='remove' )
+			await this.removeShift( shift );
+		else if( done )
 			await this.refreshShifts();
 	}
 	//a purge:  a shift has no soft delete

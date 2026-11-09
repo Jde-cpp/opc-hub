@@ -1,0 +1,19 @@
+<h2 mat-dialog-title>Change from…</h2>
+<mat-dialog-content>
+	<p class="hint">The shifts of the pattern from {{ data.source }} are copied to a new pattern, in effect from the day below.  Edit the copy's shifts:  reports before that day keep the shifts they had.</p>
+	<mat-form-field class="wide">
+		<mat-label>In effect from</mat-label>
+		<input matInput type="date" cdkFocusInitial [formField]="f.date">
+		<mat-hint>A production day, {{ data.zone }}</mat-hint>
+	</mat-form-field>
+	@if( f().dirty() && problem(); as p ){
+		<p class="problem" role="alert">{{ p }}</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<button matButton="outlined" type="button" mat-dialog-close [disabled]="busy()">Cancel</button>
+	<button matButton="filled" type="button" (click)="save()" [disabled]="busy() || !!problem()">Copy</button>
+</mat-dialog-actions>

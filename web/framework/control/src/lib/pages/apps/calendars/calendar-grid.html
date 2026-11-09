@@ -1,0 +1,63 @@
+<!--a bar's text, and its breaks cut out of it-->
+<ng-template #content let-bar>
+	<span class="name">{{ bar.name }}</span>
+	<span class="times">{{ bar.times }}</span>
+	@if( bar.note ){
+		<span class="note">{{ bar.note }}</span>
+	}
+	@for( cut of bar.cuts; track $index ){
+		<span class="cut" [style.top.px]="px(cut.top-bar.top)" [style.height.px]="px(cut.minutes)"></span>
+	}
+</ng-template>
+<div class="scroller">
+	<div class="grid" role="group" [attr.aria-label]="label()">
+		<div class="corner" aria-hidden="true"></div>
+		<!--the column's name is its group's label below:  the heads are for the eye-->
+		@for( column of columns(); track $index ){
+			<div class="head" [class.current]="column.current" aria-hidden="true">
+				<span class="full">{{ column.title }}</span>
+				<span class="short">{{ column.short }}</span>
+				@if( column.sub ){
+					<span class="sub">{{ column.sub }}</span>
+				}
+			</div>
+		}
+		<div class="axis" aria-hidden="true" [style.height.px]="height()">
+			@for( hour of hours(); track $index ){
+				<span [style.top.px]="px($index*60)">{{ hour }}</span>
+			}
+		</div>
+		@for( cell of cells(); track $index; let c = $index ){
+			<div class="column" role="group" [attr.aria-label]="cell.column.sub ? cell.column.title + ', ' + cell.column.sub : cell.column.title" [class.current]="cell.column.current" [class.editable]="editable()" [style.height.px]="height()"
+				(pointerdown)="onPointerDown($event, c)" (pointermove)="onPointerMove($event)" (pointerup)="onPointerUp()" (pointercancel)="drag.set(undefined)">
+				@for( band of cell.bands; track band.key ){
+					<div class="band" [style.top.px]="px(band.top)" [style.height.px]="px(band.minutes)">
+						@if( !band.continued ){
+							<span>{{ band.name }}</span>
+						}
+					</div>
+				}
+				@for( bar of cell.bars; track bar.key ){
+					@if( editable() && bar.shift!=undefined ){
+						<button type="button" class="bar" [class]="'tone-' + bar.tone" [class.continued]="bar.continued" [class.continues]="bar.continues" [style.top.px]="px(bar.top)" [style.height.px]="px(bar.minutes)"
+							[attr.tabindex]="bar.primary ? null : -1" [attr.aria-hidden]="bar.primary ? null : true" [attr.aria-label]="bar.detail" [matTooltip]="bar.detail" matTooltipShowDelay="400"
+							(pointerdown)="$event.stopPropagation()" (click)="open.emit(bar.shift)">
+							<ng-container [ngTemplateOutlet]="content" [ngTemplateOutletContext]="{$implicit: bar}"/>
+						</button>
+					}
+					@else{
+						<div class="bar" role="img" [class]="'tone-' + bar.tone" [class.continued]="bar.continued" [class.continues]="bar.continues" [style.top.px]="px(bar.top)" [style.height.px]="px(bar.minutes)"
+							[attr.aria-label]="bar.detail" [matTooltip]="bar.detail" matTooltipShowDelay="400">
+							<ng-container [ngTemplateOutlet]="content" [ngTemplateOutletContext]="{$implicit: bar}"/>
+						</div>
+					}
+				}
+				@if( drawing(); as d ){
+					@if( d.column==c ){
+						<div class="drawing" [style.top.px]="px(d.start)" [style.height.px]="px(d.minutes)">{{ d.text }}</div>
+					}
+				}
+			</div>
+		}
+	</div>
+</div>

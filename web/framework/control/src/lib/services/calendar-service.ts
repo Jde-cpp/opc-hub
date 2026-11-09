@@ -1,5 +1,5 @@
 import { Service } from '@angular/core';
-import { CalendarException, CalendarPattern, CalendarRef, CalendarShift, ExceptionArgs, ShiftArgs, toCalendarException, toCalendarPattern, toCalendarRef, toCalendarShift } from '../model/calendar';
+import { CalendarException, CalendarOccurrence, CalendarPattern, CalendarRef, CalendarShift, CycleArgs, ExceptionArgs, ShiftArgs, toCalendarException, toCalendarOccurrence, toCalendarPattern, toCalendarRef, toCalendarShift } from '../model/calendar';
 
 //the application server, as far as the calls below need it:  AppService in the pages, a stub in a spec
 export type CalendarReader = { query<T>( ql:string, vars?:any ):Promise<T> };
@@ -8,7 +8,9 @@ export type CalendarPoster = { postQL<T>( ql:string, vars?:any ):Promise<T> };
 //The calendar tables for the pages (#396, docs/calendar/spec.md *Reads*):  four flat reads, since the generic select joins no
 //one-to-many child, each asking for the live rows where its table has `deleted` - or every row, for a tab showing the deleted ones -
 //and the children's edits, each a table mutation the application server validates (CalendarMAwait), by POST as every mutation goes.
-//A calendar's own row goes through DetailPage's save.
+//A calendar's own row goes through DetailPage's save.  The calendar's own two operations (#397, spec *Reads*, *Validation*):
+//`calendarOccurrences`, a range resolved by the server's one resolver, and `copyCalendarPattern`, a pattern and its shifts copied
+//to a date in one call.
 @Service()
 export class CalendarService{
 	async calendars( reader:CalendarReader ):Promise<CalendarRef[]>{
@@ -40,7 +42,24 @@ export class CalendarService{
 		return data?.status?.timeZone || undefined;
 	}
 	static readonly timeZoneQuery = 'status{ timeZone }';
+	//The occurrences that overlap [start, end), each whole:  the bounds local date-times with no zone, read in the calendar's
+	async occurrences( reader:CalendarReader, calendarId:number, start:string, end:string ):Promise<CalendarOccurrence[]>{
+		const data = await reader.query<any>( CalendarService.occurrencesQuery, {id: calendarId, start, end} );
+		return ( <any[]>(data?.calendarOccurrences ?? []) ).map( toCalendarOccurrence );
+	}
+	static readonly occurrencesQuery = 'calendarOccurrences( id: $id, start: $start, end: $end ){ shift name day start end breaks{ start end } }';
 
+	//The pattern `id` and its shifts copied to one in effect from `effective`, a production day's start as a local date-time with no
+	//zone:  the copy.  A shift the server refuses on the new date undoes the copy, so the throw leaves nothing behind.
+	async copyPattern( poster:CalendarPoster, id:number, effective:string ):Promise<CalendarPattern>{
+		const data = await CalendarService.send( poster, 'copyCalendarPattern', {id, effective}, '{ id calendarId effective cycleDays cycleStart }' );
+		const copy = (<any>data)?.copyCalendarPattern;
+		if( !copy?.id )
+			throw new Error( 'The server answered no copy.' );
+		return toCalendarPattern( copy );
+	}
+	//a pattern's cycle:  `changes` the columns to write, a null `cycleStart` the week's
+	async updatePattern( poster:CalendarPoster, id:number, changes:Partial<CycleArgs> ):Promise<void>{ await CalendarService.send( poster, 'updateCalendarPattern', {id, ...changes} ); }
 	async createShift( poster:CalendarPoster, patternId:number, shift:ShiftArgs ):Promise<void>{
 		await CalendarService.send( poster, 'createCalendarShift', {calendarPatternId: patternId, ...shift}, '{ id }' );
 	}

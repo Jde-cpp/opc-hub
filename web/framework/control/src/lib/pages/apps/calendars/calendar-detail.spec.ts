@@ -2,12 +2,14 @@ import { Component, input, model } from '@angular/core';
 import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
-import { Calendar, toCalendarException, toCalendarPattern, toCalendarShift } from '../../../model/calendar';
+import { addDays, Calendar, mondayOf, productionDay, toCalendarException, toCalendarPattern, toCalendarShift } from '../../../model/calendar';
 import { Mutation } from '../../../model/ql/mutation';
 import { AppService } from '../../../services/app/app-service';
 import { CalendarService } from '../../../services/calendar-service';
 import { ConfirmDialog } from '../../../shared/confirm/confirm-dialog';
 import { Properties } from '../../graphql/properties/properties';
+import { CalendarChangeDialog, CalendarChangeDialogData } from './calendar-change-dialog';
+import { CalendarCycleDialog, CalendarCycleDialogData } from './calendar-cycle-dialog';
 import { CalendarDetail, sharedCalendarLine } from './calendar-detail';
 import { CalendarExceptionDialog, CalendarExceptionDialogData } from './calendar-exception-dialog';
 import { CalendarShiftDialog, CalendarShiftDialogData } from './calendar-shift-dialog';
@@ -20,6 +22,7 @@ const row = { id: 3, name: 'Plant', slug: 'plant', timeZone: NewYork, dayStart: 
 const first = toCalendarPattern( {id: 4, calendarId: 3, effective: null, cycleDays: 7, cycleStart: null} );
 const july = toCalendarPattern( {id: 5, calendarId: 3, effective: '2026-07-06T10:00:00Z', cycleDays: 14, cycleStart: '2026-07-01T10:00:00Z'} );
 const gone = toCalendarPattern( {id: 6, calendarId: 3, effective: '2026-06-01T10:00:00Z', cycleDays: 7, cycleStart: null, deleted: '2026-06-02T00:00:00Z'} );
+const august = toCalendarPattern( {id: 11, calendarId: 3, effective: '2026-08-03T10:00:00Z', cycleDays: 7, cycleStart: null} );//a copy of the first, from a Monday
 const day = toCalendarShift( {id: 7, calendarPatternId: 4, name: 'Day', days: 31, start: 0, minutes: 480, breaks: '[{"start":240,"minutes":30}]'} );
 const night = toCalendarShift( {id: 8, calendarPatternId: 4, name: 'Night', days: 31, start: 960, minutes: 480, breaks: null} );
 const holiday = toCalendarException( {id: 9, calendarId: 3, name: 'Independence Day', start: '2026-07-04T10:00:00Z', finish: '2026-07-05T10:00:00Z', isOpen: false} );
@@ -42,6 +45,8 @@ const create = async ( pageRow:any, {render=false, serverZone='America/Chicago' 
 		exceptions: vi.fn( async ( _app:unknown, _id:number, deleted=false )=>deleted ? [holiday, oldHoliday] : [holiday] ),
 		createShift: vi.fn( async ()=>{} ), updateShift: vi.fn( async ()=>{} ), purgeShift: vi.fn( async ()=>{} ),
 		createException: vi.fn( async ()=>{} ), updateException: vi.fn( async ()=>{} ),
+		copyPattern: vi.fn( async ( ..._args:unknown[] )=>august ), updatePattern: vi.fn( async ( ..._args:unknown[] )=>{} ),
+		occurrences: vi.fn( async ( ..._args:unknown[] )=>[] ),
 		remove: vi.fn( async ( ..._args:unknown[] )=>{} )
 	};
 	const dialog = dialogStub( true );//a confirmation's answer, and a form's:  saved
@@ -140,11 +145,13 @@ describe( 'CalendarDetail', ()=>{
 		expect( d.page.patterns.rows().map( p=>d.page.stateText( p ) ) ).toEqual( ['In effect', 'Upcoming'] );
 		await d.page.refreshShifts();
 		expect( d.page.shifts.rows().map( s=>s.name ) ).toEqual( ['Day', 'Night'] );
-		expect( d.page.shifts.rows().map( s=>[d.page.daysText( s ), d.page.startText( s ), d.page.lengthText( s ), d.page.breaksText( s ), d.page.endText( s )] ) ).toEqual( [
-			['M T W T F · ·', '06:00', '8 h', '10:00 (30 min)', 'Ends 14:00'],
-			['M T W T F · ·', '22:00', '8 h', '', 'Ends 06:00 the next day']
+		//on the grid:  the week's columns, and a bar for each shift on each of its days
+		expect( d.page.columns().map( c=>c.title ) ).toEqual( ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] );
+		expect( d.page.bars() ).toHaveLength( 10 );
+		expect( d.page.bars().filter( b=>b.primary ).map( b=>b.detail ) ).toEqual( [
+			'Day, Monday, Tuesday, Wednesday, Thursday, Friday, 06:00 to 14:00, 8 h, breaks 10:00 (30 min)',
+			'Night, Monday, Tuesday, Wednesday, Thursday, Friday, 22:00 to 06:00, 8 h'
 		] );
-		expect( d.page.daysDetail( day ) ).toBe( 'Monday, Tuesday, Wednesday, Thursday, Friday' );
 	} );
 	it( "shows another pattern's shifts when it is picked, by its own cycle", async ()=>{
 		const d = await create( row );
@@ -153,7 +160,8 @@ describe( 'CalendarDetail', ()=>{
 		expect( d.page.selected() ).toBe( july );
 		expect( d.service.shifts ).toHaveBeenLastCalledWith( d.app, 5 );
 		expect( d.page.shifts.rows() ).toEqual( [] );
-		expect( d.page.daysText( {...day, days: 0b1110011} ) ).toBe( '1-2, 5-7' );//a rotation's day numbers
+		expect( d.page.columns().map( c=>c.title ) ).toEqual( Array.from( {length: 14}, ( _, i )=>`Day ${i+1}` ) );//a rotation's day numbers
+		expect( d.page.bars() ).toEqual( [] );
 		const reads = d.service.shifts.mock.calls.length;
 		await d.page.select( july );//the one showing:  nothing to read
 		expect( d.service.shifts ).toHaveBeenCalledTimes( reads );
@@ -185,6 +193,76 @@ describe( 'CalendarDetail', ()=>{
 		await d.page.deletePattern( first );
 		expect( d.page.patterns.error() ).toBe( "It is the calendar's only pattern." );
 		expect( d.page.patterns.busy() ).toBe( false );
+		expect( d.service.patterns ).toHaveBeenCalledTimes( reads+1 );
+	} );
+
+	//#397:  the date picker picks the pattern in effect
+	it( 'shows the pattern in effect on the day picked, over one picked from the list, and today again for none', async ()=>{
+		const d = await create( row );
+		expect( [d.page.date(), d.page.dateText()] ).toEqual( [undefined, productionDay( d.page.today(), NewYork, 360 )] );
+		const field = { value: '2026-06-15' };//a Monday in June, before July's pattern
+		await d.page.setDate( field );
+		expect( [d.page.date(), d.page.selected()?.id] ).toEqual( ['2026-06-15', 4] );
+		expect( d.service.shifts ).toHaveBeenLastCalledWith( d.app, 4 );
+		expect( d.page.columns().findIndex( c=>c.current ) ).toBe( 0 );
+		expect( d.page.inEffect()?.id ).toBe( 5 );//the list's Status still says today's
+		await d.page.select( july );//from the list
+		expect( d.page.selected() ).toBe( july );
+		expect( d.page.columns()[0] ).toEqual( {title: 'Day 1', short: 'Day 1', sub: 'Wed 06-03', current: false} );//the rotation's days under the picked day's cycle
+		expect( d.page.columns()[12].current ).toBe( true );
+		await d.page.setDate( field );//the date again:  the pattern in effect then, not the one picked
+		expect( d.page.selected()?.id ).toBe( 4 );
+		const reads = d.service.shifts.mock.calls.length;
+		field.value = '2026-06-16';
+		await d.page.setDate( field );//the same pattern's day:  nothing to read
+		expect( d.service.shifts ).toHaveBeenCalledTimes( reads );
+		field.value = '2026-07-06';
+		await d.page.setDate( field );//the day July's begins
+		expect( d.page.selected()?.id ).toBe( 5 );
+		field.value = '';
+		await d.page.setDate( field );
+		expect( [d.page.date(), field.value] ).toEqual( [undefined, d.page.dateText()] );//the field shows today
+		field.value = d.page.dateText();
+		await d.page.setDate( field );//today, picked:  not a pick
+		expect( d.page.date() ).toBeUndefined();
+	} );
+	//Change from… against a mocked service
+	it( 'copies the pattern showing to a new one from a day, and shows the copy', async ()=>{
+		const d = await create( row );
+		d.page.today.set( june );
+		await d.page.refreshShifts();
+		d.dialog.answers.set( CalendarChangeDialog, august );
+		d.service.patterns.mockImplementation( async ()=>[july, august, first] );//once the copy is made
+		await d.page.changeFrom();
+		const form = d.opened<CalendarChangeDialogData>( CalendarChangeDialog );
+		expect( form ).toMatchObject( {source: 'the beginning', zone: NewYork, from: addDays( productionDay( june, NewYork, 360 ), 1 )} );//tomorrow, with no day picked
+		expect( await form.save( '2026-08-03' ) ).toBe( august );
+		expect( d.service.copyPattern ).toHaveBeenCalledWith( d.app, 4, '2026-08-03T06:00:00' );//the day's start, with no zone
+		expect( [d.page.selected()?.id, d.page.date()] ).toEqual( [11, '2026-08-03'] );
+		expect( d.page.patterns.rows().map( p=>p.id ) ).toEqual( [4, 5, 11] );
+		expect( d.service.shifts ).toHaveBeenLastCalledWith( d.app, 11 );
+	} );
+	it( 'offers the day picked for the change, and reads nothing again on Cancel', async ()=>{
+		const d = await create( row );
+		await d.page.setDate( {value: '2026-12-07'} );
+		d.dialog.answers.set( CalendarChangeDialog, undefined );
+		const reads = d.service.patterns.mock.calls.length;
+		await d.page.changeFrom();
+		expect( d.opened<CalendarChangeDialogData>( CalendarChangeDialog ) ).toMatchObject( {source: '2026-07-06', from: '2026-12-07'} );
+		expect( d.service.patterns ).toHaveBeenCalledTimes( reads );
+		expect( [d.page.selected()?.id, d.page.date()] ).toEqual( [5, '2026-12-07'] );
+	} );
+	it( "sets the selected pattern's cycle with what changed alone", async ()=>{
+		const d = await create( row );
+		const reads = d.service.patterns.mock.calls.length;
+		await d.page.editCycle();
+		const form = d.opened<CalendarCycleDialogData>( CalendarCycleDialog );
+		expect( form ).toMatchObject( {pattern: july, zone: NewYork, dayStart: 360, anchor: mondayOf( d.page.dateText() )} );
+		await form.save( {cycleDays: 8, cycleStart: '2026-07-01T06:00:00'} );
+		expect( d.service.updatePattern ).toHaveBeenCalledWith( d.app, 5, {cycleDays: 8} );//its anchor as it was
+		expect( d.service.patterns ).toHaveBeenCalledTimes( reads+1 );
+		d.dialog.answers.set( CalendarCycleDialog, false );
+		await d.page.editCycle();
 		expect( d.service.patterns ).toHaveBeenCalledTimes( reads+1 );
 	} );
 
@@ -225,6 +303,40 @@ describe( 'CalendarDetail', ()=>{
 		d.page.shifts.rows.set( [day] );
 		await d.page.addShift();
 		expect( d.opened<CalendarShiftDialogData>( CalendarShiftDialog ).startAt ).toBe( 480 );
+	} );
+	//#397:  the grid's drag and its bars
+	it( 'opens a new shift on the hours and the day dragged on the grid', async ()=>{
+		const d = await create( row );
+		d.page.today.set( june );
+		await d.page.refreshShifts();
+		await d.page.drawShift( {day: 5, start: 240, minutes: 495} );
+		const form = d.opened<CalendarShiftDialogData>( CalendarShiftDialog );
+		expect( form ).toMatchObject( {pattern: first, dayStart: 360, startAt: 240, minutes: 495, days: [5]} );
+		await form.save( {name: 'Saturday', days: 32, start: 240, minutes: 495, breaks: null} );
+		expect( d.service.createShift ).toHaveBeenCalledWith( d.app, 4, {name: 'Saturday', days: 32, start: 240, minutes: 495, breaks: null} );
+	} );
+	it( "opens a bar's shift, and removes it from its form once confirmed", async ()=>{
+		const d = await create( row );
+		d.page.today.set( june );
+		await d.page.refreshShifts();
+		d.dialog.answers.set( CalendarShiftDialog, false );
+		await d.page.openShift( 8 );
+		expect( d.opened<CalendarShiftDialogData>( CalendarShiftDialog ).shift ).toBe( night );
+		await d.page.openShift( 99 );//a bar of a shift since removed
+		expect( d.dialog.open ).toHaveBeenCalledTimes( 1 );
+		d.page.shifts.busy.set( true );//an edit is out:  the grid's bars and its drag wait for it
+		await d.page.openShift( 8 );
+		await d.page.drawShift( {day: 5, start: 240, minutes: 495} );
+		expect( d.dialog.open ).toHaveBeenCalledTimes( 1 );
+		d.page.shifts.busy.set( false );
+		d.dialog.answers.set( CalendarShiftDialog, 'remove' );
+		d.dialog.answer = false;//the confirmation's
+		await d.page.openShift( 7 );
+		expect( d.dialog.open.mock.calls.at( -1 )![0] ).toBe( ConfirmDialog );
+		expect( d.service.purgeShift ).not.toHaveBeenCalled();
+		d.dialog.answer = true;
+		await d.page.openShift( 7 );
+		expect( d.service.purgeShift ).toHaveBeenCalledWith( d.app, 7 );
 	} );
 	it( "edits a shift with what changed alone, and doesn't read again on Cancel", async ()=>{
 		const d = await create( row );
@@ -342,10 +454,10 @@ describe( 'CalendarDetail', ()=>{
 	} );
 
 	const tabs = ( root:HTMLElement )=>[...root.querySelectorAll( '.mdc-tab__text-label' )].map( e=>e.textContent!.trim() );
-	it( 'shows Properties alone on a new calendar, and its patterns and exceptions once saved', async ()=>{
+	it( 'shows Properties alone on a new calendar, and its patterns, exceptions and preview once saved', async ()=>{
 		expect( tabs( (await create( {}, {render: true} )).fixture.nativeElement ) ).toEqual( ['Properties'] );
 		TestBed.resetTestingModule();//the second page of this test
-		expect( tabs( (await create( row, {render: true} )).fixture.nativeElement ) ).toEqual( ['Properties', 'Pattern', 'Exceptions'] );
+		expect( tabs( (await create( row, {render: true} )).fixture.nativeElement ) ).toEqual( ['Properties', 'Pattern', 'Exceptions', 'Preview'] );
 	} );
 	it( 'draws the patterns with their shifts, and the exceptions', async ()=>{
 		const d = await create( row, {render: true} );
@@ -362,16 +474,26 @@ describe( 'CalendarDetail', ()=>{
 		await show( 1 );
 		expect( cells( 'mat-radio-button' ) ).toEqual( ['The beginning', '2026-07-06'] );
 		expect( root.querySelector( 'mat-row.selected mat-radio-button' )?.textContent?.trim() ).toBe( 'The beginning' );
-		expect( root.querySelector( '.shifts h3' )?.textContent ).toBe( 'Shifts from the beginning' );
-		expect( [...root.querySelectorAll( '.shifts mat-row' )].map( r=>[...r.querySelectorAll( 'mat-cell:not(.mat-column-actions)' )].map( c=>c.textContent!.trim() ) ) ).toEqual( [
-			['Day', 'M T W T F · ·', '06:00', '8 h', '10:00 (30 min)'],
-			['Night', 'M T W T F · ·', '22:00', '8 h', 'none']
-		] );
+		expect( root.querySelector( '.shifts h3' )?.textContent ).toBe( 'Shifts from the beginning, weekly' );
+		expect( root.querySelector<HTMLInputElement>( '.tab-toolbar input[type=date]' )?.value ).toBe( d.page.dateText() );
+		//the grid in place of the shifts table:  a bar for each shift on each of its days, which opens its form
+		const bars = [...root.querySelectorAll<HTMLButtonElement>( '.shifts calendar-grid button.bar' )];
+		expect( bars ).toHaveLength( 10 );
+		expect( [...root.querySelectorAll( '.shifts calendar-grid .column' )[0].querySelectorAll( '.bar' )].map( b=>[b.querySelector( '.name' )?.textContent, b.querySelector( '.times' )?.textContent] ) ).toEqual( [['Day', '06:00 - 14:00'], ['Night', '22:00 - 06:00']] );
+		expect( root.querySelector( '.shifts mat-table' ) ).toBeNull();
+		d.dialog.answers.set( CalendarShiftDialog, false );
+		bars[0].click();
+		await flush( 2 );
+		expect( d.opened<CalendarShiftDialogData>( CalendarShiftDialog ).shift ).toBe( day );
 		d.page.shifts.error.set( "Shifts 'Day' on Monday and 'Late' on Monday overlap." );
 		d.fixture.detectChanges( false );
 		expect( root.querySelector( '.shifts [role=alert]' )?.textContent ).toContain( 'overlap' );
 		await show( 2 );
 		expect( cells( 'mat-row .mat-column-start, mat-row .mat-column-kind' ) ).toEqual( ['2026-07-04 06:00', 'Closed'] );
+		await show( 3 );//the Preview reads its week when it is opened, with the closed exceptions for its bands
+		expect( root.querySelector( 'calendar-preview calendar-grid' ) ).not.toBeNull();
+		const monday = mondayOf( productionDay( new Date(), NewYork, 360 ) );
+		expect( d.service.occurrences ).toHaveBeenLastCalledWith( d.app, 3, `${monday}T06:00:00`, `${addDays( monday, 7 )}T06:00:00` );
 		await show( 0 );
 		d.app.mutate.mockRejectedValueOnce( new Error( 'dayStart 1500 is not under 1440.' ) );
 		d.page.setDayStart( '07:00' );

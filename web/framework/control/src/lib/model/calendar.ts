@@ -155,22 +155,7 @@ export function maskDays( mask:number, cycleDays:number ):number[]{
 	return days;
 }
 export function daysMask( days:readonly number[] ):number{ return [...new Set( days )].reduce( ( mask, i )=>mask+2**i, 0 ); }
-//A shift's days as its table shows them:  the week's seven letters with a dot for a day off, where position tells the two Ts and
-//Ss apart, and a rotation's day numbers from 1, runs folded - 1-2, 5-7
-export function daysText( mask:number, pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'> ):string{
-	const days = maskDays( mask, pattern.cycleDays );
-	if( isWeekly( pattern ) )
-		return weekdays.map( ( name, i )=>days.includes( i ) ? name[0] : '·' ).join( ' ' );
-	const runs:string[] = [];
-	for( let i=0; i<days.length; ++i ){
-		const first = days[i];
-		while( days[i+1]==days[i]+1 )
-			++i;
-		runs.push( days[i]==first ? `${first+1}` : `${first+1}-${days[i]+1}` );
-	}
-	return runs.join( ', ' );
-}
-//the same in words, for a tooltip and a screen reader
+//A shift's days in words, for a bar's tooltip and a screen reader
 export function daysDetail( mask:number, pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'> ):string{
 	const names = cycleDayNames( pattern );
 	return maskDays( mask, pattern.cycleDays ).map( i=>names[i] ).join( ', ' ) || 'No days';
@@ -289,7 +274,7 @@ export function toExceptionForm( exception:Pick<CalendarException,'name'|'start'
 export function exceptionRange( form:ExceptionForm, dayStart:number ):{start:string; finish:string}{
 	return form.whole ? wholeDayRange( form.from, form.to, dayStart ) : { start: form.start, finish: form.finish };
 }
-const isDate = ( text:string ):boolean=>/^\d{4}-\d{2}-\d{2}$/.test( text ) && addDays( text, 0 )==text;
+export const isDate = ( text:string ):boolean=>/^\d{4}-\d{2}-\d{2}$/.test( text ) && addDays( text, 0 )==text;
 export function exceptionProblem( form:ExceptionForm, zone:string, dayStart:number ):string|undefined{
 	if( !form.name.trim() )
 		return 'An exception needs a name.';
@@ -312,4 +297,164 @@ export function exceptionArgsOf( exception:Pick<CalendarException,'name'|'start'
 //the args that differ from the row's, which an update sends
 export function changedArgs<T extends object>( args:T, original:T ):Partial<T>{
 	return <Partial<T>>Object.fromEntries( Object.entries( args ).filter( ( [key, value] )=>value!==(<any>original)[key] ) );
+}
+
+//The grid (#397, spec *The cycle*, *Web*):  a column per cycle day, or per day of a previewed week, the hours down from the day's
+//start.  Everything a column draws is minutes from its top, the production day's start;  a span is minutes from the first column's.
+export const gridSnap = 15;
+export function minutesToPixels( minutes:number, hourHeight:number ):number{ return minutes*hourHeight/60; }
+//a pointer's offset down a column as minutes from the day's start:  the nearest quarter hour, inside the day
+export function pixelsToMinutes( pixels:number, hourHeight:number, snap=gridSnap ):number{
+	return Math.min( minutesPerDay, Math.max( 0, Math.round( pixels*60/hourHeight/snap )*snap ) );
+}
+//the hours down the side, from the day's start
+export function gridHours( dayStart:number ):string[]{ return Array.from( {length: 24}, ( _, i )=>minutesToTime( dayStart+i*60 ) ); }
+//the hours a drag covers, either way it was dragged;  none for less than a quarter hour, a click
+export function drawnSpan( from:number, to:number ):{start:number; minutes:number}|undefined{
+	const start = Math.min( from, to ), minutes = Math.abs( to-from );
+	return minutes<gridSnap ? undefined : { start, minutes };
+}
+
+const dayNumber = ( date:string ):number=>{ const [y, m, d] = date.split( '-' ).map( Number ); return Math.round( Date.UTC( y, m-1, d )/86400000 ); };
+export function weekdayOf( date:string ):number{ return ( ((dayNumber( date )+3) % 7)+7 ) % 7; }//Monday 0:  day 0, 1970-01-01, was a Thursday
+export function mondayOf( date:string ):string{ return addDays( date, -weekdayOf( date ) ); }
+//the instant a production day starts, and the production day an instant is in:  the latest whose start is not after it (spec *Resolution*)
+export function dayStartInstant( date:string, zone:string, dayStart:number ):Date|undefined{ return zoneInstant( `${date}T${minutesToTime( dayStart )}`, zone ); }
+export function productionDay( instant:Date, zone:string, dayStart:number ):string{
+	const date = zoneLocal( instant, zone ).substring( 0, 10 );
+	const start = dayStartInstant( date, zone, dayStart );
+	return start && start.getTime()>instant.getTime() ? addDays( date, -1 ) : date;
+}
+//A production day's place in a pattern's cycle:  the days from the anchor's, counted in dates so that a clock change shifts
+//nothing, modulo the cycle, positive before the anchor too.  The week's anchor is any Monday.
+export function cycleDayOf( pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'>, date:string, zone:string ):number{
+	const anchor = pattern.cycleStart ? zoneLocal( pattern.cycleStart, zone ).substring( 0, 10 ) : '1970-01-05';
+	const n = pattern.cycleDays || 7;
+	return ( ((dayNumber( date )-dayNumber( anchor )) % n)+n ) % n;
+}
+
+//`short`:  the title where the columns are narrow, a weekday's three letters.  `sub`:  the line under it.  `current`:  the column of the chosen date, or of today.
+export type GridColumn = { title:string; short:string; sub?:string; current:boolean };
+const weekdayShort = weekdays.map( name=>name.substring( 0, 3 ) );
+//A pattern's columns:  the week's seven by name, or a rotation's Day 1 to Day n with the weekday and date each falls on in the
+//cycle `date` is in
+export function patternColumns( pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'>, date:string, zone:string ):GridColumn[]{
+	const current = cycleDayOf( pattern, date, zone );
+	if( isWeekly( pattern ) )
+		return weekdays.map( ( title, i )=>({title, short: weekdayShort[i], current: i==current}) );
+	const first = addDays( date, -current );
+	return Array.from( {length: pattern.cycleDays}, ( _, i )=>{
+		const day = addDays( first, i );
+		return { title: `Day ${i+1}`, short: `Day ${i+1}`, sub: `${weekdayShort[weekdayOf( day )]} ${day.substring( 5 )}`, current: i==current };
+	} );
+}
+//a previewed week's, from its Monday, each with its date
+export function weekColumns( monday:string, today?:string ):GridColumn[]{
+	return weekdays.map( ( title, i )=>{
+		const day = addDays( monday, i );
+		return { title, short: weekdayShort[i], sub: day, current: day==today };
+	} );
+}
+
+//A piece of a span in one column:  `continued` from the column before, or one that `continues` into the next, with the `cuts` -
+//the breaks - that fall in it
+export type GridSpan = { from:number; to:number };
+export type GridCut = { top:number; minutes:number };
+export type GridPiece = { column:number; top:number; minutes:number; cuts:GridCut[]; continued:boolean; continues:boolean };
+//A span cut where each column ends, so that a shift running past the production day's end continues at the top of the next
+//column.  `wrap`:  the columns are a cycle, whose last day runs into its first;  otherwise a piece outside them is left out.
+export function gridPieces( span:GridSpan, cuts:readonly GridSpan[], columns:number, wrap:boolean ):GridPiece[]{
+	const pieces:GridPiece[] = [];
+	for( let from=span.from; from<span.to; ){
+		const index = Math.floor( from/minutesPerDay ), base = index*minutesPerDay, to = Math.min( span.to, base+minutesPerDay );
+		const column = wrap ? ( (index % columns)+columns ) % columns : index;
+		if( column>=0 && column<columns ){
+			pieces.push( {column, top: from-base, minutes: to-from, continued: from>span.from, continues: to<span.to,
+				cuts: cuts.filter( c=>c.from<to && c.to>from ).map( c=>({top: Math.max( c.from, from )-base, minutes: Math.min( c.to, to )-Math.max( c.from, from )}) )} );
+		}
+		from = to;
+	}
+	return pieces;
+}
+//A bar:  a piece of a shift's run, or of an occurrence.  `detail` says it whole, for a tooltip and a screen reader.  `tone`
+//tells neighbouring shifts apart, `openTone` being an open exception's.  `primary`:  the shift's first piece, its one tab stop.
+export type GridBar = GridPiece & { key:string; name:string; times:string; note?:string; detail:string; tone:number; shift?:number; primary:boolean };
+export type GridBand = GridPiece & { key:string; name:string };
+export type GridDraw = { day:number; start:number; minutes:number };
+export const openTone = 3;
+//A pattern's shifts as bars:  one per shift on each day its bit is set, the breaks cut out
+export function patternBars( shifts:readonly CalendarShift[], pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'>, dayStart:number ):GridBar[]{
+	const bars:GridBar[] = [];
+	for( const s of shifts ){
+		const start = minutesToTime( dayStart+s.start ), end = minutesToTime( dayStart+s.start+s.minutes ), breaks = breaksText( s, dayStart );
+		const detail = `${s.name}, ${daysDetail( s.days, pattern )}, ${start} to ${end}, ${durationText( s.minutes )}${breaks ? `, breaks ${breaks}` : ''}`;
+		let primary = true;
+		for( const day of maskDays( s.days, pattern.cycleDays ) ){
+			const from = day*minutesPerDay+s.start;
+			const cuts = s.breaks.map( b=>({from: from+b.start, to: from+b.start+b.minutes}) );
+			gridPieces( {from, to: from+s.minutes}, cuts, pattern.cycleDays, true ).forEach( ( piece, i )=>{
+				bars.push( {...piece, key: `${s.id}-${day}-${i}`, name: s.name, times: `${start} - ${end}`, detail, tone: s.id % openTone, shift: s.id, primary} );
+				primary = false;
+			} );
+		}
+	}
+	return bars;
+}
+
+//A resolved occurrence (spec *Resolution*):  a shift's on a production day, or an open exception's, which has no shift and
+//carries the exception's name, with the closed exceptions already cut from it
+export type CalendarOccurrence = { shift?:number; name:string; day:string; start:Date; end:Date; breaks:{start:Date; end:Date}[] };
+export function toCalendarOccurrence( json:any ):CalendarOccurrence{
+	const breaks = ( Array.isArray( json.breaks ) ? <any[]>json.breaks : [] ).map( b=>({start: toDate( b?.start )!, end: toDate( b?.end )!}) ).filter( b=>b.start && b.end );
+	return { shift: json.shift==null ? undefined : Number( json.shift ), name: String( json.name ?? '' ), day: String( json.day ?? '' ), start: toDate( json.start )!, end: toDate( json.end )!, breaks };
+}
+//the week of production days from `monday`, as the local date-times `calendarOccurrences` reads in the calendar's zone
+export function weekRange( monday:string, dayStart:number ):{start:string; end:string}{
+	const range = wholeDayRange( monday, addDays( monday, 6 ), dayStart );
+	return { start: zoneLess( range.start ), end: zoneLess( range.finish ) };
+}
+//an instant on the week's grid:  its wall clock in the zone, as minutes from the Monday's day start
+function weekMinute( instant:Date, monday:string, zone:string, dayStart:number ):number{
+	return Math.round( (wallClock( instant.getTime(), zone )-dayNumber( monday )*86400000)/60000 )-dayStart;
+}
+//A week's occurrences as bars, placed by the wall clock, as the hours down the side are:  the night the clocks change is as tall
+//as any other, and its `note` says how long it ran
+export function occurrenceBars( occurrences:readonly CalendarOccurrence[], monday:string, zone:string, dayStart:number ):GridBar[]{
+	const at = ( instant:Date )=>weekMinute( instant, monday, zone, dayStart );
+	const clock = ( instant:Date )=>zoneLocal( instant, zone ).substring( 11, 16 );
+	return occurrences.flatMap( ( o, index )=>{
+		const from = at( o.start ), to = Math.max( at( o.end ), from+1 );
+		const elapsed = Math.round( (o.end.getTime()-o.start.getTime())/60000 );
+		const note = elapsed==to-from ? undefined : `${durationText( elapsed )}, clock change`;
+		const detail = `${o.name}, ${o.day}, ${clock( o.start )} to ${clock( o.end )}, ${durationText( elapsed )}${note ? ' across the clock change' : ''}${o.shift==undefined ? ', an open exception' : ''}`;
+		return gridPieces( {from, to}, o.breaks.map( b=>({from: at( b.start ), to: at( b.end )}) ), 7, false )
+			.map( ( piece, i )=>({...piece, key: `${index}-${i}`, name: o.name, times: `${clock( o.start )} - ${clock( o.end )}`, note, detail, tone: o.shift==undefined ? openTone : o.shift % openTone, shift: o.shift, primary: i==0}) );
+	} );
+}
+//the live closed exceptions as bands behind them, so a holiday shows as more than a gap
+export function exceptionBands( exceptions:readonly CalendarException[], monday:string, zone:string, dayStart:number ):GridBand[]{
+	return exceptions.filter( e=>!e.deleted && !e.isOpen ).flatMap( e=>
+		gridPieces( {from: weekMinute( e.start, monday, zone, dayStart ), to: weekMinute( e.finish, monday, zone, dayStart )}, [], 7, false ).map( ( piece, i )=>({...piece, key: `${e.id}-${i}`, name: e.name}) ) );
+}
+
+//A pattern's cycle as its form holds it:  the week, or a rotation of `days` whose day 1 was `anchor`, a date
+export type CycleForm = { rotation:boolean; days:number; anchor:string };
+export type CycleArgs = { cycleDays:number; cycleStart:string|null };
+//`anchor`:  a weekly pattern's, should it become a rotation - a Monday keeps its shifts on the days they are on
+export function toCycleForm( pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'>, zone:string, anchor:string ):CycleForm{
+	return { rotation: !isWeekly( pattern ), days: pattern.cycleDays, anchor: pattern.cycleStart ? zoneLocal( pattern.cycleStart, zone ).substring( 0, 10 ) : anchor };
+}
+export function cycleProblem( form:CycleForm ):string|undefined{
+	if( !form.rotation )
+		return undefined;
+	if( !Number.isInteger( form.days ) || form.days<1 || form.days>31 )
+		return 'A rotation is 1 to 31 days long.';
+	return isDate( form.anchor ) ? undefined : 'A rotation needs the date of its day 1.';
+}
+//the columns:  the anchor the start of its production day, a local time with no zone, and none for the week
+export function toCycleArgs( form:CycleForm, dayStart:number ):CycleArgs{
+	return form.rotation ? { cycleDays: form.days, cycleStart: `${form.anchor}T${minutesToTime( dayStart )}:00` } : { cycleDays: 7, cycleStart: null };
+}
+export function cycleArgsOf( pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'>, zone:string ):CycleArgs{
+	return { cycleDays: pattern.cycleDays, cycleStart: pattern.cycleStart ? zoneLess( zoneLocal( pattern.cycleStart, zone ) ) : null };
 }

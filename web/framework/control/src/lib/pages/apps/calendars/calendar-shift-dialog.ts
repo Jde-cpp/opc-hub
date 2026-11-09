@@ -10,27 +10,29 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { CalendarPattern, CalendarShift, changedArgs, cycleDayNames, durationText, isWeekly, minutesPerDay, minutesToTime, ShiftArgs, shiftArgsOf, ShiftForm, shiftMinutes, shiftProblem, timeToMinutes, toShiftArgs, toShiftForm } from '../../../model/calendar';
 import { errorMessage } from '../../../utils/errors';
 
-//`shift`:  the one edited, none for a new one, which starts at `startAt`, minutes after the production day's start.  `save` sends
-//the form's columns, and its throw is the server's refusal, said on the form.
-export type CalendarShiftDialogData = { pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'>; dayStart:number; shift?:CalendarShift; startAt?:number; save:( args:ShiftArgs )=>Promise<unknown> };
+//`shift`:  the one edited, none for a new one, which starts at `startAt`, minutes after the production day's start, and runs
+//`minutes` on `days` of the cycle where the grid's drag gave them (#397).  `save` sends the form's columns, and its throw is the
+//server's refusal, said on the form.
+export type CalendarShiftDialogData = { pattern:Pick<CalendarPattern,'cycleDays'|'cycleStart'>; dayStart:number; shift?:CalendarShift; startAt?:number; minutes?:number; days?:number[]; save:( args:ShiftArgs )=>Promise<unknown> };
 
 //A shift's form (#396):  its name, the cycle days it runs - the week's, or a rotation's by number - its start and end on the
 //calendar's wall clock and its breaks, each a start and a length.  The form holds times of day;  the columns are minutes from the
 //production day's start and from the shift's (model/calendar.ts).  It checks what it can first, and the server's refusal - an
-//overlap with another shift - shows under the fields with the dialog still open.
+//overlap with another shift - shows under the fields with the dialog still open.  An edit offers Remove, which the page confirms:
+//the grid has no row to put it on.
 @Component({
 	templateUrl: './calendar-shift-dialog.html',
 	styleUrl: './calendar-dialog.scss',
 	imports: [FormField, MatButtonModule, MatCheckboxModule, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatTooltipModule]
 })
 export class CalendarShiftDialog{
-	//true once a shift was saved
-	static open( dialog:MatDialog, data:CalendarShiftDialogData ):Promise<boolean>{
+	//true once a shift was saved, 'remove' where its removal was asked for
+	static open( dialog:MatDialog, data:CalendarShiftDialogData ):Promise<boolean|'remove'>{
 		const ref = dialog.open( CalendarShiftDialog, {data, width: '560px', maxWidth: 'calc(100vw - 16px)', ariaModal: true} );
-		return new Promise<boolean>( resolve=>ref.afterClosed().subscribe( y=>resolve( y===true ) ) );
+		return new Promise<boolean|'remove'>( resolve=>ref.afterClosed().subscribe( y=>resolve( y===true || y==='remove' ? y : false ) ) );
 	}
 	data = inject<CalendarShiftDialogData>( MAT_DIALOG_DATA );
-	#ref = inject( MatDialogRef<CalendarShiftDialog,boolean> );
+	#ref = inject( MatDialogRef<CalendarShiftDialog,boolean|'remove'> );
 	readonly dayNames = cycleDayNames( this.data.pattern );
 	model = signal<ShiftForm>( this.data.shift ? toShiftForm( this.data.shift, this.data.pattern, this.data.dayStart ) : this.#blank() );
 	f = form( this.model, path=>{ required( path.name ); } );
@@ -44,10 +46,10 @@ export class CalendarShiftDialog{
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );
 
-	//eight hours from `startAt`, on the week's working days or on none of a rotation's
+	//eight hours from `startAt`, on the week's working days or on none of a rotation's, unless the hours and the day were dragged
 	#blank():ShiftForm{
-		const {pattern, dayStart, startAt=0} = this.data;
-		return { name: '', days: Array.from( {length: pattern.cycleDays}, ( _, i )=>isWeekly( pattern ) && i<5 ), start: minutesToTime( dayStart+startAt ), end: minutesToTime( dayStart+startAt+480 ), breaks: [] };
+		const {pattern, dayStart, startAt=0, minutes=480, days} = this.data;
+		return { name: '', days: Array.from( {length: pattern.cycleDays}, ( _, i )=>days ? days.includes( i ) : isWeekly( pattern ) && i<5 ), start: minutesToTime( dayStart+startAt ), end: minutesToTime( dayStart+startAt+minutes ), breaks: [] };
 	}
 	//half an hour, midway through the shift
 	addBreak():void{
@@ -59,6 +61,7 @@ export class CalendarShiftDialog{
 		this.model.update( m=>({...m, breaks: m.breaks.filter( ( _, i )=>i!=index )}) );
 		this.f().markAsDirty();
 	}
+	remove():void{ this.#ref.close( 'remove' ); }
 	async save():Promise<void>{
 		if( this.problem() || this.busy() )
 			return;

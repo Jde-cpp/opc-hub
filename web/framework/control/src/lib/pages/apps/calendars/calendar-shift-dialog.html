@@ -47,6 +47,9 @@
 	}
 </mat-dialog-content>
 <mat-dialog-actions>
+	@if( data.shift ){
+		<button matButton type="button" class="remove" (click)="remove()" [disabled]="busy()"><mat-icon>delete</mat-icon>Remove</button>
+	}
 	<button matButton="outlined" type="button" mat-dialog-close [disabled]="busy()">Cancel</button>
 	<button matButton="filled" type="button" (click)="save()" [disabled]="busy() || !!problem() || !changed()">Save</button>
 </mat-dialog-actions>
