@@ -19,4 +19,5 @@ namespace Jde::Opc::Gateway{
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};
+	α MutationRowId( const QL::MutationQL& m, SL sl )ε->uint32;//its id, refused when it names the row another way.
 }

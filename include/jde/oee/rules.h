@@ -12,8 +12,9 @@ namespace Jde::Opc::Oee{
 	//A role once;  a State or a count, Total or Rate, and not both counts;  a State's running list with a value in it;  a
 	//Rate's period above zero.
 	α ValidateSignals( std::span<const Signal> signals, SRCE )ε->void;
-	//The signals, the width, an ideal cycle and an idle timeout above zero when set, and an idle timeout on a machine with
-	//no State signal, whose counts are its state.
+	//The width, and an ideal cycle and an idle timeout above zero when set:  all a machine with no signal yet is held to.
+	α ValidateThresholds( Duration width, optional<Duration> idealCycle, optional<Duration> idleTimeout, SRCE )ε->void;
+	//The signals, those thresholds, and an idle timeout on a machine with no State signal, whose counts are its state.
 	α ValidateMachine( std::span<const Signal> signals, Duration width, optional<Duration> idealCycle, optional<Duration> idleTimeout, SRCE )ε->void;
 
 	namespace Lines{

@@ -89,6 +89,12 @@ function( sync=false )
 			//connection with no entry uses the process's own certificate.
 			credentials:: {}
 		},
+		//OEE on the historian (docs/oee/spec.md, *Placement*):  the machines defined over its groups, each an engine that turns its
+		//group's records into stops and interval rows.  No `oee` block, no OEE, and it needs `hist`, above:  without the historian
+		//the gateway logs a Critical and runs without it.  A `::` key is its default, shown hidden.
+		oee:{
+			settle:: "PT5S" //how long after an interval ends the engine writes its row, for records still on their way;  a member's MinTimeInterval past it makes each held value a rebuild.  Also how long after a machine's last edit its engine starts, so a form's signals land together.
+		},
 		//A password or an issued token is sent encrypted wherever the server's token policy asks for that, certificateUri or not.
 		//Where a server offers it only under a token policy of None on a channel that is not Sign & Encrypt, it would cross the
 		//wire in the clear, and the gateway refuses the connection and says why.  true sends it anyway (open62541's

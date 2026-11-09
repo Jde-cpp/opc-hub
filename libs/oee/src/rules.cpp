@@ -18,6 +18,19 @@ namespace Jde::Opc{
 		constexpr std::array<sv,4> names{ "Site", "Area", "Line", "Cell" };
 		return (uint8)level<names.size() ? names[(uint8)level] : sv{ "?" };
 	}
+	constexpr std::array<sv,3> _categories{ "Unplanned", "Planned", "Excluded" };
+	α Oee::ToString( ECategory category )ι->sv{ return (uint8)category<_categories.size() ? _categories[(uint8)category] : sv{ "?" }; }
+	α Oee::ToRole( sv name )ι->optional<ERole>{
+		for( uint8 i=0; i<=(uint8)ERole::Reason; ++i ){
+			if( ToString((ERole)i)==name )
+				return (ERole)i;
+		}
+		return nullopt;
+	}
+	α Oee::ToCategory( sv name )ι->optional<ECategory>{
+		let p = std::ranges::find( _categories, name );
+		return p==_categories.end() ? nullopt : optional<ECategory>{ (ECategory)(p-_categories.begin()) };
+	}
 	α Oee::Find( std::span<const Signal> signals, ERole role )ι->const Signal*{
 		let p = std::ranges::find( signals, role, &Signal::Role );
 		return p==signals.end() ? nullptr : &*p;
@@ -32,7 +45,7 @@ namespace Jde::Opc{
 
 	α Oee::ValidateWidth( Duration width, SL sl )ε->void{
 		let listed = std::ranges::any_of( Widths, [width]( uint8_t m ){ return width==minutes{m}; } );
-		REFUSE_IF( !listed, "interval {} is not 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60 minutes, the widths that divide an hour.", Chrono::ToString(width) );
+		REFUSE_IF( !listed, "width {} is not 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60 minutes, the widths that divide an hour.", Chrono::ToString(width) );
 	}
 
 	α Oee::ParseRunning( const jvalue& running, SL sl )ε->vector<StateValue>{
@@ -76,11 +89,14 @@ namespace Jde::Opc{
 		REFUSE_IF( !Find(signals, ERole::State) && !total && !rate, "The machine has neither a State signal nor a count, a Total or a Rate:  it needs one, or both." );
 	}
 
-	α Oee::ValidateMachine( std::span<const Signal> signals, Duration width, optional<Duration> idealCycle, optional<Duration> idleTimeout, SL sl )ε->void{
-		ValidateSignals( signals, sl );
+	α Oee::ValidateThresholds( Duration width, optional<Duration> idealCycle, optional<Duration> idleTimeout, SL sl )ε->void{
 		ValidateWidth( width, sl );
 		REFUSE_IF( idealCycle && *idealCycle<=Duration::zero(), "idealCycle must be above zero:  it is the time one unit takes." );
 		REFUSE_IF( idleTimeout && *idleTimeout<=Duration::zero(), "idleTimeout must be above zero." );
+	}
+	α Oee::ValidateMachine( std::span<const Signal> signals, Duration width, optional<Duration> idealCycle, optional<Duration> idleTimeout, SL sl )ε->void{
+		ValidateSignals( signals, sl );
+		ValidateThresholds( width, idealCycle, idleTimeout, sl );
 		REFUSE_IF( !idleTimeout && !Find(signals, ERole::State), "The machine has no State signal, so its counts are its state:  it needs an idleTimeout, how long without a count is a stop." );
 	}
 

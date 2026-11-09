@@ -131,9 +131,10 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_ANY_THROW( unreachable.Run() );
 	}
 	TEST_F( PlcServerTests, FindFieldFollowsTheContract ){
-		ASSERT_EQ( _plc->Contract()->Fields.size(), 5u );
+		ASSERT_EQ( _plc->Contract()->Fields.size(), 20u );//the five speeds, then OEE's counts and code per pump.
 		EXPECT_EQ( _plc->FindField("pump1.motorRpm"), optional<uint>{0} );
 		EXPECT_EQ( _plc->FindField("pumpManual.motorRpm"), optional<uint>{4} );
+		EXPECT_EQ( _plc->FindField("pump1.totalCount"), optional<uint>{5} );
 		EXPECT_FALSE( _plc->FindField("pump1.status") );//subscribed, never published
 		EXPECT_FALSE( _plc->FindField("nothing.here") );
 	}

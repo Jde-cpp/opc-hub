@@ -12,4 +12,10 @@ namespace Jde::DB::Sqlite::GatewayProcs{
 	α RegisterGatewayHistTemplateNodeInsert( IProcs& procs )ι->void;
 	α RegisterGatewayHistGroupInsert( IProcs& procs )ι->void;
 	α RegisterGatewayHistGroupNodeInsert( IProcs& procs )ι->void;
+	//OEE's four admin tables (gateway_oee_insert.cpp).
+	α RegisterGatewayOeeMachineInsert( IProcs& procs )ι->void;
+	α RegisterGatewayOeeMachineSignalInsert( IProcs& procs )ι->void;
+	α RegisterGatewayOeeReasonInsert( IProcs& procs )ι->void;
+	α RegisterGatewayOeeCodingInsert( IProcs& procs )ι->void;
+	α RegisterGatewayOeeMachinePurge( IProcs& procs )ι->void;//gateway_oee_machine_purge.cpp.
 }

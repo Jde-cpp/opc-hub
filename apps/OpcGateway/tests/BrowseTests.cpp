@@ -269,7 +269,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let objectTypes = rows( NodeId(0, UA_NS0ID_OBJECTTYPESFOLDER), "children" );
 		EXPECT_EQ( classOf(objectTypes, "BaseObjectType"), UA_NODECLASS_OBJECTTYPE );
 		let pump = rows( NodeId(ns, Pump1), "children" );
-		EXPECT_EQ( names(pump), (vector<string>{"motorRpm", "status"}) ) << "PumpType is the pump's type definition, not a child";
+		EXPECT_EQ( names(pump), (vector<string>{"motorRpm", "reasonCode", "rejectCount", "status", "totalCount"}) ) << "PumpType is the pump's type definition, not a child";
 		EXPECT_EQ( classOf(pump, "status"), UA_NODECLASS_VARIABLE );
 		let rpm = rows( NodeId(ns, Rpm3), "children" );
 		EXPECT_EQ( names(rpm), (vector<string>{"EURange", "HA Configuration", "InstrumentRange"}) );

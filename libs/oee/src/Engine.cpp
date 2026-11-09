@@ -38,7 +38,6 @@ namespace Jde::Opc::Oee{
 		};
 
 		constexpr α bit( ERole role )ι->uint8{ return (uint8)( 1u<<(uint8)role ); }
-		Ω isGood( uint32_t status )ι->bool{ return !UA_StatusCode_isBad( status ) && !UA_StatusCode_isUncertain( status ); }//Uncertain is Bad, as the aggregates' TreatUncertainAsBad has it.
 		Ω primaryTime( const Hist::Proto::DataValue& v )ι->optional<TimePoint>{
 			if( v.has_source_ts() )
 				return UADateTime{ UA_DateTime{v.source_ts()} }.Time();
@@ -58,7 +57,7 @@ namespace Jde::Opc::Oee{
 			return n ? Reading{ *n } : Reading{};
 		}
 		Ω sample( const Hist::Proto::DataValue& v, TimePoint t )ι->Sample{
-			auto value = isGood( v.status() ) ? reading( v ) : Reading{};
+			auto value = IsGood( v.status() ) ? reading( v ) : Reading{};
 			let good = !std::holds_alternative<std::monostate>( value );//a Good status with no value to read says nothing of the machine either.
 			return Sample{ t, v.node_index(), good, move(value) };
 		}
@@ -140,6 +139,7 @@ namespace Jde::Opc::Oee{
 		std::deque<Core> _snapshots;//by At:  the opening, then one per minute crossed, from the newest at or before _processed.
 		vector<Sample> _samples;//by Time, from the oldest snapshot on.
 		std::deque<Interval> _done;//ended by the cursor, not yet written.
+		vector<Interval> _closed;//written by this call:  Emit tells the sink, after its stops.
 		vector<Stop> _rows;//the stops and the unknown spans, open or ended since the oldest snapshot.
 		vector<Stop> _told;//_rows as the sink has them.
 		optional<LiveKey> _liveKey;//as the sink has it.
@@ -238,7 +238,7 @@ namespace Jde::Opc::Oee{
 			_rows.push_back( *loaded );
 		}
 		else{
-			if( loaded && loaded->Start<from ){//the bound says otherwise:  it ended here.
+			if( loaded && loaded->Start<from && c.Quiet!=loaded->Start ){//the bound says otherwise:  it ended here.  An idle stop still inside its timeout is the replay's to find again.
 				loaded->End = from;
 				_rows.push_back( *loaded );
 			}
@@ -376,7 +376,7 @@ namespace Jde::Opc::Oee{
 				let t = primaryTime( r.value() );
 				if( !t )
 					continue;
-				if( arrival && isGood(r.value().status()) )
+				if( arrival && IsGood(r.value().status()) )
 					Clocked( *t, *arrival );
 				Place( sample(r.value(), *t) );
 			}
@@ -628,7 +628,7 @@ namespace Jde::Opc::Oee{
 	α Engine::Impl::Write( TimePoint through )ι->void{
 		for( ; !_done.empty() && _done.front().End()<=through; _done.pop_front() ){
 			_processed = _done.front().End();
-			_sink->Closed( _done.front() );
+			_closed.push_back( _done.front() );
 		}
 		while( _snapshots.size()>1 && _snapshots[1].At<=_processed )
 			_snapshots.pop_front();
@@ -684,12 +684,17 @@ namespace Jde::Opc::Oee{
 			if( ended )
 				_sink->Closed( _rows[i++] );
 			else{
-				_sink->Rewritten( i<_rows.size() ? std::min(was.Start, _rows[i].Start) : was.Start, {_rows.begin()+i, _rows.end()} );
+				vector<TimePoint> held;
+				for( let& stop : _told | std::views::drop(i) )
+					held.push_back( stop.Start );
+				_sink->Rewritten( i<_rows.size() ? std::min(was.Start, _rows[i].Start) : was.Start, {_rows.begin()+i, _rows.end()}, held );
 				i = _rows.size();
 			}
 		}
 		for( ; i<_rows.size(); ++i )
 			_sink->Opened( _rows[i] );
+		for( let& row : std::exchange(_closed, {}) )
+			_sink->Closed( row );
 
 		let floor = _snapshots.front().At;
 		std::erase_if( _rows, [floor]( const Stop& s ){ return s.End && *s.End<floor; } );

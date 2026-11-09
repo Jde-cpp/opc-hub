@@ -52,12 +52,17 @@ namespace Jde::Opc::Server::Tests{
 	TEST_F( PubSubTests, ReaderTargetsResolveToTheNodeset ){
 		let reader = PubSub(); ASSERT_TRUE( reader );
 		let& contract = reader->Config();
-		ASSERT_EQ( contract.Fields.size(), 5u );
+		ASSERT_EQ( contract.Fields.size(), 20u );//the five speeds, then OEE's three members per pump (docs/oee/spec.md *Emulator*).
 		EXPECT_EQ( contract.Fields[0].Name, "pump1.motorRpm" );
 		EXPECT_EQ( *contract.Fields[0].Node.Numeric(), 6012u );
 		EXPECT_EQ( *contract.Fields[4].Node.Numeric(), 6054u );
-		for( let& f : contract.Fields )
-			EXPECT_EQ( f.Type, &UA_TYPES[UA_TYPES_DOUBLE] ) << f.Name;
+		for( uint i=0; i<5; ++i )
+			EXPECT_EQ( contract.Fields[i].Type, &UA_TYPES[UA_TYPES_DOUBLE] ) << contract.Fields[i].Name;
+		EXPECT_EQ( contract.Fields[5].Name, "pump1.totalCount" );
+		EXPECT_EQ( *contract.Fields[5].Node.Numeric(), 6013u );
+		EXPECT_EQ( contract.Fields[5].Type, &UA_TYPES[UA_TYPES_UINT32] );
+		EXPECT_EQ( contract.Fields[7].Name, "pump1.reasonCode" );
+		EXPECT_EQ( contract.Fields[7].Type, &UA_TYPES[UA_TYPES_INT32] );
 	}
 
 	//A published value lands in the OpcServer's target variable: the whole UADP path - writer sampling, network message,

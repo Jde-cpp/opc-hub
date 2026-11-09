@@ -12,7 +12,10 @@ namespace Jde::Opc::Oee{
 	enum class ELevel : uint8{ Site, Area, Line, Cell };//ISA-95's below the enterprise, highest first.
 	α ToString( ERole role )ι->sv;
 	α ToString( EState state )ι->sv;
+	α ToString( ECategory category )ι->sv;
 	α ToString( ELevel level )ι->sv;
+	α ToRole( sv name )ι->optional<ERole>;//as ToString spells it, the columns' text.
+	α ToCategory( sv name )ι->optional<ECategory>;
 
 	//A State value that means running:  a number, a Boolean as 1 or 0, or text.
 	using StateValue = std::variant<double,string>;

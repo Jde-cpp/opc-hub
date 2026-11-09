@@ -18,6 +18,9 @@ namespace Jde::Opc::Gateway::Tests{
 	//Status2 isn't historized.
 	constexpr UA_UInt32 Pump1{ 5001 }, Pump2{ 5002 }, Pump3{ 5003 }, Pump4{ 5004 }, PumpManual{ 5005 };
 	constexpr UA_UInt32 Status1{ 6011 }, Rpm1{ 6012 }, Status2{ 6021 }, Rpm2{ 6022 }, Status3{ 6031 }, Rpm3{ 6032 }, Rpm4{ 6042 }, RpmManual{ 6054 };
+	//OEE's members on pump1 (docs/oee/spec.md *Emulator*):  totalCount and rejectCount, UInt32 counters, and reasonCode, an Int32,
+	//historized as status and motorRpm are;  what OeeTests write as a machine's Total, Reject and Reason signals.
+	constexpr UA_UInt32 Total1{ 6013 }, Reject1{ 6014 }, Reason1{ 6015 };
 	//pumpManual's toHertz( rpm: Double ) -> ( hertz: Double, text: String ), the pumps demo's method, which CallTests call (#318), bound by the
 	//OpcServer after the load (Server::ConfigurePumps), which also gives PumpManual - and no other pump - a WriteMask of DisplayName and
 	//Description, the one WriteTests write (#417).

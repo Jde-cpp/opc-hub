@@ -31,7 +31,23 @@
 			{ name: "pump2.motorRpm", type: "Double", path: "pumps~pump2/pumps~motorRpm" },
 			{ name: "pump3.motorRpm", type: "Double", path: "pumps~pump3/pumps~motorRpm" },
 			{ name: "pump4.motorRpm", type: "Double", path: "pumps~pump4/pumps~motorRpm" },
-			{ name: "pumpManual.motorRpm", type: "Double", path: "pumps~pumpManual/pumps~motorRpm" }
+			{ name: "pumpManual.motorRpm", type: "Double", path: "pumps~pumpManual/pumps~motorRpm" },
+			//OEE's counts and stop code (docs/oee/spec.md *Emulator*), after the speeds so those keep their place in the wire order.
+			{ name: "pump1.totalCount", type: "UInt32", path: "pumps~pump1/pumps~totalCount" },
+			{ name: "pump1.rejectCount", type: "UInt32", path: "pumps~pump1/pumps~rejectCount" },
+			{ name: "pump1.reasonCode", type: "Int32", path: "pumps~pump1/pumps~reasonCode" },
+			{ name: "pump2.totalCount", type: "UInt32", path: "pumps~pump2/pumps~totalCount" },
+			{ name: "pump2.rejectCount", type: "UInt32", path: "pumps~pump2/pumps~rejectCount" },
+			{ name: "pump2.reasonCode", type: "Int32", path: "pumps~pump2/pumps~reasonCode" },
+			{ name: "pump3.totalCount", type: "UInt32", path: "pumps~pump3/pumps~totalCount" },
+			{ name: "pump3.rejectCount", type: "UInt32", path: "pumps~pump3/pumps~rejectCount" },
+			{ name: "pump3.reasonCode", type: "Int32", path: "pumps~pump3/pumps~reasonCode" },
+			{ name: "pump4.totalCount", type: "UInt32", path: "pumps~pump4/pumps~totalCount" },
+			{ name: "pump4.rejectCount", type: "UInt32", path: "pumps~pump4/pumps~rejectCount" },
+			{ name: "pump4.reasonCode", type: "Int32", path: "pumps~pump4/pumps~reasonCode" },
+			{ name: "pumpManual.totalCount", type: "UInt32", path: "pumps~pumpManual/pumps~totalCount" },
+			{ name: "pumpManual.rejectCount", type: "UInt32", path: "pumps~pumpManual/pumps~rejectCount" },
+			{ name: "pumpManual.reasonCode", type: "Int32", path: "pumps~pumpManual/pumps~reasonCode" }
 		]
 	}
 }
