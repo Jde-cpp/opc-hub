@@ -137,6 +137,25 @@ describe( 'CalendarGrid', ()=>{
 		d.at( saturday, 'pointerdown', 448, {button: 2} );//the context menu's button
 		expect( d.grid.drag() ).toBeUndefined();
 	} );
+	it( "drops a drag a Mac's ctrl-click would leave armed, and one that loses the pointer", ()=>{
+		const d = create( {editable: true} );
+		const saturday = d.column( 5 );
+		d.at( saturday, 'pointerdown', 448, {ctrlKey: true} );
+		expect( d.grid.drag() ).toBeUndefined();
+		d.at( saturday, 'pointerdown', 448 );
+		expect( d.grid.drag() ).toBeDefined();
+		saturday.dispatchEvent( new Event( 'lostpointercapture' ) );
+		expect( d.grid.drag() ).toBeUndefined();
+	} );
+	it( 'is a tab stop of its own only where no bar in it is one, for the keyboard to scroll it', ()=>{
+		const d = create( {bars: patternBars( [day], weekly, 360 ), editable: true} );
+		const scroller = d.root.querySelector( '.scroller' )!;
+		expect( [scroller.getAttribute( 'tabindex' ), scroller.getAttribute( 'aria-label' )] ).toEqual( [null, 'Shifts'] );
+		d.set( {bars: []} );
+		expect( scroller.getAttribute( 'tabindex' ) ).toBe( '0' );
+		d.set( {bars: patternBars( [day], weekly, 360 ), editable: false} );
+		expect( scroller.getAttribute( 'tabindex' ) ).toBe( '0' );
+	} );
 	//the Preview's week:  an open exception's bar under its name, and a closed one's band behind what it left
 	it( "draws a week's occurrences, an open exception's under its name, over the closed exceptions' bands", ()=>{
 		const occurrence = ( shift:number|null, name:string, day:string, start:string, end:string )=>toCalendarOccurrence( {shift, name, day, start, end, breaks: []} );

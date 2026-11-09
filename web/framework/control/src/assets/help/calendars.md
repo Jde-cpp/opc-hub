@@ -51,6 +51,8 @@ To add a shift, drag down an empty part of a day. The form opens on the hours dr
 
 To change a shift, pick one of its bars.
 
+A shift set to run on no day has no bar. It is listed under the grid, and opens from there.
+
 ### Shifts
 
 The shift's form:

@@ -25,6 +25,7 @@ import { CalendarGrid } from './calendar-grid';
 import { CalendarPreview } from './calendar-preview';
 import { CalendarRows } from './calendar-rows';
 import { CalendarShiftDialog, CalendarShiftDialogData } from './calendar-shift-dialog';
+import { DateCommit } from './date-commit';
 
 //The fields the form leaves out:  the zone and the day start have controls of their own below it.  A constant, as the binding is
 //read each check and a new array has Properties rebuild its fields.
@@ -46,7 +47,7 @@ export const sharedCalendarLine = "Calendars are shared:  every gateway plans by
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content my-content calendar-detail'},
-	imports: [CalendarGrid, CalendarPreview, DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatRadioModule, MatSelectModule, MatSlideToggleModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties]
+	imports: [CalendarGrid, CalendarPreview, DateCommit, DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatRadioModule, MatSelectModule, MatSlideToggleModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties]
 })
 export class CalendarDetail extends DetailPage<Calendar>{
 	constructor(){ super( 'calendar-detail' ); }
@@ -108,8 +109,12 @@ export class CalendarDetail extends DetailPage<Calendar>{
 	#at = computed( ()=>{ const date = this.date(); return (date ? dayStartInstant( date, this.zone(), this.dayStart ) : undefined) ?? this.today(); } );
 	selected = computed<CalendarPattern|undefined>( ()=>this.patterns.rows().find( p=>p.id==this.selectedId() ) ?? patternInEffect( this.patterns.rows(), this.#at() ) ?? this.patterns.rows()[0] );
 	//the grid:  the selected pattern's cycle days, a rotation's under the dates of the cycle the picked day is in, and its shifts
-	columns = computed( ()=>{ const p = this.selected(); return p ? patternColumns( p, this.dateText(), this.zone() ) : []; } );
+	columns = computed( ()=>{
+		const p = this.selected(), columns = p ? patternColumns( p, this.dateText(), this.zone() ) : [];
+		return this.zoneLacking() ? columns.map( c=>({...c, sub: undefined, current: false}) ) : columns;//read in UTC, the dates and today can be a day out
+	} );
 	bars = computed( ()=>{ const p = this.selected(); return p ? patternBars( this.shifts.rows(), p, this.dayStart ) : []; } );
+	dayless = computed( ()=>this.shifts.rows().filter( s=>!s.days ) );//set to run on no day, so without a bar:  listed under the grid
 
 	//Properties
 	//a new calendar's zone is the server's own, the plant's wall clock (spec *Open questions* #8), unless one is picked meanwhile
@@ -192,18 +197,24 @@ export class CalendarDetail extends DetailPage<Calendar>{
 			await this.refreshShifts();
 	}
 	//Change from…:  the pattern showing and its shifts copied to a new pattern from a day, which then shows.  The day offered is
-	//the one picked, or tomorrow.
+	//the one picked, or tomorrow, or else the first after it that no pattern starts on.
 	async changeFrom():Promise<void>{
 		const source = this.selected();
 		if( !source )
 			return;
 		const zone = this.zone(), time = minutesToTime( this.dayStart );
-		const copy = await CalendarChangeDialog.open( this.dialog, { source: this.fromText( source ).toLowerCase(), from: this.date() ?? addDays( this.dateText(), 1 ), zone, save: date=>this.#service.copyPattern( this.ql, source.id, `${date}T${time}:00` ) } );
+		const copy = await CalendarChangeDialog.open( this.dialog, { source: this.fromText( source ).toLowerCase(), from: this.#freeDay( this.date() ?? addDays( this.dateText(), 1 ), zone ), zone, save: date=>this.#service.copyPattern( this.ql, source.id, `${date}T${time}:00` ) } );
 		if( !copy )
 			return;
 		this.selectedId.set( copy.id );
 		this.date.set( patternDate( copy, zone ) );
 		await this.refreshPatterns();
+	}
+	#freeDay( from:string, zone:string ):string{
+		const taken = new Set( this.patterns.rows().map( p=>patternDate( p, zone ) ) );
+		while( taken.has( from ) )
+			from = addDays( from, 1 );
+		return from;
 	}
 	//the selected pattern's cycle:  the week, or a rotation, whose day 1 is offered as the Monday of the picked day's week
 	async editCycle():Promise<void>{
@@ -265,20 +276,15 @@ export class CalendarDetail extends DetailPage<Calendar>{
 		const pattern = this.selected();
 		if( !pattern )
 			return;
-		const done = await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, shift, save: args=>this.#service.updateShift( this.ql, shift.id, changedArgs( args, shiftArgsOf( shift ) ) ) } );
-		if( done=='remove' )
-			await this.removeShift( shift );
-		else if( done )
+		if( await CalendarShiftDialog.open( this.dialog, { pattern, dayStart: this.dayStart, shift, save: args=>this.#service.updateShift( this.ql, shift.id, changedArgs( args, shiftArgsOf( shift ) ) ), remove: ()=>this.removeShift( shift ) } ) )
 			await this.refreshShifts();
 	}
-	//a purge:  a shift has no soft delete
-	async removeShift( shift:CalendarShift ):Promise<void>{
+	//a purge, a shift having no soft delete, asked over its form:  whether it went, and a throw is the refusal the form says
+	async removeShift( shift:CalendarShift ):Promise<boolean>{
 		if( !await confirm( this.dialog, {title: `Remove ${shift.name}?`, message: `The shift is removed for good:  a shift has no Restore.  Every gateway's planned time changes with it, for as long as the pattern has been in effect.`, confirm: 'Remove', destructive: true} ) )
-			return;
-		await this.shifts.act( async ()=>{
-			await this.#service.purgeShift( this.ql, shift.id );
-			await this.refreshShifts();
-		} );
+			return false;
+		await this.#service.purgeShift( this.ql, shift.id );
+		return true;
 	}
 
 	//Exceptions

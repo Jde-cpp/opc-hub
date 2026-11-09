@@ -2,6 +2,7 @@ import { Component, input, model } from '@angular/core';
 import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
+import { By } from '@angular/platform-browser';
 import { addDays, Calendar, mondayOf, productionDay, toCalendarException, toCalendarPattern, toCalendarShift } from '../../../model/calendar';
 import { Mutation } from '../../../model/ql/mutation';
 import { AppService } from '../../../services/app/app-service';
@@ -12,6 +13,7 @@ import { CalendarChangeDialog, CalendarChangeDialogData } from './calendar-chang
 import { CalendarCycleDialog, CalendarCycleDialogData } from './calendar-cycle-dialog';
 import { CalendarDetail, sharedCalendarLine } from './calendar-detail';
 import { CalendarExceptionDialog, CalendarExceptionDialogData } from './calendar-exception-dialog';
+import { CalendarPreview } from './calendar-preview';
 import { CalendarShiftDialog, CalendarShiftDialogData } from './calendar-shift-dialog';
 import { flush } from 'jde-spa/testing';
 import { configureDetailPage, dialogStub } from 'jde-framework/testing';
@@ -72,6 +74,8 @@ const create = async ( pageRow:any, {render=false, serverZone='America/Chicago' 
 };
 
 describe( 'CalendarDetail', ()=>{
+	afterEach( ()=>localStorage.clear() );//the tab a test left the page on
+
 	//a new calendar:  the server's zone offered, midnight for its day start, and Save sends both with the name
 	it( "offers the server's zone on a new calendar, and saves it with the day start", async ()=>{
 		const d = await create( {} );
@@ -241,6 +245,8 @@ describe( 'CalendarDetail', ()=>{
 		expect( [d.page.selected()?.id, d.page.date()] ).toEqual( [11, '2026-08-03'] );
 		expect( d.page.patterns.rows().map( p=>p.id ) ).toEqual( [4, 5, 11] );
 		expect( d.service.shifts ).toHaveBeenLastCalledWith( d.app, 11 );
+		await d.page.changeFrom();
+		expect( d.opened<CalendarChangeDialogData>( CalendarChangeDialog ).from ).toBe( '2026-08-04' );//the copy has the day picked
 	} );
 	it( 'offers the day picked for the change, and reads nothing again on Cancel', async ()=>{
 		const d = await create( row );
@@ -329,14 +335,10 @@ describe( 'CalendarDetail', ()=>{
 		await d.page.drawShift( {day: 5, start: 240, minutes: 495} );
 		expect( d.dialog.open ).toHaveBeenCalledTimes( 1 );
 		d.page.shifts.busy.set( false );
-		d.dialog.answers.set( CalendarShiftDialog, 'remove' );
-		d.dialog.answer = false;//the confirmation's
+		d.dialog.answers.set( CalendarShiftDialog, true );//saved, or removed
+		const reads = d.service.shifts.mock.calls.length;
 		await d.page.openShift( 7 );
-		expect( d.dialog.open.mock.calls.at( -1 )![0] ).toBe( ConfirmDialog );
-		expect( d.service.purgeShift ).not.toHaveBeenCalled();
-		d.dialog.answer = true;
-		await d.page.openShift( 7 );
-		expect( d.service.purgeShift ).toHaveBeenCalledWith( d.app, 7 );
+		expect( d.service.shifts ).toHaveBeenCalledTimes( reads+1 );
 	} );
 	it( "edits a shift with what changed alone, and doesn't read again on Cancel", async ()=>{
 		const d = await create( row );
@@ -351,18 +353,37 @@ describe( 'CalendarDetail', ()=>{
 		expect( d.service.updateShift ).toHaveBeenCalledWith( d.app, 7, {minutes: 450, breaks: null} );
 		expect( d.service.shifts ).toHaveBeenCalledTimes( reads );
 	} );
-	it( 'removes a shift by a purge once confirmed, and says a refusal on the tab', async ()=>{
+	it( 'removes a shift by a purge once confirmed, over its form, which says a refusal', async ()=>{
 		const d = await create( row );
+		d.dialog.answers.set( CalendarShiftDialog, false );
+		await d.page.editShift( day );
+		const form = d.opened<CalendarShiftDialogData>( CalendarShiftDialog );
 		d.dialog.answer = false;
-		await d.page.removeShift( day );
+		expect( await form.remove!() ).toBe( false );
 		expect( d.dialog.open.mock.calls.at( -1 )![0] ).toBe( ConfirmDialog );
 		expect( d.service.purgeShift ).not.toHaveBeenCalled();
 		d.dialog.answer = true;
-		await d.page.removeShift( day );
+		expect( await form.remove!() ).toBe( true );
 		expect( d.service.purgeShift ).toHaveBeenCalledWith( d.app, 7 );
 		d.service.purgeShift.mockRejectedValueOnce( new Error( '(403)Forbidden' ) );
-		await d.page.removeShift( day );
-		expect( d.page.shifts.error() ).toBe( '(403)Forbidden' );
+		await expect( form.remove!() ).rejects.toThrow( '(403)Forbidden' );
+	} );
+	it( 'lists a shift on no day under the grid, which has no bar for it', async ()=>{
+		const d = await create( row, {render: true} );
+		const idle = toCalendarShift( {id: 12, calendarPatternId: 4, name: 'Idle', days: 0, start: 0, minutes: 60, breaks: null} );
+		d.page.today.set( june );
+		d.service.shifts.mockImplementation( async ()=>[day, idle] );
+		await d.page.refreshShifts();
+		d.page.tabIndex.set( 1 );
+		d.fixture.detectChanges( false );
+		await flush( 3 );
+		d.fixture.detectChanges( false );
+		const link = (<HTMLElement>d.fixture.nativeElement).querySelector<HTMLButtonElement>( '.dayless button' )!;
+		expect( link.textContent?.trim() ).toBe( 'Idle' );
+		d.dialog.answers.set( CalendarShiftDialog, false );
+		link.click();
+		await flush( 2 );
+		expect( d.opened<CalendarShiftDialogData>( CalendarShiftDialog ).shift ).toBe( idle );
 	} );
 
 	//Exceptions
@@ -453,6 +474,19 @@ describe( 'CalendarDetail', ()=>{
 		expect( root.querySelector<HTMLButtonElement>( '[aria-label="Edit this exception"]' )?.disabled ).toBe( true );
 	} );
 
+	it( "holds back the date and a rotation's dates for a zone the browser lacks, which UTC would put a day out", async ()=>{
+		const d = await create( {...row, timeZone: 'Etc/Plant'}, {render: true} );
+		d.page.tabIndex.set( 1 );
+		d.fixture.detectChanges( false );
+		await flush( 3 );
+		d.fixture.detectChanges( false );
+		const root:HTMLElement = d.fixture.nativeElement;
+		expect( root.querySelector( '.tab-body .hint' )?.textContent ).toContain( "a date can't be picked" );
+		expect( root.querySelector<HTMLInputElement>( '.tab-toolbar input[type=date]' )?.disabled ).toBe( true );
+		expect( d.page.columns() ).toHaveLength( 14 );
+		expect( d.page.columns().every( c=>!c.sub && !c.current ) ).toBe( true );
+	} );
+
 	const tabs = ( root:HTMLElement )=>[...root.querySelectorAll( '.mdc-tab__text-label' )].map( e=>e.textContent!.trim() );
 	it( 'shows Properties alone on a new calendar, and its patterns, exceptions and preview once saved', async ()=>{
 		expect( tabs( (await create( {}, {render: true} )).fixture.nativeElement ) ).toEqual( ['Properties'] );
@@ -492,6 +526,9 @@ describe( 'CalendarDetail', ()=>{
 		expect( cells( 'mat-row .mat-column-start, mat-row .mat-column-kind' ) ).toEqual( ['2026-07-04 06:00', 'Closed'] );
 		await show( 3 );//the Preview reads its week when it is opened, with the closed exceptions for its bands
 		expect( root.querySelector( 'calendar-preview calendar-grid' ) ).not.toBeNull();
+		const exceptionReads = d.service.exceptions.mock.calls.length;
+		await (<CalendarPreview>d.fixture.debugElement.query( By.directive( CalendarPreview ) ).componentInstance).reload();
+		expect( d.service.exceptions ).toHaveBeenCalledTimes( exceptionReads+1 );//its Refresh, for the hatching
 		const monday = mondayOf( productionDay( new Date(), NewYork, 360 ) );
 		expect( d.service.occurrences ).toHaveBeenLastCalledWith( d.app, 3, `${monday}T06:00:00`, `${addDays( monday, 7 )}T06:00:00` );
 		await show( 0 );

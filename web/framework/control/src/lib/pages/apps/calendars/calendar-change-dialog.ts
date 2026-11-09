@@ -1,12 +1,12 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { form, FormField } from '@angular/forms/signals';
 import { MatButtonModule } from '@angular/material/button';
-import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
+import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogTitle } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { CalendarPattern, isDate } from '../../../model/calendar';
-import { errorMessage } from '../../../utils/errors';
+import { CalendarDialog } from './calendar-dialog';
 
 //`source`:  the pattern copied, as the page names it.  `from`:  the day offered.  `save` copies it to a pattern in effect from
 //the day picked and answers the copy;  its throw is the server's refusal, said on the form.
@@ -20,35 +20,19 @@ export type CalendarChangeDialogData = { source:string; from:string; zone:string
 	styleUrl: './calendar-dialog.scss',
 	imports: [FormField, MatButtonModule, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule]
 })
-export class CalendarChangeDialog{
+export class CalendarChangeDialog extends CalendarDialog<CalendarPattern>{
 	//the copy, once made
 	static open( dialog:MatDialog, data:CalendarChangeDialogData ):Promise<CalendarPattern|undefined>{
 		const ref = dialog.open( CalendarChangeDialog, {data, width: '440px', maxWidth: 'calc(100vw - 16px)', ariaModal: true} );
 		return new Promise<CalendarPattern|undefined>( resolve=>ref.afterClosed().subscribe( y=>resolve( y && typeof y=='object' ? y : undefined ) ) );
 	}
 	data = inject<CalendarChangeDialogData>( MAT_DIALOG_DATA );
-	#ref = inject( MatDialogRef<CalendarChangeDialog,CalendarPattern> );
 	model = signal( {date: this.data.from} );
 	f = form( this.model );
 	problem = computed( ()=>isDate( this.model().date ) ? undefined : 'Pick the day the change takes effect.' );
-	busy = signal( false );
-	error = signal<string|undefined>( undefined );
 
 	async save():Promise<void>{
-		if( this.problem() || this.busy() )
-			return;
-		this.busy.set( true );
-		this.#ref.disableClose = true;//Escape or the backdrop would close it on a copy the server may still make, and the page never show it
-		this.error.set( undefined );
-		try{
-			this.#ref.close( await this.data.save( this.model().date ) );
-		}
-		catch( e ){
-			this.error.set( errorMessage(e) );
-		}
-		finally{
-			this.#ref.disableClose = false;
-			this.busy.set( false );
-		}
+		if( !this.problem() )
+			await this.send( ()=>this.data.save( this.model().date ) );
 	}
 }

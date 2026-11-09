@@ -9,8 +9,8 @@
 		<span class="cut" [style.top.px]="px(cut.top-bar.top)" [style.height.px]="px(cut.minutes)"></span>
 	}
 </ng-template>
-<div class="scroller">
-	<div class="grid" role="group" [attr.aria-label]="label()">
+<div class="scroller" role="group" [attr.aria-label]="label()" [attr.tabindex]="tabStop() ? 0 : null">
+	<div class="grid">
 		<div class="corner" aria-hidden="true"></div>
 		<!--the column's name is its group's label below:  the heads are for the eye-->
 		@for( column of columns(); track $index ){
@@ -29,7 +29,7 @@
 		</div>
 		@for( cell of cells(); track $index; let c = $index ){
 			<div class="column" role="group" [attr.aria-label]="cell.column.sub ? cell.column.title + ', ' + cell.column.sub : cell.column.title" [class.current]="cell.column.current" [class.editable]="editable()" [style.height.px]="height()"
-				(pointerdown)="onPointerDown($event, c)" (pointermove)="onPointerMove($event)" (pointerup)="onPointerUp()" (pointercancel)="drag.set(undefined)">
+				(pointerdown)="onPointerDown($event, c)" (pointermove)="onPointerMove($event)" (pointerup)="onPointerUp()" (pointercancel)="drag.set(undefined)" (lostpointercapture)="drag.set(undefined)">
 				@for( band of cell.bands; track band.key ){
 					<div class="band" [style.top.px]="px(band.top)" [style.height.px]="px(band.minutes)">
 						@if( !band.continued ){

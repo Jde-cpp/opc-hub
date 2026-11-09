@@ -29,6 +29,7 @@ export class CalendarGrid{
 
 	hours = computed( ()=>gridHours( this.dayStart() ) );
 	height = computed( ()=>this.px( minutesPerDay ) );
+	tabStop = computed( ()=>!this.editable() || !this.bars().length );//where no bar takes the focus, the keyboard's way to scroll
 	//what each column draws
 	cells = computed( ()=>this.columns().map( ( column, i )=>({column, bars: this.bars().filter( b=>b.column==i ), bands: this.bands().filter( b=>b.column==i )}) ) );
 	//a drag in flight:  its column, and where it began and is, in minutes from the day's start
@@ -39,9 +40,9 @@ export class CalendarGrid{
 	} );
 	px( minutes:number ):number{ return minutesToPixels( minutes, this.hourHeight() ); }
 
-	//a touch scrolls the page:  Add shift is its way in
+	//a touch scrolls the page:  Add shift is its way in.  A Mac's ctrl-click is button 0, and its context menu swallows the release.
 	onPointerDown( e:PointerEvent, column:number ):void{
-		if( !this.editable() || e.button!=0 || e.pointerType=='touch' )
+		if( !this.editable() || e.button!=0 || e.ctrlKey || e.pointerType=='touch' )
 			return;
 		const at = this.#minuteAt( e );
 		(<Element>e.currentTarget).setPointerCapture?.( e.pointerId );

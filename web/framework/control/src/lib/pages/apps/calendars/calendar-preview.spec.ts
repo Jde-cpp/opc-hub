@@ -104,6 +104,31 @@ describe( 'CalendarPreview', ()=>{
 		expect( d.service.occurrences ).toHaveBeenLastCalledWith( d.ql, 4, '2026-06-29T00:00:00', '2026-07-06T00:00:00' );
 		expect( d.service.occurrences ).toHaveBeenCalledTimes( 4 );
 	} );
+	it( 'tells the page of a Refresh, whose exceptions the hatching is', async ()=>{
+		const d = await create();
+		const reloaded = vi.fn();
+		d.preview.reloaded.subscribe( reloaded );
+		d.preview.step( 1 );
+		await d.settle();
+		expect( reloaded ).not.toHaveBeenCalled();
+		await d.preview.reload();
+		expect( reloaded ).toHaveBeenCalledTimes( 1 );
+	} );
+	it( 'waits for a typed date to be finished, and takes a pick at once', async ()=>{
+		const d = await create();
+		const field = d.root.querySelector<HTMLInputElement>( 'input[type=date]' )!, reads = d.service.occurrences.mock.calls.length;
+		field.dispatchEvent( new KeyboardEvent( 'keydown', {key: '1'} ) );
+		field.value = '2026-03-05';
+		field.dispatchEvent( new Event( 'change' ) );
+		await d.settle();
+		expect( [field.value, d.service.occurrences.mock.calls.length] ).toEqual( ['2026-03-05', reads] );
+		field.dispatchEvent( new Event( 'blur' ) );
+		await d.settle();
+		expect( [field.value, d.preview.monday()] ).toEqual( ['2026-03-02', '2026-03-02'] );
+		field.value = '2026-04-08';//the popup's:  no key to it
+		field.dispatchEvent( new Event( 'change' ) );
+		expect( d.preview.monday() ).toBe( '2026-04-06' );
+	} );
 	it( "draws nothing for a zone the browser lacks, whose wall clock it can't place", async ()=>{
 		const d = await create( {lacking: 'Etc/Plant'} );
 		expect( d.service.occurrences ).not.toHaveBeenCalled();

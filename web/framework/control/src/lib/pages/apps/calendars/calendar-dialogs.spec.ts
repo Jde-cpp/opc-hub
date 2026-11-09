@@ -58,11 +58,25 @@ describe( 'CalendarShiftDialog', ()=>{
 		expect( d.dialog.model() ).toEqual( {name: '', days: [false, false, true, false, false, false, false], start: '10:00', end: '18:15', breaks: []} );
 		expect( d.root.querySelector( '.remove' ) ).toBeNull();//nothing to remove yet
 	} );
-	it( 'offers Remove on an edit, which closes the form for the page to confirm', async ()=>{
-		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360, shift: day} );
+	it( 'offers Remove on an edit, the form staying open for a declined confirmation or a refusal', async ()=>{
+		const remove = vi.fn( async ():Promise<boolean>=>false );
+		const d = open<CalendarShiftDialogData>( CalendarShiftDialog, {pattern: weekly, dayStart: 360, shift: day, remove} );
 		await d.settle();
-		d.root.querySelector<HTMLButtonElement>( '.remove' )!.click();
-		expect( d.close ).toHaveBeenCalledWith( 'remove' );
+		const button = d.root.querySelector<HTMLButtonElement>( '.remove' )!;
+		button.click();
+		expect( [d.dialog.busy(), d.ref.disableClose] ).toEqual( [true, true] );
+		await d.settle();
+		expect( d.close ).not.toHaveBeenCalled();
+		expect( [d.dialog.busy(), d.ref.disableClose] ).toEqual( [false, false] );
+		remove.mockRejectedValueOnce( new Error( '(403)Forbidden' ) );
+		button.click();
+		await d.settle();
+		expect( d.root.querySelector( '.refused' )?.textContent ).toContain( '(403)Forbidden' );
+		expect( d.close ).not.toHaveBeenCalled();
+		remove.mockResolvedValueOnce( true );
+		button.click();
+		await d.settle();
+		expect( d.close ).toHaveBeenCalledWith( true );
 		expect( d.save ).not.toHaveBeenCalled();
 	} );
 	it( 'saves what was typed as the columns, and closes', async ()=>{

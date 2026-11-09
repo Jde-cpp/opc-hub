@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -9,6 +9,7 @@ import { addDays, CalendarException, CalendarOccurrence, exceptionBands, isDate,
 import { CalendarReader, CalendarService } from '../../../services/calendar-service';
 import { CalendarGrid } from './calendar-grid';
 import { CalendarRows } from './calendar-rows';
+import { DateCommit } from './date-commit';
 
 //A calendar's Preview (#397, docs/calendar/spec.md *Web*):  a week of production days, Monday first, as the server resolves it -
 //`calendarOccurrences`, the pattern in effect each day with the exceptions applied - drawn on the grid in the calendar's zone, so
@@ -20,7 +21,7 @@ import { CalendarRows } from './calendar-rows';
 	templateUrl: './calendar-preview.html',
 	styleUrl: './calendar-detail.scss',
 	host: {style: 'display: block'},
-	imports: [CalendarGrid, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatTooltipModule]
+	imports: [CalendarGrid, DateCommit, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatTooltipModule]
 })
 export class CalendarPreview{
 	constructor(){
@@ -35,6 +36,7 @@ export class CalendarPreview{
 	lacking = input<string>();//the calendar's zone, where this browser doesn't know it:  nothing can be placed
 	dayStart = input( 0 );
 	exceptions = input<CalendarException[]>( [] );//the calendar's, for the closed ones' bands
+	reloaded = output<void>();//Refresh, for the page to read those again
 	#service = inject( CalendarService );
 
 	now = signal( new Date() );
@@ -64,6 +66,7 @@ export class CalendarPreview{
 	async reload():Promise<void>{
 		const monday = this.monday();
 		this.now.set( new Date() );
+		this.reloaded.emit();
 		if( this.monday()==monday )//else the week moved on, and the effect reads it
 			await this.refresh();
 	}

@@ -8,7 +8,7 @@
 			<button matIconButton type="button" (click)="step(-1)" aria-label="The week before" matTooltip="The week before"><mat-icon>chevron_left</mat-icon></button>
 			<mat-form-field class="date" subscriptSizing="dynamic">
 				<mat-label>Week of</mat-label>
-				<input matInput type="date" #weekOf [value]="monday()" (change)="setWeek(weekOf)">
+				<input matInput type="date" #weekOf [value]="monday()" (dateCommit)="setWeek(weekOf)">
 			</mat-form-field>
 			<button matIconButton type="button" (click)="step(1)" aria-label="The week after" matTooltip="The week after"><mat-icon>chevron_right</mat-icon></button>
 			@if( week() ){

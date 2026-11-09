@@ -161,8 +161,7 @@ export function daysDetail( mask:number, pattern:Pick<CalendarPattern,'cycleDays
 	return maskDays( mask, pattern.cycleDays ).map( i=>names[i] ).join( ', ' ) || 'No days';
 }
 
-//A shift's times are minutes after the production day's start, so its wall-clock start is the day's start on
-export function shiftClock( shift:Pick<CalendarShift,'start'>, dayStart:number ):string{ return minutesToTime( dayStart+shift.start ); }
+//A shift's times are minutes after the production day's start, so a break's on the wall clock is the day's start on
 export function breaksText( shift:Pick<CalendarShift,'start'|'breaks'>, dayStart:number ):string{
 	return shift.breaks.map( b=>`${minutesToTime( dayStart+shift.start+b.start )} (${durationText( b.minutes )})` ).join( ', ' );
 }
@@ -265,7 +264,7 @@ export type ExceptionForm = { name:string; whole:boolean; from:string; to:string
 export type ExceptionArgs = { name:string; start:string; finish:string; isOpen:boolean };
 //`exception`'s form, or a new one's:  today's production day, closed
 export function toExceptionForm( exception:Pick<CalendarException,'name'|'start'|'finish'|'isOpen'>|undefined, zone:string, dayStart:number, now=new Date() ):ExceptionForm{
-	const today = zoneLocal( new Date( now.getTime()-dayStart*60000 ), zone ).substring( 0, 10 );
+	const today = productionDay( now, zone, dayStart );
 	const range = exception ? { start: zoneLocal( exception.start, zone ), finish: zoneLocal( exception.finish, zone ) } : wholeDayRange( today, today, dayStart );
 	const days = wholeDays( range.start, range.finish, dayStart );
 	return { name: exception?.name ?? '', whole: !!days, from: days?.from ?? range.start.substring( 0, 10 ), to: days?.to ?? range.finish.substring( 0, 10 ), ...range, isOpen: exception?.isOpen ?? false };
@@ -425,16 +424,19 @@ export function occurrenceBars( occurrences:readonly CalendarOccurrence[], monda
 	return occurrences.flatMap( ( o, index )=>{
 		const from = at( o.start ), to = Math.max( at( o.end ), from+1 );
 		const elapsed = Math.round( (o.end.getTime()-o.start.getTime())/60000 );
-		const note = elapsed==to-from ? undefined : `${durationText( elapsed )}, clock change`;
+		//the wall clock ran longer or shorter than the time did;  a bound's seconds are no change of the clocks
+		const changed = Math.abs( wallClock( o.end.getTime(), zone )-wallClock( o.start.getTime(), zone )-(o.end.getTime()-o.start.getTime()) )>=60000;
+		const note = changed ? `${durationText( elapsed )}, clock change` : undefined;
 		const detail = `${o.name}, ${o.day}, ${clock( o.start )} to ${clock( o.end )}, ${durationText( elapsed )}${note ? ' across the clock change' : ''}${o.shift==undefined ? ', an open exception' : ''}`;
 		return gridPieces( {from, to}, o.breaks.map( b=>({from: at( b.start ), to: at( b.end )}) ), 7, false )
 			.map( ( piece, i )=>({...piece, key: `${index}-${i}`, name: o.name, times: `${clock( o.start )} - ${clock( o.end )}`, note, detail, tone: o.shift==undefined ? openTone : o.shift % openTone, shift: o.shift, primary: i==0}) );
 	} );
 }
-//the live closed exceptions as bands behind them, so a holiday shows as more than a gap
+//the live closed exceptions as bands behind them, so a holiday shows as more than a gap.  The first piece in the week is the one
+//named, though the range began in an earlier week.
 export function exceptionBands( exceptions:readonly CalendarException[], monday:string, zone:string, dayStart:number ):GridBand[]{
 	return exceptions.filter( e=>!e.deleted && !e.isOpen ).flatMap( e=>
-		gridPieces( {from: weekMinute( e.start, monday, zone, dayStart ), to: weekMinute( e.finish, monday, zone, dayStart )}, [], 7, false ).map( ( piece, i )=>({...piece, key: `${e.id}-${i}`, name: e.name}) ) );
+		gridPieces( {from: weekMinute( e.start, monday, zone, dayStart ), to: weekMinute( e.finish, monday, zone, dayStart )}, [], 7, false ).map( ( piece, i )=>({...piece, continued: i>0, key: `${e.id}-${i}`, name: e.name}) ) );
 }
 
 //A pattern's cycle as its form holds it:  the week, or a rotation of `days` whose day 1 was `anchor`, a date

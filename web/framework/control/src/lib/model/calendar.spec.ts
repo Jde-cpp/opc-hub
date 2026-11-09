@@ -1,4 +1,4 @@
-import { addDays, breaksText, Calendar, changedArgs, cycleArgsOf, cycleDayNames, cycleDayOf, cycleProblem, daysDetail, daysMask, dayStartInstant, drawnSpan, durationText, exceptionArgsOf, exceptionBands, exceptionProblem, exceptionRange, gridHours, gridPieces, isWeekly, maskDays, minutesToPixels, minutesToTime, mondayOf, occurrenceBars, openTone, patternBars, patternColumns, patternDate, patternInEffect, pixelsToMinutes, productionDay, productionDays, shiftArgsOf, shiftClock, ShiftForm, shiftMinutes, shiftProblem, timeToMinutes, toCalendarException, toCalendarOccurrence, toCalendarPattern, toCalendarShift, toCycleArgs, toCycleForm, toExceptionArgs, toExceptionForm, toShiftArgs, toShiftForm, weekColumns, weekdayOf, weekRange, wholeDayRange, wholeDays, zoneInstant, zoneLess, zoneLocal } from './calendar';
+import { addDays, breaksText, Calendar, changedArgs, cycleArgsOf, cycleDayNames, cycleDayOf, cycleProblem, daysDetail, daysMask, dayStartInstant, drawnSpan, durationText, exceptionArgsOf, exceptionBands, exceptionProblem, exceptionRange, gridHours, gridPieces, isWeekly, maskDays, minutesToPixels, minutesToTime, mondayOf, occurrenceBars, openTone, patternBars, patternColumns, patternDate, patternInEffect, pixelsToMinutes, productionDay, productionDays, shiftArgsOf, ShiftForm, shiftMinutes, shiftProblem, timeToMinutes, toCalendarException, toCalendarOccurrence, toCalendarPattern, toCalendarShift, toCycleArgs, toCycleForm, toExceptionArgs, toExceptionForm, toShiftArgs, toShiftForm, weekColumns, weekdayOf, weekRange, wholeDayRange, wholeDays, zoneInstant, zoneLess, zoneLocal } from './calendar';
 
 //America/New_York, as the server's suites:  EDT is UTC-4 from 2026-03-08 to 2026-11-01, so a 06:00 day start is 10:00Z in July.
 const NewYork = 'America/New_York';
@@ -134,8 +134,6 @@ describe( 'a shift', ()=>{
 	const day = toCalendarShift( {id: 7, calendarPatternId: 4, name: 'Day', days: 31, start: 0, minutes: 480, breaks: '[{"start":240,"minutes":30}]'} );
 	const night = toCalendarShift( {id: 8, calendarPatternId: 4, name: 'Night', days: 31, start: 960, minutes: 480, breaks: null} );
 	it( 'shows its times on the wall clock, from the day start', ()=>{
-		expect( shiftClock( day, 360 ) ).toBe( '06:00' );
-		expect( shiftClock( night, 360 ) ).toBe( '22:00' );
 		expect( breaksText( day, 360 ) ).toBe( '10:00 (30 min)' );
 		expect( durationText( 480 ) ).toBe( '8 h' );
 		expect( durationText( 510 ) ).toBe( '8 h 30 min' );
@@ -199,6 +197,8 @@ describe( 'an exception', ()=>{
 	it( "fills its form on the calendar's wall clock, whole days where its range is", ()=>{
 		expect( toExceptionForm( holiday, NewYork, 360 ) ).toEqual( {name: 'Independence Day', whole: true, from: '2026-07-04', to: '2026-07-04', start: '2026-07-04T06:00', finish: '2026-07-05T06:00', isOpen: false} );
 		expect( toExceptionForm( halfDay, NewYork, 360 ) ).toEqual( {name: 'Stocktake', whole: false, from: '2026-07-03', to: '2026-07-03', start: '2026-07-03T18:00', finish: '2026-07-03T22:00', isOpen: true} );
+		//06:30 EDT on the morning the clocks went forward is that day's, though six hours before it was 23:30 the day before
+		expect( toExceptionForm( undefined, NewYork, 360, utc( '2026-03-08T10:30:00' ) ).from ).toBe( '2026-03-08' );
 		//a new one:  today's production day, which at 02:00 local is still yesterday's
 		expect( toExceptionForm( undefined, NewYork, 360, utc( '2026-07-10T06:00:00' ) ) ).toEqual( {name: '', whole: true, from: '2026-07-09', to: '2026-07-09', start: '2026-07-09T06:00', finish: '2026-07-10T06:00', isOpen: false} );
 	} );
@@ -375,6 +375,10 @@ describe( 'the grid', ()=>{
 		const [autumn] = occurrenceBars( [occurrence( 8, 'Night', '2026-10-31', '2026-11-01T02:00:00', '2026-11-01T11:00:00' )], '2026-10-26', NewYork, 360 );
 		expect( [...place( autumn ), autumn.note] ).toEqual( [5, 960, 480, '9 h, clock change'] );
 	} );
+	it( 'takes seconds in a bound for what they are, not a clock change', ()=>{
+		const [bar] = occurrenceBars( [occurrence( null, 'Extra', '2026-07-01', '2026-07-01T12:00:20', '2026-07-01T14:00:40' )], '2026-06-29', NewYork, 360 );
+		expect( [bar.note, bar.detail] ).toEqual( [undefined, 'Extra, 2026-07-01, 08:00 to 10:00, 2 h, an open exception'] );
+	} );
 	it( 'bands the closed exceptions, the live ones', ()=>{
 		const exception = ( id:number, name:string, start:string, finish:string, more:object={} )=>toCalendarException( {id, calendarId: 3, name, start: `${start}Z`, finish: `${finish}Z`, isOpen: false, ...more} );
 		const bands = exceptionBands( [
@@ -388,6 +392,11 @@ describe( 'the grid', ()=>{
 			['1-0', 'Maintenance', 4, 120, 120, false],
 			['2-0', 'Independence Day', 5, 0, 1440, false], ['2-1', 'Independence Day', 6, 0, 1440, true]
 		] );
+	} );
+
+	it( 'names a closed exception on its first day in the week, though it began in an earlier one', ()=>{
+		const shutdown = toCalendarException( {id: 1, calendarId: 3, name: 'Shutdown', start: '2026-06-22T10:00:00Z', finish: '2026-07-01T10:00:00Z', isOpen: false} );
+		expect( exceptionBands( [shutdown], '2026-06-29', NewYork, 360 ).map( b=>[b.column, b.continued] ) ).toEqual( [[0, false], [1, true]] );
 	} );
 
 	it( "holds a pattern's cycle as its form does, and sends the anchor as its day's start with no zone", ()=>{

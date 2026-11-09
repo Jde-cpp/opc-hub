@@ -2,13 +2,13 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { form, FormField, required } from '@angular/forms/signals';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
+import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogTitle } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { CalendarException, changedArgs, ExceptionArgs, exceptionArgsOf, ExceptionForm, exceptionProblem, exceptionRange, productionDays, toExceptionArgs, toExceptionForm } from '../../../model/calendar';
-import { errorMessage } from '../../../utils/errors';
+import { CalendarDialog } from './calendar-dialog';
 
 //`zone` and `dayStart`:  the calendar's, as saved.  `exception`:  the one edited, none for a new one.  `save` sends the form's
 //columns, and its throw is the server's refusal, said on the form.
@@ -22,14 +22,13 @@ export type CalendarExceptionDialogData = { zone:string; dayStart:number; except
 	styleUrl: './calendar-dialog.scss',
 	imports: [FormField, MatButtonModule, MatCheckboxModule, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatSelectModule]
 })
-export class CalendarExceptionDialog{
+export class CalendarExceptionDialog extends CalendarDialog<boolean>{
 	//true once an exception was saved
 	static open( dialog:MatDialog, data:CalendarExceptionDialogData ):Promise<boolean>{
 		const ref = dialog.open( CalendarExceptionDialog, {data, width: '520px', maxWidth: 'calc(100vw - 16px)', ariaModal: true} );
 		return new Promise<boolean>( resolve=>ref.afterClosed().subscribe( y=>resolve( y===true ) ) );
 	}
 	data = inject<CalendarExceptionDialogData>( MAT_DIALOG_DATA );
-	#ref = inject( MatDialogRef<CalendarExceptionDialog,boolean> );
 	model = signal<ExceptionForm>( toExceptionForm( this.data.exception, this.data.zone, this.data.dayStart ) );
 	f = form( this.model, path=>{ required( path.name ); } );
 	problem = computed( ()=>exceptionProblem( this.model(), this.data.zone, this.data.dayStart ) );
@@ -41,8 +40,6 @@ export class CalendarExceptionDialog{
 		return `${range.start.replace( 'T', ' ' )} to ${range.finish.replace( 'T', ' ' )}, ${this.data.zone}`;
 	} );
 	changed = computed( ()=>!this.data.exception || !!this.problem() || Object.keys( changedArgs( toExceptionArgs( this.model(), this.data.dayStart ), exceptionArgsOf( this.data.exception, this.data.zone ) ) ).length>0 );
-	busy = signal( false );
-	error = signal<string|undefined>( undefined );
 
 	//the range carried from one way of entering it to the other:  the days as their times, while they are days, and the times as the
 	//production days they touch
@@ -56,21 +53,7 @@ export class CalendarExceptionDialog{
 		}
 	}
 	async save():Promise<void>{
-		if( this.problem() || this.busy() )
-			return;
-		this.busy.set( true );
-		this.#ref.disableClose = true;//Escape or the backdrop would close it on a save the server may still take, and the page never read again
-		this.error.set( undefined );
-		try{
-			await this.data.save( toExceptionArgs( this.model(), this.data.dayStart ) );
-			this.#ref.close( true );
-		}
-		catch( e ){
-			this.error.set( errorMessage(e) );
-		}
-		finally{
-			this.#ref.disableClose = false;
-			this.busy.set( false );
-		}
+		if( !this.problem() )
+			await this.send( async ()=>{ await this.data.save( toExceptionArgs( this.model(), this.data.dayStart ) ); return true; } );
 	}
 }

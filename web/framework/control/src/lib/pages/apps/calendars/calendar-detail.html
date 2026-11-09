@@ -34,11 +34,11 @@
 			<ng-template mat-tab-label>Pattern</ng-template>
 			<ng-template matTabContent>
 				<div class="tab-body">
-					<p class="hint">A pattern is the calendar's shifts from a date, in effect until the next pattern's.  Times are {{ zone() }}'s.</p>
+					<p class="hint">A pattern is the calendar's shifts from a date, in effect until the next pattern's.  Times are {{ zone() }}'s.@if( zoneLacking() ){  This browser doesn't know {{ row.timeZone }}, so a date can't be picked here, and a rotation's days aren't dated.}</p>
 					<div class="tab-toolbar">
 						<mat-form-field class="date" subscriptSizing="dynamic">
 							<mat-label>Pattern on</mat-label>
-							<input matInput type="date" #on [value]="dateText()" (change)="setDate(on)">
+							<input matInput type="date" #on [value]="dateText()" [disabled]="zoneLacking()" (dateCommit)="setDate(on)">
 						</mat-form-field>
 						@if( date() ){
 							<button matButton type="button" (click)="setDate({value: ''})">Today</button>
@@ -90,6 +90,13 @@
 							<mat-progress-bar class="refresh-bar" [mode]="shifts.loading() || shifts.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the shifts"></mat-progress-bar>
 							<calendar-grid [columns]="columns()" [dayStart]="dayStart" [bars]="bars()" [editable]="true" [label]="'Shifts from ' + fromText(pattern).toLowerCase()" (open)="openShift($event)" (draw)="drawShift($event)"/>
 							<p class="hint grid-hint">Pick a shift to edit or remove it.  Drag down an empty day to add one over the hours dragged.</p>
+							@if( dayless().length ){
+								<p class="hint dayless">On no day, so not on the grid:
+									@for( s of dayless(); track s.id ){
+										<button matButton type="button" [disabled]="shifts.busy()" (click)="openShift(s.id)">{{ s.name }}</button>
+									}
+								</p>
+							}
 							@if( !shifts.loading() && !shifts.rows().length && !shifts.error() ){
 								<p class="empty" role="status">The pattern has no shifts, so nothing is planned under it.  Use Add shift, or drag on a day, to enter one.</p>
 							}
@@ -157,7 +164,7 @@
 		<mat-tab>
 			<ng-template mat-tab-label>Preview</ng-template>
 			<ng-template matTabContent>
-				<calendar-preview [ql]="ql" [calendarId]="row.id" [zone]="zone()" [lacking]="zoneLacking() ? row.timeZone : undefined" [dayStart]="dayStart" [exceptions]="exceptions.rows()"/>
+				<calendar-preview [ql]="ql" [calendarId]="row.id" [zone]="zone()" [lacking]="zoneLacking() ? row.timeZone : undefined" [dayStart]="dayStart" [exceptions]="exceptions.rows()" (reloaded)="refreshExceptions()"/>
 			</ng-template>
 		</mat-tab>
 	}

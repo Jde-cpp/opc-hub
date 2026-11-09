@@ -12,6 +12,10 @@
 	border: 1px solid var(--line);
 	border-radius: 8px;
 	background: var(--mat-sys-surface);
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: 1px;
+	}
 }
 .grid{
 	display: grid;
@@ -78,6 +82,7 @@
 	}
 }
 .bar{
+	touch-action: pan-x pan-y !important;//over matTooltip's inline none on a touch platform, which stops a swipe on a bar scrolling
 	position: absolute;
 	left: 2px;
 	right: 2px;
@@ -125,6 +130,7 @@
 	}
 }
 button.bar{
+	min-height: 12px;//a short shift's bar stays a target, over the top of the next
 	cursor: pointer;
 	&:hover{
 		filter: brightness( .96 );
