@@ -79,8 +79,8 @@ namespace Jde::DB{
 	}
 
 	//Both overloads below run everything that can throw before committing anything, so a rejected Add leaves the clause
-	//exactly as it found it.  Two things throw here: FormatOperator, for a Regex/Glob with a count other than 1 (and for
-	//Regex on sqlite at all), and patternParam, for a non-string pattern - the latter part way through the list.
+	//exactly as it found it.  Two things throw here: FormatOperator, for a Regex with a count other than 1 or a Glob with
+	//none (and for Regex on sqlite at all), and patternParam, for a non-string pattern - the latter part way through the list.
 	α WhereClause::Add( sp<Column> col, EOperator op, vector<Value> inParams, SL sl )ε->void{
 		auto clause = col->Table->Syntax().FormatOperator( *col, op, inParams.size(), sl );
 		vector<Value> translated; translated.reserve( inParams.size() );
@@ -91,15 +91,23 @@ namespace Jde::DB{
 	}
 
 	α WhereClause::Add( sp<Column> col, EOperator op, vector<Value> inParams, bool haveNull, SL sl )ε->void{
-		if( !haveNull )
-			return Add( col, op, move(inParams), sl );
 		let notIn = op==EOperator::NotIn;
+		if( !haveNull ){
+			//#590: `not in` is unknown for a null, so a nullable column's null rows went with the listed ones.  A caller that
+			//wants them out says so - `nin:[…,null]`, below.
+			if( !notIn || !col->IsNullable || inParams.empty() )
+				return Add( col, op, move(inParams), sl );
+			auto clause = Ƒ( "({} or {} is null)", col->Table->Syntax().FormatOperator(*col, op, inParams.size(), sl), col->FQName() );
+			move( inParams.begin(), inParams.end(), back_inserter(_params) );
+			_clauses.push_back( move(clause) );
+			return;
+		}
 		string clause;
 		vector<Value> translated; translated.reserve( inParams.size() );
 		if( inParams.empty() )
 			clause = Ƒ( "{} is {}null", col->FQName(), notIn ? "not " : "" );
 		else{
-			auto inClause = col->Table->Syntax().FormatOperator( *col, op, inParams.size(), sl );//`glob:[null,"a*","b*"]` throws here, with 2 params still un-committed.
+			auto inClause = col->Table->Syntax().FormatOperator( *col, op, inParams.size(), sl );//`regex:[null,"a","b"]` throws here, with 2 params still un-committed.
 			for( auto& param : inParams )
 				translated.emplace_back( patternParam(*col, op, move(param), sl) );
 			clause = notIn

@@ -192,6 +192,32 @@ namespace Jde::QL::Tests{
 		EXPECT_TRUE( glob("", "") );
 	}
 
+	//#590: a list under `glob` is every pattern - the where clause's `(x glob ? and x glob ?)`, for a subscription's filter.
+	TEST( FilterTests, AGlobListIsEveryPattern ){
+		let both = filterValue( DB::EOperator::Glob, jarray{"*pump*", "*station*"} );
+		EXPECT_TRUE( both.Test(DB::Value{string{"station pump 3"}}) ) << "in either order";
+		EXPECT_FALSE( both.Test(DB::Value{string{"Station pump 3"}}) ) << "case-sensitive, as sqlite's GLOB is";
+		EXPECT_TRUE( both.Test(DB::Value{string{"pump station"}}) );
+		EXPECT_FALSE( both.Test(DB::Value{string{"pump 3"}}) );
+		EXPECT_FALSE( both.Test(DB::Value{string{"station 3"}}) );
+		EXPECT_TRUE( filterValue(DB::EOperator::Glob, jarray{"*pump*"}).Test(DB::Value{string{"pump 3"}}) );
+		EXPECT_FALSE( filterValue(DB::EOperator::Glob, jarray{}).Test(DB::Value{string{"pump 3"}}) ) << "no pattern matches nothing";
+		EXPECT_FALSE( filterValue(DB::EOperator::Glob, jarray{"*pump*", 42}).Test(DB::Value{string{"pump 42"}}) ) << "one unusable pattern and the filter matches nothing";
+		EXPECT_FALSE( filterValue(DB::EOperator::Regex, jarray{"p.mp"}).Test(DB::Value{string{"pump"}}) ) << "regex takes its one pattern";
+		EXPECT_TRUE( filterOf(R"({name:{glob:["*pump*","*station*"]}})").Test("name", string{"station pump 3"}) );
+		EXPECT_FALSE( filterOf(R"({name:{glob:["*pump*","*station*"]}})").Test("name", string{"station 3"}) );
+	}
+	//the filter box writes a typed `*`, `?` or `[` as a one-character class.
+	TEST( FilterTests, ATypedMetacharacterIsAClassOfOne ){
+		let glob = []( sv pattern, sv value ){ return filterValue(DB::EOperator::Glob, jstring{pattern}).Test( DB::Value{string{value}} ); };
+		EXPECT_TRUE( glob("*a[[]b*", "xa[b]") );
+		EXPECT_FALSE( glob("*a[[]b*", "xab") );
+		EXPECT_TRUE( glob("*a[*]b*", "a*b") );
+		EXPECT_FALSE( glob("*a[*]b*", "axb") );
+		EXPECT_TRUE( glob("*a[?]b*", "a?b") );
+		EXPECT_FALSE( glob("*a[?]b*", "axb") );
+	}
+
 	//The metacharacters are the glob ones - a regex's are literal, which is the whole point of the operator being distinct.
 	TEST( FilterTests, GlobMetacharactersAreLiteral ){
 		let glob = []( sv pattern, sv value ){ return filterValue(DB::EOperator::Glob, jstring{pattern}).Test( DB::Value{string{value}} ); };

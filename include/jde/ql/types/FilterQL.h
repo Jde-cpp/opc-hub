@@ -20,7 +20,7 @@ namespace Jde::QL{
 		α ToString()Ι->string;
 	private:
 		α TestTime( TimePoint value )Ι->bool;
-		sp<const Pattern> _pattern; //regex/glob only, and null when the pattern was unusable - built once here, never per row.  Defined in FilterQL.cpp so <boost/regex.hpp> - and the state cap it is compiled with - stay out of this header.
+		vector<sp<const Pattern>> _patterns; //regex/glob only - glob's may be a list, all of which must match - and empty when a pattern was unusable.  Built once here, never per row.  Defined in FilterQL.cpp so <boost/regex.hpp> - and the state cap it is compiled with - stay out of this header.
 		vector<TimePoint> _times; //Value parsed as time(s), once, so a time column compares chronologically - see TestTime.  Empty unless every literal parsed.
 	};
 	struct Filter final{

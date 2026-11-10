@@ -82,6 +82,35 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( where("items( id:{in:[1,2]} ){ id }").ToString(), "where qlt_items.item_id in(?,?)" );
 		EXPECT_EQ( where("items( id:{nin:[1,2]} ){ id }").ToString(), "where qlt_items.item_id not in(?,?)" );
 	}
+	//#590: `not in` is unknown for a null, so on a nullable column a nin without a null keeps the null rows;  one with a null,
+	//and any on a column that has none, are as they were.  A lone value is a list of one.
+	TEST( WhereClauseTests, NinKeepsANullableColumnsNulls ){
+		let w = where( R"(labels( color:{nin:["red","blue"]} ){ id })" );
+		EXPECT_EQ( w.ToString(), "where (qlt_labels.color not in(?,?) or qlt_labels.color is null)" );
+		ASSERT_EQ( w.Params().size(), 2u );
+		EXPECT_EQ( w.Params()[1].get_string(), "blue" );
+		EXPECT_EQ( where(R"(labels( color:{nin:"red"} ){ id })").ToString(), "where (qlt_labels.color not in(?) or qlt_labels.color is null)" );
+		EXPECT_EQ( where(R"(labels( color:{nin:["red",null]} ){ id })").ToString(), "where (qlt_labels.color not in(?) and qlt_labels.color is not null)" );
+		EXPECT_EQ( where("labels( color:{nin:[]} ){ id }").ToString(), "where 1=1" );
+		EXPECT_EQ( where(R"(labels( name:{nin:["a"]} ){ id })").ToString(), "where qlt_labels.name not in(?)" );//not nullable.
+		EXPECT_EQ( where(R"(labels( color:{in:["red"]} ){ id })").ToString(), "where qlt_labels.color in(?)" );//`in` never matched a null.
+	}
+	//the filter box merges a column's terms into one operator object:  `in` beside `nin`, and a variable under each operator.
+	TEST( WhereClauseTests, InAndNinShareAnOperatorObject ){
+		let w = where( R"(labels( color:{in:["red","blue"], nin:["blue"]} ){ id })" );
+		EXPECT_EQ( w.ToString(), "where qlt_labels.color in(?,?) and (qlt_labels.color not in(?) or qlt_labels.color is null)" );
+		ASSERT_EQ( w.Params().size(), 3u );
+		EXPECT_EQ( w.Params()[2].get_string(), "blue" );
+	}
+	TEST( WhereClauseTests, TwoVariablesInOneOperatorObject ){
+		let w = where( "items( id:{gte:$id_gte, lt:$id_lt}, name:{in:$name_in, nin:$name_nin} ){ id }", jobject{{"id_gte",3}, {"id_lt",9}, {"name_in",jarray{"a","b"}}, {"name_nin",jarray{"b"}}} );
+		EXPECT_EQ( w.ToString(), "where qlt_items.item_id>=? and qlt_items.item_id<? and qlt_items.name in(?,?) and qlt_items.name not in(?)" );
+		ASSERT_EQ( w.Params().size(), 5u );
+		EXPECT_EQ( w.Params()[0].ToUInt(), 3u );
+		EXPECT_EQ( w.Params()[1].ToUInt(), 9u );
+		EXPECT_EQ( w.Params()[4].get_string(), "b" );
+		EXPECT_THROW( where("items( id:{gte:$id_gte, lt:$id_lt} ){ id }", jobject{{"id_gte",3}}), Exception );//each is bound, or the query is refused.
+	}
 	//an array under a scalar operator is refused at build - one value, one placeholder - rather than bound askew.
 	TEST( WhereClauseTests, AnArrayUnderAScalarOperatorIsRefused ){
 		EXPECT_NE( whatOf("items( id:{eq:[1,2]} ){ id }").find("single value"), string::npos );
@@ -93,8 +122,22 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( w.ToString(), "where qlt_items.name glob ?" );
 		ASSERT_EQ( w.Params().size(), 1u );
 		EXPECT_EQ( w.Params()[0].get_string(), "a*[bc]?" );
-		EXPECT_NE( whatOf(R"(items( name:{glob:["a*","b*"]} ){ id })").find("single pattern"), string::npos );
 		EXPECT_THROW( where("items( name:{glob:42} ){ id }"), Exception );//not a string.
+	}
+	//#590: a list under `glob` is one clause a pattern, all of which must match - the filter box's bare words.
+	TEST( WhereClauseTests, AGlobListIsEveryPattern ){
+		let w = where( R"(items( name:{glob:["*pump*","*station*"]} ){ id })" );
+		EXPECT_EQ( w.ToString(), "where (qlt_items.name glob ? and qlt_items.name glob ?)" );
+		ASSERT_EQ( w.Params().size(), 2u );
+		EXPECT_EQ( w.Params()[0].get_string(), "*pump*" );
+		EXPECT_EQ( w.Params()[1].get_string(), "*station*" );
+		EXPECT_EQ( where(R"(items( name:{glob:["*pump*"]} ){ id })").ToString(), "where qlt_items.name glob ?" );
+		let listed = where( "items( name:{glob:$words}, id:{gt:1} ){ id }", jobject{{"words",jarray{"*a*","*b*","*c*"}}} );//a variable's list, and the next column's param after it.
+		EXPECT_EQ( listed.ToString(), "where qlt_items.item_id>? and (qlt_items.name glob ? and qlt_items.name glob ? and qlt_items.name glob ?)" );
+		ASSERT_EQ( listed.Params().size(), 4u );
+		EXPECT_EQ( listed.Params()[3].get_string(), "*c*" );
+		EXPECT_NE( whatOf("items( name:{glob:[]} ){ id }").find("at least one pattern"), string::npos );
+		EXPECT_THROW( where(R"(items( name:{glob:["a*",42]} ){ id })"), Exception );//each a string.
 	}
 	//sqlite parses REGEXP but ships no implementation - refused at build, naming the operator that does work.
 	TEST( WhereClauseTests, RegexIsRefusedBySqlite ){

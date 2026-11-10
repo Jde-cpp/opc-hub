@@ -164,6 +164,22 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( AsNumber<uint>(listener->Body(0), "id"), id );
 	}
 
+	//#590: a nin without a null keeps the rows whose nullable column is null - a description never set - and one with a null
+	//leaves them out;  `in` and `nin` in one operator object, and a variable under each.
+	TEST_F( CrudOpsTests, NinKeepsANullableColumnsNulls ){
+		Item( "crud-nin-none" );
+		Item( "crud-nin-red", Gadget, R"(, description:"red")" );
+		Item( "crud-nin-blue", Gadget, R"(, description:"blue")" );
+		let slugs = []( str filter, jobject vars={} ){ vector<string> y; for( let& row : QueryArray(Ƒ(R"(items( slug:{{glob:"crud-nin-*"}}, {}, orderBy:"slug" ){{ id slug }})", filter), move(vars)) ) y.emplace_back( AsSV(row.get_object(), "slug") ); return y; };
+		EXPECT_EQ( slugs(R"(description:{nin:["red"]})"), (vector<string>{"crud-nin-blue","crud-nin-none"}) );
+		EXPECT_EQ( slugs(R"(description:{nin:"red"})"), (vector<string>{"crud-nin-blue","crud-nin-none"}) );
+		EXPECT_EQ( slugs(R"(description:{nin:["red",null]})"), (vector<string>{"crud-nin-blue"}) );
+		EXPECT_EQ( slugs(R"(description:{nin:["red","blue"]})"), (vector<string>{"crud-nin-none"}) );
+		EXPECT_EQ( slugs(R"(description:{in:["red","blue"], nin:["blue"]})"), (vector<string>{"crud-nin-red"}) );
+		EXPECT_EQ( slugs("description:{in:$description_in, nin:$description_nin}", jobject{{"description_in",jarray{"red","blue"}}, {"description_nin",jarray{"red"}}}), (vector<string>{"crud-nin-blue"}) );
+		EXPECT_EQ( slugs(R"(description:{nin:["red"], ne:null})"), (vector<string>{"crud-nin-blue"}) );//the filter box's `-description:red has:description`.
+	}
+
 	//select:  the shapes a client sends - plural and singular, a page, a pattern, an array, an enum by name, the live rows, and a
 	//column that is not there.
 	TEST_F( CrudOpsTests, SelectShapes ){
@@ -175,6 +191,7 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( slugs(R"(items( slug:{glob:"crud-select-*"}, itemType:"Gizmo", deleted:null ){ id slug })"), (vector<string>{"crud-select-b"}) );
 		EXPECT_EQ( slugs(R"(items( slug:["crud-select-a","crud-select-c"], orderBy:"slug" ){ id slug })"), (vector<string>{"crud-select-a","crud-select-c"}) );
 		EXPECT_TRUE( slugs(R"(items( slug:{glob:"crud-select-z*"} ){ id slug })").empty() );
+		EXPECT_EQ( slugs(R"(items( slug:{glob:["crud-*","*-select-*","*[bc]"]}, orderBy:"slug" ){ id slug })"), (vector<string>{"crud-select-b","crud-select-c"}) );//#590: every pattern.
 		EXPECT_TRUE( QueryObject(R"(item( slug:"crud-select-none" ){ id slug })").empty() );//singular with no row:  an empty object, not null.
 		EXPECT_EQ( AsSV(QueryObject(R"(item( slug:"crud-select-b" ){ id slug itemType })"), "itemType"), Gizmo );
 		try{

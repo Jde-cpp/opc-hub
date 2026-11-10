@@ -64,6 +64,7 @@ namespace Jde::DB::Odbc::Tests{
 		EXPECT_EQ( GlobToLike("[^a-c]at"), "[^a-c]at" );
 		EXPECT_EQ( GlobToLike("[]x]y"), "[]x]y" );      //C9: a ']' first in the class is a member - the body passes through verbatim.
 		EXPECT_EQ( GlobToLike("[abc"), "[[]abc" );      //unterminated -> a literal '[', which LIKE also has to escape.
+		EXPECT_EQ( GlobToLike("*a[[]b[*]c[?]d*"), "%a[[]b[*]c[?]d%" ); //#590: the filter box's typed '[', '*' and '?' are classes of one in both.
 	}
 
 	TEST( SyntaxTests, Limit ){
