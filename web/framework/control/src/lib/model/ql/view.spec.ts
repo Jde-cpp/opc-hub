@@ -186,6 +186,28 @@ describe( "View statics", ()=>{
 		expect( route.fieldFilters[0].filter.value ).toEqual( ["a"] );
 	} );
 
+	//#589:  a draft hides, re-styles and resizes its columns, and the view it is of stays as it was saved
+	it( "copy each field, its style and its flex, the route's and a saved view's alike", ()=>{
+		const route = View.fromTable( {columns: [{name: "name", style: new Style({flex: new Flex(300), align: "right"})}, "url"], sort: "name"}, schema );
+		const saved = View.fromJson( JSON.parse(JSON.stringify(route.toJson(undefined))), schema, route );//its style a plain object, its flex the string toJSON wrote
+		for( const view of [route, saved] ){
+			const copy = View.copy( view );
+			const [field, copied] = [view, copy].map( v=>v.fields.find( f=>f.name=="name" )! );
+			expect( copied ).not.toBe( field );
+			expect( copied.style ).not.toBe( field.style );
+			expect( copied.style!.flex ).not.toBe( field.style!.flex );
+			expect( View.alike(copy, view) ).toBe( true );
+			copied.displayed = false;
+			copied.style!.align = "center";
+			copied.style!.flex!.flexBasis = "120px";
+			copy.fields.find( f=>f.name=="url" )!.style = new Style( 80 );
+			expect( field.displayed ).toBe( true );
+			expect( JSON.parse(JSON.stringify(field.style)) ).toEqual( {flex: "0 0 300px", align: "right"} );
+			expect( view.fields.find( f=>f.name=="url" )!.style ).toBeUndefined();
+			expect( JSON.parse(JSON.stringify(copied.style)) ).toEqual( {flex: "0 0 120px", align: "center"} );
+		}
+	} );
+
 	//#588 review #5:  a host keeps its rows, and its page, for a view that shows the rows it did
 	it( "take a view renamed, or a copy, as alike, and one sorted, filtered or re-columned as not", ()=>{
 		const copy = View.copy( base );

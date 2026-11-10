@@ -7,7 +7,7 @@ import { ViewSet } from '../model/ql/view-set';
 import { StringUtils } from '../utils/string-utils';
 import { MetaObject } from '../model/ql/schema/meta-object';
 import { capitalize, LocalPrefs, ProfileStore, RouteItem, RouteStore } from 'jde-spa';
-import { FieldFilter, Operator, View, ViewField, ViewFieldSettings, ViewFilterSettings, ViewSettings } from '../model/ql/view';
+import { FieldFilter, Operator, View, ViewFieldSettings, ViewFilterSettings, ViewSettings } from '../model/ql/view';
 import { Sort } from '@angular/material/sort';
 import { QLRow } from '../model/ql/slug-row';
 
@@ -172,9 +172,7 @@ export class QLListResolver implements Resolve<QLListData> {
 			return undefined;
 		let view = View.copy( base );
 		view.name = QLListResolver.deletedViewName;
-		const shown = new ViewField( deleted );
-		shown.displayed = true;
-		view.fields = view.fields.map( f=>f===deleted ? shown : f );
+		view.fields.find( f=>f.name=="deleted" )!.displayed = true;//the copy's own field, found by name
 		view.fieldFilters = [...view.fieldFilters.filter( ff=>ff.field.name!="deleted" ), {field: deleted.qlField, filter: {operator: Operator.Greater, value: ["<not null>"]}}];//Greater: what the settings panel gives a DateTime filter
 		return view;
 	}

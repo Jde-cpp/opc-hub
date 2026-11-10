@@ -80,6 +80,22 @@
 	opacity: .3;
 }
 
-.adhoc{
-	color: var(--mat-sys-tertiary);
+//Discard and Save, at the right end of the centre zone, where the filter box is to end:  against the right zone, whose own auto
+//margin would share the room with theirs
+.bar-center{
+	margin-left: auto;
+	+ .bar-right{
+		margin-left: 0;
+	}
+}
+//a view with a draft:  after its name, in the tab, the pick list's button and its Views
+.draft-dot{
+	display: inline-block;
+	flex: none;
+	width: 8px;
+	height: 8px;
+	margin-inline-start: 6px;
+	border-radius: 50%;
+	background: var(--mat-sys-primary);
+	vertical-align: middle;
 }

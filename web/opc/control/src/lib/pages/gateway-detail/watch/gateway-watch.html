@@ -8,7 +8,7 @@
 				<ng-template mat-tab-label>List</ng-template>
 				<ng-template matTabContent>
 					@if( isSettings() ){
-						<ql-list-settings [suggestions]=colSuggestions() [columns]=columns [view]=viewCopy() [schema]=schema [paged]=false [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
+						<ql-list-settings [suggestions]=colSuggestions() [columns]=columns [view]=viewCopy() [schema]=schema [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
 					}
 					@else{
 						<view-toolbar [views]="viewSet" [tabPanel]="panel" [refreshing]="isRefreshing()" [count]="shown().length" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--Refresh describes the nodes again:  the values are the subscription's;  the rows follow the view on their own-->

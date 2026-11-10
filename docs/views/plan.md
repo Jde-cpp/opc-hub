@@ -78,6 +78,19 @@ The page size moves to the view menu's `Page size`, as above, on `QLList` and th
 
 Tests: [`view.spec.ts`](../../web/framework/control/src/lib/model/ql/view.spec.ts) for the copy's independence, field, style and flex alike; [`view-set.spec.ts`](../../web/framework/control/src/lib/model/ql/view-set.spec.ts) for a draft per tab, `Save` and `Discard`, a reload rebuilding every tab's draft, a draft whose view was deleted and a new view taking its number, a rename under a draft, and a second user's drafts kept apart; [`ql-list.spec.ts`](../../web/framework/control/src/lib/pages/ql/list/ql-list.spec.ts) that a Deleted view still shows its column; [`view-toolbar.spec.ts`](../../web/framework/control/src/lib/shared/view-toolbar/view-toolbar.spec.ts) for `Page size` and its absence on a host with no pager.
 
+Built 2026-11-09, where it differs from the text above:
+
+- **A draft takes its view's place among the views.** `ViewSet.views()` holds one entry a view, the draft where there is one, so the tab, its key and its place are the view's, and `current()` is the draft. `ViewSet.edit` changes the view shown on its draft, a header sort and `Page size` through it, and `discard` drops one.
+- **A draft that shows what its view does is no draft.** A change that puts the view back as it was saved, a sort clicked back or the page size picked again, drops the draft and the dot with it (`View.alike`), so `Save` never writes a row that says what it said.
+- **The drafts of a list are one `LocalPrefs` entry**, `<user>/<key>/drafts`, a record by view number of the JSON a saved view writes, less the name. They are written once the profile has been read for the user signed in, and read back by that read. Signed out, or while the profile is unread, a draft is kept in the page alone: its number may be another set's. A read that puts the user's saved views in the route's place drops the drafts made on the route's, as it refuses the change made to them, and one who signs in on the page does not get the last user's.
+- **A stored draft that cannot be made a view of is dropped**, with a warning, as one whose view is gone is, and the entry is rewritten without it. A view deleted and a number reused in another browser cannot be told from here: the draft opens on the new view of its number.
+- **`+ New view` and `Duplicate` leave the draft with its view**, where 1b had them drop the twin: the new view copies the view as it shows, the duplicate as it was saved, and the tab left keeps its dot.
+- **`Delete` takes a view with its draft.** 1b greyed it out on the twin, where the user might have meant only to drop the edits, which `Discard` now does.
+- **`Save changes` and `Discard changes` are in the view menu too**, as the spec lists them, greyed out with no draft, and a pick list has both, in its menu and in the bar: it shares the drafts.
+- **`Page size` is on a pick list as well**, since `QLList` pages there too. The toolbar's input for it is `paged`. The editor's Display tab loses its Page Size box, and the editor leaves the view's limit as it is.
+- **A draft made by the editor's `Show` takes its view's name**, and the `*` the old twin's name carried is gone with the code that stripped it.
+- **`Flex` and `Style` copy themselves**, a saved view's style, a plain object whose flex is the string it was written as, becoming a `Style` with a `Flex` on its first copy. It writes the same JSON.
+
 ## Phase 3a - the where clause and the filter's logic (piece 3, first half)
 
 Issue [#590].

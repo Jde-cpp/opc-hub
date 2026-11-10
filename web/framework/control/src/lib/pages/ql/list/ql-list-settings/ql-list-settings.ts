@@ -36,7 +36,6 @@ export class QLListSettings implements OnInit{
 			fields.push( new ViewField(field) );
 		view.fields = fields;
 		view.showSelector = displayCols[0].displayed;
-		view.limit = this.display().pageSize();
 		view.fieldFilters = this.filter().fieldFilters();
 		view.sort = this.sort().dataSource.filter( s=>s.active ).map( s=>({active: s.active, direction: s.direction}) );
 		return view;
@@ -46,7 +45,6 @@ export class QLListSettings implements OnInit{
 	onNameFocus( event:FocusEvent ){ (<HTMLInputElement>event.target).select(); }//was `$event.target.select()` in the template, which type-checks only because EventTarget is loose there
 	excludedColumns = input<string[]>([]);
 	canDelete = input<boolean>( false );//ViewSet.canRemove, of the view
-	paged = input<boolean>( true );//false where the host does not page - a node's Children - so it offers no Page Size
 	suggestions = input.required<Record<string,any[]>>();
 	schema = input.required<TableSchema>();
 	view = input.required<View>();

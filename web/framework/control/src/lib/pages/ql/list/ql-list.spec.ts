@@ -138,6 +138,28 @@ describe( 'QLList re-query failures reach the user', ()=>{
 	} );
 } );
 
+//#589:  View.copy copies each field, so the Deleted view names its column where it found it by identity
+describe( 'QLList on the Deleted view', ()=>{
+	it( 'still shows the deleted column, on its draft too, and the default view does not', ()=>{
+		configure();
+		const schema = schemaOf( "User", id(), required("name"), scalar("slug"), scalar("deleted", "DateTime") );
+		const profile = viewSet( QLListResolver.systemViews(schema, {columns: ["name"]}) );
+		const page = TestBed.createComponent( QLList ).componentInstance;
+		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema, profile} as unknown as QLListData );
+		const shown = ()=>{
+			page.view.set( profile.current() );
+			return page.displayedFields().map( f=>f.name );
+		};
+		profile.select( 0 );//whichever view an earlier test left remembered
+		expect( shown() ).toEqual( ["name"] );
+		profile.select( profile.views().findIndex( v=>QLListResolver.isDeletedView(v) ) );
+		expect( shown() ).toEqual( ["name", "deleted"] );
+		profile.edit( view=>{ view.limit = 50; } );
+		expect( profile.current().isAdhoc ).toBe( true );
+		expect( shown() ).toEqual( ["name", "deleted"] );
+	} );
+} );
+
 //reviews-issue/web-refactor-review.md #6:  Delete did not await the profile write, said "Could not save view." when it failed, and
 //re-queried whatever it was given, the view on screen left as it was or not.
 describe( 'QLList Delete', ()=>{
