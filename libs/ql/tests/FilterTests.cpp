@@ -83,6 +83,13 @@ namespace Jde::QL::Tests{
 		EXPECT_FALSE( filterValue(DB::EOperator::In, jarray{jarray{2}}).Test(DB::Value{uint{2}}) ) << "only a list's scalars count";
 	}
 
+	//#590: a null passes `ne` and `nin`, as the where clause keeps a nullable column's nulls under each.
+	TEST( FilterTests, ANullPassesNeAndNin ){
+		EXPECT_TRUE( filterValue(DB::EOperator::NotEqual, "red").Test(DB::Value{}) );
+		EXPECT_TRUE( filterValue(DB::EOperator::NotIn, jarray{"red"}).Test(DB::Value{}) );
+		EXPECT_FALSE( filterValue(DB::EOperator::NotIn, jarray{"red", nullptr}).Test(DB::Value{}) );
+	}
+
 	TEST( FilterTests, Regex ){
 		EXPECT_TRUE( filterValue(DB::EOperator::Regex, "b.b").Test(DB::Value{string{"bob"}}) );
 		EXPECT_FALSE( filterValue(DB::EOperator::Regex, "b.b").Test(DB::Value{string{"alice"}}) );

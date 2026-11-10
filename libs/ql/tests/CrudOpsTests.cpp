@@ -178,6 +178,7 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( slugs(R"(description:{in:["red","blue"], nin:["blue"]})"), (vector<string>{"crud-nin-red"}) );
 		EXPECT_EQ( slugs("description:{in:$description_in, nin:$description_nin}", jobject{{"description_in",jarray{"red","blue"}}, {"description_nin",jarray{"red"}}}), (vector<string>{"crud-nin-blue"}) );
 		EXPECT_EQ( slugs(R"(description:{nin:["red"], ne:null})"), (vector<string>{"crud-nin-blue"}) );//the filter box's `-description:red has:description`.
+		EXPECT_EQ( slugs(R"(description:{ne:"red"})"), (vector<string>{"crud-nin-blue","crud-nin-none"}) );//`ne` is a `nin` of one.
 	}
 
 	//select:  the shapes a client sends - plural and singular, a page, a pattern, an array, an enum by name, the live rows, and a

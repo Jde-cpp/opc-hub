@@ -1,4 +1,4 @@
-import { Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { NodeView } from './node-view';
 import { OpcError } from './opc-error';
@@ -78,8 +78,6 @@ export class WatchView extends View{
 	private static compare( a:unknown, b:unknown ):number{
 		if( a==null || b==null )
 			return a==null ? (b==null ? 0 : -1) : 1;
-		const na = WatchView.toNumber( a ), nb = WatchView.toNumber( b );
-		return !isNaN(na) && !isNaN(nb) ? na-nb : String( a ).localeCompare( String(b), undefined, {numeric: true, sensitivity: "base"} );
+		return compareCells( a, b );
 	}
-	private static toNumber( x:unknown ):number{ return typeof x=="number" ? x : typeof x=="string" && x.trim()!=="" ? Number( x ) : NaN; }
 }

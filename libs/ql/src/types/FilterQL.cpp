@@ -373,7 +373,7 @@ namespace Jde{
 						THROW("Invalid filter value type '{}'.", to_string(value.kind()) );
 					if( json->is_array() )
 						where.Add( column, filter.Operator, DB::ToValue<uint>(Json::FromArray<uint>(json->get_array())) );
-					else if( filter.Operator==DB::EOperator::NotIn && !json->is_null() )//a lone value is a list of one, as isIn reads it - and keeps a nullable column's nulls as a list does.
+					else if( (filter.Operator==DB::EOperator::NotIn || filter.Operator==DB::EOperator::NotEqual) && !json->is_null() )//a lone value is a list of one, as isIn reads it, and `ne` a `nin` of one:  each keeps a nullable column's nulls, as the in-memory match does.
 						where.Add( column, filter.Operator, vector<DB::Value>{toFilterValue(*column, *json, SRCE_CUR)}, false );
 					else
 						where.Add( column, filter.Operator, toFilterValue(*column, *json, SRCE_CUR) );

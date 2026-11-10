@@ -187,6 +187,7 @@ namespace Jde::Access::Tests{
 		using Names = vector<string>;
 		EXPECT_EQ( users(R"(description:{nin:["red"]})"), (Names{"review590-bracket","review590-none"}) ) << "the null description stays";
 		EXPECT_EQ( users(R"(description:{nin:["red",null]})"), (Names{"review590-bracket"}) );
+		EXPECT_EQ( users(R"(description:{ne:"red"})"), (Names{"review590-bracket","review590-none"}) ) << "`ne` is a `nin` of one";
 		EXPECT_EQ( users(R"(description:{nin:["red"], ne:null})"), (Names{"review590-bracket"}) );
 		EXPECT_EQ( users(R"(description:{in:["red","a[b]*c?d"], nin:["red"]})"), (Names{"review590-bracket"}) );
 		EXPECT_EQ( users("description:{in:$description_in, nin:$description_nin}", jobject{{"description_in",jarray{"red","a[b]*c?d"}}, {"description_nin",jarray{"a[b]*c?d"}}}), (Names{"review590-red"}) );

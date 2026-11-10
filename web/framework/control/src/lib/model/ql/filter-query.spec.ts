@@ -65,7 +65,7 @@ describe( "filter-query", ()=>{
 			[ "exponent:>3", ["exponent:{gt:$exponent_gt}"], {exponent_gt: 3} ],
 			[ "exponent:>=3", ["exponent:{gte:$exponent_gte}"], {exponent_gte: 3} ],
 			[ "exponent:<3", ["exponent:{lt:$exponent_lt}"], {exponent_lt: 3} ],
-			[ "exponent:<=3.5", ["exponent:{lte:$exponent_lte}"], {exponent_lte: 3.5} ],
+			[ "exponent:<=4", ["exponent:{lte:$exponent_lte}"], {exponent_lte: 4} ],
 			[ "exponent:3..9", ["exponent:{gte:$exponent_gte,lte:$exponent_lte}"], {exponent_gte: 3, exponent_lte: 9} ],
 			[ "exponent:*..9", ["exponent:{lte:$exponent_lte}"], {exponent_lte: 9} ],
 			[ "exponent:3..*", ["exponent:{gte:$exponent_gte}"], {exponent_gte: 3} ]
@@ -79,7 +79,6 @@ describe( "filter-query", ()=>{
 		it( "reads a quoted value with a space or a comma, and a quote inside a word as a letter", ()=>expectCases( [
 			[ "description:\"a b\",'c,d',e", ["description:$description"], {description: ["a b", "c,d", "e"]} ],
 			[ "description:\">3\"", ["description:$description"], {description: [">3"]} ],
-			[ "description:\"\"", ["description:$description"], {description: [""]} ],
 			[ "description:o'brien,", ["description:$description"], {description: ["o'brien"]} ],
 			[ "o'brien", ["name:{glob:$name_glob}"], {name_glob: "*o'brien*"} ]
 		] ) );
@@ -98,6 +97,8 @@ describe( "filter-query", ()=>{
 			[ "-provider:Google -provider:Key,Google", ["provider:{nin:$provider_nin}"], {provider_nin: ["Google", "Key"]} ],
 			[ "provider:Google,Key provider:Key,VK", ["provider:$provider"], {provider: ["Key"]} ],
 			[ "provider:Google provider:Key", ["provider:$provider"], {provider: []} ],
+			[ "provider:Key,Key", ["provider:$provider"], {provider: ["Key"]} ],
+			[ "-provider:Key,Key", ["provider:{nin:$provider_nin}"], {provider_nin: ["Key"]} ],
 			[ "provider:Google no:provider", ["provider:$provider"], {provider: []} ],
 			[ "has:provider no:provider", ["provider:{in:$provider_in,ne:null}"], {provider_in: [null]} ],
 			[ "name:pump station", ["name:{in:$name_in,glob:$name_glob}"], {name_in: ["pump"], name_glob: "*station*"} ],
@@ -151,12 +152,27 @@ describe( "filter-query", ()=>{
 		} );
 	} );
 
+	describe( "an enum column whose values are known", ()=>{
+		const host = ():FilterHost=>({ ...server(), enums: new Map( [["Provider", [{name: "Google"}, {name: "Key"}]]] ) });
+		it( "takes a value in any case, and sends the schema's spelling", ()=>{
+			expect( compile("provider:google,KEY", host()) ).toEqual( {args: ["provider:$provider"], vars: {provider: ["Google", "Key"]}} );
+			expect( compile("-provider:gOOgle", host()) ).toEqual( {args: ["provider:{nin:$provider_nin}"], vars: {provider_nin: ["Google"]}} );
+		} );
+		it( "refuses one that is none of them, naming them", ()=>{
+			expect( parseFilter("provider:Gogle", host()).errors.map(e=>e.message) ).toEqual( ["'Gogle' is not a value of 'Provider' - Google, Key."] );
+			expect( parseFilter("-provider:Key,VK", host()).terms ).toEqual( [] );
+		} );
+	} );
+
 	describe( "a live-toggle column", ()=>{
 		it( "reads has: as live, a null, and no: as not", ()=>expectCases( [
 			[ "has:enforced", ["deleted:$deleted"], {deleted: [null]} ],
 			[ "no:enforced", ["deleted:{ne:null}"], {} ],
-			[ "has:deleted", ["deleted:$deleted"], {deleted: [null]} ],//the QL name is the same column
 			[ "-has:Enforced", ["deleted:{ne:null}"], {} ]
+		] ) );
+		it( "reads has: and no: by its QL name as what the column holds", ()=>expectCases( [
+			[ "has:deleted", ["deleted:{ne:null}"], {} ],
+			[ "no:DELETED", ["deleted:$deleted"], {deleted: [null]} ]
 		] ) );
 		it( "leaves has: and no: as they are on a deleted column that is no toggle", ()=>{
 			const host:FilterHost = { server: true, columns: [column("deleted", scalar("DateTime"), "Deleted")] };
@@ -190,6 +206,12 @@ describe( "filter-query", ()=>{
 			[ "enforced:true", "Only has:enforced and no:enforced" ],
 			[ "deleted:>2026-01-01", "Only has:enforced and no:enforced" ],
 			[ "exponent:abc", "'abc' is not a number" ],
+			[ "exponent:<=3.5", "'3.5' is not a whole number" ],
+			[ "exponent:-1", "'-1' is below 0" ],
+			[ "id:7.5", "'7.5' is not a whole number" ],
+			[ "description:\"\"", "An empty value is not read - write no:description" ],
+			[ "-'security mode':''", "write no:\"security mode\" for an empty 'Security Mode'" ],
+			[ "description:a,\"\"", "An empty value is not read" ],
 			[ "exponent:>", "needs a value" ],
 			[ "exponent:>3,5", "takes one value" ],
 			[ "exponent:1..2,5", "takes one value" ],
@@ -263,7 +285,9 @@ describe( "filter-query", ()=>{
 			[ "PUMP", ["Pump", "pump station"] ],//a bare word, in any cell, whatever its case
 			[ "pump STATION", ["pump station"] ],
 			[ "sensor", ["pump station"] ],
-			[ "2026-03-09", ["Valve"] ],
+			[ "7", ["Pump"] ],//a String cell that holds a number
+			[ "250", [] ],//a number's cell is not text
+			[ "2026-03-09", [] ],//nor is a time's
 			[ "sourceTime:2026-03-08", ["Pump", "pump station"] ],//a whole day, on a cell of local text
 			[ "sourceTime:>2026-03-08", ["Valve"] ],
 			[ "sourceTime:<=2026-03-08", ["Pump", "pump station"] ],
@@ -278,6 +302,12 @@ describe( "filter-query", ()=>{
 		it( "matches as the grammar says", ()=>{
 			for( const [text, expected] of cases )
 				expect( names(text), text ).toEqual( expected );
+		} );
+		it( "searches no object's cell for a bare word", ()=>{
+			const host:FilterHost = { server: false, columns: [column( "name", scalar("String"), "Name" ), column( "parameters", {kind: "OBJECT", name: "Parameters"}, "Parameters" )] };
+			const test = filterPredicate<Row>( parseFilter("object", host).terms, host, {cell: ( row, name )=>row[name]} );
+			expect( test({name: "Pump", parameters: {queue: 1}}) ).toBe( false );
+			expect( test({name: "objective", parameters: {queue: 1}}) ).toBe( true );
 		} );
 	} );
 } );

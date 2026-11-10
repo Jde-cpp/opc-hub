@@ -90,27 +90,22 @@ namespace Jde::DB{
 		_clauses.push_back( move(clause) );
 	}
 
+	//A null in the list is the column's null:  `x in(…) or x is null`, and for a negative operator `x not in(…) and x is not
+	//null`.  #590: `not in` and `!=` are unknown for a null, so without one in the list a nullable column's null rows went with
+	//the listed values;  they are kept, and a caller that wants them out says so - `nin:[…,null]`.
 	α WhereClause::Add( sp<Column> col, EOperator op, vector<Value> inParams, bool haveNull, SL sl )ε->void{
-		let notIn = op==EOperator::NotIn;
-		if( !haveNull ){
-			//#590: `not in` is unknown for a null, so a nullable column's null rows went with the listed ones.  A caller that
-			//wants them out says so - `nin:[…,null]`, below.
-			if( !notIn || !col->IsNullable || inParams.empty() )
-				return Add( col, op, move(inParams), sl );
-			auto clause = Ƒ( "({} or {} is null)", col->Table->Syntax().FormatOperator(*col, op, inParams.size(), sl), col->FQName() );
-			move( inParams.begin(), inParams.end(), back_inserter(_params) );
-			_clauses.push_back( move(clause) );
-			return;
-		}
+		let negative = op==EOperator::NotIn || op==EOperator::NotEqual;
+		if( !haveNull && !(negative && col->IsNullable && !inParams.empty()) )
+			return Add( col, op, move(inParams), sl );
 		string clause;
 		vector<Value> translated; translated.reserve( inParams.size() );
 		if( inParams.empty() )
-			clause = Ƒ( "{} is {}null", col->FQName(), notIn ? "not " : "" );
+			clause = Ƒ( "{} is {}null", col->FQName(), negative ? "not " : "" );
 		else{
 			auto inClause = col->Table->Syntax().FormatOperator( *col, op, inParams.size(), sl );//`regex:[null,"a","b"]` throws here, with 2 params still un-committed.
 			for( auto& param : inParams )
 				translated.emplace_back( patternParam(*col, op, move(param), sl) );
-			clause = notIn
+			clause = haveNull && negative
 				? Ƒ( "({} and {} is not null)", move(inClause), col->FQName() )
 				: Ƒ( "({} or {} is null)", move(inClause), col->FQName() );
 		}

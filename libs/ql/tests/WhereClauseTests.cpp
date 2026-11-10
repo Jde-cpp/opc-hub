@@ -95,6 +95,17 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( where(R"(labels( name:{nin:["a"]} ){ id })").ToString(), "where qlt_labels.name not in(?)" );//not nullable.
 		EXPECT_EQ( where(R"(labels( color:{in:["red"]} ){ id })").ToString(), "where qlt_labels.color in(?)" );//`in` never matched a null.
 	}
+	//#590 review #6: `ne` is a `nin` of one, so on a nullable column it keeps the null rows too, as the in-memory NotEqual does.
+	TEST( WhereClauseTests, NeKeepsANullableColumnsNulls ){
+		let w = where( R"(labels( color:{ne:"red"} ){ id })" );
+		EXPECT_EQ( w.ToString(), "where (qlt_labels.color!=? or qlt_labels.color is null)" );
+		ASSERT_EQ( w.Params().size(), 1u );
+		EXPECT_EQ( w.Params()[0].get_string(), "red" );
+		EXPECT_EQ( where(R"(labels( color:{ne:["red"]} ){ id })").ToString(), "where (qlt_labels.color!=? or qlt_labels.color is null)" );
+		EXPECT_EQ( where(R"(labels( color:{ne:null} ){ id })").ToString(), "where qlt_labels.color is not null" );
+		EXPECT_EQ( where(R"(labels( color:{ne:[null]} ){ id })").ToString(), "where qlt_labels.color is not null" );
+		EXPECT_EQ( where(R"(labels( name:{ne:"a"} ){ id })").ToString(), "where qlt_labels.name!=?" );//not nullable.
+	}
 	//the filter box merges a column's terms into one operator object:  `in` beside `nin`, and a variable under each operator.
 	TEST( WhereClauseTests, InAndNinShareAnOperatorObject ){
 		let w = where( R"(labels( color:{in:["red","blue"], nin:["blue"]} ){ id })" );

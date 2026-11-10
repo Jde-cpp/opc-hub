@@ -12,8 +12,9 @@ import { FieldKind, type Field } from './schema/field';
 //A column the box can name:  a ViewField is one.
 export type FilterColumn = { qlField:Field, displayName:string, liveToggle?:unknown };
 //`server`: a GraphQL list, whose database runs the filter, so a term it cannot run is refused;  a list that filters its own
-//rows takes a comparison on any column.
-export type FilterHost = { columns:readonly FilterColumn[], server:boolean };
+//rows takes a comparison on any column.  `enums`: an enum's values by its type's name, as `schemaWithEnums` reads them - an
+//enum column's value is then one of them, in any case, and is sent as the schema spells it.
+export type FilterHost = { columns:readonly FilterColumn[], server:boolean, enums?:ReadonlyMap<string, readonly {name:string}[]> };
 //A span of time in the browser's time zone, as typed:  a calendar date or `@today` and the days from it, each a whole day, or
 //a date with a time, the minute or the second it names.
 export type FilterDay = { year:number, month:number, day:number, hour?:number, minute?:number, second?:number }|{ offset:number };
@@ -123,17 +124,29 @@ function startOfDay( day:FilterDay, add:number, today:Date ):Date{
 }
 
 //A value as its column types it, or the reason it is none.
-function typed( column:FilterColumn, text:string ):FilterValue|Error{
+function typed( column:FilterColumn, text:string, host:FilterHost ):FilterValue|Error{
 	const field = column.qlField;
 	if( field.isDateTime )
 		return parseDay( text ) ?? new Error( `'${text}' is not a date - write 2026-01-31, 2026-01-31T14:30 or @today-7d.` );
 	if( field.isNumber ){
 		const n = text.trim()==="" ? NaN : Number( text );
-		return Number.isFinite( n ) ? n : new Error( `'${text}' is not a number.` );
+		if( !Number.isFinite(n) )
+			return new Error( `'${text}' is not a number.` );
+		//the server converts to the column's own type, and fails the whole query on a value it cannot hold exactly.
+		const type = field.type.underlyingName;
+		if( type!="Float" && !Number.isInteger(n) )
+			return new Error( `'${text}' is not a whole number.` );
+		return type=="UInt" && n<0 ? new Error( `'${text}' is below 0, which '${column.displayName}' cannot hold.` ) : n;
 	}
 	if( field.isBoolean ){
 		const lower = text.toLowerCase();
 		return lower=="true" || lower=="false" ? lower=="true" : new Error( `'${text}' is not true or false.` );
+	}
+	const values = field.isEnum ? host.enums?.get( field.type.underlyingName ) : undefined;
+	if( values ){//the server looks the name up exactly, and fails the whole query on one it does not find.
+		const lower = text.toLowerCase();
+		return values.find( v=>v.name.toLowerCase()==lower )?.name
+			?? new Error( `'${text}' is not a value of '${column.displayName}' - ${values.map( v=>v.name ).join( ", " )}.` );
 	}
 	return text;
 }
@@ -172,8 +185,10 @@ function read( raw:RawTerm, host:FilterHost ):FilterTerm[]|string{
 			const column = refusal( name.text );
 			if( typeof column=="string" )
 				return column;
-			//A live-toggle column's header names the live state, and a row is live when the column is null:  has:enforced is `deleted is null`.
-			const empty = ( keyword=="no" )!=raw.negated!=!!column.liveToggle;
+			//A live-toggle column's header names the live state, and a row is live when the column is null:  has:enforced is
+			//`deleted is null`.  By its QL name the column is what it holds, so has:deleted is the deleted rows.
+			const live = !!column.liveToggle && column.displayName.toLowerCase()==name.text.toLowerCase();
+			const empty = ( keyword=="no" )!=raw.negated!=live;
 			terms.push( {field: columnName(column), operator: "null", values: [], negated: !empty, ...place} );
 		}
 		return terms;
@@ -186,6 +201,10 @@ function read( raw:RawTerm, host:FilterHost ):FilterTerm[]|string{
 		return `Only has:${display.toLowerCase()} and no:${display.toLowerCase()} are read on '${display}'.`;
 	if( !values.length )
 		return `'${raw.field!.text}:' needs a value.`;
+	if( values.some(v=>v.text=="") ){//a quoted one:  the QL saves '' as null in a nullable text column, so `in('')` finds nothing.
+		const named = /\s/.test( raw.field!.text ) ? `"${raw.field!.text}"` : raw.field!.text;
+		return `An empty value is not read - write no:${named} for an empty '${display}'.`;
+	}
 	const field = column.qlField, isDate = field.isDateTime;
 	const term = ( operator:FilterOperator, termValues:FilterValue[] ):FilterTerm[]=>[ {field: field.name, operator, values: termValues, negated: raw.negated, ...place} ];
 	const compared = values.length==1 && !values[0].quoted ? values[0].text : undefined;
@@ -203,7 +222,7 @@ function read( raw:RawTerm, host:FilterHost ):FilterTerm[]|string{
 		const operand = compared!.slice( comparison[0].length );
 		if( operand=="" )
 			return `'${comparison[0]}' needs a value.`;
-		const value = typed( column, operand );
+		const value = typed( column, operand, host );
 		return value instanceof Error ? value.message : term( comparison[1], [value] );
 	}
 	if( range>=0 ){
@@ -211,7 +230,7 @@ function read( raw:RawTerm, host:FilterHost ):FilterTerm[]|string{
 		for( const end of [compared!.slice(0, range), compared!.slice(range+2)] ){
 			if( end=="" )
 				return "A range needs both ends - write * for an open one.";
-			const value = end=="*" ? null : typed( column, end );
+			const value = end=="*" ? null : typed( column, end, host );
 			if( value instanceof Error )
 				return value.message;
 			ends.push( value );
@@ -224,7 +243,7 @@ function read( raw:RawTerm, host:FilterHost ):FilterTerm[]|string{
 		return "A date takes one day or a range - a list of days would need an or.";
 	const list:FilterValue[] = [];
 	for( const v of values ){
-		const value = typed( column, v.text );
+		const value = typed( column, v.text, host );
 		if( value instanceof Error )
 			return value.message;
 		list.push( value );
@@ -301,10 +320,10 @@ export function filterArguments( terms:readonly FilterTerm[], today:Date=new Dat
 		else if( term.operator=="null" && term.negated )
 			column.notNull = true;
 		else if( term.negated )
-			column.nin.push( ...term.values.filter(v=>!column.nin.includes(v)) );
+			column.nin.push( ...new Set(term.values.filter( v=>!column.nin.includes(v) )) );
 		else{
 			const values = term.operator=="null" ? [null] : term.values;
-			column.in = column.in ? column.in.filter( v=>values.includes(v as FilterValue) ) : [...values];
+			column.in = column.in ? column.in.filter( v=>values.includes(v as FilterValue) ) : [...new Set( values )];
 		}
 	}
 	const y:FilterArguments = { args: [], vars: {} };
@@ -339,8 +358,8 @@ export function filterArguments( terms:readonly FilterTerm[], today:Date=new Dat
 
 const isEmpty = ( cell:unknown )=>cell==null || cell==="";
 const toNumber = ( x:unknown )=>typeof x=="number" ? x : typeof x=="string" && x.trim()!=="" ? Number( x ) : NaN;//Number("") is 0, which would rank an empty cell among the numbers
-//numeric when both sides are numbers, and text otherwise.
-function compare( a:unknown, b:unknown ):number{
+//Two cells, numeric when both sides are numbers and text otherwise:  the rule the node and watch lists sort by, too.
+export function compareCells( a:unknown, b:unknown ):number{
 	const na = toNumber( a ), nb = toNumber( b );
 	return !isNaN( na ) && !isNaN( nb ) ? na-nb : String( a ).localeCompare( String(b), undefined, {numeric: true, sensitivity: "base"} );
 }
@@ -348,10 +367,11 @@ function compare( a:unknown, b:unknown ):number{
 //`cell`: what a column shows for a row.  `time`: a day's bound as a time column's cells are written, so the two compare.
 export type FilterPredicateOptions<T> = { cell:( row:T, column:string )=>unknown, time?:( bound:Date )=>unknown, today?:Date };
 //The terms as a test of a row, for a list that holds its rows.  `field:a` is the cell's text exactly;  an exclusion keeps an
-//empty cell;  an empty cell matches no comparison, as a null matches none in SQL;  and a bare word is in the text of any
-//cell, whatever its case.
+//empty cell;  an empty cell matches no comparison, as a null matches none in SQL;  and a bare word is in any text cell, a
+//String's or an enum's, whatever its case.
 export function filterPredicate<T>( terms:readonly FilterTerm[], host:FilterHost, options:FilterPredicateOptions<T> ):( row:T )=>boolean{
 	const { cell, time=( d:Date )=>d.toISOString(), today=new Date() } = options;
+	const texts = host.columns.filter( c=>c.qlField.isString || c.qlField.isEnum ).map( columnName );
 	const tests = terms.map( ( term ):( row:T )=>boolean=>{
 		const asked = bounds( term, today );
 		if( asked ){
@@ -359,19 +379,19 @@ export function filterPredicate<T>( terms:readonly FilterTerm[], host:FilterHost
 			return row=>{
 				const value = cell( row, term.field! );
 				return !isEmpty( value ) && limits.every( ([op, limit])=>{
-					const c = compare( value, limit );
+					const c = compareCells( value, limit );
 					return op=="gt" ? c>0 : op=="gte" ? c>=0 : op=="lt" ? c<0 : c<=0;
 				} );
 			};
 		}
 		if( term.operator=="word" ){
 			const word = `${term.values[0]}`.toLowerCase();
-			return row=>host.columns.some( c=>`${cell( row, columnName(c) ) ?? ""}`.toLowerCase().includes(word) );
+			return row=>texts.some( name=>`${cell( row, name ) ?? ""}`.toLowerCase().includes(word) );
 		}
 		if( term.operator=="null" )
 			return row=>isEmpty( cell(row, term.field!) )!=term.negated;
-		const texts = term.values.map( v=>`${v}` );
-		return row=>texts.includes( `${cell( row, term.field! ) ?? ""}` )!=term.negated;
+		const values = term.values.map( v=>`${v}` );
+		return row=>values.includes( `${cell( row, term.field! ) ?? ""}` )!=term.negated;
 	} );
 	return row=>tests.every( test=>test(row) );
 }
