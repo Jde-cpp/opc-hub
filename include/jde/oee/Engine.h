@@ -7,6 +7,7 @@
 //sink is told.
 namespace Jde::Opc::Oee{
 	Ξ IsGood( uint32_t status )ι->bool{ return !UA_StatusCode_isBad( status ) && !UA_StatusCode_isUncertain( status ); }//Uncertain is Bad, as the aggregates' TreatUncertainAsBad has it.
+	α PrimaryTime( const Hist::Proto::DataValue& v )ι->optional<TimePoint>;//the source time, else the server's:  what a record is placed by.
 	struct EngineConfig final{
 		vector<Signal> Signals;
 		Duration SmallStop{};//for the live state alone:  a read classes a stop.
@@ -23,11 +24,14 @@ namespace Jde::Opc::Oee{
 	//an idle stop whose timeout runs past From, which the replay finds again or a count takes back.
 	//LastGood is each counter's last Good value before From, for a counter whose bound is not Good:  what the first Good
 	//value after the gap counts against.
+	//Widths is a rebuild's:  where the rows over its span were written at another width than EngineConfig::Width, each change
+	//from the first row of the new width on, in time order, so the rows are made again at the widths they had.
 	struct Opening final{
 		TimePoint From;//the machine's `processed`:  the first row starts here and runs to the next boundary of the width.
 		vector<Hist::Proto::DataValue> Bounds;
 		optional<Stop> Open;
 		vector<Hist::Proto::DataValue> LastGood;
+		vector<std::pair<TimePoint,Duration>> Widths;
 	};
 	//What a tile shows, and what the shift's figures add to the stored rows.
 	struct LiveState final{
@@ -54,9 +58,10 @@ namespace Jde::Opc::Oee{
 		//keeps its start is updated, not deleted and written again, and a write cut short leaves it.
 		β Rewritten( TimePoint from, const vector<Stop>& stops, const vector<TimePoint>& held )ι->void=0;
 		//A record of `node` in a written interval, late or a Modification, or an idle stop that began in one:  the rows over
-		//`span` are to be rebuilt from the group's history.  The span ends no later than the node's next record:  at the newest
+		//`span` are to be rebuilt from the group's history, one span per record.  The span ends no later than the node's next record:  at the newest
 		//of its records the engine has let go, else at its next the engine holds short of the clock, which the host narrows to the next one stored.
-		//With neither it ends at the engine's time:  it reaches the open interval, and a fresh engine takes over.
+		//With neither it ends at the engine's time:  it reaches the open interval, and a fresh engine takes over.  The host
+		//runs a fresh engine over the rows the span touches, one made with Opening::Widths and ended by Finish (OeeMachineHost).
 		β Rebuild( uint32 node, Span span )ι->void=0;
 		β Live( const LiveState& state )ι->void=0;//the state, the row in progress or Small changed.
 	};

@@ -13,6 +13,11 @@ namespace Jde::Opc::Gateway{
 		return DB::Statement{ {view->GetColumns(move(columns), sl)}, {view}, move(where) };
 	}
 	Ω name( sv table )ε->string{ return GetViewPtr( table )->SqlName(); }
+	//ms is milliseconds and start UA ticks, a hundred nanoseconds.  The factor is a long parameter:  SQL Server makes ms an int,
+	//and an int times the literal 10000 overflows from a 4-minute row.
+	Ω intervalsOver( OeeMachinePK machine, Oee::Span span, sv columns, sv order )ε->DB::Sql{
+		return { Ƒ("select {} from {} where oee_machine_id=? and start<=? and start+ms*?>?{}", columns, name(OeeTable::Intervals), order), {DB::Value{(uint)machine}, OeeTicks(span.End), DB::Value{(_int)10000}, OeeTicks(span.Start)} };
+	}
 	Ω fromMs( uint32 ms )ι->Duration{ return milliseconds{ ms }; }
 	Ω toMs( Duration d )ι->uint32{ return (uint32)std::max<int64_t>( std::chrono::round<milliseconds>(d).count(), 0 ); }
 	//A dateTime cell:  a time from a statement of the caller's, epoch seconds from a generated select on mysql and sqlite.
@@ -122,12 +127,24 @@ namespace Jde::Opc{
 	α Gateway::OeeSql::DeleteIntervalsFrom( OeeMachinePK machine, TimePoint from )ε->DB::Sql{
 		return { Ƒ("delete from {} where oee_machine_id=? and start>=?", name(OeeTable::Intervals)), {DB::Value{(uint)machine}, OeeTicks(from)} };
 	}
+	α Gateway::OeeSql::DeleteStopsBetween( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql{
+		return { Ƒ("delete from {} where oee_machine_id=? and start>=? and start<?", name(OeeTable::Stops)), {DB::Value{(uint)machine}, OeeTicks(from), OeeTicks(to)} };
+	}
+	α Gateway::OeeSql::DeleteIntervalsBetween( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql{
+		return { Ƒ("delete from {} where oee_machine_id=? and start>=? and start<?", name(OeeTable::Intervals)), {DB::Value{(uint)machine}, OeeTicks(from), OeeTicks(to)} };
+	}
+	α Gateway::OeeSql::SelectIntervalsOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{ return intervalsOver( machine, span, "start, ms", " order by start" ); }
+	α Gateway::OeeSql::SelectFirstIntervalOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{ return intervalsOver( machine, span, "min(start)", {} ); }
 	α Gateway::OeeSql::SelectStopOver( OeeMachinePK machine, TimePoint at )ε->DB::Sql{
 		return { Ƒ("select start, finish, code, unknown, oee_stop_id from {} where oee_machine_id=? and start<? and ( finish is null or finish>? )", name(OeeTable::Stops)), {DB::Value{(uint)machine}, OeeTicks(at), OeeTicks(at)} };
+	}
+	α Gateway::OeeSql::SelectStopsOver( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql{
+		return { Ƒ("select start, finish, code, unknown, oee_stop_id from {} where oee_machine_id=? and start<? and ( finish is null or finish>? ) order by start", name(OeeTable::Stops)), {DB::Value{(uint)machine}, OeeTicks(to), OeeTicks(from)} };
 	}
 	α Gateway::OeeSql::ToStop( const DB::Row& r )ι->Oee::Stop{
 		return { .Start=ticks(r, 0), .End=r.IsNull(1) ? nullopt : optional<TimePoint>{ticks(r, 1)}, .Code=r.GetOpt<int64_t>(2), .Unknown=r.GetBit(3), .Id=r.Get<uint32>(4) };
 	}
+	α Gateway::OeeSql::ToTime( const DB::Row& r, uint i )ι->TimePoint{ return ticks( r, i ); }
 	α Gateway::OeeSql::CountCodings( uint32 reason )ε->DB::Sql{
 		return { Ƒ("select count(*) from {} where oee_reason_id=?", name(OeeTable::Codings)), {DB::Value{(uint)reason}} };
 	}

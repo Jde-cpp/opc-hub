@@ -49,9 +49,18 @@ namespace Jde::Opc::Gateway{
 		α ClearStopFinish( OeeMachinePK machine, TimePoint start )ε->DB::Sql;
 		α DeleteStopsFrom( OeeMachinePK machine, TimePoint from )ε->DB::Sql;//start at or after.
 		α DeleteIntervalsFrom( OeeMachinePK machine, TimePoint from )ε->DB::Sql;
+		//A rebuild's (docs/oee/spec.md *Intervals*):  the rows that start in [from, to), and those a span touches.
+		α DeleteStopsBetween( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql;
+		α DeleteIntervalsBetween( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql;
+		//The interval rows over `span`, by start:  start at or before its end and end after its start.  start, ms.
+		α SelectIntervalsOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql;
+		α SelectFirstIntervalOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql;//the least start of those, null for none.
 		//The stop row over `at`:  its start before it and its finish null or after it.  start, finish, code, unknown, id.
 		α SelectStopOver( OeeMachinePK machine, TimePoint at )ε->DB::Sql;
+		//The stop rows over [from, to), by start:  start before `to` and finish null or after `from`.  SelectStopOver's columns.
+		α SelectStopsOver( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql;
 		α ToStop( const DB::Row& row )ι->Oee::Stop;//SelectStopOver's.
+		α ToTime( const DB::Row& row, uint i )ι->TimePoint;//a cell of UA ticks.
 		α CountCodings( uint32 reason )ε->DB::Sql;
 		α ReasonsCoded( int64_t code )ε->DB::Sql;//oee_reason_id, name, deleted.
 		α ReasonId( const DB::Key& key )ε->DB::Sql;

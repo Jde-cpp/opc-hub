@@ -25,6 +25,7 @@ namespace Jde::App{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α ResetTimerUnlocked()ι->void;
 		ABSL_LOCKS_EXCLUDED(_mutex) α Stop()ι->void;//first thing in the final class's destructor: Flush and Size dispatch to it.
 		ABSL_LOCKS_EXCLUDED(_mutex) α StopTimer()ι->void;//shutdown: no round starts again.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Stopping()Ι->bool{ return _delay==Duration::min(); }//StopTimer ran.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α TakeDropped()ι->uint{ return std::exchange( _dropped, 0u ); }//ends the outage Cap warns once for.
 
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) β Drop()ι->uint=0;//trims the oldest half; returns what went, in Size's units.
@@ -35,7 +36,6 @@ namespace Jde::App{
 		static constexpr ELogTags _tags{ ELogTags::ExternalLogger };
 	private:
 		α Rounds()ι->VoidTask;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Stopping()Ι->bool{ return _delay==Duration::min(); }
 
 		Duration _delay ABSL_GUARDED_BY(_mutex);
 		uint _dropped ABSL_GUARDED_BY(_mutex){};

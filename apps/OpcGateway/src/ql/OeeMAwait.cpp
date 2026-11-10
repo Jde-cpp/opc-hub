@@ -1,8 +1,11 @@
 #include "OeeMAwait.h"
 #include <jde/fwk/exceptions/refuse.h>
+#include <jde/access/Authorize.h>
 #include <jde/ql/ops/MutationAwait.h>
+#include <jde/opc/uatypes/DateTime.h>
 #include <jde/calendar/client/Calendars.h>
 #include <jde/oee/rules.h>
+#include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
 #include "../oee/OeeHost.h"
 #include "HistGroupQLAwait.h"
@@ -16,6 +19,8 @@ namespace Jde::Opc::Gateway{
 
 	α OeeMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
 		using enum EMutationQL;
+		if( m.CommandName==RecomputeCommand )
+			return true;
 		let table = m.TableName();
 		if( table==Stops || table==Intervals || table==Codings )
 			return true;
@@ -135,13 +140,38 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 
+	//recomputeOee's `start` or `end`:  a time, as the history edits take one.
+	Ω recomputeTime( const QL::MutationQL& m, sv name, SL sl )ε->TimePoint{
+		let p = m.FindPtr( name );
+		REFUSE_IF( !p || p->is_null(), "{} is required, a time such as 2026-11-09T06:00:00Z:  the rows over start to end are made again.", name );
+		try{
+			return UADateTime{ *p, sl }.Time();
+		}
+		catch( const std::exception& ){
+			REFUSE( "{} is a time such as 2026-11-09T06:00:00Z, not {}.", name, serialize(*p) );
+		}
+	}
+
 	α OeeMAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			using enum EMutationQL;
 			let sl = _sl;//REFUSE's.
+			auto& host = OeeHost::Instance();
+			if( _query.CommandName==RecomputeCommand ){
+				let machineId = _query.AsNumber<OeeMachinePK>( "machine", sl );
+				const Oee::Span span{ recomputeTime(_query, "start", sl), recomputeTime(_query, "end", sl) };
+				REFUSE_IF( span.Start>=span.End, "start, {}, must be before end, {}.", ToIsoString(span.Start), ToIsoString(span.End) );
+				AppClient()->Acl()->Test( "gateway", "oeeMachines", Access::ERights::Update, UserPK(), sl );//the table's, before a caller learns of an id.
+				auto machines = co_await Any( SelectOeeMachines({.Key=DB::Key{(uint)machineId}, .IncludeDeleted=true}) );
+				if( machines.empty() )
+					notFound( Ƒ("Machine {} not found.", machineId), sl );
+				HistHost::Instance().Gate( machines.front().Group, Access::ERights::Read, false, UserPK(), sl );
+				host.Recompute( machineId, span, sl );
+				Resume( jobject{ {"machine", machineId}, {"start", ToIsoString(span.Start)}, {"end", ToIsoString(span.End)} } );
+				co_return;
+			}
 			let type = _query.Type;
 			let table = _query.TableName();
-			auto& host = OeeHost::Instance();
 			REFUSE_IF( table==Stops || table==Intervals, "{} is the OEE engine's:  it alone writes the table, and '{}' is refused.", table, _query.CommandName );
 			REFUSE_IF( table==Codings, "{} is written by codeOee and uncodeOee alone:  '{}' is refused.", table, _query.CommandName );
 			_query.DBTable->Authorize( QL::StockRights(type), UserPK(), sl );//asked first:  a refusal below says what holds what.
@@ -176,6 +206,7 @@ namespace Jde::Opc::Gateway{
 				optional<TimePoint> from;
 				optional<DB::Key> machineKey;//the machine whose live side runs after.
 				optional<OeeMachinePK> purging;
+				optional<string> recompute;//an engine input changed:  the rows before now were made with the old one.
 				if( table==Machines ){
 					if( type==Create ){
 						requireName( args, sl );
@@ -211,8 +242,11 @@ namespace Jde::Opc::Gateway{
 						if( type==Update ){
 							REFUSE_IF( args.contains("from"), "from is a create's:  it is where a new machine's rows start." );
 							auto signals = co_await Any( SelectOeeSignals({.Machine=rows.front().Id}) );
-							checkMachine( thresholds(args, &rows.front(), sl), signals, sl );
+							let would = thresholds( args, &rows.front(), sl );
+							checkMachine( would, signals, sl );
 							checkCalendar( args, sl );
+							if( would.IdleTimeout!=rows.front().IdleTimeout && std::ranges::none_of(signals, []( const OeeSignalRow& s ){ return s.Role==Oee::ERole::State; }) )
+								recompute = "idleTimeout";//only a machine whose count is its state reads it.
 						}
 					}
 				}
@@ -243,6 +277,10 @@ namespace Jde::Opc::Gateway{
 						}
 						if( let p = args.if_contains("running"); p && p->is_array() )
 							spelled["running"] = serialize( *p );
+						if( row && after.Role==Oee::ERole::State && after.Running!=row->Running )//the roles that read them.
+							recompute = "running";
+						else if( row && after.Role==Oee::ERole::Rate && after.RatePeriod!=row->RatePeriod )
+							recompute = "ratePeriod";
 						signals.push_back( after );
 						warned = warnings( machine, after, host.Settle() );
 					}
@@ -303,9 +341,13 @@ namespace Jde::Opc::Gateway{
 				}
 				else if( machineKey )
 					co_await host.MachineChanged( *machineKey );
+				if( recompute ){
+					warned.emplace_back( Ƒ("{} changed:  the rows written before now were made with the old one, and recomputeOee( machine, start, end ) makes a range of them again.", *recompute) );
+					spelled["recompute"] = true;
+				}
 				for( let& warning : warned )
 					WARN( "{}:  {}", _query.CommandName, sv{warning.get_string()} );
-				if( table==Signals && type!=Purge )
+				if( (table==Signals && type!=Purge) || recompute )
 					spelled["warnings"] = move( warned );
 				if( row0 ){
 					for( let& [key,value] : spelled )

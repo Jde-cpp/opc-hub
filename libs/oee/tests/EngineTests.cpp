@@ -140,6 +140,19 @@ namespace Jde::Opc::Oee::Tests{
 		Time->AdvanceTo( At(6,2,5) );
 		EXPECT_EQ( Row(1), Minute(1, 1min) );
 	}
+	//Two late records of a signal in one call ask once each:  merged, the host's narrowing to the first's next stored record
+	//would cut the span at the second (reviews-issue/401-oee-rebuilds.md #1).
+	TEST_F( Streams, LateRecordsInOneCallAskOnceEach ){
+		auto& engine = Counting();
+		engine.Live();
+		Arrive( Count(TotalNode, At(6,0,30), 110) );
+		Time->AdvanceTo( At(6,1,6) );
+		ASSERT_EQ( Sink->Rows.size(), 1u );
+		engine.Records( Stream({Flag(StateNode, At(6,0,10), false), Flag(StateNode, At(6,0,40), false), Flag(StateNode, At(6,0,40), true)}) );
+		ASSERT_EQ( Sink->Rebuilds.size(), 2u ) << "the same start asks once";
+		EXPECT_EQ( Sink->Rebuilds[0], (Rebuilt{StateNode, {At(6,0,10), At(6,1,6)}}) );
+		EXPECT_EQ( Sink->Rebuilds[1], (Rebuilt{StateNode, {At(6,0,40), At(6,1,6)}}) );
+	}
 
 	//A Modification is placed by the time it targets:  in the open interval the tallies are made again, in a written one it is a rebuild.
 	TEST_F( Streams, ModificationByTheTimeItTargets ){

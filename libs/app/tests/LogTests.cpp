@@ -358,6 +358,20 @@ namespace Jde::App::Tests{
 		}
 	}
 
+	//A size flush after StopTimer ran on an executor that could already be gone:  its write never resumed, and ~ProtoLog waited for
+	//it until the shutdown watchdog ended Jde.App.Tests with every test passed.  Once stopped, the buffer waits for Shutdown.
+	TEST_F( DailyFileDayTests, NoSizeFlushOnceStopped ){
+		let log = Make();
+		log->StopTimer();
+		for( uint i=0; i<400; ++i )
+			log->Write( Logging::Entry{SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("stopped filler {}", i)} );
+		ASSERT_GT( log->BufferSize(), 8096u ) << "past the size trigger, and nothing flushed";
+		log->Shutdown( false, SRCE_CUR );
+		EXPECT_EQ( log->BufferSize(), 0u );
+		std::error_code ec;
+		EXPECT_GT( fs::file_size(log->DailyFile(), ec), 0u ) << "Shutdown wrote the buffer:  " << ec.message();
+	}
+
 	//M9: ProtoLog had no destructor, so tearing one down with its flush timer armed left StartTimer's continuation pointing at
 	//freed memory - the cancelled wait completes on the io thread and resumes into it.  ASan reported it as a heap-use-after-free
 	//in DurationTimer::await_resume about `delay` after the write.  A short delay so the timer is genuinely in flight, and a loop

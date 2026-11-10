@@ -139,7 +139,9 @@ namespace Jde::App{
 		AddArguments( e.Arguments, fileEntry.entry().args() );
 		Add( move(fileEntry) );
 		let firstDrop = Cap();//M5: the buffer grows between retries too, not only on the failures themselves.
-		if( _toSaveBytes>=_delaySize && !_flushFailed )
+		//Once stopped, the buffer waits for Shutdown, which writes it itself:  a flush started now can suspend on an executor
+		//already gone, never to resume, and ~ProtoLog waits for it until the shutdown watchdog ends the process.
+		if( _toSaveBytes>=_delaySize && !_flushFailed && !Stopping() )
 			Save();//unlocks _mutex.
 		else{
 			ArmTimer();

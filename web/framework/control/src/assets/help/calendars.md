@@ -1,6 +1,11 @@
 # Shift calendars
 
-A plant does not run around the clock. A **calendar** says when it is planned to run: a time zone, the start of its production day, its shifts, and the holidays and extra days laid over them.
+A plant does not run around the clock. A **calendar** says when it is planned to run. It holds:
+
+- a time zone
+- the start of its production day
+- its shifts
+- the holidays and extra days laid over them
 
 Calendars belong to the application server and are shared. Every gateway that connects to it plans by the same ones.
 
@@ -17,7 +22,7 @@ Saving a new calendar makes its first pattern, ready for its shifts.
 
 Shift times are wall-clock times in the zone, so a shift that starts at 06:00 starts at 06:00 on both sides of a clock change. The shift that spans the change is an hour short or long, as the crew's night was.
 
-A value the server refuses, a zone it does not know, shows under the form.
+When the server refuses a value, such as a zone it does not know, the reason shows under the form.
 
 ### The production day
 
@@ -34,6 +39,13 @@ Changing the zone or the day start keeps each pattern's date and each exception 
 A **pattern** is the calendar's shifts from a date. It is in effect from that date until the next pattern's. The first pattern has no date: it is in effect from the beginning.
 
 The **Pattern** tab lists the patterns and shows one of them on the grid.
+
+Each row gives the pattern's first day, its cycle and its status:
+
+- **In effect** - the pattern that applies now.
+- **Upcoming** - from a date still to come.
+- **Replaced** - a later pattern has taken over.
+- **Deleted** - shown with **Show deleted** on.
 
 **Pattern on** picks it by date: the pattern in effect on that production day. It starts on today. **Today** goes back to it.
 
@@ -115,10 +127,10 @@ An **exception** is a dated range that changes planned time:
 
 Where a closed and an open exception meet, closed wins.
 
-**Add exception** and the edit button open its form. The range is entered one of two ways:
+**Add exception** and the edit button open its form. The **Whole days** box picks how the range is entered:
 
-- **Whole days** - a first and a last day. Each is a production day, from its day start to the next day's.
-- A **start** and an **end** to the minute, for a half day.
+- Checked - a **First day** and a **Last day**. Each is a production day, from its day start to the next day's.
+- Cleared - a **Start** and an **End** to the minute, for a half day.
 
 Both are the calendar's wall clock, whatever zone your browser is in. The line under the fields shows the range as it will be saved.
 
@@ -138,7 +150,7 @@ Use it to check a holiday week, or the week of a clock change, before a report d
 
 Bars are placed by the wall clock. On the night the clocks change, a shift is as tall as on any other night, and the bar says how long it really ran: `7 h, clock change`.
 
-The preview reads the week again each time the tab is opened.
+The preview reads the week again each time the tab is opened. **Refresh** reads it again in place, with the exceptions.
 
 ## Deleting a calendar
 

@@ -38,13 +38,6 @@ namespace Jde::Opc::Oee{
 		};
 
 		constexpr α bit( ERole role )ι->uint8{ return (uint8)( 1u<<(uint8)role ); }
-		Ω primaryTime( const Hist::Proto::DataValue& v )ι->optional<TimePoint>{
-			if( v.has_source_ts() )
-				return UADateTime{ UA_DateTime{v.source_ts()} }.Time();
-			if( v.has_server_ts() )
-				return UADateTime{ UA_DateTime{v.server_ts()} }.Time();
-			return nullopt;
-		}
 		Ω reading( const Hist::Proto::DataValue& v )ι->Reading{
 			if( !v.has_value() )
 				return {};
@@ -174,6 +167,11 @@ namespace Jde::Opc::Oee{
 			}
 		}
 		_widths.emplace_back( TimePoint::min(), _config.Width );
+		for( let& [from, width] : opening.Widths ){
+			ValidateWidth( width, sl );
+			THROW_IFSL( from<=_widths.back().first || from<=opening.From, "Opening::Widths must be in time order, after From:  {} follows {}.", ToIsoString(from), ToIsoString(_widths.back().first) );
+			_widths.emplace_back( from, width );
+		}
 		auto& c = _core;
 		let from = opening.From;
 		c.At = c.Since = from;
@@ -181,7 +179,7 @@ namespace Jde::Opc::Oee{
 		optional<EState> state;
 		for( let& b : opening.Bounds ){
 			let p = _roles.find( b.node_index() );
-			let t = primaryTime( b ).value_or( from );
+			let t = PrimaryTime( b ).value_or( from );
 			if( p==_roles.end() || b.status()==UA_STATUSCODE_BADBOUNDNOTFOUND || t>from )//a bounded read's closing bound is not the opening's.
 				continue;
 			_pruned[b.node_index()] = t;
@@ -312,7 +310,7 @@ namespace Jde::Opc::Oee{
 		for( let& v : page ){
 			if( v.Bound || v.Value.has_heartbeat() || !_roles.contains(v.Value.node_index()) )
 				continue;
-			if( let t = primaryTime(v.Value); t )
+			if( let t = PrimaryTime(v.Value); t )
 				Place( sample(v.Value, *t) );
 		}
 		Run();
@@ -373,7 +371,7 @@ namespace Jde::Opc::Oee{
 			if( r.has_modification() )
 				Modify( r.modification() );
 			else if( r.has_value() && !r.value().has_heartbeat() && _roles.contains(r.value().node_index()) ){//a heartbeat repeats a value and changes nothing.
-				let t = primaryTime( r.value() );
+				let t = PrimaryTime( r.value() );
 				if( !t )
 					continue;
 				if( arrival && IsGood(r.value().status()) )
@@ -435,12 +433,13 @@ namespace Jde::Opc::Oee{
 		let next = std::ranges::find_if( _samples, [&, horizon=Horizon()]( const Sample& s ){ return s.Node==node && s.Time>t && s.Time<=horizon; } );
 		Ask( node, {t, next==_samples.end() ? Now() : next->Time} );
 	}
+	//One per record:  the host narrows each to its node's next stored record, which a span merged from two would cut at the second.
 	α Engine::Impl::Ask( uint32 node, Span span )ι->void{
-		let p = std::ranges::find( _rebuilds, node, &std::pair<uint32,Span>::first );
+		let p = std::ranges::find_if( _rebuilds, [&]( let& r ){ return r.first==node && r.second.Start==span.Start; } );
 		if( p==_rebuilds.end() )
 			_rebuilds.emplace_back( node, span );
 		else
-			p->second = { std::min(p->second.Start, span.Start), std::max(p->second.End, span.End) };
+			p->second.End = std::max( p->second.End, span.End );
 	}
 	α Engine::Impl::Run()ι->void{
 		if( let t = std::exchange(_dirty, nullopt); t )
@@ -729,4 +728,13 @@ namespace Jde::Opc::Oee{
 	α Engine::End()ι->void{ _impl->End(); }
 	α Engine::State()Ι->LiveState{ return _impl->State(); }
 	α Engine::Processed()Ι->TimePoint{ return _impl->Processed(); }
+}
+namespace Jde::Opc{
+	α Oee::PrimaryTime( const Hist::Proto::DataValue& v )ι->optional<TimePoint>{
+		if( v.has_source_ts() )
+			return UADateTime{ UA_DateTime{v.source_ts()} }.Time();
+		if( v.has_server_ts() )
+			return UADateTime{ UA_DateTime{v.server_ts()} }.Time();
+		return nullopt;
+	}
 }
