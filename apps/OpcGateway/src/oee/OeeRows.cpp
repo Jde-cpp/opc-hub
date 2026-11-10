@@ -53,6 +53,8 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 	Ω ticks( const DB::Row& r, uint i )ι->TimePoint{ return UADateTime{ UA_DateTime{r.Get<int64_t>(i)} }.Time(); }
+	constexpr sv _codingColumns{ "oee_coding_id, start, finish, oee_reason_id, comment, user_name, created, oee_machine_id" };
+	Ω text( sv value )ι->DB::Value{ return value.empty() ? DB::Value{} : DB::Value{ string{value} }; }//the QL engine's rule:  an empty string is null.
 }
 namespace Jde::Opc{
 	α Gateway::ToSignals( const vector<OeeSignalRow>& rows )ι->vector<Oee::Signal>{
@@ -145,6 +147,44 @@ namespace Jde::Opc{
 		return { .Start=ticks(r, 0), .End=r.IsNull(1) ? nullopt : optional<TimePoint>{ticks(r, 1)}, .Code=r.GetOpt<int64_t>(2), .Unknown=r.GetBit(3), .Id=r.Get<uint32>(4) };
 	}
 	α Gateway::OeeSql::ToTime( const DB::Row& r, uint i )ι->TimePoint{ return ticks( r, i ); }
+	α Gateway::OeeSql::SelectIntervalRows( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{
+		return { Ƒ("select start, ms, run, stop, unknown, total, good, reject from {} where oee_machine_id=? and start<? and start+ms*?>? order by start", name(OeeTable::Intervals)), {DB::Value{(uint)machine}, OeeTicks(span.End), DB::Value{(_int)10000}, OeeTicks(span.Start)} };
+	}
+	α Gateway::OeeSql::ToInterval( const DB::Row& r )ι->Oee::Interval{
+		return { .Start=ticks(r, 0), .Width=fromMs(r.Get<uint32>(1)), .Run=fromMs(r.Get<uint32>(2)), .Stop=fromMs(r.Get<uint32>(3)), .Unknown=fromMs(r.Get<uint32>(4)), .Total=r.Get<double>(5), .Good=r.Get<double>(6), .Reject=r.Get<double>(7) };
+	}
+	α Gateway::OeeSql::SelectReasons()ε->DB::Sql{
+		return { Ƒ("select oee_reason_id, name, category, code, deleted from {}", name(OeeTable::Reasons)) };
+	}
+	α Gateway::OeeSql::SelectReason( uint32 id )ε->DB::Sql{
+		return { Ƒ("select oee_reason_id, name, category, code, deleted from {} where oee_reason_id=?", name(OeeTable::Reasons)), {DB::Value{(uint)id}} };
+	}
+	α Gateway::OeeSql::ToReason( const DB::Row& r )ι->Oee::Reason{
+		return { .Id=r.Get<uint32>(0), .Name=r.GetString(1), .Category=Oee::ToCategory(r.GetString(2)).value_or(Oee::ECategory::Unplanned), .Code=r.GetOpt<int64_t>(3) };
+	}
+	α Gateway::OeeSql::SelectCodingsOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{
+		return { Ƒ("select {} from {} where oee_machine_id=? and start<? and finish>? order by start", _codingColumns, name(OeeTable::Codings)), {DB::Value{(uint)machine}, OeeTicks(span.End), OeeTicks(span.Start)} };
+	}
+	α Gateway::OeeSql::SelectCodingAt( OeeMachinePK machine, TimePoint start )ε->DB::Sql{
+		return { Ƒ("select {} from {} where oee_machine_id=? and start=?", _codingColumns, name(OeeTable::Codings)), {DB::Value{(uint)machine}, OeeTicks(start)} };
+	}
+	α Gateway::OeeSql::SelectCoding( uint32 id )ε->DB::Sql{
+		return { Ƒ("select {} from {} where oee_coding_id=?", _codingColumns, name(OeeTable::Codings)), {DB::Value{(uint)id}} };
+	}
+	α Gateway::OeeSql::ToCoding( const DB::Row& r )ι->OeeCodingRow{
+		return { .Value={.Id=r.Get<uint32>(0), .Start=ticks(r, 1), .End=ticks(r, 2), .ReasonId=r.Get<uint32>(3), .Comment=r.GetString(4), .UserName=r.GetString(5)}, .Machine=r.Get<uint32>(7), .Created=timeCell(r, 6).value_or(TimePoint{}) };
+	}
+	α Gateway::OeeSql::InsertCoding( OeeMachinePK machine, Oee::Span span, uint32 reason, sv comment, uint32 identity, sv userName, TimePoint now )ε->DB::Sql{
+		return { Ƒ("insert into {}( oee_machine_id, start, finish, oee_reason_id, comment, identity_id, user_name, created ) values( ?, ?, ?, ?, ?, ?, ?, ? )", name(OeeTable::Codings)),
+			{DB::Value{(uint)machine}, OeeTicks(span.Start), OeeTicks(span.End), DB::Value{(uint)reason}, text(comment), DB::Value{(uint)identity}, DB::Value{string{userName}}, DB::Value{DB::DBTimePoint{now}}} };
+	}
+	α Gateway::OeeSql::UpdateCoding( uint32 id, TimePoint finish, uint32 reason, sv comment, uint32 identity, sv userName, TimePoint now )ε->DB::Sql{
+		return { Ƒ("update {} set finish=?, oee_reason_id=?, comment=?, identity_id=?, user_name=?, created=? where oee_coding_id=?", name(OeeTable::Codings)),
+			{OeeTicks(finish), DB::Value{(uint)reason}, text(comment), DB::Value{(uint)identity}, DB::Value{string{userName}}, DB::Value{DB::DBTimePoint{now}}, DB::Value{(uint)id}} };
+	}
+	α Gateway::OeeSql::DeleteCoding( uint32 id )ε->DB::Sql{
+		return { Ƒ("delete from {} where oee_coding_id=?", name(OeeTable::Codings)), {DB::Value{(uint)id}} };
+	}
 	α Gateway::OeeSql::CountCodings( uint32 reason )ε->DB::Sql{
 		return { Ƒ("select count(*) from {} where oee_reason_id=?", name(OeeTable::Codings)), {DB::Value{(uint)reason}} };
 	}

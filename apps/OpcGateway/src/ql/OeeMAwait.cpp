@@ -9,6 +9,7 @@
 #include "../hist/HistHost.h"
 #include "../oee/OeeHost.h"
 #include "HistGroupQLAwait.h"
+#include "OeeQLAwait.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -19,7 +20,7 @@ namespace Jde::Opc::Gateway{
 
 	α OeeMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
 		using enum EMutationQL;
-		if( m.CommandName==RecomputeCommand )
+		if( m.CommandName==RecomputeCommand || m.CommandName==CodeCommand || m.CommandName==UncodeCommand )
 			return true;
 		let table = m.TableName();
 		if( table==Stops || table==Intervals || table==Codings )
@@ -168,6 +169,57 @@ namespace Jde::Opc::Gateway{
 				HistHost::Instance().Gate( machines.front().Group, Access::ERights::Read, false, UserPK(), sl );
 				host.Recompute( machineId, span, sl );
 				Resume( jobject{ {"machine", machineId}, {"start", ToIsoString(span.Start)}, {"end", ToIsoString(span.End)} } );
+				co_return;
+			}
+			if( _query.CommandName==CodeCommand ){
+				GetViewPtr( Codings )->Authorize( Access::ERights::Update, UserPK(), sl );//the table's, which an unenforced resource passes, before a caller learns of an id.
+				let machineId = _query.AsNumber<OeeMachinePK>( "machine", sl );
+				const Oee::Span span{ OeeQL::Time(_query, "start", sl), OeeQL::Time(_query, "end", sl) };
+				REFUSE_IF( span.Start>=span.End, "start, {}, must be before end, {}.", OeeQL::Iso(span.Start), OeeQL::Iso(span.End) );
+				let reasonId = _query.TryNumber<uint32>( "reason" );
+				REFUSE_IF( !reasonId, "reason is required, an oee_reasons id." );
+				let commented = _query.FindPtr( "comment" );
+				REFUSE_IF( commented && !commented->is_null() && !commented->is_string(), "comment is text, not {}.", serialize(*commented) );
+				let comment = commented && commented->is_string() ? sv{ commented->get_string() } : sv{};
+				REFUSE_IF( comment.size()>2048, "comment is {} characters, over the column's 2048.", comment.size() );
+				let machine = host.Find( machineId );
+				if( !machine )
+					notFound( Ƒ("Machine {} not found.", machineId), sl );
+				HistHost::Instance().Gate( machine->Row.Group, Access::ERights::Read, false, UserPK(), sl );
+				auto reasons = co_await Any( DS()->SelectAsync(OeeSql::SelectReason(*reasonId)) );
+				if( reasons.empty() )
+					notFound( Ƒ("Reason {} not found.", *reasonId), sl );
+				let reason = OeeSql::ToReason( reasons.front() );
+				REFUSE_IF( !reasons.front().IsNull(4), "Reason '{}' is deleted:  it keeps resolving the stops it coded, and codes no more.", reason.Name );
+				optional<OeeCodingRow> same;//the coding at the same start, which this replaces.
+				for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectCodingsOver(machineId, span))) ){
+					auto other = OeeSql::ToCoding( row );
+					REFUSE_IF( other.Value.Start!=span.Start, "Coding {} already covers {} to {} of machine '{}':  a machine's codings don't overlap.  Code around it, or uncodeOee it first.", other.Value.Id, OeeQL::Iso(other.Value.Start), OeeQL::Iso(other.Value.End), machine->Row.Name );
+					same = move( other );
+				}
+				let by = HistHost::Instance().Writer( UserPK() );
+				let identity = (uint32)std::min<uint64_t>( by.IdentityId.Value, std::numeric_limits<uint32_t>::max() );//System, wider on Linux, as the historian stores it.
+				let clock = host.Time();
+				let now = clock ? clock->Now() : Clock::now();
+				if( same )
+					co_await Any( DS()->Execute(OeeSql::UpdateCoding(same->Value.Id, span.End, *reasonId, comment, identity, by.UserName, now)) );
+				else
+					co_await Any( DS()->Execute(OeeSql::InsertCoding(machineId, span, *reasonId, comment, identity, by.UserName, now)) );
+				auto written = co_await Any( DS()->SelectAsync(OeeSql::SelectCodingAt(machineId, span.Start)) );
+				THROW_IFSL( written.empty(), "codeOee wrote no coding at {} of machine {}.", OeeQL::Iso(span.Start), machineId );
+				Resume( _query.ResultRequest ? jvalue{OeeQL::Trim(*_query.ResultRequest, OeeQL::CodingJson(OeeSql::ToCoding(written.front()), &reason))} : jvalue{} );
+				co_return;
+			}
+			if( _query.CommandName==UncodeCommand ){
+				GetViewPtr( Codings )->Authorize( Access::ERights::Delete, UserPK(), sl );
+				let id = _query.AsNumber<uint32>( "id", sl );
+				auto rows = co_await Any( DS()->SelectAsync(OeeSql::SelectCoding(id)) );
+				let machine = rows.empty() ? optional<OeeHost::Machine>{} : host.Find( OeeSql::ToCoding(rows.front()).Machine );
+				if( !machine )
+					notFound( Ƒ("Coding {} not found.", id), sl );
+				HistHost::Instance().Gate( machine->Row.Group, Access::ERights::Read, false, UserPK(), sl );
+				co_await Any( DS()->Execute(OeeSql::DeleteCoding(id)) );
+				Resume( jobject{ {"id", id} } );
 				co_return;
 			}
 			let type = _query.Type;

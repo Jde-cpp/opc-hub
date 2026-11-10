@@ -34,6 +34,9 @@ namespace Jde::Opc::Gateway{
 	struct OeeSignalFilter final{ optional<OeeSignalPK> Id; optional<OeeMachinePK> Machine; };
 	α SelectOeeSignals( OeeSignalFilter filter={}, SRCE )ι->HistRowsAwait<OeeSignalRow>;
 
+	//An oee_codings row:  the coding, whose machine it is, and when it was made.
+	struct OeeCodingRow final{ Oee::Coding Value; OeeMachinePK Machine; TimePoint Created; };
+
 	//A time as the engine's tables hold it, UA ticks, and a machine's `processed`, a dateTime column, to the second.
 	α OeeTicks( TimePoint t )ι->DB::Value;
 	α OeeSecond( TimePoint t )ι->TimePoint;
@@ -61,6 +64,21 @@ namespace Jde::Opc::Gateway{
 		α SelectStopsOver( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql;
 		α ToStop( const DB::Row& row )ι->Oee::Stop;//SelectStopOver's.
 		α ToTime( const DB::Row& row, uint i )ι->TimePoint;//a cell of UA ticks.
+		//What the reads sum (spec *Reads*):  the interval rows that overlap [span.Start, span.End), by start, whole.
+		α SelectIntervalRows( OeeMachinePK machine, Oee::Span span )ε->DB::Sql;
+		α ToInterval( const DB::Row& row )ι->Oee::Interval;//SelectIntervalRows'.
+		α SelectReasons()ε->DB::Sql;//every reason, the deleted among them:  one keeps resolving.
+		α ToReason( const DB::Row& row )ι->Oee::Reason;//SelectReasons'.
+		α SelectReason( uint32 id )ε->DB::Sql;//SelectReasons' columns, then deleted.
+		//The codings, by start:  a machine's that overlap [span.Start, span.End), the one at a start, or a row by its id.
+		α SelectCodingsOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql;
+		α SelectCodingAt( OeeMachinePK machine, TimePoint start )ε->DB::Sql;
+		α SelectCoding( uint32 id )ε->DB::Sql;
+		α ToCoding( const DB::Row& row )ι->OeeCodingRow;//the three selects'.
+		//codeOee's and uncodeOee's:  the row's author and time are the caller's and now, never an argument's.
+		α InsertCoding( OeeMachinePK machine, Oee::Span span, uint32 reason, sv comment, uint32 identity, sv userName, TimePoint now )ε->DB::Sql;
+		α UpdateCoding( uint32 id, TimePoint finish, uint32 reason, sv comment, uint32 identity, sv userName, TimePoint now )ε->DB::Sql;
+		α DeleteCoding( uint32 id )ε->DB::Sql;
 		α CountCodings( uint32 reason )ε->DB::Sql;
 		α ReasonsCoded( int64_t code )ε->DB::Sql;//oee_reason_id, name, deleted.
 		α ReasonId( const DB::Key& key )ε->DB::Sql;

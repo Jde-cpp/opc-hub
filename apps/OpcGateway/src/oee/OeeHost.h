@@ -29,6 +29,7 @@ namespace Jde::Opc::Gateway{
 		α HolderOf( HistGroupPK group )Ι->optional<Machine>;//the machine over a group, a deleted one too:  its row holds the group.
 		α UserOf( HistGroupNodePK node )Ι->optional<Machine>;//a machine with a signal that names the member.
 		α Engine( OeeMachinePK id )Ι->sp<OeeMachineHost>;//none for a machine that isn't running.
+		α Blocked( const Machine& machine )Ι->string;//why the rows can't run, empty when they can.
 		//recomputeOee's (spec *The engine*):  the machine's rows over the span made again from the group's history, as a late record
 		//has them made (OeeMachineHost).  Queued:  the rebuild runs after the machine's writes, and a machine between engines -
 		//`settle` after an edit, a retry, a restart - holds it for the next.  NotFound for no machine, and a BadRequest for one
@@ -50,8 +51,6 @@ namespace Jde::Opc::Gateway{
 		//Pending:  the rebuilds the next engine runs once it starts, those an ended one left and a recomputeOee between engines.
 		struct Entry final{ Machine Rows; sp<OeeMachineHost> Engine; Hist::IClock::TimerId Timer{}; uint Serial{}; uint Read{}; Duration Offset{}; vector<OeeMachineHost::Ask> Pending; };
 		α Loading( AnyVoidAwait& await )ι->VoidTask;
-		//Why the rows can't run, empty when they can.
-		α Blocked( const Machine& machine )Ι->string;
 		//Under _mutex:  `id`'s engine starts after `after`, in place of any start it was waiting for.
 		α Schedule( OeeMachinePK id, Entry& entry, Duration after )ι->void;
 		//The rows read again, since `processed` moves under a running engine, and the engine made and started when they can run.

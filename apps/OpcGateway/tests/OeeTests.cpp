@@ -4,9 +4,13 @@
 //a marker, the idle detection and recomputeOee, each making the rows it touches again.  A shift's cases run as a backfill:  the
 //records written with past source times before the machine is made, so the replay, where the stream is the clock, closes every
 //interval at once;  the clock's cases run on the manual clock the suite hands the host, which each test makes anew at the wall clock's time.
+//Phase 4 (#402), the reads and the codings (*Reads*, *Reasons and codings*, *Authorization*):  oee, oeeStops, oeeLosses,
+//oeeTimeline and oeeMachineStatus over a written shift under a calendar made on the AppServer, codeOee and uncodeOee, and the gates.
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/settings.h>
+#include <jde/ql/ql.h>
 #include <jde/opc/uatypes/DateTime.h>
+#include <jde/calendar/client/Calendars.h>
 #include "utils/HistGroupFixture.h"
 #include "../src/oee/OeeHost.h"
 #include "../../../libs/historian/tests/ManualClock.h"
@@ -251,6 +255,44 @@ namespace Jde::Opc::Gateway::Tests{
 			sp<HistGroupHost> GroupHost;
 			uint ItemsBefore{};
 		};
+
+		//A calendar on the AppServer, in UTC, its one shift every day from `start`'s minute for `length`, once the gateway's client
+		//holds it;  one an earlier run left is purged first.
+		Ω ShiftCalendar( sv slug, TimePoint start, uint length )ε->uint32{
+			namespace Calendars = Calendar::Client::Calendars;
+			for( let& v : AppClient()->QuerySync<jarray>(Ƒ(R"(calendars( slug:"{}" ){{ id }})", slug), {}) )
+				PurgeCalendar( QL::AsId<uint32>(v) );
+			let id = QL::AsId<uint32>( AppClient()->QuerySync<jobject>(Ƒ(R"(createCalendar( name:"{0}", slug:"{0}", timeZone:"UTC", dayStart:0 ){{ id }})", slug), {}) );
+			sp<const Calendar::Schedule> held;
+			THROW_IF( !WaitUntil([&]{ held = Calendars::Find( id ); return held && held->Patterns().size()==1; }, 15s), "The gateway never held calendar {}.", id );
+			let ofDay = duration_cast<minutes>( start-floor<days>(start) ).count();
+			AppClient()->QuerySync<jobject>( Ƒ(R"(createCalendarShift( calendarPatternId:{}, name:"Written", days:127, start:{}, minutes:{} ){{ id }})", held->Patterns().front().Id, ofDay, length), {} );
+			THROW_IF( !WaitUntil([&]{ held = Calendars::Find( id ); return held && held->Patterns().size()==1 && held->Patterns().front().Shifts.size()==1; }, 15s), "The gateway never held calendar {}'s shift.", id );
+			return id;
+		}
+		Ω PurgeCalendar( uint32 id )ι->void{
+			try{
+				AppClient()->QuerySync<jvalue>( Ƒ("purgeCalendar( id:{} )", id), {} );
+			}
+			catch( const std::exception& e ){
+				ADD_FAILURE() << "purgeCalendar(" << id << "):  " << e.what();
+			}
+		}
+		Ω Number( const jobject& o, sv key )ε->double{ return Json::AsNumber<double>( o, key ); }
+		Ω At( const jobject& o, sv key )ε->TimePoint{ return Chrono::ToTimePoint( string{Json::AsSV(o, key)} ); }
+		//A reason with no code, purged as the returned cleanup goes, its codings first.
+		Ω Reason( sv slug, sv category )ε->uint32{
+			return HistGroupFixture::Id( Mutate("createOeeReason( name:$name, slug:$slug, category:$category ){ id }", {{"name", slug}, {"slug", slug}, {"category", category}}) );
+		}
+		Ω PurgeReason( uint32 id )ι->void{
+			try{
+				DS()->ExecuteSync( {Ƒ("delete from {} where oee_reason_id=?", GetViewPtr(OeeTable::Codings)->SqlName()), {DB::Value{(uint)id}}} );
+				Mutate( "purgeOeeReason( id:$id )", {{"id", id}} );
+			}
+			catch( const std::exception& e ){
+				ADD_FAILURE() << "purgeOeeReason(" << id << "):  " << e.what();
+			}
+		}
 
 		inline static sp<ManualClock> _clock;
 		inline static TimePoint _base;
@@ -895,5 +937,271 @@ namespace Jde::Opc::Gateway::Tests{
 		let rows = Intervals( id );
 		ExpectSame( rows, before );
 		ExpectNoOverlap( rows );
+	}
+
+	//The reads over the written shift (#402), under a calendar whose one shift is the shift's five minutes, with a small stop after
+	//it:  `oee` by shift against figures computed by hand - 300 s planned, the 90 s stop unplanned, 35 counted at a 3 s cycle, 2
+	//rejected;  the engine's tables refused a generic select;  `oeeStops` paged, newest first, and with `uncoded: true`;  a coding
+	//that splits the stop and the losses and figures after it, a replacement at the same start, one that would overlap refused, and
+	//a time to the tick;  `oeeTimeline`'s segments against the stops and codings;  uncodeOee;  the status;  a caller without Read on
+	//the group refused each;  and the machine with no calendar refusing `by: shift`.
+	TEST_F( OeeTests, TheReadsOverAWrittenShift ){
+		let t0 = Window();
+		Pump1Machine pump{ "oeeReads", t0-1min };
+		WriteShift( t0 );
+		WriteStatus( false, t0+380s );
+		WriteStatus( true, t0+410s );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Total), t0, 3 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::State), t0, 4 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Reason), t0, 2 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Reject), t0, 1 );
+		let calendar = ShiftCalendar( "oeeReads", t0, 5 );
+		absl::Cleanup purgeCalendar = [=]{ PurgeCalendar( calendar ); };
+		let id = pump.Create( t0, {ERole::State, ERole::Total, ERole::Reject, ERole::Reason}, {{"smallStop", 60000}, {"idealCycle", 3000.0}, {"calendarId", calendar}} );
+		WaitLive( id );
+		let read = [&]( sv ql, jobject more={} ){
+			jobject vars{ {"id", id}, {"start", Iso(t0)}, {"end", Iso(t0+8min)} };
+			for( let& [key,value] : more )
+				vars[key] = value;
+			return Mutate( ql, move(vars) );
+		};
+		constexpr sv figuresQL{ "oee( machine:$id, start:$start, end:$end, by:$by ){ start end shift planned run unplanned plannedStop small excluded unknown total good reject outside ideal availability performance quality oee teep measured partial }" };
+		let figures = [&]( jvalue by ){ return read( figuresQL, {{"by", move(by)}} ).as_array(); };
+
+		let shifts = figures( "shift" );
+		ASSERT_EQ( shifts.size(), 1u ) << serialize( shifts );
+		{
+			let& b = shifts[0].as_object();
+			EXPECT_EQ( Json::AsSV(b, "shift"), "Written" );
+			EXPECT_EQ( At(b, "start"), t0 );
+			EXPECT_EQ( At(b, "end"), t0+5min );
+			EXPECT_EQ( Number(b, "planned"), 300000 );
+			EXPECT_EQ( Number(b, "unplanned"), 90000 ) << "the stop, uncoded";
+			EXPECT_EQ( Number(b, "run"), 210000 );
+			for( sv none : {"plannedStop", "small", "excluded", "unknown", "outside"} )
+				EXPECT_EQ( Number(b, none), 0 ) << none;
+			EXPECT_EQ( Number(b, "total"), 35 );
+			EXPECT_EQ( Number(b, "good"), 33 );
+			EXPECT_EQ( Number(b, "reject"), 2 );
+			EXPECT_EQ( Number(b, "ideal"), 105000 );
+			EXPECT_NEAR( Number(b, "availability"), 0.7, 1e-9 );
+			EXPECT_NEAR( Number(b, "performance"), 0.5, 1e-9 );
+			EXPECT_NEAR( Number(b, "quality"), 33.0/35, 1e-9 );
+			EXPECT_NEAR( Number(b, "oee"), 0.7*0.5*33/35, 1e-9 );
+			EXPECT_NEAR( Number(b, "teep"), 0.7*0.5*33/35, 1e-9 ) << "the whole shift is planned";
+			EXPECT_EQ( b.at("measured"), (jarray{"availability", "performance", "quality"}) );
+			EXPECT_FALSE( Json::AsBool(b, "partial") );
+		}
+
+		for( sv query : {"oeeIntervals{ id }", "oeeInterval( id:1 ){ id }", "oeeCodings{ id }", "oeeStop( id:1 ){ id }", "oeeMachines{ id oeeStops{ id } }"} )
+			EXPECT_NE( Refused([&]{ Mutate( query ); }).find("no generic query"), string::npos ) << query;
+		EXPECT_NE( Refused([&]{ Mutate( "oeeStops{ stops{ id } }" ); }).find("machine"), string::npos );
+		EXPECT_EQ( Status([&]{ Mutate( "oeeLosses( machine:999999, start:$start, end:$end ){ ms }", {{"start", Iso(t0)}, {"end", Iso(t0+8min)}} ); }), EHttpStatus::NotFound );
+		EXPECT_NE( Refused([&]{ figures( "PT1S" ); }).find("minute"), string::npos );
+
+		constexpr sv stopsQL{ "oeeStops( machine:$id, start:$start, end:$end, limit:$limit, continuation:$continuation, uncoded:$uncoded ){ continuation stops{ id start end ms small open code uncoded reason{ id name category } codings{ id start end comment userName reason{ name } } machine{ id name } } }" };
+		let page = [&]( jvalue limit, jvalue continuation, jvalue uncoded ){ return read( stopsQL, {{"limit", move(limit)}, {"continuation", move(continuation)}, {"uncoded", move(uncoded)}} ).as_object(); };
+		let newest = page( 1, nullptr, nullptr );
+		ASSERT_EQ( Json::AsArray(newest, "stops").size(), 1u ) << serialize( newest );
+		{
+			let& stop = Json::AsArray( newest, "stops" )[0].as_object();
+			EXPECT_EQ( At(stop, "start"), t0+380s ) << "newest first";
+			EXPECT_EQ( At(stop, "end"), t0+410s );
+			EXPECT_EQ( Number(stop, "ms"), 30000 );
+			EXPECT_TRUE( Json::AsBool(stop, "small") );
+			EXPECT_FALSE( Json::AsBool(stop, "open") );
+			EXPECT_FALSE( Json::AsBool(stop, "uncoded") ) << "a small stop asks for no coding";
+			EXPECT_EQ( Json::AsNumber<uint32>(Json::AsObject(stop, "machine"), "id"), id );
+		}
+		ASSERT_TRUE( newest.at("continuation").is_string() ) << serialize( newest );
+		let older = page( 1, newest.at("continuation"), nullptr );
+		ASSERT_EQ( Json::AsArray(older, "stops").size(), 1u ) << serialize( older );
+		uint32 stopId{};
+		{
+			let& stop = Json::AsArray( older, "stops" )[0].as_object();
+			stopId = Json::AsNumber<uint32>( stop, "id" );
+			EXPECT_EQ( At(stop, "start"), t0+75s );
+			EXPECT_EQ( Number(stop, "ms"), 90000 );
+			EXPECT_FALSE( Json::AsBool(stop, "small") );
+			EXPECT_EQ( Number(stop, "code"), 7 );
+			EXPECT_TRUE( Json::AsBool(stop, "uncoded") );
+			EXPECT_TRUE( stop.at("reason").is_null() ) << "no reason has code 7";
+			EXPECT_TRUE( Json::AsArray(stop, "codings").empty() );
+		}
+		EXPECT_TRUE( older.at("continuation").is_null() ) << "the last page";
+		EXPECT_NE( Refused([&]{ page( 1, newest.at("continuation"), true ); }).find("continuation"), string::npos ) << "another read's";
+		EXPECT_EQ( Json::AsArray(page(nullptr, nullptr, nullptr), "stops").size(), 2u );
+		let uncodedStops = [&]{ return Json::AsArray( page(nullptr, nullptr, true), "stops" ).size(); };
+		EXPECT_EQ( uncodedStops(), 1u );
+
+		let jam = Reason( "oeeReadsJam", "Unplanned" );
+		absl::Cleanup purgeJam = [=]{ PurgeReason( jam ); };
+		let changeover = Reason( "oeeReadsChangeover", "Planned" );
+		absl::Cleanup purgeChangeover = [=]{ PurgeReason( changeover ); };
+		constexpr sv codeQL{ "codeOee( machine:$id, start:$start, end:$end, reason:$reason, comment:$comment ){ id start end comment userName time reason{ id name category } }" };
+		let code = [&]( string start, string end, uint32 reason, jvalue comment=nullptr ){ return Mutate( codeQL, {{"id", id}, {"start", move(start)}, {"end", move(end)}, {"reason", reason}, {"comment", move(comment)}} ).as_object(); };
+		let jammed = code( Iso(t0+75s), Iso(t0+120s), jam, "a jam" );
+		EXPECT_EQ( At(jammed, "start"), t0+75s );
+		EXPECT_EQ( At(jammed, "end"), t0+120s );
+		EXPECT_EQ( Json::AsSV(jammed, "comment"), "a jam" );
+		EXPECT_EQ( Json::AsSV(Json::AsObject(jammed, "reason"), "name"), "oeeReadsJam" );
+		EXPECT_FALSE( Json::AsSV(jammed, "userName").empty() ) << "stamped server-side";
+		let changed = code( Iso(t0+120s), Iso(t0+165s), changeover );
+		EXPECT_TRUE( changed.at("comment").is_null() );
+
+		let losses = [&]{ return read( "oeeLosses( machine:$id, start:$start, end:$end ){ kind ms stops reason{ id name category } }" ).as_array(); };
+		{
+			let rows = losses();
+			ASSERT_EQ( rows.size(), 2u ) << serialize( rows ) << " - the small stop is outside the shift";
+			for( uint i=0; i<2; ++i ){
+				let& row = rows[i].as_object();
+				EXPECT_EQ( Json::AsSV(row, "kind"), "reason" );
+				EXPECT_EQ( Number(row, "ms"), 45000 );
+				EXPECT_EQ( Number(row, "stops"), 1 );
+				EXPECT_EQ( Json::AsNumber<uint32>(Json::AsObject(row, "reason"), "id"), i==0 ? jam : changeover );
+			}
+			let all = figures( nullptr );
+			ASSERT_EQ( all.size(), 1u );
+			let& b = all[0].as_object();
+			EXPECT_TRUE( b.at("shift").is_null() );
+			EXPECT_EQ( Number(b, "planned"), 300000 );
+			EXPECT_EQ( Number(b, "unplanned"), 45000 );
+			EXPECT_EQ( Number(b, "plannedStop"), 45000 );
+			EXPECT_EQ( Number(b, "run"), 210000 ) << "a planned stop is no run time either";
+			EXPECT_NEAR( Number(b, "teep"), 0.7*0.5*33/35*300/480, 1e-9 ) << "over the range's eight minutes";
+		}
+		EXPECT_NE( Refused([&]{ code( Iso(t0+75s), Iso(t0+130s), jam ); }).find("overlap"), string::npos ) << "a replacement is checked against the others";
+		EXPECT_NE( Refused([&]{ code( Iso(t0+100s), Iso(t0+110s), changeover ); }).find("overlap"), string::npos );
+		EXPECT_NE( Refused([&]{ code( Iso(t0+200s), Iso(t0+200s), jam ); }).find("before end"), string::npos );
+		EXPECT_EQ( Status([&]{ code( Iso(t0+200s), Iso(t0+210s), 999999 ); }), EHttpStatus::NotFound );
+		let replaced = code( Iso(t0+75s), Iso(t0+100s), changeover, "not a jam" );
+		EXPECT_EQ( Json::AsNumber<uint32>(replaced, "id"), Json::AsNumber<uint32>(jammed, "id") ) << "the same start is the same coding";
+		{
+			let rows = losses();
+			ASSERT_EQ( rows.size(), 2u ) << serialize( rows );
+			EXPECT_EQ( Number(rows[0].as_object(), "ms"), 70000 ) << "the changeover's two codings";
+			EXPECT_EQ( Json::AsSV(rows[1].as_object(), "kind"), "uncoded" );
+			EXPECT_EQ( Number(rows[1].as_object(), "ms"), 20000 );
+		}
+		code( Iso(t0+75s), Iso(t0+120s), jam, "a jam" );
+		let fine = code( Iso(t0+200s).substr(0, 19)+".123456Z", Iso(t0+201s), jam );
+		EXPECT_EQ( At(fine, "start"), t0+200s+123456us ) << "a time goes out as it came in, finer than the millisecond";
+		Mutate( "uncodeOee( id:$id ){ id }", {{"id", Json::AsNumber<uint32>(fine, "id")}} );
+
+		let drawn = read( "oeeTimeline( machine:$id, start:$start, end:$end ){ machine{ id name } planned{ shift name start end breaks } segments{ start end state stop small uncoded reason{ name category } coding{ id comment userName } } }" ).as_array();
+		ASSERT_EQ( drawn.size(), 1u );
+		{
+			let& planned = Json::AsArray( drawn[0].as_object(), "planned" );
+			ASSERT_EQ( planned.size(), 1u ) << serialize( planned );
+			EXPECT_EQ( Json::AsSV(planned[0].as_object(), "name"), "Written" );
+			EXPECT_EQ( At(planned[0].as_object(), "start"), t0 );
+			EXPECT_EQ( At(planned[0].as_object(), "end"), t0+5min );
+			struct Expected final{ seconds Start, End; sv State; sv Reason; };
+			const array<Expected,6> expected{ Expected{0s, 75s, "running", {}}, {75s, 120s, "stopped", "oeeReadsJam"}, {120s, 165s, "stopped", "oeeReadsChangeover"}, {165s, 380s, "running", {}}, {380s, 410s, "stopped", {}}, {410s, 480s, "running", {}} };
+			let& segments = Json::AsArray( drawn[0].as_object(), "segments" );
+			ASSERT_EQ( segments.size(), expected.size() ) << serialize( segments );
+			for( uint i=0; i<expected.size(); ++i ){
+				let& segment = segments[i].as_object();
+				EXPECT_EQ( At(segment, "start"), t0+expected[i].Start ) << i;
+				EXPECT_EQ( At(segment, "end"), t0+expected[i].End ) << i;
+				EXPECT_EQ( Json::AsSV(segment, "state"), expected[i].State ) << i;
+				EXPECT_EQ( segment.at("reason").is_null(), expected[i].Reason.empty() ) << i;
+				if( expected[i].Reason.size() )
+					EXPECT_EQ( Json::AsSV(Json::AsObject(segment, "reason"), "name"), expected[i].Reason ) << i;
+			}
+			EXPECT_EQ( Json::AsNumber<uint32>(segments[1].as_object(), "stop"), stopId );
+			EXPECT_EQ( Json::AsNumber<uint32>(segments[2].as_object(), "stop"), stopId ) << "one stop, cut where its codings split it";
+			EXPECT_EQ( Json::AsSV(Json::AsObject(segments[1].as_object(), "coding"), "comment"), "a jam" );
+			EXPECT_TRUE( Json::AsBool(segments[4].as_object(), "small") );
+			EXPECT_TRUE( Json::AsBool(segments[4].as_object(), "uncoded") );
+			EXPECT_TRUE( segments[0].as_object().at("stop").is_null() );
+		}
+
+		EXPECT_EQ( uncodedStops(), 0u ) << "coded whole";
+		{
+			let coded = page( 1, newest.at("continuation"), nullptr );
+			let& stop = Json::AsArray( coded, "stops" )[0].as_object();
+			EXPECT_EQ( Json::AsArray(stop, "codings").size(), 2u );
+			EXPECT_TRUE( stop.at("reason").is_null() ) << "two reasons, so none is the stop's";
+			EXPECT_FALSE( Json::AsBool(stop, "uncoded") );
+		}
+		let uncoded = Mutate( "uncodeOee( id:$id ){ id }", {{"id", Json::AsNumber<uint32>(changed, "id")}} );
+		EXPECT_EQ( Json::AsNumber<uint32>(Json::AsObject(uncoded), "id"), Json::AsNumber<uint32>(changed, "id") );
+		EXPECT_EQ( uncodedStops(), 1u );
+		EXPECT_EQ( Status([&]{ Mutate( "uncodeOee( id:$id ){ id }", {{"id", Json::AsNumber<uint32>(changed, "id")}} ); }), EHttpStatus::NotFound );
+
+		constexpr sv statusQL{ "oeeMachineStatus( machine:$id ){ machine{ id name } enabled calendar calendarId processed engine why state }" };
+		{
+			let status = Mutate( statusQL, {{"id", id}} ).as_object();
+			EXPECT_TRUE( Json::AsBool(status, "enabled") );
+			EXPECT_EQ( Json::AsSV(status, "calendar"), "found" );
+			EXPECT_EQ( Json::AsNumber<uint32>(status, "calendarId"), calendar );
+			EXPECT_EQ( Json::AsSV(status, "engine"), "live" );
+			EXPECT_EQ( Json::AsSV(status, "state"), "running" );
+			EXPECT_GE( At(status, "processed"), t0+8min );
+			EXPECT_TRUE( status.at("why").is_null() );
+		}
+
+		{//the group's own row grants the suite's user no Read:  each read and the coding are refused, the status too.
+			auto enforced = EnforcedHistGroups();
+			ScopeHistGroup( pump.Group, Access::ERights::None );
+			absl::Cleanup unscope = [&]{ try{ UnscopeHistGroup( pump.Group ); }catch( const std::exception& e ){ ADD_FAILURE() << "the group's resource wasn't deleted:  " << e.what(); } };
+			EXPECT_EQ( Status([&]{ figures( nullptr ); }), EHttpStatus::Forbidden );
+			EXPECT_EQ( Status([&]{ page( nullptr, nullptr, nullptr ); }), EHttpStatus::Forbidden );
+			EXPECT_EQ( Status([&]{ losses(); }), EHttpStatus::Forbidden );
+			EXPECT_EQ( Status([&]{ Mutate( statusQL, {{"id", id}} ); }), EHttpStatus::Forbidden );
+			EXPECT_EQ( Status([&]{ code( Iso(t0+120s), Iso(t0+165s), changeover ); }), EHttpStatus::Forbidden ) << "a coding is only put on a stop its author may see";
+			EXPECT_EQ( Status([&]{ Mutate( "uncodeOee( id:$id ){ id }", {{"id", Json::AsNumber<uint32>(jammed, "id")}} ); }), EHttpStatus::Forbidden );
+		}
+		EXPECT_EQ( uncodedStops(), 1u ) << "nothing was coded past the gate";
+
+		Mutate( "updateOeeMachine( id:$id, calendarId:$calendar )", {{"id", id}, {"calendar", nullptr}} );
+		EXPECT_NE( Refused([&]{ figures( "shift" ); }).find("no calendar"), string::npos );
+		EXPECT_EQ( figures("day").size(), 1u ) << "its days begin at midnight UTC:  " << Iso( t0 );
+		EXPECT_EQ( Json::AsSV(Mutate(statusQL, {{"id", id}}).as_object(), "calendar"), "none" );
+	}
+
+	//A shift boundary inside a row (#402, spec *Intervals*):  five-minute rows and a shift that begins two minutes into the first, so
+	//that row is split by time, its count taken as even across it - three fifths of its 50 are the shift's, with the next row's 20.
+	TEST_F( OeeTests, AShiftBoundaryInsideARow ){
+		let a = floor<duration<int64_t,std::ratio<300>>>( Window() )+5min;
+		Pump1Machine pump{ "oeeBoundary", a-1min };
+		WriteTotal( 150, a+1min );
+		WriteTotal( 170, a+6min );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Total), a, 2 );
+		let calendar = ShiftCalendar( "oeeBoundary", a+2min, 8 );
+		absl::Cleanup purgeCalendar = [=]{ PurgeCalendar( calendar ); };
+		let id = pump.Create( a, {ERole::State, ERole::Total}, {{"width", 300000}, {"idealCycle", 6000.0}, {"calendarId", calendar}} );
+		WaitLive( id );
+		let rows = Intervals( id );
+		EXPECT_EQ( Row(rows, a).Ms, 300000u );
+		EXPECT_EQ( Row(rows, a).Total, 50 );
+		EXPECT_EQ( Row(rows, a+5min).Total, 20 );
+		let figures = [&]( jvalue by ){
+			return Mutate( "oee( machine:$id, start:$start, end:$end, by:$by ){ start end planned run total outside ideal availability performance quality oee measured partial }", {{"id", id}, {"start", Iso(a)}, {"end", Iso(a+10min)}, {"by", move(by)}} ).as_array();
+		};
+		let shifts = figures( "shift" );
+		ASSERT_EQ( shifts.size(), 1u ) << serialize( shifts );
+		let& shift = shifts[0].as_object();
+		EXPECT_EQ( At(shift, "start"), a+2min );
+		EXPECT_EQ( At(shift, "end"), a+10min );
+		EXPECT_EQ( Number(shift, "planned"), 480000 );
+		EXPECT_EQ( Number(shift, "run"), 480000 );
+		EXPECT_NEAR( Number(shift, "total"), 50, 1e-9 ) << "30 of the first row's 50, and the second's 20";
+		EXPECT_NEAR( Number(shift, "outside"), 0, 1e-9 ) << "the bucket begins at the boundary";
+		EXPECT_EQ( Number(shift, "ideal"), 300000 );
+		EXPECT_NEAR( Number(shift, "availability"), 1, 1e-9 );
+		EXPECT_NEAR( Number(shift, "performance"), 0.625, 1e-9 );
+		EXPECT_TRUE( shift.at("quality").is_null() ) << "a Total alone measures none";
+		EXPECT_NEAR( Number(shift, "oee"), 0.625, 1e-9 );
+		EXPECT_EQ( shift.at("measured"), (jarray{"availability", "performance"}) );
+		let whole = figures( nullptr );
+		ASSERT_EQ( whole.size(), 1u );
+		EXPECT_NEAR( Number(whole[0].as_object(), "total"), 50, 1e-9 );
+		EXPECT_NEAR( Number(whole[0].as_object(), "outside"), 20, 1e-9 ) << "the first row's two minutes before the shift";
+		EXPECT_EQ( Number(whole[0].as_object(), "planned"), 480000 );
+		let widened = figures( "PT1M" );
+		ASSERT_EQ( widened.size(), 2u ) << "a duration under the rows' width is raised to it:  " << serialize( widened );
+		EXPECT_EQ( At(widened[1].as_object(), "start"), a+5min );
 	}
 }

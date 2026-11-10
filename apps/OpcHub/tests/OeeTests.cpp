@@ -23,5 +23,20 @@ namespace Jde::Opc::Hub::Tests{
 		catch( const Exception& e ){
 			EXPECT_EQ( e.HttpStatus(), EHttpStatus::NotFound ) << e.what();
 		}
+		try{//HubQL's query ladder calls Gateway::CustomQuery, whose OeeQLAwait refuses the engine's tables a generic select (#402).
+			Gateway::AppClient()->QuerySync<jarray>( R"(oeeIntervals{ id })", {} );
+			FAIL() << "a generic select of the engine's table was answered";
+		}
+		catch( const Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::BadRequest );
+			EXPECT_NE( string{e.what()}.find("no generic query"), string::npos ) << e.what();
+		}
+		try{//and the reads are system tables there too.
+			Gateway::AppClient()->QuerySync<jarray>( R"(oee( machine:999999, start:"2026-01-01T00:00:00Z", end:"2026-01-02T00:00:00Z" ){ oee })", {} );
+			FAIL() << "a machine that isn't there was read";
+		}
+		catch( const Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::NotFound ) << e.what();
+		}
 	}
 }

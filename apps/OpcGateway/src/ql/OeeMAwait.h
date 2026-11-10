@@ -23,9 +23,16 @@ namespace Jde::Opc::Gateway{
 	//engine*, *Authorization*):  the machine's rows over the span made again from the group's history (OeeHost::Recompute),
 	//for the caller with Update on oee_machines and Read on the machine's group through HistHost::Gate.  It answers once the
 	//rebuild is queued, not done.
+	//codeOee( machine, start, end, reason, comment ){ id start end reason{ id name category } comment userName time } and
+	//uncodeOee( id ){ id }, system mutations too (spec *Reasons and codings*, *Authorization*), so only a POST or the socket runs
+	//them:  an operator's reason over a range of the machine's time, and its removal.  codeOee needs Update on oee_codings and
+	//uncodeOee Delete, the table's, which an unenforced resource passes (*Open questions* #7), each with Read on the machine's
+	//group through HistHost::Gate.  A machine's codings do not overlap:  one that would is refused, but for the coding at the
+	//same start, which is replaced, checked against the others as an insert is.  The reason is one that isn't deleted, and the
+	//row's identity, name and time are the caller's and now, never an argument's.
 	struct OeeMAwait final : QL::IQLTableMutationExe{
 		using base = QL::IQLTableMutationExe;
-		static constexpr sv RecomputeCommand{ "recomputeOee" };
+		static constexpr sv RecomputeCommand{ "recomputeOee" }, CodeCommand{ "codeOee" }, UncodeCommand{ "uncodeOee" };
 		OeeMAwait( QL::MutationQL&& m, QL::Creds creds, SRCE )ι:base{ move(m), move(creds), sl }{}
 		Ω IsApplicable( const QL::MutationQL& m )ι->bool;
 		Ω Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
