@@ -5,7 +5,6 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatToolbar } from '@angular/material/toolbar';
-import { QLListSettingsFilter } from './ql-list-settings-filter/ql-list-settings-filter';
 import { QLListSettingsDisplay } from './ql-list-settings-display/ql-list-settings-display';
 import { QLListSettingsSort } from './ql-list-settings-sort/ql-list-settings-sort';
 import { View, ViewField } from '../../../../model/ql/view';
@@ -17,7 +16,7 @@ const tabKey = 'qlListSettings';
 @Component({
 	selector: 'ql-list-settings',
 	templateUrl: './ql-list-settings.html',
-	imports: [MatButtonModule, MatIcon, MatInputModule, MatSelectModule, MatTabsModule, MatToolbar, QLListSettingsFilter, QLListSettingsDisplay, QLListSettingsSort]
+	imports: [MatButtonModule, MatIcon, MatInputModule, MatSelectModule, MatTabsModule, MatToolbar, QLListSettingsDisplay, QLListSettingsSort]
 })
 export class QLListSettings implements OnInit{
 	ngOnInit(){
@@ -37,7 +36,6 @@ export class QLListSettings implements OnInit{
 			fields.push( new ViewField(field) );
 		view.fields = fields;
 		view.showSelector = displayCols[0].displayed;
-		view.fieldFilters = this.filter().fieldFilters();
 		view.sort = this.sort().dataSource.filter( s=>s.active ).map( s=>({active: s.active, direction: s.direction}) );
 		return view;
 	}
@@ -46,7 +44,6 @@ export class QLListSettings implements OnInit{
 	onNameFocus( event:FocusEvent ){ (<HTMLInputElement>event.target).select(); }//was `$event.target.select()` in the template, which type-checks only because EventTarget is loose there
 	excludedColumns = input<string[]>([]);
 	canDelete = input<boolean>( false );//ViewSet.canRemove, of the view
-	suggestions = input.required<Record<string,any[]>>();
 	schema = input.required<TableSchema>();
 	view = input.required<View>();
 	columns = input.required<Record<string,string>>();
@@ -57,7 +54,6 @@ export class QLListSettings implements OnInit{
 	onCancel = output<void>();
 
 	display = viewChild.required( QLListSettingsDisplay );
-	filter = viewChild.required( QLListSettingsFilter );
 	sort = viewChild.required( QLListSettingsSort );
 
 	name = signal<string>( null as any );

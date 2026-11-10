@@ -6,7 +6,6 @@ import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { IGraphQL } from '../../../services/graphql';
 import { CollectionItem, ListRoute, QLListData, QLListResolver } from '../../../services/ql-list-resolver';
 import { MetaObject } from '../../../model/ql/schema/meta-object';
-import { Operator } from '../../../model/ql/view';
 import { QLRow } from '../../../model/ql/slug-row';
 import { arraysEqual } from '../../../utils/utils';
 import { QLList } from '../list/ql-list';
@@ -82,8 +81,7 @@ export class QLSelector{
 			//A deleted identity is not something to add to a group, even where the collection's own list was last left on Deleted.
 			//Not offered rather than taken out of the set:  the set is the list page's too, and a first save from here writes it whole.
 			let data = await QLListResolver.data( this.ql(), ListRoute.find(collectionName, collections), this.#profileStore, this.#prefs, v=>!QLListResolver.isDeletedView(v) );
-			if( excludedIds.length )
-				data.fixedFilters = [{ field: data.schema.fields.find(f=>f.name=="id")!, filter: {operator: Operator.NotIn, value: excludedIds} }];
+			data.fixedFilter = QLSelector.fixedFilter( data, excludedIds );
 			data = await QLListResolver.load( this.ql(), data, null );
 			if( !this.#latest.is(load) )
 				return;
@@ -93,6 +91,13 @@ export class QLSelector{
 		catch( e ){
 			this.#snackbar.exception( "Could not load values", e );
 		}
+	}
+
+	//A pick list's own terms, anded with the view's as a repeated field is:  the ids it leaves out, and no deleted row, so
+	//`has:deleted` typed in its box lists nothing.  Not on a live toggle's list, where a deleted row is one switched off.
+	static fixedFilter( data:QLListData, excludedIds:number[] ):string{
+		const deleted = data.profile.routeDefault?.fields.find( f=>f.name=="deleted" );
+		return [...( excludedIds.length ? [`-id:${excludedIds.join( "," )}`] : [] ), ...( deleted && !deleted.liveToggle ? ["no:deleted"] : [] )].join( " " );
 	}
 
 	//the caller's ids as the row objects the list checks against.  A no-op when they already agree, which is the usual case:

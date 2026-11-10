@@ -1,7 +1,9 @@
+import { parseFilter } from 'jde-framework';
 import { OpcObject } from './node';
 import { NodeView } from './node-view';
 import { OpcError } from './opc-error';
 import { EAccess, ETypes } from './types';
+import { WatchView } from './watch-view';
 import { variable } from 'jde-opc/testing';
 
 const bad = 0x808C0000, uncertainHigh = 0x40940600;
@@ -142,6 +144,22 @@ describe( 'NodeView timestamp and browse columns', ()=>{
 	} );
 } );
 
+//reviews-issue/591-views-filter-box.md #1:  the fields' names were made from their QL names, so the filter box refused a column
+//named as its header reads - Reference Type was Ref Type, and the watch list's Revised was Revised Sampling
+describe( 'NodeView and WatchView column names', ()=>{
+	const unread = ( view:NodeView|WatchView, filter:string )=>parseFilter( filter, view.filterHost() ).errors.map( e=>e.message );
+	it( "are the page's headers, which the filter box reads", ()=>{
+		const node = NodeView.default();
+		expect( node.fields.map( f=>f.displayName ) ).toEqual( Object.values( NodeView.columns ) );
+		expect( unread( node, '"Reference Type":i=46 "Type Definition":i=58 refType:i=47' ) ).toEqual( [] );
+		expect( unread( node, '"Ref Type":i=46' ) ).toEqual( ["No field 'Ref Type'."] );
+		const watch = WatchView.default();
+		expect( watch.fields.map( f=>f.displayName ) ).toEqual( Object.values( WatchView.columns ) );
+		expect( unread( watch, "sampling:>100 revised:>100" ) ).toEqual( [] );
+		expect( watch.displayedColumns ).toEqual( ["connection", "node", "value", "status", "sampling", "revisedSampling", "filter"] );
+	} );
+} );
+
 //MVP first-run:  an identity with no role gets userAccessLevel 0 on every node, and the Snapshot cell showed a blank that
 //read as a null value.  A row the browse never gave a level is not a denial.
 describe( 'NodeView.readDenied', ()=>{
@@ -151,5 +169,50 @@ describe( 'NodeView.readDenied', ()=>{
 		expect( NodeView.readDenied(denied) ).toBe( true );
 		expect( NodeView.readDenied(readable) ).toBe( false );
 		expect( NodeView.readDenied(x()) ).toBe( false );//no level in the row
+	} );
+} );
+
+//#591:  the filter box's terms run over the cells (views spec *The filter box*)
+describe( 'NodeView filter', ()=>{
+	const kept = ( filter:string, ...nodes:ReturnType<typeof x>[] )=>{
+		const view = NodeView.default();
+		view.filter = filter;
+		expect( view.parsedFilter().errors, filter ).toEqual( [] );
+		return view.apply( nodes ).map( n=>n.name );
+	};
+	const named = ( name:string, json:object={} )=>variable( 1, name, json );
+	it( 'declares what its columns hold, and filters in the browser', ()=>{
+		const field = ( name:string )=>NodeView.schema.find( name );
+		expect( ["class", "dataType", "status"].map( n=>field(n).isEnum ) ).toEqual( [true, true, true] );
+		expect( ["sourceTime", "serverTime"].map( n=>field(n).isDateTime ) ).toEqual( [true, true] );
+		expect( ["id", "name", "snapshot", "access", "description"].map( n=>field(n).isString ) ).toEqual( [true, true, true, true, true] );
+		expect( NodeView.default().filterHost() ).toMatchObject( {server: false, enums: undefined} );
+	} );
+	it( 'compares a String column as numbers where both sides are, and as text otherwise', ()=>{
+		const nodes = [named( "nine", {value: 9} ), named( "ten", {value: 10} ), named( "text", {value: "b"} )];
+		expect( kept( "snapshot:>9", ...nodes ) ).toEqual( ["ten", "text"] );//10 is past 9 as a number, where the text "10" is before "9"
+		expect( kept( "snapshot:<=9", ...nodes ) ).toEqual( ["nine"] );
+		expect( kept( "snapshot:>a", ...nodes ) ).toEqual( ["text"] );
+	} );
+	it( 'matches no comparison on an empty cell, and keeps one under an exclusion', ()=>{
+		const nodes = [named( "empty" ), named( "five", {value: 5} )];
+		expect( kept( "snapshot:<9", ...nodes ) ).toEqual( ["five"] );
+		expect( kept( "snapshot:<=9", ...nodes ) ).toEqual( ["five"] );
+		expect( kept( "-snapshot:5", ...nodes ) ).toEqual( ["empty"] );
+		expect( kept( "no:snapshot", ...nodes ) ).toEqual( ["empty"] );
+	} );
+	it( 'reads a day on a time column as the whole of it, in local time', ()=>{
+		const at = ( name:string, source:Date )=>{ const v = named( name, {value: 1} ); v.setReading( {value: 1, sc: 0, source} ); return v; };
+		const nodes = [at( "eve", new Date(2026, 9, 8, 23, 59, 59, 999) ), at( "morning", new Date(2026, 9, 9, 0, 0) ), at( "night", new Date(2026, 9, 9, 23, 59, 59, 999) ), named( "never", {value: 1} )];
+		expect( kept( "sourceTime:2026-10-09", ...nodes ) ).toEqual( ["morning", "night"] );
+		expect( kept( '"source time":>2026-10-08', ...nodes ) ).toEqual( ["morning", "night"] );
+		expect( kept( "sourceTime:<=2026-10-08", ...nodes ) ).toEqual( ["eve"] );
+		expect( kept( "sourceTime:2026-10-08..2026-10-09", ...nodes ) ).toEqual( ["eve", "morning", "night"] );
+	} );
+	it( 'matches an enum cell exactly and a bare word in any text cell, whatever its case', ()=>{
+		const nodes = [named( "Pump", {value: 1} ), named( "valve", {value: "pumped"} ), named( "Tank" )];
+		expect( kept( "status:Good", ...nodes ) ).toEqual( ["Pump", "valve"] );
+		expect( kept( "status:good", ...nodes ) ).toEqual( [] );
+		expect( kept( "PUMP", ...nodes ) ).toEqual( ["Pump", "valve"] );
 	} );
 } );

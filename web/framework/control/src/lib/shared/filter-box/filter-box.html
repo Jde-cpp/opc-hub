@@ -1,0 +1,17 @@
+<mat-form-field class="filter" appearance="outline" subscriptSizing="dynamic" matAutocompleteOrigin #field="matAutocompleteOrigin"><!--the suggestions open under the whole field, so under what it says of a term it cannot read-->
+	<mat-icon matPrefix aria-hidden="true">filter_list</mat-icon>
+	<span class="typed">
+		<span class="marks" aria-hidden="true"><span class="run" [style.transform]="'translateX(' + -scroll() + 'px)'">@for( mark of marks(); track $index ){<span [class.bad]="mark.bad">{{ mark.text }}</span>}</span></span>
+		<input #box matInput type="text" autocomplete="off" spellcheck="false" aria-label="Filter" placeholder="Filter by keyword or by field"
+			[value]="text()" [matAutocomplete]="options" [matAutocompleteConnectedTo]="field"
+			(input)="onInput()" (keydown.enter)="onEnter($event)" (keyup)="onCaret()" (click)="onCaret()" (scroll)="onCaret()">
+	</span>
+	<mat-autocomplete #options="matAutocomplete" class="jde-filter-panel" panelWidth="auto" [displayWith]="display" (optionSelected)="onTaken($event.option.value)">
+		@for( suggestion of suggestions(); track suggestion.label ){
+			<mat-option [value]="suggestion">{{ suggestion.label }}</mat-option>
+		}
+	</mat-autocomplete>
+	@if( unread(); as message ){
+		<mat-error>{{ message }}</mat-error>
+	}
+</mat-form-field>

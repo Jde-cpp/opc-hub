@@ -12,7 +12,7 @@ export type ViewSetOptions<V extends View> = {
 	profileStore:ProfileStore;
 	prefs:LocalPrefs;
 	settings?:TableSettings;//the route's, which toJson leaves out of a saved view
-	offered?:( view:View )=>boolean;//false for a view this host does not show - a pick list's, of deleted rows.  It stays in the set, and in what is written.  Over View, not V:  on V a ViewSet<NodeView> would be no ViewSet<View>, which the toolbar takes.
+	offered?:( view:View )=>boolean;//false for a view this host does not show - a pick list's, of deleted rows.  It stays in the set, and in what is written.  Asked of a view as saved:  its draft shows wherever it does.  Over View, not V:  on V a ViewSet<NodeView> would be no ViewSet<View>, which the toolbar takes.
 };
 
 //The views a list offers, and the rules QLList, LogDetail, NodeChildren and the watch list share for them.
@@ -22,7 +22,7 @@ export type ViewSetOptions<V extends View> = {
 //highest.
 //A control changes a view by replacing it with its draft, an Adhoc twin under its number that takes the view's place among the
 //views:  one a view at most, kept when its tab is left, written over its view by a Save and dropped by a Discard, or by a change
-//that leaves it showing what its view does.  A draft the host would not offer shows its view as saved.  The drafts are the
+//that leaves it showing what its view does.  The drafts are the
 //browser's:  a draft changed is written to LocalPrefs under the user's key and the set's, by number and without the name, which is
 //the view's, the entry's other numbers left as another tab or a pick list wrote them;  a Save or a Delete takes the draft out of it
 //once the profile holds the change, so a failed write leaves it for a reload.  A read of the profile puts back those whose view is
@@ -389,8 +389,8 @@ export class ViewSet<V extends View>{
 		this.#publish();
 		this.#remember();
 	}
-	//The views shown:  the set's the host offers, a draft in its view's place where the host offers the draft too, on the selected
-	//one or else the first.  Where the host offers none of them it is the route's default view, under no number, so a Save adds it to
+	//The views shown:  the set's the host offers, each under its draft, on the selected one or else the first.  A draft is not asked
+	//about:  the filter box shows what it holds, and a pick list's fixed terms keep the deleted rows out whatever it filters on.  Where the host offers none of them it is the route's default view, under no number, so a Save adds it to
 	//the set.
 	#publish(){
 		let views = this.#offered ? this.#members.filter( this.#offered ) : [...this.#members];
@@ -401,10 +401,7 @@ export class ViewSet<V extends View>{
 		}
 		const index = Math.max( views.findIndex(v=>v.number==this.#selected), 0 );
 		this.#bare.set( views );
-		this.#shown.set( views.map( v=>{
-			const draft = this.#drafts.get( v.number );
-			return draft && ( !this.#offered || this.#offered(draft) ) ? draft : v;
-		} ) );
+		this.#shown.set( views.map( v=>this.#drafts.get( v.number ) ?? v ) );
 		this.#index.set( index );
 		this.#selected = views[index]?.number ?? 0;
 	}

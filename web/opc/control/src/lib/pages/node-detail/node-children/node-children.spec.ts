@@ -189,6 +189,14 @@ describe( 'NodeChildren subscription values', ()=>{
 			expect( page.qualityIcon(row) ).toBe( "warning" );
 		} );
 
+		//reviews-issue/591-views-filter-box.md #7:  the filter box's suggestions kept the values the browse brought
+		it( 'suggests the value a push brings', ()=>{
+			const { page, push } = subscribed();
+			expect( page.filterValues()['snapshot'] ).toEqual( [5] );
+			push( {value: 6, sc: 0} );
+			expect( page.filterValues()['snapshot'] ).toEqual( [6] );
+		} );
+
 		it( 'holds the last value, locked, through a Bad reading', ()=>{
 			const { page, row, push } = subscribed();
 			push( {sc: bad} );

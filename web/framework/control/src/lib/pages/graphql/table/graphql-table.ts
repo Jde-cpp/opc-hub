@@ -106,6 +106,11 @@ export class GraphQLTable{
 	onSortChange = output<Sort>();
 	onRowActivate = output<QLRow>();
 	onToggleLive = output<QLRow>();
+	//The chip columns whose chips are click targets, each with the values the list's filter holds (QLList.chipFilters):  a chip
+	//there is a button, pressed where the filter holds its value.  None by default, and a column that is not among them draws
+	//a plain chip.
+	chipFilters = input<ReadonlyMap<string,ReadonlySet<string>>>( new Map() );
+	onChipClick = output<{column:string, value:string}>();
 
 	displayedColumnNames = computed( ()=>(this.selections().isMultipleSelection() ? ["select"] : []).concat( this.displayedFields().filter((x)=>x.displayed).map((x)=>x.name) ) );
 	//each field's cell, classified once per change of fields rather than once per change-detection pass and per cell

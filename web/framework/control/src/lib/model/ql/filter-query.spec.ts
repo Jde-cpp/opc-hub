@@ -1,6 +1,6 @@
 import { DateUtils } from '../../utils/date-utils';
 import { Field } from './schema/field';
-import { filterArguments, filterPredicate, parseFilter, type FilterColumn, type FilterHost } from './filter-query';
+import { cellValues, filterArguments, filterPredicate, parseFilter, suggestFilter, takesFilterTerm, toggleFilterTerm, type FilterColumn, type FilterHost } from './filter-query';
 
 const column = ( name:string, type:object, displayName:string, liveToggle?:object ):FilterColumn=>({ qlField: new Field({name, type} as Partial<Field>), displayName, liveToggle });
 const scalar = ( type:string )=>({ kind: "SCALAR", name: type });
@@ -309,5 +309,127 @@ describe( "filter-query", ()=>{
 			expect( test({name: "Pump", parameters: {queue: 1}}) ).toBe( false );
 			expect( test({name: "objective", parameters: {queue: 1}}) ).toBe( true );
 		} );
+	} );
+
+	//#591:  what the box offers at the cursor, and the text once one is taken
+	describe( "suggestFilter", ()=>{
+		const enums = new Map( [["Provider", [{name: "Google"}, {name: "Key"}, {name: "Open Id"}]]] );
+		const values = ( name:string )=>( {name: ["Pump", "pump station", "a,b", ""], description: [null, "it's", {id: 1}], exponent: [3, 65537], securityMode: ["Sign", ">odd", "a..b"]} as Record<string,unknown[]> )[name] ?? [];
+		const host = ()=>({ ...server(), enums });
+		const offered = ( text:string, caret=text.length, on:FilterHost=host() )=>suggestFilter( text, caret, on, values );
+		const labels = ( text:string, caret?:number, on?:FilterHost )=>offered( text, caret, on ).map( s=>s.label );
+		//the text with the suggestion labelled `label` taken, a `|` where the cursor stands
+		const take = ( text:string, label:string, caret=text.length )=>{
+			const s = offered( text, caret ).find( o=>o.label==label )!;
+			return `${s.text.slice( 0, s.caret )}|${s.text.slice( s.caret )}${s.more ? " …" : ""}`;
+		};
+		it( "offers the headers in a field's place, with no:, has: and - before them, and not a column the box cannot filter", ()=>{
+			expect( labels("") ).toEqual( ["no:", "has:", "-", "Id:", "Name:", "Provider:", "Description:", '"Security Mode":', "Exponent:", '"Is Group":', "Created:"] );
+			expect( labels("name:a ") ).toEqual( labels("") );
+			expect( labels("pro") ).toEqual( ["Provider:"] );
+			expect( labels("-") ).toEqual( ["-Id:", "-Name:", "-Provider:", "-Description:", '-"Security Mode":', "-Exponent:", '-"Is Group":', "-Created:"] );
+			expect( labels("e") ).toEqual( ["Exponent:", "Name:", "Provider:", "Description:", '"Security Mode":', "Created:"] );//those that start with it first
+			expect( labels("s") ).toEqual( ['"Security Mode":', "has:", "Description:", '"Is Group":'] );//a quoted header after its quote:  #10
+		} );
+		it( "writes a field with its colon, in quotes where it has a space, and has more to say", ()=>{
+			expect( take("pro", "Provider:") ).toBe( "Provider:| …" );
+			expect( take("name:a sec", '"Security Mode":') ).toBe( 'name:a "Security Mode":| …' );
+			expect( take("-ex", "-Exponent:") ).toBe( "-Exponent:| …" );
+			expect( take("nam:a", "Name:", 3) ).toBe( "Name:|a …" );//the colon already there
+		} );
+		//reviews-issue/591-views-filter-box.md #6:  taken with the cursor inside a word, the suggestion kept the word's tail
+		it( "replaces the whole word the cursor is in, and puts a sign or a field in before a word it is at the start of", ()=>{
+			expect( take("name:a", "Name:", 3) ).toBe( "Name:|a …" );
+			expect( take("-proxy:Key", "-Provider:", 4) ).toBe( "-Provider:|Key …" );
+			expect( take("provider:Google", "Google", 11) ).toBe( "provider:Google|" );
+			expect( take("provider:Key,Google x", "Open Id", 13) ).toBe( 'provider:Key,"Open Id"| x' );
+			expect( take('name:"pu station" x', "pump station", 8) ).toBe( 'name:"pump station"| x' );
+			expect( take("provider:Key", "Google", 9) ).toBe( "provider:Google|" );
+			expect( take("created:2026-01-01", ">=", 8) ).toBe( "created:>=|2026-01-01 …" );
+			expect( take("name:a x", "Provider:", 7) ).toBe( "name:a Provider:|x …" );
+		} );
+		it( "offers an enum's values from the host, the rows' for the rest, and none already in the term", ()=>{
+			expect( labels("provider:") ).toEqual( ["Google", "Key", "Open Id"] );
+			expect( labels("provider:Key,") ).toEqual( ["Google", "Open Id"] );
+			expect( labels("provider:g") ).toEqual( ["Google"] );
+			expect( labels("provider:google") ).toEqual( [] );//typed whole, in any case
+			expect( labels("name:") ).toEqual( ["Pump", "pump station", "a,b"] );
+			expect( labels("description:") ).toEqual( ["it's"] );//no null, no object
+			expect( labels("isGroup:") ).toEqual( ["true", "false"] );
+			expect( labels("status:") ).toEqual( [] );//grafted
+			expect( labels("enforced:") ).toEqual( [] );//a live toggle takes has: and no: alone
+			expect( labels("nope:") ).toEqual( [] );
+		} );
+		it( "quotes a value with a space or a comma, or one that would read as a comparison or a range", ()=>{
+			expect( take("provider:op", "Open Id") ).toBe( 'provider:"Open Id"|' );
+			expect( take("name:", "a,b") ).toBe( 'name:"a,b"|' );
+			expect( take("name:Pump,", "pump station") ).toBe( 'name:Pump,"pump station"|' );
+			expect( take('name:"pu', "pump station") ).toBe( 'name:"pump station"|' );//the quote it was typed in
+			expect( take("securityMode:", ">odd") ).toBe( 'securityMode:">odd"|' );
+			expect( take("securityMode:", "a..b") ).toBe( 'securityMode:"a..b"|' );
+			expect( take("description:", "it's") ).toBe( "description:it's|" );//an apostrophe within a word is a letter
+			expect( take("name: x", "Pump", 5) ).toBe( "name:Pump| x" );
+		} );
+		it( "offers @today on a date and the comparison signs where the column takes them", ()=>{
+			expect( labels("created:") ).toEqual( ["@today", "@today-1d", "@today-7d", "@today-30d", ">=", "<=", ">", "<"] );
+			expect( take("created:", ">=") ).toBe( "created:>=| …" );
+			expect( take("created:>=", "@today-7d") ).toBe( "created:>=@today-7d|" );
+			expect( labels("exponent:") ).toEqual( ["3", "65537", ">=", "<=", ">", "<"] );
+			expect( labels("exponent:>6") ).toEqual( ["65537"] );
+			expect( labels("name:") ).not.toContain( ">" );//the server compares numbers and dates alone
+			expect( labels("name:>") ).toEqual( [] );
+			expect( labels("name:", undefined, browser()) ).toContain( ">" );//a list that filters its own rows compares any column
+		} );
+		//reviews-issue/591-views-filter-box.md #11:  each was underlined as soon as it was taken
+		it( "offers no sign after an excluded field, nor a day where one cannot be read", ()=>{
+			expect( labels("-exponent:") ).toEqual( ["3", "65537"] );
+			expect( labels("-exponent:>") ).toEqual( [] );
+			expect( labels("-created:") ).toEqual( [] );
+			expect( labels("created:@today,") ).toEqual( [] );
+			expect( labels("-sampling:", undefined, browser()) ).not.toContain( ">" );
+		} );
+		it( "offers the columns that can be empty after no: and has:, a live toggle's by its header", ()=>{
+			expect( labels("no:") ).toEqual( ["Provider", "Description", "Security Mode", "Exponent", "Is Group", "Enforced"] );
+			expect( take("has:sec", "Security Mode") ).toBe( 'has:"Security Mode"|' );
+			expect( labels("no:Enforced,") ).not.toContain( "Enforced" );
+			expect( labels("has:enforced") ).toEqual( [] );
+			expect( labels("has:", undefined, browser()) ).toEqual( ["Name", "Snapshot", "Status", "Sampling", "Source Time"] );
+		} );
+		it( "offers nothing after a closed quote", ()=>{
+			expect( labels('name:"Pump"') ).toEqual( [] );
+		} );
+	} );
+
+	//a chip clicked, and clicked again
+	describe( "toggleFilterTerm", ()=>{
+		const host = server(), provider = host.columns[2], mode = host.columns[4];
+		it( "adds the term as the box would write it, and takes out a term that is exactly it", ()=>{
+			expect( toggleFilterTerm( "", host, provider, "Google" ) ).toBe( "Provider:Google" );
+			expect( toggleFilterTerm( "pump ", host, mode, "Sign And Encrypt" ) ).toBe( 'pump "Security Mode":"Sign And Encrypt"' );
+			expect( toggleFilterTerm( "pump Provider:Google no:description", host, provider, "Google" ) ).toBe( "pump no:description" );
+			expect( toggleFilterTerm( 'provider:"Google"', host, provider, "Google" ) ).toBe( "" );//however it was typed
+		} );
+		//reviews-issue/591-views-filter-box.md #2:  a second chip of a column added a term beside the first, and the two `in`s
+		//intersected to none;  merged, the list is the rows with either (ruled 2026-11-10)
+		it( "adds another value to the column's term, and takes one out of it, the term going with its last", ()=>{
+			expect( toggleFilterTerm( "provider:Google", host, provider, "Key" ) ).toBe( "provider:Google,Key" );
+			expect( toggleFilterTerm( 'pump provider:Google no:description', host, provider, "Open Id" ) ).toBe( 'pump provider:Google,"Open Id" no:description' );
+			expect( toggleFilterTerm( "provider:Google,Key", host, provider, "Google" ) ).toBe( "provider:Key" );
+			expect( toggleFilterTerm( 'pump Provider:"Open Id",Key no:description', host, provider, "Key" ) ).toBe( 'pump Provider:"Open Id" no:description' );
+			expect( toggleFilterTerm( "provider:Key", host, provider, "Key" ) ).toBe( "" );
+		} );
+		it( "adds beside a term that excludes the value", ()=>{
+			expect( toggleFilterTerm( "-provider:Google", host, provider, "Google" ) ).toBe( "-provider:Google Provider:Google" );
+		} );
+		it( "says which columns take a term", ()=>{
+			const takes = ( name:string, on=host )=>takesFilterTerm( on.columns.find( c=>c.qlField.name==name )!, on );
+			expect( ["provider", "status", "members", "deleted"].map( n=>takes(n) ) ).toEqual( [true, false, false, false] );
+			expect( takes( "status", browser() ) ).toBe( true );
+		} );
+	} );
+
+	it( "gathers the rows' distinct values by column, in order", ()=>{
+		const rows = [{a: "b", n: 10}, {a: "a", n: 9}, {a: "b", n: null}, {a: "", n: {id: 1}}];
+		expect( cellValues( ["a", "n", "none"], rows, ( row, column )=>( row as Record<string,unknown> )[column] ) ).toEqual( {a: ["a", "b"], n: [9, 10], none: []} );
 	} );
 } );

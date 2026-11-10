@@ -27,6 +27,28 @@ mat-cell mat-chip{
 	--mat-chip-label-text-size: 11px;
 	--mat-chip-label-text-line-height: 22px;
 }
+//A chip that filters:  a button around the chip, with nothing of a button's own to see but its focus ring and, where the
+//filter holds its value, a ring in the theme's primary.
+.chip-filter{
+	display: inline-flex;
+	flex: 0 0 auto;
+	padding: 0;
+	border: 0;
+	border-radius: 11px;
+	background: none;
+	font: inherit;
+	cursor: pointer;
+	mat-chip{
+		pointer-events: none;
+	}
+	&[aria-pressed=true]{
+		outline: 2px solid var(--mat-sys-primary);
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-on-surface);
+		outline-offset: 2px;
+	}
+}
 .dateColumn{
 	flex: 0 0 160px;
 }

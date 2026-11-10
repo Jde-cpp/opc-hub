@@ -9,11 +9,11 @@ They all work the same way, which is described here.
 
 Each section's own topic covers what is particular to it.
 
-A node's **Children** and an application server's **Logs** are not lists of records - nothing is added or deleted there - but they share the [views](#views).
+A node's **Children**, a gateway's **Watch list** and an application server's **Logs** are not lists of records, but they share the [views](#views), and the first two the [filter box](#filtering).
 
 ## Lists
 
-Above a list are its views, a row of tabs, and under them the bar with **Add**, the refresh button, the tune button and, when the list fits on one page, the row count. **Discard** and **Save** join the bar while the view has unsaved changes.
+Above a list are its views, a row of tabs, and under them the bar with **Add**, the [filter box](#filtering), the refresh button, the tune button and, when the list fits on one page, the row count. **Discard** and **Save** join the bar, after the filter box, while the view has unsaved changes.
 
 **Add** starts a new record. A list whose rows are not created by hand has no **Add**.
 
@@ -32,20 +32,58 @@ The pager under the table steps through the pages. Its inner pair of buttons ste
 
 Switching or changing the view returns to the first page. The refresh button keeps the page you are on. So does opening a record and coming back, for as long as the browser tab stays open.
 
-Deleted records are left out of every view that does not filter on **Deleted**. The **Deleted** view, after a list's other built-in views, lists only them. It is the only way to reach one and restore it.
+Deleted records are left out of every view that does not filter on **Deleted**. The **Deleted** view, after a list's other built-in views, lists only them, and so does `has:deleted` typed in any view's filter box. That is how to reach one and restore it.
 
 **Resources** under [Access](/access) is the exception. Its **Enforced** switch in each row takes the place of delete, so every row is listed and there is no **Deleted** view. Flipping the switch asks first.
 
 A list with no rows says why:
 
 - An empty list says so.
-- A view whose filters match nothing says *No … match this view*. The rows may only be hidden, so switch back to the default view to see them.
+- A view whose filter matches nothing says *No … match this view*. The rows may only be hidden, so clear the filter box or switch back to the default view to see them.
 - A list you hold no right to read says **No access**. Ask an administrator for a role that can read it.
 - A list that could not be loaded gives the reason and a **Retry** button.
 
+## Filtering
+
+The box in the middle of the bar filters the list. Type a query and the list follows: on Enter, when you pick a suggestion, and a moment after you stop typing. What you type is an [unsaved change](#unsaved-changes) to the view, so **Save** keeps the filter with it.
+
+| Type | To list the rows where |
+| --- | --- |
+| `provider:Google` | the column is that value |
+| `provider:Google,Key` | it is either value |
+| `-provider:Key` | it is not that value; an empty cell counts as not |
+| `no:email`, `has:email` | the column is empty, or is not |
+| `exponent:>3`, `>=`, `<`, `<=` | a number or a date compares so |
+| `created:2026-01-01..2026-01-31` | it lies in the range, both ends included; `*` leaves an end open, `created:2026-01-01..*` |
+| `created:2026-01-31` | the date is that day, in this browser's time zone |
+| `created:2026-01-31T14:30` | the time is in that minute; add `:05` for the second |
+| `created:>=@today-7d` | a date relative to today: `@today`, `@today-7d`, `@today+1d` |
+| `name:"Pump 3"` | a value with a space or a comma, in double or single quotes |
+| `pump` | the name contains the word; several words must all be there |
+
+A column is named as its header reads, in upper or lower case, and in quotes when it has a space: `"security mode":Sign`. Terms are separated by spaces, and a row must match every one of them. Naming a column twice narrows it further, so `created:>=2026-01-01 created:<2026-02-01` is January.
+
+As you type, the box suggests the columns, then, after the colon, the values: a column's fixed choices where it has them, otherwise the values in the rows on screen. A date column also offers `@today`, and a number or a date column the comparison signs.
+
+A term the box cannot read is underlined, and the line under the box says why. The list is filtered by the other terms meanwhile. The usual reasons:
+
+- a column the list does not have
+- a value its column cannot hold, such as a word for a number or a date that does not exist
+- `>` or a range on a text column
+- a date excluded with `-`, or more than one date in a list
+- a column the server works out after it has read the row, such as a connection's **Status**
+
+A chip in a row - a user's provider, say - is a shortcut: click it to add `provider:Google` to the filter, and click it again to take the term out. Click a chip of another value in the same column and it joins the term, `provider:Google,Key`, the rows with either; a click on one of those takes it back out.
+
+Three kinds of list differ:
+
+- On **Resources** under [Access](/access) only `has:enforced` and `no:enforced` are read on the **Enforced** column.
+- A node's **Children** and the **Watch list** filter the rows already on screen. There `field:value` must match the cell exactly, a comparison works on any column - as numbers when both sides are numbers - and a word is looked for in every text cell, whatever its case. In the other lists the database decides whether upper and lower case differ.
+- The pick lists on a record's tabs never list deleted rows, whatever is typed. **Logs** has no filter box.
+
 ## Views
 
-A **view** is which rows are filtered out, which columns are shown and in what order, and how the rows are sorted.
+A **view** is the [filter](#filtering) on the rows, which columns are shown and in what order, and how the rows are sorted.
 
 The tabs above the bar are a list's views; click one to switch. Every list comes with a *Default* view and some with more. They are a starting set: the first change you make to them - a save, a rename, a new view, a move or a deletion - keeps the whole set as your own. From then the tabs are your views alone, to change, add to and delete as you like. Two views may share a name.
 
@@ -62,11 +100,11 @@ The active tab carries a chevron, which opens the view's menu:
 - **Save changes** and **Discard changes** do what **Save** and **Discard** in the bar do.
 - **Delete** removes the view, its unsaved changes with it. Deleting the last one brings the list's own views back. It is greyed out on a list's own view when that is the only one.
 
-The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page, but for changes that would list rows it does not offer, such as deleted ones: there it shows the view as it was saved.
+The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
 
 ### Unsaved changes
 
-A change to a view - a header sort, a page size, the editor's **Show** - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
+A change to a view - a filter typed, a header sort, a page size, the editor's **Show** - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
 
 - **Save** keeps the changes as the view. On one of a list's own views it keeps the whole set as yours, as any first change does.
 - **Discard** drops them and shows the view as it was saved.
@@ -75,9 +113,8 @@ Each view has its own unsaved changes, and they stay while you look at another t
 
 **Rename** names the view at once, whether or not it has unsaved changes. **New view** copies the view as it shows, unsaved changes included, and **Duplicate** as it was saved.
 
-The tune button in the bar edits the current view, over three tabs.
+The tune button in the bar edits the current view's columns and sort, over two tabs.
 
-- **Filter** - add a column, then pick an operator and the values. *In* and *Not In* take one or more values, typed or picked from those already in the list, with `<null>` and `<not null>` offered where a column can be empty. `<` and `>` compare against one. A date column offers only `<` and `>`, with an **End Date** or **Start Date** to match. A date column that can be empty also has *null* and *not null* boxes, which on **Deleted** read *Not deleted* and *Deleted*.
 - **Display** - tick the columns to show and drag them into order.
 - **Sort** - the columns to sort by, in order, each ascending or descending.
 

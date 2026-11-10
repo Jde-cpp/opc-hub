@@ -10,7 +10,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle, LocalPrefs, ProfileStore, RouteItem } from 'jde-spa';
-import { errorMessage, QLListSettings, SnackbarService, View, ViewToolbar } from 'jde-framework';
+import { cellValues, errorMessage, QLListSettings, SnackbarService, View, ViewToolbar } from 'jde-framework';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
@@ -331,14 +331,11 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	onViewShow( view:View ){ this.isSettings.set( false ); this.viewSet.show( view ); }
 	onViewSave( view:View ){ this.viewSet.save( view ).catch( e=>this.#snackbar.exception( "Could not save view.", e ) ); this.isSettings.set( false ); }
 	onViewDelete( view:View ){ this.viewSet.remove( view ).catch( e=>this.#snackbar.exception( "Could not delete view.", e ) ); this.isSettings.set( false ); }
-	colSuggestions():Record<string,any[]>{
-		const suggestions:Record<string,any[]> = {};
-		for( const name of Object.keys( WatchView.columns ) ){
-			const values = this.rows().map( r=>WatchView.cellValue( r, name, this.names ) ).filter( v=>v!=null && v!=="" );
-			suggestions[name] = [...new Set( values )].slice( 0, 100 ).sort( (a,b)=>typeof a=="number" && typeof b=="number" ? a-b : String(a).localeCompare( String(b) ) );
-		}
-		return suggestions;
-	}
+	//the cells' values by column, which the filter box suggests
+	filterValues = computed<Record<string,unknown[]>>( ()=>{
+		this.#changes();//a describe's names and a push's reading land on the rows in place
+		return cellValues( Object.keys(WatchView.columns), this.rows(), ( r, name )=>WatchView.cellValue(r, name, this.names) );
+	} );
 
 	//the cells
 	readonly names = ( slug:CnnctnSlug )=>this.cnnctnName( slug );

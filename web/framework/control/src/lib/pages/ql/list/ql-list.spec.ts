@@ -5,13 +5,12 @@ import { HELP_TOPICS, LocalPrefs, ProfileStore, RouteStore } from 'jde-spa';
 import { IGRAPHQL } from '../../../services/graphql';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
-import { DbScalar, FieldFilter, Operator, View } from '../../../model/ql/view';
-import { Field } from '../../../model/ql/schema/field';
+import { View } from '../../../model/ql/view';
 import { QLList } from './ql-list';
 import { Paginator } from '../../../shared/paginator/paginator';
 import { Provider } from '@angular/core';
 import { pageTitleStub, provideRoute, routerStub, fakeSessionStorage, flush, screenSize } from 'jde-spa/testing';
-import { id, required, scalar, schemaOf, slugRows, snackbarStub } from 'jde-framework/testing';
+import { id, object, required, scalar, schemaOf, slugRows, snackbarStub } from 'jde-framework/testing';
 
 //A list with no route data behind it, the router at `url` and the snackbar recorded, `providers` after them.  Reset first:  a test
 //builds two.
@@ -258,30 +257,69 @@ describe( 'QLList empty and refused states', ()=>{
 	} );
 } );
 
+//#591:  a chip cell clicked adds `field:value` to the filter, and clicked again takes it out
+describe( 'QLList chip filters', ()=>{
+	const things = schemaOf( "User", id(), required("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}}, object("connectionStatus", "ConnectionStatus") );
+	const create = ()=>{
+		configure();
+		const page = TestBed.createComponent( QLList ).componentInstance;
+		const view = View.fromTable( {columns: ["name", {name: "provider", chip: {}}, {name: "connectionStatus", displayName: "Status", selection: "name", chip: {}}], sort: "name"}, things );
+		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema: things, profile: viewSet( [view] )} as unknown as QLListData );
+		page.view.set( view );
+		const changed = vi.spyOn( page, 'onChangeView' ).mockResolvedValue();
+		return { page, changed };
+	};
+	const held = ( page:QLList )=>[...page.chipFilters()].map( ([column, values])=>[column, [...values]] );
+
+	it( 'offers the chip columns the box can filter, and not one the gateway grafts on', ()=>{
+		expect( held( create().page ) ).toEqual( [["provider", []]] );
+	} );
+
+	//reviews-issue/591-views-filter-box.md #2:  a second value was a second term, which intersected with the first to nothing
+	it( 'adds the term on a click, another value to its list, and takes each out on the next, each a change to the draft', async ()=>{
+		const { page, changed } = create();
+		await page.onChipClick( {column: "provider", value: "Google"} );
+		expect( page.profile().current().filter ).toBe( "Provider:Google" );
+		expect( page.profile().current().isAdhoc ).toBe( true );
+		expect( held( page ) ).toEqual( [["provider", ["Google"]]] );
+		await page.onChipClick( {column: "provider", value: "Key"} );
+		expect( page.profile().current().filter ).toBe( "Provider:Google,Key" );
+		expect( held( page ) ).toEqual( [["provider", ["Google", "Key"]]] );
+		await page.onChipClick( {column: "provider", value: "Google"} );
+		expect( page.profile().current().filter ).toBe( "Provider:Key" );
+		await page.onChipClick( {column: "provider", value: "Key"} );
+		expect( page.profile().current().filter ).toBe( "" );
+		expect( page.profile().current().isAdhoc ).toBe( false );//as it was saved:  no draft
+		expect( changed ).toHaveBeenCalledTimes( 4 );
+	} );
+
+	it( "gathers the rows' values for the box's suggestions", ()=>{
+		const { page } = create();
+		page.data.set( [{id: 2, name: "b", provider: "Key"}, {id: 1, name: "a", provider: "Google", connectionStatus: {name: "Idle"}}, {id: 3, name: "a", provider: null}] );
+		expect( page.filterValues() ).toMatchObject( {name: ["a", "b"], provider: ["Google", "Key"], connectionStatus: []} );
+	} );
+} );
+
 //reviews/m3-closing.md #24:  the empty state came from the route alone, so a view whose filters matched nothing, a selector
 //tab's excluded rows, and a selector tab (no Add) all read "No <things> yet … use Add".
 describe( 'QLList empty state on a narrowed list', ()=>{
-	const view = ( filters:[string, Operator, DbScalar[]][] )=>{
-		const v = View.fromConfig( {configColumns: [], sort: []}, schemaOf("User") );
-		v.fieldFilters = filters.map( ([name, operator, value])=>({field: {name} as Field, filter: {operator, value}}) );
-		return v;
-	};
-	const create = ( routing:ListRoute, options:{views?:View[], current?:View, fixedFilters?:FieldFilter[], selector?:boolean} = {} )=>{
+	const view = ( filter="" )=>View.fromConfig( {configColumns: [], sort: [], filter}, schemaOf("User", id(), scalar("provider"), scalar("criteria")) );
+	const create = ( routing:ListRoute, options:{views?:View[], current?:View, fixedFilter?:string, selector?:boolean} = {} )=>{
 		configure( '/access/users' );
 		const fixture = TestBed.createComponent( QLList );
 		if( options.selector )
 			fixture.componentRef.setInput( 'selector', true );
 		const page = fixture.componentInstance;
-		const views = options.views ?? [view( [] )];
-		page.resolvedData.set( {routing, schema: {collectionName: routing.collectionName}, profile: viewSet( views ), fixedFilters: options.fixedFilters} as unknown as QLListData );
+		const views = options.views ?? [view()];
+		page.resolvedData.set( {routing, schema: {collectionName: routing.collectionName}, profile: viewSet( views ), fixedFilter: options.fixedFilter} as unknown as QLListData );
 		page.view.set( options.current ?? views[0] );
 		return page;
 	};
 	const users = new ListRoute( {path: 'users', data: {tableSettings: {empty: {title: "No users yet.", detail: "Sign in first."}}}} as any );
 
 	it( 'a view whose filters match nothing says so, not "yet"', ()=>{
-		const certs = view( [["provider", Operator.In, ["Key"]]] );
-		const page = create( users, {views: [view([]), certs], current: certs} );
+		const certs = view( "provider:Key" );
+		const page = create( users, {views: [view(), certs], current: certs} );
 		expect( page.showEmpty() ).toBe( true );
 		expect( page.emptyState().title ).toBe( "No users match this view." );
 		expect( page.emptyState().detail ).toBe( "" );
@@ -289,7 +327,7 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 
 	it( "the default view's own filter still reads as the whole list, re-sorted or not", ()=>{
 		const resources = new ListRoute( {path: 'resources', data: {tableSettings: {canAdd: false, empty: {title: "No resources registered.", detail: "Start the hub."}}}} as any );
-		const tables = view( [["criteria", Operator.In, [null]]] );
+		const tables = view( "no:criteria" );
 		const resorted = View.copy( tables );
 		resorted.sort = [{active: "schemaName", direction: "desc"}];
 		expect( create(resources, {views: [tables]}).emptyState().title ).toBe( "No resources registered." );
@@ -303,15 +341,14 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 	} );
 
 	it( 'a selector tab whose only rows are excluded reads "No other …"', ()=>{
-		const excluded:FieldFilter[] = [{field: {name: "id"} as Field, filter: {operator: Operator.NotIn, value: [7]}}];
-		const page = create( new ListRoute('roles'), {selector: true, fixedFilters: excluded} );
+		const page = create( new ListRoute('roles'), {selector: true, fixedFilter: "-id:7 no:deleted"} );
 		expect( page.emptyState().title ).toBe( "No other roles." );
 		expect( page.emptyState().detail ).toBe( "" );
 	} );
 
 	//#587:  the first tab is whichever view the user put there, so the test is against the route's default view
 	it( "compares with the route's default view, not the first tab", async ()=>{
-		const all = view( [] ), certs = view( [["provider", Operator.In, ["Key"]]] );
+		const all = view(), certs = view( "provider:Key" );
 		const page = create( users, {views: [all, certs]} );
 		await page.profile().move( certs, 0 );
 		expect( page.profile().views() ).toEqual( [certs, all] );
@@ -324,8 +361,8 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 
 	it( 'fills Add only on a genuinely empty list', ()=>{
 		expect( create(users).addFilled() ).toBe( true );
-		const certs = view( [["provider", Operator.In, ["Key"]]] );
-		expect( create(users, {views: [view([]), certs], current: certs}).addFilled() ).toBe( false );
+		const certs = view( "provider:Key" );
+		expect( create(users, {views: [view(), certs], current: certs}).addFilled() ).toBe( false );
 		const refused = create( users );
 		refused.error.set( new HttpErrorResponse({status: 403}) );
 		expect( refused.addFilled() ).toBe( false );
@@ -449,6 +486,21 @@ describe( 'QLList paging', ()=>{
 		expect( load ).toHaveBeenCalledTimes( 1 );
 		expect( page.skip() ).toBe( 25 );
 		expect( page.view().name ).toBe( "Mine" );//the editor's, and Delete's
+	} );
+
+	//reviews-issue/591-views-filter-box.md #3:  each pause in a term the box cannot read asked for the same rows again
+	it( 'asks again only for a filter that asks for other rows', async ()=>{
+		const { page, load } = create( rows(40) );
+		const typed = async ( filter:string )=>{
+			page.profile().edit( view=>{ view.filter = filter; } );
+			await page.onChangeView();
+		};
+		await typed( "nope:" );
+		await typed( "nope:a" );
+		expect( load ).not.toHaveBeenCalled();
+		expect( page.view().filter ).toBe( "nope:a" );//the view on screen, which the chips read
+		await typed( "nope:a name:b" );
+		expect( load ).toHaveBeenCalledTimes( 1 );
 	} );
 
 	//reviews-issue/231-paging.md #12:  the reset to the first page is refresh()'s alone - Save and Delete go through it too

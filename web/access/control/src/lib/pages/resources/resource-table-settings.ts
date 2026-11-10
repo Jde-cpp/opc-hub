@@ -20,7 +20,7 @@ export const resourceTableSettings:TableSettings = {
 	canPurge: false,
 	rowLink: { fields: ["schemaName", "criteria"], segments: (row)=>row["criteria"] ? undefined : [`${row["schemaName"]}`, `${row.slug}`] },//ResourceResolver's 'resources/:schema/:slug'.  A criteria row, which a saved view without the criteria filter lists, shares its table's schema and slug - its grants are on its node's Access tab.
 	viewName: "Tables",
-	filters: [ {name: "criteria", value: ["<null>"]} ],
+	filter: "no:criteria",
 	columns: [
 		{ name:"deleted", displayName:"Enforced", style: new Style({flex: new Flex(110), align: "center"}), liveToggle: {
 			enable: "Enforce",

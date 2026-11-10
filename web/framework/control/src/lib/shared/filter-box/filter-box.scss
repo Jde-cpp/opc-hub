@@ -1,0 +1,35 @@
+:host{
+	display: block;
+	flex: 1 1 auto;
+	min-width: 0;
+	--mat-form-field-container-height: 40px;
+	--mat-form-field-container-vertical-padding: 8px;
+}
+.filter{
+	width: 100%;
+}
+//The input over a copy of its text, which draws the underline of a term that is not read:  the same font, and moved as the
+//input scrolls.
+.typed{
+	position: relative;
+	display: block;
+}
+.marks{
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	overflow: hidden;
+	white-space: pre;
+	pointer-events: none;
+	color: transparent;
+	font: inherit;
+	letter-spacing: inherit;
+}
+.run{
+	display: inline-block;
+}
+.bad{
+	text-decoration: underline wavy var(--mat-sys-error);
+	text-decoration-skip-ink: none;
+}

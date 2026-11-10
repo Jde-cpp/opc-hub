@@ -1,9 +1,9 @@
 import { TestBed } from '@angular/core/testing';
-import { Operator, QLListResolver, View } from 'jde-framework';
+import { QLListResolver, View } from 'jde-framework';
 import { AccessService } from '../../services/access-service';
 import { UserDetail } from './user-detail';
 import { userTableSettings } from './user-table-settings';
-import { configureDetailPage, object, scalar, slugSchema } from 'jde-framework/testing';
+import { configureDetailPage, scalar, slugSchema } from 'jde-framework/testing';
 
 //angular-review3 L2: only group-detail clamped the stored tab index on $new.  The other detail pages restored an index
 //that names a tab the @if drops for a new record, and mat-tab-group hard-loops on a selectedIndex it cannot resolve.
@@ -84,7 +84,7 @@ describe( 'userTableSettings', ()=>{
 //The users list's three system views.  'Users' and 'Certs' began life as one user's saved views; they are declared on
 //the route now so every user gets them, and the default view is labelled 'All' instead of the framework's 'Default'.
 describe( 'userTableSettings views', ()=>{
-	const schema = slugSchema( "User", object("provider", "Provider"),
+	const schema = slugSchema( "User", {name: "provider", type: {kind: "ENUM", name: "Provider"}},//an enum, as the server's __type answers it
 		scalar("email"), scalar("loginName"), scalar("modulus"), scalar("issuer"), scalar("distinguished"), scalar("subjectAlt"),
 		scalar("expiration", "DateTime"), scalar("deleted", "DateTime"), scalar("description"), scalar("isGroup", "Boolean") );
 	const displayed = ( v:View )=>v.fields.filter( f=>f.displayed ).map( f=>f.name );
@@ -105,7 +105,8 @@ describe( 'userTableSettings views', ()=>{
 
 	it( 'Certs lists the key identities with their certificate columns', ()=>{
 		expect( displayed(byName("Certs")) ).toEqual( ["slug", "modulus", "issuer", "distinguished", "subjectAlt", "expiration", "description"] );
-		expect( byName("Certs").fieldFilters.map(f=>[f.field.name, f.filter.operator, f.filter.value]) ).toEqual( [["provider", Operator.In, ["Key"]]] );
+		expect( byName("Certs").filter ).toBe( "provider:Key" );
+		expect( byName("Certs").query( 0 ).vars["provider"] ).toEqual( ["Key"] );
 		expect( byName("Certs").sort ).toEqual( [{active: "slug", direction: "asc"}] );//name is not a displayed column there
 	} );
 } );

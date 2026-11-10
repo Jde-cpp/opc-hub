@@ -94,8 +94,14 @@ pre {
 	min-width: 0;
 }
 
-// A list's toolbar:  a left zone and a right one spread to the edges, on the container colour.  ViewToolbar's gains a centre zone
-// between them with the filter box (views 3b);  a page with a toolbar of its own (the node history, a Web Sessions tab) sets the
+// The filter box's suggestions (jde-framework's filter-box):  as wide as what they say, not as the box, which narrows under the
+// panel when Discard and Save join it.  Global because the panel renders in the overlay.
+.jde-filter-panel {
+	min-width: 12rem;
+}
+
+// A list's toolbar:  a left zone and a right one spread to the edges, on the container colour.  ViewToolbar's has a centre zone
+// between them with the filter box;  a page with a toolbar of its own (the node history, a Web Sessions tab) sets the
 // class too.  `mat-toolbar.` to outrank Material's .mat-toolbar-single-row height and its background, which come later in the
 // cascade.
 mat-toolbar.jde-list-toolbar {
@@ -130,8 +136,8 @@ mat-toolbar.jde-list-toolbar {
 		flex-wrap: wrap;
 	}
 }
-// A phone:  the centre zone takes a row of its own under the other two, so the filter box has a width to type in.  ViewToolbar is
-// to render it after the right zone there (ScreenSize.isExtraSmall), so the tab order is the rows' order, which `order` would not
+// A phone:  the centre zone takes a row of its own under the other two, so the filter box has a width to type in.  ViewToolbar
+// renders it after the right zone there (ScreenSize.isExtraSmall), so the tab order is the rows' order, which `order` would not
 // change (WCAG 2.4.3).  Here rather than in view-toolbar.scss because it reads a breakpoint, which only a jde-spa sheet can.
 @media (max-width: constants.$extra-small-breakpoint-width) {
 	mat-toolbar.jde-list-toolbar .bar-center {

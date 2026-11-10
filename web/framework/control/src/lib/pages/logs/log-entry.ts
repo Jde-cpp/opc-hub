@@ -93,6 +93,7 @@ export class LogView extends View{
 			view.sort = [...view.sort, { active: "time", direction: "desc" }];//the default view's
 		return view;
 	}
+	override filterHost(){ return undefined; }//no filter box:  the rows are a window of a paged log (views spec *Hosts*, #584)
 	override query( skip:number, level?:ELogLevel ):Query{
 		const vars:Record<string,any> = {limit: this.limit!*3, skip: skip, orderBy: this.sort};//three pages a read;  a turn onto a page not all loaded reads on (LogDataSource.turnTo)
 		let args = "limit: $limit, skip: $skip, orderBy: $orderBy";
