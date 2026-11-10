@@ -345,6 +345,20 @@ describe( 'LogDetail sort', ()=>{
 		expect( ql.ql ).toHaveBeenCalledTimes( reads );
 		expect( page.data.allEntries ).toHaveLength( 2 );
 	} );
+	//#592:  a read brings every column, so one shown, hidden, moved or resized keeps the rows read, and the one selected
+	it( 'keeps its rows for a change to the columns', async ()=>{
+		const { page, ql } = await create();
+		const reads = ql.ql.mock.calls.length;
+		page.viewSet.edit( view=>view.setDisplayed("file", true) );
+		page.onViewChange();
+		page.viewSet.edit( view=>view.setWidth("message", 300) );
+		page.onViewChange();
+		expect( page.displayedColumns() ).toEqual( ["time", "level", "message", "file"] );
+		expect( ql.ql ).toHaveBeenCalledTimes( reads );
+		page.viewSet.edit( view=>{ view.limit = 50; } );
+		page.onViewChange();
+		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
+	} );
 	it( 'saves a view with no sort sorted by time', async ()=>{
 		const { fixture, page, profileStore } = await create();
 		const view = unsorted( page );

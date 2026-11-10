@@ -9,6 +9,7 @@ import { View } from '../../../model/ql/view';
 import { QLList } from './ql-list';
 import { Paginator } from '../../../shared/paginator/paginator';
 import { Provider } from '@angular/core';
+import { SelectionModel } from '@angular/cdk/collections';
 import { pageTitleStub, provideRoute, routerStub, fakeSessionStorage, flush, screenSize } from 'jde-spa/testing';
 import { id, object, required, scalar, schemaOf, slugRows, snackbarStub } from 'jde-framework/testing';
 
@@ -375,7 +376,7 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 //#231:  the list pages with `skip` through the shared resolver.  A page turn reloads at the pager's offset;  a view change is a
 //new set of pages and starts over;  a page the rows have left behind falls back to the first (QLListResolver.load).
 describe( 'QLList paging', ()=>{
-	const schema = schemaOf( "User", id(), required("name"), scalar("slug") );
+	const schema = schemaOf( "User", id(), required("name"), scalar("slug"), scalar("email") );
 	const rows = ( n:number, from=0 )=>slugRows( n, from, "user" );
 	//load:  the resolver, answering a page of `available`.  hold():  makes each load wait until the test settles it.
 	const create = ( available:any[] )=>{
@@ -486,6 +487,39 @@ describe( 'QLList paging', ()=>{
 		expect( load ).toHaveBeenCalledTimes( 1 );
 		expect( page.skip() ).toBe( 25 );
 		expect( page.view().name ).toBe( "Mine" );//the editor's, and Delete's
+	} );
+
+	//#592:  the rows on screen hold a column hidden, moved or resized, so the page stays as it is;  one shown is asked for
+	it( 'asks again for a column shown, not for one hidden, moved or resized', async ()=>{
+		const { page, load } = create( rows(40) );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		const edit = async ( change:( view:View )=>void )=>{
+			page.profile().edit( change );
+			await page.onChangeView();
+		};
+		await edit( view=>view.setDisplayed("email", true, "Email") );
+		expect( load ).toHaveBeenCalledTimes( 2 );
+		expect( page.displayedFields().map( f=>f.name ) ).toEqual( ["name", "email"] );
+		await edit( view=>view.moveField("email", 0) );
+		await edit( view=>view.setWidth("name", 200) );
+		await edit( view=>view.setDisplayed("name", false) );
+		expect( load ).toHaveBeenCalledTimes( 2 );
+		expect( page.displayedFields().map( f=>f.name ) ).toEqual( ["email"] );
+		await edit( view=>view.setDisplayed("name", true) );//the rows still hold it
+		expect( load ).toHaveBeenCalledTimes( 2 );
+	} );
+
+	//#592:  the Fields checklist's Select, where the rows on screen stay
+	it( 'lets its rows be ticked once the view shows the selector, those ticked kept', async ()=>{
+		const { page, load } = create( rows(3) );
+		page.selections.set( new SelectionModel( false, [page.data()[1]] ) );
+		page.profile().edit( view=>{ view.showSelector = true; } );
+		await page.onChangeView();
+		expect( [page.selections().isMultipleSelection(), page.selections().selected] ).toEqual( [true, [page.data()[1]]] );
+		page.profile().edit( view=>{ view.showSelector = false; } );
+		await page.onChangeView();
+		expect( page.selections().isMultipleSelection() ).toBe( false );
+		expect( load ).not.toHaveBeenCalled();
 	} );
 
 	//reviews-issue/591-views-filter-box.md #3:  each pause in a term the box cannot read asked for the same rows again

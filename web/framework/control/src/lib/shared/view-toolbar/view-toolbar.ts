@@ -20,7 +20,7 @@ import { SnackbarService } from '../snackbar/snackbar-service';
 //own controls left (`[left]`) and, right, Refresh, the view editor's button, the host's (`[right]`) and the row count, with the
 //reload bar under it.  `+ New view` and the rename box stand outside the tablist, which may hold tabs alone.  The toolbar changes
 //the set itself and says when a write failed;  the host hears `viewChange` when the view on screen is another, and re-reads unless
-//its rows are a computed of it or the view asks for the rows it did (View.sameQuery).  The centre zone is the filter box, where the view
+//its rows are a computed of it or the rows it read hold what the view asks (View.answers).  The centre zone is the filter box, where the view
 //takes a filter (View.filterHost):  what is typed is a change to the draft.  A view with a draft shows it, a dot after its name,
 //and Save and Discard stand at the end of the centre zone, and in the menu.  On a phone the centre zone is a row of its own, and is
 //rendered after the right zone, so the tab order is the rows'.  A pick list has no tabs row:  its menu opens from a button showing
@@ -77,6 +77,28 @@ export class ViewToolbar{
 	viewButton = viewChild( 'viewButton', {read: ElementRef<HTMLButtonElement>} );//its element:  the reference alone is the MatButton
 
 	label( view:View ):string{ return view.name ?? "Default"; }
+	//The `Fields` checklist:  the host's columns, by name with what the header reads - those the view shows first, in its order -
+	//and, where the host lets its rows be ticked, *Select* ahead of them.  A tick is a change to the draft.  The last column shown
+	//stays ticked.
+	columns = input<Record<string,string>>( {} );
+	selectable = input<boolean>( false );
+	fields = computed<{name:string, label:string, shown:boolean}[]>( ()=>{
+		const offered = this.columns(), view = this.views().current();
+		const shown = view.fields.filter( f=>f.displayed && f.name in offered );
+		const rest = Object.keys( offered ).filter( name=>!shown.some( f=>f.name==name ) );
+		return [...shown.map( f=>({name: f.name, label: f.displayName ?? offered[f.name], shown: true}) ), ...rest.map( name=>({name, label: offered[name], shown: false}) )];
+	} );
+	shownCount = computed<number>( ()=>this.views().current().fields.filter( f=>f.displayed ).length );
+	toggleField( field:{name:string, label:string, shown:boolean}, event:Event ){
+		event.stopPropagation();//the menu stays open:  a checklist takes several ticks
+		this.views().edit( view=>view.setDisplayed(field.name, !field.shown, field.label) );
+		this.viewChange.emit();
+	}
+	toggleSelector( event:Event ){
+		event.stopPropagation();
+		this.views().edit( view=>{ view.showSelector = !view.showSelector; } );
+		this.viewChange.emit();
+	}
 	//the menu's sizes, and the view's own where it is none of them, as the logs' 21
 	pageSizes = computed<number[]>( ()=>{
 		const limit = this.views().current().limit;

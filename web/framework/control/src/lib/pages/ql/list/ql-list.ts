@@ -181,14 +181,19 @@ export class QLList implements OnInit{
 		this.profile().show( view );
 		await this.#refresh();
 	}
-	//The toolbar put another view on screen:  its rows, unless they are those shown or on their way - the view renamed, a copy
-	//of it, or its filter changed only in a term the box cannot read - where the page stays as it is.
+	//The toolbar or a header put another view on screen:  its rows, unless those shown or on their way hold them - the view
+	//renamed, a copy of it, a column hidden, moved or resized, or its filter changed only in a term the box cannot read - where
+	//the page stays as it is.
 	async onChangeView(){
 		const view = this.profile().current();
-		if( !View.sameQuery(view, this.#queried ?? this.view()) )
+		if( !View.answers(this.#queried ?? this.view(), view) )
 			await this.#refresh();
-		else if( !this.isRefreshing() )
+		else if( !this.isRefreshing() ){
 			this.view.set( view );
+			const multiple = this.selector() || view.showSelector;//the Fields checklist's Select
+			if( multiple!=this.selections().isMultipleSelection() )
+				this.selections.set( QLList.carriedSelection(this.selections(), this.data(), multiple) );
+		}
 	}
 	//another view, or this one edited, is a different set of pages:  from the first
 	async refresh(){

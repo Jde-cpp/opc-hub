@@ -64,6 +64,9 @@ The menus build their entries only while open (matMenuContent).-->
 		@if( !tabs() ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="viewsMenu">Views</button>
 		}
+		@if( fields().length ){
+			<button mat-menu-item type="button" [matMenuTriggerFor]="fieldsMenu">Fields</button>
+		}
 		@if( paged() ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="pageSizeMenu">Page size</button>
 		}
@@ -86,6 +89,22 @@ The menus build their entries only while open (matMenuContent).-->
 			<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="size==views().current().limit" (click)="pageSize(size)">
 				<mat-icon aria-hidden="true">{{ size==views().current().limit ? "check" : "" }}</mat-icon>
 				{{ size }} rows
+			</button>
+		}
+	</ng-template>
+</mat-menu>
+<mat-menu #fieldsMenu="matMenu">
+	<ng-template matMenuContent>
+		@if( selectable() ){
+			<button mat-menu-item type="button" role="menuitemcheckbox" [attr.aria-checked]="views().current().showSelector" (click)="toggleSelector($event)">
+				<mat-icon aria-hidden="true">{{ views().current().showSelector ? "check_box" : "check_box_outline_blank" }}</mat-icon>
+				Select
+			</button>
+		}
+		@for( field of fields(); track field.name ){
+			<button mat-menu-item type="button" role="menuitemcheckbox" [attr.aria-checked]="field.shown" [disabled]="field.shown && shownCount()<2" (click)="toggleField(field, $event)">
+				<mat-icon aria-hidden="true">{{ field.shown ? "check_box" : "check_box_outline_blank" }}</mat-icon>
+				{{ field.label }}
 			</button>
 		}
 	</ng-template>

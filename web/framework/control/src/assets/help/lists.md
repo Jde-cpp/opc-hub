@@ -26,6 +26,21 @@ Click a row to open the record. Two kinds of list differ:
 
 Click a column header to sort by that column, which is an [unsaved change](#unsaved-changes) to the view.
 
+### Columns
+
+A column is changed from its header, and each change is an [unsaved change](#unsaved-changes) to the view.
+
+- **Drag a header** along the header row to move its column.
+- **Drag a header's right edge** to set the column's width, down to 64 pixels. Double-click the edge to put back the width the list gives the column.
+- A header shows a menu button when the pointer is over it or the keyboard is on it:
+  - **Move left** and **Move right** move the column a place.
+  - **Wider** and **Narrower** change its width a step at a time.
+  - **Hide field** takes the column out of the view. The last column cannot be hidden.
+
+**Fields** in the [view's menu](#views) lists every column the list has, with the ones shown ticked and first, in their order. Tick a column to show it, after the others, and untick it to hide it. The menu stays open for the next tick.
+
+The **Name** column stays at the left edge when a list wider than the page is scrolled sideways. Where a view does not show the name, its first column does.
+
 A list longer than its view's page size is read a page at a time. **Page size** in the view's menu sets it.
 
 The pager under the table steps through the pages. Its inner pair of buttons steps one row at a time. It shows which rows are on screen, and the total once the last page has been reached.
@@ -93,6 +108,7 @@ The view you were last on is remembered in this browser.
 
 The active tab carries a chevron, which opens the view's menu:
 
+- **Fields** shows and hides [columns](#columns). Its first entry on a list's own page and on a node's **Children**, **Select**, shows or hides the column of checkboxes that tick rows.
 - **Page size** is how many rows a page holds: 10, 25, 50, 100, 250 or 500. A list starts at 25 and **Logs** at 21. A node's **Children** are not read a page at a time, so their menu has none.
 - **Rename** turns the tab's name into a box. Enter keeps the new name, Escape or a blank box leaves the old one.
 - **Duplicate** adds a copy of the view, as it was last saved, after it under the same name.
@@ -100,11 +116,11 @@ The active tab carries a chevron, which opens the view's menu:
 - **Save changes** and **Discard changes** do what **Save** and **Discard** in the bar do.
 - **Delete** removes the view, its unsaved changes with it. Deleting the last one brings the list's own views back. It is greyed out on a list's own view when that is the only one.
 
-The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
+The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Fields**, **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
 
 ### Unsaved changes
 
-A change to a view - a filter typed, a header sort, a page size, the editor's **Show** - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
+A change to a view - a filter typed, a header sort, a column shown, hidden, moved or resized, a page size, the editor's **Show** - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
 
 - **Save** keeps the changes as the view. On one of a list's own views it keeps the whole set as yours, as any first change does.
 - **Discard** drops them and shows the view as it was saved.
@@ -113,10 +129,7 @@ Each view has its own unsaved changes, and they stay while you look at another t
 
 **Rename** names the view at once, whether or not it has unsaved changes. **New view** copies the view as it shows, unsaved changes included, and **Duplicate** as it was saved.
 
-The tune button in the bar edits the current view's columns and sort, over two tabs.
-
-- **Display** - tick the columns to show and drag them into order.
-- **Sort** - the columns to sort by, in order, each ascending or descending.
+The tune button in the bar edits the current view's sort: the columns to sort by, in order, each ascending or descending.
 
 The editor's bar:
 

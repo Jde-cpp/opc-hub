@@ -10,7 +10,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle, LocalPrefs, ProfileStore, RouteItem } from 'jde-spa';
-import { cellValues, errorMessage, QLListSettings, SnackbarService, View, ViewToolbar } from 'jde-framework';
+import { cellValues, errorMessage, QLListSettings, SnackbarService, View, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
@@ -45,7 +45,7 @@ import { WatchTrend } from './watch-trend';
 	templateUrl: './gateway-watch.html',
 	styleUrls: ['./gateway-watch.scss'],
 	host: {class: 'main-content my-content gateway-watch'},
-	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, QLListSettings, StructureTable, ViewToolbar, WatchTrend]
+	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, QLListSettings, StructureTable, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar, WatchTrend]
 })
 export class GatewayWatch implements OnInit, OnDestroy{
 	static readonly prefsOwner = 'gatewayWatch';

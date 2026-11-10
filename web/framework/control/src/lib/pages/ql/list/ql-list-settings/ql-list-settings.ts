@@ -3,20 +3,15 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
-import { MatTabsModule } from '@angular/material/tabs';
 import { MatToolbar } from '@angular/material/toolbar';
-import { QLListSettingsDisplay } from './ql-list-settings-display/ql-list-settings-display';
 import { QLListSettingsSort } from './ql-list-settings-sort/ql-list-settings-sort';
-import { View, ViewField } from '../../../../model/ql/view';
-import { persistedTabIndex } from 'jde-spa';
+import { View } from '../../../../model/ql/view';
 import { TableSchema } from '../../../../model/ql/schema/table-schema';
-
-const tabKey = 'qlListSettings';
 
 @Component({
 	selector: 'ql-list-settings',
 	templateUrl: './ql-list-settings.html',
-	imports: [MatButtonModule, MatIcon, MatInputModule, MatSelectModule, MatTabsModule, MatToolbar, QLListSettingsDisplay, QLListSettingsSort]
+	imports: [MatButtonModule, MatIcon, MatInputModule, MatSelectModule, MatToolbar, QLListSettingsSort]
 })
 export class QLListSettings implements OnInit{
 	ngOnInit(){
@@ -29,13 +24,6 @@ export class QLListSettings implements OnInit{
 			view.name = this.name();
 			view.number = 0;
 		}
-		let displayCols = this.display().dataSource;
-		const own = new Set( this.view().fields.map( f=>f.name ) );
-		const fields = displayCols.filter( c=>c.name!="Selector" && (own.has(c.name) || c.displayed) ).map( c=>new ViewField(c as ViewField) );//a column the view lacks and the user left hidden stays out:  under the host's name for it, it made a Show that changed nothing a draft
-		for( let field of this.view().fields.filter(f=>!fields.find(c=>c.name==f.name)) )//the list only offers columns(), so excluded-but-queried fields (id/slug) would be lost
-			fields.push( new ViewField(field) );
-		view.fields = fields;
-		view.showSelector = displayCols[0].displayed;
 		view.sort = this.sort().dataSource.filter( s=>s.active ).map( s=>({active: s.active, direction: s.direction}) );
 		return view;
 	}
@@ -46,16 +34,13 @@ export class QLListSettings implements OnInit{
 	canDelete = input<boolean>( false );//ViewSet.canRemove, of the view
 	schema = input.required<TableSchema>();
 	view = input.required<View>();
-	columns = input.required<Record<string,string>>();
 	originalName = computed( () =>{return this.view().name ?? "<default>" + (this.view().isAdhoc ? "*" : "");} );
 	onSave = output<View>();
 	onShow = output<View>();
 	onDelete = output<View>();
 	onCancel = output<void>();
 
-	display = viewChild.required( QLListSettingsDisplay );
 	sort = viewChild.required( QLListSettingsSort );
 
 	name = signal<string>( null as any );
-	tabIndex = persistedTabIndex( tabKey );
 }

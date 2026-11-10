@@ -10,17 +10,7 @@
 	<button matButton="outlined" (click)="onDelete.emit(view())" [disabled]="!canDelete()"><mat-icon>delete</mat-icon>Delete</button>
 	<button matButton="outlined" (click)="onCancel.emit()">Cancel</button>
 </mat-toolbar>
-<mat-tab-group class="my-content" mat-align-tabs="center" mat-stretch-tabs="false"  [(selectedIndex)]="tabIndex">
-	<mat-tab>
-		<ng-template mat-tab-label>Display</ng-template>
-		<div class="centered-content">
-			<ql-list-settings-display [view]=view() [columns]=columns() [schema]=schema()></ql-list-settings-display>
-		</div>
-	</mat-tab>
-	<mat-tab>
-		<ng-template mat-tab-label>Sort</ng-template>
-		<div class="centered-content">
-			<ql-list-settings-sort [view]=view() [schema]="schema()" [excludedColumns]="excludedColumns()"></ql-list-settings-sort>
-		</div>
-	</mat-tab>
-</mat-tab-group>
+<!--the sort alone, until the view menu's `Sort by` takes it and the editor goes (views plan, Phase 5):  the columns are the view menu's `Fields` and the headers'-->
+<div class="centered-content">
+	<ql-list-settings-sort [view]=view() [schema]="schema()" [excludedColumns]="excludedColumns()"></ql-list-settings-sort>
+</div>
