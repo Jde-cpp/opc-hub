@@ -19,14 +19,14 @@
 <mat-toolbar class="jde-list-toolbar">
 	<div class="bar-left">
 		@if( !tabs() ){
-			<button matButton type="button" class="view-button" matTooltip="View menu" [matMenuTriggerFor]="viewMenu"><ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: views().current()}"/><mat-icon aria-hidden="true" iconPositionEnd>expand_more</mat-icon></button>
+			<button #viewButton matButton type="button" class="view-button" matTooltip="View menu" [matMenuTriggerFor]="viewMenu"><ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: views().current()}"/><mat-icon aria-hidden="true" iconPositionEnd>expand_more</mat-icon></button>
 		}
 		<ng-content select="[left]"/>
 	</div>
 	@if( views().current().isAdhoc ){<!--the centre zone:  the filter box's, which they are to stand at the end of-->
 		<div class="bar-center">
-			<button matButton type="button" (click)="discard()">Discard</button>
-			<button matButton="tonal" type="button" (click)="save()">Save</button>
+			<button matButton type="button" (click)="discard(true)">Discard</button>
+			<button matButton="tonal" type="button" (click)="save(true)">Save</button>
 		</div>
 	}
 	<div class="bar-right">

@@ -246,10 +246,14 @@ export class View{
 			this.limit = config.limit;
 		const missing:(string|undefined)[] = [];
 		for( const f of config.fields ){
-			if( schema.fields.some(s=>s.name==f.name) )
-				this.fields.push( new ViewField({field: f, schema: schema}) );
-			else
+			if( !schema.fields.some(s=>s.name==f.name) ){
 				missing.push( f.name );
+				continue;
+			}
+			const field = new ViewField( {field: f, schema: schema} );
+			if( f.displayName===undefined )//toJson leaves out the route's name, which the schema's must not take the place of
+				field.displayName = defaultView?.fields.find( d=>d.name==f.name )?.displayName ?? field.displayName;
+			this.fields.push( field );
 		}
 		for( let fieldFilter of config.filters ?? [] ){//{name: string, filter: Filter}
 			const field = schema.fields.find( f=>f.name==fieldFilter.name );

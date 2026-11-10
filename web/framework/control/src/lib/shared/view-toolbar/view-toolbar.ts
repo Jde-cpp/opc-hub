@@ -47,24 +47,26 @@ export class ViewToolbar{
 	edit = output<void>();
 	refresh = output<void>();
 
-	//The view being renamed, by its tab's key:  the set may republish its views meanwhile.  The box lies over the tab, where it was.
+	//The view being renamed, by its number, which its draft shares:  the set may republish its views meanwhile.  The box lies over
+	//the tab, where it was.
 	renaming = signal<number|undefined>( undefined );
 	renamed = computed<View|undefined>( ()=>{
-		const key = this.renaming();
-		return key===undefined ? undefined : this.views().views().find( v=>this.#tabKey(v)==key );
+		const number = this.renaming();
+		return number===undefined ? undefined : this.views().views().find( v=>v.number==number );
 	} );
 	renameAt = signal<{left:number, width:number}>( {left: 0, width: 0} );
 	renameInput = viewChild<ElementRef<HTMLInputElement>>( 'renameInput' );
 	tabsRow = viewChild<ElementRef<HTMLElement>>( 'tabsRow' );
 	links = viewChildren( MatTabLink );
+	viewButton = viewChild( 'viewButton', {read: ElementRef<HTMLButtonElement>} );//its element:  the reference alone is the MatButton
 
 	label( view:View ):string{ return view.name ?? "Default"; }
 	//the menu's sizes, and the view's own where it is none of them, as the logs' 21
 	pageSizes = computed<number[]>( ()=>{
 		const limit = this.views().current().limit;
-		return ViewToolbar.pageSizes.includes( limit ) || !limit ? ViewToolbar.pageSizes : [...ViewToolbar.pageSizes, limit].sort( (a,b)=>a-b );
+		return ViewToolbar.sizes.includes( limit ) || !limit ? ViewToolbar.sizes : [...ViewToolbar.sizes, limit].sort( (a,b)=>a-b );
 	} );
-	static readonly pageSizes = [10, 25, 50, 100, 250, 500];
+	static readonly sizes = [10, 25, 50, 100, 250, 500];
 	//a change to the draft, as any other
 	pageSize( size:number ){
 		if( size==this.views().current().limit )
@@ -72,13 +74,25 @@ export class ViewToolbar{
 		this.views().edit( view=>{ view.limit = size; } );
 		this.viewChange.emit();
 	}
-	save(){
+	//The draft over its view, as it stands once the set makes the change.  The bar's Discard and Save go with the draft, so they hand
+	//the focus to the view's tab, or a pick list's button, rather than drop it to the page;  the menu's hand it back to the chevron.
+	save( fromBar=false ){
 		const view = this.views().current();
-		this.#change( (set, shown)=>set.save(view, shown), "Could not save view." );
+		this.#change( (set, shown)=>set.saveDraft(view, shown), "Could not save view." );
+		if( fromBar )
+			this.#focusView();
 	}
-	discard(){
+	discard( fromBar=false ){
 		if( this.views().discard(this.views().current()) )
 			this.viewChange.emit();
+		if( fromBar )
+			this.#focusView();
+	}
+	#focusView(){
+		if( this.tabs() )
+			this.links()[this.views().index()]?.focus();
+		else
+			this.viewButton()?.nativeElement.focus();
 	}
 	//the tab clicked, the active one again being nothing:  the host re-reads on a change
 	onTab( index:number ){
@@ -117,7 +131,7 @@ export class ViewToolbar{
 			const at = tab.getBoundingClientRect();
 			this.renameAt.set( {left: at.left-row.getBoundingClientRect().left, width: at.width} );
 		}
-		this.renaming.set( this.#tabKey(this.views().current()) );
+		this.renaming.set( this.views().current().number );
 	}
 	onRenameKey( event:KeyboardEvent ){
 		if( event.key=="Enter" )
@@ -143,8 +157,6 @@ export class ViewToolbar{
 		if( refocus )
 			this.links()[this.views().index()]?.focus();
 	}
-	//what the tabs row tracks a tab by:  its view's number, which its draft shares
-	#tabKey( view:View ):number{ return view.number; }
 	//the tab of the view:  the hosts with a tabs row offer every view, so it is the view's place in the set
 	#place( view:View ):number{ return this.views().views().findIndex( v=>v.number==view.number ); }
 	//A change through the set, which says when it puts another view on screen (ViewSet), its writes awaited and a failure said

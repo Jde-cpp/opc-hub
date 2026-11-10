@@ -208,6 +208,18 @@ describe( "View statics", ()=>{
 		}
 	} );
 
+	//reviews-issue/589-views-draft.md #1:  toJson leaves out the route's name for a column, and fromJson put the schema's in its
+	//place - Opc Sessions for Sessions - so a saved view or a draft read back was never alike the route's
+	it( "read a saved view back under the route's names for its columns", ()=>{
+		const settings = {columns: ["name", {name: "opcSessions", displayName: "Sessions", selection: "count"}], sort: "name"};
+		const route = View.fromTable( settings, schema );
+		const json = JSON.parse( JSON.stringify(route.toJson(settings)) );
+		expect( json.fields.find( ( f:{name:string} )=>f.name=="opcSessions" ).displayName ).toBeUndefined();
+		const saved = View.fromJson( json, schema, route );
+		expect( saved.fields.find( f=>f.name=="opcSessions" )!.displayName ).toBe( "Sessions" );
+		expect( View.alike(saved, route) ).toBe( true );
+	} );
+
 	//#588 review #5:  a host keeps its rows, and its page, for a view that shows the rows it did
 	it( "take a view renamed, or a copy, as alike, and one sorted, filtered or re-columned as not", ()=>{
 		const copy = View.copy( base );

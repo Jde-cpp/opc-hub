@@ -62,7 +62,7 @@ The active tab carries a chevron, which opens the view's menu:
 - **Save changes** and **Discard changes** do what **Save** and **Discard** in the bar do.
 - **Delete** removes the view, its unsaved changes with it. Deleting the last one brings the list's own views back. It is greyed out on a list's own view when that is the only one.
 
-The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page.
+The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page, but for changes that would list rows it does not offer, such as deleted ones: there it shows the view as it was saved.
 
 ### Unsaved changes
 
@@ -83,7 +83,7 @@ The tune button in the bar edits the current view, over three tabs.
 
 The editor's bar:
 
-- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others. A view needs a name.
+- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others, and the view you opened the editor on is left as it was saved. A view needs a name.
 - **Show** applies the changes without saving them, as [unsaved changes](#unsaved-changes).
 - **Delete** removes the view, as the view menu's does.
 - **Cancel** returns to the list unchanged.

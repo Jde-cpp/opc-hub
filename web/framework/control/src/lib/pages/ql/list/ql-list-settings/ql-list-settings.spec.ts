@@ -127,6 +127,25 @@ describe( 'QLListSettings page size', ()=>{
 	} );
 } );
 
+//reviews-issue/589-views-draft.md #10:  the Display tab's columns the view lacks came back in it, hidden under the host's names, so a
+//Show that changed nothing was no longer alike the view, and made a draft
+describe( 'QLListSettings Show', ()=>{
+	it( 'gives back the view it was opened on where nothing was changed', async ()=>{
+		const described = schemaOf( "User", id(), required("name"), scalar("description") );
+		const fixture = TestBed.createComponent( QLListSettings );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, described );
+		fixture.componentRef.setInput( 'view', view );
+		fixture.componentRef.setInput( 'schema', described );
+		fixture.componentRef.setInput( 'columns', {name: "Name", description: "Notes"} );
+		fixture.componentRef.setInput( 'suggestions', {} );
+		fixture.componentInstance.ngOnInit();
+		await stable( fixture, 1 );
+		const shown = fixture.componentInstance.getView( true );
+		expect( shown.fields.some( f=>f.name=="description" ) ).toBe( false );
+		expect( View.alike( shown, view ) ).toBe( true );
+	} );
+} );
+
 //A24:  the three tabs and their tables are signal queries - getView reads every tab, and a row added on one re-renders its table.
 describe( 'QLListSettings tabs', ()=>{
 	it( 'builds the view from all three tabs', async ()=>{

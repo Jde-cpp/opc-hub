@@ -80,11 +80,15 @@
 	opacity: .3;
 }
 
-//Discard and Save, at the right end of the centre zone, where the filter box is to end:  against the right zone, whose own auto
-//margin would share the room with theirs
-.bar-center{
-	margin-left: auto;
-	+ .bar-right{
+//Discard and Save against the right zone, at the right end of the centre zone, where the filter box is to end.  The left zone's
+//auto margin takes the room, which the right zone's would share, and the zones pack to the right, so a zone that wraps onto a row of
+//its own keeps the right edge.  On a phone the centre zone is a row of its own (_general.scss), its buttons at its start.
+mat-toolbar.jde-list-toolbar{
+	justify-content: flex-end;
+	.bar-left{
+		margin-right: auto;
+	}
+	.bar-right{
 		margin-left: 0;
 	}
 }

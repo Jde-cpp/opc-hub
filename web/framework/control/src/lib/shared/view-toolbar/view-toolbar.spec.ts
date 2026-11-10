@@ -395,6 +395,30 @@ describe( 'ViewToolbar', ()=>{
 			expect( host.changes ).toBe( 1 );
 		} );
 
+		//reviews-issue/589-views-draft.md #6:  the button went with the draft, and the focus fell to the page
+		it( "hands the focus to the view's tab as Save and Discard go", async ()=>{
+			const { fixture, element, set } = await create( {draft: true} );
+			centre( element )[1].focus();
+			centre( element )[1].click();
+			await settle( fixture );
+			expect( document.activeElement ).toBe( activeTab( element ) );
+			set.sort( {active: "name", direction: "desc"} );
+			fixture.detectChanges();
+			centre( element )[0].focus();
+			centre( element )[0].click();
+			fixture.detectChanges();
+			expect( centre( element ) ).toEqual( [] );
+			expect( document.activeElement ).toBe( activeTab( element ) );
+		} );
+
+		it( "hands the focus to a pick list's button as Discard goes", async ()=>{
+			const { fixture, element } = await create( {draft: true, tabs: false} );
+			centre( element )[0].focus();
+			centre( element )[0].click();
+			fixture.detectChanges();
+			expect( document.activeElement ).toBe( element.querySelector( '.view-button' ) );
+		} );
+
 		it( "says a Save that failed, through the snackbar", async ()=>{
 			const { fixture, element, service, snackbar } = await create( {draft: true} );
 			service.save.mockRejectedValue( new Error( 'offline' ) );
