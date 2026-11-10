@@ -36,6 +36,7 @@ namespace Jde::App{
 		α TimeZone()Ι->const std::chrono::time_zone&{ return _tz; }
 		α Today()Ι->std::chrono::year_month_day{ ul _{_mutex}; return _today; }
 		α Write( const Logging::Record& r )ι->void override;
+		using BufferedLogger::StopTimer;//the shutdown function's, before the executor stops:  no round or size flush starts again.
 	private:
 		friend struct ArchiveAwait;
 		friend struct DailyLoadAwait;
