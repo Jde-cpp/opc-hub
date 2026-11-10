@@ -8,6 +8,7 @@ import { flush, MockProfileService, silence } from 'jde-spa/testing';
 //reviews/angular-refactor.md A1:  QLList, LogDetail and NodeChildren each kept their own copy of these rules, and each had fixed
 //a different subset of the same bugs.
 //#587:  a view is known by its number, the profile holds a row a view and the index, and the route's views are a starting set.
+//#589:  a control changes a view on its draft, one a view, kept in the browser under the user's key.  `1:A*` is view 1 under a draft.
 const schema = schemaOf( "Thing", id(), required("name"), scalar("kind"), scalar("deleted", "DateTime") );
 class ThingView extends View{}//a host's subclass - LogView, NodeView
 
@@ -233,35 +234,35 @@ describe( 'ViewSet', ()=>{
 			expect( remembered() ).toBe( "1" );
 		} );
 
-		it( 'renames a view and its twin, and writes the row as it was saved', async ()=>{
+		it( 'renames a view and its draft, and writes the row as it was saved', async ()=>{
 			const { set, service, writes } = await load( stored([[1, make("A")]]) );
 			set.sort( {active: "kind", direction: "asc"} );
 			await set.rename( set.current(), "Z" );
-			expect( names(set) ).toEqual( ["1:Z", "1:Z*"] );
+			expect( names(set) ).toEqual( ["1:Z*"] );
 			expect( set.current().isAdhoc ).toBe( true );
 			expect( writes() ).toEqual( ["things/views/1"] );
-			expect( JSON.parse(service.rows.get("things/views/1")!) ).toMatchObject( {name: "Z", sort: [{active: "name"}]} );//not the twin's sort
+			expect( JSON.parse(service.rows.get("things/views/1")!) ).toMatchObject( {name: "Z", sort: [{active: "name"}]} );//not the draft's sort
 		} );
 
 		it( "duplicates a view after it, under its name and the next number, and shows the copy as the user's", async ()=>{
 			const { set, writes, held } = await load( stored([[1, make("A")], [3, make("B")]]) );
-			set.sort( {active: "kind", direction: "asc"} );//a twin, which goes with the switch
+			set.sort( {active: "kind", direction: "asc"} );//a draft, which stays its view's
 			await set.duplicate( set.views()[0] );
-			expect( names(set) ).toEqual( ["1:A", "4:A", "3:B"] );
+			expect( names(set) ).toEqual( ["1:A*", "4:A", "3:B"] );
 			expect( set.current().number ).toBe( 4 );
 			expect( set.current().isUser ).toBe( true );
-			expect( set.current().sort[0].active ).toBe( "name" );//the view's, not its twin's
+			expect( set.current().sort[0].active ).toBe( "name" );//the view's, not its draft's
 			expect( remembered() ).toBe( "4" );
 			expect( writes() ).toEqual( ["things/views/4", "things/views"] );
 			expect( held() ).toEqual( {index: [1, 4, 3], rows: [1, 3, 4]} );
 		} );
 
-		//#588 review #6:  the toolbar's Duplicate passes the view on screen, which on an edited tab is the twin
-		it( 'duplicates the view under a twin, not the twin, whose edits go', async ()=>{
+		//#588 review #6:  the toolbar's Duplicate passes the view on screen, which on an edited tab is the draft
+		it( 'duplicates the view under a draft, not the draft, which its view keeps', async ()=>{
 			const { set } = await load( stored([[1, make("A")]]) );
 			set.sort( {active: "kind", direction: "asc"} );
 			await set.duplicate( set.current() );
-			expect( names(set) ).toEqual( ["1:A", "2:A"] );
+			expect( names(set) ).toEqual( ["1:A*", "2:A"] );
 			expect( set.current().sort[0].active ).toBe( "name" );
 		} );
 
@@ -277,11 +278,11 @@ describe( 'ViewSet', ()=>{
 			expect( shown ).toHaveBeenCalledTimes( 1 );
 		} );
 
-		it( 'adds a copy of the view shown, its edits with it, named for its number and after the last', async ()=>{
+		it( "adds a copy of the view shown, its draft's changes with it, named for its number and after the last", async ()=>{
 			const { set, writes, held } = await load();
 			set.sort( {active: "kind", direction: "asc"} );
 			await set.add();
-			expect( names(set) ).toEqual( ["1:Default", "2:Users", "3:View 3"] );
+			expect( names(set) ).toEqual( ["1:Default*", "2:Users", "3:View 3"] );//the draft stays its view's
 			expect( set.current().sort[0].active ).toBe( "kind" );
 			expect( set.current().isUser ).toBe( true );
 			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views/3", "things/views"] );//a first save:  the whole set
@@ -434,13 +435,13 @@ describe( 'ViewSet', ()=>{
 			expect( set.canRemove( set.current() ) ).toBe( false );
 		} );
 
-		//review #6:  the view under the twin would go
-		it( 'does not take a twin', async ()=>{
+		//#589:  Discard drops the changes alone, so Delete takes the view with them
+		it( 'takes a view under its draft', async ()=>{
 			const { set } = await load( stored([[1, make("A")], [2, make("B")]]) );
 			set.sort( {active: "kind", direction: "asc"} );
 			expect( set.current().isAdhoc ).toBe( true );
-			expect( set.canRemove( set.current() ) ).toBe( false );
-			expect( set.canRemove( View.copy(set.current()) ) ).toBe( false );//the copy the settings panel edits
+			expect( set.canRemove( set.current() ) ).toBe( true );
+			expect( set.canRemove( View.copy(set.current()) ) ).toBe( true );//the copy the settings panel edits
 		} );
 
 		it( 'does not take the fallback a pick list shows under no number', async ()=>{
@@ -518,6 +519,19 @@ describe( 'ViewSet', ()=>{
 			await expect( set.remove( set.views()[1], shown ) ).rejects.toThrow( 'make the change again' );
 			expect( shown ).toHaveBeenCalledTimes( 1 );
 		} );
+
+		//reviews-issue/589-views-draft.md #12:  the toolbar's Save took the draft at the click, and then dropped the one changed while
+		//the read was out
+		it( "saves a view's draft as it stands once the read lands", async ()=>{
+			const { set, service } = await failing();
+			set.sort( {active: "kind", direction: "asc"} );
+			const saving = set.saveDraft( set.current() );
+			set.edit( view=>{ view.limit = 100; } );
+			await saving;
+			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
+			const row = JSON.parse( service.rows.get("things/views/1")! );
+			expect( [row.sort[0].active, row.limit] ).toEqual( ["kind", 100] );
+		} );
 	} );
 
 	//a pick list offers no view of the deleted rows, on a set that is the list page's too
@@ -556,78 +570,348 @@ describe( 'ViewSet', ()=>{
 			expect( writes() ).toEqual( ["things/views/2", "things/views"] );
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );
 		} );
+
+		//reviews-issue/589-views-draft.md #9:  the list page's draft of a view, filtered on the deleted rows, put them in a pick list
+		it( "shows a view as saved where its draft is one it would not offer", async ()=>{
+			const page = await load( stored([[1, make("A")], [2, make("B")]]) );
+			page.set.edit( view=>{ view.fieldFilters = trash().fieldFilters; } );
+			const { set } = await load( stored([[1, make("A")], [2, make("B")]]), {offered} );
+			expect( names(set) ).toEqual( ["1:A", "2:B"] );
+			expect( set.current().fieldFilters ).toEqual( [] );
+		} );
 	} );
 
-	//the twin needs no read:  the route's views alone
+	//a draft needs no read:  the route's views alone
 	const unread = ()=>{
 		const { set } = create();
 		set.reset( route(), schema );
 		return set;
 	};
+	const kindFirst = ( view:View )=>{
+		const copy = View.copy( view );
+		copy.sort = [{active: "kind", direction: "desc"}];
+		return copy;
+	};
 
 	describe( 'show', ()=>{
-		it( "makes an Adhoc twin under its view's number, and replaces it on the next show", ()=>{
+		it( "puts an Adhoc draft in its view's place, under its number and name, and replaces it on the next show", ()=>{
 			const set = unread();
 			set.select( 1 );
-			const shown = View.copy( set.current() );
+			const shown = kindFirst( set.current() );
+			shown.name = "the editor's";
 			set.show( shown );
-			expect( names(set) ).toEqual( ["1:Default", "2:Users", "2:Users*"] );
+			expect( names(set) ).toEqual( ["1:Default", "2:Users*"] );
 			expect( set.current() ).toBeInstanceOf( ThingView );//ql-list-settings emits a base View
-			expect( set.current().isAdhoc ).toBe( true );
 			expect( shown.type ).toBe( ViewType.System );//the caller's copy is left alone
-			set.show( set.current() );
-			expect( names(set) ).toEqual( ["1:Default", "2:Users", "2:Users*"] );
+			const again = View.copy( set.current() );
+			again.limit = 50;
+			set.show( again );
+			expect( names(set) ).toEqual( ["1:Default", "2:Users*"] );
+			expect( [set.current().limit, set.current().sort[0].active] ).toEqual( [50, "kind"] );
 		} );
 
-		it( "drops the '*' the settings panel shows on an unnamed twin", ()=>{
+		it( 'makes no draft of a view shown as it is, and drops one changed back', ()=>{
 			const set = unread();
-			const starred = View.copy( set.current() );
-			starred.name = "x*";
-			starred.type = ViewType.Adhoc;
-			set.show( starred );
-			expect( set.current().name ).toBe( "x" );
+			const view = set.current();
+			set.show( view );
+			expect( set.current() ).toBe( view );
+			set.show( kindFirst(view) );
+			expect( set.current().isAdhoc ).toBe( true );
+			set.show( View.copy(view) );
+			expect( set.current() ).toBe( view );
 		} );
 
 		it( 'leaves the remembered number as it was', ()=>{
 			const set = unread();
-			set.show( set.current() );
-			expect( set.index() ).toBe( 2 );
+			set.show( kindFirst(set.current()) );
+			expect( set.index() ).toBe( 0 );
 			expect( remembered() ).toBeNull();//a Show is not a pick
 		} );
 	} );
 
-	it( 'sorts on a twin, the column first and the rest kept', ()=>{
+	it( 'sorts on a draft, the column first and the rest kept', ()=>{
 		const set = unread();
 		set.current().sort = [{active: "name", direction: "asc"}, {active: "kind", direction: "asc"}];
 		set.sort( {active: "kind", direction: "desc"} );
 		expect( set.current().isAdhoc ).toBe( true );
 		expect( set.current().sort ).toEqual( [{active: "kind", direction: "desc"}, {active: "name", direction: "asc"}] );
-		expect( set.views()[0].sort[0].active ).toBe( "name" );//the view it came from is untouched
+		expect( set.routeDefault!.sort[0].active ).toBe( "name" );//the view it came from is untouched
+	} );
+
+	it( 'edits the view shown on its draft', ()=>{
+		const set = unread();
+		set.edit( view=>{ view.limit = 100; } );
+		expect( [set.current().limit, set.current().isAdhoc] ).toEqual( [100, true] );
+		expect( set.routeDefault!.limit ).toBe( 25 );
 	} );
 
 	describe( 'select', ()=>{
-		it( 'remembers the view by its number, and discards the twin on switching away', ()=>{
+		it( 'remembers the view by its number, and keeps the draft of the tab left', ()=>{
 			const set = unread();
-			set.show( set.current() );
+			set.sort( {active: "kind", direction: "asc"} );
 			expect( set.select( 1 ) ).toBe( true );
-			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
+			expect( names(set) ).toEqual( ["1:Default*", "2:Users"] );
 			expect( set.current().name ).toBe( "Users" );
 			expect( remembered() ).toBe( "2" );
-		} );
-
-		it( 'keeps the twin when it is the one selected', ()=>{
-			const set = unread();
-			set.select( 1 );
-			set.show( set.current() );
-			set.select( 2 );
-			expect( names(set) ).toEqual( ["1:Default", "2:Users", "2:Users*"] );
-			expect( set.current().isAdhoc ).toBe( true );
+			set.select( 0 );
+			expect( [set.current().isAdhoc, set.current().sort[0].active] ).toEqual( [true, "kind"] );
 		} );
 
 		it( 'does nothing for an index that is not there', ()=>{
 			const set = unread();
 			expect( set.select( 3 ) ).toBe( false );
 			expect( set.current().name ).toBeUndefined();
+		} );
+	} );
+
+	describe( 'drafts', ()=>{
+		const kind = {active: "kind", direction: "asc"} as const;
+		const drafts = ( user="u1" )=>JSON.parse( localStorage.getItem(`${user}/things/drafts`) ?? "null" ) as Record<string,{name?:string, sort:{active:string}[], limit:number}>|null;
+		const two = ()=>stored( [[1, make("A")], [2, make("B")]] );
+		afterEach( ()=>vi.restoreAllMocks() );
+
+		it( 'keeps one a view, each in its own tab', async ()=>{
+			const { set, writes } = await load( two() );
+			set.sort( kind );
+			set.select( 1 );
+			set.edit( view=>{ view.limit = 50; } );
+			expect( names(set) ).toEqual( ["1:A*", "2:B*"] );
+			expect( [set.views()[0].sort[0].active, set.views()[0].limit, set.views()[1].sort[0].active, set.views()[1].limit] ).toEqual( ["kind", 25, "name", 50] );
+			expect( writes() ).toEqual( [] );//the browser's, not the profile's
+		} );
+
+		it( "writes each change to the browser under the user's key and the set's, by number and without the name", async ()=>{
+			const { set } = await load( two() );
+			set.sort( kind );
+			set.select( 1 );
+			set.edit( view=>{ view.limit = 50; } );
+			expect( Object.keys(drafts()!) ).toEqual( ["1", "2"] );
+			expect( drafts()![1].sort[0].active ).toBe( "kind" );
+			expect( drafts()![2].limit ).toBe( 50 );
+			expect( "name" in drafts()![1] ).toBe( false );
+		} );
+
+		it( "saves one over its view, the others kept", async ()=>{
+			const { set, service, writes } = await load( two() );
+			set.sort( kind );
+			set.select( 1 );
+			set.edit( view=>{ view.limit = 50; } );
+			await set.save( set.current() );
+			expect( names(set) ).toEqual( ["1:A*", "2:B"] );
+			expect( [set.current().isUser, set.current().limit] ).toEqual( [true, 50] );
+			expect( writes() ).toEqual( ["things/views/2"] );
+			expect( JSON.parse(service.rows.get("things/views/2")!).limit ).toBe( 50 );
+			expect( Object.keys(drafts()!) ).toEqual( ["1"] );
+		} );
+
+		it( "saves the whole set as the user's on a built-in view's Save, with that view changed", async ()=>{
+			const { set, service, writes } = await load();
+			set.select( 1 );
+			set.sort( kind );
+			await set.save( set.current() );
+			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
+			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views"] );
+			expect( JSON.parse(service.rows.get("things/views/2")!).sort[0].active ).toBe( "kind" );
+			expect( drafts() ).toBeNull();
+		} );
+
+		it( 'discards one, the view as saved shown again, and says where there was none', async ()=>{
+			const { set, writes } = await load( two() );
+			const saved = set.current();
+			set.sort( kind );
+			expect( set.discard( set.current() ) ).toBe( true );
+			expect( set.current() ).toBe( saved );
+			expect( drafts() ).toBeNull();
+			expect( set.discard( set.current() ) ).toBe( false );
+			expect( writes() ).toEqual( [] );
+		} );
+
+		it( "rebuilds every tab's draft on a reload, on the remembered view", async ()=>{
+			const first = await load( two() );
+			first.set.sort( kind );
+			first.set.select( 1 );
+			first.set.edit( view=>{ view.limit = 50; } );
+			const { set } = await load( two() );
+			expect( names(set) ).toEqual( ["1:A*", "2:B*"] );
+			expect( set.current() ).toBeInstanceOf( ThingView );
+			expect( [set.current().number, set.current().limit, set.views()[0].sort[0].active] ).toEqual( [2, 50, "kind"] );
+			await set.save( set.views()[0] );//a draft read back saves as one made here
+			expect( names(set) ).toEqual( ["1:A", "2:B*"] );
+		} );
+
+		it( 'drops the draft of a view deleted, at once, so a new view taking its number has none', async ()=>{
+			const { set } = await load( two() );
+			set.select( 1 );
+			set.sort( kind );
+			await set.remove( set.current() );
+			expect( drafts() ).toBeNull();
+			await set.add();
+			expect( names(set) ).toEqual( ["1:A", "2:View 2"] );
+		} );
+
+		it( 'drops one whose view is gone when it is read back, there too', async ()=>{
+			localStorage.setItem( "u1/things/drafts", JSON.stringify({1: kindFirst( make("A") ).toJson(undefined), 7: make("Gone").toJson(undefined)}) );
+			const { set } = await load( two() );
+			expect( names(set) ).toEqual( ["1:A*", "2:B"] );
+			expect( Object.keys(drafts()!) ).toEqual( ["1"] );
+		} );
+
+		it( 'drops one that can no longer be made a view of', async ()=>{
+			localStorage.setItem( "u1/things/drafts", JSON.stringify({1: {fields: 5}}) );
+			const warn = silence();
+			const { set } = await load( two() );
+			expect( warn ).toHaveBeenCalled();
+			expect( names(set) ).toEqual( ["1:A", "2:B"] );
+			expect( drafts() ).toBeNull();
+		} );
+
+		it( 'renames the view under a draft, so that neither a reload nor a Save puts the old name back', async ()=>{
+			const first = await load( two() );
+			first.set.sort( kind );
+			await first.set.rename( first.set.current(), "Z" );
+			const rows = Object.fromEntries( [...first.service.rows].map( ([key, value])=>[key, JSON.parse(value)] ) );
+			const { set, service } = await load( rows );
+			expect( names(set) ).toEqual( ["1:Z*", "2:B"] );
+			await set.save( set.current() );
+			const row = JSON.parse( service.rows.get("things/views/1")! );
+			expect( [row.name, row.sort[0].active] ).toEqual( ["Z", "kind"] );
+		} );
+
+		it( "keeps a second user's apart", async ()=>{
+			const first = await load( two() );
+			first.set.sort( kind );
+			const second = create( two() );
+			second.service.setUser( 'u2' );
+			await second.set.load( route(), schema );
+			expect( names(second.set) ).toEqual( ["1:A", "2:B"] );
+			second.set.select( 1 );
+			second.set.edit( view=>{ view.limit = 50; } );
+			expect( Object.keys(drafts("u2")!) ).toEqual( ["2"] );
+			expect( Object.keys(drafts()!) ).toEqual( ["1"] );
+		} );
+
+		it( 'does not carry them over to one who signs in on the page', async ()=>{
+			const { set, service } = await load();
+			set.sort( kind );
+			service.setUser( 'u2' );
+			await set.rename( set.views()[1], "Mine" );//reads for u2, who has saved none:  the route's views stay
+			expect( names(set) ).toEqual( ["1:Default", "2:Mine"] );
+			expect( drafts("u2") ).toBeNull();
+			expect( Object.keys(drafts()!) ).toEqual( ["1"] );
+		} );
+
+		it( 'keeps one made signed out, or before the profile is read, here alone', async ()=>{
+			const { set, service } = await load();
+			service.setUser( undefined );
+			set.sort( kind );
+			expect( set.current().isAdhoc ).toBe( true );
+			const unreadSet = unread();
+			unreadSet.sort( kind );
+			expect( unreadSet.current().isAdhoc ).toBe( true );
+			expect( localStorage.length ).toBe( 0 );
+		} );
+
+		it( 'writes one made before the read once it lands, where the set is the one it was made on', async ()=>{
+			const { set } = create();
+			set.reset( route(), schema );
+			set.sort( kind );
+			await set.move( set.views()[1], 0 );
+			expect( names(set) ).toEqual( ["2:Users", "1:Default*"] );
+			expect( Object.keys(drafts()!) ).toEqual( ["1"] );
+		} );
+
+		it( "leaves a pick list's fallback's out of the browser", async ()=>{
+			const { set } = await load( stored([[1, trash()]]), {offered} );
+			set.sort( kind );
+			expect( names(set) ).toEqual( ["0:Default*"] );
+			expect( drafts() ).toBeNull();
+			set.discard( set.current() );
+			expect( names(set) ).toEqual( ["0:Default"] );
+		} );
+
+		//reviews-issue/589-views-draft.md #1:  toJson leaves out the route's name for a column, and the draft came back under the
+		//schema's
+		it( "reads one back under the route's names for its columns", async ()=>{
+			const columns = ["name", {name: "kind", displayName: "Type"}];
+			const route = ()=>[undefined, "Users"].map( name=>ThingView.fromConfig( {name, configColumns: columns, sort: [{active: "name", direction: "asc"}]}, schema ) );
+			const settings = {settings: {columns, sort: [{active: "name", direction: "asc"} as const]}};
+			const first = create( {}, settings );
+			await first.set.load( route(), schema );
+			first.set.sort( kind );
+			const { set } = create( {}, settings );
+			await set.load( route(), schema );
+			expect( names(set) ).toEqual( ["1:Default*", "2:Users"] );
+			expect( set.current().fields.find( f=>f.name=="kind" )!.displayName ).toBe( "Type" );
+		} );
+
+		//reviews-issue/589-views-draft.md #2:  a failed write had already taken the draft out of the browser, so a reload lost it
+		it( 'keeps one in the browser until the profile holds its Save or its Delete', async ()=>{
+			const { set, service } = await load( two() );
+			set.sort( kind );
+			set.select( 1 );
+			set.sort( kind );
+			service.save.mockRejectedValueOnce( new Error('offline') );
+			await expect( set.saveDraft( set.current() ) ).rejects.toThrow( 'offline' );
+			service.save.mockRejectedValueOnce( new Error('offline') );
+			await expect( set.remove( set.views()[0] ) ).rejects.toThrow( 'offline' );
+			expect( names(set) ).toEqual( ["2:B"] );
+			expect( Object.keys(drafts()!) ).toEqual( ["1", "2"] );
+			const reloaded = await load( two() );//the profile as it was:  neither write landed
+			expect( names(reloaded.set) ).toEqual( ["1:A*", "2:B*"] );
+		} );
+
+		//reviews-issue/589-views-draft.md #4:  each tab wrote the whole entry from its own drafts, over the other's
+		it( 'leaves those another tab wrote as they are', async ()=>{
+			const one = await load( two() ), other = await load( two() );
+			one.set.sort( kind );
+			other.set.select( 1 );
+			other.set.sort( kind );
+			expect( Object.keys(drafts()!) ).toEqual( ["1", "2"] );
+			other.set.discard( other.set.current() );
+			expect( Object.keys(drafts()!) ).toEqual( ["1"] );
+		} );
+
+		//reviews-issue/589-views-draft.md #7:  one equal to its view, written by a tab that had not seen the view saved, showed the dot
+		it( 'drops one that shows what its view does when it is read back', async ()=>{
+			localStorage.setItem( "u1/things/drafts", JSON.stringify({1: make("A").toJson(undefined), 2: kindFirst( make("B") ).toJson(undefined)}) );
+			const { set } = await load( two() );
+			expect( names(set) ).toEqual( ["1:A", "2:B*"] );
+			expect( Object.keys(drafts()!) ).toEqual( ["2"] );
+		} );
+
+		//reviews-issue/589-views-draft.md #8:  the editor's Save under a new name left the draft on the view it was opened on
+		it( "drops the draft of the view shown on the editor's Save under another name", async ()=>{
+			const { set } = await load( two() );
+			set.sort( kind );
+			await set.save( unnumbered(set, "Mine") );
+			expect( names(set) ).toEqual( ["1:A", "2:B", "3:Mine"] );
+			expect( set.current().sort[0].active ).toBe( "kind" );
+			expect( drafts() ).toBeNull();
+		} );
+
+		//reviews-issue/589-views-draft.md #11:  the last user's stayed on screen until a change read for the new one, and that read
+		//dropped the new one's too
+		it( "takes the last user's off the screen as another signs in on the page, and keeps the new one's", async ()=>{
+			const { set, service } = await load();
+			set.sort( kind );
+			service.setUser( 'u2' );
+			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
+			set.select( 1 );
+			set.sort( kind );
+			expect( names(set) ).toEqual( ["1:Default", "2:Users*"] );
+			await set.rename( set.views()[0], "Mine" );
+			expect( names(set) ).toEqual( ["1:Mine", "2:Users*"] );
+			expect( Object.keys(drafts("u2")!) ).toEqual( ["2"] );
+			expect( Object.keys(drafts()!) ).toEqual( ["1"] );
+		} );
+
+		//reviews-issue/589-views-draft.md #15:  every load wrote the entry, changed or not
+		it( 'writes nothing to the browser at a load that changes no draft', async ()=>{
+			const first = await load( two() );
+			first.set.sort( kind );
+			const setItem = vi.spyOn( Storage.prototype, 'setItem' );
+			await load( two() );
+			expect( setItem.mock.calls.filter( ([key])=>key.endsWith("/drafts") ) ).toEqual( [] );
 		} );
 	} );
 } );

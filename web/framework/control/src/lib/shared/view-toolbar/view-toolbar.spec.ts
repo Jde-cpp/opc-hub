@@ -13,6 +13,7 @@ import { schemaOf, snackbarStub } from 'jde-framework/testing';
 
 //reviews/angular-refactor.md A2:  QLList, LogDetail and NodeChildren each carried a copy of this toolbar and its stylesheet.
 //#588:  the views are tabs, the view menu on the active one's chevron and `+ New view` after them;  a pick list has a menu button.
+//#589:  a view with a draft shows it under a dot, with Save and Discard;  the page size is the menu's.
 const schema = schemaOf( "Thing" );
 const view = ( name:string|undefined )=>{ const v = View.fromConfig( {configColumns: [], sort: []}, schema ); v.name = name; return v; };
 //the profile rows of a saved set:  the views by number, and the index in their order
@@ -20,7 +21,7 @@ const stored = ( views:[number, View][] )=>Object.fromEntries( [["things/views",
 
 @Component({
 	imports: [MatTabNavPanel, ViewToolbar],
-	template: `<view-toolbar [views]="views" [tabPanel]="panel" [tabs]="tabs()" [refreshing]="refreshing()" [count]="count()" (viewChange)="changes=changes+1" (edit)="edits=edits+1" (refresh)="refreshes=refreshes+1">
+	template: `<view-toolbar [views]="views" [tabPanel]="panel" [tabs]="tabs()" [paged]="paged()" [refreshing]="refreshing()" [count]="count()" (viewChange)="changes=changes+1" (edit)="edits=edits+1" (refresh)="refreshes=refreshes+1">
 		<button left id="add">Add</button>
 		<span right id="extra">extra</span>
 	</view-toolbar>
@@ -29,6 +30,7 @@ const stored = ( views:[number, View][] )=>Object.fromEntries( [["things/views",
 class Host{
 	views:ViewSet<View> = null as any;//before the first render
 	tabs = signal( true );
+	paged = signal( false );
 	refreshing = signal( false );
 	count = signal<number|undefined>( 3 );
 	changes = 0;
@@ -37,10 +39,10 @@ class Host{
 }
 
 describe( 'ViewToolbar', ()=>{
-	type Options = { rows?:Record<string,unknown>; route?:View[]; twin?:boolean; tabs?:boolean };
-	//A toolbar over the route's views - Default and Users, on Users - or over the saved `rows` of the profile;  a twin of the
-	//current view where asked, and a pick list's for tabs false.
-	const create = async ( {rows, route=[view( undefined ), view( "Users" )], twin=false, tabs=true}:Options={} )=>{
+	type Options = { rows?:Record<string,unknown>; route?:View[]; draft?:boolean; tabs?:boolean; paged?:boolean };
+	//A toolbar over the route's views - Default and Users, on Users - or over the saved `rows` of the profile;  a draft of the
+	//current view where asked, a pick list's for tabs false, and a host that pages.
+	const create = async ( {rows, route=[view( undefined ), view( "Users" )], draft=false, tabs=true, paged=false}:Options={} )=>{
 		const service = new MockProfileService();
 		for( const [key, value] of Object.entries(rows ?? {}) )
 			service.rows.set( key, JSON.stringify(value) );
@@ -50,12 +52,13 @@ describe( 'ViewToolbar', ()=>{
 		await set.load( route, schema );
 		if( !rows && route.length>1 )
 			set.select( 1 );
-		if( twin )
-			set.show( set.current() );
+		if( draft )
+			set.sort( {active: "name", direction: "asc"} );
 		const fixture = TestBed.createComponent( Host );
 		const host = fixture.componentInstance;
 		host.views = set;
 		host.tabs.set( tabs );
+		host.paged.set( paged );
 		fixture.detectChanges();
 		return { fixture, host, set, service, snackbar, element: fixture.nativeElement as HTMLElement };
 	};
@@ -90,11 +93,12 @@ describe( 'ViewToolbar', ()=>{
 	beforeEach( ()=>localStorage.clear() );
 
 	describe( 'the tabs row', ()=>{
-		it( 'is a tab per view, the unnamed one as Default and the twin as edited, the current one active and controlling the panel', async ()=>{
-			const { element } = await create( {twin: true} );
-			expect( labels( element ) ).toEqual( ["Default", "Users", "Users (edited)"] );
-			expect( tabs( element ).map( t=>t.getAttribute( "aria-selected" ) ) ).toEqual( ["false", "false", "true"] );
-			expect( tabs( element ).map( t=>t.getAttribute( "role" ) ) ).toEqual( ["tab", "tab", "tab"] );
+		it( 'is a tab per view, the unnamed one as Default and a draft under its dot, the current one active and controlling the panel', async ()=>{
+			const { element } = await create( {draft: true} );
+			expect( labels( element ) ).toEqual( ["Default", "Users, unsaved changes"] );//the draft in its view's tab
+			expect( tabs( element ).map( t=>!!t.querySelector( '.draft-dot' ) ) ).toEqual( [false, true] );
+			expect( tabs( element ).map( t=>t.getAttribute( "aria-selected" ) ) ).toEqual( ["false", "true"] );
+			expect( tabs( element ).map( t=>t.getAttribute( "role" ) ) ).toEqual( ["tab", "tab"] );
 			expect( activeTab( element ).getAttribute( "aria-controls" ) ).toBe( "panel" );
 			const add = element.querySelector( '.new-view' )!;
 			expect( text( add ) ).toBe( "New view" );
@@ -132,14 +136,14 @@ describe( 'ViewToolbar', ()=>{
 			expect( press ).not.toHaveBeenCalled();
 		} );
 
-		it( 'drags with the CDK:  a drop moves the tab, the twin alone staying put', async ()=>{
-			const { fixture, element, set, host } = await create( {twin: true} );
+		it( 'drags with the CDK:  a drop moves the tab, its draft with it', async ()=>{
+			const { fixture, element, set, host } = await create( {draft: true} );
 			expect( element.querySelector( 'nav.cdk-drop-list' ) ).not.toBeNull();
-			expect( tabs( element ).map( t=>t.classList.contains( "cdk-drag-disabled" ) ) ).toEqual( [false, false, true] );
+			expect( tabs( element ).map( t=>t.classList.contains( "cdk-drag-disabled" ) ) ).toEqual( [false, false] );
 			const toolbar = fixture.debugElement.query( By.directive( ViewToolbar ) ).componentInstance as ViewToolbar;
 			toolbar.onDrop( {previousIndex: 1, currentIndex: 0} as CdkDragDrop<unknown> );
 			await settle( fixture );
-			expect( labels( element ) ).toEqual( ["Users", "Default", "Users (edited)"] );
+			expect( labels( element ) ).toEqual( ["Users, unsaved changes", "Default"] );
 			expect( set.current().isAdhoc ).toBe( true );
 			expect( host.changes ).toBe( 0 );//the view on screen is the one it was
 		} );
@@ -169,11 +173,28 @@ describe( 'ViewToolbar', ()=>{
 	} );
 
 	describe( 'the view menu', ()=>{
-		it( 'opens from the chevron with Rename, Duplicate, the moves and Delete, the moves off at the ends', async ()=>{
+		it( 'opens from the chevron with Rename, Duplicate, the moves, Save and Discard changes and Delete, the moves off at the ends and the draft entries with no draft', async ()=>{
 			const { fixture, element } = await create();
 			const entries = openMenu( fixture, chevron( activeTab( element ) )! );
-			expect( entries.map( text ) ).toEqual( ["Rename", "Duplicate", "Move left", "Move right", "Delete"] );
-			expect( entries.map( e=>e.disabled ) ).toEqual( [false, false, false, true, false] );//Users is last
+			expect( entries.map( text ) ).toEqual( ["Rename", "Duplicate", "Move left", "Move right", "Save changes", "Discard changes", "Delete"] );
+			expect( entries.map( e=>e.disabled ) ).toEqual( [false, false, false, true, true, true, false] );//Users is last
+		} );
+
+		it( 'saves the draft over its view from Save changes, and drops it from Discard changes, telling the host of each', async ()=>{
+			const { fixture, element, set, host, service } = await create( {draft: true} );
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Save changes" );
+			expect( labels( element ) ).toEqual( ["Default", "Users"] );
+			expect( [set.current().isUser, set.current().sort[0].active] ).toEqual( [true, "name"] );
+			expect( JSON.parse( service.rows.get("things/views/2")! ).sort ).toEqual( [{active: "name", direction: "asc"}] );
+			expect( host.changes ).toBe( 1 );
+			set.sort( {active: "kind", direction: "asc"} );
+			fixture.detectChanges();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Discard changes" );
+			expect( labels( element ) ).toEqual( ["Default", "Users"] );
+			expect( set.current().sort[0].active ).toBe( "name" );
+			expect( host.changes ).toBe( 2 );
 		} );
 
 		it( "renames in place:  Enter commits, and the host hears of the view on screen changing", async ()=>{
@@ -285,7 +306,7 @@ describe( 'ViewToolbar', ()=>{
 			expect( set.current().name ).toBe( "Users" );
 			expect( host.changes ).toBe( 0 );
 			const entries = openMenu( fixture, chevron( activeTab( element ) )! );
-			expect( entries.map( e=>e.disabled ) ).toEqual( [false, false, true, false, false] );
+			expect( entries.map( e=>e.disabled ) ).toEqual( [false, false, true, false, true, true, false] );
 			await pick( fixture, "Move right" );
 			expect( labels( element ) ).toEqual( ["Default", "Users"] );
 		} );
@@ -301,12 +322,17 @@ describe( 'ViewToolbar', ()=>{
 			expect( service.save.mock.calls.map( ([k, v])=>v==null ? `-${k}` : k ) ).toEqual( ["-things/views", "-things/views/1"] );
 		} );
 
-		it( "has no Delete for the route's only view, nor for a twin", async ()=>{
-			const only = await create( {route: [view( undefined )]} );
-			expect( openMenu( only.fixture, chevron( activeTab( only.element ) )! ).map( e=>[text( e ), e.disabled] ) ).toContainEqual( ["Delete", true] );
-			TestBed.resetTestingModule();//two toolbars in one test
-			const twin = await create( {twin: true} );
-			expect( openMenu( twin.fixture, chevron( activeTab( twin.element ) )! ).map( e=>[text( e ), e.disabled] ) ).toContainEqual( ["Delete", true] );
+		it( "has no Delete for the route's only view", async ()=>{
+			const { fixture, element } = await create( {route: [view( undefined )]} );
+			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( e=>[text( e ), e.disabled] ) ).toContainEqual( ["Delete", true] );
+		} );
+
+		it( 'deletes a view with its draft', async ()=>{
+			const { fixture, element, set } = await create( {draft: true} );
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Delete" );
+			expect( labels( element ) ).toEqual( ["Default"] );
+			expect( set.current().isAdhoc ).toBe( false );
 		} );
 
 		it( 'says what failed, through the snackbar', async ()=>{
@@ -324,7 +350,7 @@ describe( 'ViewToolbar', ()=>{
 			expect( element.querySelector( 'nav' ) ).toBeNull();
 			const button = element.querySelector<HTMLButtonElement>( '.bar-left .view-button' )!;
 			expect( text( button ) ).toBe( "Users" );
-			expect( openMenu( fixture, button ).map( text ) ).toEqual( ["Views"] );
+			expect( openMenu( fixture, button ).map( text ) ).toEqual( ["Views", "Save changes", "Discard changes"] );
 			await pick( fixture, "Views" );
 			const views = items();
 			expect( views.map( text ) ).toEqual( ["Default", "Users"] );
@@ -333,6 +359,129 @@ describe( 'ViewToolbar', ()=>{
 			expect( set.current().name ).toBeUndefined();
 			expect( host.changes ).toBe( 1 );
 			expect( text( element.querySelector( '.view-button' )! ) ).toBe( "Default" );
+		} );
+	} );
+
+	describe( 'the draft', ()=>{
+		const centre = ( element:HTMLElement )=>[...element.querySelectorAll<HTMLButtonElement>( '.bar-center button' )];
+
+		it( 'has Discard and Save in the centre zone while the view shown has one, and neither without', async ()=>{
+			const { fixture, element, set } = await create( {draft: true} );
+			expect( centre( element ).map( text ) ).toEqual( ["Discard", "Save"] );
+			set.select( 0 );
+			fixture.detectChanges();
+			expect( centre( element ) ).toEqual( [] );
+			expect( labels( element ) ).toEqual( ["Default", "Users, unsaved changes"] );//kept for the tab left
+		} );
+
+		it( 'saves it over its view, and tells the host of the view on screen', async ()=>{
+			const { fixture, element, set, host, service } = await create( {draft: true} );
+			centre( element )[1].click();
+			await settle( fixture );
+			expect( labels( element ) ).toEqual( ["Default", "Users"] );
+			expect( set.current().isUser ).toBe( true );
+			expect( service.save.mock.calls.map( ([k])=>k ) ).toEqual( ["things/views/1", "things/views/2", "things/views"] );//a built-in view:  the whole set
+			expect( host.changes ).toBe( 1 );
+			expect( centre( element ) ).toEqual( [] );
+		} );
+
+		it( 'discards it, and tells the host', async ()=>{
+			const { fixture, element, set, host, service } = await create( {draft: true} );
+			centre( element )[0].click();
+			await settle( fixture );
+			expect( labels( element ) ).toEqual( ["Default", "Users"] );
+			expect( set.current().isSystem ).toBe( true );
+			expect( service.save ).not.toHaveBeenCalled();
+			expect( host.changes ).toBe( 1 );
+		} );
+
+		//reviews-issue/589-views-draft.md #6:  the button went with the draft, and the focus fell to the page
+		it( "hands the focus to the view's tab as Save and Discard go", async ()=>{
+			const { fixture, element, set } = await create( {draft: true} );
+			centre( element )[1].focus();
+			centre( element )[1].click();
+			await settle( fixture );
+			expect( document.activeElement ).toBe( activeTab( element ) );
+			set.sort( {active: "name", direction: "desc"} );
+			fixture.detectChanges();
+			centre( element )[0].focus();
+			centre( element )[0].click();
+			fixture.detectChanges();
+			expect( centre( element ) ).toEqual( [] );
+			expect( document.activeElement ).toBe( activeTab( element ) );
+		} );
+
+		it( "hands the focus to a pick list's button as Discard goes", async ()=>{
+			const { fixture, element } = await create( {draft: true, tabs: false} );
+			centre( element )[0].focus();
+			centre( element )[0].click();
+			fixture.detectChanges();
+			expect( document.activeElement ).toBe( element.querySelector( '.view-button' ) );
+		} );
+
+		it( "says a Save that failed, through the snackbar", async ()=>{
+			const { fixture, element, service, snackbar } = await create( {draft: true} );
+			service.save.mockRejectedValue( new Error( 'offline' ) );
+			centre( element )[1].click();
+			await settle( fixture );
+			expect( snackbar.exception ).toHaveBeenCalledWith( "Could not save view.", expect.any( Error ) );
+		} );
+
+		it( "shows in a pick list's button and its Views", async ()=>{
+			const { fixture, element } = await create( {draft: true, tabs: false} );
+			const button = element.querySelector<HTMLButtonElement>( '.bar-left .view-button' )!;
+			expect( text( button ) ).toBe( "Users, unsaved changes" );
+			expect( centre( element ).map( text ) ).toEqual( ["Discard", "Save"] );
+			openMenu( fixture, button );
+			await pick( fixture, "Views" );
+			expect( items().map( text ) ).toEqual( ["Default", "Users, unsaved changes"] );
+		} );
+	} );
+
+	describe( 'Page size', ()=>{
+		const sizes = async ( fixture:ComponentFixture<Host>, element:HTMLElement )=>{
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Page size" );
+			return items();
+		};
+
+		it( 'is not in the menu of a host with no pager', async ()=>{
+			const { fixture, element } = await create();
+			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( text ) ).not.toContain( "Page size" );
+		} );
+
+		it( "lists the sizes, the view's checked", async ()=>{
+			const { fixture, element } = await create( {paged: true} );
+			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( text )[0] ).toBe( "Page size" );
+			await pick( fixture, "Page size" );
+			expect( items().map( text ) ).toEqual( ["10 rows", "25 rows", "50 rows", "100 rows", "250 rows", "500 rows"] );
+			expect( items().filter( i=>i.getAttribute( "aria-checked" )=="true" ).map( text ) ).toEqual( ["25 rows"] );
+		} );
+
+		it( "lists the view's own size where it is none of them, as the logs' 21", async ()=>{
+			const route = [view( undefined )];
+			route[0].limit = 21;
+			const { fixture, element } = await create( {paged: true, route} );
+			const entries = await sizes( fixture, element );
+			expect( entries.map( text ) ).toEqual( ["10 rows", "21 rows", "25 rows", "50 rows", "100 rows", "250 rows", "500 rows"] );
+			expect( entries.find( i=>i.getAttribute( "aria-checked" )=="true" )!.textContent ).toContain( "21 rows" );
+		} );
+
+		it( 'makes a pick a draft change, and tells the host;  the size it has is none', async ()=>{
+			const { fixture, element, set, host, service } = await create( {paged: true} );
+			await sizes( fixture, element );
+			await pick( fixture, "100 rows" );
+			expect( [set.current().limit, set.current().isAdhoc] ).toEqual( [100, true] );
+			expect( labels( element ) ).toEqual( ["Default", "Users, unsaved changes"] );
+			expect( host.changes ).toBe( 1 );
+			expect( service.save ).not.toHaveBeenCalled();
+			( fixture.debugElement.query( By.directive( ViewToolbar ) ).componentInstance as ViewToolbar ).pageSize( 100 );
+			expect( host.changes ).toBe( 1 );
+		} );
+
+		it( "is in a pick list's menu too", async ()=>{
+			const { fixture, element } = await create( {paged: true, tabs: false} );
+			expect( openMenu( fixture, element.querySelector<HTMLButtonElement>( '.view-button' )! ).map( text ) ).toEqual( ["Views", "Page size", "Save changes", "Discard changes"] );
 		} );
 	} );
 

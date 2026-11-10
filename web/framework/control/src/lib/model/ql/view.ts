@@ -59,8 +59,10 @@ export type ViewFieldSettings = {name?:string, displayName?:string, style?:Style
 type ViewFieldJson = {name:string, hidden?:boolean, displayName?:string, style?:Style, selection?:string, chip?:ChipTones};
 export type Filter = { operator: Operator, value: DbScalar[] };
 export class Flex{
-	constructor( value:string|number ){
-		if( typeof value === "string" ){
+	constructor( value:string|number|Flex ){
+		if( value instanceof Flex )
+			Object.assign( this, value );
+		else if( typeof value === "string" ){
 			if( value=="1" ){
 				this.flexGrow = this.flexShrink = 1;
 				this.flexBasis = "0%";
@@ -99,8 +101,11 @@ export class Style{
 	constructor( value:Partial<Style>|number ){
 		if( typeof value === "number" )
 			this.flex = new Flex( value );
-		else
+		else{
 			Object.assign( this, value );
+			if( value.flex!=null )//its own:  a view's copy is resized without reaching the view.  A saved view's is the string toJSON wrote.
+				this.flex = new Flex( value.flex );
+		}
 	}
 	toJSON(){
 		return { ...(this.flex ? {flex: this.flex.toString()} : {}), ...(this.align ? {align: this.align} : {}) };//a saved view keeps both, or a user view reloads left-aligned while the default view it was edited from is not
@@ -113,7 +118,7 @@ export class ViewField{
 		if( args instanceof ViewField ){
 			const copyFrom = args as ViewField;
 			this.qlField = copyFrom.qlField;
-			this.style = copyFrom.style;
+			this.style = copyFrom.style ? new Style( copyFrom.style ) : undefined;
 			this._displayed = copyFrom._displayed;
 			this.displayName = copyFrom.displayName;
 			this.selection = copyFrom.selection;
@@ -214,7 +219,7 @@ export class View{
 		this.name = view.name;
 		this.collectionName = view.collectionName;
 		this.limit = view.limit;
-		this.fields = [...view.fields];
+		this.fields = view.fields.map( f=>new ViewField(f) );//its own fields, and their styles:  a draft hides and resizes without reaching the view it is of
 		if( view.fieldFilters )
 			this.fieldFilters = view.fieldFilters.map( ff=>({field: ff.field, filter: View.copyFilter(ff.filter)}) );//`field` is shared schema metadata, but the filter is per-view state: a shallow [...] left the "copy" pointing at the original's Filter objects and value arrays, so it protected nothing
 		this.showSelector = view.showSelector;
@@ -241,10 +246,14 @@ export class View{
 			this.limit = config.limit;
 		const missing:(string|undefined)[] = [];
 		for( const f of config.fields ){
-			if( schema.fields.some(s=>s.name==f.name) )
-				this.fields.push( new ViewField({field: f, schema: schema}) );
-			else
+			if( !schema.fields.some(s=>s.name==f.name) ){
 				missing.push( f.name );
+				continue;
+			}
+			const field = new ViewField( {field: f, schema: schema} );
+			if( f.displayName===undefined )//toJson leaves out the route's name, which the schema's must not take the place of
+				field.displayName = defaultView?.fields.find( d=>d.name==f.name )?.displayName ?? field.displayName;
+			this.fields.push( field );
 		}
 		for( let fieldFilter of config.filters ?? [] ){//{name: string, filter: Filter}
 			const field = schema.fields.find( f=>f.name==fieldFilter.name );

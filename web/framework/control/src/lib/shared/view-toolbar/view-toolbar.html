@@ -1,8 +1,8 @@
 @if( tabs() ){
 	<div #tabsRow class="tabs-row">
 		<nav mat-tab-nav-bar mat-stretch-tabs="false" class="view-tabs" aria-label="Views" [tabPanel]="tabPanel()!" cdkDropList cdkDropListOrientation="horizontal" cdkDropListLockAxis="x" (cdkDropListDropped)="onDrop($event)">
-			@for( view of views().views(); track (view.isAdhoc ? "*" : "")+view.number; let i=$index ){<!--by number, so a rename keeps its tab, and the focus on it-->
-				<a mat-tab-link [active]="i==views().index()" cdkDrag [cdkDragDisabled]="view.isAdhoc" (click)="onTab(i)">
+			@for( view of views().views(); track view.number; let i=$index ){<!--by number, so a rename, a draft or a Save keeps its tab, and the focus on it-->
+				<a mat-tab-link [active]="i==views().index()" cdkDrag (click)="onTab(i)">
 					<ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: view}"/>
 					@if( i==views().index() && renamed()!==view ){<!--a button inside the tab's link:  the AXE failure the views spec accepts-->
 						<button type="button" class="view-menu" aria-label="View menu" [matMenuTriggerFor]="viewMenu" (click)="stop($event)" (keydown)="stop($event)" (mousedown)="stop($event)" (touchstart)="stop($event)"><mat-icon aria-hidden="true">expand_more</mat-icon></button>
@@ -19,10 +19,16 @@
 <mat-toolbar class="jde-list-toolbar">
 	<div class="bar-left">
 		@if( !tabs() ){
-			<button matButton type="button" class="view-button" matTooltip="View menu" [matMenuTriggerFor]="viewMenu"><ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: views().current()}"/><mat-icon aria-hidden="true" iconPositionEnd>expand_more</mat-icon></button>
+			<button #viewButton matButton type="button" class="view-button" matTooltip="View menu" [matMenuTriggerFor]="viewMenu"><ng-container [ngTemplateOutlet]="name" [ngTemplateOutletContext]="{$implicit: views().current()}"/><mat-icon aria-hidden="true" iconPositionEnd>expand_more</mat-icon></button>
 		}
 		<ng-content select="[left]"/>
 	</div>
+	@if( views().current().isAdhoc ){<!--the centre zone:  the filter box's, which they are to stand at the end of-->
+		<div class="bar-center">
+			<button matButton type="button" (click)="discard(true)">Discard</button>
+			<button matButton="tonal" type="button" (click)="save(true)">Save</button>
+		</div>
+	}
 	<div class="bar-right">
 		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="refreshing()" (click)="refresh.emit()">
 			<mat-icon>refresh</mat-icon>
@@ -37,20 +43,37 @@
 	</div>
 </mat-toolbar>
 <mat-progress-bar class="refresh-bar" [mode]="refreshing() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Refreshing"></mat-progress-bar>
-<ng-template #name let-view>{{ label(view) }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</ng-template>
+<ng-template #name let-view>{{ label(view) }}@if( view.isAdhoc ){<span class="draft-dot" aria-hidden="true"></span><span class="cdk-visually-hidden">, unsaved changes</span>}</ng-template>
 <!--the view menu:  the active tab's, or a pick list's button's with the views first.  The entries of the later phases join it.
-Both menus build their entries only while open (matMenuContent).-->
+The menus build their entries only while open (matMenuContent).-->
 <mat-menu #viewMenu="matMenu">
 	<ng-template matMenuContent>
+		@if( !tabs() ){
+			<button mat-menu-item type="button" [matMenuTriggerFor]="viewsMenu">Views</button>
+		}
+		@if( paged() ){
+			<button mat-menu-item type="button" [matMenuTriggerFor]="pageSizeMenu">Page size</button>
+		}
 		@if( tabs() ){
 			<button mat-menu-item type="button" (click)="rename()">Rename</button>
 			<button mat-menu-item type="button" (click)="duplicate()">Duplicate</button>
 			<button mat-menu-item type="button" [disabled]="!canMove(-1)" (click)="move(-1)">Move left</button>
 			<button mat-menu-item type="button" [disabled]="!canMove(1)" (click)="move(1)">Move right</button>
+		}
+		<button mat-menu-item type="button" [disabled]="!views().current().isAdhoc" (click)="save()">Save changes</button>
+		<button mat-menu-item type="button" [disabled]="!views().current().isAdhoc" (click)="discard()">Discard changes</button>
+		@if( tabs() ){
 			<button mat-menu-item type="button" [disabled]="!views().canRemove(views().current())" (click)="remove()">Delete</button>
 		}
-		@else{
-			<button mat-menu-item type="button" [matMenuTriggerFor]="viewsMenu">Views</button>
+	</ng-template>
+</mat-menu>
+<mat-menu #pageSizeMenu="matMenu">
+	<ng-template matMenuContent>
+		@for( size of pageSizes(); track size ){
+			<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="size==views().current().limit" (click)="pageSize(size)">
+				<mat-icon aria-hidden="true">{{ size==views().current().limit ? "check" : "" }}</mat-icon>
+				{{ size }} rows
+			</button>
 		}
 	</ng-template>
 </mat-menu>

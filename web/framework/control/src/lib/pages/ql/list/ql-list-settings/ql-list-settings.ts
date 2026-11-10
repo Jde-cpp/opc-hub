@@ -31,12 +31,12 @@ export class QLListSettings implements OnInit{
 			view.number = 0;
 		}
 		let displayCols = this.display().dataSource;
-		const fields = displayCols.filter( c=>c.name!="Selector" ).map( c=>new ViewField(c as ViewField) );
+		const own = new Set( this.view().fields.map( f=>f.name ) );
+		const fields = displayCols.filter( c=>c.name!="Selector" && (own.has(c.name) || c.displayed) ).map( c=>new ViewField(c as ViewField) );//a column the view lacks and the user left hidden stays out:  under the host's name for it, it made a Show that changed nothing a draft
 		for( let field of this.view().fields.filter(f=>!fields.find(c=>c.name==f.name)) )//the list only offers columns(), so excluded-but-queried fields (id/slug) would be lost
 			fields.push( new ViewField(field) );
 		view.fields = fields;
 		view.showSelector = displayCols[0].displayed;
-		view.limit = this.display().pageSize();
 		view.fieldFilters = this.filter().fieldFilters();
 		view.sort = this.sort().dataSource.filter( s=>s.active ).map( s=>({active: s.active, direction: s.direction}) );
 		return view;
@@ -46,7 +46,6 @@ export class QLListSettings implements OnInit{
 	onNameFocus( event:FocusEvent ){ (<HTMLInputElement>event.target).select(); }//was `$event.target.select()` in the template, which type-checks only because EventTarget is loose there
 	excludedColumns = input<string[]>([]);
 	canDelete = input<boolean>( false );//ViewSet.canRemove, of the view
-	paged = input<boolean>( true );//false where the host does not page - a node's Children - so it offers no Page Size
 	suggestions = input.required<Record<string,any[]>>();
 	schema = input.required<TableSchema>();
 	view = input.required<View>();

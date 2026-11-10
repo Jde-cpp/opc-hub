@@ -1,7 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { View, ViewType } from '../../../../model/ql/view';
 import { QLListSettings } from './ql-list-settings';
-import { QLListSettingsDisplay } from './ql-list-settings-display/ql-list-settings-display';
 import { id, required, scalar, schemaOf } from 'jde-framework/testing';
 import { stable } from 'jde-spa/testing';
 
@@ -111,30 +110,39 @@ describe( 'QLListSettings Save and Delete', ()=>{
 	} );
 } );
 
-//reviews-issue/231-paging.md #15:  a node's Children are not read a page at a time, so their Display tab offers no Page Size
-describe( 'QLListSettingsDisplay Page Size', ()=>{
-	const create = ( paged?:boolean )=>{
-		const fixture = TestBed.createComponent( QLListSettingsDisplay );
+//#589:  the page size is the view menu's (ViewToolbar), so the Display tab has no box for it and the editor leaves the limit alone
+describe( 'QLListSettings page size', ()=>{
+	it( "offers none, and keeps the view's", async ()=>{
+		const fixture = TestBed.createComponent( QLListSettings );
 		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		view.limit = 40;
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
 		fixture.componentRef.setInput( 'columns', {name: "Name"} );
-		if( paged!==undefined )
-			fixture.componentRef.setInput( 'paged', paged );
-		fixture.detectChanges();
-		return fixture;
-	};
-	const pageSize = ( fixture:any ):HTMLInputElement|null=>fixture.nativeElement.querySelector( '.page-size input' );
-
-	it( 'is offered where the host pages', ()=>{
-		expect( pageSize(create())?.value ).toBe( "40" );
+		fixture.componentRef.setInput( 'suggestions', {} );
+		fixture.componentInstance.ngOnInit();
+		await stable( fixture, 1 );
+		expect( fixture.nativeElement.querySelector('input[type=number]') ).toBeNull();
+		expect( fixture.componentInstance.getView(true).limit ).toBe( 40 );
 	} );
+} );
 
-	it( 'is not offered where it does not, and the view keeps its limit', ()=>{
-		const fixture = create( false );
-		expect( pageSize(fixture) ).toBeNull();
-		expect( fixture.componentInstance.pageSize() ).toBe( 40 );//what QLListSettings.getView writes back
+//reviews-issue/589-views-draft.md #10:  the Display tab's columns the view lacks came back in it, hidden under the host's names, so a
+//Show that changed nothing was no longer alike the view, and made a draft
+describe( 'QLListSettings Show', ()=>{
+	it( 'gives back the view it was opened on where nothing was changed', async ()=>{
+		const described = schemaOf( "User", id(), required("name"), scalar("description") );
+		const fixture = TestBed.createComponent( QLListSettings );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, described );
+		fixture.componentRef.setInput( 'view', view );
+		fixture.componentRef.setInput( 'schema', described );
+		fixture.componentRef.setInput( 'columns', {name: "Name", description: "Notes"} );
+		fixture.componentRef.setInput( 'suggestions', {} );
+		fixture.componentInstance.ngOnInit();
+		await stable( fixture, 1 );
+		const shown = fixture.componentInstance.getView( true );
+		expect( shown.fields.some( f=>f.name=="description" ) ).toBe( false );
+		expect( View.alike( shown, view ) ).toBe( true );
 	} );
 } );
 

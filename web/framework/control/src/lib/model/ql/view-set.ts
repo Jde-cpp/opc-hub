@@ -3,11 +3,11 @@ import { Sort } from '@angular/material/sort';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import type { TableSettings } from '../../services/ql-list-resolver';//type-only: ql-list-resolver imports this file
 import { TableSchema } from './schema/table-schema';
-import { View, ViewType, ViewClass } from './view';
+import { View, ViewSerializedArgs, ViewType, ViewClass } from './view';
 
 export type ViewSetOptions<V extends View> = {
 	type:ViewClass<V>;//ql-list-settings emits a base View:  every view is re-made as this, so a subclass keeps its query()/apply()
-	key:string;//the LocalPrefs owner of the selected view's number
+	key:string;//the LocalPrefs owner of the selected view's number and, under the user's key, of the drafts
 	viewsKey?:string;//the profile row of the index, a view's row under it as `/<number>` - `<key>/views` when unset
 	profileStore:ProfileStore;
 	prefs:LocalPrefs;
@@ -19,8 +19,16 @@ export type ViewSetOptions<V extends View> = {
 //They are the user's saved views, in the user's order, or - while none is saved - the route's own, a starting set:  the first
 //change saved, an edit, a rename, a move or a deletion, keeps the whole set as the user's, and deleting the last shows the route's
 //again.  A view is known by its number, since names repeat:  the route's are 1 to n, and a new one takes the next above the set's
-//highest.  A Show or a header sort makes at most one Adhoc twin, under its view's number;  a Save writes it over that view, and
-//switching away discards it.
+//highest.
+//A control changes a view by replacing it with its draft, an Adhoc twin under its number that takes the view's place among the
+//views:  one a view at most, kept when its tab is left, written over its view by a Save and dropped by a Discard, or by a change
+//that leaves it showing what its view does.  A draft the host would not offer shows its view as saved.  The drafts are the
+//browser's:  a draft changed is written to LocalPrefs under the user's key and the set's, by number and without the name, which is
+//the view's, the entry's other numbers left as another tab or a pick list wrote them;  a Save or a Delete takes the draft out of it
+//once the profile holds the change, so a failed write leaves it for a reload.  A read of the profile puts back those whose view is
+//still there and that show something else.  LocalPrefs names no user, and on a shared station one user's draft must not open on
+//another's view of its number.  Signed out, or the profile unread, a draft is kept here alone.  The drafts are the user's they
+//were made for:  another user's are off screen from the moment that user signs in, and go with the next change.
 //The profile holds a row per view, `<viewsKey>/<number>`, and the index, the numbers in tab order, at `<viewsKey>`.  A change
 //writes the rows it changed, then the index, then deletes the rows it removed, so the index never names a row that is not there;
 //its writes wait for the last change's, and say what the set is by then, so two changes made together leave the two agreeing.
@@ -62,68 +70,84 @@ export class ViewSet<V extends View>{
 		this.#schema = schema;
 		this.#members = route;
 		this.#saved = this.#known = false;
-		this.#twin = this.#fallback = undefined;
+		this.#fallback = undefined;
+		this.#drafts.clear();
+		this.#draftsFor.set( this.#profileStore.userKey );
 		this.#selected = this.#prefs.viewNumber( this.#key );
 		this.#publish();
 	}
 
+	//the view's draft:  `view` in its place, under its view's name.  One that shows what its view does is no draft.
 	show( view:View ){
+		this.#claim();
 		const twin = this.#type.copy( view );
-		if( twin.isAdhoc && twin.name?.endsWith("*") )
-			twin.name = twin.name.slice( 0, -1 );
 		twin.type = ViewType.Adhoc;
-		this.#twin = twin;
+		const of = this.#members.find( v=>v.number==twin.number ) ?? ( twin.number ? undefined : this.#fallback );
+		if( of )
+			twin.name = of.name;
+		if( of && View.alike(twin, of) )
+			this.#drafts.delete( twin.number );
+		else
+			this.#drafts.set( twin.number, twin );
 		this.#selected = twin.number;
-		this.#onTwin = true;
 		this.#publish();
+		this.#store( [twin.number] );
+	}
+	//the view shown, changed on its draft
+	edit( change:( draft:V )=>void ){
+		const view = this.#type.copy( this.current() );
+		change( view );
+		this.show( view );
 	}
 	sort( sort:Sort ){
-		const view = this.#type.copy( this.current() );
-		view.sort = [sort, ...view.sort.filter( s=>s.active!=sort.active )];
-		this.show( view );
+		this.edit( view=>{ view.sort = [sort, ...view.sort.filter( s=>s.active!=sort.active )]; } );
+	}
+	//the view as it was saved, its draft dropped.  false where it has none.
+	discard( view:View ):boolean{
+		this.#claim();
+		if( !this.#drafts.delete(view.number) )
+			return false;
+		this.#publish();
+		this.#store( [view.number] );
+		return true;
 	}
 	//false for an index that is not there
 	select( index:number ):boolean{
-		const selected = this.#views()[index];
+		const selected = this.views()[index];
 		if( !selected )
 			return false;
-		this.#onTwin = selected===this.#twin;
-		if( !this.#onTwin )
-			this.#twin = undefined;
 		this.#selected = selected.number;
 		this.#publish();
 		this.#remember();
 		return true;
 	}
-	//Over the view of its number;  under a number that is none of the set's, a new view after the last.  It is the one shown, and
-	//the twin goes.  The returned promise is the profile's writes;  the views have changed when it is returned, unless the
-	//profile is still to be read.
+	//The editor's Save:  over the view of its number, whose draft goes, or, under a number that is none of the set's, a new view
+	//after the last - a Save under another name, of the view shown, whose draft goes instead.  It is the one shown.  The returned
+	//promise is the profile's writes;  the views have changed when it is returned, unless the profile is still to be read.
 	save( view:View, shown?:()=>void ):Promise<void>{
+		const from = this.current()?.number ?? 0;
+		let dropped = 0;
+		return this.#change( shown, ()=>{ dropped = this.#save( view, from ); }, ()=>this.#store( [dropped] ) );
+	}
+	//The toolbar's Save:  the view's draft over it, as the draft stands once the change is made - the profile may be read first, and
+	//the draft changed meanwhile.  Nothing where it has none by then.
+	saveDraft( view:View, shown?:()=>void ):Promise<void>{
 		return this.#change( shown, ()=>{
-			const saved = this.#type.copy( view );
-			saved.type = ViewType.User;
-			const views = [...this.#members];
-			const at = views.findIndex( v=>v.number==saved.number );
-			if( at<0 ){
-				saved.number = this.#next;
-				views.push( saved );
-			}
-			else
-				views[at] = saved;
-			this.#twin = undefined;
-			this.#selected = saved.number;
-			this.#set( views );
-		} );
+			const draft = this.#drafts.get( view.number );
+			if( draft )
+				this.#save( draft, view.number );
+		}, ()=>this.#store( [view.number] ) );
 	}
 	//A copy of the view of its number as the user's, under the next number and its own name, after it and shown:  the menu's
-	//Duplicate.  The view as saved, not its twin, whose edits go, as they do on a Save or on switching away.
+	//Duplicate.  The view as saved, not its draft, which stays its view's.
 	duplicate( view:View, shown?:()=>void ):Promise<void>{
 		return this.#change( shown, ()=>{
 			const at = this.#members.findIndex( v=>v.number==view.number );
 			this.#insert( this.#type.copy(this.#members[at] ?? view), at<0 ? this.#members.length : at+1 );
 		} );
 	}
-	//`+ New view`:  a copy of the view shown, its edits included, named for its number and after the last
+	//`+ New view`:  a copy of the view shown, its draft's changes included, named for its number and after the last.  The draft
+	//stays its view's.
 	add( shown?:()=>void ):Promise<void>{
 		return this.#change( shown, ()=>{
 			const copy = this.#type.copy( this.current() );
@@ -131,12 +155,12 @@ export class ViewSet<V extends View>{
 			this.#insert( copy, this.#members.length );
 		} );
 	}
-	//Delete has a view to take:  one of the set, and not a twin, whose Delete would take the view under it where the user may mean
-	//only to drop the edits;  nor the one view of a set that is still the route's, which would come straight back.
+	//Delete has a view to take:  one of the set, its draft with it, and not the one view of a set that is still the route's, which
+	//would come straight back.
 	canRemove( view:View ):boolean{
-		return !view.isAdhoc && this.#members.some( v=>v.number==view.number ) && ( this.#saved || this.#members.length>1 );
+		return this.#members.some( v=>v.number==view.number ) && ( this.#saved || this.#members.length>1 );
 	}
-	//the view and its twin
+	//the view and its draft, which has no name of its own
 	rename( view:View, name:string|undefined, shown?:()=>void ):Promise<void>{
 		return this.#change( shown, ()=>{
 			const named = ( v:V )=>{ const y = this.#type.copy( v ); y.name = name; return y; };
@@ -145,8 +169,9 @@ export class ViewSet<V extends View>{
 				return;
 			const views = [...this.#members];
 			views[at] = named( views[at] );
-			if( this.#twin?.number==view.number )
-				this.#twin = named( this.#twin );
+			const draft = this.#drafts.get( view.number );
+			if( draft )
+				this.#drafts.set( view.number, named(draft) );
 			this.#set( views );
 		} );
 	}
@@ -162,21 +187,21 @@ export class ViewSet<V extends View>{
 			this.#set( views );
 		} );
 	}
-	//The view of its number, and its twin.  The selection stays where it survived, and the last view taken shows the route's again.
+	//The view of its number, and its draft, at once:  the next new view can take the number.  The selection stays where it survived,
+	//and the last view taken shows the route's again.
 	remove( view:View, shown?:()=>void ):Promise<void>{
 		return this.#change( shown, ()=>{
 			if( !this.#members.some( v=>v.number==view.number ) )
 				return;
-			if( this.#twin?.number==view.number )
-				this.#twin = undefined;
+			this.#drafts.delete( view.number );
 			this.#set( this.#members.filter( v=>v.number!=view.number ) );
-		} );
+		}, ()=>this.#store( [view.number] ) );
 	}
 
-	//A change to the set:  made at once, and its writes queued.  Where the profile is still to be read the read comes first, and
-	//the change is made once it succeeds - unless it found the user's own views, since the change was made to the route's, which
-	//puts those on screen.
-	#change( shown:( ()=>void )|undefined, change:()=>void ):Promise<void>{
+	//A change to the set:  made at once, and its writes queued, `landed` called once they are done.  Where the profile is still to
+	//be read the read comes first, and the change is made once it succeeds - unless it found the user's own views, since the change
+	//was made to the route's, which puts those on screen.
+	#change( shown:( ()=>void )|undefined, change:()=>void, landed?:()=>void ):Promise<void>{
 		const known = this.#isRead, generation = this.#generation;
 		const make = ()=>{
 			const before = this.current();
@@ -197,6 +222,7 @@ export class ViewSet<V extends View>{
 				make();
 			}
 			await this.#write();
+			landed?.();
 		} );
 		this.#queue = turn;
 		return turn;
@@ -223,17 +249,91 @@ export class ViewSet<V extends View>{
 			view.number = number;
 			saved.push( view );
 		}
+		const reader = this.#profileStore.userKey, replaced = saved.length>0 || this.#saved, owner = this.#draftsFor();
+		if( replaced || ( owner!==undefined && owner!=reader ) )//of the set replaced, or another user's.  One made signed out, or before the read, is kept.
+			this.#drafts.clear();
+		this.#draftsFor.set( reader );
 		this.#known = true;
-		this.#reader = this.#profileStore.userKey;
+		this.#reader = reader;
 		this.#written = new Set( saved.map( v=>v.number ) );
-		if( !saved.length && !this.#saved )
-			return;
-		++this.#generation;
-		this.#saved = saved.length>0;
-		this.#members = this.#saved ? saved : this.#route;//none saved, over a set that was:  the last user's, not this one's
-		this.#twin = undefined;//of the set replaced
-		this.#selected = this.#prefs.viewNumber( this.#key );
+		if( replaced ){
+			++this.#generation;
+			this.#saved = saved.length>0;
+			this.#members = this.#saved ? saved : this.#route;//none saved, over a set that was:  the last user's, not this one's
+			this.#selected = this.#prefs.viewNumber( this.#key );
+		}
+		this.#restoreDrafts();
 		this.#publish();
+	}
+	//The drafts are the user's they were made for, or nobody's, made signed out, which whoever signs in takes.  Another user's go
+	//before a draft is changed:  `views` has kept them off screen since that user signed in.
+	#claim():void{
+		const user = this.#profileStore.userKey, owner = this.#draftsFor();
+		if( owner!==undefined && owner!=user && this.#drafts.size ){
+			this.#drafts.clear();
+			this.#publish();
+		}
+		this.#draftsFor.set( user );
+	}
+	//the browser's entry of the drafts:  none signed out, or while the profile is unread, when a draft's number may be another set's
+	get #draftsKey():string|undefined{
+		const user = this.#reader;
+		return this.#known && user && user==this.#profileStore.userKey ? `${user}/${this.#key}` : undefined;
+	}
+	//The browser's drafts of the set's views, under those made here, which are written to it.  One whose view is gone, that can no
+	//longer be made a view of, or that shows what its view does, is dropped, here and there.  It is written only where that changed it.
+	#restoreDrafts():void{
+		const owner = this.#draftsKey;
+		if( !owner )
+			return;
+		const stored = this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#draftsName, {} ) ?? {};//a JSON null, which get() returns as it is, written in by hand
+		const restored = new Set<number>(), dropped:number[] = [];
+		for( const [key, json] of Object.entries(stored) ){
+			const number = +key;
+			if( this.#drafts.has(number) )
+				continue;
+			const of = this.#members.find( v=>v.number==number );
+			const draft = of && this.#readDraft( json, of );
+			if( draft ){
+				this.#drafts.set( number, draft );
+				restored.add( number );
+			}
+			else
+				dropped.push( number );
+		}
+		const unstored = [...this.#drafts.keys()].filter( n=>!restored.has(n) );
+		if( dropped.length || unstored.some( n=>n>0 ) )
+			this.#store( [...dropped, ...unstored] );
+	}
+	//the stored draft of `of`, undefined where it is none:  unreadable, or showing what its view does
+	#readDraft( json:unknown, of:V ):V|undefined{
+		try{
+			const draft = this.#type.fromJson( json as ViewSerializedArgs, this.#schema, this.#route[0] );
+			draft.number = of.number;
+			draft.name = of.name;
+			draft.type = ViewType.Adhoc;
+			return View.alike( draft, of ) ? undefined : draft;
+		}
+		catch( e ){
+			console.warn( `A draft of '${this.#key}' could not be read - dropped.`, e );
+			return undefined;
+		}
+	}
+	//The drafts of `numbers` as they are here, into the browser's entry:  the others as it holds them, which another tab, or a pick
+	//list of the set's, may have written since this one read it.
+	#store( numbers:number[] ):void{
+		const owner = this.#draftsKey;
+		if( !owner )
+			return;
+		const stored = { ...this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#draftsName, {} ) };
+		for( const number of numbers.filter( n=>n>0 ) ){//not the fallback's, which is no view's
+			const draft = this.#drafts.get( number );
+			if( draft )
+				stored[number] = {...draft.toJson(this.#settings), name: undefined};
+			else
+				delete stored[number];
+		}
+		this.#prefs.set( owner, ViewSet.#draftsName, Object.keys(stored).length ? stored : null );
 	}
 	//The set as this turn starts:  its rows, then the index, then the rows no longer in it, ProfileStore skipping what it already
 	//holds.  A later change's view is named only by the index of its own turn, which has written its row.  A failed write leaves the
@@ -253,12 +353,30 @@ export class ViewSet<V extends View>{
 	}
 	#rowKey( number:number ):string{ return `${this.#viewsKey}/${number}`; }
 	#json( view:V ):string{ return JSON.stringify( view.toJson(this.#settings) ); }
+	//`view` over the view of its number, or after the last under the next number, where it is the editor's of the view numbered
+	//`from`.  The number whose draft went.
+	#save( view:View, from:number ):number{
+		const saved = this.#type.copy( view );
+		saved.type = ViewType.User;
+		const views = [...this.#members];
+		const at = views.findIndex( v=>v.number==saved.number );
+		const dropped = at<0 ? from : saved.number;
+		if( at<0 ){
+			saved.number = this.#next;
+			views.push( saved );
+		}
+		else
+			views[at] = saved;
+		this.#drafts.delete( dropped );
+		this.#selected = saved.number;
+		this.#set( views );
+		return dropped;
+	}
 	#insert( copy:V, at:number ):void{
 		copy.type = ViewType.User;
 		copy.number = this.#next;
 		const views = [...this.#members];
 		views.splice( at, 0, copy );
-		this.#twin = undefined;
 		this.#selected = copy.number;
 		this.#set( views );
 	}
@@ -271,8 +389,9 @@ export class ViewSet<V extends View>{
 		this.#publish();
 		this.#remember();
 	}
-	//The views shown:  the set's the host offers, then the twin, on the selected one or else the first.  Where the host offers
-	//none of them it is the route's default view, under no number, so a Save adds it to the set.
+	//The views shown:  the set's the host offers, a draft in its view's place where the host offers the draft too, on the selected
+	//one or else the first.  Where the host offers none of them it is the route's default view, under no number, so a Save adds it to
+	//the set.
 	#publish(){
 		let views = this.#offered ? this.#members.filter( this.#offered ) : [...this.#members];
 		if( !views.length && this.#route.length ){
@@ -280,11 +399,12 @@ export class ViewSet<V extends View>{
 			this.#fallback.number = 0;
 			views = [this.#fallback];
 		}
-		this.#onTwin &&= !!this.#twin;
-		const index = this.#onTwin ? views.length : Math.max( views.findIndex(v=>v.number==this.#selected), 0 );
-		if( this.#twin )
-			views.push( this.#twin );
-		this.#views.set( views );
+		const index = Math.max( views.findIndex(v=>v.number==this.#selected), 0 );
+		this.#bare.set( views );
+		this.#shown.set( views.map( v=>{
+			const draft = this.#drafts.get( v.number );
+			return draft && ( !this.#offered || this.#offered(draft) ) ? draft : v;
+		} ) );
 		this.#index.set( index );
 		this.#selected = views[index]?.number ?? 0;
 	}
@@ -293,21 +413,26 @@ export class ViewSet<V extends View>{
 			this.#prefs.setViewNumber( this.#key, this.#selected );
 	}
 
-	#views = signal<V[]>( [] );
+	#shown = signal<V[]>( [] );//the views, each under its draft
+	#bare = signal<V[]>( [] );//the views as saved:  shown while the drafts are another user's
 	#index = signal<number>( 0 );
-	readonly views = this.#views.asReadonly();
+	readonly views = computed<V[]>( ()=>{
+		const owner = this.#draftsFor();
+		return owner===undefined || owner==this.#profileStore.userKey ? this.#shown() : this.#bare();
+	} );
 	readonly index = this.#index.asReadonly();
-	readonly current = computed<V>( ()=>this.#views()[this.#index()] );
+	readonly current = computed<V>( ()=>this.views()[this.#index()] );
 	//the route's default view - what a view's filters are compared with to say they narrowed the list, whichever tab is first
 	get routeDefault():V|undefined{ return this.#route[0]; }
 	#route:V[] = [];
 	#schema!:TableSchema;
 	#members:V[] = [];//the set in tab order, the views not offered among them:  the user's, or the route's while none is saved
 	#saved = false;//the set is the user's
-	#twin:V|undefined;
+	#drafts = new Map<number,V>();//by its view's number
+	#draftsFor = signal<string|undefined>( undefined );//whose they are:  undefined made signed out
+	static readonly #draftsName = "drafts";
 	#fallback:V|undefined;
 	#selected = 0;//the number of the view shown
-	#onTwin = false;
 	#known = false;//the profile's rows were read
 	#reader:string|undefined;//for whom:  undefined signed out
 	#generation = 0;//of the set a read put in the route's place

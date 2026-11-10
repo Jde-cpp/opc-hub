@@ -3,7 +3,7 @@
 		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [canDelete]=profile().canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
 	} @else {
 		<ng-template #toolbar let-panel>
-			<view-toolbar [views]="profile()" [tabPanel]="panel" [tabs]="!selector()" [refreshing]="isRefreshing()" [count]="paged() ? undefined : data().length" (viewChange)="onChangeView()" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--no count on more than a page:  the pager under the table carries the range instead-->
+			<view-toolbar [views]="profile()" [tabPanel]="panel" [tabs]="!selector()" [paged]="true" [refreshing]="isRefreshing()" [count]="paged() ? undefined : data().length" (viewChange)="onChangeView()" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--no count on more than a page:  the pager under the table carries the range instead-->
 				@if( canAdd() && !selector() ){
 					<button left [matButton]="addFilled() ? 'filled' : 'tonal'" (click)="onAdd()"><mat-icon>add</mat-icon>Add</button><!--filled only on a genuinely empty list, where Add is the one useful action (addFilled); showEmpty suppresses the flash while a reload has the rows cleared-->
 				}

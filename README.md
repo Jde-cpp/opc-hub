@@ -10,6 +10,8 @@ OPC Hub is an Angular web front end over OPC UA servers, with a C++ back end.
 
 It browses a server's address space and reads, writes and subscribes to its nodes.
 
+It also records node values over time, and shows that history as a table and, with the Highcharts add-on, a trend.
+
 Users, groups, roles and resources say who may reach what.
 
 The site talks to the back end over GraphQL and a protobuf websocket.
@@ -61,7 +63,7 @@ software sends over the network.
 | [`apps/OpcGateway`](apps/OpcGateway) | the gateway role: OPC UA client sessions, browse/read/write/subscribe, the server connections and the OPC login |
 | [`apps/AppServer`](apps/AppServer) | the application server: sessions, the app registry, log collection |
 | [`apps/OpcServer`](apps/OpcServer) | our OPC UA server: the DI/IA nodesets plus a pumps demo address space; under `emulator/`, a PLC stand-in that feeds it moving values |
-| [`libs`](libs) | `fwk` (coroutines, io, settings, logging, crypto), `db` (schema and query layer; sqlite, mysql and odbc drivers), `ql` (GraphQL over `db`), `access` (users, groups, roles, resources), `web` (HTTP and websocket client and server), `app` (the app protocol between services), `opc` (the open62541 client wrappers) |
+| [`libs`](libs) | `fwk` (coroutines, io, settings, logging, crypto), `db` (schema and query layer; sqlite, mysql and odbc drivers), `ql` (GraphQL over `db`), `access` (users, groups, roles, resources), `web` (HTTP and websocket client and server), `app` (the app protocol between services), `calendar` (the shift calendar), `opc` (the open62541 client wrappers under `shared/`, the UA server core under `server/`), `historian` (node history), `oee` (OEE over the historian's records and the calendar) |
 | [`include/jde`](include/jde) | the libraries' public headers |
 | [`web`](web) | the Angular site: four libraries, `spa` → `framework` → `access` → `opc`, the generated `proto` package, and the application under `web/opc/site` |
 | [`build`](build) | the third-party superbuild (`build/CMakeLists.txt`), the cmake helpers and the shell build functions |
@@ -80,8 +82,8 @@ Every configure is a preset in [`CMakePresets.json`](CMakePresets.json), OS-spli
 `CMakePresets.Windows.json`.  The `-repos` presets build the third-party tree and the `-jde` presets build this repo.
 Both compile with `-march=x86-64-v3 -mpclmul -maes` (`cpuFlags` in `CMakePresets.common.json`).
 
-The `-repos` and `-jde` presets read two environment variables: `REPO_DIR`, the dependency root and **not** this
-checkout, and `CXX`, the compiler.  The deps install under `$REPO_DIR/install/$CXX/<Debug|RelWithDebInfo>`.
+The `-repos` and `-jde` presets read `REPO_DIR`, the dependency root and **not** this checkout.  They set `CXX` to
+`clang++` themselves.  The deps install under `$REPO_DIR/install/clang++/<Debug|RelWithDebInfo|Release>`.
 
 The Linux presets set no build directory, so `-B` picks it.  By convention it is
 `$JDE_BUILD_DIR/$JDE_COMPILER/<checkout>/<debug|release>`.
@@ -98,14 +100,16 @@ cmake -B $REPO_DIR/build/debug -S . --preset linux-clang-debug-repos && cmake --
 B=$JDE_BUILD_DIR/$JDE_COMPILER/opc-hub/debug
 cmake -B $B -S . --preset linux-clang-debug-jde
 cmake --build $B -j 8
-cd $B && ctest --timeout 300 --output-on-failure   # the db-backed suites run on in-memory sqlite - no server needed
+cd $B && ctest --output-on-failure   # in-memory sqlite, no db server; -DJDE_TEST_TIMEOUT=<s> sets the per-suite limit
 ```
 
 The release build is `linux-clang-relWithDebInfo-jde` (`win-clang-release-jde` on Windows), which is what the installers
 pack.  `build/buildFunctions.sh` wraps the same commands as `reconfig`, `build` and `compile` for the VS Code tasks.
 
 To run the hub from the build tree, export the two variables the sqlite args expand.  ctest sets them itself.
-`<buildDir>/runtime` is made by `reconfig`.  After a raw configure, make it first.  `$JDE_DIR` is this checkout.
+
+`$JDE_DIR` is this checkout and `$B` is the build dir from above.  The `mkdir` covers a raw configure, which does not
+make `runtime` the way `reconfig` does.
 
 ```bash
 export REPO_SOURCE_DIR=$JDE_DIR REPO_BUILD_DIR=$(dirname $B)
@@ -129,6 +133,9 @@ with `ng new`, links the four libraries and the site in, and runs `ng build`.  T
 | Win2025 Deps | by hand on `main`, before the first Win2025 run and after any dependency or preset bump | the hosted windows-2025 image: builds the third-party tree and caches it |
 | Win2025 | a `20*` tag push, or by hand | the site, then the release build against the cached deps and the installer; fails if the cache is missing |
 | Linux Release | a `20*` tag push, or by hand | the site on a hosted runner, then the release build, the `.deb` and the tarball on the self-hosted one |
+| Web Tests | a pull request or a push to `main` that touches `web/`, a `.proto` or `CMakePresets.common.json`, or by hand | a hosted runner: the site's build, then `ng test` over every project |
+| Linked Issue | every pull request | fails one that closes no issue, unless it carries the `no-issue` label |
+| Runner Version Check | Mondays 13:00 UTC, or by hand | a hosted runner: fails when the runner version pinned in [`.github/docker`](.github/docker) is stale |
 
 A push of a `yyyy.MM.dd` tag runs Win2025 and Linux Release, which publish all three assets on that tag's GitHub release.
 The version is `JDE_VERSION` in [`CMakePresets.common.json`](CMakePresets.common.json).

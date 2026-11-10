@@ -3,7 +3,7 @@
 		<ql-list-settings [suggestions]={} [columns]=columns [view]=viewCopy [schema]=schema [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event)
 			(onCancel)="isSettings.set( false )"></ql-list-settings>
 	} @else {
-		<view-toolbar [views]="viewSet" [tabPanel]="panel" [refreshing]="isRefreshing()" (viewChange)="onViewChange()" (edit)="isSettings.set(true)" (refresh)="refresh()">
+		<view-toolbar [views]="viewSet" [tabPanel]="panel" [paged]="true" [refreshing]="isRefreshing()" (viewChange)="onViewChange()" (edit)="isSettings.set(true)" (refresh)="refresh()">
 			<mat-form-field left subscriptSizing="dynamic" class="level-field">
 				<mat-label>Level</mat-label>
 				<mat-select [value]="level" (selectionChange)="onMinLevelChange($event.value)">
