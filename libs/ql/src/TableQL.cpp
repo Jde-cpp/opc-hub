@@ -55,9 +55,12 @@ namespace Jde::QL{
 	}
 	//Read on every table the query names.  A child whose table declares no Read - identities under groups, permissionRights
 	//under roles - is its parent's data, so the parent's check governs it:  an unenforced parent is open to everyone.  Only a
-	//root read of such a table falls to Table::Authorize's known-user rule.
+	//root read of such a table falls to Table::Authorize's known-user rule.  A table with a noSelect is refused at any depth.
 	α TableQL::AuthorizeRead( UserPK executer, SL sl, bool child )Ε->void{
-		if( let table = DBTable(); table && (!child || !empty(table->Operations & Access::ERights::Read)) )
+		let table = DBTable();
+		if( table && table->NoSelect.size() )
+			throw Exception{ sl, {ELogTags::QL, 0, EHttpStatus::BadRequest}, "'{}' takes no generic query:  {}", JsonName, table->NoSelect };
+		if( table && (!child || !empty(table->Operations & Access::ERights::Read)) )
 			table->Authorize( Access::ERights::Read, executer, sl );
 		for( let& t : Tables )
 			t.AuthorizeRead( executer, sl, true );
@@ -204,12 +207,22 @@ namespace Jde::QL{
 				y[c.JsonName] = *p;
 		}
 		for( let& t : Tables ){
-			if( auto p = fullOutput.if_contains(t.JsonName); p ){
-				if( auto o = p->if_object(); o )
-					y[t.JsonName] = t.TrimColumns( *o );
-				else
-					WARNT( ELogTags::QL, "[{}.{}]expected an object for the sub-table, got a {} - omitted.", JsonName, t.JsonName, to_string(p->kind()) );
+			let p = fullOutput.if_contains( t.JsonName );
+			if( !p )
+				continue;
+			let a = p->if_array();
+			if( let o = p->if_object(); o )
+				y[t.JsonName] = t.TrimColumns( *o );
+			else if( a && std::ranges::all_of(*a, []( const jvalue& row ){ return row.is_object(); }) ){
+				jarray rows; rows.reserve( a->size() );
+				for( let& row : *a )
+					rows.emplace_back( t.TrimColumns(row.get_object()) );
+				y[t.JsonName] = move( rows );
 			}
+			else if( p->is_null() )//no row.
+				y[t.JsonName] = nullptr;
+			else
+				WARNT( ELogTags::QL, "[{}.{}]expected an object, a list of them or null for the sub-table, got a {} - omitted.", JsonName, t.JsonName, to_string(p->kind()) );
 		}
 		return y;
 	}

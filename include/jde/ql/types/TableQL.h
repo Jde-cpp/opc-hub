@@ -40,7 +40,7 @@ namespace Jde::QL{
 		α TransformResult( string&& result )Ι->jvalue;
 		α ToJson( DB::Row& row, const vector<DB::Object>& dbColumns )Ι->jobject;
 		α ToString()Ι->string;
-		α TrimColumns( const jobject& fullOutput )Ι->jobject;
+		α TrimColumns( const jobject& fullOutput )Ι->jobject;//cut to what this names:  its columns, and its sub-tables, an object's or each of a list's;  null is kept and anything else omitted.
 
 		string Alias;
 		vector<ColumnQL> Columns;

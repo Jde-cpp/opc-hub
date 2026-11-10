@@ -50,6 +50,7 @@ namespace Jde::DB{
 		vector<sp<Table>> Children;
 		vector<vector<string>> NaturalKeys;
 		string PurgeProcName;
+		string NoSelect;//the meta's noSelect:  why the table takes no generic select, its rows read through queries of its own;  empty when it takes one.
 		sp<Table> Extends;
 	};
 }

@@ -18,6 +18,7 @@
 #include "HistGroupInfoQLAwait.h"
 #include "NodeQLAwait.h"
 #include "NodeQLMAwait.h"
+#include "OeeQLAwait.h"
 #include "OpcSessionsQLAwait.h"
 #include "SearchQLAwait.h"
 #include "VariableQLAwait.h"
@@ -107,6 +108,8 @@ namespace Jde::Opc::Gateway{
 			await = mu<HistGroupReadQLAwait>( move(q), move(executer), sl );
 		else if( HistGroupInfoQLAwait::IsApplicable(q) )//before needsClient too:  historyGroups names its connection with `opc` and opens no client for it.
 			await = mu<HistGroupInfoQLAwait>( move(q), move(executer), sl );
+		else if( OeeQLAwait::IsApplicable(q) )//before needsClient:  OEE's reads name no `opc`.
+			await = mu<OeeQLAwait>( move(q), move(executer), sl );
 		else if( q.JsonName=="opcSessions" )
 			await = mu<OpcSessionsQLAwait>( move(q), move(executer), sl );
 		else if( q.JsonName==SearchQLAwait::Command )

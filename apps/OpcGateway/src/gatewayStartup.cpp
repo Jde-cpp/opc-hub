@@ -23,6 +23,7 @@
 #include "ql/GatewayQLAwait.h"
 #include "ql/HistGroupInfoQLAwait.h"
 #include "ql/OeeMAwait.h"
+#include "ql/OeeQLAwait.h"
 #include "ql/OpcSessionsQLAwait.h"
 #include "ql/SearchQLAwait.h"
 #include "ql/ServerCnnctnMAwait.h"
@@ -60,12 +61,12 @@ namespace Jde::Opc{
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
 		//logSetting, the app client's;  sessions, the AppServer's ask for this process's web sessions, answered only over its socket (GatewayAppClient::ClientQuery).
 		flat_set<string> tables{ "logSetting", "sessions", string{SearchQLAwait::Command}, string{EndpointQLAwait::Command} };//endpoint:  the gateway's own (OpcSessionsQLAwait.h);  its sub-tables inherit.
-		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}} ){
+		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}, std::span<const sv>{OeeQLAwait::Tables}} ){//OEE's reads:  oeeStops is a table's name too, and as a system table its `stops` and `continuation` resolve no view.
 			for( let table : family )
 				tables.emplace( table );
 		}
 		QL::SetSystemTables( move(tables) );
-		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command}, string{DiscoverQLAwait::Command}, string{TrustServerQLAwait::Command}, string{CallQLAwait::Command}, string{RefreshConditionsQLAwait::Command}, string{OeeMAwait::RecomputeCommand} };//resolveHistory, testConnection, discover, trustServer, call, refreshConditions, recomputeOee:  resolve, test, discover, trust, call, refresh and recompute are no verbs either.
+		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command}, string{DiscoverQLAwait::Command}, string{TrustServerQLAwait::Command}, string{CallQLAwait::Command}, string{RefreshConditionsQLAwait::Command}, string{OeeMAwait::RecomputeCommand}, string{OeeMAwait::CodeCommand}, string{OeeMAwait::UncodeCommand} };//resolveHistory, testConnection, discover, trustServer, call, refreshConditions, recomputeOee, codeOee, uncodeOee:  resolve, test, discover, trust, call, refresh, recompute, code and uncode are no verbs either.
 		for( let command : HistQL::EditCommands )
 			mutations.emplace( command );
 		QL::SetSystemMutations( move(mutations) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.
