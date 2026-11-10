@@ -10,12 +10,12 @@ import { valueString } from './value';
 //what the row asks and what the server revised it to, and the discard rule and filter.
 export class WatchView extends View{
 	static readonly collectionName = "opcWatch";//the profile rows under `opcWatch/views` and the browser's `opcWatch/viewNumber`:  one set of views for every gateway's list
-	static columns:Record<string,string> = { connection: "Connection", node: "Node", value: "Value", status: "Status", sourceTime: "Source Time", serverTime: "Server Time", sampling: "Sampling (ms)", revisedSampling: "Revised Sampling", queue: "Queue", revisedQueue: "Revised Queue", discard: "Discard", filter: "Filter" };
+	static columns:Record<string,string> = { connection: "Connection", node: "Node", value: "Value", status: "Status", sourceTime: "Source Time", serverTime: "Server Time", sampling: "Sampling", revisedSampling: "Revised", queue: "Queue", revisedQueue: "Revised Queue", discard: "Discard", filter: "Filter" };
 	//the columns by what they hold, as NodeView's:  numbers for what a row asks and is revised to, enums for the small sets, the two times
 	static types:Record<string,{kind:FieldKind, name:string}> = { connection: {kind: FieldKind.ENUM, name: "Connection"}, status: {kind: FieldKind.ENUM, name: "StatusCode"}, discard: {kind: FieldKind.ENUM, name: "Discard"}, sourceTime: {kind: FieldKind.SCALAR, name: "DateTime"}, serverTime: {kind: FieldKind.SCALAR, name: "DateTime"}, sampling: {kind: FieldKind.SCALAR, name: "Float"}, revisedSampling: {kind: FieldKind.SCALAR, name: "Float"}, queue: {kind: FieldKind.SCALAR, name: "UInt"}, revisedQueue: {kind: FieldKind.SCALAR, name: "UInt"} };
 	static schema:TableSchema = new TableSchema( { name: "OpcWatch", fields: Object.keys( WatchView.columns ).map( name=>new Field({name, ofType: WatchView.types[name] ?? {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	static default():WatchView{
-		const view = WatchView.fromConfig( {configColumns: ["connection", "node", "value", "status", {name: "sourceTime", hidden: true}, {name: "serverTime", hidden: true}, "sampling", "revisedSampling", {name: "queue", hidden: true}, {name: "revisedQueue", hidden: true}, {name: "discard", hidden: true}, "filter"], sort: [{active: "connection", direction: "asc"}, {active: "node", direction: "asc"}]}, WatchView.schema );
+		const view = WatchView.fromConfig( {configColumns: NodeView.configColumns( WatchView.columns, ["connection", "node", "value", "status", "sampling", "revisedSampling", "filter"] ), sort: [{active: "connection", direction: "asc"}, {active: "node", direction: "asc"}]}, WatchView.schema );
 		view.type = ViewType.System;
 		return view;
 	}
@@ -46,9 +46,7 @@ export class WatchView extends View{
 	//the filter's terms as a test of a row, as NodeView's
 	predicate( names:( slug:string )=>string ):( row:WatchRow )=>boolean{
 		return filterPredicate( this.parsedFilter().terms, this.filterHost(), {cell: ( row:WatchRow, column )=>WatchView.cellValue(row, column, names), time: NodeView.time} );
-	}
-	matches( row:WatchRow, names:( slug:string )=>string ):boolean{ return this.predicate( names )( row ); }
-	//what a column shows for a row - the filter and sort work on this, so they agree with the screen
+	}	//what a column shows for a row - the filter and sort work on this, so they agree with the screen
 	static cellValue( row:WatchRow, column:string, names:( slug:string )=>string ):string|number|undefined{
 		switch( column ){
 			case "connection":      return names( row.opc );

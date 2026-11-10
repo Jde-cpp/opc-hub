@@ -86,6 +86,50 @@ describe( 'FilterBox', ()=>{
 		expect( sent ).toHaveBeenCalledTimes( 1 );
 	} );
 
+	//reviews-issue/591-views-filter-box.md #4:  the view's echo of what the box sent put the text back over a key typed since
+	it( "keeps a key typed after it asks, ahead of the view's echo", ()=>{
+		vi.useFakeTimers();
+		const { fixture, input, sent, type } = create();
+		type( "name:pu" );
+		vi.advanceTimersByTime( 400 );
+		type( "name:pum" );
+		fixture.componentRef.setInput( 'filter', "name:pu" );
+		fixture.detectChanges();
+		expect( input.value ).toBe( "name:pum" );
+		vi.advanceTimersByTime( 400 );
+		expect( sent.mock.calls ).toEqual( [["name:pu"], ["name:pum"]] );
+	} );
+
+	//reviews-issue/591-views-filter-box.md #12:  the copy behind the input kept the scroll of the text it replaced
+	it( "draws the underline under a text put in place of a scrolled one", async ()=>{
+		const { fixture, element } = create( "nope:1 " + "name:a ".repeat(40) );
+		fixture.componentInstance.scroll.set( 300 );//scrolled to its end
+		fixture.detectChanges();
+		fixture.componentRef.setInput( 'filter', "nope:2" );
+		fixture.detectChanges();
+		await flush();
+		fixture.detectChanges();
+		expect( fixture.componentInstance.scroll() ).toBe( 0 );
+		expect( element.querySelector<HTMLElement>( '.marks .run' )!.style.transform ).toBe( "translateX(0px)" );
+	} );
+
+	//reviews-issue/591-views-filter-box.md #5:  Save and Discard, before the keystroke comes due
+	it( "asks at once for what is typed on flush, and drops it on revert", ()=>{
+		vi.useFakeTimers();
+		const { fixture, input, sent, type } = create( "name:a" );
+		type( "name:ab" );
+		fixture.componentInstance.flush();
+		expect( sent.mock.calls ).toEqual( [["name:ab"]] );
+		type( "name:abc" );
+		fixture.componentInstance.revert();
+		fixture.detectChanges();
+		expect( input.value ).toBe( "name:a" );
+		vi.advanceTimersByTime( 400 );
+		expect( sent ).toHaveBeenCalledTimes( 1 );
+		fixture.componentInstance.flush();//nothing typed:  nothing asked for
+		expect( sent ).toHaveBeenCalledTimes( 1 );
+	} );
+
 	it( 'asks on Enter at once, and not again when the keystroke comes due', ()=>{
 		vi.useFakeTimers();
 		const { sent, type, enter } = create();

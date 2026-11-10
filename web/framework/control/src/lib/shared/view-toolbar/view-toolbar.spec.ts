@@ -477,6 +477,39 @@ describe( 'ViewToolbar', ()=>{
 			expect( set.current().isAdhoc ).toBe( false );
 		} );
 
+		//reviews-issue/591-views-filter-box.md #5:  what was typed and not yet asked for came due after a Discard, a draft again,
+		//and was left out of a Save
+		describe( 'with a keystroke not yet due', ()=>{
+			afterEach( ()=>vi.useRealTimers() );
+			const typed = ( fixture:ComponentFixture<Host>, input:HTMLInputElement, value:string )=>{
+				input.value = value;
+				input.dispatchEvent( new Event('input', {bubbles: true}) );
+				fixture.detectChanges();
+			};
+			it( 'drops it on Discard', async ()=>{
+				const { fixture, element, set, host } = await create( {draft: true} );
+				vi.useFakeTimers();
+				typed( fixture, box( element )!, "abc" );
+				element.querySelectorAll<HTMLButtonElement>( '.bar-center button' )[0].click();
+				fixture.detectChanges();
+				await vi.advanceTimersByTimeAsync( 400 );
+				fixture.detectChanges();
+				expect( set.current().isAdhoc ).toBe( false );
+				expect( box( element )!.value ).toBe( "" );
+				expect( host.changes ).toBe( 1 );
+			} );
+			it( 'saves it on Save', async ()=>{
+				const { fixture, element, set } = await create( {draft: true} );
+				vi.useFakeTimers();
+				typed( fixture, box( element )!, "abc" );
+				element.querySelectorAll<HTMLButtonElement>( '.bar-center button' )[1].click();
+				await vi.advanceTimersByTimeAsync( 400 );
+				fixture.detectChanges();
+				expect( set.current().filter ).toBe( "abc" );
+				expect( set.current().isAdhoc ).toBe( false );
+			} );
+		} );
+
 		it( 'is absent where the view takes no filter, Discard and Save still in the centre zone', async ()=>{
 			const route = [Unfiltered.fromConfig( {configColumns: [], sort: []}, schema )];
 			const { element } = await create( {route, draft: true, type: Unfiltered} );

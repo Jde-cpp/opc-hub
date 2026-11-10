@@ -1,7 +1,9 @@
+import { parseFilter } from 'jde-framework';
 import { OpcObject } from './node';
 import { NodeView } from './node-view';
 import { OpcError } from './opc-error';
 import { EAccess, ETypes } from './types';
+import { WatchView } from './watch-view';
 import { variable } from 'jde-opc/testing';
 
 const bad = 0x808C0000, uncertainHigh = 0x40940600;
@@ -139,6 +141,22 @@ describe( 'NodeView timestamp and browse columns', ()=>{
 			expect( view.fields.map(f=>f.name) ).toContain( name );
 			expect( view.displayedColumns ).not.toContain( name );
 		}
+	} );
+} );
+
+//reviews-issue/591-views-filter-box.md #1:  the fields' names were made from their QL names, so the filter box refused a column
+//named as its header reads - Reference Type was Ref Type, and the watch list's Revised was Revised Sampling
+describe( 'NodeView and WatchView column names', ()=>{
+	const unread = ( view:NodeView|WatchView, filter:string )=>parseFilter( filter, view.filterHost() ).errors.map( e=>e.message );
+	it( "are the page's headers, which the filter box reads", ()=>{
+		const node = NodeView.default();
+		expect( node.fields.map( f=>f.displayName ) ).toEqual( Object.values( NodeView.columns ) );
+		expect( unread( node, '"Reference Type":i=46 "Type Definition":i=58 refType:i=47' ) ).toEqual( [] );
+		expect( unread( node, '"Ref Type":i=46' ) ).toEqual( ["No field 'Ref Type'."] );
+		const watch = WatchView.default();
+		expect( watch.fields.map( f=>f.displayName ) ).toEqual( Object.values( WatchView.columns ) );
+		expect( unread( watch, "sampling:>100 revised:>100" ) ).toEqual( [] );
+		expect( watch.displayedColumns ).toEqual( ["connection", "node", "value", "status", "sampling", "revisedSampling", "filter"] );
 	} );
 } );
 

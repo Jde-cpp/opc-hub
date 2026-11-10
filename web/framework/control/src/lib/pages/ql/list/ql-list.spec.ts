@@ -275,15 +275,18 @@ describe( 'QLList chip filters', ()=>{
 		expect( held( create().page ) ).toEqual( [["provider", []]] );
 	} );
 
-	it( 'adds the term on a click and takes it out on the next, each a change to the draft', async ()=>{
+	//reviews-issue/591-views-filter-box.md #2:  a second value was a second term, which intersected with the first to nothing
+	it( 'adds the term on a click, another value to its list, and takes each out on the next, each a change to the draft', async ()=>{
 		const { page, changed } = create();
 		await page.onChipClick( {column: "provider", value: "Google"} );
 		expect( page.profile().current().filter ).toBe( "Provider:Google" );
 		expect( page.profile().current().isAdhoc ).toBe( true );
 		expect( held( page ) ).toEqual( [["provider", ["Google"]]] );
 		await page.onChipClick( {column: "provider", value: "Key"} );
-		expect( page.profile().current().filter ).toBe( "Provider:Google Provider:Key" );
+		expect( page.profile().current().filter ).toBe( "Provider:Google,Key" );
+		expect( held( page ) ).toEqual( [["provider", ["Google", "Key"]]] );
 		await page.onChipClick( {column: "provider", value: "Google"} );
+		expect( page.profile().current().filter ).toBe( "Provider:Key" );
 		await page.onChipClick( {column: "provider", value: "Key"} );
 		expect( page.profile().current().filter ).toBe( "" );
 		expect( page.profile().current().isAdhoc ).toBe( false );//as it was saved:  no draft
@@ -483,6 +486,21 @@ describe( 'QLList paging', ()=>{
 		expect( load ).toHaveBeenCalledTimes( 1 );
 		expect( page.skip() ).toBe( 25 );
 		expect( page.view().name ).toBe( "Mine" );//the editor's, and Delete's
+	} );
+
+	//reviews-issue/591-views-filter-box.md #3:  each pause in a term the box cannot read asked for the same rows again
+	it( 'asks again only for a filter that asks for other rows', async ()=>{
+		const { page, load } = create( rows(40) );
+		const typed = async ( filter:string )=>{
+			page.profile().edit( view=>{ view.filter = filter; } );
+			await page.onChangeView();
+		};
+		await typed( "nope:" );
+		await typed( "nope:a" );
+		expect( load ).not.toHaveBeenCalled();
+		expect( page.view().filter ).toBe( "nope:a" );//the view on screen, which the chips read
+		await typed( "nope:a name:b" );
+		expect( load ).toHaveBeenCalledTimes( 1 );
 	} );
 
 	//reviews-issue/231-paging.md #12:  the reset to the first page is refresh()'s alone - Save and Delete go through it too

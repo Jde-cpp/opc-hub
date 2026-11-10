@@ -329,12 +329,24 @@ describe( "filter-query", ()=>{
 			expect( labels("pro") ).toEqual( ["Provider:"] );
 			expect( labels("-") ).toEqual( ["-Id:", "-Name:", "-Provider:", "-Description:", '-"Security Mode":', "-Exponent:", '-"Is Group":', "-Created:"] );
 			expect( labels("e") ).toEqual( ["Exponent:", "Name:", "Provider:", "Description:", '"Security Mode":', "Created:"] );//those that start with it first
+			expect( labels("s") ).toEqual( ['"Security Mode":', "has:", "Description:", '"Is Group":'] );//a quoted header after its quote:  #10
 		} );
 		it( "writes a field with its colon, in quotes where it has a space, and has more to say", ()=>{
 			expect( take("pro", "Provider:") ).toBe( "Provider:| …" );
 			expect( take("name:a sec", '"Security Mode":') ).toBe( 'name:a "Security Mode":| …' );
 			expect( take("-ex", "-Exponent:") ).toBe( "-Exponent:| …" );
 			expect( take("nam:a", "Name:", 3) ).toBe( "Name:|a …" );//the colon already there
+		} );
+		//reviews-issue/591-views-filter-box.md #6:  taken with the cursor inside a word, the suggestion kept the word's tail
+		it( "replaces the whole word the cursor is in, and puts a sign or a field in before a word it is at the start of", ()=>{
+			expect( take("name:a", "Name:", 3) ).toBe( "Name:|a …" );
+			expect( take("-proxy:Key", "-Provider:", 4) ).toBe( "-Provider:|Key …" );
+			expect( take("provider:Google", "Google", 11) ).toBe( "provider:Google|" );
+			expect( take("provider:Key,Google x", "Open Id", 13) ).toBe( 'provider:Key,"Open Id"| x' );
+			expect( take('name:"pu station" x', "pump station", 8) ).toBe( 'name:"pump station"| x' );
+			expect( take("provider:Key", "Google", 9) ).toBe( "provider:Google|" );
+			expect( take("created:2026-01-01", ">=", 8) ).toBe( "created:>=|2026-01-01 …" );
+			expect( take("name:a x", "Provider:", 7) ).toBe( "name:a Provider:|x …" );
 		} );
 		it( "offers an enum's values from the host, the rows' for the rest, and none already in the term", ()=>{
 			expect( labels("provider:") ).toEqual( ["Google", "Key", "Open Id"] );
@@ -368,6 +380,14 @@ describe( "filter-query", ()=>{
 			expect( labels("name:>") ).toEqual( [] );
 			expect( labels("name:", undefined, browser()) ).toContain( ">" );//a list that filters its own rows compares any column
 		} );
+		//reviews-issue/591-views-filter-box.md #11:  each was underlined as soon as it was taken
+		it( "offers no sign after an excluded field, nor a day where one cannot be read", ()=>{
+			expect( labels("-exponent:") ).toEqual( ["3", "65537"] );
+			expect( labels("-exponent:>") ).toEqual( [] );
+			expect( labels("-created:") ).toEqual( [] );
+			expect( labels("created:@today,") ).toEqual( [] );
+			expect( labels("-sampling:", undefined, browser()) ).not.toContain( ">" );
+		} );
 		it( "offers the columns that can be empty after no: and has:, a live toggle's by its header", ()=>{
 			expect( labels("no:") ).toEqual( ["Provider", "Description", "Security Mode", "Exponent", "Is Group", "Enforced"] );
 			expect( take("has:sec", "Security Mode") ).toBe( 'has:"Security Mode"|' );
@@ -389,8 +409,16 @@ describe( "filter-query", ()=>{
 			expect( toggleFilterTerm( "pump Provider:Google no:description", host, provider, "Google" ) ).toBe( "pump no:description" );
 			expect( toggleFilterTerm( 'provider:"Google"', host, provider, "Google" ) ).toBe( "" );//however it was typed
 		} );
-		it( "adds beside a term that only holds the value among others, or excludes it", ()=>{
-			expect( toggleFilterTerm( "provider:Google,Key", host, provider, "Google" ) ).toBe( "provider:Google,Key Provider:Google" );
+		//reviews-issue/591-views-filter-box.md #2:  a second chip of a column added a term beside the first, and the two `in`s
+		//intersected to none;  merged, the list is the rows with either (ruled 2026-11-10)
+		it( "adds another value to the column's term, and takes one out of it, the term going with its last", ()=>{
+			expect( toggleFilterTerm( "provider:Google", host, provider, "Key" ) ).toBe( "provider:Google,Key" );
+			expect( toggleFilterTerm( 'pump provider:Google no:description', host, provider, "Open Id" ) ).toBe( 'pump provider:Google,"Open Id" no:description' );
+			expect( toggleFilterTerm( "provider:Google,Key", host, provider, "Google" ) ).toBe( "provider:Key" );
+			expect( toggleFilterTerm( 'pump Provider:"Open Id",Key no:description', host, provider, "Key" ) ).toBe( 'pump Provider:"Open Id" no:description' );
+			expect( toggleFilterTerm( "provider:Key", host, provider, "Key" ) ).toBe( "" );
+		} );
+		it( "adds beside a term that excludes the value", ()=>{
 			expect( toggleFilterTerm( "-provider:Google", host, provider, "Google" ) ).toBe( "-provider:Google Provider:Google" );
 		} );
 		it( "says which columns take a term", ()=>{

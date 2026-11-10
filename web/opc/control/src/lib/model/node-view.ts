@@ -1,4 +1,4 @@
-import { compareCells, DateUtils, Field, FilterHost, FieldKind, filterPredicate, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, DateUtils, Field, FilterHost, FieldKind, filterPredicate, TableSchema, View, ViewFieldSettings, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
@@ -16,8 +16,13 @@ export class NodeView extends View{
 	//draws its own cells, so a type changes no rendering.
 	static types:Record<string,{kind:FieldKind, name:string}> = { class: {kind: FieldKind.ENUM, name: "NodeClass"}, dataType: {kind: FieldKind.ENUM, name: "DataType"}, status: {kind: FieldKind.ENUM, name: "StatusCode"}, sourceTime: {kind: FieldKind.SCALAR, name: "DateTime"}, serverTime: {kind: FieldKind.SCALAR, name: "DateTime"} };
 	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: NodeView.types[name] ?? {kind: FieldKind.SCALAR, name: "String"}}) ) } );
+	//The fields in the order of `columns` and under its names, those not `shown` hidden:  the page writes the same headers, and the
+	//filter box names a column as its header reads.
+	static configColumns( columns:Record<string,string>, shown:string[] ):ViewFieldSettings[]{
+		return Object.entries( columns ).map( ([name, displayName])=>({name, displayName, hidden: !shown.includes(name)}) );
+	}
 	static default():NodeView{
-		const view = NodeView.fromConfig( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "status", hidden: true}, {name: "sourceTime", hidden: true}, {name: "serverTime", hidden: true}, {name: "access", hidden: true}, {name: "refType", hidden: true}, {name: "typeDef", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
+		const view = NodeView.fromConfig( {configColumns: NodeView.configColumns( NodeView.columns, ["id", "name", "snapshot", "description"] ), sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
 		view.showSelector = true;//the subscription checkboxes
 		view.type = ViewType.System;
 		return view;
@@ -36,7 +41,6 @@ export class NodeView extends View{
 	predicate():( node:UaNode )=>boolean{
 		return filterPredicate( this.parsedFilter().terms, this.filterHost(), {cell: NodeView.cellValue, time: NodeView.time} );
 	}
-	matches( node:UaNode ):boolean{ return this.predicate()( node ); }
 	//the sort alone, on a copy:  the sidenav takes the siblings through this without the filters (OpcStore.setRoute), so it lists them as the parent's table did
 	sortNodes( nodes:readonly UaNode[] ):UaNode[]{
 		const rows = [...nodes];

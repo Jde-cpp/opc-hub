@@ -181,11 +181,11 @@ export class QLList implements OnInit{
 		this.profile().show( view );
 		await this.#refresh();
 	}
-	//The toolbar put another view on screen:  its rows, unless they are those shown or on their way - the view renamed, or a copy
-	//of it - where the page stays as it is.
+	//The toolbar put another view on screen:  its rows, unless they are those shown or on their way - the view renamed, a copy
+	//of it, or its filter changed only in a term the box cannot read - where the page stays as it is.
 	async onChangeView(){
 		const view = this.profile().current();
-		if( !View.alike(view, this.#queried ?? this.view()) )
+		if( !View.sameQuery(view, this.#queried ?? this.view()) )
 			await this.#refresh();
 		else if( !this.isRefreshing() )
 			this.view.set( view );
@@ -237,7 +237,7 @@ export class QLList implements OnInit{
 
 	//the loaded rows' values by column, which the filter box suggests after a field's colon
 	filterValues = computed<Record<string,unknown[]>>( ()=>cellValues( this.view().fields.map( f=>f.name ), this.data(), ( row, column )=>row[column] ) );
-	//The chip columns a click filters on, each with the values the filter holds as `field:value`:  a click adds the term, and a
+	//The chip columns a click filters on, each with the values the filter holds as `field:a,b`:  a click adds the value, and a
 	//click on a value it holds takes it out.  A column the box cannot filter - one the gateway grafts on - is not among them.
 	chipFilters = computed<Map<string,Set<string>>>( ()=>{
 		const view = this.profile().current(), host = view.filterHost();
@@ -246,9 +246,9 @@ export class QLList implements OnInit{
 			return y;
 		for( const field of view.fields.filter( f=>f.chip && takesFilterTerm(f, host) ) )
 			y.set( field.name, new Set() );
-		for( const term of parseFilter(view.filter, host).terms ){
-			if( term.operator=="in" && !term.negated && term.values.length==1 )
-				y.get( term.field! )?.add( `${term.values[0]}` );
+		for( const term of parseFilter(view.filter, host).terms.filter( t=>t.operator=="in" && !t.negated ) ){
+			for( const value of term.values )
+				y.get( term.field! )?.add( `${value}` );
 		}
 		return y;
 	} );

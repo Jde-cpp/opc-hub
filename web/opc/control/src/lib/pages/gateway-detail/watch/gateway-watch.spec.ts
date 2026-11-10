@@ -303,6 +303,21 @@ describe( 'GatewayWatch', ()=>{
 		values.next( {opcId: 'local', node: A, value: 3, sc: 0} );
 		expect( page.shown().map( r=>r.name ) ).toEqual( ['zeta', 'alpha'] );
 	} );
+	//reviews-issue/591-views-filter-box.md #7:  the filter box's suggestions kept the rows as they were set, before the describes and pushes
+	it( 'suggests the names and readings the rows take in place', async ()=>{
+		let release!:()=>void;
+		const described = new Map<string,{node:Variable; path:string|null}|undefined>( [
+			[`local/${A.uaString()}`, {node: variable( 1, 'zeta' ), path: null}],
+			[`local/${B.uaString()}`, {node: variable( 2, 'alpha' ), path: null}]
+		] );
+		const { page, values } = await create( [item( 'local', A ), item( 'local', B )], described, new Promise<void>( r=>release=r ) );
+		expect( page.filterValues()['value'] ).toEqual( [] );
+		release();
+		await flush( 3 );
+		expect( page.filterValues()['node'] ).toEqual( ['alpha', 'zeta'] );
+		values.next( {opcId: 'local', node: A, value: 3, sc: 0} );
+		expect( page.filterValues()['value'] ).toEqual( [3] );
+	} );
 
 	//Clients 7 (#420, spec *Live trend*):  every push goes to the trend's buffer under the row's own series, a revised result and a
 	//refused subscribe's OpcError are no readings, and a row removed takes its pushes and its tick

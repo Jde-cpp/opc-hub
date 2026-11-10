@@ -73,7 +73,7 @@ A term the box cannot read is underlined, and the line under the box says why. T
 - a date excluded with `-`, or more than one date in a list
 - a column the server works out after it has read the row, such as a connection's **Status**
 
-A chip in a row - a user's provider, say - is a shortcut: click it to add `provider:Google` to the filter, and click it again to take the term out.
+A chip in a row - a user's provider, say - is a shortcut: click it to add `provider:Google` to the filter, and click it again to take the term out. Click a chip of another value in the same column and it joins the term, `provider:Google,Key`, the rows with either; a click on one of those takes it back out.
 
 Three kinds of list differ:
 

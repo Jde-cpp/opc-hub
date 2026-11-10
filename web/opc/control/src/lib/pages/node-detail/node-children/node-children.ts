@@ -140,13 +140,18 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.isSettings.set( false );
 	}
 	//the cells' values by column, which the filter box suggests
-	filterValues = computed<Record<string,unknown[]>>( ()=>cellValues( Object.keys(NodeView.columns), this.nodes(), NodeView.cellValue ) );
+	filterValues = computed<Record<string,unknown[]>>( ()=>{
+		this.#changes();//a push's reading lands on the node in place
+		return cellValues( Object.keys(NodeView.columns), this.nodes(), NodeView.cellValue );
+	} );
 
 	//the value cells bind to plain fields on the nodes, not signals, so an async write (or a subscription push) changes nothing
 	//Angular is watching:  zoneless runs no pass of its own, and the cell kept the old value until an unrelated event forced one.
 	#repaint(){
+		this.#changes.update( n=>n+1 );
 		this.#cdRef.markForCheck();
 	}
+	#changes = signal( 0 );
 	//every reading a row takes - a push, a write's echo, a re-read - so the quality travels with the value.  Only a CHANGE of
 	//code asks for its name:  a fault holds its code on every tick it lasts, and the socket has no REST call behind it to bring one.
 	//A StatusCode value whose name hasn't come asks too (Variable.valueName).

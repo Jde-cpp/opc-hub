@@ -19,14 +19,13 @@ import { FilterHost, FilterSuggestion, parseFilter, suggestFilter } from '../../
 export class FilterBox implements OnDestroy{
 	#injector = inject( Injector );
 	constructor(){
-		effect( ()=>{//the view's text, where it is not what the box sent:  another tab's, a Discard's, a chip's
+		//The view's text, where it is not what the box sent:  another tab's, a Discard's, a chip's.  What the box sent comes back a
+		//change detection later, behind any key typed since, which it must not put back.
+		effect( ()=>{
 			const filter = this.filter();
 			untracked( ()=>{
-				if( filter!=this.text().trim() ){
-					this.#cancel();
-					this.text.set( filter );
-					this.caret.set( filter.length );
-				}
+				if( filter!=this.#sent && filter!=this.text().trim() )
+					this.#show( filter );
 				this.#sent = filter;
 			} );
 		} );
@@ -103,6 +102,15 @@ export class FilterBox implements OnDestroy{
 		else
 			this.#commit();
 	}
+	//Save's:  what is typed and not yet asked for, asked for now, so that it is saved
+	flush(){
+		if( this.#timer!==undefined )
+			this.#commit();
+	}
+	//Discard's:  what is typed and not yet asked for, dropped with the draft
+	revert(){
+		this.#show( this.filter() );
+	}
 	#commit(){
 		this.#cancel();
 		const text = this.text().trim();
@@ -114,6 +122,13 @@ export class FilterBox implements OnDestroy{
 	#cancel(){
 		clearTimeout( this.#timer );
 		this.#timer = undefined;
+	}
+	//the view's text in place of what was typed, the copy behind the input taking the input's scroll once it is drawn
+	#show( text:string ){
+		this.#cancel();
+		this.text.set( text );
+		this.caret.set( text.length );
+		afterNextRender( ()=>this.scroll.set( this.box().nativeElement.scrollLeft ), {injector: this.#injector} );
 	}
 	#sent = "";//the text the view holds, or is about to
 	#timer:ReturnType<typeof setTimeout>|undefined;

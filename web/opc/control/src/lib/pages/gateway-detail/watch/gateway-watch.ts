@@ -332,7 +332,10 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	onViewSave( view:View ){ this.viewSet.save( view ).catch( e=>this.#snackbar.exception( "Could not save view.", e ) ); this.isSettings.set( false ); }
 	onViewDelete( view:View ){ this.viewSet.remove( view ).catch( e=>this.#snackbar.exception( "Could not delete view.", e ) ); this.isSettings.set( false ); }
 	//the cells' values by column, which the filter box suggests
-	filterValues = computed<Record<string,unknown[]>>( ()=>cellValues( Object.keys(WatchView.columns), this.rows(), ( r, name )=>WatchView.cellValue(r, name, this.names) ) );
+	filterValues = computed<Record<string,unknown[]>>( ()=>{
+		this.#changes();//a describe's names and a push's reading land on the rows in place
+		return cellValues( Object.keys(WatchView.columns), this.rows(), ( r, name )=>WatchView.cellValue(r, name, this.names) );
+	} );
 
 	//the cells
 	readonly names = ( slug:CnnctnSlug )=>this.cnnctnName( slug );

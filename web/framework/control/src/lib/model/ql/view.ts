@@ -336,6 +336,11 @@ export class View{
 		const json = ( v:View )=>JSON.stringify( {...v.toJson(undefined), name: undefined} );
 		return !!b && json( a )==json( b );
 	}
+	//the same rows asked for:  alike, or a filter that differs only in a term the box cannot read, which is left out of the query
+	static sameQuery( a:View, b:View|undefined ):boolean{
+		const json = ( v:View )=>JSON.stringify( v.query(0) );
+		return !!b && json( a )==json( b );
+	}
 	toJson( defaultSettings:TableSettings|undefined ):ViewJson{
 		let fields = [];
 		for( let field of this.fields ){

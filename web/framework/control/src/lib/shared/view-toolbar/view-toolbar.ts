@@ -20,7 +20,7 @@ import { SnackbarService } from '../snackbar/snackbar-service';
 //own controls left (`[left]`) and, right, Refresh, the view editor's button, the host's (`[right]`) and the row count, with the
 //reload bar under it.  `+ New view` and the rename box stand outside the tablist, which may hold tabs alone.  The toolbar changes
 //the set itself and says when a write failed;  the host hears `viewChange` when the view on screen is another, and re-reads unless
-//its rows are a computed of it or the view shows the rows it did (View.alike).  The centre zone is the filter box, where the view
+//its rows are a computed of it or the view asks for the rows it did (View.sameQuery).  The centre zone is the filter box, where the view
 //takes a filter (View.filterHost):  what is typed is a change to the draft.  A view with a draft shows it, a dot after its name,
 //and Save and Discard stand at the end of the centre zone, and in the menu.  On a phone the centre zone is a row of its own, and is
 //rendered after the right zone, so the tab order is the rows'.  A pick list has no tabs row:  its menu opens from a button showing
@@ -53,6 +53,7 @@ export class ViewToolbar{
 	refresh = output<void>();
 	filterValues = input<Record<string,readonly unknown[]>>( {} );//the rows' values by column, which the filter box suggests
 	filterHost = computed<FilterHost|undefined>( ()=>this.views().current()?.filterHost() );//none:  no box - the logs
+	box = viewChild( FilterBox );//Save takes what is typed in it, and Discard drops it
 	isExtraSmall = inject( ScreenSize ).isExtraSmall;
 	//the box's text:  a change to the draft, as any other
 	filter( text:string ){
@@ -92,12 +93,14 @@ export class ViewToolbar{
 	//The draft over its view, as it stands once the set makes the change.  The bar's Discard and Save go with the draft, so they hand
 	//the focus to the view's tab, or a pick list's button, rather than drop it to the page;  the menu's hand it back to the chevron.
 	save( fromBar=false ){
+		this.box()?.flush();
 		const view = this.views().current();
 		this.#change( (set, shown)=>set.saveDraft(view, shown), "Could not save view." );
 		if( fromBar )
 			this.#focusView();
 	}
 	discard( fromBar=false ){
+		this.box()?.revert();
 		if( this.views().discard(this.views().current()) )
 			this.viewChange.emit();
 		if( fromBar )

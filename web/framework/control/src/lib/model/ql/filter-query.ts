@@ -408,14 +408,18 @@ function quoted( text:string, unsafe:boolean ):string{
 const fieldText = ( name:string )=>quoted( name, /[\s:]/.test(name) || /^["'-]/.test(name) || ["no", "has"].includes(name.toLowerCase()) );
 const valueText = ( value:string )=>quoted( value, value=="" || /[\s,]/.test(value) || /^["'<>]/.test(value) || value.includes("..") );
 
-//The text with a chip's `field:value` added, or taken out where a term of the text is exactly that:  a chip clicked, and
-//clicked again.
+//A chip clicked:  the text with its value taken out of the column's `field:a,b` where that holds it, the term going with its
+//last value, else added to that term's list - rows with either value - or, where the column has none, `field:value` added.
 export function toggleFilterTerm( text:string, host:FilterHost, column:FilterColumn, value:string ):string{
 	const name = columnName( column );
-	const held = parseFilter( text, host ).terms.find( t=>t.field==name && t.operator=="in" && !t.negated && t.values.length==1 && `${t.values[0]}`==value );
-	return held
-		? `${text.slice( 0, held.start ).trimEnd()} ${text.slice( held.end ).trimStart()}`.trim()
-		: `${text.trim()} ${fieldText( column.displayName )}:${valueText( value )}`.trim();
+	const terms = parseFilter( text, host ).terms.filter( t=>t.field==name && t.operator=="in" && !t.negated );
+	const held = terms.find( t=>t.values.some( v=>`${v}`==value ) ), into = held ?? terms[0];
+	if( !into )
+		return `${text.trim()} ${fieldText( column.displayName )}:${valueText( value )}`.trim();
+	const values = held ? into.values.filter( v=>`${v}`!=value ) : [...into.values, value];
+	const typed = text.slice( into.start, into.end );//the field kept as it was written
+	const term = values.length ? `${typed.slice( 0, scan(typed)[0].values[0].start )}${values.map( v=>valueText(`${v}`) ).join( "," )}` : "";
+	return [text.slice( 0, into.start ).trimEnd(), term, text.slice( into.end ).trimStart()].filter( s=>s ).join( " " );
 }
 
 //One entry of the box's suggestions:  what it reads, the box's text once it is taken, where the cursor then stands, and
@@ -431,15 +435,28 @@ export function suggestFilter( text:string, caret:number, host:FilterHost, value
 	const last = scan( head ).at( -1 );
 	const open = last && last.end==head.length ? last : undefined;//the term the cursor is at the end of:  none after a space
 	const matches = ( label:string, typed:string )=>label.toLowerCase().includes( typed.toLowerCase() );
-	//those that start with what is typed, then those that hold it
+	//those that start with what is typed - a quoted header after its quote - then those that hold it
 	const ranked = ( labels:string[], typed:string )=>{
-		const lower = typed.toLowerCase();
+		const lower = typed.toLowerCase(), starts = ( l:string )=>l.toLowerCase().replace( /^["']/, "" ).startsWith( lower );
 		const found = labels.filter( l=>matches(l, typed) );
-		return [...found.filter( l=>l.toLowerCase().startsWith(lower) ), ...found.filter( l=>!l.toLowerCase().startsWith(lower) )];
+		return [...found.filter( starts ), ...found.filter( l=>!starts(l) )];
 	};
-	const taken = ( at:number, insert:string, label:string, more:boolean ):FilterSuggestion=>{
-		const rest = text.slice( caret );
+	//the text with `insert` in place of what is from `at` to `end`, which is the cursor for a sign put in before a value
+	const taken = ( at:number, insert:string, label:string, more:boolean, end=caret ):FilterSuggestion=>{
+		const rest = text.slice( end );
 		return { label, text: `${text.slice( 0, at )}${insert}${insert.endsWith( ":" ) && rest.startsWith( ":" ) ? rest.slice( 1 ) : rest}`, caret: at+insert.length, more };
+	};
+	//The end of the word the cursor is in, so that a suggestion taken replaces it whole and not only its part before the cursor:
+	//a quoted word's closing quote, else the next space or `stop`.
+	const wordEnd = ( atom:Atom|undefined, stop:string )=>{
+		if( atom?.quoted && !atom.closed ){
+			const close = text.indexOf( text[atom.start], caret );
+			return close<0 ? text.length : close+1;
+		}
+		let i = caret;
+		while( i<text.length && !isSpace(text[i]) && text[i]!=stop )
+			++i;
+		return i;
 	};
 	if( !open?.field ){
 		const word = open?.word;
@@ -447,19 +464,20 @@ export function suggestFilter( text:string, caret:number, host:FilterHost, value
 			return [];
 		const bare = !!word && !word.quoted && word.text=="-";//a `-` with its field still to come, which is a word until then
 		const at = open?.start ?? caret, typed = bare ? "" : word?.text ?? "", sign = open?.negated || bare ? "-" : "";
+		const end = open ? wordEnd( word, ":" ) : caret;//at a word's start the field goes in before it
 		const fields = host.columns.filter( c=>takesFilterTerm(c, host) ).map( c=>`${fieldText( c.displayName )}:` );
 		const labels = [...( sign ? [] : ["no:", "has:"] ), ...( sign || typed ? [] : ["-"] ), ...new Set( fields )];
-		return ranked( labels, typed ).slice( 0, suggestionLimit ).map( l=>taken(at, `${sign}${l}`, `${sign}${l}`, true) );
+		return ranked( labels, typed ).slice( 0, suggestionLimit ).map( l=>taken(at, `${sign}${l}`, `${sign}${l}`, true, end) );
 	}
 	const atom = open.values.at( -1 )!;
 	if( atom.quoted && atom.closed )
 		return [];
-	const others = open.values.slice( 0, -1 ).map( v=>v.text.toLowerCase() );
+	const others = open.values.slice( 0, -1 ).map( v=>v.text.toLowerCase() ), end = wordEnd( atom, "," );
 	const keyword = open.field.quoted ? "" : open.field.text.toLowerCase();
 	if( keyword=="no" || keyword=="has" ){//the columns that can be empty, a live toggle's among them
 		const fields = host.columns.filter( c=>( !host.server || serverHasColumn(c) ) && ( !host.server || c.qlField.isNullable ) ).map( c=>c.displayName );
 		return ranked( [...new Set( fields )].filter( f=>!others.includes(f.toLowerCase()) && f.toLowerCase()!=atom.text.toLowerCase() ), atom.text ).slice( 0, suggestionLimit )
-			.map( f=>taken(atom.start, fieldText(f), f, false) );
+			.map( f=>taken(atom.start, fieldText(f), f, false, end) );
 	}
 	const column = findColumn( host, open.field.text );
 	if( !column || !takesFilterTerm(column, host) )
@@ -468,6 +486,8 @@ export function suggestFilter( text:string, caret:number, host:FilterHost, value
 	const sign = atom.quoted || open.values.length>1 ? undefined : comparisons.find( ([s])=>atom.text.startsWith(s) )?.[0];
 	if( sign && !compares )
 		return [];
+	if( open.negated && sign || field.isDateTime && (open.negated || open.values.length>1) )
+		return [];//what `read` refuses:  a comparison excluded, a day excluded or a list of days
 	const typed = sign ? atom.text.slice( sign.length ) : atom.text;
 	const enumValues = field.isEnum ? host.enums?.get( field.type.underlyingName ) : undefined;
 	const held = enumValues ? enumValues.map( v=>v.name )
@@ -475,8 +495,8 @@ export function suggestFilter( text:string, caret:number, host:FilterHost, value
 		: field.isDateTime ? ["@today", "@today-1d", "@today-7d", "@today-30d"]
 		: values( columnName(column) ).filter( v=>["string", "number", "boolean"].includes(typeof v) && v!=="" ).map( v=>`${v}` );
 	const offered = ranked( [...new Set( held )].filter( v=>( enumValues ? v.toLowerCase()!=typed.toLowerCase() : v!=typed ) && !others.includes(v.toLowerCase()) ), typed ).slice( 0, suggestionLimit )
-		.map( v=>taken(atom.start, `${sign ?? ""}${valueText( v )}`, v, false) );
-	const signs = compares && !sign && !atom.quoted && open.values.length==1 && !atom.text ? comparisons.map( ([s])=>taken(atom.start, s, s, true) ) : [];
+		.map( v=>taken(atom.start, `${sign ?? ""}${valueText( v )}`, v, false, end) );
+	const signs = compares && !sign && !open.negated && !atom.quoted && open.values.length==1 && !atom.text ? comparisons.map( ([s])=>taken(atom.start, s, s, true) ) : [];
 	return [...offered, ...signs];
 }
 
