@@ -117,4 +117,10 @@ namespace Jde::Opc::Gateway{
 	α FromClientUtils::HistUnsubscription( RequestId subscription, RequestId requestId )ι->string{
 		return setMessage( requestId, [&](FromClient::Message& m){ m.mutable_hist_unsubscribe()->set_subscription( subscription ); } );
 	}
+	α FromClientUtils::OeeSubscription( uint32 machine, RequestId requestId )ι->string{
+		return setMessage( requestId, [&](FromClient::Message& m){ m.mutable_oee_subscribe()->set_machine( machine ); } );
+	}
+	α FromClientUtils::OeeUnsubscription( RequestId subscription, RequestId requestId )ι->string{
+		return setMessage( requestId, [&](FromClient::Message& m){ m.mutable_oee_unsubscribe()->set_subscription( subscription ); } );
+	}
 }

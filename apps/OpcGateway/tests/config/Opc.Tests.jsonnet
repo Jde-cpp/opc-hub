@@ -80,7 +80,7 @@ local logsDir = args.logsDir;
 		reconnectDelay: "PT0.1S",
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-gateway-tests" }, //the gateway's own groups (HistGroupTests), which main.cpp empties at the start as it does the server's.
-		oee:{ settle: "PT2S" }, //OeeTests:  not the shipped 5 s, so OeeTests.TheSettingsReachTheHost tells the setting from the default;  the suite's clock is its own, so nothing waits on it.
+		oee:{ live:: "PT1S", settle: "PT2S" }, //OeeTests:  not the shipped 5 s, so OeeTests.TheSettingsReachTheHost tells the setting from the default;  the suite's clock is its own, so nothing waits on it.
 		//the gateway's own endpoint (GatewayServerTests), beside the embedded OpcServer's 4940:  two UA servers in one process.  No ssl:
 		//the process pair, http.gateway.ssl.  Its client certificates are the test product's one ssl/certs, where that pair is - the suite's
 		//client logs in by certificate with it - and user1 is the OpcServer's login too.

@@ -9,7 +9,7 @@ namespace Jde::Proto{ class Query; }
 namespace Jde::Opc{ struct NodeId; }
 namespace Jde::Opc::Hist{ enum class ESubscriptionEnd : uint8; namespace Proto{ class HistoryRecord; } }
 namespace Jde::Opc::Gateway{
-	struct HistSubscriber;
+	struct HistSubscriber; struct OeeSubscriber;
 	using namespace Jde::Web::Server;
 	using namespace Jde::Web::Client;
 	struct GatewaySocketSession final: TWebsocketSession<FromServer::Transmission,FromClient::Transmission>, IDataChange{
@@ -35,6 +35,11 @@ namespace Jde::Opc::Gateway{
 		//The group ended a historian subscription, removed or stopping:  on the strand, out of the map and the client told
 		//under its id, unless a HistUnsubscribe or the close ended it first.
 		α HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void;
+		//A live OEE subscription's push, written on the strand unless it has ended by then, as a historian subscription's is.
+		α WriteOee( sp<OeeSubscriber> subscriber, FromServer::Transmission&& message )ι->void;
+		//The machine's feed ended a live OEE subscription, the machine deleted or purged or OEE stopping:  on the strand, out of
+		//the map and the client told under its id, unless an OeeUnsubscribe or the close ended it first.
+		α OeeEnded( sp<OeeSubscriber> subscriber, EHttpStatus status, string what )ι->void;
 	private:
 		α CreateSubscription( sp<UAClient> client, flat_map<NodeId,MonitoringParameters> asked, flat_map<NodeId,optional<MonitoringParameters>> prior, RequestId requestId )ι->VoidAwait::Task;
 		//The asks a Subscribe kept for nodes its create refused, put back to what each had before, or gone with nothing before -
@@ -61,6 +66,12 @@ namespace Jde::Opc::Gateway{
 		α HistSubscribing( sp<HistSubscriber> subscriber, FromServer::HistSubscribeAck ack, uint limit )ι->VoidTask;
 		α HistUnsubscribe( Jde::RequestId subscription, Jde::RequestId requestId )ι->void;
 		α RemoveHist( Jde::RequestId subscription, const HistSubscriber* only=nullptr )ι->sp<HistSubscriber>;//out of the map, ended:  if `only`, just when it is the one there.
+		//A live OEE subscription (oee spec *Live*), defined in oee/OeeSubscriber.cpp:  the reads' gate, the ack with the machine's
+		//status now, then an OeeStatus as the machine's feed pushes one, until OeeUnsubscribe, the close or the feed's end.
+		α OeeSubscribe( FromClient::OeeSubscribe&& request, Jde::RequestId requestId )ι->void;
+		α OeeSubscribing( sp<OeeSubscriber> subscriber )ι->VoidTask;//joins the feed, which reads the shift's rows for its first, writes the ack, then lets the pushes through.
+		α OeeUnsubscribe( Jde::RequestId subscription, Jde::RequestId requestId )ι->void;
+		α RemoveOee( Jde::RequestId subscription, const OeeSubscriber* only=nullptr )ι->sp<OeeSubscriber>;
 
 		α WriteSubscription( const jvalue& j, Jde::RequestId requestId )ι->void override;
 		α WriteSubscription( uint32 /*appPK*/, uint32 /*appInstancePK*/, const Logging::Entry& /*e*/, const QL::Subscription& /*sub*/ )ι->void override{ ASSERT(false); }
@@ -71,8 +82,9 @@ namespace Jde::Opc::Gateway{
 
 		α SendAck( uint32 id )ι->void override;
 
-		mutable std::mutex _histMutex;
+		mutable std::mutex _histMutex;//both maps', and _closed.
 		flat_map<Jde::RequestId,sp<HistSubscriber>> _histSubscriptions;//by the HistSubscribe's request id.
+		flat_map<Jde::RequestId,sp<OeeSubscriber>> _oeeSubscriptions;//by the OeeSubscribe's:  an id names one subscription across the two.
 		bool _closed{};
 		//Per connection and node, what each Subscribe asked (ItemParameters) - by the client's slug, set once the connect found the
 		//client and before the create, the defaults for a node it named none for, and kept until the node is unsubscribed.  An

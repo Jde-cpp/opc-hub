@@ -150,6 +150,12 @@ namespace Jde::Opc::Gateway{
 	α FromServer::HistRecordsTrans( FromServer::HistRecords&& records, RequestId requestId )ι->FromServer::Transmission{
 		return set( requestId, [&records](FromServer::Message& m){ *m.mutable_hist_records() = move( records ); } );
 	}
+	α FromServer::OeeSubscribeAckTrans( const FromServer::OeeStatus& status, RequestId requestId )ι->FromServer::Transmission{
+		return set( requestId, [&status](FromServer::Message& m){ *m.mutable_oee_subscribe_ack()->mutable_status() = status; } );
+	}
+	α FromServer::OeeStatusTrans( const FromServer::OeeStatus& status, RequestId requestId )ι->FromServer::Transmission{
+		return set( requestId, [&status](FromServer::Message& m){ *m.mutable_oee_status() = status; } );
+	}
 	α FromServer::ToProto( const Hist::Proto::DataValue& v, uint32 slot, bool bound, const ITypes* types )ι->FromServer::HistValue{
 		FromServer::HistValue y;
 		y.set_node( slot );

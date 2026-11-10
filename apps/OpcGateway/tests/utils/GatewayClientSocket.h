@@ -28,6 +28,12 @@ namespace Jde::Opc::Gateway::Tests{
 		β OnAck( const FromServer::HistSubscribeAck& /*ack*/ )ι->void{}//one no await took:  HistSubscribeUnsubscribe's.
 		β OnError( string /*what*/ )ι->void{}//the gateway ended the subscription:  its group removed, or the historian stopping.
 	};
+	//A live OEE subscription's listener (oee spec *Live*):  the OeeSubscribe's ack resumes its await with the status then, and
+	//each OeeStatus pushed after it comes here under the OeeSubscribe's request id.
+	struct IOeeListener{
+		β OnStatus( const FromServer::OeeStatus& status )ι->void=0;
+		β OnError( string /*what*/ )ι->void{}//the gateway ended the subscription:  its machine deleted or purged, or OEE stopping.
+	};
 	//An error the gateway *answered* with - it came back over a working socket, unlike a transport failure.  Anything that reacts
 	//to a dead connection must not react to these: the gateway is fine and it is the thing behind it that failed (an OPC server
 	//that is down, a rejected write).  The soak's reconnect-on-failure did, and killed itself trying to re-subscribe to a server
@@ -81,6 +87,12 @@ namespace Jde::Opc::Gateway::Tests{
 		//A HistSubscribe and its HistUnsubscribe in one transmission, so the unsubscribe lands while the subscription registers.
 		//The await is the unsubscribe's, and the HistSubscribe's ack goes to the listener's OnAck, which hears on after it.
 		α HistSubscribeUnsubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SRCE )ι->await<bool>;
+		//The ack's status.  The listener hears the pushes until OeeUnsubscribe's ack, or the exception that ends it;  any after
+		//either is a stray, which OeeStrays counts.
+		α OeeSubscribe( uint32 machine, sp<IOeeListener> listener, SRCE )ι->await<FromServer::OeeStatus>;
+		α OeeUnsubscribe( RequestId subscription, SRCE )ι->await<bool>;
+		α LastOeeSubscription()Ι->RequestId{ lg _{ _histMutex }; return _lastOeeSubscription; }
+		α OeeStrays()Ι->uint{ lg _{ _histMutex }; return _oeeStrays; }
 	private:
 		α registerHist( RequestId subscription, sp<IHistListener> listener, bool duplicate=false )ι->void;//its listener, under the id that names the subscription, and the last one sent.
 		α forgetRequest( RequestId requestId )ι->void;
@@ -102,6 +114,11 @@ namespace Jde::Opc::Gateway::Tests{
 		flat_map<RequestId,RequestId> _histUnsubscribes;//a HistUnsubscribe's request id, to the subscription it ends.
 		flat_set<RequestId> _histEnded;
 		uint _histStrays{};
+		flat_map<RequestId,sp<IOeeListener>> _oeeListeners;//under _histMutex, as the historian's.
+		RequestId _lastOeeSubscription{};
+		flat_map<RequestId,RequestId> _oeeUnsubscribes;//an OeeUnsubscribe's request id, to the subscription it ends.
+		flat_set<RequestId> _oeeEnded;
+		uint _oeeStrays{};
 		//The opc side, per socket as the hist side is:  a push is this socket's session's, so only this socket's listeners hear it.
 		//A Subscribe/Unsubscribe registers its record before it is written, and the ack was the only thing that took it out - so
 		//every request that *failed* left its record, listener and all, for the life of the process:  answered with an error, the

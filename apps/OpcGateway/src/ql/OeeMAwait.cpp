@@ -209,6 +209,7 @@ namespace Jde::Opc::Gateway{
 				auto written = co_await Any( DS()->SelectAsync(OeeSql::SelectCodingAt(machineId, span.Start)) );
 				THROW_IFSL( written.empty(), "codeOee wrote no coding at {} of machine {}.", OeeQL::Iso(span.Start), machineId );
 				held.unlock();
+				host.Coded( machineId );
 				Resume( _query.ResultRequest ? jvalue{_query.ResultRequest->TrimColumns(OeeQL::CodingJson(OeeSql::ToCoding(written.front()), &reason))} : jvalue{} );
 				co_return;
 			}
@@ -226,6 +227,7 @@ namespace Jde::Opc::Gateway{
 				HistHost::Instance().Gate( machine->Row.Group, Access::ERights::Read, false, UserPK(), sl );
 				co_await Any( DS()->Execute(OeeSql::DeleteCoding(id)) );
 				held.unlock();
+				host.Coded( machine->Row.Id );
 				Resume( jobject{ {"id", id} } );
 				co_return;
 			}
@@ -400,6 +402,8 @@ namespace Jde::Opc::Gateway{
 				}
 				else if( machineKey )
 					co_await host.MachineChanged( *machineKey );
+				else if( table==Reasons )
+					host.ReasonsChanged();
 				if( recompute ){
 					warned.emplace_back( Ƒ("{} changed:  the rows written before now were made with the old one, and recomputeOee( machine, start, end ) makes a range of them again.", *recompute) );
 					spelled["recompute"] = true;

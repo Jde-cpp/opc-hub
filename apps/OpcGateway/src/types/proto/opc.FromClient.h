@@ -22,4 +22,7 @@ namespace Jde::Opc::Gateway::FromClientUtils{
 	//A historian subscription and its end (spec *Subscriptions*), as a client sends them:  what the tests' GatewayClientSocket writes.
 	α HistSubscription( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, RequestId requestId )ι->string;
 	α HistUnsubscription( RequestId subscription, RequestId requestId )ι->string;
+	//A live OEE subscription and its end (oee spec *Live*), the same.
+	α OeeSubscription( uint32 machine, RequestId requestId )ι->string;
+	α OeeUnsubscription( RequestId subscription, RequestId requestId )ι->string;
 }

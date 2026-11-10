@@ -130,7 +130,7 @@ namespace Jde::Opc::Gateway{
 				lg _{ _histMutex };
 				if( _closed )
 					return;
-				if( !_histSubscriptions.try_emplace(requestId, subscriber).second )
+				if( _oeeSubscriptions.contains(requestId) || !_histSubscriptions.try_emplace(requestId, subscriber).second )
 					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "Subscription {} is live:  a HistSubscribe's request id names it.", hex(requestId) };
 			}
 			HistSubscribing( move(subscriber), move(ack), historian->Config().ReadLimit );

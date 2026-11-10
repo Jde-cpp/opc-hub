@@ -95,6 +95,66 @@ message HistRecords{
 	repeated HistModification modifications=2;
 }
 
+//A machine's live OEE (oee spec *Live*), as an OeeSubscribe's ack and its pushes carry it.
+enum EOeeState{
+	OeeUnknown=0;//no engine runs the machine, or its signals say nothing.
+	OeeRunning=1;
+	OeeStopped=2;
+}
+message OeeReason{
+	uint32 id=1;
+	string name=2;
+	string category=3;//Unplanned, Planned or Excluded.
+}
+//The stop in progress.
+message OeeStop{
+	google.protobuf.Timestamp start=1;
+	OeeReason reason=2;//the coding's that covers it so far, else its code's;  none for neither.
+	bool small=3;//still shorter than the machine's small_stop.
+	optional int64 code=4;//the Reason signal's.
+}
+message OeeShift{
+	string name=1;
+	google.protobuf.Timestamp start=2;
+	google.protobuf.Timestamp end=3;
+}
+//The figures so far, as the `oee` read answers a bucket:  the times in milliseconds, within planned time.
+message OeeFigures{
+	google.protobuf.Timestamp start=1;
+	google.protobuf.Timestamp end=2;//how far they run:  the engine's time.
+	int64 planned=3;
+	int64 run=4;
+	int64 unplanned=5;
+	int64 planned_stop=6;
+	int64 small=7;
+	int64 excluded=8;
+	int64 unknown=9;
+	double total=10;
+	double good=11;
+	double reject=12;
+	double outside=13;
+	int64 ideal=14;
+	optional double availability=15;
+	optional double performance=16;
+	optional double quality=17;
+	optional double oee=18;
+	optional double teep=19;
+	uint32 measured=20;//the factors in oee, as bits:  1 availability, 2 performance, 4 quality.
+	bool partial=21;
+}
+message OeeStatus{
+	EOeeState state=1;
+	google.protobuf.Timestamp since=2;//when the state began;  unset while no engine runs the machine.
+	OeeStop stop=3;//set while stopped.
+	bool planned=4;//the instant is inside the machine's planned time:  in a shift and out of its breaks, or always without a calendar.
+	OeeShift shift=5;//the calendar's occurrence now;  unset between shifts and without a calendar.
+	OeeFigures figures=6;//the shift's so far, or without a calendar the UTC day's;  unset between shifts.
+	google.protobuf.Timestamp last_count=7;
+}
+message OeeSubscribeAck{
+	OeeStatus status=1;
+}
+
 message Message{
 	uint32 request_id = 1;
 	oneof Value{
@@ -110,6 +170,8 @@ message Message{
 		MonitoredItemModified monitored_item_modified = 11;
 		EventValues event_values = 12; //an event subscription's push, under request id 0 as node_values is.
 		EventsRestored events_restored = 13;
+		OeeSubscribeAck oee_subscribe_ack = 14; //an OeeSubscribe's, then its OeeStatus pushes, each under its request_id.  No Value completes an OeeUnsubscribe.
+		OeeStatus oee_status = 15;
 	}
 }
 

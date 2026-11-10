@@ -59,6 +59,25 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		return await<bool>{ FromClientUtils::HistUnsubscription(subscription, requestId), requestId, shared_from_this(), sl };
 	}
+	α GatewayClientSocket::OeeSubscribe( uint32 machine, sp<IOeeListener> listener, SL sl )ι->await<FromServer::OeeStatus>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]OeeSubscribe: machine {}.", hex(requestId), machine );
+		{
+			lg _{ _histMutex };
+			_oeeListeners.emplace( requestId, move(listener) );
+			_lastOeeSubscription = requestId;
+		}
+		return await<FromServer::OeeStatus>{ FromClientUtils::OeeSubscription(machine, requestId), requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::OeeUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]OeeUnsubscribe: {}.", hex(requestId), hex(subscription) );
+		{
+			lg _{ _histMutex };
+			_oeeUnsubscribes.emplace( requestId, subscription );
+		}
+		return await<bool>{ FromClientUtils::OeeUnsubscription(subscription, requestId), requestId, shared_from_this(), sl };
+	}
 	α GatewayClientSocket::OnRead( FromServer::Transmission&& transmission )ι->void{
 		auto histListener = [this]( RequestId requestId )->sp<IHistListener> {
 			lg _{ _histMutex };
@@ -80,6 +99,26 @@ namespace Jde::Opc::Gateway::Tests{
 					_histEnded.emplace( p->second );
 				_histUnsubscribes.erase( p );
 			}
+			if( auto p = _oeeUnsubscribes.find(requestId); p!=_oeeUnsubscribes.end() ){
+				_oeeListeners.erase( p->second );
+				if( ended )
+					_oeeEnded.emplace( p->second );
+				_oeeUnsubscribes.erase( p );
+			}
+		};
+		auto oeeEnded = [this]( RequestId requestId, string what )->bool{//a live subscription's exception:  the gateway ended it.
+			sp<IOeeListener> listener;
+			{
+				lg _{ _histMutex };
+				if( auto p = _oeeListeners.find(requestId); p!=_oeeListeners.end() ){
+					listener = move( p->second );
+					_oeeListeners.erase( p );
+					_oeeEnded.emplace( requestId );
+				}
+			}
+			if( listener )
+				listener->OnError( move(what) );
+			return listener!=nullptr;
 		};
 		auto histEnded = [this]( RequestId requestId, string what )->bool{//a live subscription's exception:  the gateway ended it.
 			sp<IHistListener> listener;
@@ -130,9 +169,9 @@ namespace Jde::Opc::Gateway::Tests{
 				auto task = requestId==0 ? Web::Client::PendingTask{} : PopTask( requestId );
 				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.  An unsubscribe's listeners stay: the server still pushes.
 				let& e = m->exception();
-				if( !task.Fail && histEnded(requestId, e.what()) )
+				if( !task.Fail && (histEnded(requestId, e.what()) || oeeEnded(requestId, e.what())) )
 					break;
-				{ lg _{ _histMutex }; _histListeners.erase( requestId ); }
+				{ lg _{ _histMutex }; _histListeners.erase( requestId ); _oeeListeners.erase( requestId ); }
 				unsubscribed( requestId, false );
 				if( task.Fail )
 					task.Fail( GatewayErrorResponse{e.what(), ExceptionArgs{DefaultExceptionLevel, ELogTags::Exception, e.code(), (EHttpStatus)e.status_code()}} );//the one place the gateway answered - see GatewayErrorResponse.  SetExp stores e.Move(), so the type survives, and the status with it.
@@ -182,7 +221,26 @@ namespace Jde::Opc::Gateway::Tests{
 				if( auto listener = histListener(requestId); listener )
 					listener->OnRecords( m->hist_records() );
 				break;
-			case VALUE_NOT_SET:{//a connect's completion, or a HistUnsubscribe's.
+			case kOeeSubscribeAck:{
+				auto task = IClientSocketSession::PopTask( requestId );
+				if( auto h = std::any_cast<await<FromServer::OeeStatus>::Handle>(&task.Handle); h )
+					(*h).promise().Resume( move(*m->mutable_oee_subscribe_ack()->mutable_status()), *h );
+				break;}
+			case kOeeStatus:{
+				sp<IOeeListener> listener;
+				{
+					lg _{ _histMutex };
+					if( auto p = _oeeListeners.find(requestId); p!=_oeeListeners.end() )
+						listener = p->second;
+					else if( _oeeEnded.contains(requestId) ){
+						++_oeeStrays;
+						WARNT( ELogTags::SocketClientRead, "[{}]A live OEE subscription's push after its end.", hex(requestId) );
+					}
+				}
+				if( listener )
+					listener->OnStatus( m->oee_status() );
+				break;}
+			case VALUE_NOT_SET:{//a connect's completion, or a HistUnsubscribe's or an OeeUnsubscribe's.
 				unsubscribed( requestId, true );
 				auto task = IClientSocketSession::PopTask( requestId );
 				if( auto h = std::any_cast<await<uint32>::Handle>(&task.Handle); h )

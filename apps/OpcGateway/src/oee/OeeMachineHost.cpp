@@ -5,6 +5,7 @@
 #include <jde/oee/rules.h>
 #include "../async/ExecutorAwait.h"
 #include "../hist/HistGroupHost.h"
+#include "OeeFeed.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -21,14 +22,33 @@ namespace Jde::Opc::Gateway{
 		struct StopClosed final{ Oee::Stop Row; };
 		struct StopsRewritten final{ vector<Oee::Stop> Rows; vector<TimePoint> Held; };
 		using Op = std::variant<Oee::Interval,StopOpened,StopClosed,StopsRewritten>;
-		Writer( OeeMachinePK machine, string name )ι:_machine{ machine }, _name{ move(name) }{}
+		Writer( OeeMachinePK machine, string name, sp<OeeFeed> feed )ι:_machine{ machine }, _name{ move(name) }, _feed{ move(feed) }{}
 
-		α Closed( const Oee::Interval& row )ι->void override{ Queue( row ); }
-		α Opened( const Oee::Stop& stop )ι->void override{ Queue( StopOpened{stop} ); }
-		α Closed( const Oee::Stop& stop )ι->void override{ Queue( StopClosed{stop} ); }
-		α Rewritten( TimePoint, const vector<Oee::Stop>& stops, const vector<TimePoint>& held )ι->void override{ Queue( StopsRewritten{stops, held} ); }
+		α Closed( const Oee::Interval& row )ι->void override{
+			if( Feeding )
+				_feed->Closed( row );
+			Queue( row );
+		}
+		α Opened( const Oee::Stop& stop )ι->void override{
+			if( Feeding )
+				_feed->Told( stop );
+			Queue( StopOpened{stop} );
+		}
+		α Closed( const Oee::Stop& stop )ι->void override{
+			if( Feeding )
+				_feed->Told( stop );
+			Queue( StopClosed{stop} );
+		}
+		α Rewritten( TimePoint from, const vector<Oee::Stop>& stops, const vector<TimePoint>& held )ι->void override{
+			if( Feeding )
+				_feed->Rewritten( from, stops );
+			Queue( StopsRewritten{stops, held} );
+		}
 		α Rebuild( uint32 node, Oee::Span span )ι->void override{ Asked( {node, span} ); }
-		α Live( const Oee::LiveState& )ι->void override{}//the live feed's (#403).
+		α Live( const Oee::LiveState& )ι->void override{
+			if( Feeding )
+				_feed->Changed();
+		}
 
 		α Asked( Ask&& ask )ι->bool{//false once this has ended.
 			{
@@ -99,6 +119,7 @@ namespace Jde::Opc::Gateway{
 		α Rebuilds()Ι->uint{ return _rebuilds; }
 		function<void( string why )> OnFailure;//set before the engine is made, so before anything is queued.
 		function<void()> OnRebuild;//the first ask after a quiet spell:  the host's loop takes the rest.  Set before anything can ask.
+		std::atomic<bool> Feeding{};//the feed is told:  from the engine going live, with a feed, since the replay's rows are the tables' by then.
 	private:
 		α Active()Ι->uint8{ return (_writing ? ForWrites : 0) | (_starting ? ForStart : 0) | (_rebuilding ? ForRebuild : 0); }//under _mutex.
 		α Released()ι->vector<QuietAwait*>{//under _mutex:  the waiters nothing holds now.
@@ -199,6 +220,7 @@ namespace Jde::Opc::Gateway{
 
 		const OeeMachinePK _machine;
 		const string _name;
+		const sp<OeeFeed> _feed;
 		mutable std::mutex _mutex;
 		vector<Op> _ops;
 		vector<Ask> _asks;
@@ -314,9 +336,9 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 
-	OeeMachineHost::OeeMachineHost( OeeMachineRow row, Inputs inputs, sp<HistGroupHost> group, sp<Hist::IClock> clock, Settings settings, Duration offset )ι:
-		_row{ move(row) }, _inputs{ move(inputs) }, _group{ move(group) }, _clock{ move(clock) }, _settings{ settings }, _offset{ offset },
-		_writer{ ms<Writer>(_row.Id, _row.Name) }, _strand{ boost::asio::make_strand(*Executor()) }, _width{ _row.Width }
+	OeeMachineHost::OeeMachineHost( OeeMachineRow row, Inputs inputs, sp<HistGroupHost> group, sp<Hist::IClock> clock, Settings settings, Duration offset, sp<OeeFeed> feed )ι:
+		_row{ move(row) }, _inputs{ move(inputs) }, _group{ move(group) }, _clock{ move(clock) }, _settings{ settings }, _offset{ offset }, _feed{ move(feed) },
+		_writer{ ms<Writer>(_row.Id, _row.Name, _feed) }, _strand{ boost::asio::make_strand(*Executor()) }, _width{ _row.Width }
 	{}
 	OeeMachineHost::~OeeMachineHost(){ End(); }
 
@@ -392,6 +414,10 @@ namespace Jde::Opc::Gateway{
 				co_return;
 			engine->Live( _offset );
 			_live = true;
+			if( _feed ){
+				_writer->Feeding = true;
+				_feed->Reload();
+			}
 			INFO( "[{}]OEE is live from {}{}.", _row.Name, ToIsoString(from), _offset==Duration::zero() ? string{} : Ƒ(", with a source offset of {}", Chrono::ToString(_offset)) );
 		}
 		catch( const std::exception& e ){
@@ -579,6 +605,8 @@ namespace Jde::Opc::Gateway{
 					rebuilt = end;
 					unrun.erase( unrun.begin() );
 					INFO( "[{}]Rebuilt {} to {} for {} to {}:  {} rows and {} stops.", _row.Name, ToIsoString(start), ToIsoString(end), ToIsoString(span.Start), ToIsoString(span.End), sink->Rows.size(), sink->Stops.size() );
+					if( _feed )
+						_feed->Reload();
 				}
 			}
 		}
@@ -608,6 +636,8 @@ namespace Jde::Opc::Gateway{
 		if( _ended.exchange(true) )
 			return;
 		_live = false;
+		if( _feed )
+			_feed->Changed();
 		sp<Oee::Engine> engine;
 		{
 			lg _{ _queueMutex };

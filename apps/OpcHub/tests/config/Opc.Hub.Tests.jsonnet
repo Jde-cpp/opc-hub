@@ -66,7 +66,7 @@ local logsDir = args.logsDir;
 		issuedCerts: instance.http.gateway.ssl,
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-hub-tests" }, //the gateway role's historian:  its own path, so a gateway test run beside this one never contends for the lock.
-		oee:{ settle:: "PT5S" }, //the gateway role's OEE, as shipped (OeeTests).
+		oee:{ live:: "PT1S", settle:: "PT5S" }, //the gateway role's OEE, as shipped (OeeTests).
 		//the hub's own endpoint (EndpointTests):  loopback as the listener is, the process pair (no ssl), and a hub-shape login - a short
 		//issued token answered from this process's session map (HubAppClient::SessionInfoAwait).
 		server:{

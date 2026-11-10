@@ -8,6 +8,7 @@
 #include "async/Subscriptions.h"
 #include "async/DataChanges.h"
 #include "hist/HistSubscriber.h"
+#include "oee/OeeSubscriber.h"
 #include "ql/GatewayQLAwait.h"
 #include <jde/opc/proto/opc.Common.h>
 #include "types/proto/opc.FromClient.h"
@@ -26,12 +27,16 @@ namespace Jde::Opc::Gateway{
 		LogRead( "OnClose", 0 );
 		UAClient::Unsubscribe( SharedFromThis() );
 		flat_map<Jde::RequestId,sp<HistSubscriber>> histSubscriptions;
+		flat_map<Jde::RequestId,sp<OeeSubscriber>> oeeSubscriptions;
 		{
 			lg _{ _histMutex };
 			_closed = true;
 			histSubscriptions = move( _histSubscriptions );
+			oeeSubscriptions = move( _oeeSubscriptions );
 		}
 		for( auto&& [_,subscriber] : histSubscriptions )
+			subscriber->End();
+		for( auto&& [_,subscriber] : oeeSubscriptions )
 			subscriber->End();
 		Server::RemoveSession( Id() );
 		base::OnClose();
@@ -327,6 +332,12 @@ namespace Jde::Opc::Gateway{
 				break;
 			case kHistUnsubscribe:
 				HistUnsubscribe( m.hist_unsubscribe().subscription(), requestId );
+				break;
+			case kOeeSubscribe:
+				OeeSubscribe( move(*m.mutable_oee_subscribe()), requestId );
+				break;
+			case kOeeUnsubscribe:
+				OeeUnsubscribe( m.oee_unsubscribe().subscription(), requestId );
 				break;
 			default:
 				LogRead( Ƒ("Unknown message type '{}'", underlying(m.Value_case())), requestId, ELogLevel::Critical );
