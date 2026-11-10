@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ENodeClass, OpcObject, UaNode } from '../model/node';
 import { NodeRoute } from '../model/node-route';
+import { NodeView } from '../model/node-view';
 import { namespaceColumns, serverDescColumns } from '../model/server';
 import { Gateway } from './gateway-service';
 import { OpcStore } from './opc-store';
@@ -149,7 +150,7 @@ describe( 'OpcStore.setRoute', ()=>{
 		expect( new OpcStore().showSystem() ).toBe( true );
 		store.setShowSystem( false );
 		expect( new OpcStore().showSystem() ).toBe( false );
-		expect( localStorage.length ).toBe( 0 );//off is the default, and removes the key
+		expect( localStorage.getItem(`${NodeView.collectionName}/systemNodes`) ).toBeNull();//off is the default, and removes the key.  Its key alone:  `ng test` does not isolate spec files, so another's may be there.
 	} );
 } );
 
