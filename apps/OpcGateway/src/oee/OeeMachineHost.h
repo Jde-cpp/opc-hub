@@ -17,11 +17,12 @@ namespace Jde::Opc::Gateway{
 	//stop asks the sink for one over a span, and recomputeOee asks for one on demand.  They run here one at a time, after the
 	//writes and the start, each span narrowed to its node's next stored record and overlapping ones merged.  A span that reaches
 	//the open interval, `processed`, one on a machine whose count is its state, whose idle stops the clock finds, or one whose
-	//end falls inside the stop in progress hands the host a takeover:  the machine starts again from the first row the span
-	//touches, this engine's source offset handed to the next, so the live state is re-derived from what it read.  Any other is
-	//rebuilt in place:  the interval rows it touches, extended through any stop that spans their end so the fresh engine ends on
-	//running time, are read again from the group with the bound before, run through an engine made at the widths they had and
-	//ended at their end, and the rows over them deleted and written again, the stop that spans their start ended as the replay ends it.
+	//rows reach the stop in progress hands the host a takeover:  the machine starts again from the first row the span touches,
+	//this engine's source offset handed to the next, so the live state is re-derived from what it read.  Any other is rebuilt in
+	//place:  the interval rows it touches, widened back through any stop over their start and on through any over their end so
+	//the fresh engine opens and ends on running time, are read again from the group with the bound before, run through an engine
+	//made at the widths they had and ended at their end, and the rows over them deleted and written again.  What an engine
+	//leaves unrebuilt, Unfinished hands the host for the next.
 	struct OeeMachineHost final : Hist::ISubscriber, std::enable_shared_from_this<OeeMachineHost>{
 		struct Settings final{ Duration Settle; uint ReadLimit; };
 		//What the engine is made from:  a change of any is a restart, where a width's is SetWidth.
@@ -29,6 +30,7 @@ namespace Jde::Opc::Gateway{
 		using Failed = function<void( OeeMachinePK machine, const OeeMachineHost* host, string why )>;
 		//A rebuild that is a restart:  from `from`, `offset` this engine's source offset for the next's Live, `why` for the log.
 		using Takeover = function<void( OeeMachinePK machine, const OeeMachineHost* host, TimePoint from, Duration offset, string why )>;
+		struct Ask final{ uint32 Node; Oee::Span Span; };//a rebuild asked for:  Node 0 for recomputeOee's and a narrowed span's, which no record narrows.
 		struct Writer;
 		//What a QuietAwait waits for, as bits.
 		enum EWait : uint8{ ForWrites=1, ForStart=2, ForRebuild=4, ForAll=7 };
@@ -47,16 +49,19 @@ namespace Jde::Opc::Gateway{
 		α Id()Ι->OeeMachinePK{ return _row.Id; }
 		α Made()Ι->const Inputs&{ return _inputs; }
 		//On the executor, detached.  `failed` hears a start, a write or a rebuild that failed, after this has ended;  `takeover` a
-		//rebuild that is a restart, which ends this.
-		α Start( Failed failed, Takeover takeover )ι->void;
-		//Nothing more is taken, told or queued, and the write or rebuild statement in flight is the last:  a statement already out finishes.
+		//rebuild that is a restart, which ends this.  `carried`:  what an engine before this one left unrebuilt, run after the start.
+		//Called before anything can find this, since a recomputeOee's ask needs what it sets.
+		α Start( Failed failed, Takeover takeover, vector<Ask> carried={} )ι->void;
+		//Nothing more is taken, told or queued, and the write statement in flight is the last:  a statement already out finishes,
+		//and a rebuild past its deletes runs its statements out, since its rows are gone until it does.
 		α End()ι->void;
 		α Quiet( SRCE )ι->QuietAwait;//resumes once no write or rebuild is running and Starting has returned, on the thread that ended the last.
 		α Idle()Ι->bool;//nothing queued, no write running and no rebuild asked or running - for tests and diagnostics.
 		α Live()Ι->bool{ return _live; }//the snapshot is replayed and the engine runs on the clock.
 		α State()Ι->optional<Oee::LiveState>;//none before the engine is made, and after the end.
 		α SetWidth( Duration width )ε->void;//the machine's `width` changed:  Engine::SetWidth.
-		α Recompute( Oee::Span span )ι->void;//recomputeOee's:  a rebuild over the span, as the engine asks for one.
+		α Recompute( Oee::Span span )ι->bool;//recomputeOee's:  a rebuild over the span, as the engine asks for one;  false once this has ended.
+		α Unfinished()ι->vector<Ask>;//once Quiet after the end:  the rebuilds asked for and not run, for the next engine.
 		α Rebuilds()Ι->uint;//the rebuilds asked for, the engine's and recomputeOee's - for tests and diagnostics.
 
 		α OnRecords( vector<Hist::Proto::HistoryRecord>&& records )ι->void override;

@@ -54,6 +54,7 @@ namespace Jde::Opc::Gateway{
 		α DeleteIntervalsBetween( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql;
 		//The interval rows over `span`, by start:  start at or before its end and end after its start.  start, ms.
 		α SelectIntervalsOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql;
+		α SelectFirstIntervalOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql;//the least start of those, null for none.
 		//The stop row over `at`:  its start before it and its finish null or after it.  start, finish, code, unknown, id.
 		α SelectStopOver( OeeMachinePK machine, TimePoint at )ε->DB::Sql;
 		//The stop rows over [from, to), by start:  start before `to` and finish null or after `from`.  SelectStopOver's columns.

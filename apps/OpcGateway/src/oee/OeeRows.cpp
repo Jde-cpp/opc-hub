@@ -13,6 +13,11 @@ namespace Jde::Opc::Gateway{
 		return DB::Statement{ {view->GetColumns(move(columns), sl)}, {view}, move(where) };
 	}
 	Ω name( sv table )ε->string{ return GetViewPtr( table )->SqlName(); }
+	//ms is milliseconds and start UA ticks, a hundred nanoseconds.  The factor is a long parameter:  SQL Server makes ms an int,
+	//and an int times the literal 10000 overflows from a 4-minute row.
+	Ω intervalsOver( OeeMachinePK machine, Oee::Span span, sv columns, sv order )ε->DB::Sql{
+		return { Ƒ("select {} from {} where oee_machine_id=? and start<=? and start+ms*?>?{}", columns, name(OeeTable::Intervals), order), {DB::Value{(uint)machine}, OeeTicks(span.End), DB::Value{(_int)10000}, OeeTicks(span.Start)} };
+	}
 	Ω fromMs( uint32 ms )ι->Duration{ return milliseconds{ ms }; }
 	Ω toMs( Duration d )ι->uint32{ return (uint32)std::max<int64_t>( std::chrono::round<milliseconds>(d).count(), 0 ); }
 	//A dateTime cell:  a time from a statement of the caller's, epoch seconds from a generated select on mysql and sqlite.
@@ -128,9 +133,8 @@ namespace Jde::Opc{
 	α Gateway::OeeSql::DeleteIntervalsBetween( OeeMachinePK machine, TimePoint from, TimePoint to )ε->DB::Sql{
 		return { Ƒ("delete from {} where oee_machine_id=? and start>=? and start<?", name(OeeTable::Intervals)), {DB::Value{(uint)machine}, OeeTicks(from), OeeTicks(to)} };
 	}
-	α Gateway::OeeSql::SelectIntervalsOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{//ms is milliseconds and start UA ticks, a hundred nanoseconds.
-		return { Ƒ("select start, ms from {} where oee_machine_id=? and start<=? and start+ms*10000>? order by start", name(OeeTable::Intervals)), {DB::Value{(uint)machine}, OeeTicks(span.End), OeeTicks(span.Start)} };
-	}
+	α Gateway::OeeSql::SelectIntervalsOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{ return intervalsOver( machine, span, "start, ms", " order by start" ); }
+	α Gateway::OeeSql::SelectFirstIntervalOver( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{ return intervalsOver( machine, span, "min(start)", {} ); }
 	α Gateway::OeeSql::SelectStopOver( OeeMachinePK machine, TimePoint at )ε->DB::Sql{
 		return { Ƒ("select start, finish, code, unknown, oee_stop_id from {} where oee_machine_id=? and start<? and ( finish is null or finish>? )", name(OeeTable::Stops)), {DB::Value{(uint)machine}, OeeTicks(at), OeeTicks(at)} };
 	}

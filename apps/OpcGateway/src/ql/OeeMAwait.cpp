@@ -161,10 +161,10 @@ namespace Jde::Opc::Gateway{
 				let machineId = _query.AsNumber<OeeMachinePK>( "machine", sl );
 				const Oee::Span span{ recomputeTime(_query, "start", sl), recomputeTime(_query, "end", sl) };
 				REFUSE_IF( span.Start>=span.End, "start, {}, must be before end, {}.", ToIsoString(span.Start), ToIsoString(span.End) );
+				AppClient()->Acl()->Test( "gateway", "oeeMachines", Access::ERights::Update, UserPK(), sl );//the table's, before a caller learns of an id.
 				auto machines = co_await Any( SelectOeeMachines({.Key=DB::Key{(uint)machineId}, .IncludeDeleted=true}) );
 				if( machines.empty() )
 					notFound( Ƒ("Machine {} not found.", machineId), sl );
-				AppClient()->Acl()->Test( "gateway", "oeeMachines", Access::ERights::Update, UserPK(), sl );
 				HistHost::Instance().Gate( machines.front().Group, Access::ERights::Read, false, UserPK(), sl );
 				host.Recompute( machineId, span, sl );
 				Resume( jobject{ {"machine", machineId}, {"start", ToIsoString(span.Start)}, {"end", ToIsoString(span.End)} } );
@@ -245,8 +245,8 @@ namespace Jde::Opc::Gateway{
 							let would = thresholds( args, &rows.front(), sl );
 							checkMachine( would, signals, sl );
 							checkCalendar( args, sl );
-							if( would.IdleTimeout!=rows.front().IdleTimeout )
-								recompute = "idleTimeout";
+							if( would.IdleTimeout!=rows.front().IdleTimeout && std::ranges::none_of(signals, []( const OeeSignalRow& s ){ return s.Role==Oee::ERole::State; }) )
+								recompute = "idleTimeout";//only a machine whose count is its state reads it.
 						}
 					}
 				}
@@ -277,9 +277,9 @@ namespace Jde::Opc::Gateway{
 						}
 						if( let p = args.if_contains("running"); p && p->is_array() )
 							spelled["running"] = serialize( *p );
-						if( row && after.Running!=row->Running )
+						if( row && after.Role==Oee::ERole::State && after.Running!=row->Running )//the roles that read them.
 							recompute = "running";
-						else if( row && after.RatePeriod!=row->RatePeriod )
+						else if( row && after.Role==Oee::ERole::Rate && after.RatePeriod!=row->RatePeriod )
 							recompute = "ratePeriod";
 						signals.push_back( after );
 						warned = warnings( machine, after, host.Settle() );

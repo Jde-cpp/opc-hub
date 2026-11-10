@@ -20,7 +20,7 @@ namespace Jde::Opc::Gateway::Tests{
 	protected:
 		Ω SetUpTestSuite()ε->void{
 			HistGroupFixture::SetUpTestSuite();
-			_base = floor<minutes>( Clock::now() )-3h;//the backfills' windows, each case's later than the last's and every one in the past.
+			_base = floor<minutes>( Clock::now() )-4h;//the backfills' windows, each case's later than the last's and every one an hour or more in the past.
 		}
 		Ω TearDownTestSuite()ι->void{
 			OeeHost::Instance().Stop();
@@ -687,7 +687,8 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( WaitStored(pump.GroupHost, pump.Members.at(ERole::Total), t1, 3) ) << "the marker and the value";
 		ASSERT_LT( missed, end ) << "the gap falls inside the written row";
 		auto replaced = WaitReplaced( id, engine );
-		EXPECT_EQ( engine->Rebuilds(), 1u );
+		EXPECT_GE( engine->Rebuilds(), 1u );
+		EXPECT_LE( engine->Rebuilds(), 2u ) << "the marker's, and the value's after it when they arrive together, one ask each";
 		ASSERT_TRUE( WaitUntil([&]{ auto s = replaced->State(); return s && s->LastCount && *s->LastCount==missed; }, 15s) );
 		let stops = Stops( id );
 		ASSERT_EQ( stops.size(), 1u );
@@ -802,5 +803,97 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( stops[1].Code, optional<int64_t>{7} );
 		EXPECT_EQ( codings(), 1u ) << "a recompute never touches a coding";
 		EXPECT_EQ( replaced->State()->State, Oee::EState::Stopped );
+	}
+	//recomputeOee between engines, over a span a stop spans the start of (reviews-issue/401-oee-rebuilds.md #2, #9, #15).  `running`
+	//on the Total signal asks no recompute, only a State reading it;  on the State it becomes [2], which a Boolean never is, so the
+	//machine reads stopped throughout.  The recompute asked while the engine is between runs waits for the next, and its span,
+	//inside the shift's stop, widens back to the row that stop began in:  under the new list that row opens stopped and the run
+	//never runs again, so it is a restart from there, and no stop row is lost.
+	TEST_F( OeeTests, ARecomputeBetweenEnginesWidensToTheStopOverItsStart ){
+		let t0 = Window();
+		Pump1Machine pump{ "oeeBetween", t0-1min };
+		WriteShift( t0 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Total), t0, 3 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::State), t0, 2 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Reason), t0, 2 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Reject), t0, 1 );
+		let id = pump.Create( t0 );
+		auto engine = WaitLive( id );
+		ExpectShift( Intervals(id), Stops(id), t0 );
+
+		let recomputes = [&]( ERole role ){
+			let result = Mutate( "updateOeeMachineSignal( id:$id, running:$running ){ recompute }", {{"id", pump.Signals.at(role)}, {"running", "[2]"}} );
+			let p = Json::AsObject( result ).if_contains( "recompute" );
+			return p && p->is_bool() && p->get_bool();
+		};
+		EXPECT_FALSE( recomputes(ERole::Total) ) << "a Total reads no running list";
+		EXPECT_TRUE( recomputes(ERole::State) );
+		ASSERT_FALSE( Oee().Engine(id) ) << "between engines";
+		EXPECT_NO_THROW( Mutate("recomputeOee( machine:$id, start:$start, end:$end ){ machine }", {{"id", id}, {"start", Iso(t0+2min)}, {"end", Iso(t0+150s)}}) ) << "held for the next engine";
+		_clock->Advance( Settle() );
+		auto replaced = WaitReplaced( id, engine );
+		let stops = Stops( id );
+		ASSERT_EQ( stops.size(), 1u ) << "the shift's stop is made again, not lost";
+		EXPECT_EQ( stops[0].Start, t0+1min ) << "the row it began in opens stopped under [2]";
+		EXPECT_FALSE( stops[0].End );
+		let rows = Intervals( id );
+		ExpectRow( rows, t0, 60000, 0, 10, 10, 0 );
+		ExpectRow( rows, t0+1min, 0, 60000, 0, 0, 0 );
+		ExpectRow( rows, t0+2min, 0, 60000, 0, 0, 0 );
+		ExpectNoOverlap( rows );
+		EXPECT_EQ( replaced->State()->State, Oee::EState::Stopped );
+	}
+
+	//A history edit of the Reason inside a stop that began in the row before the edit's:  the rebuild widens back to the row the
+	//stop began in, so its code is made again from the edited record (reviews-issue/401-oee-rebuilds.md #10).
+	TEST_F( OeeTests, AReasonEditInsideAStopRecodesIt ){
+		let t0 = Window();
+		Pump1Machine pump{ "oeeRecode", t0-1min };
+		WriteStatus( false, t0+30s );
+		WriteReason( 7, t0+90s );
+		WriteStatus( true, t0+150s );
+		WriteReason( 0, t0+160s );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::State), t0, 2 );
+		WaitStored( pump.GroupHost, pump.Members.at(ERole::Reason), t0, 2 );
+		let id = pump.Create( t0 );
+		auto engine = WaitLive( id );
+		let before = Stops( id );
+		ASSERT_EQ( before.size(), 1u );
+		EXPECT_EQ( before[0].Start, t0+30s );
+		EXPECT_EQ( before[0].Code, optional<int64_t>{7} ) << "the first reason above zero before its end";
+
+		auto open = EnforcedHistGroups();
+		EXPECT_EQ( Update("updateHistory", pump.Group, {{Reason1, t0+90s, 9}}).Values, vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED} );
+		WaitRebuilt( engine );
+		EXPECT_EQ( Oee().Engine(id), engine ) << "in place";
+		let stops = Stops( id );
+		ASSERT_EQ( stops.size(), 1u );
+		EXPECT_EQ( stops[0].Start, t0+30s );
+		EXPECT_EQ( stops[0].End, optional<TimePoint>{t0+150s} );
+		EXPECT_EQ( stops[0].Code, optional<int64_t>{9} ) << "the edit reaches a stop that began before the edit's row";
+		ExpectNoOverlap( Intervals(id) );
+	}
+
+	//A machine made from a time off its width's grid starts with a ragged row, here three minutes of a five-minute machine, and off
+	//a three-minute boundary:  a recompute over it reads that row as ragged, not as a three-minute width, and makes the same rows
+	//again (reviews-issue/401-oee-rebuilds.md #4).
+	TEST_F( OeeTests, ARaggedFirstRowKeepsItsGrid ){
+		auto from = Window();
+		while( from.time_since_epoch()%5min!=2min || from.time_since_epoch()%3min==Duration::zero() )
+			from += 1min;
+		Pump1Machine pump{ "oeeRagged", from-1min };
+		let id = pump.Create( from, {ERole::State, ERole::Total}, {{"width", 300000}} );
+		auto engine = WaitLive( id );
+		let before = Intervals( id );
+		ASSERT_GE( before.size(), 3u );
+		EXPECT_EQ( before[0].Start, from );
+		EXPECT_EQ( before[0].Ms, 180000u ) << "to the grid's next boundary";
+		EXPECT_EQ( before[1].Ms, 300000u );
+		Mutate( "recomputeOee( machine:$id, start:$start, end:$end ){ machine }", {{"id", id}, {"start", Iso(from)}, {"end", Iso(from+10min)}} );
+		WaitRebuilt( engine );
+		EXPECT_EQ( Oee().Engine(id), engine ) << "in place";
+		let rows = Intervals( id );
+		ExpectSame( rows, before );
+		ExpectNoOverlap( rows );
 	}
 }
