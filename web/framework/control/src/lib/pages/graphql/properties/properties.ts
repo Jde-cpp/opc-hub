@@ -41,7 +41,7 @@ export class Properties{
 			&& !Properties.noShowFields.includes(field.name)
 			&& !this.excludedColumns().includes(field.name);
 		for( const field of this.schema().fields.filter(filter) ){
-			let values = field.isEnum ? this.schema().enums.get(field.type.name) : undefined;
+			let values = field.isEnum ? this.schema().enums.get(field.type.underlyingName) : undefined;
 			y.push( new PropertyField(field, values, this.displayNames()[field.name], this.picks()[field.name], this.units()[field.name], this.hints()[field.name]) );
 		}
 		//listed fields first, in the listed order; the rest alphabetical after them.  (The comparator this replaced ranked

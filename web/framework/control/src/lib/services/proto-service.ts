@@ -475,14 +475,15 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		if( !schema.enums ){
 			schema.enums = new Map<string, EnumValue[]>();
 			for( const field of schema.fields.filter((x)=>x.type.underlyingKind==FieldKind.ENUM) ){
-				if( schema.enums.has(field.type.name) )
+				const type = field.type.underlyingName;//a NON_NULL column's type has no name;  its ofType does
+				if( schema.enums.has(type) )
 					continue;//dedup by enum-type name (was `!enums.has(x.name)` — the field name — checked before the loop populated the map, so same-type fields each re-fetched)
 				let enumResult = await this.query<{__type: {enumValues: Array<EnumValue>;}}>(
 					`__type(name: $type) { enumValues { id name } }`,
-					{ type: field.type.name }
+					{ type }
 				);
 				let values:Array<EnumValue>  = enumResult.__type["enumValues"];
-				schema.enums.set( field.type.name, values );
+				schema.enums.set( type, values );
 			}
 		}
 		return schema;

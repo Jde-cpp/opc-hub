@@ -251,7 +251,10 @@ namespace Jde::DB::MySql::Tests{
 		EXPECT_EQ( GlobToRegex("[a-c]at"), "^[a-c]at$" ); //classes are spelled the same in both languages.
 		EXPECT_EQ( GlobToRegex("[!a-c]at"), "^[^a-c]at$" );//glob's '!' negation becomes regex '^'.
 		EXPECT_EQ( GlobToRegex("[^a-c]at"), "^[^a-c]at$" );
-		EXPECT_EQ( GlobToRegex("[]x]y"), "^[]x]y$" );     //C9: a ']' first in the class is a member, and POSIX spells it the same way.
+		EXPECT_EQ( GlobToRegex("[]x]y"), "^[\\]x]y$" );   //C9: a ']' first in the class is a member - escaped, as ICU reads one.
+		EXPECT_EQ( GlobToRegex("*a[[]b*"), "^.*a[\\[]b.*$" );//#590: the filter box's typed '[' - ICU refused `[[]` as an unclosed set.
+		EXPECT_EQ( GlobToRegex("[*][?]"), "^[*][?]$" );    //…and its typed '*' and '?', literal in a set.
+		EXPECT_EQ( GlobToRegex("[a\\&]"), "^[a\\\\\\&]$" ); //a backslash and an '&' are members, not an escape and half an intersection.
 		EXPECT_EQ( GlobToRegex("[abc"), "^\\[abc$" );     //unterminated class -> a literal '[', as in sqlite.
 	}
 

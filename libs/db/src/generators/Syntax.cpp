@@ -58,12 +58,25 @@ namespace Jde::DB{
 				params.pop_back();
 				return Ƒ( "{} {}({})", col.FQName(), op==NotIn ? "not in" : "in", params );
 			}
-		case Regex: case Glob:
-			//A word operator needs its spaces.  One pattern, one placeholder: an array literal (`glob:["a*","b*"]`)
+		case Regex:
+			//A word operator needs its spaces.  One pattern, one placeholder: an array literal (`regex:["a","b"]`)
 			//would otherwise render one '?' against N bound params and silently misalign the whole statement.
 			if( size!=1 )
 				throw Exception{ sl, Jde::ELogLevel::Debug, "'{}' takes a single pattern, not {}.", DB::ToString(op), size };
 			return Ƒ( "{} {} ?", col.FQName(), PatternOperator(op, sl) );
+		case Glob:{
+			//#590: a list of patterns, all of which must match - one clause and one placeholder each.  In brackets, so
+			//WhereClause's `or … is null` wraps the whole of it.
+			if( size==0 )
+				throw Exception{ sl, Jde::ELogLevel::Debug, "'{}' takes at least one pattern.", DB::ToString(op) };
+			let one = Ƒ( "{} {} ?", col.FQName(), PatternOperator(op, sl) );
+			if( size==1 )
+				return one;
+			string all{ '(' };
+			for( uint i=0; i<size; ++i )
+				all += i ? " and "+one : one;
+			return all+')';
+		}
 		default:
 			throw Exception{ sl, Jde::ELogLevel::Debug, "Operator '{}' has no SQL form.", DB::ToString(op) };
 		}
@@ -121,7 +134,9 @@ namespace Jde::DB{
 	}
 
 	//'*'->'.*', '?'->'.', classes pass through, everything else escaped, and the whole thing anchored - glob matches the
-	//entire value, where REGEXP is a search.
+	//entire value, where REGEXP is a search.  A class's members are literal in a glob, but ICU, MySQL's engine, reads a '['
+	//among them as a set of its own, '&&' as an intersection and a '\' as an escape - and refused `[[]`, which is how the
+	//filter box writes a typed '[' (#590) - so those and a leading ']' are escaped.
 	α GlobToRegex( sv glob )ι->string{
 		constexpr sv metacharacters{ ".^$*+?()[]{}|\\" };
 		string y{ "^" };
@@ -139,7 +154,11 @@ namespace Jde::DB{
 					y += '[';
 					if( parsed->Negate )
 						y += '^';
-					y.append( parsed->Body ); //ranges and members are spelled the same in both languages.
+					for( let member : parsed->Body ){ //ranges and members are spelled the same in both languages, but for these.
+						if( member=='[' || member==']' || member=='\\' || member=='&' )
+							y += '\\';
+						y += member;
+					}
 					y += ']';
 					i = parsed->Close;
 				}

@@ -116,6 +116,18 @@ describe( 'Properties tab order', ()=>{
 	} );
 } );
 
+//A required enum's type is NON_NULL and nameless, its enum the ofType:  its options were looked up under that missing name.
+describe( 'Properties enum options', ()=>{
+	it( 'finds a required enum\'s values under its enum type, as a nullable one\'s', ()=>{
+		const provider = { name: "provider", type: {kind: "NON_NULL", name: null, ofType: {kind: "ENUM", name: "Provider"}} };
+		const fallback = { name: "fallback", type: {kind: "ENUM", name: "Provider"} };
+		const on = new TableSchema( {name: "Widget", enums: new Map( [["Provider", [{id: 1, name: "Google"}, {id: 2, name: "Key"}]]] ), fields: [required("name"), provider, fallback]} );
+		const fields = render( on, new Widget({name: "w", provider: 2, fallback: 1}) ).componentInstance.fields();
+		const options = Object.fromEntries( fields.filter( f=>f.options ).map( f=>[f.name, f.options!.map( o=>o.name )] ) );
+		expect( options ).toEqual( {provider: ["Google", "Key"], fallback: ["Google", "Key"]} );
+	} );
+} );
+
 //`picks`, `units` and `hints` inputs (#413):  a page's own select over a scalar the schema has no enum for, null an option like
 //any other;  a number input with its unit as the suffix;  and a hint under a field where there is no error to show.
 describe( 'Properties picks, units and hints', ()=>{

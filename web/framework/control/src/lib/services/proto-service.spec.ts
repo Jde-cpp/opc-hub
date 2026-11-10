@@ -203,6 +203,28 @@ describe( 'ProtoService.loginWait', ()=>{
 	} );
 } );
 
+//A required enum column's type is NON_NULL and nameless, its enum the ofType:  its values were asked for and kept under that
+//missing name, and a second required enum of another type was skipped as though already read.
+describe( 'ProtoService.schemaWithEnums', ()=>{
+	it( 'reads each enum once, under its own name, a required column\'s as a nullable one\'s', async ()=>{
+		const values = ( ...names:string[] )=>names.map( (name, id)=>({id, name}) );
+		const answer = vi.fn( ( _ql:string, vars:{type:string} ):unknown=>vars.type=="Widget"
+			? {__type: {fields: [
+				{name: 'provider', type: {kind: 'NON_NULL', name: null, ofType: {kind: 'ENUM', name: 'Provider'}}},
+				{name: 'fallback', type: {kind: 'ENUM', name: 'Provider'}},
+				{name: 'state', type: {kind: 'NON_NULL', name: null, ofType: {kind: 'ENUM', name: 'State'}}},
+				{name: 'name', type: {kind: 'SCALAR', name: 'String'}}
+			]}}
+			: {__type: {enumValues: vars.type=="Provider" ? values( 'Google', 'Key' ) : values( 'On', 'Off' )}} );
+		class Service extends TestProtoService{
+			override async query<Y>( ql:string, vars?:any ):Promise<Y>{ return answer( ql, vars ) as Y; }
+		}
+		const schema = await new Service().schemaWithEnums( 'Widget' );
+		expect( answer.mock.calls.map( ([, vars])=>vars.type ) ).toEqual( ['Widget', 'Provider', 'State'] );
+		expect( Object.fromEntries( [...schema.enums].map( ([type, v])=>[type, v.map( e=>e.name )] ) ) ).toEqual( {Provider: ['Google', 'Key'], State: ['On', 'Off']} );
+	} );
+} );
+
 //Chrome's back/forward cache kept a page left by a full load alive with its socket open:  the gateway kept its subscriptions, and
 //their asks on items other pages share, until the page came back to a socket Chrome closed then (reviews-issue/419-watch.md W1).
 describe( 'ProtoService and the back/forward cache', ()=>{

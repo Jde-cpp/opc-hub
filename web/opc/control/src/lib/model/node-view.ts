@@ -1,4 +1,4 @@
-import { DateUtils, Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, DateUtils, Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
@@ -118,8 +118,6 @@ export class NodeView extends View{
 	private static compare( a:unknown, b:unknown ):number{
 		if( a==null || b==null )
 			return a==null ? (b==null ? 0 : -1) : 1;//blanks sort first, as a null does
-		const na = NodeView.toNumber( a ), nb = NodeView.toNumber( b );
-		return !isNaN(na) && !isNaN(nb) ? na-nb : String( a ).localeCompare( String(b), undefined, {numeric: true, sensitivity: "base"} );
+		return compareCells( a, b );
 	}
-	private static toNumber( x:unknown ):number{ return typeof x=="number" ? x : typeof x=="string" && x.trim()!=="" ? Number( x ) : NaN; }//Number("") is 0, which would rank an empty cell among the numbers
 }

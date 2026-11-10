@@ -150,6 +150,26 @@ namespace Jde::QL{
 		}
 		return {};
 	}
+	//#590: `glob` takes a list of patterns, all of which must match, as Syntax::FormatOperator writes it.  Empty - matching
+	//nothing - when the list is, or when any one of its patterns can't be used;  `regex` still takes its one.
+	Ω makePatterns( DB::EOperator op, const jvalue& value )ι->vector<sp<const Pattern>>{
+		vector<sp<const Pattern>> y;
+		let list = op==DB::EOperator::Glob ? value.if_array() : nullptr;
+		if( !list ){
+			if( auto pattern = makePattern(op, value); pattern )
+				y.push_back( move(pattern) );
+			return y;
+		}
+		if( list->empty() )
+			WARN( "A '{}' filter needs at least one pattern - it can not match.", QL::ToString(op) );
+		for( let& item : *list ){
+			auto pattern = makePattern( op, item );
+			if( !pattern )
+				return {};
+			y.push_back( move(pattern) );
+		}
+		return y;
+	}
 
 	//The filter's own literal(s) as TimePoints, parsed once here rather than per row.  Empty unless *every* literal parses,
 	//which is also how Test decides whether a time column can be compared chronologically at all - an unparseable literal
@@ -189,8 +209,8 @@ namespace Jde::QL{
 	FilterValue::FilterValue( DB::EOperator op, jvalue value )ι:
 		Operator{ op },
 		Value{ move(value) },
-		_pattern{ op==DB::EOperator::Regex || op==DB::EOperator::Glob ? makePattern(op, Value) : nullptr },
-		//keyed off the operator, not off _pattern: a regex/glob whose pattern failed to compile is still a text match.
+		_patterns{ op==DB::EOperator::Regex || op==DB::EOperator::Glob ? makePatterns(op, Value) : vector<sp<const Pattern>>{} },
+		//keyed off the operator, not off _patterns: a regex/glob whose pattern failed to compile is still a text match.
 		_times{ op==DB::EOperator::Regex || op==DB::EOperator::Glob ? vector<TimePoint>{} : makeTimes(Value) }
 	{}
 
@@ -245,7 +265,11 @@ namespace Jde::QL{
 			using enum DB::EOperator;
 			case Equal: passesFilters = Value==db.ToJson(); break;
 			case NotEqual: passesFilters = Value!=db.ToJson(); break;
-			case Regex: case Glob: passesFilters = _pattern && _pattern->Match( db.ToString() ); break; //compiled/validated in the ctor; a null pattern matches nothing.
+			case Regex: case Glob:{ //compiled/validated in the ctor; none matches nothing.
+				let text = db.ToString();
+				passesFilters = _patterns.size() && std::ranges::all_of( _patterns, [&]( let& pattern ){ return pattern->Match(text); } );
+				break;
+			}
 			case In: passesFilters = isIn( db.ToJson(), Value ); break;
 			case NotIn: passesFilters = !isIn( db.ToJson(), Value ); break;
 			case Greater: passesFilters = db.ToJson() > Value; break;
@@ -349,6 +373,8 @@ namespace Jde{
 						THROW("Invalid filter value type '{}'.", to_string(value.kind()) );
 					if( json->is_array() )
 						where.Add( column, filter.Operator, DB::ToValue<uint>(Json::FromArray<uint>(json->get_array())) );
+					else if( (filter.Operator==DB::EOperator::NotIn || filter.Operator==DB::EOperator::NotEqual) && !json->is_null() )//a lone value is a list of one, as isIn reads it, and `ne` a `nin` of one:  each keeps a nullable column's nulls, as the in-memory match does.
+						where.Add( column, filter.Operator, vector<DB::Value>{toFilterValue(*column, *json, SRCE_CUR)}, false );
 					else
 						where.Add( column, filter.Operator, toFilterValue(*column, *json, SRCE_CUR) );
 				}

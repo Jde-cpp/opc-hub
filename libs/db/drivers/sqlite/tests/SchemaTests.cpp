@@ -357,8 +357,9 @@ namespace Jde::DB::Sqlite::Tests{
 		EXPECT_EQ( syntax.FormatOperator(*col, EOperator::Glob).find(fq+"glob"), string::npos ); //the bug.
 		EXPECT_THROW( syntax.FormatOperator(*col, EOperator::Regex), Exception );     //sqlite REGEXP needs a udf; refused, not emitted.
 		EXPECT_THROW( syntax.FormatOperator(*col, EOperator::ElementMatch), Exception ); //no SQL form at all - was "…idelemMatch?".
-		//One pattern, one placeholder: a `glob:["a*","b*"]` array must not bind 2 params against the single '?'.
-		EXPECT_THROW( syntax.FormatOperator(*col, EOperator::Glob, 2), Exception );
+		//#590: a `glob:["a*","b*"]` list is a clause and a placeholder for each pattern, all of which must match.
+		EXPECT_EQ( syntax.FormatOperator(*col, EOperator::Glob, 2), "("+fq+" glob ? and "+fq+" glob ?)" );
+		EXPECT_THROW( syntax.FormatOperator(*col, EOperator::Glob, 0), Exception );
 		//#22: the comparison operators owe the same count check.  N>=2 was an opaque driver bind error; N==0 was silent -
 		//sqlite ran `name=?` with nothing bound and returned no rows.
 		EXPECT_THROW( syntax.FormatOperator(*col, EOperator::Equal, 2), Exception );
@@ -492,11 +493,13 @@ namespace Jde::DB::Sqlite::Tests{
 	//#24: a rejected Add must leave the clause as it found it.  Both vector overloads used to push their params before
 	//the call that rejects them, so a refused `glob:[null,"a*","b*"]` left _params holding two values with no clause to
 	//match - invisible in-tree only because the sole caller drops the whole WhereClause when the throw propagates.
+	//#590: a list under `glob` is no longer refused for its count, so the refusal here is its second pattern's, part way
+	//through the list:  not a string.
 	TEST_P( SchemaTests, WhereClauseAddIsAllOrNothing ){
 		auto schema = DB::GetCluster( GetParam(), ms<Access::Authorize>("SqliteTests") )->GetAppSchema( "access" );
 		auto table = schema->GetTablePtr( "identities" );
 		auto col = table->GetColumnPtr( "name", SRCE_CUR );
-		let patterns = []{ return vector<Value>{ Value{string{"a*"}}, Value{string{"b*"}} }; };
+		let patterns = []{ return vector<Value>{ Value{string{"a*"}}, Value{(uint)42} }; };
 		for( let haveNull : {false, true} ){
 			WhereClause where;
 			where.Add( col, EOperator::Equal, Value{string{"seed"}} );          //one good clause, so a leak is visible.

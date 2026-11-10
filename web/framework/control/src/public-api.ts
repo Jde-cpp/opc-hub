@@ -5,6 +5,7 @@ export * from './lib/model/ql/slug-row';
 export * from './lib/model/ql/mutation';
 export * from './lib/model/ql/view';
 export * from './lib/model/ql/view-set';
+export * from './lib/model/ql/filter-query';
 export * from './lib/model/ql/schema/meta-object';
 export * from './lib/model/ql/schema/table-schema';
 export * from './lib/model/ql/schema/field';

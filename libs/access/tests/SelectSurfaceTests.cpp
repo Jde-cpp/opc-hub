@@ -167,6 +167,42 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( asked.find("identity_id"), string::npos ) << asked << " - an orderBy the client sent is left as it is";
 	}
 
+	//#590, on whichever database the suite is run against - sqlite under ctest, mysql and SQL Server directly:  a nin
+	//without a null keeps a nullable column's nulls, `in` and `nin` share an operator object with a variable each, a list
+	//under `glob` is every pattern, and a typed `[` reaches the dialect's pattern language as a literal.
+	TEST_F( SelectSurfaceTests, TheFilterBoxsShapesSelectThroughSql ){
+		let root = GetRoot();
+		let none = GetId( GetUser("review590-none", root) );
+		let red = GetId( GetUser("review590-red", root) );
+		let bracket = GetId( GetUser("review590-bracket", root) );
+		QL().QuerySync<jvalue>( Ƒ("mutation updateUser( id:{}, description:\"\" )", none), {}, root );//'' is saved as null.
+		QL().QuerySync<jvalue>( Ƒ("mutation updateUser( id:{}, description:\"red\" )", red), {}, root );
+		QL().QuerySync<jvalue>( Ƒ("mutation updateUser( id:{}, description:\"a[b]*c?d\" )", bracket), {}, root );
+		let users = []( str filter, jobject vars={} ){
+			vector<string> y;
+			for( let& row : QL().QuerySync<jarray>(Ƒ(R"(users( loginName:{{glob:"review590-*"}}, {}, orderBy:"loginName" ){{ id loginName }})", filter), move(vars), GetRoot()) )
+				y.emplace_back( AsSV(row.get_object(), "loginName") );
+			return y;
+		};
+		using Names = vector<string>;
+		EXPECT_EQ( users(R"(description:{nin:["red"]})"), (Names{"review590-bracket","review590-none"}) ) << "the null description stays";
+		EXPECT_EQ( users(R"(description:{nin:["red",null]})"), (Names{"review590-bracket"}) );
+		EXPECT_EQ( users(R"(description:{ne:"red"})"), (Names{"review590-bracket","review590-none"}) ) << "`ne` is a `nin` of one";
+		EXPECT_EQ( users(R"(description:{nin:["red"], ne:null})"), (Names{"review590-bracket"}) );
+		EXPECT_EQ( users(R"(description:{in:["red","a[b]*c?d"], nin:["red"]})"), (Names{"review590-bracket"}) );
+		EXPECT_EQ( users("description:{in:$description_in, nin:$description_nin}", jobject{{"description_in",jarray{"red","a[b]*c?d"}}, {"description_nin",jarray{"a[b]*c?d"}}}), (Names{"review590-red"}) );
+		EXPECT_EQ( users("id:{gte:$id_gte, lte:$id_lte}", jobject{{"id_gte",red}, {"id_lte",red}}), (Names{"review590-red"}) );
+
+		EXPECT_EQ( names(R"(users( loginName:{glob:["*review590*","*-[nr]*","*e"]}, orderBy:"loginName" ){ id loginName })"), (Names{"review590-none"}) ) << "every pattern, not any";
+		EXPECT_EQ( users(R"(description:{glob:"*a[[]b*"})"), (Names{"review590-bracket"}) ) << "a typed '['";
+		EXPECT_EQ( users(R"(description:{glob:["*b]*","*[*]c*","*c[?]d*"]})"), (Names{"review590-bracket"}) ) << "a typed ']', '*' and '?'";
+		EXPECT_EQ( users(R"(description:{glob:"*b[]]*"})"), (Names{"review590-bracket"}) ) << "a ']' first in a class is a member";
+		EXPECT_TRUE( users(R"(description:{glob:"*a[[]x*"})").empty() );
+
+		for( let id : {none, red, bracket} )
+			PurgeUser( UserPK{id}, root );
+	}
+
 	//db-review3 #22: `eq:["a","b"]` rendered one '?' against two bound params.  sqlite answered SQLITE_RANGE and mysql
 	//"wrong number of parameters"; the zero case was worse - sqlite ran the statement with the placeholder left null and
 	//returned nothing at all.  FormatOperator counts now, and the count has to survive the whole ql path to the driver.
