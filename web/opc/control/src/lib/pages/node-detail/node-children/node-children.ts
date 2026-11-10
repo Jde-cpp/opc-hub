@@ -13,7 +13,7 @@ import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { QLListSettings, SnackbarService, View, ViewToolbar } from 'jde-framework'
+import { cellValues, QLListSettings, SnackbarService, View, ViewToolbar } from 'jde-framework'
 import { EAccess } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
@@ -139,14 +139,8 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.viewSet.remove( view ).catch( e=>this.#snackbar.exception("Could not delete view.", e) );
 		this.isSettings.set( false );
 	}
-	colSuggestions():Record<string,any[]>{
-		const suggestions:Record<string,any[]> = {};
-		for( const name of Object.keys(NodeView.columns) ){
-			const values = this.nodes().map( n=>NodeView.cellValue(n, name) ).filter( v=>v!=null && v!=="" );
-			suggestions[name] = [...new Set(values)].slice( 0, 100 ).sort( (a,b)=>typeof a=="number" && typeof b=="number" ? a-b : String(a).localeCompare(String(b)) );
-		}
-		return suggestions;
-	}
+	//the cells' values by column, which the filter box suggests
+	filterValues = computed<Record<string,unknown[]>>( ()=>cellValues( Object.keys(NodeView.columns), this.nodes(), NodeView.cellValue ) );
 
 	//the value cells bind to plain fields on the nodes, not signals, so an async write (or a subscription push) changes nothing
 	//Angular is watching:  zoneless runs no pass of its own, and the cell kept the old value until an unrelated event forced one.

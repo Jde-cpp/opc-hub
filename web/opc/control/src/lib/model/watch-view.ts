@@ -1,4 +1,4 @@
-import { compareCells, Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, Field, FieldKind, FilterHost, filterPredicate, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { NodeView } from './node-view';
 import { OpcError } from './opc-error';
@@ -11,7 +11,9 @@ import { valueString } from './value';
 export class WatchView extends View{
 	static readonly collectionName = "opcWatch";//the profile rows under `opcWatch/views` and the browser's `opcWatch/viewNumber`:  one set of views for every gateway's list
 	static columns:Record<string,string> = { connection: "Connection", node: "Node", value: "Value", status: "Status", sourceTime: "Source Time", serverTime: "Server Time", sampling: "Sampling (ms)", revisedSampling: "Revised Sampling", queue: "Queue", revisedQueue: "Revised Queue", discard: "Discard", filter: "Filter" };
-	static schema:TableSchema = new TableSchema( { name: "OpcWatch", fields: Object.keys( WatchView.columns ).map( name=>new Field({name, ofType: {kind: FieldKind.SCALAR, name: "String"}}) ) } );
+	//the columns by what they hold, as NodeView's:  numbers for what a row asks and is revised to, enums for the small sets, the two times
+	static types:Record<string,{kind:FieldKind, name:string}> = { connection: {kind: FieldKind.ENUM, name: "Connection"}, status: {kind: FieldKind.ENUM, name: "StatusCode"}, discard: {kind: FieldKind.ENUM, name: "Discard"}, sourceTime: {kind: FieldKind.SCALAR, name: "DateTime"}, serverTime: {kind: FieldKind.SCALAR, name: "DateTime"}, sampling: {kind: FieldKind.SCALAR, name: "Float"}, revisedSampling: {kind: FieldKind.SCALAR, name: "Float"}, queue: {kind: FieldKind.SCALAR, name: "UInt"}, revisedQueue: {kind: FieldKind.SCALAR, name: "UInt"} };
+	static schema:TableSchema = new TableSchema( { name: "OpcWatch", fields: Object.keys( WatchView.columns ).map( name=>new Field({name, ofType: WatchView.types[name] ?? {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	static default():WatchView{
 		const view = WatchView.fromConfig( {configColumns: ["connection", "node", "value", "status", {name: "sourceTime", hidden: true}, {name: "serverTime", hidden: true}, "sampling", "revisedSampling", {name: "queue", hidden: true}, {name: "revisedQueue", hidden: true}, {name: "discard", hidden: true}, "filter"], sort: [{active: "connection", direction: "asc"}, {active: "node", direction: "asc"}]}, WatchView.schema );
 		view.type = ViewType.System;
@@ -26,7 +28,7 @@ export class WatchView extends View{
 	}
 	//the rows in view order:  filtered, then sorted by each Sort in turn.  `names` gives a connection's name by its slug.
 	apply( rows:readonly WatchRow[], names:( slug:string )=>string ):WatchRow[]{
-		const y = rows.filter( r=>this.matches( r, names ) );
+		const y = rows.filter( this.predicate(names) );
 		const sorts = this.sort.filter( s=>s.active && s.direction );
 		if( sorts.length ){
 			y.sort( (a,b)=>{
@@ -40,23 +42,12 @@ export class WatchView extends View{
 		}
 		return y;
 	}
-	matches( row:WatchRow, names:( slug:string )=>string ):boolean{
-		return this.fieldFilters.every( ff=>{
-			const values = ff.filter.value;
-			if( !values.length )
-				return true;
-			const cell = WatchView.cellValue( row, ff.field.name, names );
-			const text = cell==null ? "" : String( cell );
-			switch( ff.filter.operator ){
-				case Operator.NotIn:           return !values.some( v=>String(v)==text );
-				case Operator.Less:            return WatchView.compare( cell, values[0] )<0;
-				case Operator.LessOrEqual:     return WatchView.compare( cell, values[0] )<=0;
-				case Operator.Greater:         return WatchView.compare( cell, values[0] )>0;
-				case Operator.GreaterOrEqual:  return WatchView.compare( cell, values[0] )>=0;
-				default:                       return values.some( v=>String(v)==text );
-			}
-		} );
+	override filterHost():FilterHost{ return { ...super.filterHost()!, server: false, enums: undefined }; }
+	//the filter's terms as a test of a row, as NodeView's
+	predicate( names:( slug:string )=>string ):( row:WatchRow )=>boolean{
+		return filterPredicate( this.parsedFilter().terms, this.filterHost(), {cell: ( row:WatchRow, column )=>WatchView.cellValue(row, column, names), time: NodeView.time} );
 	}
+	matches( row:WatchRow, names:( slug:string )=>string ):boolean{ return this.predicate( names )( row ); }
 	//what a column shows for a row - the filter and sort work on this, so they agree with the screen
 	static cellValue( row:WatchRow, column:string, names:( slug:string )=>string ):string|number|undefined{
 		switch( column ){

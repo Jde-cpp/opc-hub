@@ -15,7 +15,7 @@ export const userTableSettings:TableSettings = {
 	viewName: "All",
 	columns: [ ...identityColumns, "description" ],
 	views: [
-		{ name: "Users", columns: [ ...identityColumns, "email", "loginName", "description" ], filters: [ {name: "issuer", value: ["<null>"]} ] },
-		{ name: "Certs", columns: [ "slug", "modulus", "issuer", "distinguished", "subjectAlt", "expiration", "description" ], sort: "slug", filters: [ {name: "provider", value: ["Key"]} ] }
+		{ name: "Users", columns: [ ...identityColumns, "email", "loginName", "description" ], filter: "no:issuer" },
+		{ name: "Certs", columns: [ "slug", "modulus", "issuer", "distinguished", "subjectAlt", "expiration", "description" ], sort: "slug", filter: "provider:Key" }
 	]
 }

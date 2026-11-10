@@ -18,6 +18,7 @@ import { Failure, failureState } from '../../../utils/errors';
 import { FailureState } from '../../../shared/failure-state/failure-state';
 import { SelectionModel } from '@angular/cdk/collections';
 import { View, ViewField } from '../../../model/ql/view';
+import { cellValues, parseFilter, takesFilterTerm, toggleFilterTerm } from '../../../model/ql/filter-query';
 import { ViewSet } from '../../../model/ql/view-set';
 import { MatDialog } from '@angular/material/dialog';
 import { confirm } from '../../../shared/confirm/confirm-dialog';
@@ -234,24 +235,31 @@ export class QLList implements OnInit{
 		this.isSettings.set( false );
 	}
 
-	colSuggestions():Record<string,any[]>{
-		let suggestions: Record<string, any[]> = {};
-		for( let field of this.view().fields ){
-			let values = [];
-			if( field.qlField.isNullable ){
-				values.push("<null>");
-				values.push("<not null>");
-			}
-			suggestions[field.name] = values;
+	//the loaded rows' values by column, which the filter box suggests after a field's colon
+	filterValues = computed<Record<string,unknown[]>>( ()=>cellValues( this.view().fields.map( f=>f.name ), this.data(), ( row, column )=>row[column] ) );
+	//The chip columns a click filters on, each with the values the filter holds as `field:value`:  a click adds the term, and a
+	//click on a value it holds takes it out.  A column the box cannot filter - one the gateway grafts on - is not among them.
+	chipFilters = computed<Map<string,Set<string>>>( ()=>{
+		const view = this.profile().current(), host = view.filterHost();
+		const y = new Map<string,Set<string>>();
+		if( !host )
+			return y;
+		for( const field of view.fields.filter( f=>f.chip && takesFilterTerm(f, host) ) )
+			y.set( field.name, new Set() );
+		for( const term of parseFilter(view.filter, host).terms ){
+			if( term.operator=="in" && !term.negated && term.values.length==1 )
+				y.get( term.field! )?.add( `${term.values[0]}` );
 		}
-		for( let row of this.data() ){
-			for( let col of Object.keys(row).filter(c=>row[c] && suggestions[c] && !suggestions[c].includes(row[c])) )//guard suggestions[c]: rows can carry keys outside the view's fields
-				suggestions[col].push( row[col] );
-		}
-		for( let col of Object.keys(suggestions) )
-			suggestions[col] = suggestions[col].filter( (v,i,a) => a.indexOf(v)===i ).slice(0,100)
-				.sort( (a,b)=> typeof a=="number" && typeof b=="number" ? a-b : String(a).localeCompare(String(b)) );//`a-b` was NaN for string values
-		return suggestions;
+		return y;
+	} );
+	async onChipClick( chip:{column:string, value:string} ){
+		const view = this.profile().current(), host = view.filterHost();
+		const field = view.fields.find( f=>f.name==chip.column );
+		if( !host || !field )
+			return;
+		const filter = toggleFilterTerm( view.filter, host, field, chip.value );
+		this.profile().edit( draft=>{ draft.filter = filter; } );
+		await this.onChangeView();
 	}
 
 	onViewCancel(){
@@ -327,7 +335,7 @@ export class QLList implements OnInit{
 		const home = this.profile().routeDefault;
 		return !!home && !!this.view() && !View.sameFilters( this.view(), home );
 	});
-	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilters?.length, selector: this.selector()}) );
+	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilter?.includes( "-id:" ), selector: this.selector()}) );
 	showEmpty = computed<boolean>( ()=>!this.isRefreshing() && this.error()===undefined && !this.data().length );//not while a reload has the rows cleared
 	addFilled = computed<boolean>( ()=>this.showEmpty() && !this.viewFiltered() );//Add is the one useful action only on a genuinely empty list - not under a filter, a refusal or a failure (#fail and loadOrFail empty the rows too)
 	//the help topic for wherever the list is showing - its own page or a detail page's tab - resolved as the navbar's ? does;

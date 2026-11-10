@@ -1,4 +1,4 @@
-import { compareCells, DateUtils, Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, DateUtils, Field, FilterHost, FieldKind, filterPredicate, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
@@ -11,8 +11,11 @@ import { valueString } from './value';
 export class NodeView extends View{
 	static readonly collectionName = "opcNodes";//the profile rows under `opcNodes/views` and the browser's `opcNodes/viewNumber`:  one set of views for every node on every connection, the way a ql-list collection has one
 	static columns:Record<string,string> = { id: "ID", name: "Name", class: "Class", dataType: "Data Type", snapshot: "Snapshot", status: "Status", sourceTime: "Source Time", serverTime: "Server Time", access: "Access", refType: "Reference Type", typeDef: "Type Definition", description: "Description" };
-	//every column a non-null String:  ids and values are of mixed types and are filtered on their cell text, and NON_NULL keeps the <null>/<not null> suggestions out of the filter tab
-	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: {kind: FieldKind.SCALAR, name: "String"}}) ) } );
+	//The columns by what they hold (views spec *The filter box*):  an enum where the values are a small set, which the box suggests
+	//from the rows;  a time;  and String for the rest - an id, a snapshot - since an OPC value's type varies by row.  The page
+	//draws its own cells, so a type changes no rendering.
+	static types:Record<string,{kind:FieldKind, name:string}> = { class: {kind: FieldKind.ENUM, name: "NodeClass"}, dataType: {kind: FieldKind.ENUM, name: "DataType"}, status: {kind: FieldKind.ENUM, name: "StatusCode"}, sourceTime: {kind: FieldKind.SCALAR, name: "DateTime"}, serverTime: {kind: FieldKind.SCALAR, name: "DateTime"} };
+	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: NodeView.types[name] ?? {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	static default():NodeView{
 		const view = NodeView.fromConfig( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "status", hidden: true}, {name: "sourceTime", hidden: true}, {name: "serverTime", hidden: true}, {name: "access", hidden: true}, {name: "refType", hidden: true}, {name: "typeDef", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
 		view.showSelector = true;//the subscription checkboxes
@@ -24,8 +27,16 @@ export class NodeView extends View{
 
 	//the rows in view order:  filtered, then sorted by each Sort in turn (the first is primary)
 	apply( nodes:readonly UaNode[] ):UaNode[]{
-		return this.sortNodes( nodes.filter(n=>this.matches(n)) );
+		return this.sortNodes( nodes.filter(this.predicate()) );
 	}
+	//the browser runs the filter, over the cells:  a comparison is read on any column
+	override filterHost():FilterHost{ return { ...super.filterHost()!, server: false, enums: undefined }; }
+	//The filter's terms as a test of a node (filter-query.ts):  `field:a` is the cell's text exactly, an empty cell matches no
+	//comparison, and a day's bounds are written as the time cells are.
+	predicate():( node:UaNode )=>boolean{
+		return filterPredicate( this.parsedFilter().terms, this.filterHost(), {cell: NodeView.cellValue, time: NodeView.time} );
+	}
+	matches( node:UaNode ):boolean{ return this.predicate()( node ); }
 	//the sort alone, on a copy:  the sidenav takes the siblings through this without the filters (OpcStore.setRoute), so it lists them as the parent's table did
 	sortNodes( nodes:readonly UaNode[] ):UaNode[]{
 		const rows = [...nodes];
@@ -49,24 +60,6 @@ export class NodeView extends View{
 	//the user's saved views, or the default while there is none, with the remembered selection
 	static loadViews( views:ViewSet<NodeView> ):Promise<void>{
 		return views.load( [NodeView.default()], NodeView.schema );
-	}
-	//In/NotIn match the cell text exactly, as the SQL `in` a ql-list filter turns into;  the comparisons go numeric when both sides are numbers
-	matches( node:UaNode ):boolean{
-		return this.fieldFilters.every( ff=>{
-			const values = ff.filter.value;
-			if( !values.length )
-				return true;
-			const cell = NodeView.cellValue( node, ff.field.name );
-			const text = cell==null ? "" : String( cell );
-			switch( ff.filter.operator ){
-				case Operator.NotIn:           return !values.some( v=>String(v)==text );
-				case Operator.Less:            return NodeView.compare( cell, values[0] )<0;
-				case Operator.LessOrEqual:     return NodeView.compare( cell, values[0] )<=0;
-				case Operator.Greater:         return NodeView.compare( cell, values[0] )>0;
-				case Operator.GreaterOrEqual:  return NodeView.compare( cell, values[0] )>=0;
-				default:                       return values.some( v=>String(v)==text );//In - and None, which the filter tab never emits
-			}
-		});
 	}
 	//what a column shows for a node - the filter and sort work on this, so they agree with the screen.  A numeric value stays a number so it sorts and compares as one.
 	static cellValue( node:UaNode, column:string ):string|number|undefined{

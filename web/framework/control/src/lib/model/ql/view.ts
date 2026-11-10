@@ -1,46 +1,12 @@
-import { arraysEqual, verify } from '../../utils/utils';
+import { verify } from '../../utils/utils';
 import { StringUtils } from '../../utils/string-utils';
 import { Query } from '../../services/graphql';
 import { TableSettings } from '../../services/ql-list-resolver';
 import { Field, FieldKind } from "./schema/field";
+import { filterArguments, FilterHost, FilterParse, parseFilter } from './filter-query';
 import { TableSchema } from "./schema/table-schema";
 import { Sort } from "@angular/material/sort";
 
-export class Days{
-	constructor( startDate:Date ){
-		let eod = new Date();
-		eod.setHours( 0, 0, 0, 0 );
-		eod.setDate( eod.getDate()+1 );
-		let bod = new Date( startDate );
-		bod.setHours( 0, 0, 0, 0 );
-		this.days = Math.round( (eod.getTime()-bod.getTime())/(1000*60*60*24) );
-	}
-	static fromJson( json:{days:number} ):Days{
-		let y = new Days( new Date() );
-		y.days = json.days;
-		return y;
-	}
-	fromNow():Date{
-		let start = new Date();
-		start.setHours( 0, 0, 0, 0 );
-		start.setDate( start.getDate()-this.days+1 );
-		return start;
-	}
-	days:number;
-}
-export type DbScalar = string|number|boolean|null|Date|Days;
-export enum Operator{
-	None,
-	In,
-	NotIn,
-	Less,
-	LessOrEqual,
-	Greater,
-	GreaterOrEqual,
-	Regex,
-	ElementMatch,
-	Between
-}
 //hidden = queried but not necessarily shown eg id
 //A column whose values are a small closed set reads as a chip rather than as text - the same treatment the log table gives
 //its level.  The map is value -> tone, not value -> colour:  the palette belongs to the table (graphql-table.scss), so a
@@ -57,7 +23,6 @@ export type ChipTones = Record<string,ChipTone>;
 export type LiveToggle = { enable:string, disable:string, enableMessage?:string, disableMessage?:string };
 export type ViewFieldSettings = {name?:string, displayName?:string, style?:Style, defaultView?:boolean/*=!hidden*/, hidden?:boolean, selection?:string/*OBJECT/UNION sub-selection, e.g. "count" -> `name{count}`; defaults to "id name"/"id"*/, chip?:ChipTones, liveToggle?:LiveToggle};
 type ViewFieldJson = {name:string, hidden?:boolean, displayName?:string, style?:Style, selection?:string, chip?:ChipTones};
-export type Filter = { operator: Operator, value: DbScalar[] };
 export class Flex{
 	constructor( value:string|number|Flex ){
 		if( value instanceof Flex )
@@ -176,16 +141,13 @@ export class ViewField{
 	liveToggle?:LiveToggle;
 };
 
-//A filter a route declares on a system view (TableSettings.views):  the column, the operator (In when unset) and the values,
-//in the same vocabulary the settings panel uses - "<null>"/"<not null>" included.
-export type ViewFilterSettings = { name:string, operator?:Operator, value:DbScalar[] };
 //A further system view a route declares beside the default one.  Whatever it leaves unset comes from the default view:  the
-//table's columns and its sort.  The default view itself is the TableSettings' own columns/sort under `viewName`.
-export type ViewSettings = { name:string, columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, filters?:ViewFilterSettings[] };
-type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filters?:ViewFilterSettings[], queried?:string[] };
-type ViewJson = { name:string|undefined, collectionName:string, fields:ViewFieldJson[], filters:{ field?: Field, name:string, filter: Filter }[], limit?:number, showSelector:boolean|undefined, sort:Sort[]|undefined };
-export type ViewSerializedArgs = { name:string|undefined, collectionName:string, fields:ViewField[], limit?:number, showSelector:boolean, sort?:Sort[], filters?:{name: string, filter: Filter}[] };//sort optional:  toJson omits one that matched the default view's
-export type FieldFilter = { field: Field, filter: Filter };
+//table's columns and its sort.  The default view itself is the TableSettings' own columns/sort under `viewName`.  `filter` is
+//the filter box's text, in its grammar (filter-query.ts):  "no:issuer", "provider:Key".
+export type ViewSettings = { name:string, columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, filter?:string };
+type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filter?:string, queried?:string[] };
+type ViewJson = { name:string|undefined, collectionName:string, fields:ViewFieldJson[], filter?:string, limit?:number, showSelector:boolean|undefined, sort:Sort[]|undefined };
+export type ViewSerializedArgs = { name:string|undefined, collectionName:string, fields:ViewField[], limit?:number, showSelector:boolean, sort?:Sort[], filter?:string };//sort optional:  toJson omits one that matched the default view's
 export enum ViewType{
 	System,
 	Adhoc,
@@ -210,18 +172,15 @@ export class View{
 		init( y );
 		return y;
 	}
-	//The settings dialog edits filters in place, so Cancel is only honest if the dialog never holds the live view's Filter objects.  structuredClone is unusable: it flattens Days into a plain object and breaks the `instanceof` checks in the filter UI and query().
-	static copyFilter( filter:Filter ):Filter{
-		return { operator: filter.operator, value: (filter.value ?? []).map( v=>v instanceof Days ? Days.fromJson({days:v.days}) : v instanceof Date ? new Date(v) : v ) };//`?? []` so a stale persisted view without a value array can't turn a copy into a load-time crash
-	}
 	private copyFrom( view:View ):void{
 		this.number = view.number;
 		this.name = view.name;
 		this.collectionName = view.collectionName;
 		this.limit = view.limit;
 		this.fields = view.fields.map( f=>new ViewField(f) );//its own fields, and their styles:  a draft hides and resizes without reaching the view it is of
-		if( view.fieldFilters )
-			this.fieldFilters = view.fieldFilters.map( ff=>({field: ff.field, filter: View.copyFilter(ff.filter)}) );//`field` is shared schema metadata, but the filter is per-view state: a shallow [...] left the "copy" pointing at the original's Filter objects and value arrays, so it protected nothing
+		this.filter = view.filter;
+		this.fixedFilter = view.fixedFilter;
+		this.schema = view.schema;
 		this.showSelector = view.showSelector;
 		this.sort = structuredClone( view.sort );
 		this.type = view.type;
@@ -233,11 +192,11 @@ export class View{
 		this.queried = config.queried ?? [];
 		this.collectionName = schema.collectionName;
 		this.fields = this.columns( schema, config.configColumns, ["id", "attributes"] );
-		for( const f of config.filters ?? [] ){//a route's filter names a column that must exist - unlike a saved view's, which is dropped with a warning, this is a config error
-			const field = schema.fields.find( x=>x.name==f.name ); verify( field, `View '${config.name}' (${schema.collectionName}) filters on '${f.name}' - not in the schema.` );
-			this.fieldFilters.push( {field, filter: {operator: f.operator ?? Operator.In, value: [...f.value]}} );
-		}
+		this.schema = schema;
 		this.appendAlwaysQueried( schema );
+		this.filter = config.filter?.trim() ?? "";
+		const unread = this.parsedFilter().errors;//a route's filter must read - unlike a saved view's, whose bad term the box underlines, this is a config error
+		verify( !unread.length, `View '${config.name}' (${schema.collectionName}) filters on '${this.filter}' - ${unread[0]?.message}` );
 	}
 	private fromJson( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
 		this.name = config.name;
@@ -255,19 +214,11 @@ export class View{
 				field.displayName = defaultView?.fields.find( d=>d.name==f.name )?.displayName ?? field.displayName;
 			this.fields.push( field );
 		}
-		for( let fieldFilter of config.filters ?? [] ){//{name: string, filter: Filter}
-			const field = schema.fields.find( f=>f.name==fieldFilter.name );
-			if( !field ){
-				missing.push( fieldFilter.name );
-				continue;
-			}
-			if( field.isDateTime )//JSON round-trip leaves Days as {days:n} and Date as an ISO string — the filter UI's instanceof checks need real instances
-				fieldFilter.filter.value = fieldFilter.filter.value.map( v=>View.reviveDateValue(v) );
-			this.fieldFilters.push( {field: field, filter: fieldFilter.filter} );
-		}
 		if( missing.length )
 			console.warn( `View '${config.name}' (${config.collectionName}) references ${missing.join(", ")} - not in the schema, dropped.` );
 
+		this.filter = config.filter ?? "";
+		this.schema = schema;
 		this.showSelector = config.showSelector;
 		this.sort = config.sort ?? defaultView?.sort ?? [];
 		this.type = ViewType.User;
@@ -280,6 +231,7 @@ export class View{
 	}
 	private fromTable( config:TableSettings, schema:TableSchema ):void{
 		this.collectionName = schema.collectionName;
+		this.schema = schema;
 		this.fields = this.columns( schema, config.columns!, config.excludedColumns ?? ["id", "attributes"] );
 		this.sort = View.toSort( config.sort ) ?? [];
 		this.queried = config.rowLink?.fields ?? [];
@@ -324,34 +276,25 @@ export class View{
 			selectCols.push( description );
 		return selectCols;
 	}
-	private static comparisonOperator( op:Operator ):string|undefined{
-		switch( op ){
-			case Operator.Less:           return "lt";
-			case Operator.LessOrEqual:    return "lte";
-			case Operator.Greater:        return "gt";
-			case Operator.GreaterOrEqual: return "gte";
-			case Operator.NotIn:          return "nin";
-			default: return undefined;//In keeps the bare-array form the server treats as `in`
-		}
+	//What the filter box names and how its terms are run (filter-query.ts):  the view's columns under their headers, then the
+	//schema's others by their QL names, on the server.  Undefined for a view that takes no filter - the logs'.
+	filterHost():FilterHost|undefined{
+		const own = new Set( this.fields.map( f=>f.name ) );
+		const rest = ( this.schema?.fields ?? [] ).filter( f=>!own.has(f.name) ).map( f=>({qlField: f, displayName: StringUtils.idToDisplay(f.name)}) );
+		return { columns: [...this.fields.filter( f=>f.qlField ), ...rest], server: true, enums: this.schema?.enums };
 	}
-	private static comparisonJson( v:DbScalar ):DbScalar{
-		if( v instanceof Days )
-			v = v.fromNow();//resolve the relative "last N days" at query time
-		return v instanceof Date ? v.toISOString() : v;
-	}
-	private static reviveDateValue( v:DbScalar ):DbScalar{
-		if( v==null || v instanceof Date || v instanceof Days )
-			return v;
-		if( typeof v=="string" ){
-			const d = new Date( v );
-			return isNaN( d.getTime() ) ? v : d;//"<not null>" etc. stay strings
-		}
-		return typeof v=="object" && "days" in (v as object) ? Days.fromJson( <{days:number}>v ) : v;
+	//the filter's terms and what the box could not read, the host's fixed terms after the view's
+	parsedFilter():FilterParse{
+		const host = this.filterHost();
+		if( !host )
+			return { terms: [], errors: [] };
+		const typed = parseFilter( this.filter, host );
+		return this.fixedFilter ? { terms: [...typed.terms, ...parseFilter(this.fixedFilter, host).terms], errors: typed.errors } : typed;
 	}
 	query( skip:number ):Query{
 		let fieldStr = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) ).map( f=>f.queryText ).join(" ");//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key
 		let args = [];
-		let vars:Record<string, DbScalar[]|DbScalar|null> = {};
+		let vars:Record<string,unknown> = {};
 		if( this.limit )
 			args.push( `limit:${this.limit}` );
 		if( skip )
@@ -363,39 +306,9 @@ export class View{
 			args.push( `orderBy:[${sortStr.slice(0,-1)}]` );
 		}
 
-		for( const fieldFilter of this.fieldFilters ){
-			const filter = fieldFilter.filter;
-			const values = filter.value;
-			if( !values.length )
-				continue;
-			const name = fieldFilter.field.name;
-			if( values.every(v=>v=="<not null>") )
-				args.push( `${name}:{"ne":null}` );
-			else if( values.every(v=>v=="<null>") && View.comparisonOperator(filter.operator)!="nin" ){//under any operator but NotIn (which means not null):  a DateTime column offers only < and >, and `{gt:"<null>"}` reached the server as a timestamp to parse - the bare-array form is the one it reads as `is null` (reviews/m3-closing.md #16)
-				args.push( `${name}:$${name}` );
-				vars[name] = [null];
-			}
-			else{
-				const op = View.comparisonOperator( filter.operator );
-				if( op=="nin" ){//NotIn takes the full value array (server nin now fixed)
-					args.push( `${name}:{nin:$${name}}` );
-					vars[name] = values.map( v=>v=="<null>" ? null : v );
-				}
-				else if( op ){//a comparison takes one real value:  a marker or a missing one went out as `{gt:"<null>"}` or an unbound $var, and the server answered "Query failed." (reviews/m3-closing.md #35)
-					const value = values.find( v=>v!=null && v!="<null>" && v!="<not null>" );
-					if( value===undefined )
-						continue;
-					args.push( `${name}:{${op}:$${name}}` );
-					vars[name] = View.comparisonJson( value );
-				}
-				else{//In → bare-array form the server treats as `in`
-					args.push( `${name}:$${name}` );
-					//colSuggestions() offers "<null>" for a nullable column, and it has to leave as a JSON null:  QL::ToWhereClause
-					//turns a null array element into `is null`, while the literal string went out as `in ('<null>')` and matched nothing.
-					vars[name] = values.map( v=>v=="<null>" ? null : v );
-				}
-			}
-		}
+		const filter = filterArguments( this.parsedFilter().terms );//a column's terms as one argument, a term the box could not read left out
+		args.push( ...filter.args );
+		Object.assign( vars, filter.vars );
 		//Deleted rows stay out unless the view filters on `deleted` - the Deleted system view does, and so can any saved one.
 		//A live-toggle column (the Resources page's Enforced) lists every row:  `deleted` is its switch, not a trash can.
 		const deleted = this.fields.find( f=>f.name=="deleted" );
@@ -410,10 +323,13 @@ export class View{
 		for( let field of fields.filter(f=>!this.fields.find(v=>v.name==f.name)) )
 			this.fields.push( new ViewField({qlField: field, settings: {name: field.name, hidden: true}}) );
 	}
-	//the same filters in any order:  a view that was only re-sorted or re-columned shows the same rows
+	//the same filters, however they are typed and in any order:  a view that was only re-sorted or re-columned shows the same rows
 	static sameFilters( a:View, b:View ):boolean{
-		const keys = ( v:View )=>v.fieldFilters.map( ff=>JSON.stringify([ff.field.name, ff.filter.operator, ff.filter.value]) ).sort();
-		return arraysEqual( keys(a), keys(b) );
+		const key = ( v:View )=>{
+			const { args, vars } = filterArguments( v.parsedFilter().terms, new Date(0) );
+			return JSON.stringify( [[...args].sort(), Object.entries( vars ).sort( ([x], [y])=>x<y ? -1 : 1 )] );
+		};
+		return key( a )==key( b );
 	}
 	//the same but for the name:  a view renamed, or a copy of one, shows the rows it did in the columns it did
 	static alike( a:View, b:View|undefined ):boolean{
@@ -428,13 +344,10 @@ export class View{
 			if( field.displayed || customDisplay )
 				fields.push( field.toJson(customDisplay) );
 		}
-		let filters = new Array<{field?: Field, name:string,filter:Filter}>;
-		for( let ff of this.fieldFilters )
-			filters.push( {name: ff.field.name, filter: ff.filter} );
 		let sort = defaultSettings && JSON.stringify(this.sort)==JSON.stringify(defaultSettings.sort) ? undefined : this.sort;
 		return {
 			name: this.name,
-			filters: filters,
+			filter: this.filter || undefined,
 			collectionName: this.collectionName,
 			fields: fields,
 			limit: this.limit,
@@ -442,7 +355,9 @@ export class View{
 			sort: sort
 		};
 	}
-	fieldFilters:FieldFilter[] = [];
+	filter = "";//the filter box's text, as typed:  a saved view keeps it, and a day in it is the day of the browser that runs the query
+	fixedFilter = "";//the host's own terms, anded with the view's and never shown or saved - a pick list's (QLListData.fixedFilter)
+	protected schema:TableSchema|undefined;
 	number:number = 0;//what its ViewSet knows it by, since names repeat:  the key of its profile row, never in the row.  0 until it is one of a set's.
 	name:string|undefined;
 	collectionName!:string;

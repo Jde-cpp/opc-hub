@@ -137,6 +137,19 @@ The route filters are rewritten in the grammar ([`user-table-settings.ts:18`](..
 
 Tests: the box's error underline and hint, the debounce under fake timers, a suggestion's quoting, a chip click twice and a grafted column's chip inert, a pick list's fixed terms beside a typed `has:deleted`; [`node-view.spec.ts`](../../web/opc/control/src/lib/model/node-view.spec.ts) for the declared types, a numeric comparison on a String column, an empty cell under `<`, and whole days on a time column.
 
+Built 2026-11-10, where it differs from the text above:
+
+- **A view holds the text alone.** `View.filter` is what was typed, and `View.parsedFilter` reads it against `View.filterHost` each time it is asked: the view's columns under their headers, then the schema's other columns by their QL names, so a term on a column the view does not show is read. The parsed terms are kept nowhere. `filterHost` answers nothing for the logs, which is what leaves the box out of their bar.
+- **The fixed terms are text too**, `View.fixedFilter`, set on the copy `QLListResolver.load` queries with and never saved: a pick list's is `-id:3,4 no:deleted`. `no:deleted` is left out where `deleted` is a live toggle, whose deleted rows are the ones switched off.
+- **A route's filter that does not read is a configuration error**, thrown as the views are built, where a saved view's is underlined in the box. A saved view's `filters`, from before this phase, is not read.
+- **The box is its own component**, `filter-box`, in the toolbar's centre zone, with `Discard` and `Save` after it. A term's underline is drawn by a copy of the text behind the input. The reason is a `mat-error` under the box: the one for the term the cursor is in, else the first, with a count of the others.
+- **The text is trimmed before it is kept**, so a space typed after a term makes no draft, and the same text is not asked for twice.
+- **A suggestion for a field ends in its colon and does not query**; the values open next. The comparison signs do the same. A value typed whole is not offered again, nor one already in the term's list. `no:` and `has:` offer the columns that can be empty.
+- **A chip is a button around the chip**, pressed where the filter holds exactly `field:value`. A click on a value the filter holds only in a list, or excludes, adds the term beside it.
+- **`viewFiltered` compares what the filters compile to**, so the same filter typed another way, or in another order, is the same.
+- **The users' `provider` is an enum in the schema the server answers**, not an object, so `provider:Key` and the chip click work there. The access spec's fixture declared it an object and was corrected.
+- **Not built here:** Escape clearing the box and `Ctrl+\`, which are Phase 8's.
+
 ## Phase 4 - fields (piece 4)
 
 Issue [#592].

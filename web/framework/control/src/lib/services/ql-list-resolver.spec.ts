@@ -1,7 +1,7 @@
 import { Sort } from '@angular/material/sort';
 import { LocalPrefs, ProfileStore, RouteStore } from 'jde-spa';
 import { IGRAPHQL } from './graphql';
-import { Operator, View } from '../model/ql/view';
+import { View } from '../model/ql/view';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from './ql-list-resolver';
 import { Blank, fakeSessionStorage, profileStoreStub } from 'jde-spa/testing';
 import { openRoute, qlAnswering, scalar, slugRows, slugSchema } from 'jde-framework/testing';
@@ -21,8 +21,8 @@ describe( 'QLListResolver.systemViews', ()=>{
 
 	it( 'names the default view and appends the declared ones, all as system views', ()=>{
 		const settings:TableSettings = { viewName: "all", columns: ["name", "kind", "description"], views: [
-			{ name: "Kinds", columns: ["name", "kind"], filters: [{name: "kind", value: ["a", "b"]}] },
-			{ name: "Newest", sort: "slug", filters: [{name: "kind", operator: Operator.NotIn, value: ["<null>"]}] }
+			{ name: "Kinds", columns: ["name", "kind"], filter: "kind:a,b" },
+			{ name: "Newest", sort: "slug", filter: "has:kind" }
 		] };
 		const views = QLListResolver.systemViews( schema, settings );
 		expect( views.map(v=>v.name) ).toEqual( ["all", "Kinds", "Newest"] );
@@ -55,14 +55,15 @@ describe( 'QLListResolver.systemViews', ()=>{
 
 	//The way to deleted rows, now there is no Show deleted:  a last system view, the default's columns and filters plus deleted.
 	it( 'ends with a Deleted view where the collection has a deleted column', ()=>{
-		const views = QLListResolver.systemViews( deletable, { columns: ["name"], filters: [{name: "kind", value: ["a"]}], views: [{name: "Kinds"}] } );
+		const views = QLListResolver.systemViews( deletable, { columns: ["name"], filter: "kind:a", views: [{name: "Kinds"}] } );
 		expect( views.map(v=>v.name) ).toEqual( [undefined, "Kinds", "Deleted"] );
 		const deleted = views[2];
 		expect( deleted.isSystem ).toBe( true );
 		expect( QLListResolver.isDeletedView(deleted) ).toBe( true );
 		expect( displayed(deleted) ).toEqual( ["name", "deleted"] );
 		const q = deleted.query( 0 );
-		expect( q.text ).toContain( 'deleted:{"ne":null}' );
+		expect( deleted.filter ).toBe( "kind:a has:deleted" );
+		expect( q.text ).toContain( 'deleted:{ne:null}' );
 		expect( q.vars["kind"] ).toEqual( ["a"] );
 		expect( views[0].fields.find(f=>f.name=="deleted")!.displayed ).toBe( false );//on a copy:  the default view keeps it hidden
 	} );
@@ -95,29 +96,27 @@ describe( 'QLListResolver.systemViews', ()=>{
 		} );
 	} );
 
-	it( 'turns a declared filter into the query the settings panel would have built', ()=>{
+	it( 'turns a declared filter into the query the filter box would have built', ()=>{
 		const [, kinds] = QLListResolver.systemViews( schema, { columns: ["name"], views: [
-			{ name: "Kinds", filters: [{name: "kind", value: ["a", "<null>"]}] }
+			{ name: "Kinds", filter: "kind:a,b" }
 		] } );
-		expect( kinds.fieldFilters ).toHaveLength( 1 );
-		expect( kinds.fieldFilters[0].field.name ).toBe( "kind" );
-		expect( kinds.fieldFilters[0].filter.operator ).toBe( Operator.In );
+		expect( kinds.filter ).toBe( "kind:a,b" );
 		const q = kinds.query( 0 );
 		expect( q.text ).toContain( "kind:$kind" );
-		expect( q.vars["kind"] ).toEqual( ["a", null] );//"<null>" leaves as a JSON null, as the panel's does
+		expect( q.vars["kind"] ).toEqual( ["a", "b"] );
 	} );
 
 	//The default view can be the filtered one - resources opens on its table rows and keeps an unfiltered 'All' beside it.
 	it( 'filters the default view when the route declares filters, and not the views beside it', ()=>{
-		const [tables, all] = QLListResolver.systemViews( schema, { viewName: "Tables", columns: ["name"], filters: [{name: "kind", value: ["<null>"]}], views: [{name: "All"}] } );
+		const [tables, all] = QLListResolver.systemViews( schema, { viewName: "Tables", columns: ["name"], filter: "no:kind", views: [{name: "All"}] } );
 		expect( tables.name ).toBe( "Tables" );
 		expect( tables.query( 0 ).vars["kind"] ).toEqual( [null] );
-		expect( all.fieldFilters ).toHaveLength( 0 );
+		expect( all.filter ).toBe( "" );
 		expect( displayed(all) ).toEqual( displayed(tables) );
 	} );
 
 	it( 'refuses a filter on a column the schema does not have', ()=>{
-		expect( ()=>QLListResolver.systemViews(schema, { columns: ["name"], views: [{name: "Bad", filters: [{name: "nope", value: [1]}]}] }) ).toThrow( /nope/ );
+		expect( ()=>QLListResolver.systemViews(schema, { columns: ["name"], views: [{name: "Bad", filter: "nope:1"}] }) ).toThrow( /nope/ );
 	} );
 } );
 

@@ -1,4 +1,4 @@
-import { Flex, Operator, Style, View, ViewField, type ViewFieldSettings, type ViewSerializedArgs } from './view';
+import { Flex, Style, View, ViewField, type ViewFieldSettings, type ViewSerializedArgs } from './view';
 import { scalar, schemaOf, serverConnectionSchema } from 'jde-framework/testing';
 
 const schema = serverConnectionSchema();
@@ -62,53 +62,49 @@ describe( "View.query on deleted rows", ()=>{
 	} );
 } );
 
-//reviews/m3-closing.md #16:  /access/resources is a live-toggle page - `deleted` is its Enforced switch - so it always queries with
-//showDeleted on, and query() spliced out every `deleted:` filter whenever showDeleted was on.  "Enforced only" (deleted is null)
-//and "not enforced" (not null) went out as no filter at all.  And a lone "null" under a comparison operator - a DateTime column
-//offers only < and > - was sent as a timestamp, `{gt:"<null>"}`, rather than as `is null`.
-describe( "View.query on a live-toggle column's filter", ()=>{
+//#591:  the view's filter is the filter box's text, which query() compiles (filter-query.ts).  /access/resources is a live-toggle
+//page - `deleted` is its Enforced switch - and a filter on it must still go out (reviews/m3-closing.md #16).
+describe( "View.query on the filter", ()=>{
 	const liveToggle = { enable: "Enforce", disable: "Stop enforcing" };
-	const view = ( settings:{liveToggle?:typeof liveToggle}, value:any[], operator=Operator.Greater, column="deleted" )=>{
+	const view = ( settings:{liveToggle?:typeof liveToggle}, filter:string, fixed="" )=>{
 		const v = View.fromTable( {columns: ["name", {name: "deleted", displayName: "Enforced", ...settings}], sort: "name"}, schema );
-		v.fieldFilters.push( {field: schema.fields.find( f=>f.name==column )!, filter: {operator, value}} );
+		v.filter = filter;
+		v.fixedFilter = fixed;
 		return v.query( 0 );
 	};
-	it( 'sends "null" - the enforced rows - as is null', ()=>{
-		const q = view( {liveToggle}, ["<null>"] );
+	it( 'sends has: on a live toggle - the enforced rows - as is null', ()=>{
+		const q = view( {liveToggle}, "has:enforced" );
 		expect( q.text ).toContain( "deleted:$deleted" );
 		expect( q.vars["deleted"] ).toEqual( [null] );
 	} );
-	it( 'sends "not null"', ()=>{
-		expect( view({liveToggle}, ["<not null>"]).text ).toContain( 'deleted:{"ne":null}' );
-	} );
-	it( 'sends a date', ()=>{
-		const q = view( {liveToggle}, [new Date("2026-09-01T00:00:00Z")] );
-		expect( q.text ).toContain( "deleted:{gt:$deleted}" );
-		expect( q.vars["deleted"] ).toBeDefined();
+	it( 'sends no: on a live toggle as not null', ()=>{
+		expect( view({liveToggle}, "no:enforced").text ).toContain( "deleted:{ne:null}" );
 	} );
 	it( 'keeps a filter on deleted where it is only the trash can', ()=>{//the Deleted view is one
-		const q = view( {}, ["<not null>"] );
-		expect( q.text ).toContain( 'deleted:{"ne":null}' );
+		const q = view( {}, "has:deleted" );
+		expect( q.text ).toContain( "deleted:{ne:null}" );
 		expect( q.text ).not.toContain( "deleted:$deleted" );
 	} );
-	it( 'leaves NotIn null as not null', ()=>{
-		const q = view( {}, ["<null>"], Operator.NotIn, "url" );
-		expect( q.text ).toContain( "url:{nin:$url}" );
-		expect( q.vars["url"] ).toEqual( [null] );
-	} );
-	it( 'sends a lone "null" under a comparison as is null on any nullable column', ()=>{
-		const q = view( {}, ["<null>"], Operator.Less, "url" );
+	it( 'sends a term, and leaves out one it cannot read', ()=>{
+		const q = view( {}, "url:a,b nope:1 -description:x" );
 		expect( q.text ).toContain( "url:$url" );
-		expect( q.vars["url"] ).toEqual( [null] );
+		expect( q.vars["url"] ).toEqual( ["a", "b"] );
+		expect( q.text ).toContain( "description:{nin:$description_nin}" );
+		expect( q.text ).not.toContain( "nope" );
+		expect( q.text ).toContain( "deleted:$deleted" );//the deleted rows still left out
 	} );
-	//a saved view from before ql-list-settings-filter's fix can still hold what the dialog used to build
-	it( 'reads a doubled marker as the marker', ()=>{
-		expect( view({liveToggle}, ["<null>", "<null>"]).vars["deleted"] ).toEqual( [null] );
-		expect( view({liveToggle}, ["<not null>", "<not null>"]).text ).toContain( 'deleted:{"ne":null}' );
+	it( "ands the host's fixed terms with the view's, as a repeated field is", ()=>{
+		const q = view( {}, "has:deleted", "-id:3,4 no:deleted" );
+		expect( q.text ).toContain( "id:{nin:$id_nin}" );
+		expect( q.vars["id_nin"] ).toEqual( [3, 4] );
+		expect( q.text ).toContain( "deleted:{in:$deleted_in,ne:null}" );//null and not null:  nothing
+		expect( q.vars["deleted_in"] ).toEqual( [null] );
 	} );
-	it( 'never sends a comparison without a value', ()=>{
-		expect( view({liveToggle}, [undefined]).text ).not.toContain( "deleted:" );
-		expect( view({liveToggle}, [null]).text ).not.toContain( "deleted:" );
+	it( 'takes the same filters in another order, or typed another way, as the same', ()=>{
+		const of = ( filter:string )=>{ const v = View.fromTable( {columns: ["name", "url"], sort: "name"}, schema ); v.filter = filter; return v; };
+		expect( View.sameFilters( of("url:a,b no:description"), of("no:description  URL:a,b") ) ).toBe( true );
+		expect( View.sameFilters( of("url:a"), of("url:b") ) ).toBe( false );
+		expect( View.sameFilters( of(""), of("nope:1") ) ).toBe( true );//a term that is not read filters nothing
 	} );
 } );
 
@@ -136,7 +132,7 @@ describe( "View revival against a changed schema", ()=>{
 		name: "Mine",
 		collectionName: "serverConnections",
 		fields: [ {name: "name"}, {name: "groupings"} ],
-		filters: [ {name: "groupings", filter: {operator: Operator.In, value: ["a"]}} ],
+		filter: "groupings:a",
 		showSelector: false,
 		sort: [ {active: "name", direction: "asc"} ]
 	});
@@ -146,9 +142,10 @@ describe( "View revival against a changed schema", ()=>{
 		expect( names ).toContain( "name" );
 		expect( names ).not.toContain( "groupings" );
 	} );
-	it( "drops a filter on a column the schema no longer has", ()=>{
+	it( "keeps the text of a filter on a column the schema no longer has, as a term the box cannot read", ()=>{
 		const view = View.fromJson( serialized(), schema );
-		expect( view.fieldFilters ).toHaveLength( 0 );
+		expect( view.filter ).toBe( "groupings:a" );
+		expect( view.parsedFilter() ).toMatchObject( {terms: [], errors: [{start: 0, end: 11}]} );
 	} );
 	it( "still builds a query afterwards", ()=>{
 		const view = View.fromJson( serialized(), schema );
@@ -158,9 +155,8 @@ describe( "View revival against a changed schema", ()=>{
 	} );
 	it( "keeps a filter whose column survives", ()=>{
 		const args = serialized();
-		args.filters = [ {name: "url", filter: {operator: Operator.In, value: ["a"]}} ];
-		const view = View.fromJson( args, schema );
-		expect( view.fieldFilters.map(ff=>ff.field.name) ).toEqual( ["url"] );
+		args.filter = "url:a";
+		expect( View.fromJson( args, schema ).query( 0 ).vars["url"] ).toEqual( ["a"] );
 	} );
 } );
 
@@ -179,11 +175,19 @@ describe( "View statics", ()=>{
 		expect( View.copy( copy ) ).not.toBeInstanceOf( ThingView );
 	} );
 
-	it( "copies the filters, not the copy's source's", ()=>{
-		const route = View.fromConfig( {configColumns: ["name"], sort: [], filters: [{name: "name", value: ["a"]}]}, schema );
+	it( "copies the filter, and the host's fixed terms, and saves the filter alone", ()=>{
+		const route = View.fromConfig( {configColumns: ["name"], sort: [], filter: "name:a"}, schema );
+		route.fixedFilter = "-id:1";
 		const copy = View.copy( route );
-		copy.fieldFilters[0].filter.value.push( "b" );
-		expect( route.fieldFilters[0].filter.value ).toEqual( ["a"] );
+		expect( [copy.filter, copy.fixedFilter] ).toEqual( ["name:a", "-id:1"] );
+		const json = JSON.parse( JSON.stringify(copy.toJson(undefined)) );
+		expect( json.filter ).toBe( "name:a" );
+		expect( JSON.stringify(json) ).not.toContain( "-id:1" );
+		expect( View.fromJson( json, schema, route ).filter ).toBe( "name:a" );
+		expect( "filter" in JSON.parse( JSON.stringify(View.fromConfig( {configColumns: ["name"], sort: []}, schema ).toJson(undefined)) ) ).toBe( false );
+	} );
+	it( "refuse a route's filter that does not read", ()=>{
+		expect( ()=>View.fromConfig( {name: "Bad", configColumns: ["name"], sort: [], filter: "nope:1"}, schema ) ).toThrow( /nope/ );
 	} );
 
 	//#589:  a draft hides, re-styles and resizes its columns, and the view it is of stays as it was saved
@@ -228,7 +232,7 @@ describe( "View statics", ()=>{
 		expect( View.alike( copy, base ) ).toBe( true );
 		const sorted = View.copy( base );
 		sorted.sort = [{active: "url", direction: "asc"}];
-		const filtered = View.fromConfig( {configColumns: ["name", "url"], sort: [{active: "name", direction: "asc"}], filters: [{name: "name", value: ["a"]}]}, schema );
+		const filtered = View.fromConfig( {configColumns: ["name", "url"], sort: [{active: "name", direction: "asc"}], filter: "name:a"}, schema );
 		const fewer = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		expect( [sorted, filtered, fewer].map( v=>View.alike( v, base ) ) ).toEqual( [false, false, false] );
 		expect( View.alike( base, undefined ) ).toBe( false );

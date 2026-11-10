@@ -70,6 +70,26 @@ describe( 'GraphQLTable chip columns', ()=>{
 		expect( chips.map( c=>[...c.classList].find( n=>n.startsWith('chip-') ) ) ).toEqual( ["chip-ok", undefined] );
 	} );
 
+	//#591:  a chip on a column the box can filter is a button - a click filters on its value, and one on a value the filter holds
+	//takes the term out;  a grafted column's chip is no click target
+	it( 'makes a chip a click target on the columns the host names, pressed where the filter holds its value', async ()=>{
+		const kinds = schemaOf( "Thing", required("name"), scalar("kind"), object("opcSessions", "OpcSessions") );
+		const fixture = build( ["name", {name: "kind", chip: {}}, status], [{id: 1, name: "a", kind: "x", opcSessions: {name: "Connected"}}, {id: 2, name: "b", kind: "y", opcSessions: {name: "Idle"}}], kinds );
+		fixture.componentRef.setInput( 'chipFilters', new Map( [["kind", new Set( ["y"] )]] ) );
+		const clicks = vi.fn(), rows = vi.fn();
+		fixture.componentInstance.onChipClick.subscribe( clicks );
+		fixture.componentInstance.onRowActivate.subscribe( rows );
+		await stable( fixture, 1 );
+		const element = fixture.nativeElement as HTMLElement;
+		const buttons = [...element.querySelectorAll<HTMLButtonElement>( 'button.chip-filter' )];
+		expect( buttons.map( b=>[b.textContent!.trim(), b.getAttribute( "aria-label" ), b.getAttribute( "aria-pressed" )] ) ).toEqual( [["x", "Filter by x", "false"], ["y", "Filter by y", "true"]] );
+		expect( element.querySelectorAll( '.mat-column-opcSessions button' ).length ).toBe( 0 );
+		expect( element.querySelectorAll( '.mat-column-opcSessions mat-chip' ).length ).toBe( 2 );
+		buttons[0].click();
+		expect( clicks.mock.calls ).toEqual( [[{column: "kind", value: "x"}]] );
+		expect( rows ).not.toHaveBeenCalled();//the row is not opened
+	} );
+
 	it( 'gives a column with no chip setting no tone', ()=>{
 		expect( create(["name"]).chipClass("name", {name:"Connected"} as any) ).toBe( "" );
 	} );

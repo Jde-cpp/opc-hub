@@ -16,7 +16,6 @@ describe( 'QLListSettings view name', ()=>{
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
 		fixture.componentRef.setInput( 'columns', {name: "Name"} );
-		fixture.componentRef.setInput( 'suggestions', {} );
 		fixture.componentInstance.ngOnInit();
 		fixture.detectChanges();
 		return fixture;
@@ -76,7 +75,6 @@ describe( 'QLListSettings Save and Delete', ()=>{
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
 		fixture.componentRef.setInput( 'columns', {name: "Name"} );
-		fixture.componentRef.setInput( 'suggestions', {} );
 		fixture.componentInstance.ngOnInit();
 		fixture.detectChanges();
 		return fixture.componentInstance;
@@ -119,7 +117,6 @@ describe( 'QLListSettings page size', ()=>{
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
 		fixture.componentRef.setInput( 'columns', {name: "Name"} );
-		fixture.componentRef.setInput( 'suggestions', {} );
 		fixture.componentInstance.ngOnInit();
 		await stable( fixture, 1 );
 		expect( fixture.nativeElement.querySelector('input[type=number]') ).toBeNull();
@@ -137,7 +134,6 @@ describe( 'QLListSettings Show', ()=>{
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', described );
 		fixture.componentRef.setInput( 'columns', {name: "Name", description: "Notes"} );
-		fixture.componentRef.setInput( 'suggestions', {} );
 		fixture.componentInstance.ngOnInit();
 		await stable( fixture, 1 );
 		const shown = fixture.componentInstance.getView( true );
@@ -148,22 +144,22 @@ describe( 'QLListSettings Show', ()=>{
 
 //A24:  the three tabs and their tables are signal queries - getView reads every tab, and a row added on one re-renders its table.
 describe( 'QLListSettings tabs', ()=>{
-	it( 'builds the view from all three tabs', async ()=>{
+	it( 'builds the view from both tabs, its filter kept', async ()=>{
 		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( QLListSettings );
-		fixture.componentRef.setInput( 'view', View.fromTable( {columns: ["name", "slug"], sort: "name"}, schema ) );
+		const view = View.fromTable( {columns: ["name", "slug"], sort: "name"}, schema );
+		view.filter = "slug:a";
+		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
 		fixture.componentRef.setInput( 'columns', {name: "Name", slug: "Slug"} );
-		fixture.componentRef.setInput( 'suggestions', {} );
 		const settings = fixture.componentInstance;
 		settings.ngOnInit();
 		await stable( fixture, 1 );
-		settings.filter().onAddFilter( "slug" );
 		const sort = settings.sort();
 		sort.updateSort( sort.dataSource.at(-1)!, "slug" );
 		fixture.detectChanges();
 		const built = settings.getView( true );
-		expect( built.fieldFilters.map( f=>f.field.name ) ).toEqual( ["slug"] );
+		expect( built.filter ).toBe( "slug:a" );
 		expect( built.sort.map( s=>s.active ) ).toEqual( ["name", "slug"] );
 		expect( built.fields.map( f=>f.name ) ).toEqual( expect.arrayContaining(["name", "slug"]) );
 	} );

@@ -8,7 +8,7 @@ import { View } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 import { SnackbarService } from '../snackbar/snackbar-service';
 import { ViewToolbar } from './view-toolbar';
-import { flush, MockProfileService } from 'jde-spa/testing';
+import { flush, MockProfileService, screenSize } from 'jde-spa/testing';
 import { schemaOf, snackbarStub } from 'jde-framework/testing';
 
 //reviews/angular-refactor.md A2:  QLList, LogDetail and NodeChildren each carried a copy of this toolbar and its stylesheet.
@@ -39,16 +39,16 @@ class Host{
 }
 
 describe( 'ViewToolbar', ()=>{
-	type Options = { rows?:Record<string,unknown>; route?:View[]; draft?:boolean; tabs?:boolean; paged?:boolean };
+	type Options = { rows?:Record<string,unknown>; route?:View[]; draft?:boolean; tabs?:boolean; paged?:boolean; width?:'wide'|'extra-small'; type?:typeof View };
 	//A toolbar over the route's views - Default and Users, on Users - or over the saved `rows` of the profile;  a draft of the
 	//current view where asked, a pick list's for tabs false, and a host that pages.
-	const create = async ( {rows, route=[view( undefined ), view( "Users" )], draft=false, tabs=true, paged=false}:Options={} )=>{
+	const create = async ( {rows, route=[view( undefined ), view( "Users" )], draft=false, tabs=true, paged=false, width='wide', type=View}:Options={} )=>{
 		const service = new MockProfileService();
 		for( const [key, value] of Object.entries(rows ?? {}) )
 			service.rows.set( key, JSON.stringify(value) );
 		const snackbar = snackbarStub();
-		TestBed.configureTestingModule( {providers: [{provide: IPROFILE_SERVICE, useValue: service}, {provide: SnackbarService, useValue: snackbar}]} );
-		const set = new ViewSet( {type: View, key: "things", profileStore: TestBed.inject( ProfileStore ), prefs: new LocalPrefs()} );
+		TestBed.configureTestingModule( {providers: [screenSize( width ), {provide: IPROFILE_SERVICE, useValue: service}, {provide: SnackbarService, useValue: snackbar}]} );
+		const set = new ViewSet( {type, key: "things", profileStore: TestBed.inject( ProfileStore ), prefs: new LocalPrefs()} );
 		await set.load( route, schema );
 		if( !rows && route.length>1 )
 			set.select( 1 );
@@ -435,6 +435,60 @@ describe( 'ViewToolbar', ()=>{
 			openMenu( fixture, button );
 			await pick( fixture, "Views" );
 			expect( items().map( text ) ).toEqual( ["Default", "Users, unsaved changes"] );
+		} );
+	} );
+
+	//#591:  the centre zone is the filter box, where the view takes a filter
+	describe( 'the filter box', ()=>{
+		class Unfiltered extends View{ override filterHost(){ return undefined; } }//the logs'
+		const box = ( element:HTMLElement )=>element.querySelector<HTMLInputElement>( '.bar-center filter-box input' );
+		const type = ( fixture:ComponentFixture<Host>, input:HTMLInputElement, value:string )=>{
+			input.value = value;
+			input.dispatchEvent( new Event('input', {bubbles: true}) );
+			input.dispatchEvent( new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}) );
+			fixture.detectChanges();
+		};
+
+		it( "holds the view's filter, and what is typed is a change to the draft, which the host hears", async ()=>{
+			const { fixture, element, set, host } = await create();
+			const input = box( element )!;
+			expect( input.value ).toBe( "" );
+			type( fixture, input, "name:a" );
+			expect( set.current().filter ).toBe( "name:a" );
+			expect( set.current().isAdhoc ).toBe( true );
+			expect( host.changes ).toBe( 1 );
+			expect( [...element.querySelectorAll( '.bar-center > *' )].map( e=>e.tagName=="FILTER-BOX" ? "box" : text( e ) ) ).toEqual( ["box", "Discard", "Save"] );
+			type( fixture, input, "name:a" );
+			expect( host.changes ).toBe( 1 );
+		} );
+
+		it( "shows the filter of the view shown:  another tab's, and the saved one's after a Discard", async ()=>{
+			const { fixture, element, set } = await create();
+			type( fixture, box( element )!, "name:a" );
+			set.select( 0 );
+			fixture.detectChanges();
+			expect( box( element )!.value ).toBe( "" );
+			set.select( 1 );
+			fixture.detectChanges();
+			expect( box( element )!.value ).toBe( "name:a" );
+			element.querySelectorAll<HTMLButtonElement>( '.bar-center button' )[0].click();
+			fixture.detectChanges();
+			expect( box( element )!.value ).toBe( "" );
+			expect( set.current().isAdhoc ).toBe( false );
+		} );
+
+		it( 'is absent where the view takes no filter, Discard and Save still in the centre zone', async ()=>{
+			const route = [Unfiltered.fromConfig( {configColumns: [], sort: []}, schema )];
+			const { element } = await create( {route, draft: true, type: Unfiltered} );
+			expect( element.querySelector( 'filter-box' ) ).toBeNull();
+			expect( [...element.querySelectorAll( '.bar-center button' )].map( text ) ).toEqual( ["Discard", "Save"] );
+		} );
+
+		it( 'stands between the left zone and the right, and after both on a phone, where it is a row of its own', async ()=>{
+			const zones = ( element:HTMLElement )=>[...element.querySelector( 'mat-toolbar' )!.children].map( c=>c.className.split( " " )[0] );
+			expect( zones( (await create()).element ) ).toEqual( ["bar-left", "bar-center", "bar-right"] );
+			TestBed.resetTestingModule();//a second toolbar, on a phone
+			expect( zones( (await create( {width: 'extra-small'} )).element ) ).toEqual( ["bar-left", "bar-right", "bar-center"] );
 		} );
 	} );
 

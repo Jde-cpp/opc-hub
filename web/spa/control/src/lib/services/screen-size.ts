@@ -3,7 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BreakpointObserver } from '@angular/cdk/layout';
 
 //The breakpoints TypeScript reads - `small`, where the shell's sidenav becomes a drawer (ComponentSidenav) and the navbar's
-//search takes a row of its own, and `extra-small`, where a list toolbar's filter box is to (views 3b).  The widths are constants.scss's,
+//search takes a row of its own, and `extra-small`, where a list toolbar's filter box does.  The widths are constants.scss's,
 //published by _general.scss as --jde-breakpoint-* so each number is written once.  A sheet still loading when the service is
 //made (a non-blocking styles.css) is read again on the window's load;  a document without the sheet (a spec, a site that never
 //@uses general) is never either, and says so once for each.

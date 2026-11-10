@@ -7,7 +7,7 @@ import { ViewSet } from '../model/ql/view-set';
 import { StringUtils } from '../utils/string-utils';
 import { MetaObject } from '../model/ql/schema/meta-object';
 import { capitalize, LocalPrefs, ProfileStore, RouteItem, RouteStore } from 'jde-spa';
-import { FieldFilter, Operator, View, ViewFieldSettings, ViewFilterSettings, ViewSettings } from '../model/ql/view';
+import { View, ViewFieldSettings, ViewSettings } from '../model/ql/view';
 import { Sort } from '@angular/material/sort';
 import { QLRow } from '../model/ql/slug-row';
 
@@ -15,12 +15,12 @@ import { QLRow } from '../model/ql/slug-row';
 //list to a row's page where they are not its slug alone - a resource's slug repeats across schemas, so its page is schema/slug.
 //Its `fields` are the row fields `segments` reads:  every view queries them, displayed or not, as it does id and slug.  No
 //segments:  the row has no page - a click does nothing, and the row is no sidenav child.
-//viewName: the tab label of the default view ("Default" when unset);  filters: the default view's, same vocabulary as a
-//ViewSettings filter (resources opens on the table rows, criteria null);  views: further system views, see ViewSettings
+//viewName: the tab label of the default view ("Default" when unset);  filter: the default view's, the filter box's text as a
+//ViewSettings' is (resources opens on the table rows, "no:criteria");  views: further system views, see ViewSettings
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
 export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };
 export type RowLink = { fields:string[], segments:(row:QLRow)=>string[]|undefined };
-export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, rowLink?:RowLink, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filters?:ViewFilterSettings[], views?:ViewSettings[], empty?:EmptyState, noun?:string};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
+export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, rowLink?:RowLink, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filter?:string, views?:ViewSettings[], empty?:EmptyState, noun?:string};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
 export type CollectionItem = string | { path:string, title?:string, data?:{summary:string, collectionName:string, tableSettings:TableSettings} };
 export class ListRoute extends RouteItem{
 	constructor( collection:string|CollectionItem ){
@@ -44,7 +44,7 @@ export class ListRoute extends RouteItem{
 
 export type QLListData = {
 	columns: Record<string,string>;
-	fixedFilters?: FieldFilter[];//applied on top of whichever view is current and never shown or saved - QLSelector's excludedIds
+	fixedFilter?: string;//terms anded with whichever view is current and never shown or saved, in the filter box's grammar - QLSelector's `-id:1,2 no:deleted`
 	profile: ViewSet<View>;
 	results: any; //{users:ISlugRow[]};
 	routing:ListRoute;
@@ -152,10 +152,10 @@ export class QLListResolver implements Resolve<QLListData> {
 	static systemViews( schema:TableSchema, settings:TableSettings ):View[]{
 		const columns = settings.columns ?? [];
 		const queried = settings.rowLink?.fields;
-		const defaultView = View.fromConfig( {name: settings.viewName, configColumns: columns, sort: View.toSort(settings.sort) ?? [{active: "name", direction: "asc"}], filters: settings.filters, queried}, schema );//settings.sort, not the name default:  a route that declares its own order (resources: schema then name) has to get it
+		const defaultView = View.fromConfig( {name: settings.viewName, configColumns: columns, sort: View.toSort(settings.sort) ?? [{active: "name", direction: "asc"}], filter: settings.filter, queried}, schema );//settings.sort, not the name default:  a route that declares its own order (resources: schema then name) has to get it
 		const views = [defaultView];
 		for( const v of settings.views ?? [] )
-			views.push( View.fromConfig({name: v.name, configColumns: v.columns ?? columns, sort: View.toSort(v.sort) ?? [...defaultView.sort], filters: v.filters, queried}, schema) );
+			views.push( View.fromConfig({name: v.name, configColumns: v.columns ?? columns, sort: View.toSort(v.sort) ?? [...defaultView.sort], filter: v.filter, queried}, schema) );
 		const deleted = QLListResolver.deletedView( defaultView );
 		if( deleted )
 			views.push( deleted );
@@ -163,8 +163,8 @@ export class QLListResolver implements Resolve<QLListData> {
 	}
 	static readonly deletedViewName = "Deleted";
 	//a view that lists deleted rows, whatever it is called and whoever saved it:  one that filters on `deleted`, as View.query reads it
-	static isDeletedView( view:View ):boolean{ return view.fieldFilters.some( ff=>ff.field.name=="deleted" && ff.filter.value.length>0 ); }
-	//The default view's columns and filters, plus the deleted rows View.query otherwise leaves out - and their deleted date.
+	static isDeletedView( view:View ):boolean{ return view.parsedFilter().terms.some( t=>t.field=="deleted" ); }
+	//The default view's columns and filter with `has:deleted`, the deleted rows View.query otherwise leaves out - and their deleted date.
 	//None where `deleted` is a live toggle (the Resources page's Enforced):  that list shows every row already.
 	static deletedView( base:View ):View|undefined{
 		const deleted = base.fields.find( f=>f.name=="deleted" );
@@ -173,7 +173,7 @@ export class QLListResolver implements Resolve<QLListData> {
 		let view = View.copy( base );
 		view.name = QLListResolver.deletedViewName;
 		view.fields.find( f=>f.name=="deleted" )!.displayed = true;//the copy's own field, found by name
-		view.fieldFilters = [...view.fieldFilters.filter( ff=>ff.field.name!="deleted" ), {field: deleted.qlField, filter: {operator: Operator.Greater, value: ["<not null>"]}}];//Greater: what the settings panel gives a DateTime filter
+		view.filter = `${base.filter} has:deleted`.trim();
 		return view;
 	}
 	static columns( schema:TableSchema, configColumns:(string|ViewFieldSettings)[], excluded: string[] ):Record<string,string>{
@@ -203,9 +203,9 @@ export class QLListResolver implements Resolve<QLListData> {
 	//routeStore null:  the rows are a pick list (QLSelector - filtered, and never the page's own collection), not the collection's sidenav children
 	static async load<T extends PageData>( ql:Pick<IGraphQL,"query">, data:T, routeStore:RouteStore|null ):Promise<T>{
 		let view = data.profile.current();
-		if( data.fixedFilters?.length ){//on a copy:  the profile's view is what the settings panel edits and what a Save persists
+		if( data.fixedFilter ){//on a copy:  the profile's view is what the box edits and what a Save persists
 			view = View.copy( view );
-			view.fieldFilters = [...view.fieldFilters, ...data.fixedFilters];
+			view.fixedFilter = data.fixedFilter;
 		}
 		const collectionName = data.schema.collectionName;
 		const query = ( skip:number )=>{

@@ -1,6 +1,6 @@
 import { Injector, runInInjectionContext } from '@angular/core';
 import { IPROFILE_SERVICE, LocalPrefs, ProfileStore } from 'jde-spa';
-import { Operator, View, ViewType } from './view';
+import { View, ViewType } from './view';
 import { ViewSet, ViewSetOptions } from './view-set';
 import { id, required, scalar, schemaOf } from 'jde-framework/testing';
 import { flush, MockProfileService, silence } from 'jde-spa/testing';
@@ -18,10 +18,10 @@ describe( 'ViewSet', ()=>{
 	//a view that lists deleted rows, and a pick list's test for the views it offers
 	const trash = ()=>{
 		const view = make( "Trash" );
-		view.fieldFilters = [{field: schema.fields.find( f=>f.name=="deleted" )!, filter: {operator: Operator.Greater, value: ["<not null>"]}}];
+		view.filter = "has:deleted";
 		return view;
 	};
-	const offered = ( view:ThingView )=>!view.fieldFilters.some( ff=>ff.field.name=="deleted" );
+	const offered = ( view:ThingView )=>!view.parsedFilter().terms.some( t=>t.field=="deleted" );
 	//the profile rows of a saved set:  the views by number, and the index in their order unless it is given
 	const stored = ( views:[number, ThingView][], index:number[]=views.map( ([number])=>number ) )=>
 		Object.fromEntries( [["things/views", index], ...views.map( ([number, view])=>[`things/views/${number}`, view.toJson(undefined)] )] );
@@ -571,13 +571,14 @@ describe( 'ViewSet', ()=>{
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );
 		} );
 
-		//reviews-issue/589-views-draft.md #9:  the list page's draft of a view, filtered on the deleted rows, put them in a pick list
-		it( "shows a view as saved where its draft is one it would not offer", async ()=>{
+		//reviews-issue/589-views-draft.md #9 hid the list page's draft of a view, filtered on the deleted rows, from a pick list.  #591:
+		//the pick list's own terms keep those rows out, and its box has to show the filter it runs under
+		it( "shows a view under its draft though the draft is one it would not offer as a view", async ()=>{
 			const page = await load( stored([[1, make("A")], [2, make("B")]]) );
-			page.set.edit( view=>{ view.fieldFilters = trash().fieldFilters; } );
+			page.set.edit( view=>{ view.filter = trash().filter; } );
 			const { set } = await load( stored([[1, make("A")], [2, make("B")]]), {offered} );
-			expect( names(set) ).toEqual( ["1:A", "2:B"] );
-			expect( set.current().fieldFilters ).toEqual( [] );
+			expect( names(set) ).toEqual( ["1:A*", "2:B"] );
+			expect( set.current().filter ).toBe( "has:deleted" );
 		} );
 	} );
 

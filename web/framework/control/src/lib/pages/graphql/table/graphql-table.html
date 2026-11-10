@@ -20,7 +20,14 @@
 	@for( column of columnNames().chip; track column ){
 		<ng-container [matColumnDef]="column">
 			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header [disabled]="!sortable(column)" [style]="columnStyle(column)"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let row" [style]="columnStyle(column)">@if( objectValue(row[column]); as value ){<mat-chip [class]="chipClass(column,row)">{{value}}</mat-chip>}</mat-cell><!--no chip for a null value (a user with no provider) - an empty outline reads as a broken cell-->
+			<mat-cell *matCellDef="let row" [style]="columnStyle(column)">@if( objectValue(row[column]); as value ){
+				@if( chipFilters().get(column); as held ){<!--a click filters on the value, and a second takes the term out;  stopPropagation, as the select checkbox does-->
+					<button type="button" class="chip-filter" [attr.aria-pressed]="held.has(value)" [attr.aria-label]="'Filter by ' + value" (click)="$event.stopPropagation(); onChipClick.emit({column, value})"><mat-chip [class]="chipClass(column,row)">{{value}}</mat-chip></button>
+				}
+				@else{
+					<mat-chip [class]="chipClass(column,row)">{{value}}</mat-chip>
+				}
+			}</mat-cell><!--no chip for a null value (a user with no provider) - an empty outline reads as a broken cell-->
 		</ng-container>
 	}
 	@for( column of columnNames().liveToggle; track column ){

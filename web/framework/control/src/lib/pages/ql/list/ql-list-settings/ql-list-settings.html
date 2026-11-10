@@ -12,12 +12,6 @@
 </mat-toolbar>
 <mat-tab-group class="my-content" mat-align-tabs="center" mat-stretch-tabs="false"  [(selectedIndex)]="tabIndex">
 	<mat-tab>
-		<ng-template mat-tab-label>Filter</ng-template>
-		<div class="centered-content">
-			<ql-list-settings-filter [view]=view() [columns]=columns() [schema]=schema() [excludedColumns]=excludedColumns() [suggestions]=suggestions()></ql-list-settings-filter>
-		</div>
-	</mat-tab>
-	<mat-tab>
 		<ng-template mat-tab-label>Display</ng-template>
 		<div class="centered-content">
 			<ql-list-settings-display [view]=view() [columns]=columns() [schema]=schema()></ql-list-settings-display>

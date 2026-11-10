@@ -395,7 +395,7 @@ describe( 'GatewayWatch', ()=>{
 		a.variable!.customDataType = <any>{ id: new NodeId( {ns: 2, i: 3001} ), name: 'PumpState', enumValues: [{id: 1, name: 'Off'}, {id: 2, name: 'Running'}] };
 		expect( page.valueText( a ) ).toBe( 'Running' );
 		expect( page.cell( a, 'value' ) ).toBe( 'Running' );//what the filter and the sort read:  the number, while the cell said the name (419-watch #13)
-		expect( page.colSuggestions()['value'] ).toEqual( ['Running'] );
+		expect( page.filterValues()['value'] ).toEqual( ['Running'] );
 		a.setReading( {value: 7, sc: 0} );
 		expect( page.valueText( a ) ).toBe( '7' );//a value the enumeration does not name
 		expect( page.sampling( a ) ).toBe( '100' );

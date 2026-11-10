@@ -7,7 +7,8 @@ import { QLListData, QLListResolver } from '../../../services/ql-list-resolver';
 import { QLRow } from '../../../model/ql/slug-row';
 import { QLSelector } from './ql-selector';
 import { profileStoreStub, provideRoute } from 'jde-spa/testing';
-import { snackbarStub } from 'jde-framework/testing';
+import { scalar, slugSchema, snackbarStub } from 'jde-framework/testing';
+import { View } from '../../../model/ql/view';
 import { QLList } from '../list/ql-list';
 import { GraphQLTable } from '../../graphql/table/graphql-table';
 
@@ -105,5 +106,34 @@ describe( 'QLSelector', ()=>{
 		requery( rows(1, 2, 3) );
 		expect( ownerIds() ).toEqual( [1, 3] );
 		expect( checkedIds() ).toEqual( [1, 3] );
+	} );
+} );
+
+//#591:  a pick list's own terms, anded with whichever view it shows
+describe( 'QLSelector.fixedFilter', ()=>{
+	const deletable = slugSchema( "User", scalar("deleted", "DateTime") );
+	const data = ( columns:(string|object)[], schema=deletable )=>{
+		const view = View.fromTable( {columns: columns as string[], sort: "name"}, schema );
+		return { data: {schema, profile: {routeDefault: view, current: ()=>view}, routing: {path: "users"}} as unknown as QLListData, view };
+	};
+	it( 'leaves out the ids it is given and the deleted rows', ()=>{
+		expect( QLSelector.fixedFilter( data(["name"]).data, [3, 4] ) ).toBe( "-id:3,4 no:deleted" );
+		expect( QLSelector.fixedFilter( data(["name"]).data, [] ) ).toBe( "no:deleted" );
+	} );
+	it( 'keeps the deleted rows of a live toggle, which are those switched off, and has none to leave out where there is no column', ()=>{
+		const enforced = {name: "deleted", displayName: "Enforced", liveToggle: {enable: "Enforce", disable: "Stop enforcing"}};
+		expect( QLSelector.fixedFilter( data(["name", enforced]).data, [3] ) ).toBe( "-id:3" );
+		expect( QLSelector.fixedFilter( data(["name"], slugSchema("Role")).data, [] ) ).toBe( "" );
+	} );
+	it( 'lists nothing for has:deleted typed in its box', async ()=>{
+		const { data: listData, view } = data( ["name"] );
+		view.filter = "has:deleted";
+		const query = vi.fn().mockResolvedValue( {users: []} );
+		await QLListResolver.load( {query}, {...listData, fixedFilter: QLSelector.fixedFilter(listData, [3])}, null );
+		const [text, vars] = query.mock.calls[0];
+		expect( text ).toContain( "deleted:{in:$deleted_in,ne:null}" );//deleted, and not:  no row
+		expect( text ).toContain( "id:{nin:$id_nin}" );
+		expect( vars ).toMatchObject( {deleted_in: [null], id_nin: [3]} );
+		expect( view.fixedFilter ).toBe( "" );//on a copy:  the view is the list page's too
 	} );
 } );

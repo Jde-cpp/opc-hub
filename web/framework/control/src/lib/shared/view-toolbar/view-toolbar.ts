@@ -8,8 +8,11 @@ import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatTabLink, MatTabNav, MatTabNavPanel } from '@angular/material/tabs';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
+import { ScreenSize } from 'jde-spa';
+import { FilterHost } from '../../model/ql/filter-query';
 import { View } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
+import { FilterBox } from '../filter-box/filter-box';
 import { SnackbarService } from '../snackbar/snackbar-service';
 
 //A ViewSet's face, the same over every list (views spec *The view bar*):  the tabs row - a tab per view, the view menu on the
@@ -17,14 +20,16 @@ import { SnackbarService } from '../snackbar/snackbar-service';
 //own controls left (`[left]`) and, right, Refresh, the view editor's button, the host's (`[right]`) and the row count, with the
 //reload bar under it.  `+ New view` and the rename box stand outside the tablist, which may hold tabs alone.  The toolbar changes
 //the set itself and says when a write failed;  the host hears `viewChange` when the view on screen is another, and re-reads unless
-//its rows are a computed of it or the view shows the rows it did (View.alike).  A view with a draft shows it, a dot after its name,
-//and Save and Discard stand in the centre zone, where the filter box is to be, and in the menu.  A pick list has no tabs row:  its
-//menu opens from a button showing the view's name, `Views` first, and nothing that makes, moves or removes a view.
+//its rows are a computed of it or the view shows the rows it did (View.alike).  The centre zone is the filter box, where the view
+//takes a filter (View.filterHost):  what is typed is a change to the draft.  A view with a draft shows it, a dot after its name,
+//and Save and Discard stand at the end of the centre zone, and in the menu.  On a phone the centre zone is a row of its own, and is
+//rendered after the right zone, so the tab order is the rows'.  A pick list has no tabs row:  its menu opens from a button showing
+//the view's name, `Views` first, and nothing that makes, moves or removes a view.
 @Component({
 	selector: 'view-toolbar',
 	templateUrl: './view-toolbar.html',
 	styleUrl: './view-toolbar.scss',
-	imports: [CdkDrag, CdkDropList, MatButton, MatIcon, MatIconButton, MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger, MatProgressBar, MatTabLink, MatTabNav, MatToolbar, MatTooltip, NgTemplateOutlet]
+	imports: [CdkDrag, CdkDropList, FilterBox, MatButton, MatIcon, MatIconButton, MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger, MatProgressBar, MatTabLink, MatTabNav, MatToolbar, MatTooltip, NgTemplateOutlet]
 })
 export class ViewToolbar{
 	#snackbar = inject( SnackbarService );
@@ -46,6 +51,16 @@ export class ViewToolbar{
 	viewChange = output<void>();//the view on screen is another.  Not `change`:  a native change event bubbling out of a projected input would reach the same binding
 	edit = output<void>();
 	refresh = output<void>();
+	filterValues = input<Record<string,readonly unknown[]>>( {} );//the rows' values by column, which the filter box suggests
+	filterHost = computed<FilterHost|undefined>( ()=>this.views().current()?.filterHost() );//none:  no box - the logs
+	isExtraSmall = inject( ScreenSize ).isExtraSmall;
+	//the box's text:  a change to the draft, as any other
+	filter( text:string ){
+		if( text==this.views().current().filter )
+			return;
+		this.views().edit( view=>{ view.filter = text; } );
+		this.viewChange.emit();
+	}
 
 	//The view being renamed, by its number, which its draft shares:  the set may republish its views meanwhile.  The box lies over
 	//the tab, where it was.
