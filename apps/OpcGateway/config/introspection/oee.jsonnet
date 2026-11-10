@@ -13,9 +13,7 @@
 //codeOee( machine, start, end, reason, comment ){ … } and uncodeOee( id ){ id }:  an operator's reason over a range of the
 //machine's time, and its removal, for a caller with Update, or Delete, on oee_codings and Read on the group.
 local types = import 'scalars.libsonnet';
-local String = types.String, UInt = types.UInt, Boolean = types.Boolean, DateTime = types.DateTime, Json = types.Json, NonNull = types.NonNull, List = types.List;
-local Float = { kind: "SCALAR", name: "Float" };
-local Object( name ) = { kind: "OBJECT", name: name };
+local String = types.String, UInt = types.UInt, Boolean = types.Boolean, DateTime = types.DateTime, Json = types.Json, Float = types.Float, Object = types.Object, NonNull = types.NonNull, List = types.List;
 local recomputeOee = {
 	fields: [
 		{ name: "machine", type: NonNull(UInt) }, //the oee_machines row.

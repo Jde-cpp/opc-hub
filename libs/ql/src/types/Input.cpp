@@ -68,7 +68,8 @@ namespace Jde::QL{
 	}
 	α Input::CheckVariables( SL sl )Ε->void{
 		let unbound = UnboundVariables();
-		THROW_IFSL( unbound.size(), "Could not find variable{} '{}' in variables: {}", unbound.size()==1 ? "" : "s", Str::Join(unbound, "', '"), Variables ? serialize(*Variables) : string{"{}"} );
+		if( unbound.size() )//the caller's mistake.
+			throw Exception{ sl, {ELogTags::QL, 0, EHttpStatus::BadRequest}, "Could not find variable{} '{}' in variables: {}", unbound.size()==1 ? "" : "s", Str::Join(unbound, "', '"), Variables ? serialize(*Variables) : string{"{}"} };
 	}
 	α Input::GetKey( SL sl )Ε->DB::Key{
 		let y = FindKey();

@@ -131,8 +131,11 @@ local attributes( i ) = {
 			},
 			naturalKeys: [["oee_machine_id", "role"]]
 		},
+		//noSelect:  the engine's three take no generic select, which knows nothing of the group's gate (TableQL::AuthorizeRead).
+		local oeeReads = "the OEE engine's rows are read through oee, oeeStops, oeeLosses and oeeTimeline, each past its machine's group's gate.",
 		oeeStops:{
 			comment: "The engine's:  a machine's stop, from the record that left running to the record that returned, or with unknown a span of unknown time.  No generic mutation",
+			noSelect: oeeReads,
 			columns: {
 				oeeStopId: common.pkSequenced,
 				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, updateable:false, i:1 },
@@ -145,6 +148,7 @@ local attributes( i ) = {
 		},
 		oeeIntervals:{
 			comment: "The engine's:  one row per machine per interval, every one written.  An absent row means the engine has not reached it.  No generic mutation",
+			noSelect: oeeReads,
 			columns: {
 				oeeIntervalId: common.longSequenced,
 				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, updateable:false, i:1 },
@@ -170,6 +174,7 @@ local attributes( i ) = {
 		},
 		oeeCodings:{
 			comment: "An operator's reason over a range of a machine's time.  Written by codeOee and uncodeOee alone;  the engine never touches one.  No generic mutation, and no deleted",
+			noSelect: oeeReads,
 			columns: {
 				oeeCodingId: common.pkSequenced,
 				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, updateable:false, i:1 },

@@ -64,6 +64,14 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( trimmed.at("id").as_int64(), 1 );
 		EXPECT_FALSE( trimmed.contains("groups") );
 	}
+	//A list of objects is trimmed row by row, and a null sub-table, no row, stays null (reviews-issue/402-oee-reads.md #13).
+	TEST( TableQLTests, TrimColumnsTrimsEachRowOfAList ){
+		const vector<sp<DB::AppSchema>> noSchemas;
+		let ql = QL::ParseQuery( "status{ id groups{ id } owner{ id } }", {}, noSchemas );
+		let trimmed = ql.TrimColumns( jobject{ {"id",1}, {"groups",jarray{jobject{{"id",2},{"name","a"}}, jobject{{"id",3}}}}, {"owner",nullptr} } );
+		EXPECT_EQ( serialize(trimmed.at("groups")), R"([{"id":2},{"id":3}])" );
+		EXPECT_TRUE( trimmed.at("owner").is_null() );
+	}
 
 	//(c) `{ permissionRights{ id resource resource{ id name deleted } } }` - the bare fk stem resolves to resources.name and
 	//writes a string at "resource", then the sub-table of the same name wants an object there.

@@ -1,6 +1,6 @@
 #include "OeeQLAwait.h"
-#include <charconv>
 #include <jde/fwk/str.h>
+#include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/exceptions/refuse.h>
 #include <jde/access/Authorize.h>
 #include <jde/opc/uatypes/DateTime.h>
@@ -16,22 +16,8 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	using Ticks = std::chrono::duration<int64_t,std::ratio<1,10'000'000>>;//UA's.
 
-	Ω isRead( sv name )ι->bool{ return std::ranges::find( OeeQLAwait::Tables, name )!=OeeQLAwait::Tables.end(); }
-	Ω engineTable( sv name )ι->bool{ return name=="oeeIntervals" || name=="oeeInterval" || name=="oeeCodings" || name=="oeeCoding" || name=="oeeStops" || name=="oeeStop"; }
-	//An engine table selected under `q`, at any depth.
-	Ω nested( const QL::TableQL& q )ι->const QL::TableQL*{
-		for( let children : {&q.Tables, &q.InlineFragments} ){
-			for( let& child : *children ){
-				if( engineTable(child.JsonName) )
-					return &child;
-				if( let p = nested(child); p )
-					return p;
-			}
-		}
-		return nullptr;
-	}
 	α OeeQLAwait::IsApplicable( const QL::TableQL& q )ι->bool{
-		return isRead( q.JsonName ) || engineTable( q.JsonName ) || nested( q );
+		return std::ranges::find( Tables, q.JsonName )!=Tables.end();
 	}
 
 	Ω ms( Duration d )ι->int64_t{ return std::chrono::duration_cast<std::chrono::milliseconds>( d ).count(); }
@@ -42,9 +28,9 @@ namespace Jde::Opc::Gateway{
 	//What a read is made from:  the machine as the formulas take it, its calendar's snapshot, and the range's rows.
 	struct OeeRead final{
 		Oee::Machine Machine;
-		sp<const Calendar::Schedule> Schedule;//none without a calendar, or with one the client doesn't hold:  every minute planned.
+		sp<const Calendar::Schedule> Schedule;//none without a calendar, or with one the client doesn't hold:  every minute planned (spec *Calendars*).
 		Oee::Span Range;
-		TimePoint Now;//the engine's time, which an open stop runs to.
+		TimePoint Now;//where oeeStops ends an open stop:  the engine's time, else the table's processed.
 		uint Limit;//readLimit.
 		vector<Oee::Interval> Rows;
 		vector<Oee::Stop> Stops;
@@ -72,32 +58,46 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω figures( const QL::TableQL& q, const OeeRead& r, SL sl )ε->jvalue{
 		optional<Calendar::BucketBy> by;
+		bool shift{};
 		if( let p = q.FindPtr("by"); p && !p->is_null() ){
 			REFUSE_IF( !p->is_string(), "by is shift, day, week, month or an ISO 8601 duration, not {}.", serialize(*p) );
 			by = Calendar::ParseBucketBy( p->get_string(), sl );
-			if( let width = std::get_if<Duration>(&*by); width ){
+			//Counted from the range before Figures builds them, at the least:  a calendar's day is 25 hours at most, its week and month
+			//an hour over 7 and 31 days, and shifts are walked a day at a time.
+			Duration most;
+			let width = std::get_if<Duration>( &*by );
+			if( width ){
 				for( let& row : r.Rows )//no narrower than the widest row:  a bucket inside a row is that row's share, not a figure.
 					*width = std::max( *width, row.Width );
-				let count = ( r.Range.End-r.Range.Start ) / *width;
-				REFUSE_IF( (uint)count>r.Limit, "by {} over {} to {} is over {} buckets, more than readLimit, {}:  ask for a shorter range, or a wider by.", Chrono::ToString(*width), OeeQL::Iso(r.Range.Start), OeeQL::Iso(r.Range.End), count, r.Limit );
+				most = *width;
 			}
+			else{
+				using enum Calendar::EBucket;
+				let bucket = std::get<Calendar::EBucket>( *by );
+				shift = bucket==Shift;
+				most = bucket==Day ? hours{25} : bucket==Week ? hours{7*24+1} : bucket==Month ? hours{31*24+1} : hours{24};
+			}
+			let count = ( r.Range.End-r.Range.Start )/most;
+			REFUSE_IF( (uint)count>r.Limit, "by {} over {} to {} is {} {} or more, more than readLimit, {}:  ask for a shorter range, or a wider by.", width ? Chrono::ToString(*width) : string{p->get_string()}, OeeQL::Iso(r.Range.Start), OeeQL::Iso(r.Range.End), count, shift ? "days" : "buckets", r.Limit );
 		}
-		let shift = by && std::holds_alternative<Calendar::EBucket>( *by ) && std::get<Calendar::EBucket>( *by )==Calendar::EBucket::Shift;
 		let buckets = Oee::Figures( r.Machine, r.History(), r.Schedule.get(), r.Range.Start, r.Range.End, by, sl );
 		REFUSE_IF( buckets.size()>r.Limit, "{} buckets is more than readLimit, {}:  ask for a shorter range, or a wider by.", buckets.size(), r.Limit );
 		jarray y; y.reserve( buckets.size() );
 		for( let& bucket : buckets )
-			y.emplace_back( OeeQL::Trim(q, bucketJson(bucket, shift)) );
+			y.emplace_back( q.TrimColumns(bucketJson(bucket, shift)) );
 		return y;
 	}
 
-	Ω stops( const QL::TableQL& q, const OeeRead& r, const OeeMachineRow& machine, SL sl )ε->jvalue{
+	//oeeStops' paging:  its arguments, which the next page's must be, and the start of the last stop the page before listed.
+	struct StopsPage final{
+		bool UncodedOnly;
+		string Key;
+		optional<TimePoint> Before;
+	};
+	Ω stopsPage( const QL::TableQL& q, OeeMachinePK machine, Oee::Span range, SL sl )ε->StopsPage{
 		let asked = q.FindPtr( "uncoded" );
-		let uncodedOnly = asked && asked->is_bool() && asked->get_bool();
-		let limit = [&]{ let n = q.TryNumber<uint>( "limit" ).value_or( 0 ); return n && n<r.Limit ? n : r.Limit; }();
-		//The continuation:  the read's arguments, which the next page's must be, and the start of the last stop listed.
-		let key = Ƒ( "{}|{}|{}|{}", machine.Id, ticks(r.Range.Start), ticks(r.Range.End), uncodedOnly ? 1 : 0 );
-		optional<TimePoint> before;
+		StopsPage y{ .UncodedOnly=asked && asked->is_bool() && asked->get_bool(), .Key={}, .Before={} };
+		y.Key = Ƒ( "{}|{}|{}|{}", machine, ticks(range.Start), ticks(range.End), y.UncodedOnly ? 1 : 0 );
 		if( let p = q.FindPtr("continuation"); p && !p->is_null() ){
 			string text;
 			try{
@@ -111,15 +111,20 @@ namespace Jde::Opc::Gateway{
 			int64_t start{};
 			let cursor = bar==string::npos ? sv{} : sv{ text }.substr( bar+1 );
 			let parsed = cursor.size() && std::from_chars( cursor.data(), cursor.data()+cursor.size(), start ).ec==std::errc{};
-			REFUSE_IF( !parsed || sv{text}.substr(0, bar)!=key, "continuation is no page of this read:  one is good for the arguments it was answered to." );
-			before = UADateTime{ UA_DateTime{start} }.Time();
+			REFUSE_IF( !parsed || sv{text}.substr(0, bar)!=y.Key, "continuation is no page of this read:  one is good for the arguments it was answered to." );
+			y.Before = UADateTime{ UA_DateTime{start} }.Time();
 		}
+		return y;
+	}
+	//`r.Stops` start before `page.Before`, the SQL's bound.
+	Ω stops( const QL::TableQL& q, const OeeRead& r, const OeeMachineRow& machine, const StopsPage& page )ε->jvalue{
+		let limit = [&]{ let n = q.TryNumber<uint>( "limit" ).value_or( 0 ); return n && n<r.Limit ? n : r.Limit; }();
 		jarray listed;
 		string continuation;
 		TimePoint last;
 		for( auto p = r.Stops.rbegin(); p!=r.Stops.rend(); ++p ){
 			let& stop = *p;
-			if( stop.Unknown || (before && stop.Start>=*before) )
+			if( stop.Unknown )
 				continue;
 			let end = stop.End.value_or( std::max(r.Now, stop.Start) );
 			let small = end-stop.Start<r.Machine.SmallStop;
@@ -130,9 +135,10 @@ namespace Jde::Opc::Gateway{
 			const Oee::Reason* whole{};//the reason of a coding over the whole stop.
 			bool gap{};
 			auto covered = stop.Start;
-			for( let& coding : r.CodingRows ){
-				if( coding.Value.End<=stop.Start || coding.Value.Start>=end )
-					continue;
+			//A machine's codings don't overlap and are read by start, so their ends are in order too:  those over the stop are a run.
+			let first = std::ranges::partition_point( r.CodingRows, [&]( const OeeCodingRow& c ){ return c.Value.End<=stop.Start; } );
+			for( auto c = first; c!=r.CodingRows.end() && c->Value.Start<end; ++c ){
+				let& coding = *c;
 				gap = gap || coding.Value.Start>covered;
 				covered = std::max( covered, coding.Value.End );
 				let reason = r.Reason( coding.Value.ReasonId );
@@ -142,10 +148,10 @@ namespace Jde::Opc::Gateway{
 			}
 			gap = gap || covered<end;
 			let uncoded = !small && gap && !coded;
-			if( uncodedOnly && !uncoded )
+			if( page.UncodedOnly && !uncoded )
 				continue;
 			if( listed.size()==limit ){
-				continuation = Str::Encode64( Ƒ("{}|{}", key, ticks(last)), true );
+				continuation = Str::Encode64( Ƒ("{}|{}", page.Key, ticks(last)), true );
 				break;
 			}
 			listed.emplace_back( jobject{
@@ -154,21 +160,25 @@ namespace Jde::Opc::Gateway{
 			} );
 			last = stop.Start;
 		}
-		return OeeQL::Trim( q, jobject{ {"stops", move(listed)}, {"continuation", continuation.empty() ? jvalue{} : jvalue{move(continuation)}} } );
+		return q.TrimColumns( jobject{ {"stops", move(listed)}, {"continuation", continuation.empty() ? jvalue{} : jvalue{move(continuation)}} } );
 	}
 
 	Ω losses( const QL::TableQL& q, const OeeRead& r )ι->jvalue{
 		jarray y;
 		for( let& loss : Oee::Losses(r.Machine, r.History(), r.Schedule.get(), r.Range.Start, r.Range.End) ){
 			let kind = loss.Kind==Oee::ELoss::Small ? "small" : loss.Kind==Oee::ELoss::Uncoded ? "uncoded" : "reason";
-			y.emplace_back( OeeQL::Trim(q, jobject{ {"kind", kind}, {"reason", OeeQL::ReasonJson(loss.Cause ? &*loss.Cause : nullptr)}, {"ms", ms(loss.Time)}, {"stops", loss.Stops} }) );
+			y.emplace_back( q.TrimColumns(jobject{ {"kind", kind}, {"reason", OeeQL::ReasonJson(loss.Cause ? &*loss.Cause : nullptr)}, {"ms", ms(loss.Time)}, {"stops", loss.Stops} }) );
 		}
 		return y;
 	}
 
 	Ω timeline( const QL::TableQL& q, const OeeRead& r, const OeeMachineRow& machine, SL sl )ε->jvalue{
+		//The planned band walks the calendar a day at a time over the whole range, whatever the rows.
+		let days = ( r.Range.End-r.Range.Start )/std::chrono::days{ 1 };
+		REFUSE_IF( r.Schedule && (uint)days>r.Limit, "{} to {} is {} days of the calendar, more than readLimit, {}:  narrow the range.", OeeQL::Iso(r.Range.Start), OeeQL::Iso(r.Range.End), days, r.Limit );
 		let drawn = Oee::Timeline( r.Machine, r.History(), r.Schedule.get(), r.Range.Start, r.Range.End );
 		REFUSE_IF( drawn.Segments.size()>r.Limit, "{} to {} is {} segments, more than readLimit, {}:  narrow the range.", OeeQL::Iso(r.Range.Start), OeeQL::Iso(r.Range.End), drawn.Segments.size(), r.Limit );
+		REFUSE_IF( drawn.Planned.size()>r.Limit, "{} to {} is {} planned occurrences, more than readLimit, {}:  narrow the range.", OeeQL::Iso(r.Range.Start), OeeQL::Iso(r.Range.End), drawn.Planned.size(), r.Limit );
 		jarray planned;
 		for( let& occurrence : drawn.Planned )
 			planned.emplace_back( Calendar::ToJson(occurrence) );
@@ -182,7 +192,7 @@ namespace Jde::Opc::Gateway{
 				{"reason", OeeQL::ReasonJson(s.Cause ? &*s.Cause : nullptr)}, {"small", s.Small}, {"uncoded", s.Uncoded}, {"coding", move(coding)}
 			} );
 		}
-		return jarray{ OeeQL::Trim(q, jobject{ {"machine", machineJson(machine)}, {"planned", move(planned)}, {"segments", move(segments)} }) };
+		return jarray{ q.TrimColumns(jobject{ {"machine", machineJson(machine)}, {"planned", move(planned)}, {"segments", move(segments)} }) };
 	}
 
 	//`row`:  the table's now, whose `processed` an engine since ended has moved.
@@ -200,34 +210,18 @@ namespace Jde::Opc::Gateway{
 			state = why.empty() ? "waiting" : "blocked";
 		}
 		let processed = live ? optional<TimePoint>{ live->Processed } : row.Processed;
-		return OeeQL::Trim( q, jobject{
+		return q.TrimColumns( jobject{
 			{"machine", machineJson(row)}, {"enabled", oee.Enabled()},
 			{"calendar", !row.Calendar ? "none" : Calendar::Client::Calendars::Find(*row.Calendar) ? "found" : "missing"}, {"calendarId", row.Calendar ? jvalue{*row.Calendar} : jvalue{}},
 			{"processed", processed ? jvalue{OeeQL::Iso(*processed)} : jvalue{}}, {"engine", move(state)}, {"why", why.empty() ? jvalue{} : jvalue{move(why)}},
 			{"state", live ? jvalue{Oee::ToString(live->State)} : jvalue{}}
 		} );
 	}
-	//Read on the machine's group, as a read of its history asks it.  `lenient`, the status read's:  past the group's rights, a
-	//gateway without its historian, or one that doesn't host the group, is what the status says.
-	Ω gate( const OeeMachineRow& row, bool lenient, UserPK user, SL sl )ε->void{
-		try{
-			HistHost::Instance().Gate( row.Group, Access::ERights::Read, false, user, sl );
-		}
-		catch( Exception& e ){
-			if( !lenient || (e.HttpStatus()!=EHttpStatus::ServiceUnavailable && e.HttpStatus()!=EHttpStatus::NotFound) )
-				throw;
-			e.SetLevel( ELogLevel::NoLog );
-		}
-	}
-
 	α OeeQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			let sl = _sl;
 			let& name = _query.JsonName;
-			if( let inner = nested(_query); inner || !isRead(name) ){
-				let table = inner ? inner : &_query;
-				REFUSE( "'{}' takes no generic query:  the OEE engine's rows are read through oee, oeeStops, oeeLosses and oeeTimeline, each past its machine's group's gate.", table->JsonName );
-			}
+			_query.CheckVariables( sl );//before an argument is read:  an unbound one would read as absent.
 			let machineId = _query.TryNumber<OeeMachinePK>( "machine" );
 			REFUSE_IF( !machineId, "{} needs machine, an oee_machines id.", name );
 			auto& oee = OeeHost::Instance();
@@ -236,13 +230,13 @@ namespace Jde::Opc::Gateway{
 				AppClient()->Acl()->Test( "gateway", "histGroups", Access::ERights::Read, UserPK(), sl );//the table's, before a caller learns of an id.
 				throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Machine {} not found.", *machineId };
 			}
-			if( name==StatusCommand ){
-				gate( machine->Row, true, UserPK(), sl );
-				auto rows = co_await Any( SelectOeeMachines({.Key=DB::Key{(uint)*machineId}, .IncludeDeleted=true}) );
+			if( name==StatusCommand ){//Read on the group's own row, which HistHost::Gate names only for a group it hosts:  past it, a gateway without its historian, or one that doesn't host the group, is what the status says.
+				auto [groups, rows] = co_await All( SelectHistGroups({.Key=DB::Key{(uint)machine->Row.Group}, .IncludeDeleted=true}), SelectOeeMachines({.Key=DB::Key{(uint)*machineId}, .IncludeDeleted=true}) );
+				AppClient()->Acl()->Test( "gateway", "histGroups", groups.empty() ? string{} : groups.front().Guid, Access::ERights::Read, UserPK(), sl );
 				Resume( status(_query, *machine, rows.empty() ? machine->Row : rows.front()) );
 				co_return;
 			}
-			gate( machine->Row, false, UserPK(), sl );
+			HistHost::Instance().Gate( machine->Row.Group, Access::ERights::Read, false, UserPK(), sl );
 			oee.TestEnabled( sl );
 			let signals = ToSignals( machine->Signals );
 			OeeRead r{
@@ -252,13 +246,37 @@ namespace Jde::Opc::Gateway{
 				.Now={}, .Limit=HistQL::ReadLimit(), .Rows={}, .Stops={}, .CodingRows={}, .Codings={}, .Reasons={}
 			};
 			REFUSE_IF( r.Range.Start>=r.Range.End, "start, {}, must be before end, {}.", OeeQL::Iso(r.Range.Start), OeeQL::Iso(r.Range.End) );
+			let page = name==StopsCommand ? optional<StopsPage>{ stopsPage(_query, *machineId, r.Range, sl) } : nullopt;
 			//The engine's unwritten rows before the table's:  a row written between the two is then in both, and the table's is kept.
 			let engine = oee.Engine( *machineId );
 			let live = engine ? engine->State() : optional<Oee::LiveState>{};
 			let clock = oee.Time();
 			r.Now = live ? live->At : clock ? clock->Now() : Clock::now();
-			for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectStopsOver(*machineId, r.Range.Start, r.Range.End))) )
-				r.Stops.push_back( OeeSql::ToStop(row) );
+			auto stopsSql = OeeSql::SelectStopsOver( *machineId, r.Range.Start, page && page->Before ? std::min(r.Range.End, *page->Before) : r.Range.End );
+			auto take = [&]( const vector<DB::Row>& stopRows, const vector<DB::Row>& reasonRows ){
+				for( let& row : stopRows )
+					r.Stops.push_back( OeeSql::ToStop(row) );
+				for( let& row : reasonRows )
+					r.Reasons.push_back( OeeSql::ToReason(row) );
+			};
+			if( page ){//with the machine's row:  with no engine to run an open stop on, it ends where the rows do, the table's processed, which the host's copy lags.
+				auto [stopRows, reasonRows, machines] = co_await All( DS()->SelectAsync(move(stopsSql)), DS()->SelectAsync(OeeSql::SelectReasons()), SelectOeeMachines({.Key=DB::Key{(uint)*machineId}, .IncludeDeleted=true}) );
+				take( stopRows, reasonRows );
+				if( !live && machines.size() && machines.front().Processed )
+					r.Now = *machines.front().Processed;
+			}
+			else{
+				auto [stopRows, reasonRows, intervalRows] = co_await All( DS()->SelectAsync(move(stopsSql)), DS()->SelectAsync(OeeSql::SelectReasons()), DS()->SelectAsync(OeeSql::SelectIntervalRows(*machineId, r.Range)) );
+				take( stopRows, reasonRows );
+				for( let& row : intervalRows )
+					r.Rows.push_back( OeeSql::ToInterval(row) );
+				if( live ){
+					for( let& row : live->Rows ){
+						if( row.Width>Duration::zero() && row.Start<r.Range.End && row.End()>r.Range.Start && (r.Rows.empty() || row.Start>=r.Rows.back().End()) )
+							r.Rows.push_back( row );
+					}
+				}
+			}
 			auto coded = r.Range;//with the stops that overlap it, whole:  a stop is listed with every coding over it.
 			for( let& stop : r.Stops ){
 				coded.Start = std::min( coded.Start, stop.Start );
@@ -268,23 +286,11 @@ namespace Jde::Opc::Gateway{
 				r.CodingRows.push_back( OeeSql::ToCoding(row) );
 				r.Codings.push_back( r.CodingRows.back().Value );
 			}
-			for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectReasons())) )
-				r.Reasons.push_back( OeeSql::ToReason(row) );
-			if( name!=StopsCommand ){
-				for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectIntervalRows(*machineId, r.Range))) )
-					r.Rows.push_back( OeeSql::ToInterval(row) );
-				if( live ){
-					for( let& row : live->Rows ){
-						if( row.Width>Duration::zero() && row.Start<r.Range.End && row.End()>r.Range.Start && (r.Rows.empty() || row.Start>=r.Rows.back().End()) )
-							r.Rows.push_back( row );
-					}
-				}
-			}
 			jvalue y;
 			if( name==FiguresCommand )
 				y = figures( _query, r, sl );
 			else if( name==StopsCommand )
-				y = stops( _query, r, machine->Row, sl );
+				y = stops( _query, r, machine->Row, *page );
 			else if( name==LossesCommand )
 				y = losses( _query, r );
 			else
@@ -307,29 +313,6 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 	α OeeQL::Iso( TimePoint t )ι->string{ return ToIsoString<Ticks>( t ); }
-	α OeeQL::Trim( const QL::TableQL& q, const jobject& full )ι->jobject{
-		jobject y;
-		for( let& column : q.Columns ){
-			if( let p = full.if_contains(column.JsonName); p )
-				y[column.JsonName] = *p;
-		}
-		for( let& table : q.Tables ){
-			let p = full.if_contains( table.JsonName );
-			if( !p )
-				continue;
-			if( let o = p->if_object(); o )
-				y[table.JsonName] = Trim( table, *o );
-			else if( let a = p->if_array(); a ){
-				jarray rows; rows.reserve( a->size() );
-				for( let& row : *a )
-					rows.emplace_back( row.is_object() ? jvalue{Trim(table, row.get_object())} : row );
-				y[table.JsonName] = move( rows );
-			}
-			else
-				y[table.JsonName] = *p;
-		}
-		return y;
-	}
 	α OeeQL::ReasonJson( const Oee::Reason* reason )ι->jvalue{
 		return reason ? jvalue{ jobject{{"id", reason->Id}, {"name", reason->Name}, {"category", Oee::ToString(reason->Category)}} } : jvalue{};
 	}

@@ -1,4 +1,5 @@
 #pragma once
+#include <jde/fwk/co/CoMutex.h>
 #include "OeeMachineHost.h"
 
 namespace Jde::Opc::Gateway{
@@ -45,6 +46,8 @@ namespace Jde::Opc::Gateway{
 		//Before its statement, whose proc takes the machine's stops, intervals, codings and signals with it:  its engine ends.
 		α MachinePurging( OeeMachinePK id )ι->AnyVoidTask;
 		α MachinePurged( OeeMachinePK id )ι->void;
+		//codeOee's and uncodeOee's, held over a coding's checks and its write:  this gateway alone writes oee_codings.
+		α Codings()ι->CoMutex&{ return _codings; }
 		static constexpr Duration RetryInterval{ 30s };//how soon a machine whose start or write failed is started again.
 	private:
 		//Read:  the MachineChanged whose rows these are.  Offset:  the source offset the next engine goes live with, a takeover's.
@@ -69,5 +72,6 @@ namespace Jde::Opc::Gateway{
 		Duration _settle{ 5s };
 		bool _configured{}, _stopped{};
 		uint _reads{};//MachineChanged's, so an older read that finishes last changes nothing.
+		CoMutex _codings;
 	};
 }

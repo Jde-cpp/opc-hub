@@ -845,6 +845,21 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( stops[1].Code, optional<int64_t>{7} );
 		EXPECT_EQ( codings(), 1u ) << "a recompute never touches a coding";
 		EXPECT_EQ( replaced->State()->State, Oee::EState::Stopped );
+
+		//no engine to run it on:  the open stop ends where the rows do, the table's processed, not at now (reviews-issue/402-oee-reads.md #17).
+		WaitIdle( replaced );
+		Mutate( "deleteOeeMachine( id:$id )", {{"id", id}} );
+		ASSERT_TRUE( WaitUntil([&]{ return !Oee().Engine(id); }, 15s) );
+		let processed = Processed( id );
+		ASSERT_TRUE( processed );
+		let openMs = [&]{
+			let page = Mutate( "oeeStops( machine:$id, start:$start, end:$end ){ stops{ start open ms } }", {{"id", id}, {"start", Iso(t0)}, {"end", Iso(*processed+1h)}} ).as_object();
+			let& listed = Json::AsArray( page, "stops" );
+			return listed.empty() || !Json::AsBool(listed[0].as_object(), "open") ? -1.0 : Number( listed[0].as_object(), "ms" );
+		};
+		EXPECT_EQ( openMs(), (double)duration_cast<milliseconds>(*processed-(t0+165s)).count() );
+		_clock->Advance( Settle() );
+		EXPECT_EQ( openMs(), (double)duration_cast<milliseconds>(*processed-(t0+165s)).count() ) << "not wall time";
 	}
 	//recomputeOee between engines, over a span a stop spans the start of (reviews-issue/401-oee-rebuilds.md #2, #9, #15).  `running`
 	//on the Total signal asks no recompute, only a State reading it;  on the State it becomes [2], which a Boolean never is, so the
@@ -998,6 +1013,25 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NE( Refused([&]{ Mutate( "oeeStops{ stops{ id } }" ); }).find("machine"), string::npos );
 		EXPECT_EQ( Status([&]{ Mutate( "oeeLosses( machine:999999, start:$start, end:$end ){ ms }", {{"start", Iso(t0)}, {"end", Iso(t0+8min)}} ); }), EHttpStatus::NotFound );
 		EXPECT_NE( Refused([&]{ figures( "PT1S" ); }).find("minute"), string::npos );
+		{//a calendar walked past readLimit days is refused before the walk (reviews-issue/402-oee-reads.md #1, #2).
+			jobject ages{ {"start", "1601-01-02T00:00:00Z"}, {"end", "9999-12-30T00:00:00Z"} };
+			for( sv by : {"day", "week", "month", "shift"} ){
+				auto vars = ages;
+				vars["by"] = by;
+				EXPECT_NE( Refused([&]{ read( figuresQL, vars ); }).find("readLimit"), string::npos ) << by;
+			}
+			EXPECT_NE( Refused([&]{ read( "oeeTimeline( machine:$id, start:$start, end:$end ){ planned{ start } }", ages ); }).find("readLimit"), string::npos );
+		}
+		EXPECT_NE( Refused([&]{ read( "codeOee( start:$start, end:$end, reason:1 ){ id }" ); }).find("needs machine"), string::npos ) << "a BadRequest, not a 500 (#3)";
+		EXPECT_NE( Refused([&]{ Mutate( R"(uncodeOee( id:"5" ){ id })" ); }).find("needs id"), string::npos );
+		EXPECT_NE( Refused([&]{ read( "oeeStops( machine:$id, start:$start, end:$end, uncoded:$uncodd ){ stops{ id } }" ); }).find("uncodd"), string::npos ) << "an unbound variable isn't an absent argument (#16)";
+		EXPECT_NE( Refused([&]{ read( "codeOee( machine:$id, start:$start, end:$end, reason:1, comment:$coment ){ id }" ); }).find("coment"), string::npos );
+		{//the column's 2048 are characters:  a three-byte one counts once (#8).
+			string comment;
+			for( uint i=0; i<2049; ++i )
+				comment += "\xe8\xaa\x9e";
+			EXPECT_NE( Refused([&]{ read( "codeOee( machine:$id, start:$start, end:$end, reason:1, comment:$comment ){ id }", {{"comment", comment}} ); }).find("2049 characters"), string::npos );
+		}
 
 		constexpr sv stopsQL{ "oeeStops( machine:$id, start:$start, end:$end, limit:$limit, continuation:$continuation, uncoded:$uncoded ){ continuation stops{ id start end ms small open code uncoded reason{ id name category } codings{ id start end comment userName reason{ name } } machine{ id name } } }" };
 		let page = [&]( jvalue limit, jvalue continuation, jvalue uncoded ){ return read( stopsQL, {{"limit", move(limit)}, {"continuation", move(continuation)}, {"uncoded", move(uncoded)}} ).as_object(); };
@@ -1155,9 +1189,16 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		EXPECT_EQ( uncodedStops(), 1u ) << "nothing was coded past the gate";
 
+		//a calendar the gateway no longer holds plans every minute, refuses `by: shift`, and the status says which (spec *Calendars*).
+		AppClient()->QuerySync<jvalue>( Ƒ("deleteCalendar( id:{} )", calendar), {} );
+		ASSERT_TRUE( WaitUntil([&]{ return !Calendar::Client::Calendars::Find(calendar); }, 15s) ) << "a deleted calendar leaves the cache";
+		EXPECT_EQ( Json::AsSV(Mutate(statusQL, {{"id", id}}).as_object(), "calendar"), "missing" );
+		EXPECT_NE( Refused([&]{ figures( "shift" ); }).find("no calendar"), string::npos );
+		EXPECT_EQ( Number(figures(nullptr)[0].as_object(), "planned"), 480000 ) << "every minute of the eight";
+
 		Mutate( "updateOeeMachine( id:$id, calendarId:$calendar )", {{"id", id}, {"calendar", nullptr}} );
 		EXPECT_NE( Refused([&]{ figures( "shift" ); }).find("no calendar"), string::npos );
-		EXPECT_EQ( figures("day").size(), 1u ) << "its days begin at midnight UTC:  " << Iso( t0 );
+		EXPECT_EQ( figures("day").size(), floor<days>(t0)==floor<days>(t0+8min-1us) ? 1u : 2u ) << "its days begin at midnight UTC:  " << Iso( t0 );
 		EXPECT_EQ( Json::AsSV(Mutate(statusQL, {{"id", id}}).as_object(), "calendar"), "none" );
 	}
 

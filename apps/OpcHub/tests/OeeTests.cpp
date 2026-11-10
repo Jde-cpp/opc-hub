@@ -23,7 +23,7 @@ namespace Jde::Opc::Hub::Tests{
 		catch( const Exception& e ){
 			EXPECT_EQ( e.HttpStatus(), EHttpStatus::NotFound ) << e.what();
 		}
-		try{//HubQL's query ladder calls Gateway::CustomQuery, whose OeeQLAwait refuses the engine's tables a generic select (#402).
+		try{//the engine's tables refuse a generic select by their meta's noSelect, at whatever ladder reaches SelectAwait (#402).
 			Gateway::AppClient()->QuerySync<jarray>( R"(oeeIntervals{ id })", {} );
 			FAIL() << "a generic select of the engine's table was answered";
 		}

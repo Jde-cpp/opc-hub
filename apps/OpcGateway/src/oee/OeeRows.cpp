@@ -15,8 +15,9 @@ namespace Jde::Opc::Gateway{
 	Ω name( sv table )ε->string{ return GetViewPtr( table )->SqlName(); }
 	//ms is milliseconds and start UA ticks, a hundred nanoseconds.  The factor is a long parameter:  SQL Server makes ms an int,
 	//and an int times the literal 10000 overflows from a 4-minute row.
-	Ω intervalsOver( OeeMachinePK machine, Oee::Span span, sv columns, sv order )ε->DB::Sql{
-		return { Ƒ("select {} from {} where oee_machine_id=? and start<=? and start+ms*?>?{}", columns, name(OeeTable::Intervals), order), {DB::Value{(uint)machine}, OeeTicks(span.End), DB::Value{(_int)10000}, OeeTicks(span.Start)} };
+	//`before`:  how a row's start compares to the span's end, < or <=.
+	Ω intervalsOver( OeeMachinePK machine, Oee::Span span, sv columns, sv order, sv before="<=" )ε->DB::Sql{
+		return { Ƒ("select {} from {} where oee_machine_id=? and start{}? and start+ms*?>?{}", columns, name(OeeTable::Intervals), before, order), {DB::Value{(uint)machine}, OeeTicks(span.End), DB::Value{(_int)10000}, OeeTicks(span.Start)} };
 	}
 	Ω fromMs( uint32 ms )ι->Duration{ return milliseconds{ ms }; }
 	Ω toMs( Duration d )ι->uint32{ return (uint32)std::max<int64_t>( std::chrono::round<milliseconds>(d).count(), 0 ); }
@@ -148,7 +149,7 @@ namespace Jde::Opc{
 	}
 	α Gateway::OeeSql::ToTime( const DB::Row& r, uint i )ι->TimePoint{ return ticks( r, i ); }
 	α Gateway::OeeSql::SelectIntervalRows( OeeMachinePK machine, Oee::Span span )ε->DB::Sql{
-		return { Ƒ("select start, ms, run, stop, unknown, total, good, reject from {} where oee_machine_id=? and start<? and start+ms*?>? order by start", name(OeeTable::Intervals)), {DB::Value{(uint)machine}, OeeTicks(span.End), DB::Value{(_int)10000}, OeeTicks(span.Start)} };
+		return intervalsOver( machine, span, "start, ms, run, stop, unknown, total, good, reject", " order by start", "<" );
 	}
 	α Gateway::OeeSql::ToInterval( const DB::Row& r )ι->Oee::Interval{
 		return { .Start=ticks(r, 0), .Width=fromMs(r.Get<uint32>(1)), .Run=fromMs(r.Get<uint32>(2)), .Stop=fromMs(r.Get<uint32>(3)), .Unknown=fromMs(r.Get<uint32>(4)), .Total=r.Get<double>(5), .Good=r.Get<double>(6), .Reject=r.Get<double>(7) };

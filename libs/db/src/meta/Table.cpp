@@ -80,6 +80,7 @@ namespace Jde::DB{
 		Operations{ Json::FindArray(o, "ops") ? Access::ToRights(Json::AsArray(o, "ops")) : DefaultOps },
 		NaturalKeys{ getNaturalKeys(o) },
 		PurgeProcName{ o.contains("purgeProc") ? string{o.at("purgeProc").as_string()} : string{} },
+		NoSelect{ Json::FindString(o, "noSelect").value_or(string{}) },
 		Extends{ o.contains("extends") ? ms<Table>(Json::AsString(o,"extends")) : nullptr }
 	{}
 	Table::~Table()=default;
