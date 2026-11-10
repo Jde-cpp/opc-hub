@@ -189,7 +189,8 @@ function( sync=false )
 		introspection: [
 			"introspection/serverConnection.jsonnet",
 			"introspection/search.jsonnet",
-			"introspection/hist.jsonnet"
+			"introspection/hist.jsonnet",
+			"introspection/oee.jsonnet"
 		]
 	},
 	web:{

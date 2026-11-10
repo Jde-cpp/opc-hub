@@ -29,6 +29,10 @@ namespace Jde::Opc::Gateway{
 		α HolderOf( HistGroupPK group )Ι->optional<Machine>;//the machine over a group, a deleted one too:  its row holds the group.
 		α UserOf( HistGroupNodePK node )Ι->optional<Machine>;//a machine with a signal that names the member.
 		α Engine( OeeMachinePK id )Ι->sp<OeeMachineHost>;//none for a machine that isn't running.
+		//recomputeOee's (spec *The engine*):  the machine's rows over the span made again from the group's history, as a late record
+		//has them made (OeeMachineHost).  Queued:  the rebuild runs after the machine's writes.  NotFound for no machine, and a
+		//BadRequest for one that isn't running, saying why, after TestEnabled.
+		α Recompute( OeeMachinePK id, Oee::Span span, SRCE )ε->void;
 
 		//OeeMAwait's:  the live side of each table edit, lazy as HistHost's are.
 		//Seeds `processed` with `from` to the second, now when none, and holds the row.
@@ -41,7 +45,8 @@ namespace Jde::Opc::Gateway{
 		α MachinePurged( OeeMachinePK id )ι->void;
 		static constexpr Duration RetryInterval{ 30s };//how soon a machine whose start or write failed is started again.
 	private:
-		struct Entry final{ Machine Rows; sp<OeeMachineHost> Engine; Hist::IClock::TimerId Timer{}; uint Serial{}; uint Read{}; };//Read:  the MachineChanged whose rows these are.
+		//Read:  the MachineChanged whose rows these are.  Offset:  the source offset the next engine goes live with, a takeover's.
+		struct Entry final{ Machine Rows; sp<OeeMachineHost> Engine; Hist::IClock::TimerId Timer{}; uint Serial{}; uint Read{}; Duration Offset{}; };
 		α Loading( AnyVoidAwait& await )ι->VoidTask;
 		//Why the rows can't run, empty when they can.
 		α Blocked( const Machine& machine )Ι->string;
@@ -51,6 +56,9 @@ namespace Jde::Opc::Gateway{
 		//`serial`:  the entry's when this was asked for, so an edit or a stop since leaves it nothing to do.
 		α Launch( OeeMachinePK id, uint serial )ι->VoidTask;
 		α Failed( OeeMachinePK id, const OeeMachineHost* host, string why )ι->void;
+		//A rebuild that is a restart (OeeMachineHost::Takeover):  the engine ends and its writes are waited for, `processed` is set
+		//back to `from`, and another starts at once with `offset`, so the live state is re-derived from the history.
+		α Rebuild( OeeMachinePK id, const OeeMachineHost* host, TimePoint from, Duration offset, string why )ι->VoidTask;
 
 		mutable std::mutex _mutex;
 		flat_map<OeeMachinePK,Entry> _machines;

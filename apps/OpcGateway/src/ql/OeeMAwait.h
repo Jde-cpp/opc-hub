@@ -17,8 +17,15 @@ namespace Jde::Opc::Gateway{
 	//before the statement.  createOeeMachine takes `from`, a time of no column, where the engine starts:  now when absent, and
 	//never after it.  A signal's create or update answers `warnings`, a list:  a counter whose member has a deviation band,
 	//and a member whose MinTimeInterval is past `settle`.  Every refusal is a BadRequest;  a row that isn't there is NotFound.
+	//A signal's update that changes its `running` or `ratePeriod`, and a machine's that changes its `idleTimeout`, the engine's
+	//inputs, answer `recompute: true` with a warning that says so:  the rows written before it were made with the old one.
+	//recomputeOee( machine, start, end ){ machine start end }, a system mutation registered by its whole name (spec *The
+	//engine*, *Authorization*):  the machine's rows over the span made again from the group's history (OeeHost::Recompute),
+	//for the caller with Update on oee_machines and Read on the machine's group through HistHost::Gate.  It answers once the
+	//rebuild is queued, not done.
 	struct OeeMAwait final : QL::IQLTableMutationExe{
 		using base = QL::IQLTableMutationExe;
+		static constexpr sv RecomputeCommand{ "recomputeOee" };
 		OeeMAwait( QL::MutationQL&& m, QL::Creds creds, SRCE )ι:base{ move(m), move(creds), sl }{}
 		Ω IsApplicable( const QL::MutationQL& m )ι->bool;
 		Ω Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;

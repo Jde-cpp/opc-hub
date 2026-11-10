@@ -174,6 +174,11 @@ namespace Jde::Opc::Oee{
 			}
 		}
 		_widths.emplace_back( TimePoint::min(), _config.Width );
+		for( let& [from, width] : opening.Widths ){
+			ValidateWidth( width, sl );
+			THROW_IFSL( from<=_widths.back().first || from<=opening.From, "Opening::Widths must be in time order, after From:  {} follows {}.", ToIsoString(from), ToIsoString(_widths.back().first) );
+			_widths.emplace_back( from, width );
+		}
 		auto& c = _core;
 		let from = opening.From;
 		c.At = c.Since = from;

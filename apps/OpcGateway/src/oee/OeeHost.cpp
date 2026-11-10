@@ -118,6 +118,16 @@ namespace Jde::Opc::Gateway{
 		auto p = _machines.find( id );
 		return p==_machines.end() ? nullptr : p->second.Engine;
 	}
+	α OeeHost::Recompute( OeeMachinePK id, Oee::Span span, SL sl )ε->void{
+		let machine = Find( id );
+		if( !machine )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Machine {} not found.", id };
+		TestEnabled( sl );
+		auto engine = Engine( id );
+		if( !engine )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "Machine '{}' isn't running, so nothing recomputes its rows:  {}.", machine->Row.Name, Blocked(*machine) };
+		engine->Recompute( span );
+	}
 	α OeeHost::Blocked( const Machine& machine )Ι->string{
 		if( machine.Row.Deleted )
 			return "it is deleted";
@@ -202,12 +212,15 @@ namespace Jde::Opc::Gateway{
 					co_return;
 				entry->Rows = machine;
 				if( group && historian ){
-					engine = ms<OeeMachineHost>( machine.Row, inputs(machine), move(group), _clock, OeeMachineHost::Settings{_settle, historian->Config().ReadLimit} );
+					engine = ms<OeeMachineHost>( machine.Row, inputs(machine), move(group), _clock, OeeMachineHost::Settings{_settle, historian->Config().ReadLimit}, std::exchange(entry->Offset, {}) );
 					entry->Engine = engine;
 				}
 			}
-			if( engine )
-				engine->Start( []( OeeMachinePK machine, const OeeMachineHost* host, string why ){ Instance().Failed( machine, host, move(why) ); } );
+			if( engine ){
+				engine->Start(
+					[]( OeeMachinePK machine, const OeeMachineHost* host, string why ){ Instance().Failed( machine, host, move(why) ); },
+					[]( OeeMachinePK machine, const OeeMachineHost* host, TimePoint from, Duration offset, string why ){ Instance().Rebuild( machine, host, from, offset, move(why) ); } );
+			}
 			else if( !machine.Row.Deleted )
 				INFO( "[{}]OEE isn't running:  {}.", machine.Row.Name, blocked );
 		}
@@ -225,6 +238,32 @@ namespace Jde::Opc::Gateway{
 		ended = move( p->second.Engine );
 		p->second.Engine = nullptr;
 		Schedule( id, p->second, RetryInterval );
+	}
+	α OeeHost::Rebuild( OeeMachinePK id, const OeeMachineHost* host, TimePoint from, Duration offset, string why )ι->VoidTask{
+		sp<OeeMachineHost> ended;
+		uint serial;
+		{
+			lg _{ _mutex };
+			auto p = _machines.find( id );
+			if( _stopped || p==_machines.end() || p->second.Engine.get()!=host )
+				co_return;
+			INFO( "[{}]OEE starts again from {}, its rows from there made again from the history:  {}", p->second.Rows.Row.Name, ToIsoString(from), why );
+			if( auto timer = std::exchange(p->second.Timer, 0); timer )
+				_clock->Cancel( timer );
+			serial = ++p->second.Serial;
+			ended = std::exchange( p->second.Engine, nullptr );
+			p->second.Offset = offset;
+		}
+		ended->End();
+		try{
+			co_await ended->Quiet();//its last statement, before the restart deletes what it wrote.
+			co_await Any( DS()->Execute(OeeSql::SetProcessed(id, from)) );
+		}
+		catch( const std::exception& e ){
+			Failed( id, nullptr, Ƒ("`processed` couldn't be set back to {}, so the rows from there stand as they were:  {}", ToIsoString(from), e.what()) );
+			co_return;
+		}
+		Launch( id, serial );
 	}
 
 	α OeeHost::MachineCreated( OeeMachinePK id, optional<TimePoint> from )ι->AnyVoidTask{
