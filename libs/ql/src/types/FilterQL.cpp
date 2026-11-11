@@ -345,7 +345,7 @@ namespace Jde{
 		table.CheckVariables();
 		DB::WhereClause where;
 		for( let& [name,filters] : table.Filter().ColumnFilters ){
-			if( name=="orderBy" || name=="limit" || name=="offset" || name=="skip" )
+			if( Input::IsStatementArg(name) )
 				continue;
 			auto column = FilterColumn( dbTable, name );
 			for( auto& filter : filters ){

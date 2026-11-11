@@ -30,6 +30,7 @@ namespace Jde::QL{
 		α FindTable( sv jsonPluralName )ι->TableQL*;
 		α ExtractTable( sv jsonPluralName )ι->optional<TableQL>;
 		α GetTable( sv jsonPluralName, SRCE )ε->TableQL&;
+		α GroupedChild()Ι->const TableQL*;//the first sub-table, at any depth, that sends groupBy.
 		α IsPlural()Ι->bool{ return DB::Names::IsPlural(JsonName); }
 		α JTableName()Ι->string override{ return JsonName; }
 		α OrderBy()Ε->string;

@@ -27,6 +27,8 @@ namespace Jde::QL{
 		α Limit()Ι->uint{ return TryNumber<uint>( "limit" ).value_or(0); }
 		α Offset()Ι->uint{ auto offset = TryNumber<uint>( "offset" ); return offset ? *offset : TryNumber<uint>( "skip" ).value_or(0); }
 		α OrderByJson()Ι->const vector<std::pair<string,bool>>&;
+		α GroupBy( SRCE )Ε->optional<string>;//the json name of the column a count is answered per value of.
+		Ω IsStatementArg( sv name )ι->bool{ return name=="orderBy" || name=="groupBy" || name=="limit" || name=="offset" || name=="skip"; }//the statement's, not a filter on a column of that name.
 
 		jobject Args;
 		sp<jobject> Variables;

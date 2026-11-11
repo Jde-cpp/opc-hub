@@ -110,6 +110,15 @@ namespace Jde::QL{
 		} );
 		return *_orderBy;
 	}
+	α Input::GroupBy( SL sl )Ε->optional<string>{
+		let groupBy = FindPtr<jvalue>( "groupBy" );
+		if( !groupBy )
+			return {};
+		let name = groupBy->if_string();
+		if( !name || name->empty() )
+			throw Exception{ sl, {ELogTags::QL, 0, EHttpStatus::BadRequest}, "groupBy takes one column's name, not '{}'.", serialize(*groupBy) };
+		return string{ *name };
+	}
 	α Input::ArgString()Ι->string{
 		if( Args.empty() )
 			return {};

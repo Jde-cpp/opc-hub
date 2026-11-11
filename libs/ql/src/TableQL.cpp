@@ -82,6 +82,15 @@ namespace Jde::QL{
 		THROW_IFSL( !y, "Could not find table '{}'.", jsonPluralName );
 		return *y;
 	}
+	α TableQL::GroupedChild()Ι->const TableQL*{
+		for( let& t : Tables ){
+			if( t.Args.contains("groupBy") )
+				return &t;
+			if( let grandchild = t.GroupedChild(); grandchild )
+				return grandchild;
+		}
+		return nullptr;
+	}
 
 	α ColumnQL::QLType( const DB::Column& column, SL sl )ε->string{
 		string qlTypeName = "ID";

@@ -110,6 +110,17 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( TestInput{""}.Offset(), 0u );
 	}
 
+	//groupBy names one column:  a string, a variable's included, and anything else is refused rather than read as no grouping.
+	TEST( InputTests, GroupBy ){
+		EXPECT_EQ( TestInput{R"({groupBy: "itemType"})"}.GroupBy(), optional<string>{"itemType"} );
+		TestInput variable{ "{groupBy: $by}", jobject{{"by","attributes"}} };
+		EXPECT_EQ( variable.GroupBy(), optional<string>{"attributes"} );
+		EXPECT_EQ( TestInput{"{limit: 10}"}.GroupBy(), nullopt );
+		EXPECT_THROW( TestInput{R"({groupBy: ["itemType","attributes"]})"}.GroupBy(), Exception );
+		EXPECT_THROW( TestInput{R"({groupBy: ""})"}.GroupBy(), Exception );
+		EXPECT_THROW( TestInput{"{groupBy: null}"}.GroupBy(), Exception );
+	}
+
 	TEST( InputTests, FindKey ){
 		EXPECT_TRUE( TestInput{"{id: 42}"}.FindKey()->IsPK() );
 		EXPECT_EQ( TestInput{"{id: 42}"}.GetKey().PK(), 42u );

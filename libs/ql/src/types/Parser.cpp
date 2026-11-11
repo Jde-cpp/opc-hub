@@ -423,6 +423,8 @@ namespace Jde::QL{
 		Next();	//{
 		Next(); //[userCreated]
 		auto table = LoadTable( tableName, vars, schemas, remote || tableName=="logs" );//remote:  the FindView path, so a table these schemas lack resolves none, as a system table does.
+		if( table.Args.contains("groupBy") || table.GroupedChild() )
+			throw Exception{ SRCE_CUR, {ELogTags::QL, 0, EHttpStatus::BadRequest}, "[{}]A subscription takes no groupBy:  it delivers rows, not counts.", name };
 		warnUnknownColumns( table, name );
 		return Subscription{ move(tableName), *type, move(table) };
 

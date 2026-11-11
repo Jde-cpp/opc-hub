@@ -9,6 +9,9 @@ namespace Jde::QL{
 		try{
 			for( auto&& table : _tables ){
 				ASSERT( !_statement || _statement->From.Joins.size() );
+				//a count per value is a top-level collection's:  refused here, before any handler, as a custom query builds its children itself.
+				if( let grouped = table.GroupedChild(); grouped )
+					throw Exception{ _sl, {ELogTags::QL, 0, EHttpStatus::BadRequest}, "[{}]sub-table '{}' takes no groupBy:  a count per value is a top-level collection's.", table.JsonName, grouped->JsonName };
 				optional<jvalue> result;
 				let returnRaw = table.ReturnRaw && _tables.size()==1;
 				auto returnName = table.ReturnName();
