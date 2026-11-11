@@ -1,4 +1,5 @@
 #include "opc.FromServer.h"
+#include <google/protobuf/wire_format_lite.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/NodeId.h>
@@ -153,8 +154,27 @@ namespace Jde::Opc::Gateway{
 	α FromServer::OeeSubscribeAckTrans( const FromServer::OeeStatus& status, RequestId requestId )ι->FromServer::Transmission{
 		return set( requestId, [&status](FromServer::Message& m){ *m.mutable_oee_subscribe_ack()->mutable_status() = status; } );
 	}
-	α FromServer::OeeStatusTrans( const FromServer::OeeStatus& status, RequestId requestId )ι->FromServer::Transmission{
-		return set( requestId, [&status](FromServer::Message& m){ *m.mutable_oee_status() = status; } );
+	//A message field on the wire is its tag, its length and its bytes, so the status is framed with no copy of the proto.
+	α FromServer::OeeStatusTrans( const string& status, RequestId requestId )ι->string{
+		using google::protobuf::io::CodedOutputStream;
+		using google::protobuf::internal::WireFormatLite;
+		let idTag = WireFormatLite::MakeTag( FromServer::Message::kRequestIdFieldNumber, WireFormatLite::WIRETYPE_VARINT );
+		let statusTag = WireFormatLite::MakeTag( FromServer::Message::kOeeStatusFieldNumber, WireFormatLite::WIRETYPE_LENGTH_DELIMITED );
+		let messagesTag = WireFormatLite::MakeTag( FromServer::Transmission::kMessagesFieldNumber, WireFormatLite::WIRETYPE_LENGTH_DELIMITED );
+		let size = (uint32_t)status.size();
+		let message = (uint32_t)( (requestId ? CodedOutputStream::VarintSize32(idTag)+CodedOutputStream::VarintSize32(requestId) : 0)//proto3 leaves a zero out.
+			+ CodedOutputStream::VarintSize32(statusTag)+CodedOutputStream::VarintSize32(size)+size );
+		string y( CodedOutputStream::VarintSize32(messagesTag)+CodedOutputStream::VarintSize32(message)+message, '\0' );
+		auto p = CodedOutputStream::WriteVarint32ToArray( messagesTag, (uint8_t*)y.data() );
+		p = CodedOutputStream::WriteVarint32ToArray( message, p );
+		if( requestId ){
+			p = CodedOutputStream::WriteVarint32ToArray( idTag, p );
+			p = CodedOutputStream::WriteVarint32ToArray( requestId, p );
+		}
+		p = CodedOutputStream::WriteVarint32ToArray( statusTag, p );
+		p = CodedOutputStream::WriteVarint32ToArray( size, p );
+		std::ranges::copy( status, (char*)p );
+		return y;
 	}
 	α FromServer::ToProto( const Hist::Proto::DataValue& v, uint32 slot, bool bound, const ITypes* types )ι->FromServer::HistValue{
 		FromServer::HistValue y;

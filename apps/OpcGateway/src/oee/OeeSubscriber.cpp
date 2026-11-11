@@ -21,19 +21,19 @@ namespace Jde::Opc::Gateway{
 		_live = true;
 		for( let& held : std::exchange(_held, {}) ){
 			if( !_ended )
-				Send( held );
+				Send( *held );
 		}
 		if( auto end = std::exchange(_end, nullopt); end )
 			Ending( end->first, move(end->second) );
 	}
-	α OeeSubscriber::OnStatus( const FromServer::OeeStatus& status )ι->void{
+	α OeeSubscriber::OnStatus( sp<const string> status )ι->void{
 		if( _ended )
 			return;
 		lg _{ _mutex };
 		if( _live )
-			Send( status );
+			Send( *status );
 		else
-			_held.push_back( status );
+			_held.push_back( move(status) );
 	}
 	α OeeSubscriber::OnEnded( EHttpStatus status, string what )ι->void{
 		{
@@ -49,7 +49,7 @@ namespace Jde::Opc::Gateway{
 		if( auto session = _session.lock(); session )
 			session->OeeEnded( shared_from_this(), status, move(what) );
 	}
-	α OeeSubscriber::Send( const FromServer::OeeStatus& status )ι->void{
+	α OeeSubscriber::Send( const string& status )ι->void{
 		if( auto session = _session.lock(); session )
 			session->WriteOee( shared_from_this(), FromServer::OeeStatusTrans(status, _requestId) );
 	}
@@ -102,10 +102,10 @@ namespace Jde::Opc::Gateway{
 			WriteException( move(e), requestId );
 		}
 	}
-	α GatewaySocketSession::WriteOee( sp<OeeSubscriber> subscriber, FromServer::Transmission&& message )ι->void{
+	α GatewaySocketSession::WriteOee( sp<OeeSubscriber> subscriber, string&& message )ι->void{
 		Dispatch( [this, self=SharedFromThis(), subscriber=move(subscriber), message=move(message)]()mutable{
 			if( !subscriber->Ended() )
-				Write( move(message) );
+				IWebsocketSession::Write( move(message) );
 		} );
 	}
 	α GatewaySocketSession::OeeEnded( sp<OeeSubscriber> subscriber, EHttpStatus status, string what )ι->void{

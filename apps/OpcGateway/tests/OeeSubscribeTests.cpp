@@ -5,6 +5,7 @@
 #include "utils/OeeFixture.h"
 #include "utils/GatewayClientSocket.h"
 #include "../src/oee/OeeFeed.h"
+#include "../src/types/proto/opc.FromServer.h"
 
 namespace Jde::Opc::Gateway::Tests{
 	using Web::Client::ClientSocketAwait;
@@ -247,5 +248,21 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( feed->Subscribers(), 0u );
 		EXPECT_THROW( Unsubscribe(subscription), GatewayErrorResponse ) << "the id is free";
 		EXPECT_EQ( Status([&]{ Subscribe( id, ms<OeeHeard>() ); }), EHttpStatus::NotFound ) << "a deleted machine has no live feed";
+	}
+
+	//A push is serialized once and framed by hand for each subscriber:  the bytes are the proto's own, whatever the request id's
+	//and the status's lengths take on the wire.
+	TEST( OeeStatusTransTests, FramedAsTheProtoSerializesIt ){
+		FromServer::OeeStatus status;
+		status.set_state( FromServer::OeeRunning );
+		status.mutable_shift()->set_name( string(200, 's') );
+		let bytes = status.SerializeAsString();
+		for( Jde::RequestId id : {0u, 1u, 300u, 0xffffffffu} ){
+			FromServer::Transmission t;
+			auto& m = *t.add_messages();
+			m.set_request_id( id );
+			*m.mutable_oee_status() = status;
+			EXPECT_EQ( FromServer::OeeStatusTrans(bytes, id), t.SerializeAsString() ) << id;
+		}
 	}
 }

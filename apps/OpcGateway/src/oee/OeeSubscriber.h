@@ -14,10 +14,10 @@ namespace Jde::Opc::Gateway{
 		α Ended()Ι->bool{ return _ended; }
 		α Request()Ι->Jde::RequestId{ return _requestId; }
 		α Live()ι->void;//the ack is written:  what was held goes, and each push from here on goes as it comes.
-		α OnStatus( const FromServer::OeeStatus& status )ι->void;//the feed's.
+		α OnStatus( sp<const string> status )ι->void;//the feed's push, serialized once for all its subscribers.
 		α OnEnded( EHttpStatus status, string what )ι->void;//the feed ended it:  the machine deleted or purged, or OEE stopping.
 	private:
-		α Send( const FromServer::OeeStatus& status )ι->void;
+		α Send( const string& status )ι->void;
 		α Ending( EHttpStatus status, string what )ι->void;
 		wp<GatewaySocketSession> _session;
 		const Jde::RequestId _requestId;
@@ -25,7 +25,7 @@ namespace Jde::Opc::Gateway{
 		std::atomic<bool> _ended{};
 		std::mutex _mutex;
 		bool _live{};
-		vector<FromServer::OeeStatus> _held;//each push, so every one the feed counts reaches the socket.
+		vector<sp<const string>> _held;//each push, so every one the feed counts reaches the socket.
 		optional<std::pair<EHttpStatus,string>> _end;//the feed's, before the ack.
 	};
 }

@@ -36,7 +36,7 @@ namespace Jde::Opc::Gateway{
 		//under its id, unless a HistUnsubscribe or the close ended it first.
 		α HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void;
 		//A live OEE subscription's push, written on the strand unless it has ended by then, as a historian subscription's is.
-		α WriteOee( sp<OeeSubscriber> subscriber, FromServer::Transmission&& message )ι->void;
+		α WriteOee( sp<OeeSubscriber> subscriber, string&& message )ι->void;//a Transmission's bytes.
 		//The machine's feed ended a live OEE subscription, the machine deleted or purged or OEE stopping:  on the strand, out of
 		//the map and the client told under its id, unless an OeeUnsubscribe or the close ended it first.
 		α OeeEnded( sp<OeeSubscriber> subscriber, EHttpStatus status, string what )ι->void;

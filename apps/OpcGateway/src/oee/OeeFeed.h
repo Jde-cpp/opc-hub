@@ -89,7 +89,7 @@ namespace Jde::Opc::Gateway{
 		std::map<TimePoint,Oee::Stop> _stops;
 		vector<Oee::Coding> _codings;
 		vector<Oee::Reason> _reasons;
-		string _last;//the last status pushed, serialized.
+		sp<const string> _last;//the last status pushed, serialized once for the comparison and every subscriber's send.
 		std::atomic<uint> _pushed{};
 	};
 }

@@ -138,7 +138,7 @@ namespace Jde::Opc::Gateway{
 		_stops.clear();
 		_codings.clear();
 		_reasons.clear();
-		_last.clear();
+		_last.reset();
 	}
 	α OeeFeed::Tick( uint serial )ι->void{
 		bool unread, retry;
@@ -211,7 +211,7 @@ namespace Jde::Opc::Gateway{
 				status = Build( state );
 				if( !subscriber->Ended() ){
 					if( _subscribers.empty() )
-						_last = status.SerializeAsString();
+						_last = Jde::ms<const string>( status.SerializeAsString() );
 					_subscribers.push_back( move(subscriber) );
 					Arm();
 				}
@@ -369,17 +369,16 @@ namespace Jde::Opc::Gateway{
 	α OeeFeed::Push()ι->void{
 		lg sending{ _sendMutex };
 		let state = State();
-		FromServer::OeeStatus status;
+		sp<const string> status;
 		vector<sp<OeeSubscriber>> subscribers;
 		{
 			lg _{ _mutex };
 			if( !_loaded || _subscribers.empty() )
 				return;
-			status = Build( state );
-			auto bytes = status.SerializeAsString();
-			if( bytes==_last )
+			status = Jde::ms<const string>( Build(state).SerializeAsString() );
+			if( _last && *status==*_last )
 				return;
-			_last = move( bytes );
+			_last = status;
 			subscribers = _subscribers;
 			++_pushed;
 		}
