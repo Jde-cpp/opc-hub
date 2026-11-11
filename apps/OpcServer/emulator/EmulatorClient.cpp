@@ -149,6 +149,13 @@ namespace Jde::Opc::Emulator{
 		UA_WriteResponse_clear( &response );
 		Check( sc, Ƒ("write {}", node.ToString()), EOpcLogTags::Client, sl );
 	}
+	α EmulatorClient::ValueType( const NodeId& node, SL sl )ε->const UA_DataType*{
+		UA_NodeId id;
+		Check( UA_Client_readDataTypeAttribute(_ptr, node, &id), Ƒ("{}'s DataType", node.ToString()), EOpcLogTags::Client, sl );
+		let type = UA_findDataTypeWithCustom( &id, UA_Client_getConfig(_ptr)->customDataTypes );
+		UA_NodeId_clear( &id );
+		return type;
+	}
 	α EmulatorClient::CreateSubscription( Duration publishingInterval, SL sl )ε->UA_UInt32{
 		auto request = UA_CreateSubscriptionRequest_default();
 		request.requestedPublishingInterval = std::chrono::duration<double,std::milli>( publishingInterval ).count();

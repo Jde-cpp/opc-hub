@@ -17,16 +17,30 @@ device does, in one process:
 The process values are generated (`Signals`).  The modes are:
 
 - `sine`, `ramp`, `randomWalk`, `counter`, `toggle`;
-- `follow`: a motor lagging towards `ratedRpm` while the device is commanded on, and towards 0 when it is not;
+- `follow`: a motor lagging towards `ratedRpm` while the device's `status` is on, and towards 0 when it is not;
+- `production`: a count that advances by one every `cycle`, give or take `jitter`, while the device's `status` is on,
+  and a `reject` share of those units counted on a second tag too, `rejectTag`;
 - `command`: not generated, subscribed from the OpcServer.
 
 Which tag does what is `/emulator/devices` in the config.
 
-The device clock keeps running while the OpcServer session is down.  A PLC does not freeze because a client left.
+A device's `status` is its bool tag of that name: the run command where it is a `command`, its own value where it is
+a `toggle`.  A device's `stops` list, `{every, for, code}`, holds a generated `status` off from each `every` of the
+device's clock for `for`, the first at `every`, not at 0, and writes `code` to `reasonCode` meanwhile, 0 otherwise.  A
+period that crosses a stop's start or end is cut there, so the counts hold to the stop whatever `period` is; `status`
+and `reasonCode` are still published once a period, and a stop or the run between two that isn't longer than the
+period is warned of at startup.  The stock config counts on pump1 and pump2, and stops pump2 for ten seconds a minute
+with code 1 ([OEE's rig](../../../docs/oee/spec.md#design)).
+
+A device with a `command` tag is off until the first notification of it, or under `-transport=server` its node's
+value, so pump1 counts nothing while the OpcServer's `status` is unknown.
+
+The device clock keeps running while the OpcServer session is down.  A PLC does not freeze because a client left, and
+it holds its last command until the session is back.
 
 | | value |
 |---|---|
-| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 50 units, no database or server) |
+| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 71 units, no database or server) |
 | settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
@@ -72,7 +86,7 @@ The PLC server is the device.  Expect `PLC server on 127.0.0.1:4842 with 'pumps.
 lines with `writes=` counting the local writes and `externalChanges=` the commands clients wrote.  To collect from it:
 
 1. Trust, both ways.  The gateway (hub or standalone) must trust the PLC's certificate - the dev
-   `Opc.Gateway.jsonnet` lists `Jde-Cpp/PlcEmulator/ssl/certs` in `gateway.trustedCertDirs`; an installed one needs
+   [`Opc.Gateway.jsonnet`](../../../apps/OpcGateway/config/Opc.Gateway.jsonnet) lists `Jde-Cpp/PlcEmulator/ssl/certs` in `gateway.trustedCertDirs`; an installed one needs
    the dir added, or the `.pem` copied into its `ssl/servers`.  The PLC trusts the gateway's per-connection
    certificates through `plc.trustedCertDirs`, which names the gateway's and the hub's product dirs.
 2. A `server_connections` row: url `opc.tcp://127.0.0.1:4842`, `certificateUri` `urn:jde:plc-emulator` (the secured
@@ -145,10 +159,18 @@ overrides that beat them.
 | `pubsub` | | the contract - `import` the shared file, never a copy |
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
 | `namespace` | | the device paths' default namespace; absent = the contract's (`pubsub.dataSet.namespace`), so the write and server transports need no `pubsub` block |
-| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another) and `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`) |
+| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)) and `stops[]` (`every`, `for`, `code`) |
 
-Durations are ISO 8601 (`PT30S`).  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`,
-and a non-positive `step` for `randomWalk`/`counter`, at startup, naming the tag.
+Durations are ISO 8601 (`PT30S`).  A key of the wrong kind - `cycle: "2s"`, `reject: "0.05"` - is refused, not read
+as its default.  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`, a non-positive `step`
+for `randomWalk`/`counter`, and for `production` a `cycle` that is not positive, a `jitter` of the `cycle` or more and a
+`reject` outside 0 to 1, at startup, naming the tag.  A stop is refused with a `for` that is not shorter than its
+`every`, with a `code` of 0, and on a device whose `status` is a `command` or missing - the UI's command is not the
+emulator's to hold off.  A device is refused with two tags of one name, a reject tag (`rejectCount` unless `rejectTag`
+says) and a stops list's `reasonCode` included, and with a `command` tag beside a generated `status`, which would
+command nothing.
+
+A production count's reject tag takes the count's `quality` windows, one counter's faults, but not its sensor range.
 
 ## Status codes
 
@@ -235,7 +257,7 @@ Two certificates of its own, and two lists of others':
 | certificate | where | trusted by |
 |---|---|---|
 | login (`http.ssl`, CN `PlcEmulator.debug.webServer`) | `Jde-Cpp/PlcEmulator/ssl/certs/…webServer.PlcEmulator.pem` | the AppServer: its `/access/trustedCertDirs` lists the `PlcEmulator` dir (the dev configs; an installed hub's `config/args/install` lists only the OpcServer's - add this one there); the CN becomes the user |
-| UA pair (`emulator.ssl`, CN `PlcEmulator.opc`, SAN `urn:jde:plc-emulator`) - the client's channel certificate on the OpcServer and, unless `plc.ssl` says otherwise, the PLC server's own | same dir | the OpcServer: the same `trustedCertDirs` entry (again the dev args; the installed ones need it added); the gateway: `gateway.trustedCertDirs` in the dev `Opc.Gateway.jsonnet`, for `-transport=server`.  Both rescan on a failed verify, so a re-issued cert is picked up |
+| UA pair (`emulator.ssl`, CN `PlcEmulator.opc`, SAN `urn:jde:plc-emulator`) - the client's channel certificate on the OpcServer and, unless `plc.ssl` says otherwise, the PLC server's own | same dir | the OpcServer: the same `trustedCertDirs` entry (again the dev args; the installed ones need it added); the gateway: `gateway.trustedCertDirs` in the dev [`Opc.Gateway.jsonnet`](../../../apps/OpcGateway/config/Opc.Gateway.jsonnet), for `-transport=server`.  Both rescan on a failed verify, so a re-issued cert is picked up |
 | the OpcServer's own | `Jde-Cpp/OpcServer/ssl/certs` | this process: `/emulator/trustedCertDirs` in this config, checked before every session (`verifyServerCertificate`) - the anchors, not the OS root store |
 | the gateway's per-connection certificates | `Jde-Cpp/OpcGateway/ssl/certs`, `Jde-Cpp/OpcHub/ssl/certs` | the PLC server: `plc.trustedCertDirs`, on the secured channel and as certificate tokens; a refused one is written to `plc.rejectedCertDir` |
 
@@ -266,8 +288,11 @@ each side; the test configs use it.
 
 ## Tests
 
-`Jde.Opc.PlcEmulator.Tests` (`tests/`): `Signals` (parsing, every refusal, each generator's shape), `Quality` (the
-status names, the §7.38 bit layout, the windows, hold and the sensor range), `ParseDevices`, and `PlcServer` on loopback
+`Jde.Opc.PlcEmulator.Tests` (`tests/`): `Signals` (parsing, every refusal, each generator's shape, `production`'s
+advance, jitter bounds and reject share, a key of the wrong kind), `Quality` (the status names, the §7.38 bit layout,
+the windows and their edges, hold and the sensor range), `ParseDevices` (two tags of one name, a command beside a
+generated `status`), `Device::Sample` (a scheduled stop's timing and code, a period cut at its edges, nothing counted
+while `status` is off or before the first command, a held fault reaching the rejects), and `PlcServer` on loopback
 4851 with the writer aimed at a port nothing reads: the `/emulator/plc` block and its defaults, a secured session with
 a `plc.users` login reading and writing its nodes, anonymous, an issued token (there is no hub in the suite) and a
 stranger's certificate refused, and a command write reaching the emulator's queue.  `ctest -R Jde.Opc.PlcEmulator.Tests`.
@@ -279,8 +304,11 @@ in-process.
 ## Known limits
 
 - `UA_Client_connect` is synchronous: a failed attempt stalls the device clock for up to the 10 s client timeout.
-- A field or tag is written as a `Boolean`, an integer, an enumeration, a `Float` or a `Double`; the pumps contract is
-  all `Double`.  Over the session (`-transport=write`) every number goes as a `Double`.
+- A field or tag is written as a `Boolean`, an integer, an enumeration, a `Float` or a `Double`: a field as the
+  contract's type, a node as its DataType, read at startup on the PLC's own server and at each connect over the
+  session.  A DataType the client has no encoding for, an abstract one or a nodeset's own, goes as the mode's type: a
+  `production` count `UInt32`, the stop code `Int32`, a `toggle` `Boolean`, any other number `Double`.
+- A scheduled stop needs a generated `status`: pump1's, the web's run command, stops only when the UI stops it.
 - Status codes reach the OpcServer over pubsub only - a session-written tag's non-Good status is refused (no
   `StatusWrite`) and its value is written alone.  A Bad reading always carries its last value: the OpcServer's reader
   skips a field without one.  The source timestamp is not held with a held reading, and the historian bits are not

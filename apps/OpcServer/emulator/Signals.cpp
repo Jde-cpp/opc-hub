@@ -5,32 +5,33 @@
 
 #define let const auto
 namespace Jde::Opc::Emulator{
-	constexpr array<sv,7> _modeNames{ "sine", "ramp", "randomWalk", "counter", "toggle", "command", "follow" };
-	α ParseMode( sv s, SL sl )ε->EMode{
-		for( uint i=0; i<_modeNames.size(); ++i ){
-			if( _modeNames[i]==s )
-				return (EMode)i;
-		}
-		THROWSL( "Unknown tag mode '{}' - one of {}.", s, Str::Join(_modeNames, "|") );
-	}
-	α ToString( EMode mode )ι->sv{ return _modeNames[underlying(mode)]; }
+	constexpr array<sv,8> _modeNames{ "sine", "ramp", "randomWalk", "counter", "toggle", "command", "follow", "production" };
 
+	//A key left out takes the member's default, from the header.
 	TagSpec::TagSpec( const jobject& o, SL sl )ε:
-		Name{ Json::AsString(o, "name", sl) },
-		Mode{ ParseMode(Json::FindSV(o, "mode").value_or("counter"), sl) },
-		Min{ Json::FindNumber<double>(o, "min").value_or(0) },
-		Max{ Json::FindNumber<double>(o, "max").value_or(100) },
-		Step{ Json::FindNumber<double>(o, "step").value_or(1) },
-		RatedRpm{ Json::FindNumber<double>(o, "ratedRpm").value_or(1450) },
-		Period{ Json::FindDuration(o, "period").value_or(30s) },
-		Tau{ Json::FindDuration(o, "tau").value_or(3s) },
-		SensorMin{ Json::FindNumber<double>(o, "sensorMin") },
-		SensorMax{ Json::FindNumber<double>(o, "sensorMax") }{
-		THROW_IFSL( Max<=Min && !IsBool() && Mode!=EMode::Follow, "Tag '{}': max ({}) must exceed min ({}).", Name, Max, Min );
+		Name{ Json::AsString(o, "name", sl) }{
+		let owner = Ƒ( "Tag '{}'", Name );
+		let number = [&]( sv key, double dflt ){ return FindKey<double>( o, key, owner, sl ).value_or( dflt ); };
+		let duration = [&]( sv key, Duration dflt ){ return FindKey<Duration>( o, key, owner, sl ).value_or( dflt ); };
+		if( let mode = FindKey<string>(o, "mode", owner, sl); mode )
+			Mode = ParseMode( *mode, sl );
+		Min = number( "min", Min ); Max = number( "max", Max ); Step = number( "step", Step ); RatedRpm = number( "ratedRpm", RatedRpm );
+		Period = duration( "period", Period ); Tau = duration( "tau", Tau ); Cycle = duration( "cycle", Cycle ); Jitter = duration( "jitter", Jitter );
+		Reject = number( "reject", Reject );
+		RejectTag = FindKey<string>( o, "rejectTag", owner, sl ).value_or( RejectTag );
+		SensorMin = FindKey<double>( o, "sensorMin", owner, sl );
+		SensorMax = FindKey<double>( o, "sensorMax", owner, sl );
+		THROW_IFSL( Max<=Min && !IsBool() && Mode!=EMode::Follow && Mode!=EMode::Production, "Tag '{}': max ({}) must exceed min ({}).", Name, Max, Min );
 		THROW_IFSL( Period<=Duration::zero() || Tau<=Duration::zero(), "Tag '{}': period and tau must be positive.", Name );
 		//randomWalk draws from [-Step,Step), which is empty unless Step>0 - absl::Uniform then returns -Step every time - and
 		//counter wraps on `>Max`, so a non-positive step walks down from Min forever.  A config typo either way - it must fail like one.
 		THROW_IFSL( Step<=0 && (Mode==EMode::RandomWalk || Mode==EMode::Counter), "Tag '{}': step ({}) must be positive for mode '{}'.", Name, Step, ToString(Mode) );
+		if( Mode==EMode::Production ){
+			//a jitter of the cycle or more could draw a unit that takes no time, or less.
+			THROW_IFSL( Cycle<=Duration::zero() || Jitter<Duration::zero() || Jitter>=Cycle, "Tag '{}': cycle must be positive and jitter in [0, cycle).", Name );
+			THROW_IFSL( Reject<0 || Reject>1, "Tag '{}': reject ({}) is a share, 0 to 1.", Name, Reject );
+			THROW_IFSL( Reject>0 && (RejectTag.empty() || RejectTag==Name), "Tag '{}': rejectTag names a second tag.", Name );
+		}
 		let quality = o.if_contains( "quality" );
 		THROW_IFSL( quality && !quality->is_array(), "Tag '{}': quality must be an array of windows.", Name );
 		//A command tag is the UI's - the emulator never writes it, so a quality on it would silently do nothing.
@@ -72,15 +73,56 @@ namespace Jde::Opc::Emulator{
 	};
 	struct Follow final : IGenerator{//a drive: first-order lag towards RatedRpm while commanded on, towards 0 when off.
 		Follow( const TagSpec& s )ι:_rated{ s.RatedRpm }, _tau{ seconds(s.Tau) }{}
-		α Next( Duration dt, bool command )ι->double override{
-			let target = command ? _rated : 0.0;
+		α Next( Duration dt, bool on )ι->double override{
+			let target = on ? _rated : 0.0;
 			_value += ( target-_value )*( 1-std::exp(-seconds(dt)/_tau) );
 			return _value;
 		}
 		double _rated, _tau, _value{};
 	};
 
-	α MakeGenerator( const TagSpec& spec )ε->up<IGenerator>{
+	struct Units{ uint Count{}, Rejects{}; };
+	struct ProductionCount final : IGenerator{//a unit every cycle, give or take the jitter, while on;  off, the unit in hand waits where it is.
+		ProductionCount( const TagSpec& s, sp<Units> units )ι:_cycle{ seconds(s.Cycle) }, _jitter{ seconds(s.Jitter) }, _reject{ s.Reject }, _units{ move(units) }, _left{ Draw() }{}
+		α Next( Duration dt, bool on )ι->double override{
+			if( on ){
+				auto t = seconds( dt );
+				for( ; t>=_left; _left = Draw() ){
+					t -= _left;
+					++_units->Count;
+					if( _reject>0 && absl::Bernoulli(Math::BitGen(), _reject) )
+						++_units->Rejects;
+				}
+				_left -= t;
+			}
+			return (double)_units->Count;
+		}
+		α Draw()ι->double{ return _jitter>0 ? _cycle+absl::Uniform<double>( Math::BitGen(), -_jitter, _jitter ) : _cycle; }
+		double _cycle, _jitter, _reject; sp<Units> _units; double _left;
+	};
+	struct ProductionRejects final : IGenerator{
+		ProductionRejects( sp<Units> units )ι:_units{ move(units) }{}
+		α Next( Duration, bool )ι->double override{ return (double)_units->Rejects; }
+		sp<Units> _units;
+	};
+}
+namespace Jde::Opc{
+	α Emulator::ParseMode( sv s, SL sl )ε->EMode{
+		for( uint i=0; i<_modeNames.size(); ++i ){
+			if( _modeNames[i]==s )
+				return (EMode)i;
+		}
+		THROWSL( "Unknown tag mode '{}' - one of {}.", s, Str::Join(_modeNames, "|") );
+	}
+	α Emulator::ToString( EMode mode )ι->sv{ return _modeNames[underlying(mode)]; }
+
+	α Emulator::MakeProduction( const TagSpec& spec )ε->Production{
+		THROW_IF( spec.Mode!=EMode::Production, "Tag '{}': mode {} has no rejects.", spec.Name, ToString(spec.Mode) );
+		auto units = ms<Units>();
+		return { mu<ProductionCount>(spec, units), mu<ProductionRejects>(units) };
+	}
+
+	α Emulator::MakeGenerator( const TagSpec& spec )ε->up<IGenerator>{
 		switch( spec.Mode ){
 		case EMode::Sine: return mu<Sine>( spec );
 		case EMode::Ramp: return mu<Ramp>( spec );
@@ -88,6 +130,7 @@ namespace Jde::Opc::Emulator{
 		case EMode::Counter: return mu<Counter>( spec );
 		case EMode::Toggle: return mu<Toggle>( spec );
 		case EMode::Follow: return mu<Follow>( spec );
+		case EMode::Production: return MakeProduction( spec ).Count;
 		case EMode::Command: THROW( "Tag '{}': command tags are subscribed, not generated.", spec.Name );
 		}
 		THROW( "Tag '{}': unhandled mode {}.", spec.Name, underlying(spec.Mode) );

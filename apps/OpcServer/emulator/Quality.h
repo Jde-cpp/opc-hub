@@ -1,6 +1,20 @@
 #pragma once
+#include <jde/fwk/chrono.h>
 
 namespace Jde::Opc::Emulator{
+	//`key`'s value, none when it is absent;  present as anything else it throws, naming `owner` - a typo has to fail like
+	//one, not read as the default (`cycle: "2s"`).  T:  Duration (ISO 8601), bool, string or a number.
+	Ŧ FindKey( const jobject& o, sv key, sv owner, SRCE )ε->optional<T>;
+
+	//`Length` from `Start`, again every `Every` when set, on a clock that starts with the emulator:  a quality window's and a
+	//device's stop's.  Each owner refuses its own edge cases.
+	struct Schedule{
+		α IsActive( Duration t )Ι->bool;
+		α NextEdge( Duration t )Ι->optional<Duration>;//the first start or end after `t`;  none once a one-shot window has ended.
+		Duration Start{}, Length{};
+		optional<Duration> Every;
+	};
+
 	//A reading's data quality - OPC 10000-4 §7.38.  A StatusCode's layout (Table 176, and Table 177 for the info bits):
 	//  31:30 Severity (00 Good, 01 Uncertain, 10 Bad, 11 reserved) | 27:16 SubCode | 15 StructureChanged | 14 SemanticsChanged
 	//  | 11:10 InfoType (01 = DataValue: the bits below mean something) | 9:8 LimitBits | 7 Overflow | 4:0 historian bits.
@@ -17,14 +31,10 @@ namespace Jde::Opc::Emulator{
 	α StatusNames()ι->std::span<const std::pair<sv,UA_StatusCode>>;//the qualities a device produces about its own readings.
 	α ToString( UA_StatusCode sc )ι->string;//"BadSensorFailure", "UncertainEngineeringUnitsExceeded+High".
 
-	//One scheduled fault: `Status` from `Start` for `Length`, again every `Every` when set.  Times are on the tag's own
-	//clock, which starts with the emulator.
-	struct QualityWindow{
+	//One scheduled fault:  `Status` on its schedule, on the tag's own clock.  `every` may equal `duration`:  on for good from `start`.
+	struct QualityWindow : Schedule{
 		QualityWindow( const jobject& o, sv tagName, SRCE )ε;
-		α IsActive( Duration t )Ι->bool;
 		UA_StatusCode Status{};//composed: the flags are already in it.
-		Duration Start{}, Length{};
-		optional<Duration> Every;
 		bool Hold{};//publish the last reading from before the window - a blind sensor.  Defaults on for Bad and the two LastUsableValue codes.
 		bool HasLimit{};//the window names its own LimitBits, so the sensor range's are not ORed in.
 	};
@@ -43,4 +53,36 @@ namespace Jde::Opc::Emulator{
 		Duration _t{};
 		ELimit _clamp{};//of the last live reading;  a held reading keeps the limit it was taken at.
 	};
+
+	Ŧ FindKey( const jobject& o, sv key, sv owner, SL sl )ε->optional<T>{
+		const auto v = o.if_contains( key );
+		if( !v )
+			return {};
+		optional<T> y;
+		sv kind;
+		if constexpr( std::is_same_v<T,Duration> ){
+			kind = "an ISO 8601 duration, PT30S";
+			if( v->is_string() ){
+				if( auto d = Chrono::TryToDuration(v->get_string(), ELogLevel::Trace, sl); d )
+					y = *d;
+			}
+		}
+		else if constexpr( std::is_same_v<T,bool> ){
+			kind = "true or false";
+			if( v->is_bool() )
+				y = v->get_bool();
+		}
+		else if constexpr( std::is_same_v<T,string> ){
+			kind = "a string";
+			if( v->is_string() )
+				y = string{ v->get_string() };
+		}
+		else{
+			kind = "a number";
+			if( auto n = v->try_to_number<T>(); n )
+				y = *n;
+		}
+		THROW_IFSL( !y, "{}: `{}` is {} - it takes {}.", owner, key, serialize(*v), kind );
+		return y;
+	}
 }

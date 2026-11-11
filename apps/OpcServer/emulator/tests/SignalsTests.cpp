@@ -1,4 +1,4 @@
-//Signals:  TagSpec parsing - defaults, the refusals (#9 among them) - and the six generators' shapes.
+//Signals:  TagSpec parsing - defaults, the refusals (#9 among them) - and the generators' shapes.
 #include "../Signals.h"
 
 #define let const auto
@@ -7,7 +7,7 @@ namespace Jde::Opc::Emulator::Tests{
 	Ω gen( sv json )ε->up<IGenerator>{ return MakeGenerator( spec(json) ); }
 
 	TEST( ParseModeTests, EveryNameRoundTripsAndNothingElseParses ){
-		for( let name : {"sine", "ramp", "randomWalk", "counter", "toggle", "command", "follow"} )
+		for( let name : {"sine", "ramp", "randomWalk", "counter", "toggle", "command", "follow", "production"} )
 			EXPECT_EQ( ToString(ParseMode(name)), name );
 		EXPECT_THROW( ParseMode("triangle"), Exception );
 	}
@@ -18,6 +18,7 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_EQ( s.Mode, EMode::Counter );
 		EXPECT_EQ( s.Min, 0 ); EXPECT_EQ( s.Max, 100 ); EXPECT_EQ( s.Step, 1 ); EXPECT_EQ( s.RatedRpm, 1450 );
 		EXPECT_EQ( s.Period, Duration{30s} ); EXPECT_EQ( s.Tau, Duration{3s} );
+		EXPECT_EQ( s.Cycle, Duration{1s} ); EXPECT_EQ( s.Jitter, Duration::zero() ); EXPECT_EQ( s.Reject, 0 ); EXPECT_EQ( s.RejectTag, "rejectCount" );
 		EXPECT_FALSE( s.IsBool() );
 	}
 	TEST( TagSpecTests, OnlyToggleAndCommandAreBool ){
@@ -93,5 +94,73 @@ namespace Jde::Opc::Emulator::Tests{
 	}
 	TEST( GeneratorTests, CommandTagsHaveNoGenerator ){
 		EXPECT_THROW( gen(R"({"name":"status","mode":"command"})"), Exception );
+	}
+
+	TEST( TagSpecTests, ProductionRefusals ){
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","cycle":"PT0S"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","cycle":"PT2S","jitter":"PT2S"})"), Exception );//a unit could take no time
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","reject":1.5})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","reject":-0.1})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","reject":0.1,"rejectTag":"x"})"), Exception );
+		EXPECT_NO_THROW( spec(R"({"name":"x","mode":"production","min":10,"max":10,"cycle":"PT2S","jitter":"PT1.9S","reject":1})") );//no range
+		EXPECT_THROW( MakeProduction(spec(R"({"name":"x","mode":"counter"})")), Exception );
+	}
+	TEST( TagSpecTests, AKeyOfTheWrongKindIsRefusedNotDefaulted ){//a typo has to fail like one
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","cycle":"2s"})"), Exception );//not ISO 8601:  read as the default, it counted twice as fast
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","jitter":"0.5"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","reject":"0.05"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"sine","period":30})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"follow","tau":"3s"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","min":"1"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":3})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","reject":0.1,"rejectTag":7})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","sensorMax":"1"})"), Exception );
+	}
+	TEST( ProductionTests, AUnitEveryCycle ){
+		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT2S"})" );
+		EXPECT_EQ( g->Next(1s, true), 0 );
+		EXPECT_EQ( g->Next(1s, true), 1 );
+		EXPECT_EQ( g->Next(4s, true), 3 );//a period of two cycles counts both
+		EXPECT_EQ( g->Next(1s, true), 3 );
+		EXPECT_EQ( g->Next(1s, true), 4 );
+	}
+	TEST( ProductionTests, NothingAdvancesWhileStatusIsOff ){
+		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT2S"})" );
+		EXPECT_EQ( g->Next(1s, true), 0 );
+		EXPECT_EQ( g->Next(1h, false), 0 );
+		EXPECT_EQ( g->Next(1s, true), 1 );//the unit in hand waited where it was
+		EXPECT_EQ( g->Next(1h, false), 1 );
+	}
+	TEST( ProductionTests, JitterKeepsEachUnitWithinItsBounds ){
+		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT1S","jitter":"PT0.25S"})" );
+		constexpr double step{ .01 };
+		double count{}, sinceUnit{}, shortest{ 10 }, longest{};
+		for( uint i=0; i<50'000; ++i ){//500 s
+			sinceUnit += step;
+			if( let next = g->Next(10ms, true); next!=count ){
+				ASSERT_EQ( next, count+1 );
+				count = next;
+				shortest = std::min( shortest, sinceUnit ); longest = std::max( longest, sinceUnit );
+				sinceUnit = 0;
+			}
+		}
+		EXPECT_GE( shortest, .75-2*step ); EXPECT_LE( longest, 1.25+2*step );//a unit lands on the 10 ms sample after it ends, at both of its ends
+		EXPECT_LT( shortest, .9 ); EXPECT_GT( longest, 1.1 );//and the jitter is there
+		EXPECT_NEAR( count, 500, 25 );//+-.25 s uniform over 500 units:  sd 3.2
+	}
+	TEST( ProductionTests, RejectsAreAShareOfTheCount ){
+		auto tenth = MakeProduction( spec(R"({"name":"totalCount","mode":"production","reject":0.1})") );
+		EXPECT_EQ( tenth.Rejects->Next(1s, true), 0 );
+		EXPECT_EQ( tenth.Count->Next(10'000s, true), 10'000 );
+		let rejects = tenth.Rejects->Next( 1s, true );
+		EXPECT_GT( rejects, 800 ); EXPECT_LT( rejects, 1200 );//sd 30
+		EXPECT_EQ( tenth.Rejects->Next(1h, true), rejects );//the rejects' own sample counts nothing
+
+		auto none = MakeProduction( spec(R"({"name":"totalCount","mode":"production"})") );
+		none.Count->Next( 1000s, true );
+		EXPECT_EQ( none.Rejects->Next(1s, true), 0 );
+		auto all = MakeProduction( spec(R"({"name":"totalCount","mode":"production","reject":1})") );
+		all.Count->Next( 1000s, true );
+		EXPECT_EQ( all.Rejects->Next(1s, true), 1000 );
 	}
 }

@@ -86,9 +86,23 @@ local serverApplicationUri = "urn:open62541.server.application";
 		//- the `pumps~` alias the contract's own field paths use is the contract's convention, not needed here.  A tag
 		//named in the contract ("<device>.<tag>") is published; command tags are subscribed; everything else is written
 		//over the session.
+		//
+		//OEE's rig (docs/oee/spec.md *Emulator*):  `production` counts a unit every `cycle`, give or take `jitter`, while the device's
+		//`status` is on, and a `reject` share of them on `rejectTag` too.  pump1 stops when the web's run command stops it, an
+		//operator's stop;  pump2's toggle is a stop of fifteen seconds in every thirty, and its `stops` list, {every, for, code}, holds
+		//`status` off for the first ten seconds of each minute after the first with `reasonCode` 1, as the toggle would come back
+		//on:  so each minute has one stop of fifteen seconds with no code and one of twenty-five, coded from its sixteenth second.
 		devices:[
-			{ path: "pump1", tags:[ { name: "motorRpm", mode: "follow", ratedRpm: 1450, tau: "PT3S" }, { name: "status", mode: "command" } ] },
-			{ path: "pump2", tags:[ { name: "motorRpm", mode: "sine", min: 800, max: 1600, period: "PT30S" }, { name: "status", mode: "toggle", period: "PT15S" } ] },
+			{ path: "pump1", tags:[
+				{ name: "motorRpm", mode: "follow", ratedRpm: 1450, tau: "PT3S" },
+				{ name: "totalCount", mode: "production", cycle: "PT2S", jitter: "PT0.5S", reject: 0.05, rejectTag:: "rejectCount" },
+				{ name: "status", mode: "command" }
+			] },
+			{ path: "pump2", stops:[ { every: "PT1M", "for": "PT10S", code: 1 } ], tags:[
+				{ name: "motorRpm", mode: "sine", min: 800, max: 1600, period: "PT30S" },
+				{ name: "totalCount", mode: "production", cycle: "PT2S", jitter: "PT0.5S", reject: 0.05, rejectTag:: "rejectCount" },
+				{ name: "status", mode: "toggle", period: "PT15S" }
+			] },
 			{ path: "pump3", tags:[ { name: "motorRpm", mode: "ramp", min: 0, max: 1450, period: "PT20S" }, { name: "status", mode: "command" } ] },
 			{ path: "pump4", tags:[ { name: "motorRpm", mode: "randomWalk", min: 1300, max: 1500, step: 10 }, { name: "status", mode: "command" } ] },
 			{ path: "pumpManual", tags:[ { name: "motorRpm", mode: "counter", min: 0, max: 100000, step: 1 } ] }
