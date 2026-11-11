@@ -4,8 +4,8 @@
 
 namespace Jde::Opc::Gateway{
 	//One OeeSubscribe on the gateway's socket (docs/oee/spec.md *Live*):  its place in the machine's feed, and what the feed
-	//pushes, the latest held until the ack is written and sent after it.  The feed pushes from whichever thread built the
-	//status, so OnStatus only hands it to the socket's strand.  It holds the session weakly:  the session's map holds it, and
+	//pushes, held until the ack is written and sent after it, the feed's end too.  The feed pushes from whichever thread built
+	//the status, so OnStatus only hands it to the socket's strand.  It holds the session weakly:  the session's map holds it, and
 	//the feed while it is joined.  The session's side, OeeSubscribe to RemoveOee, is defined with it in OeeSubscriber.cpp.
 	struct OeeSubscriber final : std::enable_shared_from_this<OeeSubscriber>{
 		OeeSubscriber( wp<GatewaySocketSession> session, Jde::RequestId requestId, sp<OeeFeed> feed )ι;
@@ -18,12 +18,14 @@ namespace Jde::Opc::Gateway{
 		α OnEnded( EHttpStatus status, string what )ι->void;//the feed ended it:  the machine deleted or purged, or OEE stopping.
 	private:
 		α Send( const FromServer::OeeStatus& status )ι->void;
+		α Ending( EHttpStatus status, string what )ι->void;
 		wp<GatewaySocketSession> _session;
 		const Jde::RequestId _requestId;
 		const sp<OeeFeed> _feed;
 		std::atomic<bool> _ended{};
 		std::mutex _mutex;
 		bool _live{};
-		optional<FromServer::OeeStatus> _held;
+		vector<FromServer::OeeStatus> _held;//each push, so every one the feed counts reaches the socket.
+		optional<std::pair<EHttpStatus,string>> _end;//the feed's, before the ack.
 	};
 }

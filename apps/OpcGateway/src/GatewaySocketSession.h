@@ -72,6 +72,8 @@ namespace Jde::Opc::Gateway{
 		α OeeSubscribing( sp<OeeSubscriber> subscriber )ι->VoidTask;//joins the feed, which reads the shift's rows for its first, writes the ack, then lets the pushes through.
 		α OeeUnsubscribe( Jde::RequestId subscription, Jde::RequestId requestId )ι->void;
 		α RemoveOee( Jde::RequestId subscription, const OeeSubscriber* only=nullptr )ι->sp<OeeSubscriber>;
+		//Under _histMutex:  a live subscription of any kind holds the id, which names one across them all.  Every subscribe asks.
+		α Holds( Jde::RequestId requestId )Ι->bool{ return _histSubscriptions.contains( requestId ) || _oeeSubscriptions.contains( requestId ); }
 
 		α WriteSubscription( const jvalue& j, Jde::RequestId requestId )ι->void override;
 		α WriteSubscription( uint32 /*appPK*/, uint32 /*appInstancePK*/, const Logging::Entry& /*e*/, const QL::Subscription& /*sub*/ )ι->void override{ ASSERT(false); }

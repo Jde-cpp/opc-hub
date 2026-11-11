@@ -93,6 +93,10 @@ namespace Jde::Opc::Gateway::Tests{
 		α OeeUnsubscribe( RequestId subscription, SRCE )ι->await<bool>;
 		α LastOeeSubscription()Ι->RequestId{ lg _{ _histMutex }; return _lastOeeSubscription; }
 		α OeeStrays()Ι->uint{ lg _{ _histMutex }; return _oeeStrays; }
+		//An OeeSubscribe, or a HistSubscribe, under `requestId`, which a live subscription holds:  the gateway's refusal fails the
+		//await and leaves that subscription's listener as it was.
+		α OeeSubscribeAs( RequestId requestId, uint32 machine, SRCE )ι->await<FromServer::OeeStatus>;
+		α HistSubscribeAs( RequestId requestId, uint32 group, const vector<ExNodeId>& nodes, SRCE )ι->await<vector<StatusCode>>;
 	private:
 		α registerHist( RequestId subscription, sp<IHistListener> listener, bool duplicate=false )ι->void;//its listener, under the id that names the subscription, and the last one sent.
 		α forgetRequest( RequestId requestId )ι->void;
@@ -119,6 +123,7 @@ namespace Jde::Opc::Gateway::Tests{
 		flat_map<RequestId,RequestId> _oeeUnsubscribes;//an OeeUnsubscribe's request id, to the subscription it ends.
 		flat_set<RequestId> _oeeEnded;
 		uint _oeeStrays{};
+		flat_set<RequestId> _probes;//OeeSubscribeAs's and HistSubscribeAs':  an exception under the id is theirs.
 		//The opc side, per socket as the hist side is:  a push is this socket's session's, so only this socket's listeners hear it.
 		//A Subscribe/Unsubscribe registers its record before it is written, and the ack was the only thing that took it out - so
 		//every request that *failed* left its record, listener and all, for the life of the process:  answered with an error, the

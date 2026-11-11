@@ -20,6 +20,10 @@ namespace Jde::Opc::Gateway::Tests{
 		vector<FromServer::OeeStatus> _statuses;
 		vector<string> _errors;
 	};
+	struct HistDeaf final : IHistListener{//a HistSubscribe's whose pushes the case doesn't read.
+		α OnSnapshot( const FromServer::HistSnapshot& )ι->void override{}
+		α OnRecords( const FromServer::HistRecords& )ι->void override{}
+	};
 
 	struct OeeSubscribeTests : OeeFixture{
 		Ω Subscribe( GatewayClientSocket& socket, uint32 machine, sp<OeeHeard> heard )ε->FromServer::OeeStatus{
@@ -134,7 +138,8 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_THROW( Unsubscribe(999'999), GatewayErrorResponse );
 	}
 
-	//A shift's break over now:  the ack's `planned` is false inside the shift, and its figures plan none of the break.
+	//A shift's break over now:  the ack's `planned` is false inside the shift, and its figures plan none of the break.  The
+	//calendar purged, the push says the machine's calendar is missing, with the UTC day's figures.
 	TEST_F( OeeSubscribeTests, PlannedIsFalseInABreak ){
 		let from = floor<seconds>( Now() )-5s;
 		Pump1Machine pump{ "oeeLiveBreak", from-2s };
@@ -143,12 +148,44 @@ namespace Jde::Opc::Gateway::Tests{
 		absl::Cleanup purgeCalendar = [=]{ PurgeCalendar( calendar ); };
 		let id = pump.Create( from, {ERole::State, ERole::Total, ERole::Reject, ERole::Reason}, {{"calendarId", calendar}} );
 		WaitLive( id );
-		let ack = Subscribe( id, ms<OeeHeard>() );
+		auto heard = ms<OeeHeard>();
+		let ack = Subscribe( id, heard );
 		EXPECT_EQ( ack.state(), FromServer::OeeRunning );
 		EXPECT_FALSE( ack.planned() );
 		EXPECT_EQ( ack.shift().name(), "Written" );
 		ASSERT_TRUE( ack.has_figures() );
 		EXPECT_EQ( ack.figures().planned(), 0 ) << "the machine's rows start in the break";
+		EXPECT_FALSE( ack.calendar_missing() );
+
+		std::move( purgeCalendar ).Cancel();
+		PurgeCalendar( calendar );
+		let missing = WaitFor( *heard, []( let& s ){ return s.calendar_missing(); }, "of the calendar missing" );
+		EXPECT_TRUE( missing.planned() ) << "planned every minute, as without a calendar";
+		EXPECT_FALSE( missing.has_shift() );
+		ASSERT_TRUE( missing.has_figures() );
+		EXPECT_EQ( Time(missing.figures().start()), TimePoint{floor<days>(from)} ) << "the UTC day's";
+		EXPECT_TRUE( Unsubscribe(Last()) );
+	}
+
+	//No engine runs the machine, which has no signals:  the ack is OeeUnknown with no figures, the tables holding no rows, and
+	//the clock passing `live` pushes nothing, since nothing moved.
+	TEST_F( OeeSubscribeTests, WithNoEngineNothingIsPushed ){
+		let from = floor<seconds>( Now() )-5s;
+		Pump1Machine pump{ "oeeLiveIdle", from-2s };
+		let id = pump.Create( from, {} );
+		let feed = Oee().Feed( id );
+		ASSERT_TRUE( feed );
+		EXPECT_FALSE( Oee().Engine(id) );
+		auto heard = ms<OeeHeard>();
+		let ack = Subscribe( id, heard );
+		EXPECT_EQ( ack.state(), FromServer::OeeUnknown );
+		EXPECT_FALSE( ack.has_since() );
+		EXPECT_FALSE( ack.has_figures() ) << "no rows";
+		EXPECT_TRUE( ack.planned() );
+		_clock->Advance( Oee().Live()*3 );
+		std::this_thread::sleep_for( 200ms );
+		EXPECT_EQ( feed->Pushed(), 0u );
+		EXPECT_EQ( heard->Count(), 0u );
 		EXPECT_TRUE( Unsubscribe(Last()) );
 	}
 
@@ -180,6 +217,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let day = Subscribe( *dropped, id, ms<OeeHeard>() );
 		EXPECT_EQ( day.state(), FromServer::OeeRunning );
 		EXPECT_TRUE( day.planned() ) << "no calendar plans every minute";
+		EXPECT_FALSE( day.calendar_missing() ) << "it names none";
 		EXPECT_FALSE( day.has_shift() );
 		ASSERT_TRUE( day.has_figures() );
 		EXPECT_EQ( Time(day.figures().start()), TimePoint{floor<days>(from)} ) << "the UTC day's";
@@ -191,6 +229,16 @@ namespace Jde::Opc::Gateway::Tests{
 		Subscribe( id, heard );
 		let subscription = Last();
 		EXPECT_EQ( feed->Subscribers(), 1u );
+		{//a live subscription's id names it alone, across the historian's and OEE's.
+			let status = HistGroupFixture::Ex( Status1 );
+			EXPECT_EQ( Status([&]{ BlockAwait<ClientSocketAwait<FromServer::OeeStatus>,FromServer::OeeStatus>( Socket().OeeSubscribeAs(subscription, id) ); }), EHttpStatus::BadRequest );
+			EXPECT_EQ( Status([&]{ BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>( Socket().HistSubscribeAs(subscription, pump.Group, {ExNodeId{status}}) ); }), EHttpStatus::BadRequest );
+			BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>( Socket().HistSubscribe(pump.Group, {ExNodeId{status}}, nullopt, ms<HistDeaf>()) );
+			let hist = Socket().LastHistSubscription();
+			EXPECT_EQ( Status([&]{ BlockAwait<ClientSocketAwait<FromServer::OeeStatus>,FromServer::OeeStatus>( Socket().OeeSubscribeAs(hist, id) ); }), EHttpStatus::BadRequest );
+			EXPECT_TRUE( (BlockAwait<ClientSocketAwait<bool>,bool>(Socket().HistUnsubscribe(hist))) );
+			EXPECT_EQ( feed->Subscribers(), 1u ) << "the refusals left it as it was";
+		}
 		Mutate( "deleteOeeMachine( id:$id )", {{"id", id}} );
 		ASSERT_TRUE( WaitUntil([&]{ return !heard->Errors().empty(); }, 15s) );
 		let errors = heard->Errors();

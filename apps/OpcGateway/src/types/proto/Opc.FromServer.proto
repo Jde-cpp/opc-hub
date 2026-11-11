@@ -150,6 +150,7 @@ message OeeStatus{
 	OeeShift shift=5;//the calendar's occurrence now;  unset between shifts and without a calendar.
 	OeeFigures figures=6;//the shift's so far, or without a calendar the UTC day's;  unset between shifts.
 	google.protobuf.Timestamp last_count=7;
+	bool calendar_missing=8;//the machine names a calendar the gateway's calendar client doesn't find, so its figures are the UTC day's, as without one.
 }
 message OeeSubscribeAck{
 	OeeStatus status=1;

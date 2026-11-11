@@ -74,7 +74,27 @@ namespace Jde::Opc::Gateway{
 		else
 			std::ranges::move( records, std::back_inserter(_queued) );
 	}
+	α HistSubscriber::Acked()ι->void{
+		optional<Hist::ESubscriptionEnd> end;
+		{
+			lg _{ _queueMutex };
+			_acked = true;
+			end = std::exchange( _end, nullopt );
+		}
+		if( end )
+			Ending( *end );
+	}
 	α HistSubscriber::OnEnded( Hist::ESubscriptionEnd why )ι->void{
+		{
+			lg _{ _queueMutex };
+			if( !_acked ){//the ack isn't written:  the end follows it.
+				_end = why;
+				return;
+			}
+		}
+		Ending( why );
+	}
+	α HistSubscriber::Ending( Hist::ESubscriptionEnd why )ι->void{
 		if( auto session = _session.lock(); session )
 			session->HistEnded( shared_from_this(), why );
 	}
@@ -130,8 +150,9 @@ namespace Jde::Opc::Gateway{
 				lg _{ _histMutex };
 				if( _closed )
 					return;
-				if( _oeeSubscriptions.contains(requestId) || !_histSubscriptions.try_emplace(requestId, subscriber).second )
+				if( Holds(requestId) )
 					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "Subscription {} is live:  a HistSubscribe's request id names it.", hex(requestId) };
+				_histSubscriptions.emplace( requestId, subscriber );
 			}
 			HistSubscribing( move(subscriber), move(ack), historian->Config().ReadLimit );
 		}
@@ -146,6 +167,7 @@ namespace Jde::Opc::Gateway{
 			if( subscriber->HasMembers() )//the registration and its snapshot on the executor:  the group's locks, and the files the snapshot opens under them, aren't the socket strand's to wait on.
 				co_await ExecutorAwait<void>{ [&]{ subscriber->Register( subscriber, SRCE_CUR ); } };
 			Write( FromServer::HistSubscribeAckTrans(move(ack), requestId) );//answers the HistSubscribe even once it has ended:  nothing follows it then.
+			subscriber->Acked();
 			for( bool more{ true }; more && !subscriber->Ended(); ){
 				auto page = co_await ExecutorAwait<Hist::ReadResult>{ [&]{ return subscriber->Next( limit, SRCE_CUR ); } };//a page of the snapshot, read on the executor as a group's QL reads are.
 				more = !page.Continuation.empty();

@@ -19,8 +19,12 @@ namespace Jde::Opc::Gateway{
 	α OeeSubscriber::Live()ι->void{
 		lg _{ _mutex };
 		_live = true;
-		if( auto held = std::exchange(_held, nullopt); held && !_ended )
-			Send( *held );
+		for( let& held : std::exchange(_held, {}) ){
+			if( !_ended )
+				Send( held );
+		}
+		if( auto end = std::exchange(_end, nullopt); end )
+			Ending( end->first, move(end->second) );
 	}
 	α OeeSubscriber::OnStatus( const FromServer::OeeStatus& status )ι->void{
 		if( _ended )
@@ -29,9 +33,19 @@ namespace Jde::Opc::Gateway{
 		if( _live )
 			Send( status );
 		else
-			_held = status;
+			_held.push_back( status );
 	}
 	α OeeSubscriber::OnEnded( EHttpStatus status, string what )ι->void{
+		{
+			lg _{ _mutex };
+			if( !_live ){//the ack isn't written:  the end follows it.
+				_end = { status, move(what) };
+				return;
+			}
+		}
+		Ending( status, move(what) );
+	}
+	α OeeSubscriber::Ending( EHttpStatus status, string what )ι->void{
 		if( auto session = _session.lock(); session )
 			session->OeeEnded( shared_from_this(), status, move(what) );
 	}
@@ -65,8 +79,9 @@ namespace Jde::Opc::Gateway{
 				lg _{ _histMutex };
 				if( _closed )
 					return;
-				if( _histSubscriptions.contains(requestId) || !_oeeSubscriptions.try_emplace(requestId, subscriber).second )
+				if( Holds(requestId) )
 					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "Subscription {} is live:  an OeeSubscribe's request id names it.", hex(requestId) };
+				_oeeSubscriptions.emplace( requestId, subscriber );
 			}
 			OeeSubscribing( move(subscriber) );
 		}

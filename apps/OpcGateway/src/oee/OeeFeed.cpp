@@ -9,11 +9,8 @@
 #define let const auto
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
+	constexpr Duration MaxBackoff{ 1min };
 
-	Ω machine( const OeeMachineRow& row, const vector<OeeSignalRow>& rows )ι->Oee::Machine{
-		let signals = ToSignals( rows );
-		return { row.Id, row.Name, row.IdealCycle, row.SmallStop, Oee::HasCount(signals), Oee::MeasuresQuality(signals) };
-	}
 	Ω stamp( TimePoint t )ι->google::protobuf::Timestamp{ return UADateTime{ t }.ToProto(); }
 	Ω ms( Duration d )ι->int64_t{ return std::chrono::duration_cast<std::chrono::milliseconds>( d ).count(); }
 	Ω figures( const Oee::Bucket& b )ι->FromServer::OeeFigures{
@@ -39,7 +36,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	OeeFeed::OeeFeed( OeeMachineRow row, vector<OeeSignalRow> signals, sp<Hist::IClock> clock, Duration live )ι:
-		_id{ row.Id }, _clock{ move(clock) }, _live{ live }, _row{ move(row) }, _machine{ machine(_row, signals) }
+		_id{ row.Id }, _clock{ move(clock) }, _live{ live }, _row{ move(row) }, _machine{ ToMachine(_row, signals) }
 	{}
 
 	α OeeFeed::Closed( const Oee::Interval& row )ι->void{
@@ -74,26 +71,36 @@ namespace Jde::Opc::Gateway{
 		}
 		Post( [self=shared_from_this()]{ self->Push(); } );
 	}
-	α OeeFeed::Reload()ι->void{
+	α OeeFeed::Reload( EReload what )ι->void{
 		{
 			lg _{ _mutex };
 			if( !Active() )
 				return;
+			let queued = _pending!=0;
+			_pending |= what;
+			if( queued )
+				return;
 		}
 		Post( [self=shared_from_this()]{ self->Reloading(); } );
 	}
-	α OeeFeed::Edited( OeeMachineRow row, vector<OeeSignalRow> signals )ι->void{
+	α OeeFeed::Edited( OeeMachineRow row, vector<OeeSignalRow> signals, uint read )ι->void{
 		let deleted = row.Deleted;
 		{
 			lg _{ _mutex };
+			if( read<_edit )
+				return;
+			_edit = read;
 			_row = move( row );
-			_machine = machine( _row, signals );
-			_gone.reset();//a purge that failed:  the machine stands.
+			_machine = ToMachine( _row, signals );
 		}
 		if( deleted )
 			EndAll( EHttpStatus::NotFound, "The machine was deleted, which ends the subscription.", false );
 		else
 			Reload();
+	}
+	α OeeFeed::Restored()ι->void{
+		lg _{ _mutex };
+		_gone.reset();
 	}
 	α OeeFeed::EndAll( EHttpStatus status, sv what, bool gone )ι->void{
 		vector<sp<OeeSubscriber>> ended;
@@ -125,6 +132,8 @@ namespace Jde::Opc::Gateway{
 		if( auto timer = std::exchange(_timer, 0); timer )
 			_clock->Cancel( timer );
 		_loaded = false;
+		_pending = 0;
+		_backoff = {};
 		_rows.clear();
 		_stops.clear();
 		_codings.clear();
@@ -132,18 +141,19 @@ namespace Jde::Opc::Gateway{
 		_last.clear();
 	}
 	α OeeFeed::Tick( uint serial )ι->void{
-		bool unread;
+		bool unread, retry;
 		{
 			lg _{ _mutex };
 			if( serial!=_serial )
 				return;
 			_timer = 0;
 			Arm();
-			unread = !Holding();//a load that failed:  tried again.
+			unread = !Holding();//a load that failed:  tried again past its backoff.
+			retry = unread && _clock->Now()>=_retryAt;
 		}
-		if( unread )
+		if( retry )
 			Reload();
-		else
+		else if( !unread )
 			Push();
 	}
 	α OeeFeed::State()Ι->optional<Oee::LiveState>{
@@ -225,25 +235,43 @@ namespace Jde::Opc::Gateway{
 		let self = shared_from_this();
 		try{
 			auto held = co_await _work.Lock();
-			bool active;
+			uint8 what;
+			bool loaded;
 			{
 				lg _{ _mutex };
-				active = Active();
+				what = Active() ? _pending : 0;
+				_pending = 0;
+				loaded = _loaded;
 			}
-			if( active )
+			if( what==Everything || (what && !loaded) )
 				co_await Load();
+			else if( what )
+				co_await Reread( what );
 		}
 		catch( const std::exception& e ){
-			WARN( "[{}]The live feed's rows couldn't be read, and are read again in {}:  {}", _machine.Name, Chrono::ToString(_live), e.what() );
+			Failed( e );
 		}
 		Push();
+	}
+	α OeeFeed::Failed( const std::exception& e )ι->void{
+		lg _{ _mutex };
+		_loaded = false;
+		_rows.clear();
+		_stops.clear();
+		let first = _backoff==Duration::zero();
+		_backoff = first ? _live : std::min( _backoff*2, std::max(MaxBackoff, _live) );
+		_retryAt = _clock->Now()+_backoff;
+		LOG( first ? ELogLevel::Warning : ELogLevel::Debug, _tags, "[{}]The live feed's rows couldn't be read, and are read again in {}, less often until they are:  {}", _machine.Name, Chrono::ToString(_backoff), e.what() );
 	}
 	//The rows the sink tells from here on are held beside the read's:  one the engine closed before it is written by the time
 	//the tables are read, the engine's writes being waited for first, and one closed after is held.
 	α OeeFeed::Load()ι->AnyVoidTask{
 		let engine = OeeHost::Instance().Engine( _id );
+		uint serial;
 		{
 			lg _{ _mutex };
+			serial = _serial;
+			_pending = 0;//asked before the reads, so in them.
 			_loaded = false;
 			_collecting = true;
 			_rows.clear();
@@ -269,30 +297,39 @@ namespace Jde::Opc::Gateway{
 			//with the stops over the window, whole:  a stop that began before it is coded from its start.
 			let codingRows = co_await Any( DS()->SelectAsync(OeeSql::SelectCodingsOver(_id, {stops.empty() ? from : std::min(from, stops.front().Start), until})) );
 			lg _{ _mutex };
-			vector<Oee::Interval> rows;
-			for( let& row : intervalRows )
-				rows.push_back( OeeSql::ToInterval(row) );
-			for( let& row : _rows ){
-				if( rows.empty() || row.Start>=rows.back().End() )
-					rows.push_back( row );
-			}
-			_rows = move( rows );
-			std::map<TimePoint,Oee::Stop> told = move( _stops );
-			_stops.clear();
-			for( let& stop : stops ){
-				if( !_rewritten || stop.Start<*_rewritten )
-					_stops.emplace( stop.Start, stop );
-			}
-			for( let& [start, stop] : told )
-				_stops.insert_or_assign( start, stop );
-			_codings.clear();
-			for( let& row : codingRows )
-				_codings.push_back( OeeSql::ToCoding(row).Value );
-			_reasons.clear();
-			for( let& row : reasonRows )
-				_reasons.push_back( OeeSql::ToReason(row) );
 			_collecting = false;
-			_loaded = true;
+			if( serial!=_serial ){//the last subscriber left during the reads:  nothing is held.
+				_rows.clear();
+				_stops.clear();
+			}
+			else{
+				vector<Oee::Interval> rows;
+				for( let& row : intervalRows )
+					rows.push_back( OeeSql::ToInterval(row) );
+				for( let& row : _rows ){
+					if( rows.empty() || row.Start>=rows.back().End() )
+						rows.push_back( row );
+				}
+				_rows = move( rows );
+				std::map<TimePoint,Oee::Stop> told = move( _stops );
+				_stops.clear();
+				for( let& stop : stops ){
+					if( !_rewritten || stop.Start<*_rewritten )
+						_stops.emplace( stop.Start, stop );
+				}
+				for( let& [start, stop] : told )
+					_stops.insert_or_assign( start, stop );
+				_codings.clear();
+				for( let& row : codingRows )
+					_codings.push_back( OeeSql::ToCoding(row).Value );
+				_reasons.clear();
+				for( let& row : reasonRows )
+					_reasons.push_back( OeeSql::ToReason(row) );
+				_from = from;
+				_loaded = true;
+				if( std::exchange(_backoff, Duration::zero())>Duration::zero() )
+					INFO( "[{}]The live feed's rows are read again.", _machine.Name );
+			}
 		}
 		catch( ... ){
 			lg _{ _mutex };
@@ -300,6 +337,33 @@ namespace Jde::Opc::Gateway{
 			_rows.clear();
 			_stops.clear();
 			throw;
+		}
+	}
+	α OeeFeed::Reread( uint8 what )ι->AnyVoidTask{
+		uint serial;
+		Oee::Span over;
+		{
+			lg _{ _mutex };
+			serial = _serial;
+			over = { _stops.empty() ? _from : std::min(_from, _stops.begin()->first), _clock->Now()+hours{24} };//as Load reads them.
+		}
+		vector<DB::Row> codingRows, reasonRows;
+		if( what & CodingsOnly )
+			codingRows = co_await Any( DS()->SelectAsync(OeeSql::SelectCodingsOver(_id, over)) );
+		if( what & ReasonsOnly )
+			reasonRows = co_await Any( DS()->SelectAsync(OeeSql::SelectReasons()) );
+		lg _{ _mutex };
+		if( serial!=_serial || !_loaded )
+			co_return;
+		if( what & CodingsOnly ){
+			_codings.clear();
+			for( let& row : codingRows )
+				_codings.push_back( OeeSql::ToCoding(row).Value );
+		}
+		if( what & ReasonsOnly ){
+			_reasons.clear();
+			for( let& row : reasonRows )
+				_reasons.push_back( OeeSql::ToReason(row) );
 		}
 	}
 	α OeeFeed::Push()ι->void{
@@ -355,6 +419,7 @@ namespace Jde::Opc::Gateway{
 		}
 		let& shift = window ? window->Shift : optional<Calendar::Occurrence>{};
 		y.set_planned( !schedule || (shift && std::ranges::none_of(shift->Breaks, [now]( const Calendar::Span& b ){ return b.Start<=now && now<b.End; })) );
+		y.set_calendar_missing( _row.Calendar && !schedule );
 		if( shift ){
 			y.mutable_shift()->set_name( shift->Name );
 			*y.mutable_shift()->mutable_start() = stamp( shift->Start );
@@ -367,18 +432,16 @@ namespace Jde::Opc::Gateway{
 		if( !window || !_loaded )
 			return y;
 		let start = window->Range.Start;
-		let end = std::min( now, window->Range.End );
 		std::erase_if( _rows, [start]( const Oee::Interval& row ){ return row.End()<=start; } );
 		std::erase_if( _stops, [start]( let& stop ){ return stop.second.End && *stop.second.End<=start; } );
+		auto end = std::min( now, window->Range.End );
+		if( !state )//no engine runs it:  the figures end where the tables' rows do, and stand until they move.
+			end = std::min( end, _rows.empty() ? start : _rows.back().End() );
 		if( end<=start )
 			return y;
 		let held = _rows.size();
-		if( state ){//the rows not yet written and the one still filling, after those held.
-			for( let& row : state->Rows ){
-				if( row.Width>Duration::zero() && row.End()>start && (_rows.empty() || row.Start>=_rows.back().End()) )
-					_rows.push_back( row );
-			}
-		}
+		if( state )
+			AppendUnwritten( _rows, state->Rows, {start, end} );
 		vector<Oee::Stop> stops;
 		for( let& [_, stop] : _stops )
 			stops.push_back( stop );

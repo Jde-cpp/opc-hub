@@ -14,19 +14,23 @@ namespace Jde::Opc::Gateway{
 	//machine from its rows' load to its purge, and each engine of the machine tells it;  it holds no engine, asking the host for
 	//the one that runs.  The engine calls under its lock, so nothing here calls an engine under _mutex.
 	struct OeeFeed final : std::enable_shared_from_this<OeeFeed>{
+		enum EReload : uint8{ CodingsOnly=1, ReasonsOnly=2, Everything=0xff };//what a reload reads.
 		OeeFeed( OeeMachineRow row, vector<OeeSignalRow> signals, sp<Hist::IClock> clock, Duration live )ι;
 		//The engine's sink, under the engine's lock:  held when the feed has a subscriber, else dropped.
 		α Closed( const Oee::Interval& row )ι->void;
 		α Told( const Oee::Stop& stop )ι->void;//a stop's row began or ended.
 		α Rewritten( TimePoint from, const vector<Oee::Stop>& stops )ι->void;
 		α Changed()ι->void;//the state did, or the engine ended:  a push at once, from the executor.
-		//The held rows are no longer the tables':  read again, then pushed.  Nothing without a subscriber.
-		α Reload()ι->void;
-		//The machine's rows as an edit left them:  a deleted machine's subscriptions end, another's rows are read again.
-		α Edited( OeeMachineRow row, vector<OeeSignalRow> signals )ι->void;
+		//What is held is no longer the tables':  read again, then pushed.  Nothing without a subscriber;  one asked while another
+		//waits its turn joins it.
+		α Reload( EReload what=Everything )ι->void;
+		//The machine's rows as its host's `read`th MachineChanged left them:  a deleted machine's subscriptions end, another's rows
+		//are read again.  An older read than one taken changes nothing.
+		α Edited( OeeMachineRow row, vector<OeeSignalRow> signals, uint read )ι->void;
 		//Every subscription ends with `what` under its id, a `status` exception:  the machine deleted, or with `gone`, which
 		//refuses any after it the same, purged or OEE stopping.
 		α EndAll( EHttpStatus status, sv what, bool gone=true )ι->void;
+		α Restored()ι->void;//the purge failed:  the machine stands, and is subscribed again.
 		α Subscribers()Ι->uint{ lg _{ _mutex }; return _subscribers.size(); }//for tests and diagnostics.
 		α Pushed()Ι->uint{ return _pushed; }//the statuses pushed, each to every subscriber - for tests and diagnostics.
 
@@ -47,6 +51,8 @@ namespace Jde::Opc::Gateway{
 		α Adding( AddAwait& await, sp<OeeSubscriber> subscriber )ι->VoidTask;
 		α Reloading()ι->VoidTask;
 		α Load()ι->AnyVoidTask;//under _work.
+		α Reread( uint8 what )ι->AnyVoidTask;//under _work:  the codings or the reasons alone, over what is held.
+		α Failed( const std::exception& e )ι->void;//a reload's:  nothing is held, and the next tick past the backoff reads again.
 		α Push()ι->void;
 		α Tick( uint serial )ι->void;
 		α State()Ι->optional<Oee::LiveState>;//the running engine's, none while none is live:  never under _mutex.
@@ -70,10 +76,15 @@ namespace Jde::Opc::Gateway{
 		vector<sp<OeeSubscriber>> _subscribers;
 		optional<std::pair<EHttpStatus,string>> _gone;
 		uint _adding{};//joins in flight, which hold the rows as a subscriber does.
+		uint _edit{};//the latest MachineChanged read Edited took.
 		Hist::IClock::TimerId _timer{};
-		uint _serial{};
+		uint _serial{};//Idle's:  a load it outlived keeps nothing.
 		bool _loaded{}, _collecting{};
+		uint8 _pending{};//EReload bits a queued Reloading reads.
+		Duration _backoff{};//since a reload failed:  `live` doubled to a minute, zero once one succeeds.
+		TimePoint _retryAt{};
 		optional<TimePoint> _rewritten;//while collecting:  the least `from` a Rewritten named.
+		TimePoint _from{};//the window's start at the load, from which the codings are read.
 		vector<Oee::Interval> _rows;//by Start, from the window's start as it was at the load.
 		std::map<TimePoint,Oee::Stop> _stops;
 		vector<Oee::Coding> _codings;

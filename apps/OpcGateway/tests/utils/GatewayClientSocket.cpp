@@ -78,6 +78,22 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		return await<bool>{ FromClientUtils::OeeUnsubscription(subscription, requestId), requestId, shared_from_this(), sl };
 	}
+	α GatewayClientSocket::OeeSubscribeAs( RequestId requestId, uint32 machine, SL sl )ι->await<FromServer::OeeStatus>{
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]OeeSubscribe as a live subscription's id: machine {}.", hex(requestId), machine );
+		{
+			lg _{ _histMutex };
+			_probes.emplace( requestId );
+		}
+		return await<FromServer::OeeStatus>{ FromClientUtils::OeeSubscription(machine, requestId), requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::HistSubscribeAs( RequestId requestId, uint32 group, const vector<ExNodeId>& nodes, SL sl )ι->await<vector<StatusCode>>{
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe as a live subscription's id: group {}.", hex(requestId), group );
+		{
+			lg _{ _histMutex };
+			_probes.emplace( requestId );
+		}
+		return await<vector<StatusCode>>{ FromClientUtils::HistSubscription(group, nodes, nullopt, requestId), requestId, shared_from_this(), sl };
+	}
 	α GatewayClientSocket::OnRead( FromServer::Transmission&& transmission )ι->void{
 		auto histListener = [this]( RequestId requestId )->sp<IHistListener> {
 			lg _{ _histMutex };
@@ -166,6 +182,17 @@ namespace Jde::Opc::Gateway::Tests{
 			case kException:{
 				if( duplicateRefused(requestId, m->exception().what()) )
 					break;
+				bool probe;
+				{
+					lg _{ _histMutex };
+					probe = _probes.erase( requestId );
+				}
+				if( probe ){
+					let& e = m->exception();
+					if( auto task = PopTask(requestId); task.Fail )
+						task.Fail( GatewayErrorResponse{e.what(), ExceptionArgs{DefaultExceptionLevel, ELogTags::Exception, e.code(), (EHttpStatus)e.status_code()}} );
+					break;
+				}
 				auto task = requestId==0 ? Web::Client::PendingTask{} : PopTask( requestId );
 				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.  An unsubscribe's listeners stay: the server still pushes.
 				let& e = m->exception();

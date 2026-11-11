@@ -171,7 +171,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α OeeHost::Coded( OeeMachinePK id )ι->void{
 		if( auto feed = Feed(id); feed )
-			feed->Reload();
+			feed->Reload( OeeFeed::CodingsOnly );
 	}
 	α OeeHost::ReasonsChanged()ι->void{
 		vector<sp<OeeFeed>> feeds;
@@ -183,7 +183,7 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		for( let& feed : feeds )
-			feed->Reload();
+			feed->Reload( OeeFeed::ReasonsOnly );
 	}
 	α OeeHost::Recompute( OeeMachinePK id, Oee::Span span, SL sl )ε->void{
 		let machine = Find( id );
@@ -409,7 +409,7 @@ namespace Jde::Opc::Gateway{
 				ending = std::exchange( entry.Engine, nullptr );
 		}
 		if( feed )
-			feed->Edited( machine.Row, machine.Signals );
+			feed->Edited( machine.Row, machine.Signals, read );
 		if( running ){
 			running->SetWidth( machine.Row.Width );
 			co_return;
@@ -447,6 +447,10 @@ namespace Jde::Opc::Gateway{
 			engine->End();
 			co_await engine->Quiet();
 		}
+	}
+	α OeeHost::PurgeFailed( OeeMachinePK id )ι->void{
+		if( auto feed = Feed(id); feed )
+			feed->Restored();
 	}
 	α OeeHost::MachinePurged( OeeMachinePK id )ι->void{
 		lg _{ _mutex };

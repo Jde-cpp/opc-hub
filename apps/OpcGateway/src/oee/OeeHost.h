@@ -51,6 +51,7 @@ namespace Jde::Opc::Gateway{
 		α MachineChanged( DB::Key key )ι->AnyVoidTask;
 		//Before its statement, whose proc takes the machine's stops, intervals, codings and signals with it:  its engine ends.
 		α MachinePurging( OeeMachinePK id )ι->AnyVoidTask;
+		α PurgeFailed( OeeMachinePK id )ι->void;//its statement failed, so the machine stands:  its feed takes subscribers again.
 		α MachinePurged( OeeMachinePK id )ι->void;
 		//codeOee's and uncodeOee's, held over a coding's checks and its write:  this gateway alone writes oee_codings.
 		α Codings()ι->CoMutex&{ return _codings; }

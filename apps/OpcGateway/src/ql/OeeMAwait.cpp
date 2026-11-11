@@ -390,6 +390,7 @@ namespace Jde::Opc::Gateway{
 				}
 				auto row0 = y.is_array() && y.get_array().size() ? y.get_array()[0].if_object() : nullptr;
 				if( failed ){
+					host.PurgeFailed( *purging );
 					co_await host.MachineChanged( *machineKey );
 					std::rethrow_exception( failed );
 				}
