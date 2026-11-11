@@ -14,9 +14,11 @@ namespace Jde::Opc{
 		constexpr std::array<sv,3> names{ "running", "stopped", "unknown" };
 		return (uint8)state<names.size() ? names[(uint8)state] : sv{ "?" };
 	}
-	α Oee::ToString( ELevel level )ι->sv{
-		constexpr std::array<sv,4> names{ "Site", "Area", "Line", "Cell" };
-		return (uint8)level<names.size() ? names[(uint8)level] : sv{ "?" };
+	constexpr std::array<sv,4> _levels{ "Site", "Area", "Line", "Cell" };
+	α Oee::ToString( ELevel level )ι->sv{ return (uint8)level<_levels.size() ? _levels[(uint8)level] : sv{ "?" }; }
+	α Oee::ToLevel( sv name )ι->optional<ELevel>{
+		let p = std::ranges::find( _levels, name );
+		return p==_levels.end() ? nullopt : optional<ELevel>{ (ELevel)(p-_levels.begin()) };
 	}
 	constexpr std::array<sv,3> _categories{ "Unplanned", "Planned", "Excluded" };
 	α Oee::ToString( ECategory category )ι->sv{ return (uint8)category<_categories.size() ? _categories[(uint8)category] : sv{ "?" }; }

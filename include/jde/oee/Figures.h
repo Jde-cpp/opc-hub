@@ -41,6 +41,12 @@ namespace Jde::Opc::Oee{
 	//planned time's is split by time, its counts and its unknown time taken as even across it;  the stops are exact.
 	//Without a schedule every minute is planned and the days begin at midnight UTC;  by shift then throws a BadRequest.
 	α Figures( const Machine& machine, const History& history, const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by={}, SRCE )ε->vector<Bucket>;
+	//One bucket per `bounds`, in order and apart, each labelled as its bound is:  a line's buckets cut by its own calendar, each
+	//machine's planned time within them by `schedule`, its own.
+	α Figures( const Machine& machine, const History& history, const Calendar::Schedule* schedule, std::span<const Calendar::Bucket> bounds )ι->vector<Bucket>;
+
+	//The bounds Figures cuts [start, end) at:  the range itself with no `by`.  `of`:  the machine or line, for by shift's refusal.
+	α Buckets( const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by, sv of, SRCE )ε->vector<Calendar::Bucket>;
 
 	//A loss row:  the time of stops, within planned time, under one reason.  A small stop is under Small whatever its
 	//coding, bar Excluded, and time no coding or code names under Uncoded.

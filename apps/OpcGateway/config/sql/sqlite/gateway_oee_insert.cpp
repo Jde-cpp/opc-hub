@@ -1,6 +1,6 @@
 #include "gatewayProcs.h"
 
-//Twins of the *generated* insert procs of OEE's four admin tables (opcGateway-meta.jsonnet), as gateway_hist_insert.cpp's are:
+//Twins of the *generated* insert procs of OEE's four admin tables and the lines' two (opcGateway-meta.jsonnet), as gateway_hist_insert.cpp's are:
 //insertable columns in `i` order, created=$now, the sequence column out last.  oee_stops and oee_intervals have none:  the
 //engine inserts them itself, and no QL create reaches them.
 namespace Jde::DB::Sqlite{
@@ -21,5 +21,13 @@ namespace Jde::DB::Sqlite{
 	//	out _oee_coding_id.
 	α GatewayProcs::RegisterGatewayOeeCodingInsert( IProcs& procs )ι->void{
 		RegisterInsertProc( procs, "gateway_oee_coding_insert", "insert into gateway_oee_codings( oee_machine_id, start, finish, oee_reason_id, comment, identity_id, user_name, created ) values( ?, ?, ?, ?, ?, ?, ?, unixepoch() )", 7 );
+	}
+	//	params: [0]=_level, [1]=_calendar_id, [2]=_name, [3]=_slug, [4]=_attributes, [5]=_description; out _oee_line_id.
+	α GatewayProcs::RegisterGatewayOeeLineInsert( IProcs& procs )ι->void{
+		RegisterInsertProc( procs, "gateway_oee_line_insert", "insert into gateway_oee_lines( level, calendar_id, name, slug, attributes, created, description ) values( ?, ?, ?, ?, ?, unixepoch(), ? )", 6 );
+	}
+	//	params: [0]=_oee_line_id, [1]=_oee_machine_id, [2]=_member_line_id, [3]=_sort; out _oee_line_member_id.
+	α GatewayProcs::RegisterGatewayOeeLineMemberInsert( IProcs& procs )ι->void{
+		RegisterInsertProc( procs, "gateway_oee_line_member_insert", "insert into gateway_oee_line_members( oee_line_id, oee_machine_id, member_line_id, sort ) values( ?, ?, ?, ? )", 4 );
 	}
 }

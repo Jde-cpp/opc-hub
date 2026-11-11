@@ -97,7 +97,7 @@ local attributes( i ) = {
 			//group, and rejoining is a new row and so a new node_index (spec *Collection*).
 			naturalKeys: [["server_connection_id", "node"]]
 		},
-		//OEE on the historian (docs/oee/spec.md *Machines*, *Stops*, *Intervals*, *Reasons and codings*).  Every edit of the six is
+		//OEE on the historian (docs/oee/spec.md *Machines*, *Stops*, *Intervals*, *Reasons and codings*).  Every edit of the six, and of the lines' two after them, is
 		//routed by Gateway::CustomMutation, the hub's HubQL too, to ql/OeeMAwait, which checks the row with libs/oee's rules, refuses
 		//every generic mutation of the engine's three - oeeStops, oeeIntervals, oeeCodings - and runs the live side in src/oee.  A time
 		//the engine writes is a `long` of UA DateTime ticks, 100 ns from 1601 UTC, as the group's records are stamped:  a dateTime
@@ -105,7 +105,7 @@ local attributes( i ) = {
 		//are the spec's end and interval:  SQL Server reserves END and mysql INTERVAL, and column names are emitted unquoted.
 		oeeMachines:{
 			comment: "A machine:  one historian group whose members are given roles (oee_machine_signals), with its thresholds, its rows' width and its shift calendar",
-			purgeProc: "oee_machine_purge", //its stops, intervals, codings and signals go with it, in one transaction:  codings are operator-entered and nothing restores them.
+			purgeProc: "oee_machine_purge", //its stops, intervals, codings, signals and line memberships go with it, in one transaction:  codings are operator-entered and nothing restores them.
 			columns: {
 				oeeMachineId: common.pkSequenced,
 				histGroupId: tables.histGroups.columns.histGroupId+{ pkTable: "hist_groups", sk:null, updateable:false, i:1, comment:"The group whose records the engine reads, a foreign key and unique:  a group has at most one machine, deleted ones counted.  OeeMAwait refuses the group's delete and purge while the row stands;  the key is the backstop.  Not updateable:  purge the machine and create it again." },
@@ -187,6 +187,29 @@ local attributes( i ) = {
 				created: common.slugColumns.created+{ i:8 }
 			},
 			naturalKeys: [["oee_machine_id", "start"]]
+		},
+		//Lines (docs/oee/spec.md *Lines*):  a named set of machines and of lines at a level of the ISA-95 hierarchy.  OeeMAwait holds
+		//the two to libs/oee's rules over the graph as a mutation would leave it - no line reaching itself or a machine by two paths,
+		//no member line above its parent's level - and tells OeeHost, which holds the graph for the reads and the live feed.
+		oeeLines:{
+			comment: "A line:  a named set of machines and of lines (oee_line_members), whose figures are its members' combined",
+			purgeProc: "oee_line_purge", //its memberships go with it, as a parent and as a member.
+			columns: {
+				oeeLineId: common.pkSequenced,
+				level: common.types.varchar+{ length:8, i:1, comment:"Site, Area, Line or Cell, ISA-95's below the enterprise:  a member line's is no higher than its parent's.  It changes no figure." },
+				calendarId: common.types.uint+{ nullable:true, i:2, comment:"As a machine's:  the AppServer calendar's id as a value, for the line's buckets and its current shift.  Each machine's planned time is its own calendar's.  Null begins the line's days at midnight UTC." }
+			}+common.slugColumns,
+			naturalKeys: common.slugNKs
+		},
+		oeeLineMembers:{
+			comment: "A line's member:  a machine or a line, one of the two.  No deleted - a member leaves by purge",
+			columns: {
+				oeeLineMemberId: common.pkSequenced,
+				oeeLineId: tables.oeeLines.columns.oeeLineId+{ pkTable: "oee_lines", sk:null, updateable:false, i:1 },
+				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, nullable:true, updateable:false, i:2 },
+				memberLineId: tables.oeeLines.columns.oeeLineId+{ pkTable: "oee_lines", name: "member_line_id", sk:null, nullable:true, updateable:false, i:3, comment:"The member when it is a line.  A member is this or oee_machine_id;  once in a line, which is OeeMAwait's check, not an index:  SQL Server's unique index holds one null." },
+				sort: common.types.uint+{ default:0, i:4, comment:"The members' order on the pages, and of a line's machines in oeeTimeline." }
+			}
 		}
 	},
 	//The gateway's other two Authorize::Test gates (reviews/m2-closing.md #8).  `opcSessions` and `search` are QL *system*

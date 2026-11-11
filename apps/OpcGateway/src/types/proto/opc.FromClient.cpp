@@ -120,6 +120,9 @@ namespace Jde::Opc::Gateway{
 	α FromClientUtils::OeeSubscription( uint32 machine, RequestId requestId )ι->string{
 		return setMessage( requestId, [&](FromClient::Message& m){ m.mutable_oee_subscribe()->set_machine( machine ); } );
 	}
+	α FromClientUtils::OeeLineSubscription( uint32 line, RequestId requestId )ι->string{
+		return setMessage( requestId, [&](FromClient::Message& m){ m.mutable_oee_subscribe()->set_line( line ); } );
+	}
 	α FromClientUtils::OeeUnsubscription( RequestId subscription, RequestId requestId )ι->string{
 		return setMessage( requestId, [&](FromClient::Message& m){ m.mutable_oee_unsubscribe()->set_subscription( subscription ); } );
 	}

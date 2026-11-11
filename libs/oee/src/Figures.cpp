@@ -187,23 +187,26 @@ namespace Jde::Opc{
 	}
 
 	α Oee::Figures( const Machine& machine, const History& history, const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by, SL sl )ε->vector<Bucket>{
+		return end<=start ? vector<Bucket>{} : Figures( machine, history, schedule, Buckets(schedule, start, end, by, machine.Name, sl) );
+	}
+	α Oee::Figures( const Machine& machine, const History& history, const Calendar::Schedule* schedule, std::span<const Calendar::Bucket> bounds )ι->vector<Bucket>{
 		vector<Bucket> y;
-		if( end<=start )
+		if( bounds.empty() )
 			return y;
-		vector<Calendar::Bucket> buckets;
-		if( by ){
-			let shift = std::get_if<Calendar::EBucket>( &*by );
-			REFUSE_IF( !schedule && shift && *shift==Calendar::EBucket::Shift, "'{}' has no calendar, so no shifts:  by shift needs one.", machine.Name );
-			buckets = ( schedule ? *schedule : utc() ).Buckets( start, end, *by, sl );
-		}
-		else
-			buckets.push_back( {start, end, {}} );
 		let cover = covered( history );
-		let stops = pieces( machine, history, clip({start, end}, cover), cover.End );
-		y.reserve( buckets.size() );
-		for( auto& bounds : buckets )
-			y.push_back( figure(machine, history, schedule, stops, cover, move(bounds)) );
+		let stops = pieces( machine, history, clip({bounds.front().Start, bounds.back().End}, cover), cover.End );
+		y.reserve( bounds.size() );
+		for( auto b : bounds )
+			y.push_back( figure(machine, history, schedule, stops, cover, move(b)) );
 		return y;
+	}
+
+	α Oee::Buckets( const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by, sv of, SL sl )ε->vector<Calendar::Bucket>{
+		if( !by )
+			return { {start, end, {}} };
+		let shift = std::get_if<Calendar::EBucket>( &*by );
+		REFUSE_IF( !schedule && shift && *shift==Calendar::EBucket::Shift, "'{}' has no calendar, so no shifts:  by shift needs one.", of );
+		return ( schedule ? *schedule : utc() ).Buckets( start, end, *by, sl );
 	}
 
 	α Oee::Losses( const Machine& machine, const History& history, const Calendar::Schedule* schedule, TimePoint start, TimePoint end )ι->vector<Loss>{

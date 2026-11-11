@@ -69,6 +69,16 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		return await<FromServer::OeeStatus>{ FromClientUtils::OeeSubscription(machine, requestId), requestId, shared_from_this(), sl };
 	}
+	α GatewayClientSocket::OeeSubscribeLine( uint32 line, sp<IOeeListener> listener, SL sl )ι->await<FromServer::OeeStatus>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]OeeSubscribe: line {}.", hex(requestId), line );
+		{
+			lg _{ _histMutex };
+			_oeeListeners.emplace( requestId, move(listener) );
+			_lastOeeSubscription = requestId;
+		}
+		return await<FromServer::OeeStatus>{ FromClientUtils::OeeLineSubscription(line, requestId), requestId, shared_from_this(), sl };
+	}
 	α GatewayClientSocket::OeeUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
 		let requestId = NextRequestId();
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]OeeUnsubscribe: {}.", hex(requestId), hex(subscription) );

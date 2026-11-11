@@ -90,6 +90,7 @@ namespace Jde::Opc::Gateway::Tests{
 		//The ack's status.  The listener hears the pushes until OeeUnsubscribe's ack, or the exception that ends it;  any after
 		//either is a stray, which OeeStrays counts.
 		α OeeSubscribe( uint32 machine, sp<IOeeListener> listener, SRCE )ι->await<FromServer::OeeStatus>;
+		α OeeSubscribeLine( uint32 line, sp<IOeeListener> listener, SRCE )ι->await<FromServer::OeeStatus>;//a line's, the same.
 		α OeeUnsubscribe( RequestId subscription, SRCE )ι->await<bool>;
 		α LastOeeSubscription()Ι->RequestId{ lg _{ _histMutex }; return _lastOeeSubscription; }
 		α OeeStrays()Ι->uint{ lg _{ _histMutex }; return _oeeStrays; }

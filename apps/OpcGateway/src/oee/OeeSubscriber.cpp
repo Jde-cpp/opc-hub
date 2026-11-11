@@ -5,12 +5,13 @@
 #include "../hist/HistHost.h"
 #include "../types/proto/opc.FromServer.h"
 #include "OeeHost.h"
+#include "OeeLineFeed.h"
 
 #define let const auto
 
 namespace Jde::Opc::Gateway{
-	OeeSubscriber::OeeSubscriber( wp<GatewaySocketSession> session, Jde::RequestId requestId, sp<OeeFeed> feed )ι:
-		_session{ move(session) }, _requestId{ requestId }, _feed{ move(feed) }
+	OeeSubscriber::OeeSubscriber( wp<GatewaySocketSession> session, Jde::RequestId requestId, sp<IOeeFeed> feed, UserPK user )ι:
+		_session{ move(session) }, _requestId{ requestId }, _feed{ move(feed) }, _user{ user }
 	{}
 	α OeeSubscriber::End()ι->void{
 		if( !_ended.exchange(true) )
@@ -56,25 +57,37 @@ namespace Jde::Opc::Gateway{
 
 	α GatewaySocketSession::OeeSubscribe( FromClient::OeeSubscribe&& request, Jde::RequestId requestId )ι->void{
 		try{
-			LogRead( Ƒ("OeeSubscribe: machine: {}", request.machine()), requestId );
+			LogRead( request.line() ? Ƒ("OeeSubscribe: line: {}", request.line()) : Ƒ("OeeSubscribe: machine: {}", request.machine()), requestId );
 			if( !Session() ){
 				WriteException( Exception{"Send sessionId before subscribing."}, requestId );
 				return;
 			}
-			if( !request.machine() )
-				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "OeeSubscribe needs machine, an oee_machines id." };
+			if( (request.machine()!=0)==(request.line()!=0) )
+				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "OeeSubscribe needs machine, an oee_machines id, or line, an oee_lines id:  one of the two." };
 			auto& oee = OeeHost::Instance();
-			let machine = oee.Find( request.machine() );
-			if( !machine ){
-				AppClient()->Acl()->Test( "gateway", "histGroups", Access::ERights::Read, UserPK(), SRCE_CUR );//the table's, before a caller learns of an id.
-				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "Machine {} not found.", request.machine() };
+			sp<IOeeFeed> feed;
+			if( request.line() ){//Read on the group of every machine it reaches, as its reads (spec *Authorization*).
+				let reached = oee.Reach( request.line(), UserPK(), SRCE_CUR );
+				if( reached.Line.Deleted )
+					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "Line '{}' is deleted.", reached.Line.Name };
+				oee.TestEnabled( SRCE_CUR );
+				feed = oee.LineFeed( request.line() );
 			}
-			HistHost::Instance().Gate( machine->Row.Group, Access::ERights::Read, false, UserPK(), SRCE_CUR );//as the reads (spec *Authorization*).
-			oee.TestEnabled( SRCE_CUR );
-			auto feed = oee.Feed( request.machine() );
-			if( !feed )
-				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::ServiceUnavailable}, "The gateway's OEE has stopped." };
-			auto subscriber = ms<OeeSubscriber>( SharedFromThis(), requestId, move(feed) );
+			else{
+				let machine = oee.Find( request.machine() );
+				if( !machine ){
+					AppClient()->Acl()->Test( "gateway", "histGroups", Access::ERights::Read, UserPK(), SRCE_CUR );//the table's, before a caller learns of an id.
+					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "Machine {} not found.", request.machine() };
+				}
+				HistHost::Instance().Gate( machine->Row.Group, Access::ERights::Read, false, UserPK(), SRCE_CUR );//as the reads (spec *Authorization*).
+				oee.TestEnabled( SRCE_CUR );
+				feed = oee.Feed( request.machine() );
+			}
+			if( !feed ){//purged since its check, or OEE stopped.
+				oee.TestEnabled( SRCE_CUR );
+				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "{} {} not found.", request.line() ? "Line" : "Machine", request.line() ? request.line() : request.machine() };
+			}
+			auto subscriber = ms<OeeSubscriber>( SharedFromThis(), requestId, move(feed), UserPK() );
 			{//claimed here, on the strand, so a second subscribe with the id is refused before either joins.
 				lg _{ _histMutex };
 				if( _closed )

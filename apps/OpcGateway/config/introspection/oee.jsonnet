@@ -6,7 +6,11 @@
 //oeeLosses( machine, start, end ){ kind reason{ … } ms stops }:  the loss rows, longest first.
 //oeeTimeline( machine, start, end ){ machine{ … } planned{ … } segments{ … } }:  what the Gantt chart draws, a list of one.
 //oeeMachineStatus( machine ){ … }:  the machine's engine and calendar, for the admin page.
-//Each needs Read on the machine's group.  Times are ISO 8601 to a hundred nanoseconds, durations milliseconds.
+//Each of the four takes `line`, an oee_lines id, in place of `machine` (spec *Lines*):  its machines' combined, a bucket
+//adding `machines` and `coverage`, and with `members: true` a bucket per direct member.  oeeLineStatus( line ){ … } is the
+//line's oeeMachineStatus.
+//Each needs Read on the machine's group, a line's on the group of every machine it reaches.  Times are ISO 8601 to a hundred
+//nanoseconds, durations milliseconds.
 //recomputeOee( machine, start, end ){ machine start end } (ql/OeeMAwait.cpp):  the machine's rows over start to end made
 //again from its group's history (oee/OeeMachineHost.cpp), for a caller with Update on oee_machines and Read on the group;
 //answers the span queued, as the engine ran it, once it is queued, not done.
@@ -44,7 +48,24 @@ local oee = {
 		{ name: "oee", type: Float },
 		{ name: "teep", type: Float },
 		{ name: "measured", type: List(NonNull(String)) }, //the factors in oee:  availability, performance, quality.
-		{ name: "partial", type: NonNull(Boolean) } //unknown time falls in it, or the rows don't cover it.
+		{ name: "partial", type: NonNull(Boolean) }, //unknown time falls in it, or the rows don't cover it.
+		//A line's.
+		{ name: "machines", type: UInt }, //the machines the bucket is over.
+		{ name: "coverage", type: Object("OeeCoverage") }, //how many of them each factor is over.
+		{ name: "members", type: List(Object("OeeMember")) }, //with members: true, a bucket per direct member.
+		//A member's bucket's:  the machine or the line it is.
+		{ name: "machine", type: Object("OeeMachineRef") },
+		{ name: "line", type: Object("OeeLineRef") }
+	]
+};
+local oeeLineStatus = {
+	fields: [
+		{ name: "line", type: Object("OeeLineRef") },
+		{ name: "enabled", type: NonNull(Boolean) }, //the gateway has an oee block and its historian.
+		{ name: "calendar", type: NonNull(String) }, //none, found or missing:  the line's own.
+		{ name: "calendarId", type: UInt },
+		{ name: "deleted", type: NonNull(Boolean) },
+		{ name: "machines", type: List(Object("OeeMachineStatus")) } //one per machine it reaches, in member order.
 	]
 };
 local oeeStops = {
@@ -104,6 +125,11 @@ local oeeCoding = {
 	oeeTimeline: oeeTimeline,
 	OeeMachineStatus: oeeMachineStatus,
 	oeeMachineStatus: oeeMachineStatus,
+	OeeLineStatus: oeeLineStatus,
+	oeeLineStatus: oeeLineStatus,
+	OeeMember: oee,
+	OeeCoverage: { fields: [ { name: "performance", type: NonNull(UInt) }, { name: "quality", type: NonNull(UInt) } ] },
+	OeeLineRef: { fields: [ { name: "id", type: NonNull(UInt) }, { name: "name", type: NonNull(String) }, { name: "level", type: String } ] },
 	OeeCodingRead: oeeCoding,
 	codeOee: oeeCoding,
 	uncodeOee: { fields: [ { name: "id", type: NonNull(UInt) } ] },

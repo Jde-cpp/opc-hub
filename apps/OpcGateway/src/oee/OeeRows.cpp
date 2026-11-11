@@ -1,7 +1,6 @@
 #include "OeeRows.h"
 #include <jde/db/generators/WhereClause.h>
 #include <jde/opc/uatypes/DateTime.h>
-#include <jde/oee/rules.h>
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -53,6 +52,12 @@ namespace Jde::Opc::Gateway{
 		}
 		return y;
 	}
+	Ω lineRow( DB::Row&& r )->OeeLineRow{
+		return { .Id=r.Get<uint32>(0), .Level=Oee::ToLevel(r.GetString(1)), .Calendar=r.GetOpt<uint32>(2), .Name=r.TakeString(3), .Slug=r.TakeString(4), .Deleted=!r.IsNull(5) };
+	}
+	Ω lineMemberRow( DB::Row&& r )->OeeLineMemberRow{
+		return { .Id=r.Get<uint32>(0), .Line=r.Get<uint32>(1), .Machine=r.GetOpt<uint32>(2), .MemberLine=r.GetOpt<uint32>(3), .Sort=r.Get<uint32>(4) };
+	}
 	Ω ticks( const DB::Row& r, uint i )ι->TimePoint{ return UADateTime{ UA_DateTime{r.Get<int64_t>(i)} }.Time(); }
 	constexpr sv _codingColumns{ "oee_coding_id, start, finish, oee_reason_id, comment, user_name, created, oee_machine_id" };
 	Ω text( sv value )ι->DB::Value{ return value.empty() ? DB::Value{} : DB::Value{ string{value} }; }//the QL engine's rule:  an empty string is null.
@@ -93,6 +98,33 @@ namespace Jde::Opc{
 		if( filter.Machine )
 			where.Add( view->GetColumnPtr("oee_machine_id"), (uint)*filter.Machine );
 		return { select(OeeTable::Signals, {"oee_machine_signal_id", "oee_machine_id", "role", "hist_group_node_id", "running", "rate_period"}, move(where), sl), signalRow, sl };
+	}
+	α Gateway::SelectOeeLines( SL sl )ι->HistRowsAwait<OeeLineRow>{
+		return { select(OeeTable::Lines, {"oee_line_id", "level", "calendar_id", "name", "slug", "deleted"}, {}, sl), lineRow, sl };
+	}
+	α Gateway::SelectOeeLineMembers( SL sl )ι->HistRowsAwait<OeeLineMemberRow>{
+		return { select(OeeTable::LineMembers, {"oee_line_member_id", "oee_line_id", "oee_machine_id", "member_line_id", "sort"}, {}, sl), lineMemberRow, sl };
+	}
+	α Gateway::OeeLines::Find( OeeLinePK id )Ι->const OeeLineRow*{
+		let p = std::ranges::find( Lines, id, &OeeLineRow::Id );
+		return p==Lines.end() ? nullptr : &*p;
+	}
+	α Gateway::OeeLines::Find( const DB::Key& key )Ι->const OeeLineRow*{
+		if( key.IsPK() )
+			return Find( (OeeLinePK)key.PK() );
+		let p = std::ranges::find( Lines, key.NK(), &OeeLineRow::Slug );
+		return p==Lines.end() ? nullptr : &*p;
+	}
+	α Gateway::OeeLines::Graph( flat_map<uint32,string> machines, bool standing )Ι->Oee::Lines::Graph{
+		Oee::Lines::Graph y{ .Lines={}, .Members={}, .Machines=move(machines) };
+		for( let& line : Lines )
+			y.Lines.push_back( {line.Id, line.Name, line.Level.value_or(Oee::ELevel::Cell)} );
+		for( let& member : Members ){
+			let line = standing && member.MemberLine ? Find( *member.MemberLine ) : nullptr;
+			if( !line || !line->Deleted )
+				y.Members.push_back( {member.Line, member.Machine, member.MemberLine} );
+		}
+		return y;
 	}
 	α Gateway::OeeTicks( TimePoint t )ι->DB::Value{ return DB::Value{ (_int)UADateTime{t}.UA() }; }
 	α Gateway::OeeSecond( TimePoint t )ι->TimePoint{ return std::chrono::floor<std::chrono::seconds>( t ); }

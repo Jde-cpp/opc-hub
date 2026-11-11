@@ -2,7 +2,7 @@
 #include <jde/ql/IQLAwaitExe.h>
 
 namespace Jde::Opc::Gateway{
-	//Every edit of OEE's six tables (opcGateway-meta.jsonnet, docs/oee/spec.md *Machines*, *Reasons and codings*, *Authorization*),
+	//Every edit of OEE's tables (opcGateway-meta.jsonnet, docs/oee/spec.md *Machines*, *Reasons and codings*, *Authorization*),
 	//routed here by Gateway::CustomMutation, and HubQL's, ahead of HistGroupMAwait:  it also claims a hist_groups delete or purge
 	//while a machine holds the group, and a hist_group_nodes purge while a signal names the member, and refuses them before the
 	//historian's await runs its live side ahead of the statement, which would take the group from the historian, and the
@@ -19,6 +19,12 @@ namespace Jde::Opc::Gateway{
 	//and a member whose MinTimeInterval is past `settle`.  Every refusal is a BadRequest;  a row that isn't there is NotFound.
 	//A signal's update that changes its `running` or `ratePeriod`, and a machine's that changes its `idleTimeout`, the engine's
 	//inputs, answer `recompute: true` with a warning that says so:  the rows written before it were made with the old one.
+	//The lines' two tables (spec *Lines*) are held to libs/oee's rules over the host's graph as the mutation would leave it:  a
+	//line's level one of the four, and on an update no higher than a line it is a member of, nor lower than a member line's;  a
+	//member a machine or a line, one of the two, that exists and isn't the line's member already, which makes no line reach
+	//itself or a machine by two paths, and whose level is no higher than its line's.  A member is created, re-sorted and purged:
+	//it has no deleted, and its keys aren't updateable.  A line's purge takes its memberships both ways, its proc's, and a
+	//machine's takes its own.  After each, OeeHost reads both tables again, under one lock with the checks and the write.
 	//recomputeOee( machine, start, end ){ machine start end }, a system mutation registered by its whole name (spec *The
 	//engine*, *Authorization*):  the machine's rows over the span made again from the group's history (OeeHost::Recompute),
 	//for the caller with Update on oee_machines and Read on the machine's group through HistHost::Gate.  It answers once the
