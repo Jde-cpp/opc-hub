@@ -13,13 +13,16 @@
 namespace Jde::Opc::Gateway::Tests{
 	using Hist::Tests::ManualClock;
 	using Oee::ERole;
+	//A pump's status, totalCount, rejectCount and reasonCode, which a machine's signals are made over:  pump1's, or pump2's.
+	struct PumpNodes final{ UA_UInt32 Status{ Status1 }, Total{ Total1 }, Reject{ Reject1 }, Reason{ Reason1 }; };
+	constexpr PumpNodes Pump2Nodes{ Status2, Total2, Reject2, Reason2 };
 	struct OeeIntervalRow final{ TimePoint Start; uint32 Ms, Run, Stop, Unknown; double Total, Good, Reject; };
 
 	struct OeeFixture : HistGroupFixture{
 	protected:
 		Ω SetUpTestSuite()ε->void{
 			HistGroupFixture::SetUpTestSuite();
-			_base = floor<minutes>( Clock::now() )-4h;//the backfills' windows, each case's later than the last's and every one an hour or more in the past.
+			_base = floor<minutes>( Clock::now() )-6h;//the backfills' windows, each case's later than the last's and every one an hour or more in the past:  OeeTests' and OeeLinesTests'.
 		}
 		Ω TearDownTestSuite()ι->void{
 			OeeHost::Instance().Stop();
@@ -73,12 +76,15 @@ namespace Jde::Opc::Gateway::Tests{
 		Ω WriteTotal( uint32_t value, TimePoint source )ε->void{ UA_UInt32 v = value; Write( Total1, &v, UA_TYPES[UA_TYPES_UINT32], source ); }
 		Ω WriteReject( uint32_t value, TimePoint source )ε->void{ UA_UInt32 v = value; Write( Reject1, &v, UA_TYPES[UA_TYPES_UINT32], source ); }
 		Ω WriteReason( int32_t value, TimePoint source )ε->void{ UA_Int32 v = value; Write( Reason1, &v, UA_TYPES[UA_TYPES_INT32], source ); }
-		//pump1's four members at `t`, before a group joins them:  each item's first value then carries it, the bound the engine opens with.
-		Ω Baseline( TimePoint t, bool status=true, uint32_t total=100, uint32_t reject=5 )ε->void{
-			WriteStatus( status, t );
-			WriteTotal( total, t );
-			WriteReject( reject, t );
-			WriteReason( 0, t );
+		Ω WriteBool( UA_UInt32 node, bool value, TimePoint source )ε->void{ UA_Boolean b = value; Write( node, &b, UA_TYPES[UA_TYPES_BOOLEAN], source ); }
+		Ω WriteCount( UA_UInt32 node, uint32_t value, TimePoint source )ε->void{ UA_UInt32 v = value; Write( node, &v, UA_TYPES[UA_TYPES_UINT32], source ); }
+		//A pump's four members at `t`, before a group joins them:  each item's first value then carries it, the bound the engine opens with.
+		Ω Baseline( TimePoint t, bool status=true, uint32_t total=100, uint32_t reject=5, PumpNodes nodes={} )ε->void{
+			WriteBool( nodes.Status, status, t );
+			WriteCount( nodes.Total, total, t );
+			WriteCount( nodes.Reject, reject, t );
+			UA_Int32 none{};
+			Write( nodes.Reason, &none, UA_TYPES[UA_TYPES_INT32], t );
 		}
 		Ω Intervals( uint32 machine )ε->vector<OeeIntervalRow>{
 			vector<OeeIntervalRow> y;
@@ -178,15 +184,15 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_FALSE( stops[0].Unknown );
 		}
 
-		//A group over pump1's four members, subscribed with each first value in, and the machine a test makes over it:  purged as
-		//it goes, machine first, as `Pump1Machine pump{ "slug", t0 };`.
+		//A group over a pump's four members, pump1's unless `nodes` says, subscribed with each first value in, and the machine a
+		//test makes over it:  purged as it goes, machine first, as `Pump1Machine pump{ "slug", t0 };`.
 		struct Pump1Machine final{
-			Pump1Machine( sv slug, TimePoint baseline, bool status=true, uint32_t total=100, uint32_t reject=5 )ε:Slug{ slug }{
+			Pump1Machine( sv slug, TimePoint baseline, bool status=true, uint32_t total=100, uint32_t reject=5, PumpNodes nodes={} )ε:Slug{ slug }{
 				ItemsBefore = Items();
-				Baseline( baseline, status, total, reject );
+				Baseline( baseline, status, total, reject, nodes );
 				Group = CreateGroup( slug );
 				try{
-					for( let [role, node] : {std::pair{ERole::State, Status1}, std::pair{ERole::Total, Total1}, std::pair{ERole::Reject, Reject1}, std::pair{ERole::Reason, Reason1}} )
+					for( let [role, node] : {std::pair{ERole::State, nodes.Status}, std::pair{ERole::Total, nodes.Total}, std::pair{ERole::Reject, nodes.Reject}, std::pair{ERole::Reason, nodes.Reason}} )
 						Members.emplace( role, AddNode(Group, node) );
 					GroupHost = HistGroupFixture::Host( Group );
 					WaitSubscribed( GroupHost, 4 );

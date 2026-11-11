@@ -13,33 +13,12 @@ namespace Jde::Opc::Gateway{
 
 	Ω stamp( TimePoint t )ι->google::protobuf::Timestamp{ return UADateTime{ t }.ToProto(); }
 	Ω ms( Duration d )ι->int64_t{ return std::chrono::duration_cast<std::chrono::milliseconds>( d ).count(); }
-	Ω figures( const Oee::Bucket& b )ι->FromServer::OeeFigures{
-		FromServer::OeeFigures y;
-		*y.mutable_start() = stamp( b.Start );
-		*y.mutable_end() = stamp( b.End );
-		y.set_planned( ms(b.Planned) ); y.set_run( ms(b.Run) ); y.set_unplanned( ms(b.Unplanned) ); y.set_planned_stop( ms(b.PlannedStop) );
-		y.set_small( ms(b.Small) ); y.set_excluded( ms(b.Excluded) ); y.set_unknown( ms(b.Unknown) );
-		y.set_total( b.Total ); y.set_good( b.Good ); y.set_reject( b.Reject ); y.set_outside( b.Outside ); y.set_ideal( ms(b.Ideal) );
-		if( b.Availability )
-			y.set_availability( *b.Availability );
-		if( b.Performance )
-			y.set_performance( *b.Performance );
-		if( b.Quality )
-			y.set_quality( *b.Quality );
-		if( b.OEE )
-			y.set_oee( *b.OEE );
-		if( b.TEEP )
-			y.set_teep( *b.TEEP );
-		y.set_measured( (uint32)b.Measured );
-		y.set_partial( b.Partial );
-		return y;
-	}
-
 	OeeFeed::OeeFeed( OeeMachineRow row, vector<OeeSignalRow> signals, sp<Hist::IClock> clock, Duration live )ι:
 		_id{ row.Id }, _clock{ move(clock) }, _live{ live }, _row{ move(row) }, _machine{ ToMachine(_row, signals) }
 	{}
 
 	α OeeFeed::Closed( const Oee::Interval& row )ι->void{
+		OeeHost::Instance().MachineMoved( _id );
 		lg _{ _mutex };
 		if( !Holding() )
 			return;
@@ -64,6 +43,7 @@ namespace Jde::Opc::Gateway{
 			_rewritten = _rewritten ? std::min( *_rewritten, from ) : from;
 	}
 	α OeeFeed::Changed()ι->void{
+		OeeHost::Instance().MachineMoved( _id );
 		{
 			lg _{ _mutex };
 			if( _subscribers.empty() )
@@ -72,6 +52,7 @@ namespace Jde::Opc::Gateway{
 		Post( [self=shared_from_this()]{ self->Push(); } );
 	}
 	α OeeFeed::Reload( EReload what )ι->void{
+		OeeHost::Instance().MachineMoved( _id );//the rows a line sums were made by other hands too.
 		{
 			lg _{ _mutex };
 			if( !Active() )
@@ -163,18 +144,6 @@ namespace Jde::Opc::Gateway{
 	α OeeFeed::Schedule()Ι->sp<const Calendar::Schedule>{
 		return _row.Calendar ? Calendar::Client::Calendars::Find( *_row.Calendar ) : nullptr;
 	}
-	α OeeFeed::Current( const Calendar::Schedule* schedule, TimePoint now )Ι->optional<Window>{
-		if( !schedule ){
-			const TimePoint day{ std::chrono::floor<std::chrono::days>(now) };
-			return Window{ nullopt, {day, day+std::chrono::days{1}} };
-		}
-		auto shift = schedule->At( now );
-		if( !shift )
-			return nullopt;
-		const Oee::Span range{ shift->Start, shift->End };
-		return Window{ move(shift), range };
-	}
-
 	α OeeFeed::Adding( AddAwait& await, sp<OeeSubscriber> subscriber )ι->VoidTask{
 		let self = shared_from_this();
 		bool joining{};
@@ -286,7 +255,7 @@ namespace Jde::Opc::Gateway{
 			optional<Window> window;
 			{
 				lg _{ _mutex };
-				window = Current( Schedule().get(), now );
+				window = CurrentOeeWindow( Schedule().get(), now );
 			}
 			let from = window ? window->Range.Start : now;
 			let until = now+hours{ 24 };
@@ -389,7 +358,7 @@ namespace Jde::Opc::Gateway{
 		FromServer::OeeStatus y;
 		let now = state ? state->At : _clock->Now();
 		let schedule = Schedule();
-		let window = Current( schedule.get(), now );
+		let window = CurrentOeeWindow( schedule.get(), now );
 		let stopped = state && state->State==Oee::EState::Stopped && state->Open && !state->Open->Unknown;
 		if( state ){
 			y.set_state( state->State==Oee::EState::Running ? FromServer::OeeRunning : state->State==Oee::EState::Stopped ? FromServer::OeeStopped : FromServer::OeeUnknown );
@@ -452,12 +421,46 @@ namespace Jde::Opc::Gateway{
 		}
 		try{
 			if( let buckets = Oee::Figures(_machine, {_rows, stops, _codings, _reasons}, schedule.get(), start, end); buckets.size() )
-				*y.mutable_figures() = figures( buckets.front() );
+				*y.mutable_figures() = ToOeeFigures( buckets.front() );
 		}
 		catch( const std::exception& e ){
 			DBG( "[{}]The live figures couldn't be computed:  {}", _machine.Name, e.what() );
 		}
 		_rows.resize( held );
 		return y;
+	}
+}
+namespace Jde::Opc{
+	α Gateway::ToOeeFigures( const Oee::Bucket& b )ι->FromServer::OeeFigures{
+		FromServer::OeeFigures y;
+		*y.mutable_start() = stamp( b.Start );
+		*y.mutable_end() = stamp( b.End );
+		y.set_planned( ms(b.Planned) ); y.set_run( ms(b.Run) ); y.set_unplanned( ms(b.Unplanned) ); y.set_planned_stop( ms(b.PlannedStop) );
+		y.set_small( ms(b.Small) ); y.set_excluded( ms(b.Excluded) ); y.set_unknown( ms(b.Unknown) );
+		y.set_total( b.Total ); y.set_good( b.Good ); y.set_reject( b.Reject ); y.set_outside( b.Outside ); y.set_ideal( ms(b.Ideal) );
+		if( b.Availability )
+			y.set_availability( *b.Availability );
+		if( b.Performance )
+			y.set_performance( *b.Performance );
+		if( b.Quality )
+			y.set_quality( *b.Quality );
+		if( b.OEE )
+			y.set_oee( *b.OEE );
+		if( b.TEEP )
+			y.set_teep( *b.TEEP );
+		y.set_measured( (uint32)b.Measured );
+		y.set_partial( b.Partial );
+		return y;
+	}
+	α Gateway::CurrentOeeWindow( const Calendar::Schedule* schedule, TimePoint now )ι->optional<OeeWindow>{
+		if( !schedule ){
+			const TimePoint day{ std::chrono::floor<std::chrono::days>(now) };
+			return OeeWindow{ nullopt, {day, day+std::chrono::days{1}} };
+		}
+		auto shift = schedule->At( now );
+		if( !shift )
+			return nullopt;
+		const Oee::Span range{ shift->Start, shift->End };
+		return OeeWindow{ move(shift), range };
 	}
 }

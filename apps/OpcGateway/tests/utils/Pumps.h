@@ -21,6 +21,8 @@ namespace Jde::Opc::Gateway::Tests{
 	//OEE's members on pump1 (docs/oee/spec.md *Emulator*):  totalCount and rejectCount, UInt32 counters, and reasonCode, an Int32,
 	//historized as status and motorRpm are;  what OeeTests write as a machine's Total, Reject and Reason signals.
 	constexpr UA_UInt32 Total1{ 6013 }, Reject1{ 6014 }, Reason1{ 6015 };
+	//pump2's, the second machine of OeeLinesTests' lines.
+	constexpr UA_UInt32 Total2{ 6023 }, Reject2{ 6024 }, Reason2{ 6025 };
 	//pumpManual's toHertz( rpm: Double ) -> ( hertz: Double, text: String ), the pumps demo's method, which CallTests call (#318), bound by the
 	//OpcServer after the load (Server::ConfigurePumps), which also gives PumpManual - and no other pump - a WriteMask of DisplayName and
 	//Description, the one WriteTests write (#417).

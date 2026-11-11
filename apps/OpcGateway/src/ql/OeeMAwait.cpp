@@ -25,7 +25,7 @@ namespace Jde::Opc::Gateway{
 		let table = m.TableName();
 		if( table==Stops || table==Intervals || table==Codings )
 			return true;
-		if( table==Machines || table==Signals || table==Reasons )
+		if( table==Machines || table==Signals || table==Reasons || table==Lines || table==LineMembers )
 			return m.Type==Create || m.Type==Update || m.Type==Delete || m.Type==Restore || m.Type==Purge;
 		let& host = OeeHost::Instance();
 		if( table==HistTable::Groups && (m.Type==Delete || m.Type==Purge) ){
@@ -60,6 +60,10 @@ namespace Jde::Opc::Gateway{
 	Ω requireName( const jobject& args, SL sl )ε->void{
 		let p = args.if_contains( "name" );
 		REFUSE_IF( !p || !p->is_string() || p->get_string().empty(), "name is required." );
+	}
+	Ω optionalId( const jobject& args, sv name, SL sl )ε->optional<uint32>{
+		let p = args.if_contains( name );
+		return p && !p->is_null() ? optional<uint32>{ requireId(args, name, sl) } : nullopt;
 	}
 	//A column of whole milliseconds:  none when the arguments leave it out or null it.
 	Ω wholeMs( const jobject& args, sv name, SL sl )ε->optional<Duration>{
@@ -268,6 +272,7 @@ namespace Jde::Opc::Gateway{
 				optional<DB::Key> machineKey;//the machine whose live side runs after.
 				optional<OeeMachinePK> purging;
 				optional<string> recompute;//an engine input changed:  the rows before now were made with the old one.
+				CoGuard lineEdit;//a line's or a member's:  its checks, its write and the host's read of both tables together.
 				if( table==Machines ){
 					if( type==Create ){
 						requireName( args, sl );
@@ -348,6 +353,55 @@ namespace Jde::Opc::Gateway{
 					checkMachine( {machine.Width, machine.IdealCycle, machine.IdleTimeout}, signals, sl );
 					machineKey = DB::Key{ (uint)machineId };
 				}
+				else if( table==Lines ){
+					lineEdit = co_await host.LineEdits().Lock();
+					let lines = host.Lines();
+					if( type==Create )
+						requireName( args, sl );
+					let level = args.if_contains( "level" );
+					if( (level || type==Create) && (type==Create || type==Update) )
+						REFUSE_IF( !level || !level->is_string() || !Oee::ToLevel(level->get_string()), "level is Site, Area, Line or Cell{}.", level ? Ƒ(", not {}", serialize(*level)) : string{} );
+					if( type==Create || type==Update )
+						checkCalendar( args, sl );
+					if( type!=Create ){
+						let key = rowKey( _query, sl );
+						let row = lines.Find( key );
+						if( !row )
+							notFound( Ƒ("Line {} not found.", key.IsPK() ? std::to_string(key.PK()) : key.NK()), sl );
+						if( type==Update && level ){//against its lines' levels above, and its member lines' below.
+							auto graph = lines.Graph( host.MachineNames() );
+							std::ranges::find( graph.Lines, row->Id, &Oee::Lines::Line::Id )->Level = *Oee::ToLevel( level->get_string() );
+							Oee::Lines::Validate( graph, sl );
+						}
+					}
+				}
+				else if( table==LineMembers ){
+					REFUSE_IF( type==Delete || type==Restore, "A member has no deleted:  purge it." );
+					lineEdit = co_await host.LineEdits().Lock();
+					let lines = host.Lines();
+					if( type==Create ){
+						let lineId = requireId( args, "oeeLineId", sl );
+						let line = lines.Find( lineId );
+						if( !line )
+							notFound( Ƒ("Line {} not found.", lineId), sl );
+						let machineId = optionalId( args, "oeeMachineId", sl );
+						let memberId = optionalId( args, "memberLineId", sl );
+						REFUSE_IF( machineId.has_value()==memberId.has_value(), "A member of '{}' is a machine or a line:  oeeMachineId or memberLineId, one of the two.", line->Name );
+						let machine = machineId ? host.Find( *machineId ) : nullopt;
+						if( machineId && !machine )
+							notFound( Ƒ("Machine {} not found.", *machineId), sl );
+						let member = memberId ? lines.Find( *memberId ) : nullptr;
+						if( memberId && !member )
+							notFound( Ƒ("Line {} not found.", *memberId), sl );
+						let same = std::ranges::any_of( lines.Members, [&]( const OeeLineMemberRow& m ){ return m.Line==lineId && m.Machine==machineId && m.MemberLine==memberId; } );
+						REFUSE_IF( same, "'{}' is a member of '{}' already.", machine ? machine->Row.Name : member->Name, line->Name );
+						auto graph = lines.Graph( host.MachineNames() );
+						graph.Members.push_back( {lineId, machineId, memberId} );
+						Oee::Lines::Validate( graph, sl );
+					}
+					else if( let id = MutationRowId(_query, sl); !std::ranges::contains(lines.Members, id, &OeeLineMemberRow::Id) )
+						notFound( Ƒ("Member {} not found.", id), sl );
+				}
 				else{//a reason.
 					if( type==Create )
 						requireName( args, sl );
@@ -394,8 +448,12 @@ namespace Jde::Opc::Gateway{
 					co_await host.MachineChanged( *machineKey );
 					std::rethrow_exception( failed );
 				}
-				if( purging )
+				if( purging ){
 					host.MachinePurged( *purging );
+					co_await host.LinesChanged();//its memberships went with it.
+				}
+				else if( lineEdit )
+					co_await host.LinesChanged();
 				else if( table==Machines && type==Create ){
 					let pk = row0 ? Json::FindNumber<uint32>( *row0, "id" ).value_or( 0 ) : 0;
 					THROW_IFSL( !pk, "'{}' answered no id:  {}", _query.CommandName, serialize(y) );

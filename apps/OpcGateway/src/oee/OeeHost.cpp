@@ -1,11 +1,14 @@
 #include "OeeHost.h"
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/co/BlockAwait.h>
+#include <jde/fwk/process/execution.h>
 #include <jde/fwk/settings.h>
+#include <jde/access/Authorize.h>
 #include <jde/calendar/client/Calendars.h>
 #include <jde/oee/rules.h>
+#include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
-#include "OeeFeed.h"
+#include "OeeLineFeed.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -68,6 +71,7 @@ namespace Jde::Opc::Gateway{
 				}
 				for( let& feed : feeds )
 					feed->Reload();
+				host.MoveLines();//a line's shift, or a machine's planned time under it.
 			} );
 			lg _{ _mutex };
 			_calendars = handle;
@@ -86,10 +90,13 @@ namespace Jde::Opc::Gateway{
 	α OeeHost::Stop()ι->void{
 		vector<sp<OeeMachineHost>> engines;
 		vector<sp<OeeFeed>> feeds;
+		flat_map<OeeLinePK,sp<OeeLineFeed>> lineFeeds;
 		optional<uint> calendars;
 		{
 			lg _{ _mutex };
 			_stopped = true;
+			lineFeeds = std::exchange( _lineFeeds, {} );
+			_lineFeedCount = 0;
 			calendars = std::exchange( _calendars, nullopt );
 			for( auto&& [_,entry] : _machines ){
 				if( entry.Feed )
@@ -107,6 +114,8 @@ namespace Jde::Opc::Gateway{
 		for( auto& engine : engines )
 			engine->End();
 		for( auto& feed : feeds )
+			feed->EndAll( EHttpStatus::ServiceUnavailable, "The gateway's OEE stopped, which ends the subscription." );
+		for( let& [_,feed] : lineFeeds )
 			feed->EndAll( EHttpStatus::ServiceUnavailable, "The gateway's OEE stopped, which ends the subscription." );
 		for( auto& engine : engines ){
 			try{
@@ -172,6 +181,7 @@ namespace Jde::Opc::Gateway{
 	α OeeHost::Coded( OeeMachinePK id )ι->void{
 		if( auto feed = Feed(id); feed )
 			feed->Reload( OeeFeed::CodingsOnly );
+		MoveLines( id );
 	}
 	α OeeHost::ReasonsChanged()ι->void{
 		vector<sp<OeeFeed>> feeds;
@@ -184,6 +194,7 @@ namespace Jde::Opc::Gateway{
 		}
 		for( let& feed : feeds )
 			feed->Reload( OeeFeed::ReasonsOnly );
+		MoveLines();
 	}
 	α OeeHost::Recompute( OeeMachinePK id, Oee::Span span, SL sl )ε->void{
 		let machine = Find( id );
@@ -236,10 +247,11 @@ namespace Jde::Opc::Gateway{
 
 	α OeeHost::Loading( AnyVoidAwait& await )ι->VoidTask{
 		try{
-			auto [machines, signals] = co_await All( SelectOeeMachines({.IncludeDeleted=true}), SelectOeeSignals() );
+			auto [machines, signals, lines, members] = co_await All( SelectOeeMachines({.IncludeDeleted=true}), SelectOeeSignals(), SelectOeeLines(), SelectOeeLineMembers() );
 			vector<std::pair<OeeMachinePK,uint>> launches;
 			{
 				lg _{ _mutex };
+				SetLines( move(lines), move(members) );
 				_machines.clear();
 				for( auto& row : machines ){
 					let id = row.Id;
@@ -257,7 +269,7 @@ namespace Jde::Opc::Gateway{
 				for( let [id, serial] : launches )
 					Launch( id, serial );
 			}
-			INFO( "OEE:  {} machines, {} signals.", machines.size(), signals.size() );
+			INFO( "OEE:  {} machines, {} signals, {} lines.", machines.size(), signals.size(), Lines().Lines.size() );
 			await.Resume();
 		}
 		catch( runtime_error& e ){
@@ -410,6 +422,7 @@ namespace Jde::Opc::Gateway{
 		}
 		if( feed )
 			feed->Edited( machine.Row, machine.Signals, read );
+		MoveLines( id );
 		if( running ){
 			running->SetWidth( machine.Row.Width );
 			co_return;
@@ -455,5 +468,103 @@ namespace Jde::Opc::Gateway{
 	α OeeHost::MachinePurged( OeeMachinePK id )ι->void{
 		lg _{ _mutex };
 		_machines.erase( id );
+	}
+
+	α OeeHost::MachineNames()Ι->flat_map<uint32,string>{
+		lg _{ _mutex };
+		flat_map<uint32,string> y;
+		for( let& [id,entry] : _machines )
+			y.emplace( id, entry.Rows.Row.Name );
+		return y;
+	}
+	α OeeHost::SetLines( vector<OeeLineRow>&& lines, vector<OeeLineMemberRow>&& members )ι->void{
+		std::ranges::sort( members, {}, []( const OeeLineMemberRow& m ){ return std::pair{ m.Sort, m.Id }; } );
+		_lines = { move(lines), move(members) };
+	}
+	α OeeHost::Reach( OeeLinePK id )Ι->optional<Reached>{
+		lg _{ _mutex };
+		let line = _lines.Find( id );
+		if( !line )
+			return nullopt;
+		Reached y{ *line, {}, _lines };
+		try{
+			for( let machine : Oee::Lines::Reach(_lines.Graph({}, true), id) ){
+				if( auto p = _machines.find(machine); p!=_machines.end() )
+					y.Machines.push_back( p->second.Rows );
+			}
+		}
+		catch( const std::exception& e ){//a line that reaches itself, which no mutation leaves.
+			ERR( "Line '{}' reaches no machine:  {}", line->Name, e.what() );
+		}
+		return y;
+	}
+	α OeeHost::Reach( OeeLinePK id, UserPK by, SL sl )Ε->Reached{
+		auto y = Reach( id );
+		if( !y ){
+			AppClient()->Acl()->Test( "gateway", "oeeLines", Access::ERights::Read, by, sl );//the table's, before a caller learns of an id.
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Line {} not found.", id };
+		}
+		for( let& machine : y->Machines )
+			HistHost::Instance().Gate( machine.Row.Group, Access::ERights::Read, false, by, sl );
+		return move( *y );
+	}
+	α OeeHost::LineFeed( OeeLinePK id )ι->sp<OeeLineFeed>{
+		lg _{ _mutex };
+		if( _stopped || !_clock || !_lines.Find(id) )
+			return nullptr;
+		auto& feed = _lineFeeds[id];
+		if( !feed ){
+			feed = ms<OeeLineFeed>( id, _clock, _live );
+			_lineFeedCount = _lineFeeds.size();
+		}
+		return feed;
+	}
+	α OeeHost::MachineMoved( OeeMachinePK id )ι->void{
+		if( _lineFeedCount )
+			Post( [id]{ Instance().MoveLines( id ); } );
+	}
+	α OeeHost::MoveLines( optional<OeeMachinePK> machine )ι->void{
+		if( !_lineFeedCount )
+			return;
+		vector<sp<OeeLineFeed>> feeds;
+		{
+			lg _{ _mutex };
+			for( let& [_,feed] : _lineFeeds )
+				feeds.push_back( feed );
+		}
+		for( let& feed : feeds )
+			feed->Moved( machine );
+	}
+	α OeeHost::LinesChanged()ι->AnyVoidTask{
+		uint read;
+		{
+			lg _{ _mutex };
+			read = ++_lineReads;
+		}
+		auto [lines, members] = co_await All( SelectOeeLines(), SelectOeeLineMembers() );
+		vector<std::pair<sp<OeeLineFeed>,string>> ended;//with why:  empty for a line that's gone.
+		{
+			lg _{ _mutex };
+			if( read<_lineReads )
+				co_return;
+			SetLines( move(lines), move(members) );
+			for( auto p = _lineFeeds.begin(); p!=_lineFeeds.end(); ){
+				let line = _lines.Find( p->first );
+				if( line && !line->Deleted ){
+					++p;
+					continue;
+				}
+				ended.emplace_back( p->second, line ? line->Name : string{} );
+				p = line ? std::next( p ) : _lineFeeds.erase( p );
+			}
+			_lineFeedCount = _lineFeeds.size();
+		}
+		for( let& [feed, deleted] : ended ){
+			if( deleted.empty() )
+				feed->EndAll( EHttpStatus::NotFound, "The line was purged, which ends the subscription." );
+			else
+				feed->EndAll( EHttpStatus::NotFound, "The line was deleted, which ends the subscription.", false );
+		}
+		MoveLines();
 	}
 }

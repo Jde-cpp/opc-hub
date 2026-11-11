@@ -87,6 +87,18 @@ namespace Jde::Opc::Oee::Tests{
 		EXPECT_DOUBLE_EQ( *line.Quality, 342.0/360 ) << "the filler's alone";
 		EXPECT_EQ( line.Measured, EFactors::Availability|EFactors::Performance );
 	}
+	//A level's text, as the column holds it, and the bounds a line's read is cut at:  the range itself with no `by`.
+	TEST_F( LinesTests, LevelsAndBounds ){
+		for( let level : {ELevel::Site, ELevel::Area, ELevel::Line, ELevel::Cell} )
+			EXPECT_EQ( ToLevel(ToString(level)), optional<ELevel>{level} );
+		EXPECT_FALSE( ToLevel("Plant") );
+		let whole = Buckets( nullptr, At(6), At(14), {}, "Line 1" );
+		ASSERT_EQ( whole.size(), 1u );
+		EXPECT_EQ( whole[0].Start, At(6) );
+		EXPECT_EQ( whole[0].End, At(14) );
+		EXPECT_EQ( Buckets(nullptr, At(6), At(14), Calendar::BucketBy{Duration{2h}}, "Line 1").size(), 4u );
+		EXPECT_THROW( Buckets(nullptr, At(6), At(14), Calendar::BucketBy{Calendar::EBucket::Shift}, "Line 1"), Exception ) << "no calendar, no shifts";
+	}
 	//`partial` is any member's, and a line of nothing measures nothing.
 	TEST_F( LinesTests, PartialAndEmpty ){
 		auto partial = Packer;

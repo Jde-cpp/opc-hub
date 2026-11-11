@@ -190,20 +190,21 @@ namespace Jde::Opc{
 		vector<Bucket> y;
 		if( end<=start )
 			return y;
-		vector<Calendar::Bucket> buckets;
-		if( by ){
-			let shift = std::get_if<Calendar::EBucket>( &*by );
-			REFUSE_IF( !schedule && shift && *shift==Calendar::EBucket::Shift, "'{}' has no calendar, so no shifts:  by shift needs one.", machine.Name );
-			buckets = ( schedule ? *schedule : utc() ).Buckets( start, end, *by, sl );
-		}
-		else
-			buckets.push_back( {start, end, {}} );
+		auto buckets = Buckets( schedule, start, end, by, machine.Name, sl );
 		let cover = covered( history );
 		let stops = pieces( machine, history, clip({start, end}, cover), cover.End );
 		y.reserve( buckets.size() );
 		for( auto& bounds : buckets )
 			y.push_back( figure(machine, history, schedule, stops, cover, move(bounds)) );
 		return y;
+	}
+
+	α Oee::Buckets( const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by, sv of, SL sl )ε->vector<Calendar::Bucket>{
+		if( !by )
+			return { {start, end, {}} };
+		let shift = std::get_if<Calendar::EBucket>( &*by );
+		REFUSE_IF( !schedule && shift && *shift==Calendar::EBucket::Shift, "'{}' has no calendar, so no shifts:  by shift needs one.", of );
+		return ( schedule ? *schedule : utc() ).Buckets( start, end, *by, sl );
 	}
 
 	α Oee::Losses( const Machine& machine, const History& history, const Calendar::Schedule* schedule, TimePoint start, TimePoint end )ι->vector<Loss>{

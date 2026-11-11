@@ -16,6 +16,7 @@ namespace Jde::Opc::Oee{
 	α ToString( ELevel level )ι->sv;
 	α ToRole( sv name )ι->optional<ERole>;//as ToString spells it, the columns' text.
 	α ToCategory( sv name )ι->optional<ECategory>;
+	α ToLevel( sv name )ι->optional<ELevel>;
 
 	//A State value that means running:  a number, a Boolean as 1 or 0, or text.
 	using StateValue = std::variant<double,string>;

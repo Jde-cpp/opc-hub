@@ -1,5 +1,6 @@
 #pragma once
 #include <jde/oee/Engine.h>
+#include <jde/oee/rules.h>
 #include "../hist/HistRows.h"
 
 //OEE's tables (opcGateway-meta.jsonnet, docs/oee/spec.md *Machines*, *Stops*, *Intervals*) as rows:  the selects the host and
@@ -7,7 +8,7 @@
 namespace Jde::Opc::Gateway{
 	using OeeMachinePK = uint32;
 	using OeeSignalPK = uint32;
-	namespace OeeTable{ constexpr sv Machines{ "oee_machines" }, Signals{ "oee_machine_signals" }, Stops{ "oee_stops" }, Intervals{ "oee_intervals" }, Reasons{ "oee_reasons" }, Codings{ "oee_codings" }; }
+	namespace OeeTable{ constexpr sv Machines{ "oee_machines" }, Signals{ "oee_machine_signals" }, Stops{ "oee_stops" }, Intervals{ "oee_intervals" }, Reasons{ "oee_reasons" }, Codings{ "oee_codings" }, Lines{ "oee_lines" }, LineMembers{ "oee_line_members" }; }
 
 	struct OeeMachineRow final{
 		OeeMachinePK Id;
@@ -37,6 +38,23 @@ namespace Jde::Opc::Gateway{
 	//oee_machine_signals:  by row, by machine, or all.
 	struct OeeSignalFilter final{ optional<OeeSignalPK> Id; optional<OeeMachinePK> Machine; };
 	α SelectOeeSignals( OeeSignalFilter filter={}, SRCE )ι->HistRowsAwait<OeeSignalRow>;
+
+	//The lines' two tables (spec *Lines*).  Level is none for text ToLevel doesn't know, a row the QL never wrote.
+	using OeeLinePK = uint32;
+	struct OeeLineRow final{ OeeLinePK Id; optional<Oee::ELevel> Level; optional<uint32> Calendar; string Name; string Slug; bool Deleted; };
+	struct OeeLineMemberRow final{ uint32 Id; OeeLinePK Line; optional<OeeMachinePK> Machine; optional<OeeLinePK> MemberLine; uint32 Sort; };
+	α SelectOeeLines( SRCE )ι->HistRowsAwait<OeeLineRow>;//every one, the deleted among them.
+	α SelectOeeLineMembers( SRCE )ι->HistRowsAwait<OeeLineMemberRow>;//every one.
+	//The gateway's lines as the library's rules and the reads take them, the members in their order, by sort then row.
+	struct OeeLines final{
+		vector<OeeLineRow> Lines;
+		vector<OeeLineMemberRow> Members;
+		α Find( OeeLinePK id )Ι->const OeeLineRow*;
+		α Find( const DB::Key& key )Ι->const OeeLineRow*;//by id or slug.
+		//`machines`:  their names, for the messages.  A line whose level isn't read is a Cell, the lowest.  `standing`:  without
+		//the memberships of deleted lines, which a figure leaves out as it does a deleted machine, until the line's restore.
+		α Graph( flat_map<uint32,string> machines={}, bool standing=false )Ι->Oee::Lines::Graph;
+	};
 
 	//An oee_codings row:  the coding, whose machine it is, and when it was made.
 	struct OeeCodingRow final{ Oee::Coding Value; OeeMachinePK Machine; TimePoint Created; };

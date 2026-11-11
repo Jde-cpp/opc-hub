@@ -42,6 +42,9 @@ namespace Jde::Opc::Oee{
 	//Without a schedule every minute is planned and the days begin at midnight UTC;  by shift then throws a BadRequest.
 	α Figures( const Machine& machine, const History& history, const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by={}, SRCE )ε->vector<Bucket>;
 
+	//The bounds Figures cuts [start, end) at:  the range itself with no `by`.  `of`:  the machine or line, for by shift's refusal.
+	α Buckets( const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by, sv of, SRCE )ε->vector<Calendar::Bucket>;
+
 	//A loss row:  the time of stops, within planned time, under one reason.  A small stop is under Small whatever its
 	//coding, bar Excluded, and time no coding or code names under Uncoded.
 	enum class ELoss : uint8{ Reason, Uncoded, Small };

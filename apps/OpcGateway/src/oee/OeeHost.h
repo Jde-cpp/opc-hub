@@ -10,7 +10,9 @@ namespace Jde::Opc::Gateway{
 	//A machine runs once it is live, has a `processed` and a signal set the library's rules pass, and its group is hosted.  One
 	//an edit makes runnable starts `settle` after its last edit, so a form's signals land before the engine reads the past with
 	//them;  those loaded at the gateway's start, and a restart after a failure, don't wait.
-	struct OeeFeed;
+	//The lines (spec *Lines*) are held as the machines are:  both tables' rows, read again after each edit of either, for
+	//OeeMAwait's rules, the reads' reach and each line's live feed, made when it is first subscribed.
+	struct OeeFeed; struct OeeLineFeed;
 	struct OeeHost final : noncopyable{
 		Ω Instance()ι->OeeHost&;
 		//The settings and the rows, then each machine's engine, on the executor.  Blocks on the rows' load:  Gateway::Connect's
@@ -43,6 +45,24 @@ namespace Jde::Opc::Gateway{
 		//that can't run, saying why, after TestEnabled.
 		α Recompute( OeeMachinePK id, Oee::Span span, SRCE )ε->void;
 
+		α Lines()Ι->OeeLines{ lg _{ _mutex }; return _lines; }
+		α MachineNames()Ι->flat_map<uint32,string>;//for the rules' messages.
+		//A line and the machines it reaches, each once, in member order, the deleted among them;  none of a deleted member line's.
+		struct Reached final{ OeeLineRow Line; vector<Machine> Machines; OeeLines Lines; };
+		α Reach( OeeLinePK line )Ι->optional<Reached>;//none for no line.
+		//Past the gate (spec *Authorization*, *Open questions* #14):  Read on the group of every machine reached, one refused
+		//refusing the line.  A line that isn't there is NotFound, once the caller has passed the lines' own table.
+		α Reach( OeeLinePK line, UserPK by, SRCE )Ε->Reached;
+		//The line's live feed, made at its first ask:  none for no line, and once stopped.
+		α LineFeed( OeeLinePK line )ι->sp<OeeLineFeed>;
+		//A machine's feed's, under its engine's lock:  the machine's state changed or it closed an interval, so the lines that
+		//reach it compute again, from the executor.  Nothing while no line has a feed.
+		α MachineMoved( OeeMachinePK id )ι->void;
+		α LineEdits()ι->CoMutex&{ return _lineEdits; }//OeeMAwait's, held over a line's or a member's checks, its write and LinesChanged.
+		//A line or a member created, edited, deleted, restored or purged, or a machine purged, whose memberships went with it:  both
+		//tables read again, and each line's feed ended, for one deleted or gone, or computed again.
+		α LinesChanged()ι->AnyVoidTask;
+
 		//OeeMAwait's:  the live side of each table edit, lazy as HistHost's are.
 		//Seeds `processed` with `from` to the second, now when none, and holds the row.
 		α MachineCreated( OeeMachinePK id, optional<TimePoint> from )ι->AnyVoidTask;
@@ -72,6 +92,8 @@ namespace Jde::Opc::Gateway{
 		//A rebuild that is a restart (OeeMachineHost::Takeover):  the engine ends and its writes are waited for, `processed` is set
 		//back to `from`, and another starts at once with `offset`, so the live state is re-derived from the history.
 		α Rebuild( OeeMachinePK id, const OeeMachineHost* host, TimePoint from, Duration offset, string why )ι->VoidTask;
+		α MoveLines( optional<OeeMachinePK> machine={} )ι->void;//every line's feed, or those that reach `machine`, computes again.
+		α SetLines( vector<OeeLineRow>&& lines, vector<OeeLineMemberRow>&& members )ι->void;//under _mutex.
 
 		mutable std::mutex _mutex;
 		flat_map<OeeMachinePK,Entry> _machines;
@@ -82,5 +104,10 @@ namespace Jde::Opc::Gateway{
 		bool _configured{}, _stopped{};
 		uint _reads{};//MachineChanged's, so an older read that finishes last changes nothing.
 		CoMutex _codings;
+		OeeLines _lines;
+		flat_map<OeeLinePK,sp<OeeLineFeed>> _lineFeeds;
+		std::atomic<uint> _lineFeedCount{};
+		uint _lineReads{};//LinesChanged's, so an older read that finishes last changes nothing.
+		CoMutex _lineEdits;
 	};
 }

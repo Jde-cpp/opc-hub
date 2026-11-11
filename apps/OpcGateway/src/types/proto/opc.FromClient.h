@@ -24,5 +24,6 @@ namespace Jde::Opc::Gateway::FromClientUtils{
 	α HistUnsubscription( RequestId subscription, RequestId requestId )ι->string;
 	//A live OEE subscription and its end (oee spec *Live*), the same.
 	α OeeSubscription( uint32 machine, RequestId requestId )ι->string;
+	α OeeLineSubscription( uint32 line, RequestId requestId )ι->string;
 	α OeeUnsubscription( RequestId subscription, RequestId requestId )ι->string;
 }

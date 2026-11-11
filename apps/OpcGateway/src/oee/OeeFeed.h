@@ -5,6 +5,27 @@
 
 namespace Jde::Opc::Gateway{
 	struct OeeSubscriber;
+	//What an OeeSubscribe joins (docs/oee/spec.md *Live*):  a machine's feed, or a line's (OeeLineFeed).
+	struct IOeeFeed{
+		virtual ~IOeeFeed()=default;
+		//`subscriber` joins:  the status now, which the ack carries, and what is pushed from then on reaches it too.
+		struct AddAwait final : AnyAwait<FromServer::OeeStatus>{
+			AddAwait( sp<IOeeFeed> feed, sp<OeeSubscriber> subscriber, SL sl )ι:AnyAwait<FromServer::OeeStatus>{ sl }, _feed{ move(feed) }, _subscriber{ move(subscriber) }{}
+		protected:
+			α Suspend()ι->void override{ _feed->Adding( *this, move(_subscriber) ); }
+		private:
+			sp<IOeeFeed> _feed;
+			sp<OeeSubscriber> _subscriber;
+		};
+		β Add( sp<OeeSubscriber> subscriber, SRCE )ι->AddAwait=0;
+		β Remove( const OeeSubscriber* subscriber )ι->void=0;
+	protected:
+		β Adding( AddAwait& await, sp<OeeSubscriber> subscriber )ι->VoidTask=0;
+	};
+	//The shift over `now` by `schedule`, or without one the UTC day:  what a status's figures are over.  None between shifts.
+	struct OeeWindow final{ optional<Calendar::Occurrence> Shift; Oee::Span Range; };
+	α CurrentOeeWindow( const Calendar::Schedule* schedule, TimePoint now )ι->optional<OeeWindow>;
+	α ToOeeFigures( const Oee::Bucket& bucket )ι->FromServer::OeeFigures;//a line's coverage is set by its feed.
 	//A machine's live feed (docs/oee/spec.md *Live*):  what every OeeSubscribe of the machine hears, built once a push.  While
 	//it has a subscriber it holds the current shift's rows, its stops, their codings and the reasons - read from the tables when
 	//the first subscribes, kept from then by what the engine tells its sink - so a push is the formulas over what is held and the
@@ -13,7 +34,7 @@ namespace Jde::Opc::Gateway{
 	//is pushed at once, anything else every `live` at most, and only a status that differs from the last.  The host holds one per
 	//machine from its rows' load to its purge, and each engine of the machine tells it;  it holds no engine, asking the host for
 	//the one that runs.  The engine calls under its lock, so nothing here calls an engine under _mutex.
-	struct OeeFeed final : std::enable_shared_from_this<OeeFeed>{
+	struct OeeFeed final : IOeeFeed, std::enable_shared_from_this<OeeFeed>{
 		enum EReload : uint8{ CodingsOnly=1, ReasonsOnly=2, Everything=0xff };//what a reload reads.
 		OeeFeed( OeeMachineRow row, vector<OeeSignalRow> signals, sp<Hist::IClock> clock, Duration live )ι;
 		//The engine's sink, under the engine's lock:  held when the feed has a subscriber, else dropped.
@@ -34,21 +55,12 @@ namespace Jde::Opc::Gateway{
 		α Subscribers()Ι->uint{ lg _{ _mutex }; return _subscribers.size(); }//for tests and diagnostics.
 		α Pushed()Ι->uint{ return _pushed; }//the statuses pushed, each to every subscriber - for tests and diagnostics.
 
-		//`subscriber` joins:  the rows read first when it is the first, then the status now, which the ack carries.  What is pushed
-		//from then on reaches it too.  NotFound for a deleted machine.
-		struct AddAwait final : AnyAwait<FromServer::OeeStatus>{
-			AddAwait( sp<OeeFeed> feed, sp<OeeSubscriber> subscriber, SL sl )ι:AnyAwait<FromServer::OeeStatus>{ sl }, _feed{ move(feed) }, _subscriber{ move(subscriber) }{}
-		protected:
-			α Suspend()ι->void override{ _feed->Adding( *this, move(_subscriber) ); }
-		private:
-			sp<OeeFeed> _feed;
-			sp<OeeSubscriber> _subscriber;
-		};
-		α Add( sp<OeeSubscriber> subscriber, SRCE )ι->AddAwait{ return { shared_from_this(), move(subscriber), sl }; }
-		α Remove( const OeeSubscriber* subscriber )ι->void;
+		//The rows are read first when `subscriber` is the first.  NotFound for a deleted machine.
+		α Add( sp<OeeSubscriber> subscriber, SRCE )ι->AddAwait override{ return { shared_from_this(), move(subscriber), sl }; }
+		α Remove( const OeeSubscriber* subscriber )ι->void override;
 	private:
-		struct Window final{ optional<Calendar::Occurrence> Shift; Oee::Span Range; };
-		α Adding( AddAwait& await, sp<OeeSubscriber> subscriber )ι->VoidTask;
+		using Window = OeeWindow;
+		α Adding( AddAwait& await, sp<OeeSubscriber> subscriber )ι->VoidTask override;
 		α Reloading()ι->VoidTask;
 		α Load()ι->AnyVoidTask;//under _work.
 		α Reread( uint8 what )ι->AnyVoidTask;//under _work:  the codings or the reasons alone, over what is held.
@@ -63,7 +75,6 @@ namespace Jde::Opc::Gateway{
 		α Idle()ι->void;//the last subscriber left:  the timer and what was held go.
 		α Build( const optional<Oee::LiveState>& state )ι->FromServer::OeeStatus;
 		α Schedule()Ι->sp<const Calendar::Schedule>;
-		α Current( const Calendar::Schedule* schedule, TimePoint now )Ι->optional<Window>;//the shift over `now`, or without a calendar its UTC day.
 
 		const OeeMachinePK _id;
 		const sp<Hist::IClock> _clock;

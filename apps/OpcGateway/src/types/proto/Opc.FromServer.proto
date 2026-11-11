@@ -95,7 +95,7 @@ message HistRecords{
 	repeated HistModification modifications=2;
 }
 
-//A machine's live OEE (oee spec *Live*), as an OeeSubscribe's ack and its pushes carry it.
+//A machine's live OEE (oee spec *Live*), or a line's, as an OeeSubscribe's ack and its pushes carry it.
 enum EOeeState{
 	OeeUnknown=0;//no engine runs the machine, or its signals say nothing.
 	OeeRunning=1;
@@ -141,6 +141,16 @@ message OeeFigures{
 	optional double teep=19;
 	uint32 measured=20;//the factors in oee, as bits:  1 availability, 2 performance, 4 quality.
 	bool partial=21;
+	//A line's, as the `oee` read's `machines` and `coverage`:  the machines the figures are over, and how many each factor is.
+	uint32 machines=22;
+	uint32 performance_coverage=23;
+	uint32 quality_coverage=24;
+}
+//A line's state:  the machines it reaches, by theirs.  One no engine runs is unknown, and a deleted one is in none.
+message OeeMachineCounts{
+	uint32 running=1;
+	uint32 stopped=2;
+	uint32 unknown=3;
 }
 message OeeStatus{
 	EOeeState state=1;
@@ -151,6 +161,9 @@ message OeeStatus{
 	OeeFigures figures=6;//the shift's so far, or without a calendar the UTC day's;  unset between shifts.
 	google.protobuf.Timestamp last_count=7;
 	bool calendar_missing=8;//the machine names a calendar the gateway's calendar client doesn't find, so its figures are the UTC day's, as without one.
+	//A line's, set for one alone:  its state as counts, for which `state`, `since`, `stop` and `last_count` stay unset.  Its `planned`,
+	//`shift` and `calendar_missing` are its own calendar's, and its `figures` its machines' combined over that shift so far.
+	OeeMachineCounts machines=9;
 }
 message OeeSubscribeAck{
 	OeeStatus status=1;
