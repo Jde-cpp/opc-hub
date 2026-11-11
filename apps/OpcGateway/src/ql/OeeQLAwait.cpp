@@ -238,9 +238,8 @@ namespace Jde::Opc::Gateway{
 			}
 			HistHost::Instance().Gate( machine->Row.Group, Access::ERights::Read, false, UserPK(), sl );
 			oee.TestEnabled( sl );
-			let signals = ToSignals( machine->Signals );
 			OeeRead r{
-				.Machine={ machine->Row.Id, machine->Row.Name, machine->Row.IdealCycle, machine->Row.SmallStop, Oee::HasCount(signals), Oee::MeasuresQuality(signals) },
+				.Machine=ToMachine( machine->Row, machine->Signals ),
 				.Schedule=machine->Row.Calendar ? Calendar::Client::Calendars::Find( *machine->Row.Calendar ) : nullptr,
 				.Range={ OeeQL::Time(_query, "start", sl), OeeQL::Time(_query, "end", sl) },
 				.Now={}, .Limit=HistQL::ReadLimit(), .Rows={}, .Stops={}, .CodingRows={}, .Codings={}, .Reasons={}
@@ -270,12 +269,8 @@ namespace Jde::Opc::Gateway{
 				take( stopRows, reasonRows );
 				for( let& row : intervalRows )
 					r.Rows.push_back( OeeSql::ToInterval(row) );
-				if( live ){
-					for( let& row : live->Rows ){
-						if( row.Width>Duration::zero() && row.Start<r.Range.End && row.End()>r.Range.Start && (r.Rows.empty() || row.Start>=r.Rows.back().End()) )
-							r.Rows.push_back( row );
-					}
-				}
+				if( live )
+					AppendUnwritten( r.Rows, live->Rows, r.Range );
 			}
 			auto coded = r.Range;//with the stops that overlap it, whole:  a stop is listed with every coding over it.
 			for( let& stop : r.Stops ){

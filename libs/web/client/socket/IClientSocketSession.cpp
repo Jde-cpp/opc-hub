@@ -119,14 +119,18 @@ namespace Jde::Web::Client{
 		//arrive ahead of the entry PopTask cancels through.  Waiting the timer out instead is not free: a pending asio timer is
 		//work, and io_context::run - hence Process::Shutdown - blocks on it.  A process that exited within the timeout of its
 		//last request therefore sat out the remainder and was killed by the shutdown watchdog (emulator-review #11).
-		_timeouts.emplace( requestId, timer.Canceller() );
+		//By its own canceller:  a request reusing the id - a probe under a live subscription's - may arrive before this one's
+		//cancelled wait resumes, and neither its entry nor its task is this one's.
+		const auto canceller = timer.Canceller();
+		const auto mine = [&]( const auto& kv ){ return kv.second==canceller; };
+		_timeouts.insert_or_assign( requestId, canceller );
 		if( !HasTask(requestId) ){//CloseTasks ran between AddTask and the emplace above:  it failed the request and found no timer to cancel.
-			_timeouts.erase( requestId );
+			_timeouts.erase_if( requestId, mine );
 			co_return;
 		}
-		auto _ = co_await timer;
-		_timeouts.erase( requestId );
-		if( !HasTask(requestId) )
+		const auto waited = co_await timer;
+		_timeouts.erase_if( requestId, mine );
+		if( !waited || !HasTask(requestId) )
 			co_return;//answered, or already failed with the session.
 		CloseOnError( Ƒ("request {} unanswered after {}", hex(requestId), Chrono::ToString(timeout)), sl );
 	}

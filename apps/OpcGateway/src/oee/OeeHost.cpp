@@ -2,13 +2,16 @@
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/settings.h>
+#include <jde/calendar/client/Calendars.h>
 #include <jde/oee/rules.h>
 #include "../hist/HistHost.h"
+#include "OeeFeed.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	constexpr Duration DefaultSettle{ 5s };
+	constexpr Duration DefaultLive{ 1s };
 
 	Ω inputs( const OeeHost::Machine& machine )ι->OeeMachineHost::Inputs{ return { ToSignals(machine.Signals), machine.Row.IdleTimeout, machine.Row.SmallStop }; }
 	//What a start from `processed` leaves to rebuild of the asks it carries:  its replay makes the rows from `processed` on.
@@ -35,12 +38,39 @@ namespace Jde::Opc::Gateway{
 			WARNT( ELogTags::Settings, "'/gateway/oee/settle' of {} is not allowed:  it must be positive.  Using {}.", Chrono::ToString(settle), Chrono::ToString(DefaultSettle) );
 			settle = DefaultSettle;
 		}
+		auto live = Settings::FindDuration( "/gateway/oee/live" ).value_or( DefaultLive );
+		if( live<=Duration::zero() ){
+			WARNT( ELogTags::Settings, "'/gateway/oee/live' of {} is not allowed:  it must be positive.  Using {}.", Chrono::ToString(live), Chrono::ToString(DefaultLive) );
+			live = DefaultLive;
+		}
+		bool listen;
 		{
 			lg _{ _mutex };
 			_stopped = false;
 			_configured = oee!=nullptr;
 			_settle = settle;
+			_live = live;
 			_clock = clock ? move( clock ) : Hist::SystemClock();
+			listen = !_calendars;
+			if( listen )
+				_calendars = 0;
+		}
+		if( listen ){
+			let handle = Calendar::Client::Calendars::Listen( []( const flat_set<uint32>& changed ){
+				auto& host = Instance();
+				vector<sp<OeeFeed>> feeds;
+				{
+					lg _{ host._mutex };
+					for( let& [_,entry] : host._machines ){
+						if( entry.Feed && entry.Rows.Row.Calendar && changed.contains(*entry.Rows.Row.Calendar) )
+							feeds.push_back( entry.Feed );
+					}
+				}
+				for( let& feed : feeds )
+					feed->Reload();
+			} );
+			lg _{ _mutex };
+			_calendars = handle;
 		}
 		if( !oee )
 			INFO( "No '/gateway/oee':  this gateway computes no OEE." );
@@ -55,10 +85,15 @@ namespace Jde::Opc::Gateway{
 	}
 	α OeeHost::Stop()ι->void{
 		vector<sp<OeeMachineHost>> engines;
+		vector<sp<OeeFeed>> feeds;
+		optional<uint> calendars;
 		{
 			lg _{ _mutex };
 			_stopped = true;
+			calendars = std::exchange( _calendars, nullopt );
 			for( auto&& [_,entry] : _machines ){
+				if( entry.Feed )
+					feeds.push_back( entry.Feed );
 				++entry.Serial;
 				if( auto timer = std::exchange(entry.Timer, 0); timer )
 					_clock->Cancel( timer );
@@ -67,8 +102,12 @@ namespace Jde::Opc::Gateway{
 				entry.Engine = nullptr;
 			}
 		}
+		if( calendars )
+			Calendar::Client::Calendars::StopListen( *calendars );
 		for( auto& engine : engines )
 			engine->End();
+		for( auto& feed : feeds )
+			feed->EndAll( EHttpStatus::ServiceUnavailable, "The gateway's OEE stopped, which ends the subscription." );
 		for( auto& engine : engines ){
 			try{
 				BlockAwait( engine->Quiet() );
@@ -124,6 +163,27 @@ namespace Jde::Opc::Gateway{
 		lg _{ _mutex };
 		auto p = _machines.find( id );
 		return p==_machines.end() ? nullptr : p->second.Engine;
+	}
+	α OeeHost::Feed( OeeMachinePK id )Ι->sp<OeeFeed>{
+		lg _{ _mutex };
+		auto p = _machines.find( id );
+		return _stopped || p==_machines.end() ? nullptr : p->second.Feed;
+	}
+	α OeeHost::Coded( OeeMachinePK id )ι->void{
+		if( auto feed = Feed(id); feed )
+			feed->Reload( OeeFeed::CodingsOnly );
+	}
+	α OeeHost::ReasonsChanged()ι->void{
+		vector<sp<OeeFeed>> feeds;
+		{
+			lg _{ _mutex };
+			for( let& [_,entry] : _machines ){
+				if( entry.Feed )
+					feeds.push_back( entry.Feed );
+			}
+		}
+		for( let& feed : feeds )
+			feed->Reload( OeeFeed::ReasonsOnly );
 	}
 	α OeeHost::Recompute( OeeMachinePK id, Oee::Span span, SL sl )ε->void{
 		let machine = Find( id );
@@ -189,6 +249,7 @@ namespace Jde::Opc::Gateway{
 						if( signal.Machine==id )
 							entry.Rows.Signals.push_back( signal );
 					}
+					entry.Feed = ms<OeeFeed>( entry.Rows.Row, entry.Rows.Signals, _clock, _live );
 					launches.emplace_back( id, entry.Serial );
 				}
 			}
@@ -237,7 +298,7 @@ namespace Jde::Opc::Gateway{
 					co_return;
 				entry->Rows = machine;
 				if( group && historian ){
-					engine = ms<OeeMachineHost>( machine.Row, inputs(machine), move(group), _clock, OeeMachineHost::Settings{_settle, historian->Config().ReadLimit}, std::exchange(entry->Offset, {}) );
+					engine = ms<OeeMachineHost>( machine.Row, inputs(machine), move(group), _clock, OeeMachineHost::Settings{_settle, historian->Config().ReadLimit}, std::exchange(entry->Offset, {}), entry->Feed );
 					engine->Start(//before a recomputeOee can find it.
 						[]( OeeMachinePK machine, const OeeMachineHost* host, string why ){ Instance().Failed( machine, host, move(why) ); },
 						[]( OeeMachinePK machine, const OeeMachineHost* host, TimePoint from, Duration offset, string why ){ Instance().Rebuild( machine, host, from, offset, move(why) ); },
@@ -328,11 +389,15 @@ namespace Jde::Opc::Gateway{
 		Machine machine{ move(rows.front()), co_await Any(SelectOeeSignals({.Machine=id})) };
 		let blocked = Blocked( machine );
 		sp<OeeMachineHost> ending, running;
+		sp<OeeFeed> feed;
 		{
 			lg _{ _mutex };
 			auto& entry = _machines[id];
 			if( read<entry.Read )//a later edit's rows are in, and its engine decided.
 				co_return;
+			if( !entry.Feed && _clock )
+				entry.Feed = ms<OeeFeed>( machine.Row, machine.Signals, _clock, _live );
+			feed = entry.Feed;
 			entry.Read = read;
 			entry.Rows = machine;
 			++entry.Serial;//a start it was waiting for is this edit's to ask for again.
@@ -343,6 +408,8 @@ namespace Jde::Opc::Gateway{
 			else
 				ending = std::exchange( entry.Engine, nullptr );
 		}
+		if( feed )
+			feed->Edited( machine.Row, machine.Signals, read );
 		if( running ){
 			running->SetWidth( machine.Row.Width );
 			co_return;
@@ -363,19 +430,27 @@ namespace Jde::Opc::Gateway{
 	}
 	α OeeHost::MachinePurging( OeeMachinePK id )ι->AnyVoidTask{
 		sp<OeeMachineHost> engine;
+		sp<OeeFeed> feed;
 		{
 			lg _{ _mutex };
 			if( auto p = _machines.find(id); p!=_machines.end() ){
+				feed = p->second.Feed;
 				++p->second.Serial;
 				if( auto timer = std::exchange(p->second.Timer, 0); timer && _clock )
 					_clock->Cancel( timer );
 				engine = std::exchange( p->second.Engine, nullptr );
 			}
 		}
+		if( feed )
+			feed->EndAll( EHttpStatus::NotFound, "The machine was purged, which ends the subscription." );
 		if( engine ){
 			engine->End();
 			co_await engine->Quiet();
 		}
+	}
+	α OeeHost::PurgeFailed( OeeMachinePK id )ι->void{
+		if( auto feed = Feed(id); feed )
+			feed->Restored();
 	}
 	α OeeHost::MachinePurged( OeeMachinePK id )ι->void{
 		lg _{ _mutex };

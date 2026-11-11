@@ -22,6 +22,9 @@ namespace Jde::Opc::Gateway::FromServer{
 	α HistSubscribeAckTrans( FromServer::HistSubscribeAck&& ack, RequestId requestId )ι->FromServer::Transmission;
 	α HistSnapshotTrans( FromServer::HistSnapshot&& page, RequestId requestId )ι->FromServer::Transmission;
 	α HistRecordsTrans( FromServer::HistRecords&& records, RequestId requestId )ι->FromServer::Transmission;
+	//A live OEE subscription's messages (oee spec *Live*), each under its OeeSubscribe's request id.
+	α OeeSubscribeAckTrans( const FromServer::OeeStatus& status, RequestId requestId )ι->FromServer::Transmission;
+	α OeeStatusTrans( const string& status, RequestId requestId )ι->string;//a push's status, serialized once for every subscriber, as its Transmission's bytes.
 
 	//A reading as a NodeValues:  a structure as its fields, by the type it holds or, for a body still encoded, by `types`, the connection's
 	//registry (clients spec *Structures*), and opaque where neither explains it.

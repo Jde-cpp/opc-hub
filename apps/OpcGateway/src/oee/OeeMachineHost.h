@@ -4,7 +4,7 @@
 #include "OeeRows.h"
 
 namespace Jde::Opc::Gateway{
-	struct HistGroupHost;
+	struct HistGroupHost; struct OeeFeed;
 	//One oee_machines row as the gateway runs it (docs/oee/spec.md *The engine*):  the library's engine, its subscription to the
 	//machine's group, and the writer its sink queues to.  Start is the restart:  the rows a run before this one wrote past
 	//`processed` go, the stop over it is loaded as the machine's state, the snapshot is paged into the engine from one tick
@@ -44,7 +44,9 @@ namespace Jde::Opc::Gateway{
 			sp<Writer> _writer;
 		};
 		//`offset`:  the source offset the engine goes live with, a takeover's from the engine before it, else none (reviews-issue/400-oee-tables.md #4).
-		OeeMachineHost( OeeMachineRow row, Inputs inputs, sp<HistGroupHost> group, sp<Hist::IClock> clock, Settings settings, Duration offset={} )ι;
+		//`feed`:  the machine's live feed, told what the sink is once this is live, and to read its rows again when this goes live,
+		//rebuilds in place or ends (spec *Live*);  none before the host has its clock.
+		OeeMachineHost( OeeMachineRow row, Inputs inputs, sp<HistGroupHost> group, sp<Hist::IClock> clock, Settings settings, Duration offset={}, sp<OeeFeed> feed={} )ι;
 		~OeeMachineHost();
 		α Id()Ι->OeeMachinePK{ return _row.Id; }
 		α Made()Ι->const Inputs&{ return _inputs; }
@@ -56,6 +58,7 @@ namespace Jde::Opc::Gateway{
 		//and a rebuild past its deletes runs its statements out, since its rows are gone until it does.
 		α End()ι->void;
 		α Quiet( SRCE )ι->QuietAwait;//resumes once no write or rebuild is running and Starting has returned, on the thread that ended the last.
+		α Written( SRCE )ι->QuietAwait;//Quiet, but for Starting and a rebuild:  every row the sink was told of is in the tables.
 		α Idle()Ι->bool;//nothing queued, no write running and no rebuild asked or running - for tests and diagnostics.
 		α Live()Ι->bool{ return _live; }//the snapshot is replayed and the engine runs on the clock.
 		α State()Ι->optional<Oee::LiveState>;//none before the engine is made, and after the end.
@@ -71,7 +74,6 @@ namespace Jde::Opc::Gateway{
 		α Starting()ι->VoidTask;
 		α Subscribe( UA_DateTime from )ε->Hist::ReadResult;//registers, and the snapshot's first page, which opens with the bounds.
 		α Next()ε->Hist::ReadResult;
-		α Written( SRCE )ι->QuietAwait;//Quiet, but for Starting and a rebuild.
 		α Rebuilding()ι->VoidTask;//the queued asks, one span at a time, until none is left or a takeover.
 		α Current()Ι->sp<Oee::Engine>;//the engine, or none before it is made or after the end.
 
@@ -81,6 +83,7 @@ namespace Jde::Opc::Gateway{
 		const sp<Hist::IClock> _clock;
 		const Settings _settings;
 		const Duration _offset;
+		const sp<OeeFeed> _feed;
 		const sp<Writer> _writer;
 		boost::asio::strand<boost::asio::io_context::executor_type> _strand;
 		std::atomic<bool> _ended{}, _live{};

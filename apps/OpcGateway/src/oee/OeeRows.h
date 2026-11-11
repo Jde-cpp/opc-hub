@@ -26,6 +26,10 @@ namespace Jde::Opc::Gateway{
 	struct OeeSignalRow final{ OeeSignalPK Id; OeeMachinePK Machine; optional<Oee::ERole> Role; HistGroupNodePK Node; vector<Oee::StateValue> Running; Duration RatePeriod; };
 	//The rows' signals, as the library takes them;  one with no role is left out.
 	α ToSignals( const vector<OeeSignalRow>& rows )ι->vector<Oee::Signal>;
+	α ToMachine( const OeeMachineRow& row, const vector<OeeSignalRow>& signals )ι->Oee::Machine;//as the figures take it.
+	//The engine's rows not yet written, and the one still filling, after `rows`, the tables':  those over `span` that start at
+	//or after the last's end, so a row written between the two reads is the table's.
+	α AppendUnwritten( vector<Oee::Interval>& rows, const vector<Oee::Interval>& unwritten, Oee::Span span )ι->void;
 
 	//oee_machines:  by key, or all;  deleted rows only when asked.
 	struct OeeMachineFilter final{ optional<DB::Key> Key; bool IncludeDeleted{}; };

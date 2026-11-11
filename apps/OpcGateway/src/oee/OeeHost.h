@@ -10,6 +10,7 @@ namespace Jde::Opc::Gateway{
 	//A machine runs once it is live, has a `processed` and a signal set the library's rules pass, and its group is hosted.  One
 	//an edit makes runnable starts `settle` after its last edit, so a form's signals land before the engine reads the past with
 	//them;  those loaded at the gateway's start, and a restart after a failure, don't wait.
+	struct OeeFeed;
 	struct OeeHost final : noncopyable{
 		Ω Instance()ι->OeeHost&;
 		//The settings and the rows, then each machine's engine, on the executor.  Blocks on the rows' load:  Gateway::Connect's
@@ -22,6 +23,7 @@ namespace Jde::Opc::Gateway{
 		//the gateway's end.
 		α TestEnabled( SRCE )Ε->void;
 		α Settle()Ι->Duration{ lg _{ _mutex }; return _settle; }
+		α Live()Ι->Duration{ lg _{ _mutex }; return _live; }//how often at most a machine's feed pushes what isn't a state change.
 		α Time()Ι->sp<Hist::IClock>{ lg _{ _mutex }; return _clock; }//Start's;  none before it.
 
 		struct Machine final{ OeeMachineRow Row; vector<OeeSignalRow> Signals; };
@@ -30,6 +32,10 @@ namespace Jde::Opc::Gateway{
 		α HolderOf( HistGroupPK group )Ι->optional<Machine>;//the machine over a group, a deleted one too:  its row holds the group.
 		α UserOf( HistGroupNodePK node )Ι->optional<Machine>;//a machine with a signal that names the member.
 		α Engine( OeeMachinePK id )Ι->sp<OeeMachineHost>;//none for a machine that isn't running.
+		//The machine's live feed (spec *Live*), which outlasts its engines:  none for no machine, and once stopped.
+		α Feed( OeeMachinePK id )Ι->sp<OeeFeed>;
+		α Coded( OeeMachinePK id )ι->void;//codeOee's and uncodeOee's:  the machine's feed reads its codings again.
+		α ReasonsChanged()ι->void;//a reason made, edited, deleted, restored or purged:  every feed reads them again.
 		α Blocked( const Machine& machine )Ι->string;//why the rows can't run, empty when they can.
 		//recomputeOee's (spec *The engine*):  the machine's rows over the span made again from the group's history, as a late record
 		//has them made (OeeMachineHost).  Queued:  the rebuild runs after the machine's writes, and a machine between engines -
@@ -45,6 +51,7 @@ namespace Jde::Opc::Gateway{
 		α MachineChanged( DB::Key key )ι->AnyVoidTask;
 		//Before its statement, whose proc takes the machine's stops, intervals, codings and signals with it:  its engine ends.
 		α MachinePurging( OeeMachinePK id )ι->AnyVoidTask;
+		α PurgeFailed( OeeMachinePK id )ι->void;//its statement failed, so the machine stands:  its feed takes subscribers again.
 		α MachinePurged( OeeMachinePK id )ι->void;
 		//codeOee's and uncodeOee's, held over a coding's checks and its write:  this gateway alone writes oee_codings.
 		α Codings()ι->CoMutex&{ return _codings; }
@@ -52,7 +59,7 @@ namespace Jde::Opc::Gateway{
 	private:
 		//Read:  the MachineChanged whose rows these are.  Offset:  the source offset the next engine goes live with, a takeover's.
 		//Pending:  the rebuilds the next engine runs once it starts, those an ended one left and a recomputeOee between engines.
-		struct Entry final{ Machine Rows; sp<OeeMachineHost> Engine; Hist::IClock::TimerId Timer{}; uint Serial{}; uint Read{}; Duration Offset{}; vector<OeeMachineHost::Ask> Pending; };
+		struct Entry final{ Machine Rows; sp<OeeFeed> Feed; sp<OeeMachineHost> Engine; Hist::IClock::TimerId Timer{}; uint Serial{}; uint Read{}; Duration Offset{}; vector<OeeMachineHost::Ask> Pending; };
 		α Loading( AnyVoidAwait& await )ι->VoidTask;
 		//Under _mutex:  `id`'s engine starts after `after`, in place of any start it was waiting for.
 		α Schedule( OeeMachinePK id, Entry& entry, Duration after )ι->void;
@@ -70,6 +77,8 @@ namespace Jde::Opc::Gateway{
 		flat_map<OeeMachinePK,Entry> _machines;
 		sp<Hist::IClock> _clock;
 		Duration _settle{ 5s };
+		Duration _live{ 1s };
+		optional<uint> _calendars;//the calendar client's Listen:  a calendar changed, and the feeds of the machines under it read again.
 		bool _configured{}, _stopped{};
 		uint _reads{};//MachineChanged's, so an older read that finishes last changes nothing.
 		CoMutex _codings;

@@ -24,11 +24,13 @@ namespace Jde::Opc::Gateway{
 		α Slot( Hist::NodeIndex index )Ι->optional<uint32>;
 		α Page( Hist::ReadResult&& result, bool more )Ι->FromServer::HistSnapshot;
 		α Records( const vector<Hist::Proto::HistoryRecord>& records )Ι->FromServer::Transmission;//a push as its message, the stored bodies decoded:  on the socket's strand.
+		α Acked()ι->void;//the ack is written:  an end the group sent before it goes now.
 		α Live()ι->void;//the snapshot is written:  what queued goes, and each push from here on goes as it comes.
 		α OnRecords( vector<Hist::Proto::HistoryRecord>&& records )ι->void override;
 		α OnEnded( Hist::ESubscriptionEnd why )ι->void override;
 	private:
 		α Send( vector<Hist::Proto::HistoryRecord>&& records )ι->void;
+		α Ending( Hist::ESubscriptionEnd why )ι->void;
 		wp<GatewaySocketSession> _session;
 		const Jde::RequestId _requestId;
 		const wp<HistGroupHost> _host;
@@ -39,7 +41,8 @@ namespace Jde::Opc::Gateway{
 		up<Hist::Subscription> _subscription;
 		std::atomic<bool> _ended{};
 		std::mutex _queueMutex;
-		bool _live{};
+		bool _acked{}, _live{};
 		vector<Hist::Proto::HistoryRecord> _queued;
+		optional<Hist::ESubscriptionEnd> _end;//the group's, before the ack.
 	};
 }

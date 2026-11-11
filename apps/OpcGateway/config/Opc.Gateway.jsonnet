@@ -93,6 +93,7 @@ function( sync=false )
 		//group's records into stops and interval rows.  No `oee` block, no OEE, and it needs `hist`, above:  without the historian
 		//the gateway logs a Critical and runs without it.  A `::` key is its default, shown hidden.
 		oee:{
+			live:: "PT1S", //how often at most a client of OeeSubscribe hears a machine's figures;  a state change is pushed at once.
 			settle:: "PT5S" //how long after an interval ends the engine writes its row, for records still on their way;  a member's MinTimeInterval past it makes each held value a rebuild.  Also how long after a machine's last edit its engine starts, so a form's signals land together.
 		},
 		//A password or an issued token is sent encrypted wherever the server's token policy asks for that, certificateUri or not.

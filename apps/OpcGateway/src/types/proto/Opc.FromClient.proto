@@ -69,6 +69,16 @@ message HistSubscribe{
 message HistUnsubscribe{
 	uint32 subscription=1;
 }
+//A machine's live OEE (oee spec *Live*):  answered by an OeeSubscribeAck with its status now, then an OeeStatus whenever its
+//state changes, at once, and every /gateway/oee/live at most while anything else of it does.  The message's request_id names
+//the subscription from then on.
+message OeeSubscribe{
+	uint32 machine=1;//the oee_machines id.
+}
+//Ends a live OEE subscription, by the request_id of its OeeSubscribe.
+message OeeUnsubscribe{
+	uint32 subscription=1;
+}
 
 message Message{
 	uint32 request_id = 1;
@@ -81,6 +91,8 @@ message Message{
 		HistUnsubscribe hist_unsubscribe = 7;
 		SubscribeEvents subscribe_events = 8;
 		UnsubscribeEvents unsubscribe_events = 9;
+		OeeSubscribe oee_subscribe = 10;
+		OeeUnsubscribe oee_unsubscribe = 11;
 	}
 }
 
