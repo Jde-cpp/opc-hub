@@ -26,14 +26,21 @@ Which tag does what is `/emulator/devices` in the config.
 
 A device's `status` is its bool tag of that name: the run command where it is a `command`, its own value where it is
 a `toggle`.  A device's `stops` list, `{every, for, code}`, holds a generated `status` off from each `every` of the
-device's clock for `for`, and writes `code` to `reasonCode` meanwhile, 0 otherwise.  The stock config counts on pump1
-and pump2, and stops pump2 for ten seconds a minute with code 1 ([OEE's rig](../../../docs/oee/spec.md#design)).
+device's clock for `for`, the first at `every`, not at 0, and writes `code` to `reasonCode` meanwhile, 0 otherwise.  A
+period that crosses a stop's start or end is cut there, so the counts hold to the stop whatever `period` is; `status`
+and `reasonCode` are still published once a period, and a stop or the run between two that isn't longer than the
+period is warned of at startup.  The stock config counts on pump1 and pump2, and stops pump2 for ten seconds a minute
+with code 1 ([OEE's rig](../../../docs/oee/spec.md#design)).
 
-The device clock keeps running while the OpcServer session is down.  A PLC does not freeze because a client left.
+A device with a `command` tag is off until the first notification of it, or under `-transport=server` its node's
+value, so pump1 counts nothing while the OpcServer's `status` is unknown.
+
+The device clock keeps running while the OpcServer session is down.  A PLC does not freeze because a client left, and
+it holds its last command until the session is back.
 
 | | value |
 |---|---|
-| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 65 units, no database or server) |
+| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 71 units, no database or server) |
 | settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
@@ -154,11 +161,16 @@ overrides that beat them.
 | `namespace` | | the device paths' default namespace; absent = the contract's (`pubsub.dataSet.namespace`), so the write and server transports need no `pubsub` block |
 | `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)) and `stops[]` (`every`, `for`, `code`) |
 
-Durations are ISO 8601 (`PT30S`).  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`,
-a non-positive `step` for `randomWalk`/`counter`, and for `production` a `cycle` that is not positive, a `jitter` of the
-`cycle` or more and a `reject` outside 0 to 1, at startup, naming the tag.  A stop is refused with a `for` that is not
-shorter than its `every`, with a `code` of 0, on a device whose `status` is a `command` or missing - the UI's command is
-not the emulator's to hold off - and beside a `reasonCode` tag of the device's own.
+Durations are ISO 8601 (`PT30S`).  A key of the wrong kind - `cycle: "2s"`, `reject: "0.05"` - is refused, not read
+as its default.  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`, a non-positive `step`
+for `randomWalk`/`counter`, and for `production` a `cycle` that is not positive, a `jitter` of the `cycle` or more and a
+`reject` outside 0 to 1, at startup, naming the tag.  A stop is refused with a `for` that is not shorter than its
+`every`, with a `code` of 0, and on a device whose `status` is a `command` or missing - the UI's command is not the
+emulator's to hold off.  A device is refused with two tags of one name, a reject tag (`rejectCount` unless `rejectTag`
+says) and a stops list's `reasonCode` included, and with a `command` tag beside a generated `status`, which would
+command nothing.
+
+A production count's reject tag takes the count's `quality` windows, one counter's faults, but not its sensor range.
 
 ## Status codes
 
@@ -277,9 +289,10 @@ each side; the test configs use it.
 ## Tests
 
 `Jde.Opc.PlcEmulator.Tests` (`tests/`): `Signals` (parsing, every refusal, each generator's shape, `production`'s
-advance, jitter bounds and reject share), `Quality` (the status names, the §7.38 bit layout, the windows, hold and the
-sensor range), `ParseDevices`, `Device::Sample` (a scheduled stop's timing and code, nothing counted while `status` is
-off), and `PlcServer` on loopback
+advance, jitter bounds and reject share, a key of the wrong kind), `Quality` (the status names, the §7.38 bit layout,
+the windows and their edges, hold and the sensor range), `ParseDevices` (two tags of one name, a command beside a
+generated `status`), `Device::Sample` (a scheduled stop's timing and code, a period cut at its edges, nothing counted
+while `status` is off or before the first command, a held fault reaching the rejects), and `PlcServer` on loopback
 4851 with the writer aimed at a port nothing reads: the `/emulator/plc` block and its defaults, a secured session with
 a `plc.users` login reading and writing its nodes, anonymous, an issued token (there is no hub in the suite) and a
 stranger's certificate refused, and a command write reaching the emulator's queue.  `ctest -R Jde.Opc.PlcEmulator.Tests`.
@@ -291,9 +304,10 @@ in-process.
 ## Known limits
 
 - `UA_Client_connect` is synchronous: a failed attempt stalls the device clock for up to the 10 s client timeout.
-- A field or tag is written as a `Boolean`, an integer, an enumeration, a `Float` or a `Double`; the pumps contract is
-  `Double` but for the counts and the stop code.  Over the session (`-transport=write`) a `production` count goes as a
-  `UInt32` and the stop code as an `Int32`, the pumps' types, and every other number as a `Double`.
+- A field or tag is written as a `Boolean`, an integer, an enumeration, a `Float` or a `Double`: a field as the
+  contract's type, a node as its DataType, read at startup on the PLC's own server and at each connect over the
+  session.  A DataType the client has no encoding for, an abstract one or a nodeset's own, goes as the mode's type: a
+  `production` count `UInt32`, the stop code `Int32`, a `toggle` `Boolean`, any other number `Double`.
 - A scheduled stop needs a generated `status`: pump1's, the web's run command, stops only when the UI stops it.
 - Status codes reach the OpcServer over pubsub only - a session-written tag's non-Good status is refused (no
   `StatusWrite`) and its value is written alone.  A Bad reading always carries its last value: the OpcServer's reader

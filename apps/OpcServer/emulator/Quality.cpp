@@ -70,25 +70,37 @@ namespace Jde::Opc::Emulator{
 	Ω isLastUsable( UA_StatusCode sc )ι->bool{
 		return UA_StatusCode_isEqualTop( sc, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE ) || UA_StatusCode_isEqualTop( sc, UA_STATUSCODE_UNCERTAINNOCOMMUNICATIONLASTUSABLEVALUE );
 	}
-	QualityWindow::QualityWindow( const jobject& o, sv tagName, SL sl )ε:
-		Start{ Json::FindDuration(o, "start").value_or(Duration::zero()) },
-		Length{ Json::FindDuration(o, "duration").value_or(Duration::zero()) },
-		Every{ Json::FindDuration(o, "every") }{
-		let& status = Json::AsValue( o, "status", sl );//a name, a "0x…" string, or the number itself.
-		let code = status.is_string() ? ParseStatus( status.get_string(), sl ) : ParseStatus( std::to_string(Json::AsNumber<UA_StatusCode>(status, sl)), sl );
-		let limit = Json::FindSV( o, "limit" );
-		HasLimit = limit.has_value();
-		Status = Compose( code, {limit ? ParseLimit(*limit, sl) : ELimit::None, Json::FindBool(o, "overflow").value_or(false), Json::FindBool(o, "structureChanged").value_or(false), Json::FindBool(o, "semanticsChanged").value_or(false)} );
-		Hold = Json::FindBool( o, "hold" ).value_or( UA_StatusCode_isBad(Status) || isLastUsable(Status) );
-		THROW_IFSL( Start<Duration::zero(), "Tag '{}' quality '{}': start must not be negative.", tagName, ToString(Status) );
-		THROW_IFSL( Length<=Duration::zero(), "Tag '{}' quality '{}': duration is required and must be positive.", tagName, ToString(Status) );
-		THROW_IFSL( Every && *Every<Length, "Tag '{}' quality '{}': every ({}) must not be shorter than duration ({}).", tagName, ToString(Status), Chrono::ToString(*Every), Chrono::ToString(Length) );
-	}
-	α QualityWindow::IsActive( Duration t )Ι->bool{
+	α Schedule::IsActive( Duration t )Ι->bool{
 		if( t<Start )
 			return false;
 		let elapsed = t-Start;
 		return ( Every ? elapsed % *Every : elapsed )<Length;
+	}
+	α Schedule::NextEdge( Duration t )Ι->optional<Duration>{
+		if( t<Start )
+			return Start;
+		let elapsed = t-Start;
+		if( !Every )
+			return elapsed<Length ? optional{ Start+Length } : nullopt;
+		let phase = elapsed % *Every;
+		return t-phase + ( phase<Length ? Length : *Every );
+	}
+
+	Ω windowSchedule( const jobject& o, sv owner, SL sl )ε->Schedule{
+		return { FindKey<Duration>(o, "start", owner, sl).value_or(Duration::zero()), FindKey<Duration>(o, "duration", owner, sl).value_or(Duration::zero()), FindKey<Duration>(o, "every", owner, sl) };
+	}
+	QualityWindow::QualityWindow( const jobject& o, sv tagName, SL sl )ε:
+		Schedule{ windowSchedule(o, Ƒ("Tag '{}' quality", tagName), sl) }{
+		let owner = Ƒ( "Tag '{}' quality", tagName );
+		let& status = Json::AsValue( o, "status", sl );//a name, a "0x…" string, or the number itself.
+		let code = status.is_string() ? ParseStatus( status.get_string(), sl ) : ParseStatus( std::to_string(Json::AsNumber<UA_StatusCode>(status, sl)), sl );
+		let limit = FindKey<string>( o, "limit", owner, sl );
+		HasLimit = limit.has_value();
+		Status = Compose( code, {limit ? ParseLimit(*limit, sl) : ELimit::None, FindKey<bool>(o, "overflow", owner, sl).value_or(false), FindKey<bool>(o, "structureChanged", owner, sl).value_or(false), FindKey<bool>(o, "semanticsChanged", owner, sl).value_or(false)} );
+		Hold = FindKey<bool>( o, "hold", owner, sl ).value_or( UA_StatusCode_isBad(Status) || isLastUsable(Status) );
+		THROW_IFSL( Start<Duration::zero(), "Tag '{}' quality '{}': start must not be negative.", tagName, ToString(Status) );
+		THROW_IFSL( Length<=Duration::zero(), "Tag '{}' quality '{}': duration is required and must be positive.", tagName, ToString(Status) );
+		THROW_IFSL( Every && *Every<Length, "Tag '{}' quality '{}': every ({}) must not be shorter than duration ({}).", tagName, ToString(Status), Chrono::ToString(*Every), Chrono::ToString(Length) );
 	}
 
 	TagQuality::TagQuality( vector<QualityWindow> windows, optional<double> sensorMin, optional<double> sensorMax )ι:

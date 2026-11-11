@@ -6,6 +6,11 @@
 
 namespace Jde::App::Client{ struct IAppClient; }
 namespace Jde::Opc::Emulator{
+	union Scalar{ UA_Boolean B; UA_SByte I8; UA_Byte U8; UA_Int16 I16; UA_UInt16 U16; UA_Int32 I32; UA_UInt32 U32; UA_Int64 I64; UA_UInt64 U64; UA_Float F; UA_Double D; };
+	//`value` as a scalar of `type` in `v`, over `s`:  a Boolean is nonzero, an integer rounded and held to its range, NaN 0;
+	//false for a type the emulator doesn't write - anything but Boolean, an integer, an enumeration, Float and Double.
+	α SetScalar( UA_Variant& v, const UA_DataType& type, double value, Scalar& s )ι->bool;
+
 	//The PLC server's INodeAccess (servers plan Phase 6, the endpoint's Phase 2 shape):  every node open to every session - Read,
 	//Write, browse - since the login is the gate:  a session is a hub user, by issued token or certificate, or a username from the
 	//block's list, and anonymous is off unless the block turns it on.  No history, so nothing is editable.  NodeRights stops short

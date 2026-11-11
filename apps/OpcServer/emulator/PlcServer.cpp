@@ -98,31 +98,11 @@ namespace Jde::Opc::Emulator{
 			return std::isnan(r) ? T{} : r<=(double)L::lowest() ? L::lowest() : r>=(double)L::max() ? L::max() : (T)r;
 		}
 	}
-	union Scalar{ UA_Boolean B; UA_SByte I8; UA_Byte U8; UA_Int16 I16; UA_UInt16 U16; UA_Int32 I32; UA_UInt32 U32; UA_Int64 I64; UA_UInt64 U64; UA_Float F; UA_Double D; };
-	//`value` as a scalar of `type` in `v`, over `s`;  false for a type the emulator doesn't write.
-	Ω setScalar( UA_Variant& v, const UA_DataType& type, double value, Scalar& s )ι->bool{
-		switch( type.typeKind ){
-		case UA_DATATYPEKIND_BOOLEAN: s.B = to<UA_Boolean>( value ); break;
-		case UA_DATATYPEKIND_SBYTE: s.I8 = to<UA_SByte>( value ); break;
-		case UA_DATATYPEKIND_BYTE: s.U8 = to<UA_Byte>( value ); break;
-		case UA_DATATYPEKIND_INT16: s.I16 = to<UA_Int16>( value ); break;
-		case UA_DATATYPEKIND_UINT16: s.U16 = to<UA_UInt16>( value ); break;
-		case UA_DATATYPEKIND_INT32: case UA_DATATYPEKIND_ENUM: s.I32 = to<UA_Int32>( value ); break;//an enumeration is an Int32.
-		case UA_DATATYPEKIND_UINT32: s.U32 = to<UA_UInt32>( value ); break;
-		case UA_DATATYPEKIND_INT64: s.I64 = to<UA_Int64>( value ); break;
-		case UA_DATATYPEKIND_UINT64: s.U64 = to<UA_UInt64>( value ); break;
-		case UA_DATATYPEKIND_FLOAT: s.F = to<UA_Float>( value ); break;
-		case UA_DATATYPEKIND_DOUBLE: s.D = value; break;
-		default: return false;
-		}
-		UA_Variant_setScalar( &v, &s, &type );//every member at the union's address.
-		return true;
-	}
 	α PlcServer::Write( const NodeId& node, const UA_DataType& type, double value, UA_StatusCode status, SL sl )ε->void{
 		Scalar s;
 		UA_Variant v;
 		UA_Variant_init( &v );
-		THROW_IFSL( !setScalar(v, type, value, s), "{} is {} - the emulator writes Boolean, an integer, an enumeration, Float or Double.", node.ToString(), type.typeName );
+		THROW_IFSL( !SetScalar(v, type, value, s),"{} is {} - the emulator writes Boolean, an integer, an enumeration, Float or Double.", node.ToString(), type.typeName );
 		Write( node, v, status, sl );
 	}
 	α PlcServer::Write( uint field, double value, UA_StatusCode status, SL sl )ε->void{
@@ -140,7 +120,7 @@ namespace Jde::Opc::Emulator{
 			return UA_TYPES[UA_TYPES_DOUBLE];//abstract:  Number, BaseDataType.
 		UA_Variant v;
 		Scalar s;
-		THROW_IFSL( !setScalar(v, *type, 0, s), "{} is {} - the emulator writes Boolean, an integer, an enumeration, Float or Double.", node.ToString(), type->typeName );
+		THROW_IFSL( !SetScalar(v, *type, 0, s),"{} is {} - the emulator writes Boolean, an integer, an enumeration, Float or Double.", node.ToString(), type->typeName );
 		return *type;
 	}
 
@@ -167,5 +147,25 @@ namespace Jde::Opc::Emulator{
 	α PlcServer::Drain()ι->vector<Command>{
 		lg _{ _mutex };
 		return std::exchange( _commands, {} );
+	}
+}
+namespace Jde::Opc{
+	α Emulator::SetScalar( UA_Variant& v, const UA_DataType& type, double value, Scalar& s )ι->bool{
+		switch( type.typeKind ){
+		case UA_DATATYPEKIND_BOOLEAN: s.B = to<UA_Boolean>( value ); break;
+		case UA_DATATYPEKIND_SBYTE: s.I8 = to<UA_SByte>( value ); break;
+		case UA_DATATYPEKIND_BYTE: s.U8 = to<UA_Byte>( value ); break;
+		case UA_DATATYPEKIND_INT16: s.I16 = to<UA_Int16>( value ); break;
+		case UA_DATATYPEKIND_UINT16: s.U16 = to<UA_UInt16>( value ); break;
+		case UA_DATATYPEKIND_INT32: case UA_DATATYPEKIND_ENUM: s.I32 = to<UA_Int32>( value ); break;//an enumeration is an Int32.
+		case UA_DATATYPEKIND_UINT32: s.U32 = to<UA_UInt32>( value ); break;
+		case UA_DATATYPEKIND_INT64: s.I64 = to<UA_Int64>( value ); break;
+		case UA_DATATYPEKIND_UINT64: s.U64 = to<UA_UInt64>( value ); break;
+		case UA_DATATYPEKIND_FLOAT: s.F = to<UA_Float>( value ); break;
+		case UA_DATATYPEKIND_DOUBLE: s.D = value; break;
+		default: return false;
+		}
+		UA_Variant_setScalar( &v, &s, &type );//every member at the union's address.
+		return true;
 	}
 }

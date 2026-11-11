@@ -90,8 +90,8 @@ local serverApplicationUri = "urn:open62541.server.application";
 		//OEE's rig (docs/oee/spec.md *Emulator*):  `production` counts a unit every `cycle`, give or take `jitter`, while the device's
 		//`status` is on, and a `reject` share of them on `rejectTag` too.  pump1 stops when the web's run command stops it, an
 		//operator's stop;  pump2's toggle is a stop of fifteen seconds in every thirty, and its `stops` list, {every, for, code}, holds
-		//`status` off for the first ten seconds of each minute with `reasonCode` 1, as the toggle would come back on:  so each
-		//minute has one stop of fifteen seconds with no code and one of twenty-five with it.
+		//`status` off for the first ten seconds of each minute after the first with `reasonCode` 1, as the toggle would come back
+		//on:  so each minute has one stop of fifteen seconds with no code and one of twenty-five, coded from its sixteenth second.
 		devices:[
 			{ path: "pump1", tags:[
 				{ name: "motorRpm", mode: "follow", ratedRpm: 1450, tau: "PT3S" },

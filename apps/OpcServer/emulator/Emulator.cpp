@@ -92,8 +92,15 @@ namespace Jde::Opc::Emulator{
 		}
 		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, SRCE_CUR );
 		for( auto& device : _devices ){//the vectors are final: ParseDevices returned them.
-			for( auto& tag : device.Tags )
+			for( auto& tag : device.Tags ){
 				tag.Self = this;
+				if( tag.Field )
+					tag.Type = _plc->Contract()->Fields[*tag.Field].Type;
+			}
+			for( let& stop : device.Stops ){
+				if( stop.Length<=_period || *stop.Every-stop.Length<=_period )
+					WARN( "[{}]a stop of {} every {} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop or the run after it - the counts still hold to it.", device.Name, Chrono::ToString(stop.Length), Chrono::ToString(*stop.Every), Chrono::ToString(_period) );
+			}
 		}
 		if( _transport==ETransport::Server ){
 			//Every tag is a node of the PLC's own server, resolved once - the address space is this process's - and a generated one
@@ -150,7 +157,13 @@ namespace Jde::Opc::Emulator{
 					_client->Monitor( _subscription, tag.Node, _period, &tag, OnDataChange );
 					++commands;
 				}
-				DBG( "[{}]{} -> {} ({})", device.Name, tag.Spec.Name, tag.Node.ToString(), command ? "subscribed" : "written" );
+				else if( let type = _client->ValueType(tag.Node); type ){//none:  the mode's, ParseDevices'.
+					Scalar s;
+					UA_Variant v;
+					THROW_IF( !SetScalar(v, *type, 0, s), "[{}]{} is {} - the emulator writes Boolean, an integer, an enumeration, Float or Double.", device.Name, tag.Spec.Name, type->typeName );
+					tag.Type = type;
+				}
+				DBG( "[{}]{} -> {} ({})", device.Name, tag.Spec.Name, tag.Node.ToString(), command ? "subscribed" : Ƒ("written as {}", tag.Type->typeName) );
 			}
 		}
 		_reconnectDelay = _reconnectMin;
@@ -224,18 +237,10 @@ namespace Jde::Opc::Emulator{
 				}
 				if( !sessionUp )
 					continue;//nothing to write to; the value is current and goes out on the next cycle after recovery.
+				Scalar s;
 				UA_Variant v;
-				UA_Boolean b = tag.Value!=0;
-				UA_UInt32 count = tag.Type==&UA_TYPES[UA_TYPES_UINT32] ? (UA_UInt32)tag.Value : 0;
-				UA_Int32 code = (UA_Int32)tag.Value;
-				if( tag.Spec.IsBool() )
-					UA_Variant_setScalar( &v, &b, &UA_TYPES[UA_TYPES_BOOLEAN] );
-				else if( tag.Type==&UA_TYPES[UA_TYPES_UINT32] )
-					UA_Variant_setScalar( &v, &count, &UA_TYPES[UA_TYPES_UINT32] );
-				else if( tag.Type==&UA_TYPES[UA_TYPES_INT32] )
-					UA_Variant_setScalar( &v, &code, &UA_TYPES[UA_TYPES_INT32] );
-				else
-					UA_Variant_setScalar( &v, &tag.Value, &UA_TYPES[UA_TYPES_DOUBLE] );
+				UA_Variant_init( &v );
+				SetScalar( v, *tag.Type, tag.Value, s );//a type it writes:  the mode's, or the node's that Connect checked.
 				try{
 					try{
 						_client->Write( tag.Node, v, tag.StatusRefused ? UA_STATUSCODE_GOOD : tag.Status );
@@ -323,10 +328,12 @@ namespace Jde::Opc::Emulator{
 			vector<string> tags;
 			for( let& tag : device.Tags ){
 				//Branch on the spec, not on Generator:  a toggle has a generator and is written as UA_Boolean (Cycle), so it
-				//rendered `status=1.0` (#13).  Both boolean modes print as the bool they are; command tags have no Value.
+				//rendered `status=1.0` (#13).  Both boolean modes print as the bool they are; command tags have no Value.  A tag
+				//written as an integer prints as one:  `reasonCode=1`, not `1.0`.
+				let integer = tag.Type && tag.Type->typeKind>=UA_DATATYPEKIND_SBYTE && ( tag.Type->typeKind<=UA_DATATYPEKIND_UINT64 || tag.Type->typeKind==UA_DATATYPEKIND_ENUM );
 				let value = tag.Spec.IsBool()
 					? Ƒ( "{}={}", tag.Spec.Name, tag.Generator ? tag.Value!=0 : device.Command )
-					: Ƒ( "{}={:.1f}", tag.Spec.Name, tag.Value );
+					: integer ? Ƒ( "{}={:.0f}", tag.Spec.Name, tag.Value ) : Ƒ( "{}={:.1f}", tag.Spec.Name, tag.Value );
 				tags.push_back( tag.Status ? Ƒ("{}({})", value, ToString(tag.Status)) : value );//Good is the unmarked case.
 			}
 			values.push_back( Ƒ("{}[{}]", device.Name, Str::Join(tags, " ")) );

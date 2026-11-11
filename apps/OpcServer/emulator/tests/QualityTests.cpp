@@ -81,6 +81,13 @@ namespace Jde::Opc::Emulator::Tests{
 		let repeating = spec( R"({"name":"x","quality":[{"status":"Bad","start":"PT10S","duration":"PT5S","every":"PT1M"}]})" ).Quality[0];
 		EXPECT_TRUE( repeating.IsActive(12s) ); EXPECT_FALSE( repeating.IsActive(69s) ); EXPECT_TRUE( repeating.IsActive(70s) ); EXPECT_TRUE( repeating.IsActive(134s) ); EXPECT_FALSE( repeating.IsActive(135s) );
 	}
+	TEST( ScheduleTests, NextEdgeIsTheFirstStartOrEndAfter ){
+		constexpr Schedule once{ 10s, 5s, nullopt };
+		EXPECT_EQ( once.NextEdge(0s), 10s ); EXPECT_EQ( once.NextEdge(10s), 15s ); EXPECT_EQ( once.NextEdge(14s), 15s );
+		EXPECT_EQ( once.NextEdge(15s), nullopt );//one shot:  no edge left
+		constexpr Schedule repeating{ 10s, 5s, 60s };
+		EXPECT_EQ( repeating.NextEdge(9s), 10s ); EXPECT_EQ( repeating.NextEdge(12s), 15s ); EXPECT_EQ( repeating.NextEdge(15s), 70s ); EXPECT_EQ( repeating.NextEdge(70s), 75s ); EXPECT_EQ( repeating.NextEdge(100s), 130s );
+	}
 	TEST( QualityWindowTests, Refusals ){
 		EXPECT_THROW( spec(R"({"name":"x","quality":{"status":"Bad","duration":"PT1S"}})"), Exception );//not an array
 		EXPECT_THROW( spec(R"({"name":"x","quality":[{"duration":"PT1S"}]})"), Exception );//no status
@@ -89,6 +96,9 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( spec(R"({"name":"x","quality":[{"status":"Bad","duration":"PT0S"}]})"), Exception );
 		EXPECT_THROW( spec(R"({"name":"x","quality":[{"status":"Bad","duration":"PT10S","every":"PT5S"}]})"), Exception );//would never end
 		EXPECT_THROW( spec(R"({"name":"x","quality":[{"status":"Bad","duration":"PT1S","limit":"middle"}]})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","quality":[{"status":"Bad","duration":"5s"}]})"), Exception );//a key of the wrong kind, not its default
+		EXPECT_THROW( spec(R"({"name":"x","quality":[{"status":"Bad","duration":"PT1S","every":60}]})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","quality":[{"status":"Bad","duration":"PT1S","hold":"no"}]})"), Exception );
 		//the emulator never writes a command tag, and a bool has no range
 		EXPECT_THROW( spec(R"({"name":"x","mode":"command","quality":[{"status":"Bad","duration":"PT1S"}]})"), Exception );
 		EXPECT_THROW( spec(R"({"name":"x","mode":"command","sensorMax":1})"), Exception );

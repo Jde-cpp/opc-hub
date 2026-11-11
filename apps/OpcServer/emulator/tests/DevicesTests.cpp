@@ -21,7 +21,8 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_TRUE( y[0].Tags[0].Generator );
 		EXPECT_FALSE( y[0].Tags[1].Generator );
 		EXPECT_FALSE( y[0].Tags[1].Field );
-		EXPECT_TRUE( y[0].Command );//a device starts commanded on until the subscription says otherwise
+		EXPECT_FALSE( y[0].Command );//off until its first notification:  the OpcServer's `status` may read false
+		EXPECT_TRUE( y[1].Command );//nothing to command it
 	}
 	TEST( ParseDevicesTests, PublishedFieldsMapThroughTheContract ){
 		let contract = []( sv name )ι->optional<uint>{ return name=="pump1.motorRpm" ? optional<uint>{3} : optional<uint>{}; };
@@ -62,8 +63,9 @@ namespace Jde::Opc::Emulator::Tests{
 		ASSERT_EQ( y[0].Tags.size(), 3u );
 		EXPECT_EQ( y[0].Tags[0].Spec.Name, "totalCount" ); EXPECT_EQ( y[0].Tags[1].Spec.Name, "rejectCount" ); EXPECT_EQ( y[0].Tags[2].Spec.Name, "status" );
 		EXPECT_EQ( y[0].Tags[0].Field, optional<uint>{5} ); EXPECT_EQ( y[0].Tags[1].Field, optional<uint>{6} );
-		EXPECT_EQ( y[0].Tags[0].Type, &UA_TYPES[UA_TYPES_UINT32] ); EXPECT_EQ( y[0].Tags[1].Type, &UA_TYPES[UA_TYPES_UINT32] );//what a session write goes as
-		EXPECT_EQ( y[0].Tags[0].Spec.Quality.size(), 1u ); EXPECT_TRUE( y[0].Tags[1].Spec.Quality.empty() );//the schedule is the count's
+		EXPECT_EQ( y[0].Tags[0].Type, &UA_TYPES[UA_TYPES_UINT32] ); EXPECT_EQ( y[0].Tags[1].Type, &UA_TYPES[UA_TYPES_UINT32] );//the mode's, until a node says otherwise
+		EXPECT_EQ( y[0].Tags[2].Type, nullptr );//a command tag is never written
+		EXPECT_EQ( y[0].Tags[0].Spec.Quality.size(), 1u ); EXPECT_EQ( y[0].Tags[1].Spec.Quality.size(), 1u );//one counter:  the count's faults are the rejects' too
 		EXPECT_EQ( y[0].StatusTag, optional<uint>{2} );
 		ASSERT_EQ( y[1].Tags.size(), 3u );
 		EXPECT_EQ( y[1].Tags[1].Spec.Name, "scrap" ); EXPECT_EQ( y[1].Tags[2].Spec.Name, "plain" );//no share, no second tag
@@ -72,6 +74,9 @@ namespace Jde::Opc::Emulator::Tests{
 	TEST( DeviceTests, NothingAdvancesWhileTheCommandIsOff ){
 		auto y = devices( R"([{ "path":"pump1", "tags":[ { "name":"totalCount", "mode":"production", "reject":1 }, { "name":"status", "mode":"command" } ] }])" );
 		auto& pump = y[0];
+		pump.Sample( 3s );
+		EXPECT_FALSE( pump.On ); EXPECT_EQ( pump.Tags[0].Value, 0 );//no notification yet
+		pump.Command = true;//the first
 		pump.Sample( 3s );
 		EXPECT_TRUE( pump.On ); EXPECT_EQ( pump.Tags[0].Value, 3 ); EXPECT_EQ( pump.Tags[1].Value, 3 );
 		pump.Command = false;//the UI's write
@@ -101,11 +106,13 @@ namespace Jde::Opc::Emulator::Tests{
 		ASSERT_EQ( pump.ReasonTag, optional<uint>{2} );
 		let& count = pump.Tags[0]; let& status = pump.Tags[1]; let& reason = pump.Tags[2];
 		EXPECT_EQ( reason.Spec.Name, "reasonCode" ); EXPECT_EQ( reason.Field, optional<uint>{9} ); EXPECT_EQ( reason.Type, &UA_TYPES[UA_TYPES_INT32] );
+		//stopped [10,13) [20,25) [30,33) [40,45):  the first active stop gives the code
+		let codeAt = []( uint t ){ return t%10>=3 || t<10 ? ( t>=20 && t%20<5 ? 8 : 0 ) : 7; };
 		uint units{};
-		for( uint second=1; second<=45; ++second ){//stopped [10,13) [20,25) [30,33) [40,45):  the first active stop gives the code
+		for( uint second=1; second<=45; ++second ){
 			pump.Sample( 1s );
-			let code = second%10>=3 || second<10 ? ( second>=20 && second%20<5 ? 8 : 0 ) : 7;
-			if( !code )
+			let code = codeAt( second );//as of the sample
+			if( !codeAt(second-1) )//through the second before it
 				++units;
 			EXPECT_EQ( pump.Code, code ) << second;
 			EXPECT_EQ( pump.On, !code ) << second;
@@ -114,6 +121,37 @@ namespace Jde::Opc::Emulator::Tests{
 			EXPECT_EQ( count.Value, units ) << second;
 		}
 		EXPECT_EQ( units, 45u-3-5-3-5 );
+	}
+	TEST( DeviceTests, APeriodIsCutAtEachStopEdge ){//a long -period, or a blocking reconnect's ten seconds in one dt
+		auto y = devices( R"([{ "path":"pump2", "stops":[ { "every":"PT10S", "for":"PT3S", "code":7 } ],
+			"tags":[ { "name":"totalCount", "mode":"production" }, { "name":"status", "mode":"toggle", "period":"PT1H" } ] }])" );
+		auto& pump = y[0];
+		pump.Sample( 1min );//stopped [10,13) [20,23) [30,33) [40,43) [50,53), and from 60
+		EXPECT_EQ( pump.Tags[0].Value, 60-5*3 );
+		EXPECT_EQ( pump.Code, 7 ); EXPECT_FALSE( pump.On );//as of 60
+		pump.Sample( 7s );
+		EXPECT_EQ( pump.Tags[0].Value, 60-5*3+4 ); EXPECT_EQ( pump.Code, 0 ); EXPECT_TRUE( pump.On );
+	}
+	TEST( DeviceTests, AHeldFaultOnTheCountHoldsItsRejects ){//one sensor:  never more rejects than units in an interval
+		auto y = devices( R"([{ "path":"pump1", "tags":[ { "name":"totalCount", "mode":"production", "reject":1, "quality":[{ "status":"BadSensorFailure", "start":"PT2S", "duration":"PT2S" }] } ] }])" );
+		auto& pump = y[0];
+		let& count = pump.Tags[0]; let& rejects = pump.Tags[1];
+		for( uint second=1; second<=5; ++second ){
+			pump.Sample( 1s );
+			let held = second==2 || second==3;
+			EXPECT_EQ( count.Value, held ? 1 : second ) << second; EXPECT_EQ( rejects.Value, count.Value ) << second;
+			EXPECT_EQ( count.Status, held ? UA_STATUSCODE_BADSENSORFAILURE : UA_STATUSCODE_GOOD ) << second; EXPECT_EQ( rejects.Status, count.Status ) << second;
+		}
+	}
+	TEST( ParseDevicesTests, TwoTagsOfOneNameAreRefused ){
+		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"a", "mode":"production", "reject":0.1 }, { "name":"b", "mode":"production", "reject":0.1 } ] }])"), Exception );//both `rejectCount`
+		EXPECT_NO_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"a", "mode":"production", "reject":0.1 }, { "name":"b", "mode":"production", "reject":0.1, "rejectTag":"bRejects" } ] }])") );
+		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"status", "mode":"command" }, { "name":"n", "mode":"production", "reject":0.1, "rejectTag":"status" } ] }])"), Exception );
+		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"x" }, { "name":"x", "mode":"sine" } ] }])"), Exception );
+	}
+	TEST( ParseDevicesTests, ACommandTagBesideAGeneratedStatusIsRefused ){//it would command nothing
+		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"run", "mode":"command" }, { "name":"status", "mode":"toggle" } ] }])"), Exception );
+		EXPECT_NO_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"run", "mode":"command" }, { "name":"motorRpm", "mode":"follow" } ] }])") );
 	}
 	TEST( ParseDevicesTests, StopRefusals ){
 		constexpr sv tags{ R"("tags":[ { "name":"status", "mode":"toggle" } ])" };
@@ -128,6 +166,9 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( stops(R"([{ "every":"PT10S", "for":"PT3S", "code":7 }])", R"("tags":[ { "name":"status", "mode":"command" } ])"), Exception );//the UI's status is not the emulator's to hold
 		EXPECT_THROW( stops(R"([{ "every":"PT10S", "for":"PT3S", "code":7 }])", R"("tags":[ { "name":"motorRpm", "mode":"sine" } ])"), Exception );//no status
 		EXPECT_THROW( stops(R"([{ "every":"PT10S", "for":"PT3S", "code":7 }])", R"("tags":[ { "name":"status", "mode":"toggle" }, { "name":"reasonCode" } ])"), Exception );//the stops' own tag
+		EXPECT_NO_THROW( stops("[]", R"("tags":[ { "name":"status", "mode":"toggle" }, { "name":"reasonCode" } ])") );//no stops, no tag of theirs
+		EXPECT_THROW( stops(R"([{ "every":"60s", "for":"PT3S", "code":7 }])", tags), Exception );//not ISO 8601
+		EXPECT_THROW( stops(R"([{ "every":"PT10S", "for":"PT3S", "code":"7" }])", tags), Exception );
 	}
 	TEST( ParseDevicesTests, Refusals ){
 		EXPECT_THROW( devices("[]"), Exception );

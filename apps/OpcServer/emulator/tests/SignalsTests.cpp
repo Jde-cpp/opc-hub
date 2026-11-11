@@ -105,6 +105,17 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_NO_THROW( spec(R"({"name":"x","mode":"production","min":10,"max":10,"cycle":"PT2S","jitter":"PT1.9S","reject":1})") );//no range
 		EXPECT_THROW( MakeProduction(spec(R"({"name":"x","mode":"counter"})")), Exception );
 	}
+	TEST( TagSpecTests, AKeyOfTheWrongKindIsRefusedNotDefaulted ){//a typo has to fail like one
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","cycle":"2s"})"), Exception );//not ISO 8601:  read as the default, it counted twice as fast
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","jitter":"0.5"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","reject":"0.05"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"sine","period":30})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"follow","tau":"3s"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","min":"1"})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":3})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","mode":"production","reject":0.1,"rejectTag":7})"), Exception );
+		EXPECT_THROW( spec(R"({"name":"x","sensorMax":"1"})"), Exception );
+	}
 	TEST( ProductionTests, AUnitEveryCycle ){
 		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT2S"})" );
 		EXPECT_EQ( g->Next(1s, true), 0 );

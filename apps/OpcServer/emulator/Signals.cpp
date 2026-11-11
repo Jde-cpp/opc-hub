@@ -6,30 +6,21 @@
 #define let const auto
 namespace Jde::Opc::Emulator{
 	constexpr array<sv,8> _modeNames{ "sine", "ramp", "randomWalk", "counter", "toggle", "command", "follow", "production" };
-	α ParseMode( sv s, SL sl )ε->EMode{
-		for( uint i=0; i<_modeNames.size(); ++i ){
-			if( _modeNames[i]==s )
-				return (EMode)i;
-		}
-		THROWSL( "Unknown tag mode '{}' - one of {}.", s, Str::Join(_modeNames, "|") );
-	}
-	α ToString( EMode mode )ι->sv{ return _modeNames[underlying(mode)]; }
 
+	//A key left out takes the member's default, from the header.
 	TagSpec::TagSpec( const jobject& o, SL sl )ε:
-		Name{ Json::AsString(o, "name", sl) },
-		Mode{ ParseMode(Json::FindSV(o, "mode").value_or("counter"), sl) },
-		Min{ Json::FindNumber<double>(o, "min").value_or(0) },
-		Max{ Json::FindNumber<double>(o, "max").value_or(100) },
-		Step{ Json::FindNumber<double>(o, "step").value_or(1) },
-		RatedRpm{ Json::FindNumber<double>(o, "ratedRpm").value_or(1450) },
-		Period{ Json::FindDuration(o, "period").value_or(30s) },
-		Tau{ Json::FindDuration(o, "tau").value_or(3s) },
-		Cycle{ Json::FindDuration(o, "cycle").value_or(1s) },
-		Jitter{ Json::FindDuration(o, "jitter").value_or(Duration::zero()) },
-		Reject{ Json::FindNumber<double>(o, "reject").value_or(0) },
-		RejectTag{ Json::FindString(o, "rejectTag").value_or("rejectCount") },
-		SensorMin{ Json::FindNumber<double>(o, "sensorMin") },
-		SensorMax{ Json::FindNumber<double>(o, "sensorMax") }{
+		Name{ Json::AsString(o, "name", sl) }{
+		let owner = Ƒ( "Tag '{}'", Name );
+		let number = [&]( sv key, double dflt ){ return FindKey<double>( o, key, owner, sl ).value_or( dflt ); };
+		let duration = [&]( sv key, Duration dflt ){ return FindKey<Duration>( o, key, owner, sl ).value_or( dflt ); };
+		if( let mode = FindKey<string>(o, "mode", owner, sl); mode )
+			Mode = ParseMode( *mode, sl );
+		Min = number( "min", Min ); Max = number( "max", Max ); Step = number( "step", Step ); RatedRpm = number( "ratedRpm", RatedRpm );
+		Period = duration( "period", Period ); Tau = duration( "tau", Tau ); Cycle = duration( "cycle", Cycle ); Jitter = duration( "jitter", Jitter );
+		Reject = number( "reject", Reject );
+		RejectTag = FindKey<string>( o, "rejectTag", owner, sl ).value_or( RejectTag );
+		SensorMin = FindKey<double>( o, "sensorMin", owner, sl );
+		SensorMax = FindKey<double>( o, "sensorMax", owner, sl );
 		THROW_IFSL( Max<=Min && !IsBool() && Mode!=EMode::Follow && Mode!=EMode::Production, "Tag '{}': max ({}) must exceed min ({}).", Name, Max, Min );
 		THROW_IFSL( Period<=Duration::zero() || Tau<=Duration::zero(), "Tag '{}': period and tau must be positive.", Name );
 		//randomWalk draws from [-Step,Step), which is empty unless Step>0 - absl::Uniform then returns -Step every time - and
@@ -114,13 +105,24 @@ namespace Jde::Opc::Emulator{
 		α Next( Duration, bool )ι->double override{ return (double)_units->Rejects; }
 		sp<Units> _units;
 	};
-	α MakeProduction( const TagSpec& spec )ε->Production{
+}
+namespace Jde::Opc{
+	α Emulator::ParseMode( sv s, SL sl )ε->EMode{
+		for( uint i=0; i<_modeNames.size(); ++i ){
+			if( _modeNames[i]==s )
+				return (EMode)i;
+		}
+		THROWSL( "Unknown tag mode '{}' - one of {}.", s, Str::Join(_modeNames, "|") );
+	}
+	α Emulator::ToString( EMode mode )ι->sv{ return _modeNames[underlying(mode)]; }
+
+	α Emulator::MakeProduction( const TagSpec& spec )ε->Production{
 		THROW_IF( spec.Mode!=EMode::Production, "Tag '{}': mode {} has no rejects.", spec.Name, ToString(spec.Mode) );
 		auto units = ms<Units>();
 		return { mu<ProductionCount>(spec, units), mu<ProductionRejects>(units) };
 	}
 
-	α MakeGenerator( const TagSpec& spec )ε->up<IGenerator>{
+	α Emulator::MakeGenerator( const TagSpec& spec )ε->up<IGenerator>{
 		switch( spec.Mode ){
 		case EMode::Sine: return mu<Sine>( spec );
 		case EMode::Ramp: return mu<Ramp>( spec );

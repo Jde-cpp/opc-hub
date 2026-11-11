@@ -9,7 +9,7 @@ namespace Jde::Opc::Emulator{
 	α ToString( EMode mode )ι->sv;
 
 	struct TagSpec{
-		TagSpec( const jobject& o, SRCE )ε;
+		TagSpec( const jobject& o, SRCE )ε;//throws on a key there but of the wrong kind (FindKey), and on the refusals below it.
 		α IsBool()Ι->bool{ return Mode==EMode::Toggle || Mode==EMode::Command; }
 		string Name;
 		EMode Mode{ EMode::Counter };
@@ -22,7 +22,8 @@ namespace Jde::Opc::Emulator{
 		vector<QualityWindow> Quality;//the scheduled faults, first active wins.
 	};
 
-	//One tag's value generator.  `dt` is the time since the previous sample, `on` the device's status (Device::On).
+	//One tag's value generator.  `dt` is the time since the previous sample, `on` whether the device ran through it - Device::Sample
+	//cuts a period at a stop's edges, so a period is all on or all off.
 	struct IGenerator{
 		virtual ~IGenerator() = default;
 		β Next( Duration dt, bool on )ι->double = 0;
