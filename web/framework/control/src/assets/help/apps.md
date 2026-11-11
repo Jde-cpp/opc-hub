@@ -71,7 +71,6 @@ The tabs above the toolbar switch between saved views. The toolbar holds:
 
 - the *Level* filter, which hides everything below the level picked
 - the refresh button, which reloads from the top
-- the tune button, which chooses the columns shown and their sort, and saves that as a view
 - on the right, three buttons that act on the row you select by clicking it, or with Enter:
   - the hide button hides every entry with the selected entry's message
   - the next button goes to the next entry with that message, reading on through the log for one
@@ -79,7 +78,7 @@ The tabs above the toolbar switch between saved views. The toolbar holds:
 
 The messages you hide stay hidden the next time you open a log, until you show them again.
 
-See [Views](/help/lists#views) for more on views.
+The view's menu and the column headers choose the columns shown and their sort. See [Views](/help/lists#views) for more on views.
 
 In the table, column headers sort as well, all but *Line*. The *Time* column shows the time of day; hover it for the full date, which matters once paging reaches an earlier day's entries.
 

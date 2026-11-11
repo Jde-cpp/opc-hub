@@ -1,163 +1,159 @@
 @if( !isLoading() ){
-	@if( isSettings() ){
-		<ql-list-settings [view]=viewCopy() [schema]=schema [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
-	} @else {
-		<view-toolbar [views]="viewSet" [tabPanel]="panel" [columns]="columns" [selectable]="true" [filterValues]="filterValues()" [refreshing]="isRefreshing()" [count]="rows().length" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--the browse carries every value, so Refresh is the only reader;  the rows follow the view on their own-->
-			<mat-slide-toggle left class="system-toggle" [checked]="showSystem()" (change)="setShowSystem($event.checked)" matTooltip="Show the nodes of the OPC UA standard's own namespace - the Server object and the type trees">System nodes</mat-slide-toggle>
-			<a left matIconButton [routerLink]="watchLink" aria-label="Open the watch list" matTooltip="Watch list - the variables watched from any connection of this gateway, with their sampling"><mat-icon aria-hidden="true" fontIcon="visibility"></mat-icon></a>
-		</view-toolbar>
-		<mat-tab-nav-panel #panel>
-			<div style="align-content: center; margin: auto; text-align: center">
-				<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange rather than sorting the table in place-->
-				<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
-					<ng-container matColumnDef="select">
-						<mat-header-cell *matHeaderCellDef>
-							<mat-checkbox (change)="$event ? toggleAllRows() : null"
-														[checked]=isAllSelected()
-														[disabled]=!selectableRows.length
-														[indeterminate]="selections.hasValue() && !isAllSelected()"
-														[aria-label]=checkboxLabel()>
-							</mat-checkbox>
-						</mat-header-cell>
-						<mat-cell *matCellDef="let node">
-							<mat-checkbox (click)=$event.stopPropagation()
-														(change)=selections.toggle(node)
-														[checked]=selections.isSelected(node)
-														[disabled]=!node.isVariable
-														[aria-label]=checkboxLabel(node)>
-							</mat-checkbox>
-						</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="id">
-						<mat-header-cell viewColumn *matHeaderCellDef> ID </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{r.nodeId.id}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="name">
-						<mat-header-cell viewColumn *matHeaderCellDef> Name </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">
-							@if( r.isMethod ){<!--no page of its own:  a Call on this object-->
-								<span>{{r.name}}</span>
-								@if( !snapshotShown() ){<!--the Snapshot cell's Call, where the view hides that column-->
-									<button matIconButton type="button" class="call-icon" (click)="call(r)" [attr.aria-label]="'Call ' + r.name" matTooltip="Call"><mat-icon aria-hidden="true" fontIcon="play_arrow"></mat-icon></button>
-								}
+	<view-toolbar [views]="viewSet" [tabPanel]="panel" [columns]="columns" [selectable]="true" [filterValues]="filterValues()" [refreshing]="isRefreshing()" [count]="rows().length" (refresh)="onRefresh()"><!--the browse carries every value, so Refresh is the only reader;  the rows follow the view on their own-->
+		<mat-slide-toggle left class="system-toggle" [checked]="showSystem()" (change)="setShowSystem($event.checked)" matTooltip="Show the nodes of the OPC UA standard's own namespace - the Server object and the type trees">System nodes</mat-slide-toggle>
+		<a left matIconButton [routerLink]="watchLink" aria-label="Open the watch list" matTooltip="Watch list - the variables watched from any connection of this gateway, with their sampling"><mat-icon aria-hidden="true" fontIcon="visibility"></mat-icon></a>
+	</view-toolbar>
+	<mat-tab-nav-panel #panel>
+		<div style="align-content: center; margin: auto; text-align: center">
+			<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange rather than sorting the table in place-->
+			<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" [filterValues]="filterValues()" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
+				<ng-container matColumnDef="select">
+					<mat-header-cell *matHeaderCellDef>
+						<mat-checkbox (change)="$event ? toggleAllRows() : null"
+													[checked]=isAllSelected()
+													[disabled]=!selectableRows.length
+													[indeterminate]="selections.hasValue() && !isAllSelected()"
+													[aria-label]=checkboxLabel()>
+						</mat-checkbox>
+					</mat-header-cell>
+					<mat-cell *matCellDef="let node">
+						<mat-checkbox (click)=$event.stopPropagation()
+													(change)=selections.toggle(node)
+													[checked]=selections.isSelected(node)
+													[disabled]=!node.isVariable
+													[aria-label]=checkboxLabel(node)>
+						</mat-checkbox>
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="id">
+					<mat-header-cell viewColumn *matHeaderCellDef> ID </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{r.nodeId.id}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="name">
+					<mat-header-cell viewColumn *matHeaderCellDef> Name </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">
+						@if( r.isMethod ){<!--no page of its own:  a Call on this object-->
+							<span>{{r.name}}</span>
+							@if( !snapshotShown() ){<!--the Snapshot cell's Call, where the view hides that column-->
+								<button matIconButton type="button" class="call-icon" (click)="call(r)" [attr.aria-label]="'Call ' + r.name" matTooltip="Call"><mat-icon aria-hidden="true" fontIcon="play_arrow"></mat-icon></button>
 							}
-							@else if( isSelf(r) ){<!--a Variable page's own row:  this page-->
-								<span class="self">{{r.name}}</span>
+						}
+						@else if( isSelf(r) ){<!--a Variable page's own row:  this page-->
+							<span class="self">{{r.name}}</span>
+						}
+						@else{
+							<a [routerLink]="routerLink(r)" routerLinkActive="router-link-active" >{{r.name}}</a>
+						}
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="class">
+					<mat-header-cell viewColumn *matHeaderCellDef> Class </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{toObject(r.nodeClass)}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="dataType">
+					<mat-header-cell viewColumn *matHeaderCellDef> Data Type </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{dataType(r)}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="snapshot">
+					<mat-header-cell viewColumn *matHeaderCellDef> Snapshot </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">
+						@if( r.isMethod ){<!--a method has no value:  its cell is its Call (clients spec *Methods*)-->
+							<button matButton="outlined" class="call-button" type="button" (click)="call(r)" [attr.aria-label]="'Call ' + r.name">Call</button>
+						}
+						@else if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
+							<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
+						}
+						@else{<!--the reading as text, an enumeration by name (NodeView.enumName), a structure as a table of its members (clients spec *Structures*);  the Write beside it opens the dialog that types the value as the DataType says (clients spec *Values and writes*, #423)-->
+							@if( structured(r.value) ){
+								<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.stale"></structure-table>
 							}
 							@else{
-								<a [routerLink]="routerLink(r)" routerLinkActive="router-link-active" >{{r.name}}</a>
+								<span class="value-text" [class.stale]="r.stale" [title]="cell(r, 'snapshot')">{{cell(r, "snapshot")}}</span>
 							}
-						</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="class">
-						<mat-header-cell viewColumn *matHeaderCellDef> Class </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{toObject(r.nodeClass)}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="dataType">
-						<mat-header-cell viewColumn *matHeaderCellDef> Data Type </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{dataType(r)}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="snapshot">
-						<mat-header-cell viewColumn *matHeaderCellDef> Snapshot </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">
-							@if( r.isMethod ){<!--a method has no value:  its cell is its Call (clients spec *Methods*)-->
-								<button matButton="outlined" class="call-button" type="button" (click)="call(r)" [attr.aria-label]="'Call ' + r.name">Call</button>
+							@if( r.isVariable && !readOnly(r) ){<!--a Variable's alone, as the row menu's:  an Object's or a type's has no Value to write-->
+								<button matIconButton type="button" class="write-button" (click)="write(r)" [attr.aria-label]="'Write ' + r.name" matTooltip="Write a value"><mat-icon aria-hidden="true" fontIcon="edit"></mat-icon></button>
 							}
-							@else if( readDenied(r) ){<!--the server answers the read with nothing, and a blank cell read as a null value-->
-								<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
+						}
+						<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the
+								Gateways help promise, and against a server that reports the node read-only the box simply reverted.  A cell with no
+								Write says why on a lock beside it, the same focusable icon-with-tooltip shape the quality icon below uses, so a keyboard
+								reaches it too.-->
+						@if( readOnlyReason(r); as reason ){
+							<mat-icon class="lock-icon" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="reason" [matTooltip]="reason" fontIcon="lock"></mat-icon>
+						}
+						<!--the reading's quality, beside the value - only where the view hides the Status column, which says it better:  a Bad or Uncertain reading must not pass for a good one there.  A shape per severity and a label, so the colour is never the only signal;  focusable, so the tooltip is a keyboard's too-->
+						@if( !statusShown() && qualityIcon(r); as icon ){
+							<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="status(r)" [matTooltip]="statusTooltip(r)" [fontIcon]="icon"></mat-icon>
+						}
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="status">
+					<mat-header-cell viewColumn *matHeaderCellDef> Status </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">
+						@if( status(r); as text ){
+							@if( qualityIcon(r); as icon ){
+								<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
 							}
-							@else{<!--the reading as text, an enumeration by name (NodeView.enumName), a structure as a table of its members (clients spec *Structures*);  the Write beside it opens the dialog that types the value as the DataType says (clients spec *Values and writes*, #423)-->
-								@if( structured(r.value) ){
-									<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.stale"></structure-table>
-								}
-								@else{
-									<span class="value-text" [class.stale]="r.stale" [title]="cell(r, 'snapshot')">{{cell(r, "snapshot")}}</span>
-								}
-								@if( r.isVariable && !readOnly(r) ){<!--a Variable's alone, as the row menu's:  an Object's or a type's has no Value to write-->
-									<button matIconButton type="button" class="write-button" (click)="write(r)" [attr.aria-label]="'Write ' + r.name" matTooltip="Write a value"><mat-icon aria-hidden="true" fontIcon="edit"></mat-icon></button>
-								}
+							<span class="status-text" [class.status-good]="!r.sc" [matTooltip]="statusTooltip(r)">{{text}}</span>
+						}
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="sourceTime"><!--the reading's timestamps, as a push sent them:  blank for a reading only REST brought-->
+					<mat-header-cell viewColumn *matHeaderCellDef> Source Time </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{cell(r, "sourceTime")}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="serverTime">
+					<mat-header-cell viewColumn *matHeaderCellDef> Server Time </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{cell(r, "serverTime")}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="access">
+					<mat-header-cell viewColumn *matHeaderCellDef> Access </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">
+						<mat-chip-set aria-label="Access">
+							@for( name of access(r); track name ){
+								<mat-chip class="access-chip" [class.access-write]="name.includes('Write')">{{name}}</mat-chip>
 							}
-							<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the
-									Gateways help promise, and against a server that reports the node read-only the box simply reverted.  A cell with no
-									Write says why on a lock beside it, the same focusable icon-with-tooltip shape the quality icon below uses, so a keyboard
-									reaches it too.-->
-							@if( readOnlyReason(r); as reason ){
-								<mat-icon class="lock-icon" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="reason" [matTooltip]="reason" fontIcon="lock"></mat-icon>
-							}
-							<!--the reading's quality, beside the value - only where the view hides the Status column, which says it better:  a Bad or Uncertain reading must not pass for a good one there.  A shape per severity and a label, so the colour is never the only signal;  focusable, so the tooltip is a keyboard's too-->
-							@if( !statusShown() && qualityIcon(r); as icon ){
-								<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="status(r)" [matTooltip]="statusTooltip(r)" [fontIcon]="icon"></mat-icon>
-							}
-						</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="status">
-						<mat-header-cell viewColumn *matHeaderCellDef> Status </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">
-							@if( status(r); as text ){
-								@if( qualityIcon(r); as icon ){
-									<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
-								}
-								<span class="status-text" [class.status-good]="!r.sc" [matTooltip]="statusTooltip(r)">{{text}}</span>
-							}
-						</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="sourceTime"><!--the reading's timestamps, as a push sent them:  blank for a reading only REST brought-->
-						<mat-header-cell viewColumn *matHeaderCellDef> Source Time </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{cell(r, "sourceTime")}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="serverTime">
-						<mat-header-cell viewColumn *matHeaderCellDef> Server Time </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{cell(r, "serverTime")}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="access">
-						<mat-header-cell viewColumn *matHeaderCellDef> Access </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">
-							<mat-chip-set aria-label="Access">
-								@for( name of access(r); track name ){
-									<mat-chip class="access-chip" [class.access-write]="name.includes('Write')">{{name}}</mat-chip>
-								}
-							</mat-chip-set>
-						</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="refType"><!--what the browse answered the node by, and its type - the ids until the References tab brings the names-->
-						<mat-header-cell viewColumn *matHeaderCellDef> Reference Type </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{cell(r, "refType")}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="typeDef">
-						<mat-header-cell viewColumn *matHeaderCellDef> Type Definition </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{cell(r, "typeDef")}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="description">
-						<mat-header-cell viewColumn *matHeaderCellDef> Description </mat-header-cell>
-						<mat-cell viewColumn *matCellDef="let r">{{r.description?.text}}</mat-cell>
-					</ng-container>
-					<ng-container matColumnDef="menu"><!--the row's menu (clients spec *Watch list*):  a Variable's Watch adds it to the gateway's watch list-->
-						<mat-header-cell *matHeaderCellDef></mat-header-cell>
-						<mat-cell *matCellDef="let r">
-							@if( r.isVariable && !readDenied(r) ){
-								<button matIconButton type="button" class="row-menu" [matMenuTriggerFor]="rowMenu" [matMenuTriggerData]="{row: r}" [attr.aria-label]="'More for ' + r.name"><mat-icon aria-hidden="true" fontIcon="more_vert"></mat-icon></button>
-							}
-						</mat-cell>
-					</ng-container>
-					<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
-					<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
-				</mat-table>
+						</mat-chip-set>
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="refType"><!--what the browse answered the node by, and its type - the ids until the References tab brings the names-->
+					<mat-header-cell viewColumn *matHeaderCellDef> Reference Type </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{cell(r, "refType")}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="typeDef">
+					<mat-header-cell viewColumn *matHeaderCellDef> Type Definition </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{cell(r, "typeDef")}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="description">
+					<mat-header-cell viewColumn *matHeaderCellDef> Description </mat-header-cell>
+					<mat-cell viewColumn *matCellDef="let r">{{r.description?.text}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="menu"><!--the row's menu (clients spec *Watch list*):  a Variable's Watch adds it to the gateway's watch list-->
+					<mat-header-cell *matHeaderCellDef></mat-header-cell>
+					<mat-cell *matCellDef="let r">
+						@if( r.isVariable && !readDenied(r) ){
+							<button matIconButton type="button" class="row-menu" [matMenuTriggerFor]="rowMenu" [matMenuTriggerData]="{row: r}" [attr.aria-label]="'More for ' + r.name"><mat-icon aria-hidden="true" fontIcon="more_vert"></mat-icon></button>
+						}
+					</mat-cell>
+				</ng-container>
+				<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
+				<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
+			</mat-table>
+		</div>
+		@if( !isRefreshing() && !rows().length ){
+			<div class="jde-empty" role="status">
+				<mat-icon aria-hidden="true">account_tree</mat-icon>
+				@if( hiddenBySystem() ){
+					<p class="title">System nodes are hidden.</p>
+					<p>Every child here is a node of the OPC UA standard's own namespace.</p>
+					<div class="actions"><button matButton type="button" (click)="setShowSystem( true )">Show system nodes</button></div>
+				}
+				@else{
+					<p class="title">{{ nodes().length ? "No node matches this view." : "No child nodes." }}</p>
+				}
 			</div>
-			@if( !isRefreshing() && !rows().length ){
-				<div class="jde-empty" role="status">
-					<mat-icon aria-hidden="true">account_tree</mat-icon>
-					@if( hiddenBySystem() ){
-						<p class="title">System nodes are hidden.</p>
-						<p>Every child here is a node of the OPC UA standard's own namespace.</p>
-						<div class="actions"><button matButton type="button" (click)="setShowSystem( true )">Show system nodes</button></div>
-					}
-					@else{
-						<p class="title">{{ nodes().length ? "No node matches this view." : "No child nodes." }}</p>
-					}
-				</div>
-			}
-		</mat-tab-nav-panel>
-	}
+		}
+	</mat-tab-nav-panel>
 }
 <mat-menu #rowMenu="matMenu">
 	<ng-template matMenuContent let-row="row">

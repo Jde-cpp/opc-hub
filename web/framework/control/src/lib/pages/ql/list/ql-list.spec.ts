@@ -93,9 +93,9 @@ describe( 'QLList.onRowActivate', ()=>{
 	} );
 } );
 
-//review3 L7: onViewShow/onChangeView and the old Show deleted toggle fired refresh() without awaiting it, and onViewSave/onViewDelete
-//awaited reload() with no catch - so a failed re-query left the table empty or stale and said nothing, the rejection
-//going to the console as unhandled.  Every one now reports through #refresh/#reload.
+//review3 L7: onChangeView and the old Show deleted toggle fired refresh() without awaiting it, and others awaited reload() with no
+//catch - so a failed re-query left the table empty or stale and said nothing, the rejection going to the console as unhandled.
+//Every one now reports through #refresh/#reload.
 describe( 'QLList re-query failures reach the user', ()=>{
 	const schema = schemaOf( "User", id(), required("name"), scalar("slug"), scalar("deleted", "DateTime") );
 
@@ -119,16 +119,17 @@ describe( 'QLList re-query failures reach the user', ()=>{
 		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
 	} );
 
-	it( 'reports a failed view show', async ()=>{
+	it( "reports a failed header sort", async ()=>{
 		const { page, exception } = create();
-		await page.onViewShow( page.view() );
+		await page.onSortChange( {active: "slug", direction: "asc"} );
 		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
 	} );
-
-	it( 'reports a failed reload behind Save', async ()=>{
-		const { page, exception } = create();
-		await page.onViewSave( page.view() );
-		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
+	//reviews-issue/593-views-sort.md #5:  MatSort followed the rows' view and the later sorts' places the draft, apart until a read landed
+	it( "shows the draft's sort in the header, its read out or failed", async ()=>{
+		const { page } = create();
+		page.profile().edit( view=>view.setSort("slug", "desc") );//a header menu's Sort descending
+		await page.onChangeView();
+		expect( [page.view().sort[0].active, page.sort] ).toEqual( ["name", {active: "slug", direction: "desc"}] );
 	} );
 
 	it( 'clears isRefreshing even when the re-query fails', async ()=>{
@@ -158,50 +159,6 @@ describe( 'QLList on the Deleted view', ()=>{
 		profile.edit( view=>{ view.limit = 50; } );
 		expect( profile.current().isAdhoc ).toBe( true );
 		expect( shown() ).toEqual( ["name", "deleted"] );
-	} );
-} );
-
-//reviews-issue/web-refactor-review.md #6:  Delete did not await the profile write, said "Could not save view." when it failed, and
-//re-queried whatever it was given, the view on screen left as it was or not.
-describe( 'QLList Delete', ()=>{
-	const schema = schemaOf( "User", id(), required("name"), scalar("slug") );
-	const create = ()=>{
-		const { snackbar: {exception} } = configure();
-		const page = TestBed.createComponent( QLList ).componentInstance;
-		const system = View.fromTable( {columns: ["name"], sort: "name"}, schema );
-		const mine = View.copy( system );
-		mine.name = "Mine";
-		const profile = viewSet( [system, mine] );
-		profile.select( 1 );
-		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema, profile} as unknown as QLListData );
-		page.view.set( mine );
-		page.isSettings.set( true );
-		const load = vi.spyOn( QLListResolver, 'load' ).mockImplementation( async ( _ql:any, data:any )=>({...data, results: {users: []}}) );
-		return { page, profile, system, mine, load, exception };
-	};
-	afterEach( ()=>vi.restoreAllMocks() );
-
-	it( 'takes the view on screen, and re-queries under the view left', async ()=>{
-		const { page, profile, mine, load, exception } = create();
-		await page.onViewDelete( mine );
-		expect( profile.views().map( v=>v.name ) ).toEqual( [undefined] );
-		expect( load ).toHaveBeenCalledTimes( 1 );
-		expect( page.isSettings() ).toBe( false );
-		expect( exception ).not.toHaveBeenCalled();
-	} );
-	it( 'leaves the rows alone where the view on screen stays', async ()=>{
-		const { page, profile, system, mine, load } = create();
-		profile.select( 0 );
-		await page.onViewDelete( mine );
-		expect( profile.views() ).toEqual( [system] );
-		expect( load ).not.toHaveBeenCalled();
-		expect( page.isSettings() ).toBe( false );
-	} );
-	it( 'says the delete failed, not a save', async ()=>{
-		const { page, mine, exception } = create();
-		vi.spyOn( TestBed.inject(ProfileStore), 'save' ).mockRejectedValue( new Error( 'offline' ) );
-		await page.onViewDelete( mine );
-		expect( exception.mock.calls ).toEqual( [["Could not delete view.", expect.any( Error )]] );
 	} );
 } );
 
@@ -589,21 +546,25 @@ describe( 'QLList paging', ()=>{
 		expect( load ).toHaveBeenCalledTimes( 1 );
 	} );
 
-	//reviews-issue/231-paging.md #12:  the reset to the first page is refresh()'s alone - Save and Delete go through it too
-	it( 'keeps the page on Refresh, and starts over on a saved or deleted view', async ()=>{
+	//reviews-issue/231-paging.md #12:  the reset to the first page is refresh()'s alone - a view of other rows goes through it
+	it( 'keeps the page on Refresh, and starts over on a view sorted otherwise', async ()=>{
 		const { page, load } = create( rows(80) );
 		await page.onPage( {startIndex: 50, pageSize: 25} );
 		await page.onRefresh();
 		expect( load.mock.calls[1][1].skip ).toBe( 50 );
-		const mine = View.copy( page.view() );
-		mine.name = "Mine";
-		mine.number = 0;//as the settings panel emits a view under another name:  a new one
-		await page.onViewSave( mine );
+		page.profile().edit( view=>view.toggleSort("slug") );//as `Sort by` adds a second sort
+		await page.onChangeView();
 		expect( load.mock.calls[2][1].skip ).toBe( 0 );
-		await page.onPage( {startIndex: 25, pageSize: 25} );
-		await page.onViewDelete( page.profile().current() );//the view on screen:  Delete leaves the rows where it stays (#6)
-		expect( load.mock.calls[4][1].skip ).toBe( 0 );
 		expect( page.skip() ).toBe( 0 );
+	} );
+
+	//#593:  the Sort tab was the editor's last, and the editor went with it
+	it( 'renders its toolbar and its table with no view editor', ()=>{
+		const { fixture } = create( rows(3) );
+		fixture.detectChanges();
+		const element = fixture.nativeElement as HTMLElement;
+		expect( [!!element.querySelector( 'view-toolbar' ), !!element.querySelector( 'ql-table' )] ).toEqual( [true, true] );
+		expect( element.querySelector( 'ql-list-settings, button[aria-label="Edit view"]' ) ).toBeNull();
 	} );
 
 	//reviews-issue/231-paging.md #8:  the resolver reads it back (QLListResolver.savedSkip), so a record's breadcrumb or Back

@@ -276,7 +276,7 @@ describe( 'LogDetail message actions', ()=>{
 	} );
 } );
 
-//reviews-issue/web-refactor-review.md #2:  the Sort tab could remove every row, and the table's [matSortActive]="sort[0].active" - and
+//reviews-issue/web-refactor-review.md #2:  the editor's Sort tab could remove every row, as `No sorting` does now, and the table's [matSortActive]="sort[0].active" - and
 //LogDataSource's ordering, which reads sort[0] too - threw on the empty sort;  saved, it threw on every later open.
 describe( 'LogDetail sort', ()=>{
 	const tick = ()=>flush( 2 );
@@ -300,7 +300,7 @@ describe( 'LogDetail sort', ()=>{
 		return { fixture, page: fixture.componentInstance, snackbar, profileStore, ql };
 	};
 	const unsorted = ( page:LogDetail )=>{
-		const view = page.viewCopy;
+		const view = LogView.copy( page.view() );
 		view.sort = [];
 		return view;
 	};
@@ -308,7 +308,8 @@ describe( 'LogDetail sort', ()=>{
 
 	it( 'puts time back in a view shown with no sort', async ()=>{
 		const { fixture, page, snackbar } = await create();
-		page.onViewShow( unsorted(page) );
+		page.viewSet.edit( view=>{ view.sort = []; } );//`No sorting`
+		page.onViewChange();
 		await tick();
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
 		expect( page.sort ).toEqual( [time] );
@@ -321,27 +322,23 @@ describe( 'LogDetail sort', ()=>{
 		let written!:()=>void;
 		profileStore.save.mockReturnValue( new Promise<void>( done=>{ written = done; } ) );
 		const reads = ql.ql.mock.calls.length;
-		const view = page.viewCopy;
-		view.name = 'mine';
-		view.number = 0;
-		view.sort = [{active: 'level', direction: 'asc'}, {active: 'time', direction: 'desc'}];
-		const saving = page.onViewSave( view );
-		expect( page.view().name ).toBe( 'mine' );
+		page.viewSet.edit( view=>view.setSort("level", "asc") );//as a header's menu
+		page.onViewChange();
+		expect( page.sort ).toEqual( [{active: 'level', direction: 'asc'}, time] );
 		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
+		const saving = page.viewSet.saveDraft( page.view(), ()=>page.onViewChange() );//the toolbar's Save
 		written();
 		await saving;
+		expect( page.view().isAdhoc ).toBe( false );
 		expect( ql.ql ).toHaveBeenCalledTimes( reads+1 );
 	} );
 	//#588 review #5:  a rename cleared every row read and the one selected
 	it( 'keeps its rows for a view that shows the rows it did, renamed or copied', async ()=>{
 		const { page, ql } = await create();
 		const reads = ql.ql.mock.calls.length;
-		const view = page.viewCopy;
-		view.name = 'mine';
-		view.number = 0;//a new view, the one shown under another name
-		await page.onViewSave( view );
-		page.onViewChange();//as the toolbar says of a rename
-		expect( page.view().name ).toBe( 'mine' );
+		await page.viewSet.add();//a new view, the one shown under another name
+		page.onViewChange();//as the toolbar says of it
+		expect( page.view().name ).toBe( 'View 2' );
 		expect( ql.ql ).toHaveBeenCalledTimes( reads );
 		expect( page.data.allEntries ).toHaveLength( 2 );
 	} );
@@ -361,13 +358,10 @@ describe( 'LogDetail sort', ()=>{
 	} );
 	it( 'saves a view with no sort sorted by time', async ()=>{
 		const { fixture, page, profileStore } = await create();
-		const view = unsorted( page );
-		view.name = 'mine';
-		view.number = 0;//as the settings panel emits a view under another name:  a new one
-		page.onViewSave( view );
-		await tick();
+		page.viewSet.edit( view=>{ view.sort = []; view.limit = 50; } );//`No sorting`, and a change to save
+		await page.viewSet.saveDraft( page.view() );
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
-		expect( JSON.parse(profileStore.save.mock.calls.find( ([key])=>key=='logs/views/2' )![1]).sort ).toEqual( [time] );
+		expect( JSON.parse(profileStore.save.mock.calls.find( ([key])=>key=='logs/views/1' )![1]).sort ).toEqual( [time] );
 	} );
 	it( 'repairs a view saved with no sort as it loads', async ()=>{
 		const { fixture, page, snackbar } = await create( [{...LogView.default().toJson( undefined ), name: 'mine', sort: []}] );
@@ -379,12 +373,33 @@ describe( 'LogDetail sort', ()=>{
 		expect( page.sort ).toEqual( [time] );
 		expect( snackbar.exception ).not.toHaveBeenCalled();
 	} );
-	it( 'keeps time after the sort the panel left', async ()=>{
+	it( 'keeps time after the sort a draft was left with', async ()=>{
 		const { page } = await create();
 		const view = unsorted( page );
 		view.sort = [{active: 'level', direction: 'asc'}];
-		page.onViewShow( view );
+		page.viewSet.show( view );
+		page.onViewChange();
 		await tick();
 		expect( page.sort ).toEqual( [{active: 'level', direction: 'asc'}, time] );
+	} );
+	//reviews-issue/593-views-sort.md #3:  a third click cleared the header's sort, and onSort dropped its column from the view's
+	it( 'turns a header the other way on each click, never dropping it from the sort', async ()=>{
+		const { fixture, page } = await create();
+		const level = [...( fixture.nativeElement as HTMLElement ).querySelectorAll<HTMLElement>( 'mat-header-cell .column-label' )].find( e=>e.textContent!.includes("Level") )!;
+		const sorts:string[] = [];
+		for( let i=0; i<3; ++i ){
+			level.click();
+			fixture.detectChanges();
+			sorts.push( page.sort.map( s=>`${s.active} ${s.direction}` ).join() );
+		}
+		expect( sorts ).toEqual( ["level asc,time desc", "level desc,time desc", "level asc,time desc"] );
+	} );
+	//#593:  the header's menu and `Sort by` offer the columns the rows can be ordered by, and the editor is gone
+	it( 'sorts by the columns its rows are ordered by, and renders with no view editor', async ()=>{
+		const { fixture, page } = await create();
+		const element = fixture.nativeElement as HTMLElement;
+		expect( Object.keys( page.columns ).filter( c=>page.view().sortable(c) ) ).toEqual( ["time", "level", "message", "file", "function"] );
+		expect( [!!element.querySelector( 'view-toolbar' ), !!element.querySelector( 'mat-table' )] ).toEqual( [true, true] );
+		expect( element.querySelector( 'ql-list-settings, button[aria-label="Edit view"]' ) ).toBeNull();
 	} );
 } );

@@ -1,7 +1,6 @@
 import { Component, ElementRef, OnInit, input, signal, model, computed, inject } from '@angular/core';
 import {ActivatedRoute, Router, RouterLink} from '@angular/router';
 import {Sort} from '@angular/material/sort';
-import { QLListSettings } from './ql-list-settings/ql-list-settings';
 import {SnackbarService} from '../../../shared/snackbar/snackbar-service'
 import {IGRAPHQL, IGraphQL, EnumValue } from '../../../services/graphql';
 import {TableSchema}  from '../../../model/ql/schema/table-schema';
@@ -18,7 +17,7 @@ import { Failure, failureState } from '../../../utils/errors';
 import { FailureState } from '../../../shared/failure-state/failure-state';
 import { SelectionModel } from '@angular/cdk/collections';
 import { View, ViewField } from '../../../model/ql/view';
-import { cellValues, parseFilter, takesFilterTerm, toggleFilterTerm } from '../../../model/ql/filter-query';
+import { cellValues, heldValues, takesFilterTerm } from '../../../model/ql/filter-query';
 import { ViewSet } from '../../../model/ql/view-set';
 import { MatDialog } from '@angular/material/dialog';
 import { confirm } from '../../../shared/confirm/confirm-dialog';
@@ -31,7 +30,7 @@ import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 	selector: 'ql-list',
 	templateUrl: './ql-list.html',
 	host: {class:'main-content my-content'},
-	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, NgTemplateOutlet, Paginator, QLListSettings, RouterLink, ViewToolbar]
+	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, NgTemplateOutlet, Paginator, RouterLink, ViewToolbar]
 })
 export class QLList implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -169,23 +168,6 @@ export class QLList implements OnInit{
 		await this.#reload();
 	}
 
-	async onViewSave( view:View ){
-		this.data.set( [] );
-		try{
-			await this.profile().save( view );//awaited, or the catch below is dead code
-		}
-		catch( e ){
-			this.#snackbar.exception( "Could not save view.", e );
-		}
-		await this.#refresh();
-		this.isSettings.set( false );
-	}
-	async onViewShow( view:View ){
-		this.data.set( [] );
-		this.isSettings.set( false );
-		this.profile().show( view );
-		await this.#refresh();
-	}
 	//The toolbar or a header put another view on screen:  its rows, unless those shown or on their way hold them - the view
 	//renamed, a copy of it, a column hidden, moved or resized, or its filter changed only in a term the box cannot read - where
 	//the page stays as it is, its columns the view's even while a read is out.  A column shown is read on the same page, and a
@@ -233,50 +215,20 @@ export class QLList implements OnInit{
 				this.isRefreshing.set( false );
 		}
 	}
-	//As LogDetail:  awaited, said as a delete, and a re-query only where the view on screen went with it
-	//(reviews-issue/web-refactor-review.md #6)
-	async onViewDelete( view:View ){
-		const current = this.profile().current();
-		try{
-			await this.profile().remove( view );
-		}
-		catch( e ){
-			this.#snackbar.exception( "Could not delete view.", e );
-		}
-		if( this.profile().current()!==current )
-			await this.#refresh();
-		this.isSettings.set( false );
-	}
-
-	//the loaded rows' values by column, which the filter box suggests after a field's colon
+	//the loaded rows' values by column, which the filter box suggests after a field's colon and a header's `Filter by…` lists
 	filterValues = computed<Record<string,unknown[]>>( ()=>cellValues( this.view().fields.map( f=>f.name ), this.data(), ( row, column )=>row[column] ) );
 	//The chip columns a click filters on, each with the values the filter holds as `field:a,b`:  a click adds the value, and a
 	//click on a value it holds takes it out.  A column the box cannot filter - one the gateway grafts on - is not among them.
 	chipFilters = computed<Map<string,Set<string>>>( ()=>{
 		const view = this.profile().current(), host = view.filterHost();
-		const y = new Map<string,Set<string>>();
 		if( !host )
-			return y;
-		for( const field of view.fields.filter( f=>f.chip && takesFilterTerm(f, host) ) )
-			y.set( field.name, new Set() );
-		for( const term of parseFilter(view.filter, host).terms.filter( t=>t.operator=="in" && !t.negated ) ){
-			for( const value of term.values )
-				y.get( term.field! )?.add( `${value}` );
-		}
-		return y;
+			return new Map();
+		const held = heldValues( view.filter, host );
+		return new Map( view.fields.filter( f=>f.chip && takesFilterTerm(f, host) ).map( f=>[f.name, held.get( f.name ) ?? new Set<string>()] ) );
 	} );
 	async onChipClick( chip:{column:string, value:string} ){
-		const view = this.profile().current(), host = view.filterHost();
-		const field = view.fields.find( f=>f.name==chip.column );
-		if( !host || !field )
-			return;
-		const filter = toggleFilterTerm( view.filter, host, field, chip.value );
-		this.profile().edit( draft=>{ draft.filter = filter; } );
+		this.profile().edit( draft=>draft.toggleFilterValue(chip.column, chip.value) );
 		await this.onChangeView();
-	}
-
-	onViewCancel(){
-		this.isSettings.set( false );
 	}
 
 	sideNav = model<RouteItem>();//optional:  embedded in a detail page's tab the host owns the sidenav
@@ -298,7 +250,6 @@ export class QLList implements OnInit{
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );
 	#reloads = new Latest();
-	isSettings = signal<boolean>( false );
 	selections = model<SelectionModel<QLRow>>( null as any );//rows, not ids - QLSelector maps them to its callers' id selection
 
 	displayedFields = computed<ViewField[]>( ()=>{
@@ -319,13 +270,13 @@ export class QLList implements OnInit{
 	more = signal<boolean>( false );
 	paged = computed<boolean>( ()=>this.more() || this.skip()>0 );
 	length = computed<number|undefined>( ()=>this.more() ? undefined : this.skip()+this.data().length );
-	excludedColumns = computed<string[]>( ()=>this.tableSettings().excludedColumns ?? [] );
 	enums = computed<Map<string, EnumValue[]>>( ()=>this.schema().enums );
 	resolvedData = signal<QLListData>(null as any);
 	profile = computed<ViewSet<View>>( ()=>this.resolvedData().profile );
 	routeStore = inject( RouteStore );
 	schema = computed<TableSchema>( ()=>this.resolvedData().schema );
-	get sort():Sort{ return this.view().sort?.length ? this.view().sort[0] : {active: "", direction: ""}; }
+	//the draft's, as the columns and the later sorts' places are:  the header shows the sort asked for while its rows are read
+	get sort():Sort{ return this.profile().current().sort[0] ?? {active: "", direction: ""}; }
 	canAdd = computed<boolean>( ()=>this.tableSettings().canAdd ?? true );//off the tableSettings, like canPurge - a route that set it anywhere else was silently ignored
 	canNavigate = computed<boolean>( ()=>this.tableSettings().canNavigate ?? true );
 	tableSettings = computed<TableSettings>( ()=>this.resolvedData().routing.tableSettings );

@@ -3,9 +3,9 @@ import { StringUtils } from '../../utils/string-utils';
 import { Query } from '../../services/graphql';
 import { TableSettings } from '../../services/ql-list-resolver';
 import { Field, FieldKind } from "./schema/field";
-import { filterArguments, FilterHost, FilterParse, parseFilter } from './filter-query';
+import { filterArguments, FilterHost, FilterParse, parseFilter, serverHasField, toggleFilterTerm } from './filter-query';
 import { TableSchema } from "./schema/table-schema";
-import { Sort } from "@angular/material/sort";
+import { Sort, SortDirection } from "@angular/material/sort";
 
 //hidden = queried but not necessarily shown eg id
 //A column whose values are a small closed set reads as a chip rather than as text - the same treatment the log table gives
@@ -287,6 +287,12 @@ export class View{
 		const rest = ( this.schema?.fields ?? [] ).filter( f=>!own.has(f.name) ).map( f=>({qlField: f, displayName: StringUtils.idToDisplay(f.name)}) );
 		return { columns: [...this.fields.filter( f=>f.qlField ), ...rest], server: true, enums: this.schema?.enums };
 	}
+	//a column's value into the filter as `field:a,b`, or out of it:  a chip's click, and a pick of the header's `Filter by…`
+	toggleFilterValue( name:string, value:string ):void{
+		const host = this.filterHost(), field = this.fields.find( f=>f.name==name );
+		if( host && field )
+			this.filter = toggleFilterTerm( this.filter, host, field, value );
+	}
 	//the filter's terms and what the box could not read, the host's fixed terms after the view's
 	parsedFilter():FilterParse{
 		const host = this.filterHost();
@@ -377,6 +383,38 @@ export class View{
 		const style = route?.fields.find( f=>f.name==name )?.style;
 		if( field )
 			field.style = style ? new Style( style ) : undefined;
+	}
+	//The sort (views spec *Sort*).  A column this refuses is in neither menu and its header does not sort:  orderBy on a column the
+	//server lacks is an error.  The lists that sort their own rows have none of those kinds.
+	sortable( name:string ):boolean{
+		const field = this.fields.find( f=>f.name==name )?.qlField ?? this.schema?.fields.find( f=>f.name==name );
+		return !!field && serverHasField( field );
+	}
+	//the sort `No sorting` leaves:  none, but where the rows need an order of their own (LogView)
+	clearedSort():Sort[]{ return []; }
+	//a header's click:  the column first, the others after it as they were
+	sortFirst( sort:Sort ):void{ this.sort = [sort, ...this.sort.filter( s=>s.active!=sort.active )]; }
+	//a header menu's two sorts:  the direction, where the column stands in the sort, else the column first
+	setSort( name:string, direction:SortDirection ):void{
+		if( this.sort.some( s=>s.active==name ) )
+			this.sort = this.sort.map( s=>s.active==name ? {active: name, direction} : s );
+		else
+			this.sortFirst( {active: name, direction} );
+	}
+	//`Sort by`'s click:  the column after the others, ascending, or - the view sorting by it - the other way
+	toggleSort( name:string ):void{
+		const flipped = ( s:Sort ):Sort=>({active: name, direction: s.direction=="asc" ? "desc" : "asc"});
+		this.sort = this.sort.some( s=>s.active==name ) ? this.sort.map( s=>s.active==name ? flipped(s) : s ) : [...this.sort, {active: name, direction: "asc"}];
+	}
+	//to the place `to` in the sort
+	moveSort( name:string, to:number ):void{
+		const from = this.sort.findIndex( s=>s.active==name );
+		to = Math.max( 0, Math.min(to, this.sort.length-1) );
+		if( from<0 || from==to )
+			return;
+		const sort = [...this.sort];
+		sort.splice( to, 0, ...sort.splice(from, 1) );
+		this.sort = sort;
 	}
 	append( fields: Field[] ){
 		for( let field of fields.filter(f=>!this.fields.find(v=>v.name==f.name)) )

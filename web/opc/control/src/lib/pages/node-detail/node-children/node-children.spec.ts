@@ -414,29 +414,6 @@ describe( 'NodeChildren refresh', ()=>{
 	} );
 } );
 
-//reviews-issue/web-refactor-review.md #6:  a refused Delete said "Could not save view."
-describe( 'NodeChildren Delete', ()=>{
-	it( 'says the delete failed, not a save', async ()=>{
-		const snackbar = snackbarStub();
-		TestBed.configureTestingModule({ providers: [
-			screenSize(),
-			provideRoute(),
-			{ provide: GATEWAY_SERVICE, useValue: {} },
-			{ provide: SnackbarService, useValue: snackbar },
-			pageTitleStub
-		]});
-		const page = TestBed.createComponent( NodeChildren ).componentInstance;
-		const mine = NodeView.copy( NodeView.default() );
-		mine.name = "Mine";
-		page.viewSet.reset( [NodeView.default(), mine], NodeView.schema );
-		page.viewSet.select( 1 );
-		vi.spyOn( TestBed.inject(ProfileStore), 'save' ).mockRejectedValue( new Error( 'offline' ) );
-		page.onViewDelete( mine );
-		await flush();
-		expect( snackbar.exception.mock.calls ).toEqual( [["Could not delete view.", expect.any( Error )]] );
-	} );
-} );
-
 //reviews-issue/318-opc-calls.md #1:  only a code registered as pending is fetched, and the dialog's `names` fetched the pending set
 //as it stood - which the call's codes were not yet in, so a refusal read "Bad 0x801F0000" for good.
 describe( 'NodeChildren a Method\'s Call', ()=>{
@@ -477,8 +454,10 @@ describe( 'NodeChildren a Method\'s Call button', ()=>{
 		const cell = ( b:Element )=>b.closest( 'mat-cell' )?.classList.contains( 'mat-column-name' ) ? 'name' : b.closest( 'mat-cell' )?.classList.contains( 'mat-column-snapshot' ) ? 'snapshot' : '?';
 		const calls = ()=>[...fixture.nativeElement.querySelectorAll( 'button[aria-label="Call toHertz"]' )].map( cell );
 		page.viewSet.reset( views, NodeView.schema );
+		page.viewSet.select( 0 );//whichever view an earlier test left remembered
 		fixture.detectChanges();
 		expect( calls() ).toEqual( ['snapshot'] );
+		expect( fixture.nativeElement.querySelector( 'ql-list-settings, button[aria-label="Edit view"]' ) ).toBeNull();//#593:  no view editor
 		page.viewSet.select( 1 );
 		fixture.detectChanges();
 		expect( page.snapshotShown() ).toBe( false );
@@ -573,6 +552,17 @@ describe( 'NodeChildren the System nodes toggle', ()=>{
 		expect( page.showSystem() ).toBe( true );
 		expect( page.rows().map( n=>n.name ) ).toEqual( ['ObjectTypes'] );
 		expect( empty() ).toBeNull();
+	} );
+	//reviews-issue/593-views-sort.md #1:  with no sort, MatSort was handed Name ascending, so Name's header showed a sort not applied
+	it( 'shows no header sorted where the view has no sort', ()=>{
+		const { fixture, page } = create();
+		const node = ( i:number, name:string )=>new Variable( <any>{ns: 2, i, name, browse: {ns: 2, name}} );
+		(<any>page).setNodes( [node( 31, 'b' ), node( 32, 'a' )], false );
+		page.viewSet.edit( view=>{ view.sort = []; } );//`No sorting`
+		page.isLoading.set( false );
+		fixture.detectChanges();
+		const sorted = [...( fixture.nativeElement as HTMLElement ).querySelectorAll( 'mat-header-cell[aria-sort]' )].filter( c=>c.getAttribute( 'aria-sort' )!='none' );
+		expect( [page.rows().map( n=>n.name ), page.sort, sorted.length] ).toEqual( [['b', 'a'], {active: '', direction: ''}, 0] );
 	} );
 	it( 'says the view matched nothing when the toggle hid nothing', ()=>{
 		const { page } = create();

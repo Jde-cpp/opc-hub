@@ -13,7 +13,7 @@ import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { cellValues, QLListSettings, SnackbarService, View, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
+import { cellValues, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
 import { EAccess } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
@@ -35,7 +35,7 @@ import { StructureTable } from '../../structure-table/structure-table';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,QLListSettings,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -123,21 +123,9 @@ export class NodeChildren implements OnInit, OnDestroy {
 		}
 	}
 
-	//The view tabs and settings panel, as ql-list/log-detail have them;  the rows re-derive from view() on their own.
+	//the header's click:  the rows re-derive from view() on their own
 	onSortChange( sort:Sort ){
 		this.viewSet.sort( sort );
-	}
-	onViewShow( view:View ){
-		this.isSettings.set( false );
-		this.viewSet.show( view );
-	}
-	onViewSave( view:View ){
-		this.viewSet.save( view ).catch( e=>this.#snackbar.exception("Could not save view.", e) );
-		this.isSettings.set( false );
-	}
-	onViewDelete( view:View ){
-		this.viewSet.remove( view ).catch( e=>this.#snackbar.exception("Could not delete view.", e) );
-		this.isSettings.set( false );
 	}
 	//the cells' values by column, which the filter box suggests
 	filterValues = computed<Record<string,unknown[]>>( ()=>{
@@ -316,7 +304,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 	readDenied( r:UaNode ):boolean{ return NodeView.readDenied( r ); }//the Snapshot cell's "no read access" - the model's rule, reachable from the template
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );
-	isSettings = signal<boolean>( false );
 	get Key():string{ return this.pageData.route.profileKey; }
 	node = model.required<UaNode>();
 	refreshed = output<UaNode[]>();//the nodes a Refresh browsed:  pageData.nodes is assigned, which no signal sees
@@ -343,14 +330,12 @@ export class NodeChildren implements OnInit, OnDestroy {
 	get variables():Variable[]{ return <Variable[]>this.nodes().filter((x)=>x.nodeClass==ENodeClass.Variable); }
 	selections = new SelectionModel<UaNode>(true, []);
 	//sideNav = model.required<NodeRoute>();
-	get sort():Sort{ return this.view().sort[0] ?? {active: "name", direction: "asc"}; }
+	get sort():Sort{ return this.view().sort[0] ?? {active: "", direction: ""}; }//none:  `No sorting` leaves the rows as they came, and no header shows an arrow
 	get subscription(){return this.#subscription;} #subscription:Subscription|undefined;
 	set subscription(x){ if(!x && this.subscription) this.subscription.unsubscribe(); this.#subscription=x; }
 	viewSet = NodeView.viewSet( inject(ProfileStore), inject(LocalPrefs) );
 	view = this.viewSet.current;
-	viewCopy = computed<NodeView>( ()=>NodeView.copy(this.view()) );//the settings panel gets a copy to edit, never the one on screen - and one copy per view, not one per change-detection pass as a getter would hand it
 	columns = NodeView.columns;
-	schema = NodeView.schema;
 
 	#profileStore = inject( ProfileStore );
 	#opcStore = inject( OpcStore );

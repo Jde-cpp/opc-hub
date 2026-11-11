@@ -231,6 +231,11 @@ mat-table.jde-view-columns {
 		contain: inline-size;
 	}
 }
+// A view's second or later sort draws its own arrow and place (ViewColumnHeader), where Material's sort header would hint one of
+// its own on hover.  Global, as the arrow is Material's element.
+.jde-column-header .jde-sorted-later .mat-sort-header-arrow {
+	display: none;
+}
 // A column header on its way to another place (ViewColumnHeader's drag):  the copy under the pointer, which CDK puts in the
 // body, and the gap it left.
 .jde-column-header.cdk-drag-preview {

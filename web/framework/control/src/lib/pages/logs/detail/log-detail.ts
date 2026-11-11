@@ -5,7 +5,6 @@ import {MatSortModule, Sort} from '@angular/material/sort';
 import { MatTabNavPanel } from '@angular/material/tabs';
 import { LogDataSource } from '../log-data-source';
 import {LogSettings} from '../log-settings';
-import { QLListSettings } from '../../ql/list/ql-list-settings/ql-list-settings';
 import {SnackbarService} from '../../../shared/snackbar/snackbar-service';
 
 
@@ -18,8 +17,6 @@ import { ViewColumnCell, ViewColumnHeader, ViewColumns } from '../../../shared/v
 import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { IGraphQL } from '../../../services/graphql';
-import { TableSchema } from '../../../model/ql/schema/table-schema';
-import { View } from '../../../model/ql/view';
 import { ViewSet } from '../../../model/ql/view-set';
 import { Entry,LogEntries, LogEntriesRest, LogView } from '../log-entry';
 import { logLevel, logLevels } from '../log-levels';
@@ -31,7 +28,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 	selector: 'log-detail',
 	templateUrl: './log-detail.html',
 	styleUrls: ['./log-detail.scss'],
-	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, Paginator, QLListSettings, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar]
+	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, Paginator, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar]
 })
 export class LogDetail implements OnInit, OnDestroy{
 	#snackBar = inject( SnackbarService );
@@ -96,17 +93,9 @@ export class LogDetail implements OnInit, OnDestroy{
 	}
 	levels = logLevels;
 
-	//time is never left unsorted;  another column, cleared, drops out of the sort
+	//a header's click:  matSortDisableClear, so it only ever turns a column the other way, as on every list
 	onSort( sort:Sort ){
-		if( !sort.direction && sort.active=="time" )
-			sort = { active: "time", direction: "asc" };
-		if( sort.direction )
-			this.viewSet.sort( sort );
-		else{
-			const view = LogView.copy( this.view() );
-			view.sort = view.sort.filter( s=>s.active!=sort.active );
-			this.viewSet.show( view );
-		}
+		this.viewSet.sort( sort );
 		this.refresh();
 	}
 	onPagerChange( event:PageEvent ){
@@ -114,29 +103,6 @@ export class LogDetail implements OnInit, OnDestroy{
 		if( this.data.turnTo(event.startIndex) )
 			this.load( this.data.allEntries.length );
 	}
-	onViewSave( view:View ){
-		this.isSettings.set( false );
-		return this.#changeView( shown=>this.viewSet.save(view, shown), "Could not save view." );
-	}
-	onViewShow( view:View ){
-		this.isSettings.set( false );
-		this.viewSet.show( view );
-		this.refresh();
-	}
-	onViewDelete( view:View ){
-		this.isSettings.set( false );
-		return this.#changeView( shown=>this.viewSet.remove(view, shown), "Could not delete view." );
-	}
-	//the editor's change, through the set, which says when it puts another view on screen (ViewSet), as the toolbar's are
-	async #changeView( change:( shown:()=>void )=>Promise<void>, failed:string ){
-		try{
-			await change( ()=>this.onViewChange() );
-		}
-		catch( e ){
-			this.#snackBar.exception( failed, e );
-		}
-	}
-
 	cellClick( entry:Entry ){
 		let current =	this.selectedEntry;
 		if( current != entry )
@@ -226,15 +192,12 @@ export class LogDetail implements OnInit, OnDestroy{
 	isLoading = signal<boolean>( true );
 	#loads = signal<number>( 0 );//a page turn can read on while a refresh is still out
 	isRefreshing = computed<boolean>( ()=>this.#loads()>0 );
-	isSettings = signal<boolean>( false );
 	//push() hides arriving rows below data.filter.level, so the setter writes both.  otherwise widening the combo
 	//re-reads the lower levels and they are hidden on arrival against the level that was in force before.
 	get level():ELogLevel{ return this.profile.level; } set level( value:ELogLevel ){ this.profile.level=value; this.data.filter.level=value; }
-	schema:TableSchema = LogView.schema;
 	get selectedEntry(){ return this.data.allEntries.find( (e)=>e.selected ); }
 	profileStore = inject(ProfileStore);
 	viewSet = new ViewSet( {type: LogView, key: "logs", profileStore: this.profileStore, prefs: inject(LocalPrefs)} );
 	view = this.viewSet.current;
 	#read:LogView|undefined;//the view the rows shown were read under, or are being read
-	get viewCopy(){ return LogView.copy( this.view() ); }
 }

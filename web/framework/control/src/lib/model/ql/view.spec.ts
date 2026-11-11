@@ -1,5 +1,5 @@
 import { Flex, Style, View, ViewField, type ViewFieldSettings, type ViewSerializedArgs } from './view';
-import { scalar, schemaOf, serverConnectionSchema } from 'jde-framework/testing';
+import { object, scalar, schemaOf, serverConnectionSchema } from 'jde-framework/testing';
 
 const schema = serverConnectionSchema();
 
@@ -340,5 +340,59 @@ describe( "View's columns", ()=>{
 		expect( change( v=>{ v.sort = [{active: "slug", direction: "asc"}]; } ) ).toBe( false );
 		expect( change( v=>{ v.limit = 50; } ) ).toBe( false );
 		expect( View.answers( undefined, read ) ).toBe( false );
+	} );
+} );
+
+//#593:  the header menu's sorts and the view menu's `Sort by` (views spec *Sort*)
+describe( "View's sort", ()=>{
+	const things = schemaOf( "Thing", scalar("name"), scalar("slug"), scalar("kind"), object("owner", "Owner") );
+	const make = ()=>View.fromTable( {columns: ["name", "slug", "owner"], sort: "name"}, things );
+	const sorted = ( view:View )=>view.sort.map( s=>`${s.active} ${s.direction}` );
+
+	it( "reaches the query in its order", ()=>{
+		const view = make();
+		view.toggleSort( "kind" );
+		view.toggleSort( "slug" );
+		view.toggleSort( "kind" );//the view sorting by it:  the other way, where it stands
+		expect( sorted(view) ).toEqual( ["name asc", "kind desc", "slug asc"] );
+		expect( view.query(0).text ).toContain( 'orderBy:[{name:"asc"},{kind:"desc"},{slug:"asc"}]' );
+		view.moveSort( "slug", 0 );
+		expect( view.query(0).text ).toContain( 'orderBy:[{slug:"asc"},{name:"asc"},{kind:"desc"}]' );
+		view.sort = [];
+		expect( view.query(0).text ).not.toContain( "orderBy" );
+	} );
+	it( "takes a header menu's direction where the column stands, and a column it lacks first", ()=>{
+		const view = make();
+		view.toggleSort( "slug" );
+		view.setSort( "slug", "desc" );
+		expect( sorted(view) ).toEqual( ["name asc", "slug desc"] );
+		view.setSort( "kind", "desc" );
+		expect( sorted(view) ).toEqual( ["kind desc", "name asc", "slug desc"] );
+		view.sortFirst( {active: "slug", direction: "asc"} );//a header's click
+		expect( sorted(view) ).toEqual( ["slug asc", "kind desc", "name asc"] );
+	} );
+	it( "moves a sort within the sort, held at its ends", ()=>{
+		const view = make();
+		view.toggleSort( "slug" );
+		view.toggleSort( "kind" );
+		view.moveSort( "name", 9 );
+		expect( sorted(view) ).toEqual( ["slug asc", "kind asc", "name asc"] );
+		view.moveSort( "kind", -1 );
+		view.moveSort( "owner", 0 );//not in it
+		expect( sorted(view) ).toEqual( ["kind asc", "slug asc", "name asc"] );
+	} );
+	it( "refuses a grafted object column, and one the list does not have", ()=>{
+		const view = make();
+		expect( ["name", "kind", "owner", "nothing"].map( c=>view.sortable(c) ) ).toEqual( [true, true, false, false] );//kind:  the schema's, the view not holding it
+	} );
+	//reviews-issue/593-views-sort.md #2:  OBJECT alone was refused, so a list reached orderBy, which the server refuses
+	it( "refuses a list column, a flags column as the introspection gives it among them, and a union", ()=>{
+		const lists = schemaOf( "Thing", scalar("name"),
+			{name: "rights", type: {kind: "NON_NULL", name: null, ofType: {kind: "LIST", name: "Rights"}}},//a flags column, its list not wrapping its type
+			{name: "tags", type: {kind: "LIST", name: null, ofType: {kind: "SCALAR", name: "String"}}},
+			{name: "members", type: {kind: "LIST", name: null, ofType: {kind: "UNION", name: "Identity"}}},
+			{name: "identity", type: {kind: "UNION", name: "Identity"}} );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, lists );
+		expect( ["name", "rights", "tags", "members", "identity"].map( c=>view.sortable(c) ) ).toEqual( [true, false, false, false, false] );
 	} );
 } );

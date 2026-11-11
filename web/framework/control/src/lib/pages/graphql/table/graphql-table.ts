@@ -4,6 +4,7 @@ import { SelectionModel } from '@angular/cdk/collections';
 import { MatTableModule } from '@angular/material/table';
 import { MatSortModule, Sort } from '@angular/material/sort';
 import {FieldKind} from '../../../model/ql/schema/field';
+import { serverHasField } from '../../../model/ql/filter-query';
 import { MatCheckbox } from '@angular/material/checkbox';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIcon } from '@angular/material/icon';
@@ -78,7 +79,11 @@ export class GraphQLTable{
 		return values.length==1 ? `${values[0]}` : '';
 	}
 	stringValue( column:string, row:QLRow ):unknown{ return this.cellText()?.( column, row ) ?? row[column]; }
-	sortable( colName:string ){ return this.columns().get( colName )?.field.type.underlyingKind!=FieldKind.OBJECT; }//orderBy on a grafted object field is a server error.
+	//View.sortable's test, for a table given no views:  orderBy on a column the server lacks is an error
+	sortable( colName:string ){
+		const field = this.columns().get( colName )?.field;
+		return !field || serverHasField( field.qlField );
+	}
 
 	//A live-toggle cell (ViewFieldSettings.liveToggle).  Deliberately an icon button and not a mat-slide-toggle:  a slide
 	//toggle keeps its own checked state, so a mutation that FAILS would leave the switch showing the state the row never
@@ -114,10 +119,11 @@ export class GraphQLTable{
 	//a plain chip.
 	chipFilters = input<ReadonlyMap<string,ReadonlySet<string>>>( new Map() );
 	onChipClick = output<{column:string, value:string}>();
-	//The list's views, where its headers change them (ViewColumns):  a column hidden, moved or resized is a change to the draft,
-	//said by `columnsChange`.  None, and the headers only sort.
+	//The list's views, where its headers change them (ViewColumns):  a column hidden, moved, resized, sorted or filtered by is a
+	//change to the draft, said by `columnsChange`.  None, and the headers only sort.
 	views = input<ViewSet<View>>();
 	columnsChange = output<void>();
+	filterValues = input<Record<string,readonly unknown[]>>( {} );//the rows' values by column, for a header's `Filter by…`
 
 	displayedColumnNames = computed( ()=>(this.selections().isMultipleSelection() ? ["select"] : []).concat( this.displayedFields().filter((x)=>x.displayed).map((x)=>x.name) ) );
 	//each field's cell, classified once per change of fields rather than once per change-detection pass and per cell

@@ -7,133 +7,128 @@
 			<mat-tab>
 				<ng-template mat-tab-label>List</ng-template>
 				<ng-template matTabContent>
-					@if( isSettings() ){
-						<ql-list-settings [view]=viewCopy() [schema]=schema [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
-					}
-					@else{
-						<view-toolbar [views]="viewSet" [tabPanel]="panel" [columns]="columns" [filterValues]="filterValues()" [refreshing]="isRefreshing()" [count]="shown().length" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--Refresh describes the nodes again:  the values are the subscription's;  the rows follow the view on their own-->
-							<button left matButton="filled" type="button" class="add-button" (click)="onAdd()"><mat-icon aria-hidden="true">add</mat-icon>Add</button>
-						</view-toolbar>
-						<mat-tab-nav-panel #panel>
-							<div class="table-wrap">
-								<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange-->
-								<mat-table [dataSource]="shown()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
-									<ng-container matColumnDef="trend"><!--the rows the Trend tab draws, up to the palette's eight (#420)-->
-										<mat-header-cell *matHeaderCellDef> Trend </mat-header-cell>
-										<mat-cell *matCellDef="let r">
-											<mat-checkbox [checked]="ticked().has(r.key)" [disabled]="!canTick(r)" (change)="toggleTick(r)" [aria-label]="'Trend ' + r.name" [matTooltip]="tickTooltip(r)"></mat-checkbox>
-										</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="connection">
-										<mat-header-cell viewColumn *matHeaderCellDef> Connection </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r"><span>{{ cnnctnName(r.opc) }}</span></mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="node"><!--the node by its display name, linked to its page where the gateway placed it, with the folder it is under - two pumps' motorRpm read alike without it;  the id is the tooltip-->
-										<mat-header-cell viewColumn *matHeaderCellDef> Node </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r">
-											@if( nodeLink(r); as link ){
-												<a [routerLink]="link" [matTooltip]="r.node.uaString()">{{ r.name }}</a>
+					<view-toolbar [views]="viewSet" [tabPanel]="panel" [columns]="columns" [filterValues]="filterValues()" [refreshing]="isRefreshing()" [count]="shown().length" (refresh)="onRefresh()"><!--Refresh describes the nodes again:  the values are the subscription's;  the rows follow the view on their own-->
+						<button left matButton="filled" type="button" class="add-button" (click)="onAdd()"><mat-icon aria-hidden="true">add</mat-icon>Add</button>
+					</view-toolbar>
+					<mat-tab-nav-panel #panel>
+						<div class="table-wrap">
+							<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange-->
+							<mat-table [dataSource]="shown()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" [filterValues]="filterValues()" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
+								<ng-container matColumnDef="trend"><!--the rows the Trend tab draws, up to the palette's eight (#420)-->
+									<mat-header-cell *matHeaderCellDef> Trend </mat-header-cell>
+									<mat-cell *matCellDef="let r">
+										<mat-checkbox [checked]="ticked().has(r.key)" [disabled]="!canTick(r)" (change)="toggleTick(r)" [aria-label]="'Trend ' + r.name" [matTooltip]="tickTooltip(r)"></mat-checkbox>
+									</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="connection">
+									<mat-header-cell viewColumn *matHeaderCellDef> Connection </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r"><span>{{ cnnctnName(r.opc) }}</span></mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="node"><!--the node by its display name, linked to its page where the gateway placed it, with the folder it is under - two pumps' motorRpm read alike without it;  the id is the tooltip-->
+									<mat-header-cell viewColumn *matHeaderCellDef> Node </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r">
+										@if( nodeLink(r); as link ){
+											<a [routerLink]="link" [matTooltip]="r.node.uaString()">{{ r.name }}</a>
+										}
+										@else{
+											<span [matTooltip]="r.node.uaString()">{{ r.name }}</span>
+										}
+										@if( parentPath(r); as path ){
+											<span class="parent-path">{{ path }}</span>
+										}
+									</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="value">
+									<mat-header-cell viewColumn *matHeaderCellDef> Value </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r">
+										@if( structured(r.value) ){<!--a structure decoded by member, an array of them, or a body no type explains (clients spec *Structures*)-->
+											<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.sc && qualityIcon(r)=='error'"></structure-table>
+										}
+										@else{
+											<span class="value-text" [class.stale]="r.sc && qualityIcon(r)=='error'">{{ valueText(r) }}</span>
+										}
+										<!--the reading's quality beside the value where the view hides the Status column, which says it better:  a shape per severity and a label, so the colour is never the only signal-->
+										@if( !statusShown() && qualityIcon(r); as icon ){
+											<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="status(r)" [matTooltip]="statusTooltip(r) || status(r)" [fontIcon]="icon"></mat-icon>
+										}
+									</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="status"><!--the reading's quality, or why the row has none:  a node the connection does not have, a subscribe refused-->
+									<mat-header-cell viewColumn *matHeaderCellDef> Status </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r">
+										@if( status(r); as text ){
+											@if( qualityIcon(r); as icon ){
+												<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
 											}
-											@else{
-												<span [matTooltip]="r.node.uaString()">{{ r.name }}</span>
-											}
-											@if( parentPath(r); as path ){
-												<span class="parent-path">{{ path }}</span>
-											}
-										</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="value">
-										<mat-header-cell viewColumn *matHeaderCellDef> Value </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r">
-											@if( structured(r.value) ){<!--a structure decoded by member, an array of them, or a body no type explains (clients spec *Structures*)-->
-												<structure-table [value]="r.value" [label]="r.name" [class.stale]="r.sc && qualityIcon(r)=='error'"></structure-table>
-											}
-											@else{
-												<span class="value-text" [class.stale]="r.sc && qualityIcon(r)=='error'">{{ valueText(r) }}</span>
-											}
-											<!--the reading's quality beside the value where the view hides the Status column, which says it better:  a shape per severity and a label, so the colour is never the only signal-->
-											@if( !statusShown() && qualityIcon(r); as icon ){
-												<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="status(r)" [matTooltip]="statusTooltip(r) || status(r)" [fontIcon]="icon"></mat-icon>
-											}
-										</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="status"><!--the reading's quality, or why the row has none:  a node the connection does not have, a subscribe refused-->
-										<mat-header-cell viewColumn *matHeaderCellDef> Status </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r">
-											@if( status(r); as text ){
-												@if( qualityIcon(r); as icon ){
-													<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
-												}
-												<span class="status-text" [class.status-good]="!r.sc && !r.error" [matTooltip]="statusTooltip(r) || text">{{ text }}</span>
-											}
-										</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="sourceTime"><!--the reading's timestamps, as the push sent them-->
-										<mat-header-cell viewColumn *matHeaderCellDef> Source Time </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r">{{ cell(r, "sourceTime") }}</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="serverTime">
-										<mat-header-cell viewColumn *matHeaderCellDef> Server Time </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r">{{ cell(r, "serverTime") }}</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="sampling"><!--what the row asks, then what the server revised the item to (spec *Watch list*):  blank until the ack-->
-										<mat-header-cell viewColumn *matHeaderCellDef> Sampling <span class="unit">ms</span></mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r" class="numeric">{{ sampling(r) }}</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="revisedSampling">
-										<mat-header-cell viewColumn *matHeaderCellDef> Revised <span class="unit">ms</span></mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r" class="numeric">
-											@if( r.revised ){
-												<span [class.refused]="r.revised.sc" [matTooltip]="revisedTooltip(r)">{{ r.revised.samplingInterval }}</span>
-											}
-										</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="queue">
-										<mat-header-cell viewColumn *matHeaderCellDef> Queue </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r" class="numeric">{{ queue(r) }}</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="revisedQueue">
-										<mat-header-cell viewColumn *matHeaderCellDef> Revised Queue </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r" class="numeric">
-											@if( r.revised ){
-												<span [class.refused]="r.revised.sc" [matTooltip]="revisedTooltip(r)">{{ r.revised.queueSize }}</span>
-											}
-										</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="discard">
-										<mat-header-cell viewColumn *matHeaderCellDef> Discard </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r">{{ discard(r) }}</mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="filter">
-										<mat-header-cell viewColumn *matHeaderCellDef> Filter </mat-header-cell>
-										<mat-cell viewColumn *matCellDef="let r"><span>{{ filter(r) }}</span></mat-cell>
-									</ng-container>
-									<ng-container matColumnDef="actions">
-										<mat-header-cell *matHeaderCellDef></mat-header-cell>
-										<mat-cell *matCellDef="let r">
-											<button matIconButton type="button" class="row-action" (click)="onParameters(r)" [attr.aria-label]="'Parameters of ' + r.name" matTooltip="Parameters"><mat-icon aria-hidden="true" fontIcon="tune"></mat-icon></button>
-											<button matIconButton type="button" class="row-action" (click)="remove(r)" [attr.aria-label]="'Remove ' + r.name" matTooltip="Remove"><mat-icon aria-hidden="true" fontIcon="close"></mat-icon></button>
-										</mat-cell>
-									</ng-container>
-									<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
-									<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
-								</mat-table>
+											<span class="status-text" [class.status-good]="!r.sc && !r.error" [matTooltip]="statusTooltip(r) || text">{{ text }}</span>
+										}
+									</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="sourceTime"><!--the reading's timestamps, as the push sent them-->
+									<mat-header-cell viewColumn *matHeaderCellDef> Source Time </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r">{{ cell(r, "sourceTime") }}</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="serverTime">
+									<mat-header-cell viewColumn *matHeaderCellDef> Server Time </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r">{{ cell(r, "serverTime") }}</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="sampling"><!--what the row asks, then what the server revised the item to (spec *Watch list*):  blank until the ack-->
+									<mat-header-cell viewColumn *matHeaderCellDef> Sampling <span class="unit">ms</span></mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r" class="numeric">{{ sampling(r) }}</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="revisedSampling">
+									<mat-header-cell viewColumn *matHeaderCellDef> Revised <span class="unit">ms</span></mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r" class="numeric">
+										@if( r.revised ){
+											<span [class.refused]="r.revised.sc" [matTooltip]="revisedTooltip(r)">{{ r.revised.samplingInterval }}</span>
+										}
+									</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="queue">
+									<mat-header-cell viewColumn *matHeaderCellDef> Queue </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r" class="numeric">{{ queue(r) }}</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="revisedQueue">
+									<mat-header-cell viewColumn *matHeaderCellDef> Revised Queue </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r" class="numeric">
+										@if( r.revised ){
+											<span [class.refused]="r.revised.sc" [matTooltip]="revisedTooltip(r)">{{ r.revised.queueSize }}</span>
+										}
+									</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="discard">
+									<mat-header-cell viewColumn *matHeaderCellDef> Discard </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r">{{ discard(r) }}</mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="filter">
+									<mat-header-cell viewColumn *matHeaderCellDef> Filter </mat-header-cell>
+									<mat-cell viewColumn *matCellDef="let r"><span>{{ filter(r) }}</span></mat-cell>
+								</ng-container>
+								<ng-container matColumnDef="actions">
+									<mat-header-cell *matHeaderCellDef></mat-header-cell>
+									<mat-cell *matCellDef="let r">
+										<button matIconButton type="button" class="row-action" (click)="onParameters(r)" [attr.aria-label]="'Parameters of ' + r.name" matTooltip="Parameters"><mat-icon aria-hidden="true" fontIcon="tune"></mat-icon></button>
+										<button matIconButton type="button" class="row-action" (click)="remove(r)" [attr.aria-label]="'Remove ' + r.name" matTooltip="Remove"><mat-icon aria-hidden="true" fontIcon="close"></mat-icon></button>
+									</mat-cell>
+								</ng-container>
+								<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
+								<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
+							</mat-table>
+						</div>
+						@if( !shown().length ){
+							<div class="jde-empty" role="status">
+								<mat-icon aria-hidden="true">visibility</mat-icon>
+								@if( rows().length ){
+									<p class="title">No row matches this view.</p>
+								}
+								@else{
+									<p class="title">Nothing watched yet.</p>
+									<p>Add a node by its id or by name, or use <em>Watch</em> on a row of any node page of this gateway.</p>
+									<div class="actions"><button matButton type="button" (click)="onAdd()">Add</button></div>
+								}
 							</div>
-							@if( !shown().length ){
-								<div class="jde-empty" role="status">
-									<mat-icon aria-hidden="true">visibility</mat-icon>
-									@if( rows().length ){
-										<p class="title">No row matches this view.</p>
-									}
-									@else{
-										<p class="title">Nothing watched yet.</p>
-										<p>Add a node by its id or by name, or use <em>Watch</em> on a row of any node page of this gateway.</p>
-										<div class="actions"><button matButton type="button" (click)="onAdd()">Add</button></div>
-									}
-								</div>
-							}
-						</mat-tab-nav-panel>
-					}
+						}
+					</mat-tab-nav-panel>
 				</ng-template>
 			</mat-tab>
 			<mat-tab><!--the ticked rows' pushes over a window, with the History tab's chart (#420)-->

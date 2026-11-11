@@ -1,66 +1,61 @@
 @if( !isLoading() ) {
-	@if( isSettings() ){
-		<ql-list-settings [view]=viewCopy [schema]=schema [canDelete]=viewSet.canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event)
-			(onCancel)="isSettings.set( false )"></ql-list-settings>
-	} @else {
-		<view-toolbar [views]="viewSet" [tabPanel]="panel" [paged]="true" [columns]="columns" [refreshing]="isRefreshing()" (viewChange)="onViewChange()" (edit)="isSettings.set(true)" (refresh)="refresh()">
-			<mat-form-field left subscriptSizing="dynamic" class="level-field">
-				<mat-label>Level</mat-label>
-				<mat-select [value]="level" (selectionChange)="onMinLevelChange($event.value)">
-					@for( l of levels; track l.level ){
-						<mat-option [value]=l.level>{{l.name}}</mat-option>
+	<view-toolbar [views]="viewSet" [tabPanel]="panel" [paged]="true" [columns]="columns" [refreshing]="isRefreshing()" (viewChange)="onViewChange()" (refresh)="refresh()">
+		<mat-form-field left subscriptSizing="dynamic" class="level-field">
+			<mat-label>Level</mat-label>
+			<mat-select [value]="level" (selectionChange)="onMinLevelChange($event.value)">
+				@for( l of levels; track l.level ){
+					<mat-option [value]=l.level>{{l.name}}</mat-option>
+				}
+			</mat-select>
+		</mat-form-field>
+		<!--against the row selected:  every row of its message hidden, or the next one shown-->
+		<button right matIconButton type="button" aria-label="Hide this message" matTooltip="Hide every row of the selected message" [disabled]="!selectedEntry" (click)="hideSelectedMessage()"><mat-icon>visibility_off</mat-icon></button>
+		<button right matIconButton type="button" aria-label="Next of this message" matTooltip="The next row of the selected message" [disabled]="!selectedEntry" (click)="navigateNext()"><mat-icon>navigate_next</mat-icon></button>
+		<button right matIconButton type="button" aria-label="Show hidden messages" [matTooltip]="hiddenTooltip()" [disabled]="!profile.hiddenMessages.length" (click)="clearHiddenMessages()"><mat-icon>layers_clear</mat-icon></button>
+	</view-toolbar>
+	<mat-tab-nav-panel #panel>
+		<mat-table [dataSource]="data" class="mat-elevation-z8" [viewColumns]="viewSet" (columnsChange)="onViewChange()" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction" matSortDisableClear>
+			<ng-container matColumnDef="time">
+				<mat-header-cell viewColumn *matHeaderCellDef> Time </mat-header-cell>
+				<mat-cell viewColumn style="text-align: left" title="{{element.time | date }}" *matCellDef="let element"> {{element.time | date: "HH:mm:ss.SSS"}} </mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="level">
+				<mat-header-cell viewColumn *matHeaderCellDef> Level </mat-header-cell>
+				<mat-cell viewColumn *matCellDef="let entry"><mat-chip [class]="levelClass(entry)">{{toLevel(entry.level)}}</mat-chip></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="message">
+				<mat-header-cell viewColumn *matHeaderCellDef> Message </mat-header-cell>
+				<mat-cell viewColumn *matCellDef="let entry"><span class="clip" (mouseenter)="overflowTitle($event)">{{message(entry)}}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="file">
+				<mat-header-cell viewColumn *matHeaderCellDef> File </mat-header-cell>
+				<mat-cell viewColumn *matCellDef="let element" title="{{fileName(element)}}"><span class="path"><bdi>{{fileName(element)}}</bdi></span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="function">
+				<mat-header-cell viewColumn *matHeaderCellDef class="function"> Function </mat-header-cell>
+				<mat-cell viewColumn *matCellDef="let element" class="function"><span class="clip" (mouseenter)="overflowTitle($event)">{{functionName(element)}}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="line">
+				<mat-header-cell viewColumn *matHeaderCellDef class="number"> Line </mat-header-cell>
+				<mat-cell viewColumn *matCellDef="let element" class="number"> {{element.line}} </mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="tags">
+				<mat-header-cell viewColumn *matHeaderCellDef> Tags </mat-header-cell>
+				<mat-cell viewColumn *matCellDef="let entry" [title]="tagList(entry)">
+					@for( tag of tags(entry); track tag ){
+						<mat-chip>{{tagName(tag)}}</mat-chip>
 					}
-				</mat-select>
-			</mat-form-field>
-			<!--against the row selected:  every row of its message hidden, or the next one shown-->
-			<button right matIconButton type="button" aria-label="Hide this message" matTooltip="Hide every row of the selected message" [disabled]="!selectedEntry" (click)="hideSelectedMessage()"><mat-icon>visibility_off</mat-icon></button>
-			<button right matIconButton type="button" aria-label="Next of this message" matTooltip="The next row of the selected message" [disabled]="!selectedEntry" (click)="navigateNext()"><mat-icon>navigate_next</mat-icon></button>
-			<button right matIconButton type="button" aria-label="Show hidden messages" [matTooltip]="hiddenTooltip()" [disabled]="!profile.hiddenMessages.length" (click)="clearHiddenMessages()"><mat-icon>layers_clear</mat-icon></button>
-		</view-toolbar>
-		<mat-tab-nav-panel #panel>
-			<mat-table [dataSource]="data" class="mat-elevation-z8" [viewColumns]="viewSet" (columnsChange)="onViewChange()" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction">
-				<ng-container matColumnDef="time">
-					<mat-header-cell viewColumn *matHeaderCellDef> Time </mat-header-cell>
-					<mat-cell viewColumn style="text-align: left" title="{{element.time | date }}" *matCellDef="let element"> {{element.time | date: "HH:mm:ss.SSS"}} </mat-cell>
-				</ng-container>
-				<ng-container matColumnDef="level">
-					<mat-header-cell viewColumn *matHeaderCellDef> Level </mat-header-cell>
-					<mat-cell viewColumn *matCellDef="let entry"><mat-chip [class]="levelClass(entry)">{{toLevel(entry.level)}}</mat-chip></mat-cell>
-				</ng-container>
-				<ng-container matColumnDef="message">
-					<mat-header-cell viewColumn *matHeaderCellDef> Message </mat-header-cell>
-					<mat-cell viewColumn *matCellDef="let entry"><span class="clip" (mouseenter)="overflowTitle($event)">{{message(entry)}}</span></mat-cell>
-				</ng-container>
-				<ng-container matColumnDef="file">
-					<mat-header-cell viewColumn *matHeaderCellDef> File </mat-header-cell>
-					<mat-cell viewColumn *matCellDef="let element" title="{{fileName(element)}}"><span class="path"><bdi>{{fileName(element)}}</bdi></span></mat-cell>
-				</ng-container>
-				<ng-container matColumnDef="function">
-					<mat-header-cell viewColumn *matHeaderCellDef class="function"> Function </mat-header-cell>
-					<mat-cell viewColumn *matCellDef="let element" class="function"><span class="clip" (mouseenter)="overflowTitle($event)">{{functionName(element)}}</span></mat-cell>
-				</ng-container>
-				<ng-container matColumnDef="line">
-					<mat-header-cell viewColumn [sortable]="false" *matHeaderCellDef class="number"> Line </mat-header-cell>
-					<mat-cell viewColumn *matCellDef="let element" class="number"> {{element.line}} </mat-cell>
-				</ng-container>
-				<ng-container matColumnDef="tags">
-					<mat-header-cell viewColumn *matHeaderCellDef> Tags </mat-header-cell>
-					<mat-cell viewColumn *matCellDef="let entry" [title]="tagList(entry)">
-						@for( tag of tags(entry); track tag ){
-							<mat-chip>{{tagName(tag)}}</mat-chip>
-						}
-					</mat-cell>
-				</ng-container>
-				<ng-container matColumnDef="user">
-					<mat-header-cell viewColumn *matHeaderCellDef class="number"> User </mat-header-cell>
-					<mat-cell viewColumn *matCellDef="let entry" class="number"> {{entry.user}} </mat-cell>
-				</ng-container>
-				<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
-				<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" tabindex="0" (click)="cellClick(row)" (keydown.enter)="cellClick(row)"></mat-row>
-			</mat-table>
-			<div class="jde-pager">
-				<paginator (onPageEvent)="onPagerChange($event)" [startIndex]="data.startIndex()" [length]="data.length()" [pageSize]="view().limit"></paginator>
-			</div>
-		</mat-tab-nav-panel>
-	}
+				</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="user">
+				<mat-header-cell viewColumn *matHeaderCellDef class="number"> User </mat-header-cell>
+				<mat-cell viewColumn *matCellDef="let entry" class="number"> {{entry.user}} </mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
+			<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" tabindex="0" (click)="cellClick(row)" (keydown.enter)="cellClick(row)"></mat-row>
+		</mat-table>
+		<div class="jde-pager">
+			<paginator (onPageEvent)="onPagerChange($event)" [startIndex]="data.startIndex()" [length]="data.length()" [pageSize]="view().limit"></paginator>
+		</div>
+	</mat-tab-nav-panel>
 }

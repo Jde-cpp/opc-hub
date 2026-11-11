@@ -9,8 +9,9 @@ import { ViewSet } from '../../model/ql/view-set';
 import { SnackbarService } from '../snackbar/snackbar-service';
 import { ViewToolbar } from './view-toolbar';
 import { flush, MockProfileService, screenSize } from 'jde-spa/testing';
-import { required, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
+import { object, required, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
 import { TableSchema } from '../../model/ql/schema/table-schema';
+import { LogEntries, LogView } from '../../pages/logs/log-entry';
 
 //reviews/angular-refactor.md A2:  QLList, LogDetail and NodeChildren each carried a copy of this toolbar and its stylesheet.
 //#588:  the views are tabs, the view menu on the active one's chevron and `+ New view` after them;  a pick list has a menu button.
@@ -22,7 +23,7 @@ const stored = ( views:[number, View][] )=>Object.fromEntries( [["things/views",
 
 @Component({
 	imports: [MatTabNavPanel, ViewToolbar],
-	template: `<view-toolbar [views]="views" [tabPanel]="panel" [tabs]="tabs()" [paged]="paged()" [columns]="columns()" [selectable]="selectable()" [refreshing]="refreshing()" [count]="count()" (viewChange)="changes=changes+1" (edit)="edits=edits+1" (refresh)="refreshes=refreshes+1">
+	template: `<view-toolbar [views]="views" [tabPanel]="panel" [tabs]="tabs()" [paged]="paged()" [columns]="columns()" [selectable]="selectable()" [refreshing]="refreshing()" [count]="count()" (viewChange)="changes=changes+1" (refresh)="refreshes=refreshes+1">
 		<button left id="add">Add</button>
 		<span right id="extra">extra</span>
 	</view-toolbar>
@@ -37,7 +38,6 @@ class Host{
 	refreshing = signal( false );
 	count = signal<number|undefined>( 3 );
 	changes = 0;
-	edits = 0;
 	refreshes = 0;
 }
 
@@ -279,7 +279,8 @@ describe( 'ViewToolbar', ()=>{
 			const { fixture, element, set } = await create();
 			openMenu( fixture, chevron( activeTab( element ) )! );
 			await pick( fixture, "Rename" );
-			await set.save( View.copy( set.current() ) );
+			set.edit( view=>{ view.limit = 50; } );
+			await set.saveDraft( set.current() );
 			fixture.detectChanges();
 			const box = renameBox( element )!;
 			expect( box ).not.toBeNull();
@@ -660,12 +661,121 @@ describe( 'ViewToolbar', ()=>{
 		} );
 	} );
 
+	//#593 (views spec *Sort*)
+	describe( 'Sort by', ()=>{
+		const things = schemaOf( "Thing", required("name"), scalar("slug"), scalar("kind"), object("owner", "Owner"), scalar("secret") );
+		const columns = { name: "Name", slug: "Slug", kind: "Sort", owner: "Owner" };//the route's, `secret` excluded
+		const open = async ()=>{
+			const route = View.fromTable( {columns: ["slug", "name", "owner"], sort: "name"}, things );
+			const y = await create( {route: [route], schema: things} );
+			y.host.columns.set( columns );
+			y.fixture.detectChanges();
+			openMenu( y.fixture, chevron( activeTab( y.element ) )! );
+			await pick( y.fixture, "Sort by" );
+			return y;
+		};
+		//the entries but the moves:  what each reads, a sorted one with its direction
+		const entries = ()=>items().filter( i=>!i.classList.contains( "sort-move" ) ).map( text );
+		const move = async ( fixture:ComponentFixture<Host>, label:string )=>{
+			items().find( i=>i.getAttribute( "aria-label" )==label )!.click();
+			await settle( fixture );
+		};
+		const sorted = ( set:ViewSet<View> )=>set.current().sort.map( s=>`${s.active} ${s.direction}` );
+
+		it( 'is not in the menu of a host that names no columns and a view with no sort', async ()=>{
+			const { fixture, element } = await create();
+			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( text ) ).not.toContain( "Sort by" );
+		} );
+
+		it( "lists the view's sorts with their directions, in their order, then the host's other columns the view can sort by, and No sorting", async ()=>{
+			await open();
+			expect( entries() ).toEqual( ["Name, ascending", "Slug", "Sort", "No sorting"] );//not Owner, a grafted object
+		} );
+		//reviews-issue/593-views-sort.md #8:  a sorted column was a checkbox ticked, which a click turned the other way and left ticked
+		it( 'offers the columns as plain items, no checkbox among them', async ()=>{
+			await open();
+			expect( new Set( items().map( i=>[i.getAttribute( "role" ), i.getAttribute( "aria-checked" )].join() ) ) ).toEqual( new Set( ["menuitem,"] ) );
+		} );
+		//reviews-issue/593-views-sort.md #4:  the focus went to the new entry natively, and the arrow keys went on from the old one
+		it( 'goes on from the entry a click made, by the arrow keys', async ()=>{
+			const { fixture } = await open();
+			await pick( fixture, "Sort" );
+			expect( text( document.activeElement! ) ).toBe( "Sort, ascending" );
+			panels().at( -1 )!.dispatchEvent( new KeyboardEvent( 'keydown', {key: "ArrowDown", keyCode: 40, bubbles: true, cancelable: true} ) );
+			expect( document.activeElement!.getAttribute( "aria-label" ) ).toBe( "Move Sort up" );
+		} );
+
+		it( 'adds a column after the others at a click, turns a ticked one the other way, tells the host, and stays open', async ()=>{
+			const { fixture, set, host } = await open();
+			await pick( fixture, "Sort" );
+			await pick( fixture, "Slug" );
+			await pick( fixture, "Sort, ascending" );
+			expect( entries() ).toEqual( ["Name, ascending", "Sort, descending", "Slug, ascending", "No sorting"] );
+			expect( sorted( set ) ).toEqual( ["name asc", "kind desc", "slug asc"] );
+			expect( [set.current().isAdhoc, host.changes] ).toEqual( [true, 3] );
+		} );
+
+		it( 'moves a ticked column up and down, the moves off at the ends, and keeps the focus on the move', async ()=>{
+			const { fixture, set } = await open();
+			await pick( fixture, "Slug" );
+			await pick( fixture, "Sort" );
+			const off = ()=>items().filter( i=>i.disabled ).map( i=>i.getAttribute( "aria-label" ) );
+			expect( off() ).toEqual( ["Move Name up", "Move Sort down"] );
+			await move( fixture, "Move Sort up" );
+			expect( sorted( set ) ).toEqual( ["name asc", "kind asc", "slug asc"] );
+			expect( document.activeElement!.getAttribute( "aria-label" ) ).toBe( "Move Sort up" );
+			await move( fixture, "Move Sort up" );
+			expect( sorted( set ) ).toEqual( ["kind asc", "name asc", "slug asc"] );
+			expect( text( document.activeElement! ) ).toBe( "Sort, ascending" );//its move up now off:  the column's own entry
+			await move( fixture, "Move Sort down" );
+			expect( sorted( set ) ).toEqual( ["name asc", "kind asc", "slug asc"] );
+		} );
+
+		it( 'takes a dragged order', async ()=>{
+			const { fixture, set, host } = await open();
+			await pick( fixture, "Slug" );
+			fixture.componentInstance.changes = 0;
+			const toolbar = fixture.debugElement.query( By.directive( ViewToolbar ) ).componentInstance as ViewToolbar;
+			toolbar.onSortDrop( {previousIndex: 1, currentIndex: 0, item: {data: "slug"}} as CdkDragDrop<unknown> );
+			toolbar.onSortDrop( {previousIndex: 0, currentIndex: 0, item: {data: "slug"}} as CdkDragDrop<unknown> );//where it was
+			expect( [sorted( set ), host.changes] ).toEqual( [["slug asc", "name asc"], 1] );
+		} );
+
+		it( 'clears the sort from No sorting, which is off with none', async ()=>{
+			const { fixture, set, element } = await open();
+			await pick( fixture, "No sorting" );
+			expect( sorted( set ) ).toEqual( [] );
+			//by the triggers' own panels:  those closed stay in the overlay
+			const entries = ( trigger:Element )=>[...document.getElementById( trigger.getAttribute( "aria-controls" )! )!.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )];
+			const menu = chevron( activeTab( element ) )!;
+			menu.click();
+			fixture.detectChanges();
+			const sortBy = entries( menu ).find( i=>text( i )=="Sort by" )!;
+			sortBy.click();
+			await settle( fixture );
+			expect( entries( sortBy ).map( i=>[text( i ), i.disabled] ) ).toEqual( [["Slug", false], ["Name", false], ["Sort", false], ["No sorting", true]] );//as Fields lists them
+		} );
+		//reviews-issue/593-views-sort.md #6:  `No sorting` emptied the sort, and LogView put its default's `time desc` back
+		it( "leaves the logs' time as it stands, and is off where the time is all the sort", async ()=>{
+			const route = LogView.default();
+			route.sort = [{active: "level", direction: "asc"}, {active: "time", direction: "asc"}];
+			const { fixture, set, host, element } = await create( {route: [route], schema: LogView.schema, type: LogView} );
+			host.columns.set( LogEntries.columns );
+			fixture.detectChanges();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Sort by" );
+			await pick( fixture, "No sorting" );
+			const toolbar = fixture.debugElement.query( By.directive( ViewToolbar ) ).componentInstance as ViewToolbar;
+			expect( [sorted( set ), toolbar.canClearSort(), host.changes] ).toEqual( [["time asc"], false, 1] );
+			toolbar.clearSort();
+			expect( host.changes ).toBe( 1 );
+		} );
+	} );
+
 	describe( 'the toolbar', ()=>{
-		it( 'hands Edit and Refresh to the host', async ()=>{
+		it( 'hands Refresh to the host', async ()=>{
 			const { element, host } = await create();
-			element.querySelector<HTMLButtonElement>( 'button[aria-label="Edit view"]' )!.click();
 			element.querySelector<HTMLButtonElement>( 'button[aria-label="Refresh"]' )!.click();
-			expect( host.edits ).toBe( 1 );
 			expect( host.refreshes ).toBe( 1 );
 		} );
 
@@ -692,11 +802,12 @@ describe( 'ViewToolbar', ()=>{
 			expect( rowCount( element ) ).toBeUndefined();
 		} );
 
-		it( "puts the host's controls left, and Refresh and Edit right ahead of the host's and the count", async ()=>{
+		//#593:  the tune button went with the editor
+		it( "puts the host's controls left, and Refresh right ahead of the host's and the count", async ()=>{
 			const { element } = await create();
 			expect( element.querySelector( '.bar-left #add' ) ).not.toBeNull();
 			const right = element.querySelector( '.bar-right' )!;
-			expect( [...right.children].map( c=>c.id || c.getAttribute( "aria-label" ) || c.className ) ).toEqual( ["Refresh", "Edit view", "extra", "row-count"] );
+			expect( [...right.children].map( c=>c.id || c.getAttribute( "aria-label" ) || c.className ) ).toEqual( ["Refresh", "extra", "row-count"] );
 		} );
 	} );
 } );

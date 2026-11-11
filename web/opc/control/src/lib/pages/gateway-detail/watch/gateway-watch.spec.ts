@@ -419,4 +419,16 @@ describe( 'GatewayWatch', ()=>{
 		expect( page.filter( a ) ).toBe( 'StatusValueTimestamp, no deadband' );
 		expect( page.cell( a, 'connection' ) ).toBe( 'Local' );
 	} );
+
+	//#593:  the Sort tab was the editor's last, and the editor went with it
+	it( 'renders its list with no view editor', async ()=>{
+		const { fixture } = await create( [item( 'local', A )], pumps() );
+		for( let pass = 0; pass<2; ++pass ){//the page's own detector:  the fixture's first pass checks for no changes, which a page already opened by hand trips
+			fixture.componentRef.changeDetectorRef.detectChanges();
+			await flush( 3 );
+		}
+		const element = fixture.nativeElement as HTMLElement;
+		expect( [!!element.querySelector( 'view-toolbar' ), !!element.querySelector( 'mat-table' )] ).toEqual( [true, true] );
+		expect( element.querySelector( 'ql-list-settings, button[aria-label="Edit view"]' ) ).toBeNull();
+	} );
 } );

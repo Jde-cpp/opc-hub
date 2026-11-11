@@ -6,7 +6,7 @@ import { TableSchema } from './schema/table-schema';
 import { View, ViewSerializedArgs, ViewType, ViewClass } from './view';
 
 export type ViewSetOptions<V extends View> = {
-	type:ViewClass<V>;//ql-list-settings emits a base View:  every view is re-made as this, so a subclass keeps its query()/apply()
+	type:ViewClass<V>;//every view is re-made as this, so a subclass keeps its query()/apply() whatever class it is handed
 	key:string;//the LocalPrefs owner of the selected view's number and, under the user's key, of the drafts
 	viewsKey?:string;//the profile row of the index, a view's row under it as `/<number>` - `<key>/views` when unset
 	profileStore:ProfileStore;
@@ -100,7 +100,7 @@ export class ViewSet<V extends View>{
 		this.show( view );
 	}
 	sort( sort:Sort ){
-		this.edit( view=>{ view.sort = [sort, ...view.sort.filter( s=>s.active!=sort.active )]; } );
+		this.edit( view=>view.sortFirst(sort) );
 	}
 	//the view as it was saved, its draft dropped.  false where it has none.
 	discard( view:View ):boolean{
@@ -121,21 +121,28 @@ export class ViewSet<V extends View>{
 		this.#remember();
 		return true;
 	}
-	//The editor's Save:  over the view of its number, whose draft goes, or, under a number that is none of the set's, a new view
-	//after the last - a Save under another name, of the view shown, whose draft goes instead.  It is the one shown.  The returned
-	//promise is the profile's writes;  the views have changed when it is returned, unless the profile is still to be read.
-	save( view:View, shown?:()=>void ):Promise<void>{
-		const from = this.current()?.number ?? 0;
-		let dropped = 0;
-		return this.#change( shown, ()=>{ dropped = this.#save( view, from ); }, ()=>this.#store( [dropped] ) );
-	}
 	//The toolbar's Save:  the view's draft over it, as the draft stands once the change is made - the profile may be read first, and
-	//the draft changed meanwhile.  Nothing where it has none by then.
+	//the draft changed meanwhile.  Nothing where it has none by then.  A pick list's fallback, under no number, is added after the
+	//last under the next.  The returned promise is the profile's writes;  the views have changed when it is returned, unless the
+	//profile is still to be read.
 	saveDraft( view:View, shown?:()=>void ):Promise<void>{
 		return this.#change( shown, ()=>{
 			const draft = this.#drafts.get( view.number );
-			if( draft )
-				this.#save( draft, view.number );
+			if( !draft )
+				return;
+			const saved = this.#type.copy( draft );
+			saved.type = ViewType.User;
+			this.#drafts.delete( view.number );
+			const views = [...this.#members];
+			const at = views.findIndex( v=>v.number==saved.number );
+			if( at<0 ){
+				saved.number = this.#next;
+				views.push( saved );
+			}
+			else
+				views[at] = saved;
+			this.#selected = saved.number;
+			this.#set( views );
 		}, ()=>this.#store( [view.number] ) );
 	}
 	//A copy of the view of its number as the user's, under the next number and its own name, after it and shown:  the menu's
@@ -353,25 +360,6 @@ export class ViewSet<V extends View>{
 	}
 	#rowKey( number:number ):string{ return `${this.#viewsKey}/${number}`; }
 	#json( view:V ):string{ return JSON.stringify( view.toJson(this.#settings) ); }
-	//`view` over the view of its number, or after the last under the next number, where it is the editor's of the view numbered
-	//`from`.  The number whose draft went.
-	#save( view:View, from:number ):number{
-		const saved = this.#type.copy( view );
-		saved.type = ViewType.User;
-		const views = [...this.#members];
-		const at = views.findIndex( v=>v.number==saved.number );
-		const dropped = at<0 ? from : saved.number;
-		if( at<0 ){
-			saved.number = this.#next;
-			views.push( saved );
-		}
-		else
-			views[at] = saved;
-		this.#drafts.delete( dropped );
-		this.#selected = saved.number;
-		this.#set( views );
-		return dropped;
-	}
 	#insert( copy:V, at:number ):void{
 		copy.type = ViewType.User;
 		copy.number = this.#next;
