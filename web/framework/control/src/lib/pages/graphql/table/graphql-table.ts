@@ -9,7 +9,9 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatIcon } from '@angular/material/icon';
 import { MatIconButton } from '@angular/material/button';
 import { MatTooltip } from '@angular/material/tooltip';
-import { Style, ViewField } from '../../../model/ql/view';
+import { Style, View, ViewField } from '../../../model/ql/view';
+import { ViewSet } from '../../../model/ql/view-set';
+import { ViewColumnCell, ViewColumnHeader, ViewColumns } from '../../../shared/view-columns/view-columns';
 import { QLRow } from '../../../model/ql/slug-row';
 import { capitalize } from 'jde-spa';
 
@@ -21,7 +23,7 @@ export type CellText = ( column:string, row:QLRow )=>string|undefined;
 	selector: 'ql-table',
 	styleUrls: ['./graphql-table.scss'],
 	templateUrl: './graphql-table.html',
-	imports: [DatePipe, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip]
+	imports: [DatePipe, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip, ViewColumnCell, ViewColumnHeader, ViewColumns]
 })
 export class GraphQLTable{
 
@@ -59,7 +61,8 @@ export class GraphQLTable{
 	isAllSelected(){ return this.selections().selected.length==this.dataSource().length; }
 	isSelected( row:QLRow ){ return this.selections().isSelected(row); }
 	columnName( colName:string ){ return this.columns().get( colName )?.field.displayName ?? capitalize(colName); }
-	//Applied to the header cell and the data cell from the one setting, so the two cannot drift apart.
+	//Applied to the header cell and the data cell from the one setting, so the two cannot drift apart.  Its width is viewColumn's
+	//where the table has views:  the draft's, as the header's menu and drag set it.
 	columnStyle( colName:string ):Record<string,string>{ return this.columns().get( colName )?.style ?? noStyle; }
 	objectValue( obj: unknown ): string{
 		if( obj==null )
@@ -111,10 +114,17 @@ export class GraphQLTable{
 	//a plain chip.
 	chipFilters = input<ReadonlyMap<string,ReadonlySet<string>>>( new Map() );
 	onChipClick = output<{column:string, value:string}>();
+	//The list's views, where its headers change them (ViewColumns):  a column hidden, moved or resized is a change to the draft,
+	//said by `columnsChange`.  None, and the headers only sort.
+	views = input<ViewSet<View>>();
+	columnsChange = output<void>();
 
 	displayedColumnNames = computed( ()=>(this.selections().isMultipleSelection() ? ["select"] : []).concat( this.displayedFields().filter((x)=>x.displayed).map((x)=>x.name) ) );
 	//each field's cell, classified once per change of fields rather than once per change-detection pass and per cell
-	columns = computed( ()=>new Map( this.displayedFields().map( f=>[f.name, {field: f, kind: columnKind( f ), style: cellStyle( f.style )}] ) ) );
+	columns = computed( ()=>{
+		const width = !this.views();
+		return new Map( this.displayedFields().map( f=>[f.name, {field: f, kind: columnKind( f ), style: cellStyle( f.style, width )}] ) );
+	} );
 	//the matColumnDef lists, one per kind:  a field is in one at most, or its column is declared twice and mat-table throws
 	columnNames = computed( ()=>{
 		const y:Record<ColumnKind,string[]> = { chip: [], liveToggle: [], string: [], object: [], list: [], date: [], bool: [], uint: [] };
@@ -148,13 +158,13 @@ function columnKind( x:ViewField ):ColumnKind|undefined{
 	return undefined;
 }
 //`align` is expanded rather than passed through: it is not a CSS property, and a mat-cell is a flex container - text-align on
-//its own leaves the content wherever justify-content put it.
-function cellStyle( style:Style|undefined ):Record<string,string>{
+//its own leaves the content wherever justify-content put it.  `width`:  the flex too.
+function cellStyle( style:Style|undefined, width:boolean ):Record<string,string>{
 	if( !style )
 		return noStyle;
 	const y:Record<string,string> = {};
 	for( const [key,value] of Object.entries(style) ){
-		if( value==null )
+		if( value==null || (key=="flex" && !width) )
 			continue;
 		if( key=="align" ){
 			y["justifyContent"] = value=="right" ? "flex-end" : value=="center" ? "center" : "flex-start";

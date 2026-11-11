@@ -1,0 +1,60 @@
+//The header cell:  the label, which is the sort, with the menu button over its right end and the resize handle over the cell's
+//right edge.  Neither takes room from the label, which is clipped where the column is narrower than it.  The cell is their
+//containing block, pinned or not.
+:host(:not(.jde-pinned)){//a pinned cell is sticky (_general.scss), which contains them as well
+	position: relative;
+}
+.column-label{
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+}
+//shown on hover and focus, and while its menu is open:  always where nothing hovers
+.column-menu{
+	position: absolute;
+	inset-inline-end: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: var(--mat-table-background-color, var(--mat-sys-surface));
+	color: var(--mat-sys-on-surface-variant);
+	cursor: pointer;
+	opacity: 0;
+	&:hover{
+		background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, var(--mat-table-background-color, var(--mat-sys-surface)));
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+	}
+	mat-icon{
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+	}
+}
+:host(:hover) .column-menu, :host(:focus-within) .column-menu, .column-menu[aria-expanded=true]{
+	opacity: 1;
+}
+@media (hover: none){
+	.column-menu{
+		opacity: 1;
+	}
+}
+.column-resize{
+	position: absolute;
+	inset-block: 0;
+	inset-inline-end: 0;
+	width: 8px;
+	cursor: col-resize;
+	touch-action: none;
+	&:hover, &:active{
+		background: var(--mat-sys-primary);
+	}
+}

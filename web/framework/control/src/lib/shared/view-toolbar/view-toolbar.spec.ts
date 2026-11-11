@@ -4,12 +4,13 @@ import { By } from '@angular/platform-browser';
 import { CdkDragDrop } from '@angular/cdk/drag-drop';
 import { MatTabNavPanel } from '@angular/material/tabs';
 import { IPROFILE_SERVICE, LocalPrefs, ProfileStore } from 'jde-spa';
-import { View } from '../../model/ql/view';
+import { Style, View } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 import { SnackbarService } from '../snackbar/snackbar-service';
 import { ViewToolbar } from './view-toolbar';
 import { flush, MockProfileService, screenSize } from 'jde-spa/testing';
-import { schemaOf, snackbarStub } from 'jde-framework/testing';
+import { required, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
+import { TableSchema } from '../../model/ql/schema/table-schema';
 
 //reviews/angular-refactor.md A2:  QLList, LogDetail and NodeChildren each carried a copy of this toolbar and its stylesheet.
 //#588:  the views are tabs, the view menu on the active one's chevron and `+ New view` after them;  a pick list has a menu button.
@@ -21,7 +22,7 @@ const stored = ( views:[number, View][] )=>Object.fromEntries( [["things/views",
 
 @Component({
 	imports: [MatTabNavPanel, ViewToolbar],
-	template: `<view-toolbar [views]="views" [tabPanel]="panel" [tabs]="tabs()" [paged]="paged()" [refreshing]="refreshing()" [count]="count()" (viewChange)="changes=changes+1" (edit)="edits=edits+1" (refresh)="refreshes=refreshes+1">
+	template: `<view-toolbar [views]="views" [tabPanel]="panel" [tabs]="tabs()" [paged]="paged()" [columns]="columns()" [selectable]="selectable()" [refreshing]="refreshing()" [count]="count()" (viewChange)="changes=changes+1" (edit)="edits=edits+1" (refresh)="refreshes=refreshes+1">
 		<button left id="add">Add</button>
 		<span right id="extra">extra</span>
 	</view-toolbar>
@@ -31,6 +32,8 @@ class Host{
 	views:ViewSet<View> = null as any;//before the first render
 	tabs = signal( true );
 	paged = signal( false );
+	columns = signal<Record<string,string>>( {} );
+	selectable = signal( false );
 	refreshing = signal( false );
 	count = signal<number|undefined>( 3 );
 	changes = 0;
@@ -39,17 +42,17 @@ class Host{
 }
 
 describe( 'ViewToolbar', ()=>{
-	type Options = { rows?:Record<string,unknown>; route?:View[]; draft?:boolean; tabs?:boolean; paged?:boolean; width?:'wide'|'extra-small'; type?:typeof View };
+	type Options = { rows?:Record<string,unknown>; route?:View[]; schema?:TableSchema; draft?:boolean; tabs?:boolean; paged?:boolean; width?:'wide'|'extra-small'; type?:typeof View };
 	//A toolbar over the route's views - Default and Users, on Users - or over the saved `rows` of the profile;  a draft of the
 	//current view where asked, a pick list's for tabs false, and a host that pages.
-	const create = async ( {rows, route=[view( undefined ), view( "Users" )], draft=false, tabs=true, paged=false, width='wide', type=View}:Options={} )=>{
+	const create = async ( {rows, schema: tableSchema=schema, route=[view( undefined ), view( "Users" )], draft=false, tabs=true, paged=false, width='wide', type=View}:Options={} )=>{
 		const service = new MockProfileService();
 		for( const [key, value] of Object.entries(rows ?? {}) )
 			service.rows.set( key, JSON.stringify(value) );
 		const snackbar = snackbarStub();
 		TestBed.configureTestingModule( {providers: [screenSize( width ), {provide: IPROFILE_SERVICE, useValue: service}, {provide: SnackbarService, useValue: snackbar}]} );
 		const set = new ViewSet( {type, key: "things", profileStore: TestBed.inject( ProfileStore ), prefs: new LocalPrefs()} );
-		await set.load( route, schema );
+		await set.load( route, tableSchema );
 		if( !rows && route.length>1 )
 			set.select( 1 );
 		if( draft )
@@ -569,6 +572,91 @@ describe( 'ViewToolbar', ()=>{
 		it( "is in a pick list's menu too", async ()=>{
 			const { fixture, element } = await create( {paged: true, tabs: false} );
 			expect( openMenu( fixture, element.querySelector<HTMLButtonElement>( '.view-button' )! ).map( text ) ).toEqual( ["Views", "Page size", "Save changes", "Discard changes"] );
+		} );
+	} );
+
+	//#592:  the columns are the view menu's, a checklist that stays open, each tick a change to the draft
+	describe( 'Fields', ()=>{
+		const things = schemaOf( "Thing", required("name"), scalar("slug"), scalar("kind"), scalar("secret") );
+		const columns = { name: "Name", slug: "Slug", kind: "Sort" };//the route's, `secret` excluded
+		const open = async ( selectable=false )=>{
+			const route = View.fromTable( {columns: ["slug", "name"], sort: "name"}, things );
+			const y = await create( {route: [route], schema: things} );
+			y.host.columns.set( columns );
+			y.host.selectable.set( selectable );
+			y.fixture.detectChanges();
+			openMenu( y.fixture, chevron( activeTab( y.element ) )! );
+			await pick( y.fixture, "Fields" );
+			return y;
+		};
+		const ticks = ()=>items().map( i=>[text( i ), i.getAttribute( "aria-checked" )] );
+
+		it( 'is not in the menu of a host that names no columns', async ()=>{
+			const { fixture, element } = await create();
+			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( text ) ).not.toContain( "Fields" );
+		} );
+
+		it( "lists the host's columns, those shown first in the view's order and ticked", async ()=>{
+			await open();
+			expect( ticks() ).toEqual( [["Slug", "true"], ["Name", "true"], ["Sort", "false"]] );
+			expect( items().every( i=>i.getAttribute( "role" )=="menuitemcheckbox" ) ).toBe( true );
+		} );
+
+		it( 'shows and hides a column on the draft at a tick, tells the host, and stays open', async ()=>{
+			const { fixture, set, host } = await open();
+			await pick( fixture, "Sort" );
+			expect( ticks() ).toEqual( [["Slug", "true"], ["Name", "true"], ["Sort", "true"]] );
+			const shown = ()=>set.current().fields.filter( f=>f.displayed ).map( f=>[f.name, f.displayName] );
+			expect( shown() ).toEqual( [["slug", "Slug"], ["name", "Name"], ["kind", "Sort"]] );//under the host's name for it
+			await pick( fixture, "Slug" );
+			expect( ticks() ).toEqual( [["Slug", "false"], ["Name", "true"], ["Sort", "true"]] );//reviews-issue/592-views-fields.md #7:  in the order it opened in
+			expect( [set.current().isAdhoc, host.changes] ).toEqual( [true, 2] );
+		} );
+
+		it( 'lists those shown first again once it is opened again', async ()=>{
+			const { fixture, element } = await open();
+			await pick( fixture, "Slug" );
+			document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+			await settle( fixture );
+			//by the triggers' own panels:  those closed stay in the overlay
+			const entries = ( trigger:Element )=>[...document.getElementById( trigger.getAttribute( "aria-controls" )! )!.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )];
+			const menu = chevron( activeTab( element ) )!;
+			menu.click();
+			fixture.detectChanges();
+			const fields = entries( menu ).find( i=>text( i )=="Fields" )!;
+			fields.click();
+			await settle( fixture );
+			expect( entries( fields ).map( i=>[text( i ), i.getAttribute( "aria-checked" )] ) ).toEqual( [["Name", "true"], ["Slug", "false"], ["Sort", "false"]] );
+		} );
+
+		//reviews-issue/592-views-fields.md #4:  a column the view lacks came from the schema bare, without the route's width or chip
+		it( "shows a column the view lacks as the route's default view has it", async ()=>{
+			const route = [
+				View.fromTable( {columns: ["slug", "name", {name: "kind", style: new Style( 90 ), chip: {a: "ok"}}], sort: "name"}, things ),
+				View.fromConfig( {name: "Narrow", configColumns: ["slug", "name"], sort: [{active: "name", direction: "asc"}]}, things )
+			];
+			const { fixture, set, element, host } = await create( {route, schema: things} );
+			host.columns.set( columns );
+			fixture.detectChanges();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Fields" );
+			await pick( fixture, "Sort" );
+			const kind = set.current().fields.find( f=>f.name=="kind" )!;
+			expect( [set.current().name, kind.displayed, kind.flex, kind.chip] ).toEqual( ["Narrow", true, "0 0 90px", {a: "ok"}] );
+		} );
+
+		it( 'keeps the last column shown', async ()=>{
+			const { fixture } = await open();
+			await pick( fixture, "Slug" );
+			expect( items().filter( i=>i.disabled ).map( text ) ).toEqual( ["Name"] );
+		} );
+
+		it( 'offers Select first where the host lets its rows be ticked', async ()=>{
+			const { fixture, set, host } = await open( true );
+			expect( ticks()[0] ).toEqual( ["Select", "false"] );
+			await pick( fixture, "Select" );
+			expect( ticks()[0] ).toEqual( ["Select", "true"] );
+			expect( [set.current().showSelector, set.current().isAdhoc, host.changes] ).toEqual( [true, true, 1] );
 		} );
 	} );
 

@@ -1,11 +1,16 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { SelectionModel } from '@angular/cdk/collections';
+import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { Flex, Style, View } from '../../../model/ql/view';
+import { ViewSet } from '../../../model/ql/view-set';
 import { CellText, GraphQLTable } from './graphql-table';
 import { object, required, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
-import { stable } from 'jde-spa/testing';
+import { flush, stable } from 'jde-spa/testing';
+import { By } from '@angular/platform-browser';
+import { CdkDragDrop, CdkDropList } from '@angular/cdk/drag-drop';
+import { ViewColumns } from '../../../shared/view-columns/view-columns';
 
 //The gateway's Connections list: a text column, and the grafted count that reads as a number.
 const schema = schemaOf( "ServerConnection", required("name"), scalar("deleted", "DateTime"), object("opcSessions", "OpcSessions") );
@@ -192,5 +197,193 @@ describe( 'GraphQLTable columns', ()=>{
 		fixture.componentRef.setInput( 'cellText', <CellText>(( column, row )=>column=="dayStart" ? `${<number>row['dayStart']/60}:00` : undefined) );
 		await stable( fixture, 1 );
 		expect( cells() ).toEqual( ["6:00", "0:00"] );
+	} );
+} );
+
+//#592:  a header has its menu and its resize handle beside the sort, which is a span around the label, and each is a change to the
+//view's draft that the table tells its host of
+describe( 'GraphQLTable headers', ()=>{
+	const things = schemaOf( "Thing", required("name"), scalar("slug"), scalar("kind") );
+	//a table over a set of one view, its columns following the view as QLList's do
+	const open = async ( columns:any[] = ["name", "slug", {name: "kind", style: new Style({flex: new Flex(120)})}], multiple=false )=>{
+		TestBed.configureTestingModule({ providers: [{ provide: SnackbarService, useValue: snackbarStub() }] });
+		const set = new ViewSet( {type: View, key: "things", profileStore: TestBed.inject( ProfileStore ), prefs: new LocalPrefs()} );
+		set.reset( [View.fromTable({columns, sort: "name"}, things)], things );
+		const fixture = TestBed.createComponent( GraphQLTable );
+		const table = fixture.componentInstance, changes = vi.fn(), sorts = vi.fn();
+		const follow = ()=>fixture.componentRef.setInput( 'displayedFields', set.current().fields.filter( f=>f.displayed ) );
+		fixture.componentRef.setInput( 'dataSource', [{id: 1, name: "a", slug: "a-1", kind: "x"}] );
+		fixture.componentRef.setInput( 'selections', new SelectionModel<any>(multiple, []) );
+		fixture.componentRef.setInput( 'views', set );
+		fixture.componentRef.setInput( 'sort', {active: "name", direction: "asc"} );
+		follow();
+		table.columnsChange.subscribe( ()=>{ changes(); follow(); } );
+		table.onSortChange.subscribe( sorts );
+		await stable( fixture, 1 );
+		const element = fixture.nativeElement as HTMLElement;
+		const header = ( name:string )=>element.querySelector<HTMLElement>( `mat-header-cell.mat-column-${name}` )!;
+		const text = ( e:Element )=>{ const copy = e.cloneNode( true ) as Element; copy.querySelectorAll( 'mat-icon' ).forEach( i=>i.remove() ); return copy.textContent!.trim(); };
+		const menu = async ( name:string )=>{
+			const button = header( name ).querySelector<HTMLButtonElement>( 'button.column-menu' )!;
+			button.click();
+			await stable( fixture, 1 );
+			return [...document.getElementById( button.getAttribute( "aria-controls" )! )!.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )];//its own panel:  one closed may still be in the overlay
+		};
+		const pick = async ( name:string, entry:string )=>{
+			( await menu( name ) ).find( i=>text( i )==entry )!.click();
+			await stable( fixture, 1 );
+		};
+		//a column's menu read and closed again:  its entries, or those greyed out
+		const entries = async ( name:string, disabled=false )=>{
+			const y = ( await menu( name ) ).filter( i=>!disabled || i.disabled ).map( text );
+			document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+			await stable( fixture, 1 );
+			return y;
+		};
+		const shown = ()=>[...element.querySelectorAll( 'mat-header-cell' )].map( h=>text( h ) );
+		const pointer = ( name:string, type:string, clientX=0 )=>header( name ).querySelector( '.column-resize' )!.dispatchEvent( new MouseEvent( type, {clientX, bubbles: true, cancelable: true} ) );
+		return { fixture, set, element, changes, sorts, header, entries, pick, shown, pointer };
+	};
+	beforeEach( ()=>localStorage.clear() );
+
+	it( 'gives a column its menu button and its handle, and the select column neither', async ()=>{
+		const { element, header, entries } = await open( undefined, true );
+		expect( element.querySelectorAll( 'button.column-menu' ).length ).toBe( 3 );
+		expect( element.querySelectorAll( '.column-resize' ).length ).toBe( 3 );
+		expect( element.querySelector( 'mat-header-cell.mat-column-select .column-menu' ) ).toBeNull();
+		expect( header( "slug" ).querySelector( 'button.column-menu' )!.getAttribute( "aria-label" ) ).toBe( "Slug column menu" );
+		expect( await entries( "slug" ) ).toEqual( ["Move left", "Move right", "Wider", "Narrower", "Hide field"] );
+	} );
+
+	it( 'sorts from a span around the label, and says the sort on the cell alone', async ()=>{
+		const { header, sorts } = await open();
+		await flush();//the observer that takes Material's aria-sort off the span
+		const label = header( "name" ).querySelector( '.column-label' )!;
+		expect( label.tagName ).toBe( "SPAN" );
+		expect( label.hasAttribute( "aria-sort" ) ).toBe( false );
+		expect( header( "name" ).getAttribute( "aria-sort" ) ).toBe( "ascending" );
+		expect( header( "slug" ).getAttribute( "aria-sort" ) ).toBe( "none" );
+		header( "slug" ).querySelector<HTMLElement>( '.mat-sort-header-container' )!.click();
+		expect( sorts.mock.calls ).toEqual( [[{active: "slug", direction: "asc"}]] );
+	} );
+
+	it( 'leaves the sort alone on a click on the menu button or the handle', async ()=>{
+		const { header, sorts, pointer, fixture } = await open();
+		header( "slug" ).querySelector<HTMLButtonElement>( 'button.column-menu' )!.click();
+		pointer( "slug", "click" );
+		await stable( fixture, 1 );
+		expect( header( "slug" ).querySelector( '.mat-sort-header-container button, .mat-sort-header-container .column-resize' ) ).toBeNull();//beside the sort's button, not in it
+		expect( sorts ).not.toHaveBeenCalled();
+	} );
+
+	it( 'hides a field on the draft, and tells its host', async ()=>{
+		const { set, changes, pick, shown } = await open();
+		await pick( "slug", "Hide field" );
+		expect( shown() ).toEqual( ["Name", "Kind"] );
+		expect( [set.current().isAdhoc, changes.mock.calls.length] ).toEqual( [true, 1] );
+	} );
+
+	it( 'keeps the last field', async ()=>{
+		const { entries } = await open( ["name"] );
+		expect( await entries( "name", true ) ).toEqual( ["Move left", "Move right", "Hide field"] );
+	} );
+
+	it( 'moves a field left and right, and offers neither past an end', async ()=>{
+		const { entries, pick, shown } = await open();
+		expect( await entries( "name", true ) ).toEqual( ["Move left"] );
+		expect( await entries( "kind", true ) ).toEqual( ["Move right"] );
+		await pick( "name", "Move right" );
+		expect( shown() ).toEqual( ["Slug", "Name", "Kind"] );
+		await pick( "kind", "Move left" );
+		expect( shown() ).toEqual( ["Slug", "Kind", "Name"] );
+	} );
+
+	it( 'moves a header dropped on another place', async ()=>{
+		const { fixture, shown, changes } = await open();
+		const list = fixture.debugElement.query( By.directive( ViewColumns ) ).injector.get( CdkDropList );
+		list.dropped.emit( {item: {data: "kind"}, previousIndex: 2, currentIndex: 0} as CdkDragDrop<unknown> );
+		await stable( fixture, 1 );
+		expect( shown() ).toEqual( ["Kind", "Name", "Slug"] );
+		list.dropped.emit( {item: {data: "kind"}, previousIndex: 0, currentIndex: 0} as CdkDragDrop<unknown> );//where it was
+		expect( changes ).toHaveBeenCalledTimes( 1 );
+	} );
+
+	it( "writes the handle's drag to the style, header and cell alike, held at the floor, and a double-click restores the route's", async ()=>{
+		const { fixture, set, element, header, pointer, sorts } = await open();
+		const width = ( name:string )=>set.current().fields.find( f=>f.name==name )!.flex;
+		const drawn = ( name:string )=>[header( name ).style.flex, element.querySelector<HTMLElement>( `mat-cell.mat-column-${name}` )!.style.flex];
+		pointer( "kind", "pointerdown", 500 );
+		pointer( "kind", "pointermove", 580 );//from the 120px the route gives it:  nothing is laid out here
+		pointer( "kind", "pointerup" );
+		await stable( fixture, 1 );
+		expect( width( "kind" ) ).toBe( "0 0 200px" );
+		expect( drawn( "kind" ) ).toEqual( ["0 0 200px", "0 0 200px"] );
+		pointer( "kind", "pointermove", 0 );//the drag is over
+		expect( width( "kind" ) ).toBe( "0 0 200px" );
+		pointer( "kind", "pointerdown", 500 );
+		pointer( "kind", "pointermove", 100 );
+		pointer( "kind", "pointerup" );
+		expect( width( "kind" ) ).toBe( "0 0 64px" );
+		pointer( "kind", "dblclick" );
+		pointer( "slug", "pointerdown", 0 );
+		pointer( "slug", "pointermove", 150 );
+		pointer( "slug", "dblclick" );
+		await stable( fixture, 1 );
+		expect( [width( "kind" ), width( "slug" )] ).toEqual( ["0 0 120px", undefined] );
+		expect( drawn( "slug" ) ).toEqual( ["", ""] );
+		expect( set.current().isAdhoc ).toBe( false );//as the route has it:  no draft
+		expect( sorts ).not.toHaveBeenCalled();
+	} );
+
+	//reviews-issue/592-views-fields.md #5:  every move of the pointer was a draft, written to the local store
+	it( "draws the handle's drag as it goes, and writes the draft once, where the pointer is let go", async ()=>{
+		const { fixture, set, header, pointer, changes } = await open();
+		const width = ()=>set.current().fields.find( f=>f.name=="kind" )!.flex;
+		pointer( "kind", "pointerdown", 500 );
+		pointer( "kind", "pointermove", 520 );
+		pointer( "kind", "pointermove", 540 );
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, width(), set.current().isAdhoc, changes.mock.calls.length] ).toEqual( ["0 0 160px", "0 0 120px", false, 0] );
+		pointer( "kind", "pointerup" );
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, width(), set.current().isAdhoc, changes.mock.calls.length] ).toEqual( ["0 0 160px", "0 0 160px", true, 1] );
+		pointer( "kind", "pointerdown", 500 );
+		pointer( "kind", "pointermove", 400 );
+		pointer( "kind", "pointercancel" );
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, width(), changes.mock.calls.length] ).toEqual( ["0 0 160px", "0 0 160px", 1] );
+	} );
+
+	//reviews-issue/592-views-fields.md #9:  the fields the host gives lag the draft while a read is out, and their width outranked it
+	it( "draws a width from the draft, ahead of the fields its host gives", async ()=>{
+		const { fixture, set, header, element } = await open();
+		set.edit( view=>view.setWidth( "kind", 200 ) );//the host not told:  its read is out
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, element.querySelector<HTMLElement>( 'mat-cell.mat-column-kind' )!.style.flex] ).toEqual( ["0 0 200px", "0 0 200px"] );
+	} );
+
+	it( 'widens and narrows by the menu, to the floor and no further', async ()=>{
+		const { set, pick, entries } = await open();
+		const width = ()=>set.current().fields.find( f=>f.name=="kind" )!.flex;
+		await pick( "kind", "Wider" );
+		expect( width() ).toBe( "0 0 152px" );
+		await pick( "kind", "Narrower" );
+		await pick( "kind", "Narrower" );
+		await pick( "kind", "Narrower" );
+		expect( width() ).toBe( "0 0 64px" );
+		expect( await entries( "kind", true ) ).toEqual( ["Move right", "Narrower"] );
+	} );
+
+	it( 'pins the name, header and cell', async ()=>{
+		const { element } = await open( ["slug", "name"] );
+		expect( [...element.querySelectorAll( '.jde-pinned' )].map( e=>[e.tagName, e.classList.contains( "mat-column-name" )] ) ).toEqual( [["MAT-HEADER-CELL", true], ["MAT-CELL", true]] );
+	} );
+
+	it( 'only sorts where it is given no views', async ()=>{
+		const fixture = build( ["name"], [{id: 1, name: "a"}] );
+		await stable( fixture, 1 );
+		const element = fixture.nativeElement as HTMLElement;
+		expect( element.querySelector( '.mat-sort-header-container' ) ).not.toBeNull();
+		expect( element.querySelector( '.column-menu, .column-resize, .jde-pinned' ) ).toBeNull();
 	} );
 } );

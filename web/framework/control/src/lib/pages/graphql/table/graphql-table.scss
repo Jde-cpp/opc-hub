@@ -1,7 +1,3 @@
-.mat-header-cell
-{
-	min-width: 100px;
-}
 /* The whole row is the click target - it opens the row's detail page, or checks it in selector mode - so it has to say so
    before it is clicked.  A state layer over `transparent`, not a flat colour, so it composites over whatever the row
    already has under it (.highlight's selection, the sticky header's backdrop) instead of replacing it. */
@@ -12,6 +8,11 @@ mat-row
 mat-row:hover
 {
 	background: color-mix( in srgb, var(--mat-sys-on-surface) 8%, transparent );
+}
+//the pinned cell paints the table's colour (_general.scss), so it takes the row's tint itself
+mat-row:hover .jde-pinned
+{
+	background: color-mix( in srgb, var(--mat-sys-on-surface) 8%, var(--mat-table-background-color, var(--mat-sys-surface)) );
 }
 .highlight
 {

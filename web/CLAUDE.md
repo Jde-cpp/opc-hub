@@ -110,7 +110,7 @@ from a backup and restore it afterwards.
 A component sheet cannot `@use` another library's partial, so a rule two libraries share is a global class in
 `spa/control/src/styles/_general.scss` - `.jde-list-toolbar`, `mat-table.jde-dense`, `.jde-rights-grid`, `.jde-empty` - with
 the explanation there once;  qualify it with the element (`mat-toolbar.`) where Material's own rule would win the cascade.
-Within one library a partial does it (`opc/control/src/lib/pages/_status.scss`'s mixins, `_list-settings.scss`), and a
+Within one library a partial does it (`opc/control/src/lib/pages/_status.scss`'s mixins), and a
 sheet two components of a library share goes in both `styleUrls` (`hist-admin-shared.scss`).
 
 The breakpoints are named in `spa/control/src/styles/_constants.scss` alone (720 extra-small, 959 small, 1024 medium), so a

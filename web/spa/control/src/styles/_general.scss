@@ -210,6 +210,44 @@ mat-header-cell {
 	text-align: left;
 }
 
+// A view's pinned column (jde-framework's ViewColumns, View.pinned):  the name stays at the pane's left as a table wider than
+// the pane scrolls sideways, over the columns before it.  It paints the table's colour, or the cells it passes over show
+// through;  a table whose rows tint on hover tints the cell in its own sheet.  Global because the tables are in two libraries.
+.jde-pinned {
+	position: sticky;
+	left: 0;
+	z-index: 1;
+	background: var(--mat-table-background-color, var(--mat-sys-surface));
+}
+// A view's table (ViewColumns) has rows as wide as their columns, since a row is the block its pinned cell sticks in:  a row only as
+// wide as the pane let the cell scroll away once the scroll passed the row's end.  `min-content` is the sum of the fixed bases, the
+// cells' own content contained so that a growing column with a long line in it - the logs' Message - adds only its padding;  where
+// the columns fit, the rows fill the pane as before.
+mat-table.jde-view-columns {
+	mat-header-row, mat-row {
+		min-width: min-content;
+	}
+	mat-header-cell, mat-cell {
+		contain: inline-size;
+	}
+}
+// A column header on its way to another place (ViewColumnHeader's drag):  the copy under the pointer, which CDK puts in the
+// body, and the gap it left.
+.jde-column-header.cdk-drag-preview {
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	padding: 0 16px;
+	border-radius: 4px;
+	box-shadow: var(--mat-sys-level4);
+	background: var(--mat-sys-surface);
+	color: var(--mat-sys-on-surface);
+	font: var(--mat-sys-title-small);
+}
+.jde-column-header.cdk-drag-placeholder {
+	opacity: .3;
+}
+
 // The rights grids, a column per right, headed and centred, every other one shaded.  jde-access's permission table and
 // jde-opc's node rights edit one - a checkbox a cell, the deny glyph filling it so it centres on the axis mat-checkbox centres
 // its box on, in its own 40px target.  Effective rights and a resource's holders mark one - an icon a cell, whose tooltip is

@@ -54,6 +54,8 @@ export class Flex{
 	toString(){
 		return `${this.flexGrow ?? 0} ${this.flexShrink ?? 0} ${this.flexBasis ?? "auto"}`;
 	}
+	//the basis in pixels, where it is one
+	get px():number|undefined{ return this.flexBasis?.endsWith( "px" ) ? parseFloat( this.flexBasis ) : undefined; }
 	flexGrow?:number;
 	flexShrink?:number;
 	flexBasis?:string
@@ -128,6 +130,8 @@ export class ViewField{
 		const selection = this.selection ?? (this.type.underlyingKind==FieldKind.OBJECT ? "id name" : this.type.underlyingKind==FieldKind.UNION ? "id" : undefined);
 		return selection ? `${this.name}{${selection}}` : this.name;
 	}
+	//the width a view sets, or the route:  undefined where the column's sheet has it
+	get flex():string|undefined{ return this.style?.flex!=null ? `${this.style.flex}` : undefined; }
 	get displayed():boolean{ return this._displayed ?? (this.type.ofType?.name!="ID" && this.name!="attributes" && this.type.kind!=FieldKind.LIST); }
 	set displayed(x){this._displayed=x;} private _displayed:boolean|undefined;
 
@@ -292,7 +296,11 @@ export class View{
 		return this.fixedFilter ? { terms: [...typed.terms, ...parseFilter(this.fixedFilter, host).terms], errors: typed.errors } : typed;
 	}
 	query( skip:number ):Query{
-		let fieldStr = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) ).map( f=>f.queryText ).join(" ");//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key
+		const { fields, args, vars } = this.#queryParts( skip );
+		return { text: `${this.collectionName}${args.length>0 ? `(${args.join(",")})` : ""}{ ${fields.join(" ")} }`, vars: vars };
+	}
+	#queryParts( skip:number ):{fields:string[], args:string[], vars:Record<string,unknown>}{
+		const fields = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) ).map( f=>f.queryText );//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key
 		let args = [];
 		let vars:Record<string,unknown> = {};
 		if( this.limit )
@@ -316,8 +324,59 @@ export class View{
 			args.push( `deleted:$deleted` );
 			vars["deleted"] = null;
 		}
-
-		return { text: `${this.collectionName}${args.length>0 ? `(${args.join(",")})` : ""}{ ${fieldStr} }`, vars: vars };
+		return { fields, args, vars };
+	}
+	//The column pinned at the left as the table scrolls sideways:  the name, or the first shown where the view shows none.
+	get pinned():string|undefined{
+		const shown = this.fields.filter( f=>f.displayed );
+		return ( shown.find( f=>f.name=="name" ) ?? shown[0] )?.name;
+	}
+	//A column shown, after those that are, or hidden:  the Fields checklist's tick and the header's Hide field.  One the view lacks
+	//is `route`'s - the route's field for it, with its width, chip and selection - else the schema's, under the host's name for it.
+	//The last column shown stays.
+	setDisplayed( name:string, displayed:boolean, displayName?:string, route?:ViewField ):void{
+		let field = this.fields.find( f=>f.name==name );
+		if( !displayed ){
+			if( field?.displayed && this.fields.filter( f=>f.displayed ).length>1 )
+				field.displayed = false;
+			return;
+		}
+		if( field?.displayed )
+			return;
+		const qlField = field?.qlField ?? this.schema?.fields.find( f=>f.name==name );
+		if( !qlField )
+			return;
+		field ??= route?.name==name ? new ViewField( route ) : new ViewField( {qlField, settings: {name, displayName}} );
+		field.displayed = true;
+		this.fields = [...this.fields.filter( f=>f!==field ), field];
+	}
+	//to the place `to` among the columns shown:  a header dropped, or its Move left and Move right
+	moveField( name:string, to:number ):void{
+		const shown = this.fields.filter( f=>f.displayed );
+		const from = shown.findIndex( f=>f.name==name );
+		to = Math.max( 0, Math.min(to, shown.length-1) );
+		if( from<0 || from==to )
+			return;
+		const fields = this.fields.filter( f=>f!==shown[from] );
+		fields.splice( fields.indexOf(shown[to])+( to>from ? 1 : 0 ), 0, shown[from] );
+		this.fields = fields;
+	}
+	//A column's width, a fixed basis as a route writes one, never under the floor - room for the header's menu button and its
+	//handle - nor narrowed under `from`, the width it had, where that is less:  a column its sheet draws narrower is not widened.
+	static readonly minWidth = 64;
+	static widthOf( width:number, from=Infinity ):number{ return Math.max( Math.min(View.minWidth, from), Math.round(width) ); }
+	static flexOf( width:number ):string{ return `${new Flex( width )}`; }
+	setWidth( name:string, width:number, from=Infinity ):void{
+		const field = this.fields.find( f=>f.name==name );
+		if( field )
+			field.style = new Style( {...field.style, flex: new Flex( View.widthOf(width, from) )} );
+	}
+	//the width, and the alignment with it, as the route's view has the column:  none where its sheet sizes it
+	restoreWidth( name:string, route:View|undefined ):void{
+		const field = this.fields.find( f=>f.name==name );
+		const style = route?.fields.find( f=>f.name==name )?.style;
+		if( field )
+			field.style = style ? new Style( style ) : undefined;
 	}
 	append( fields: Field[] ){
 		for( let field of fields.filter(f=>!this.fields.find(v=>v.name==f.name)) )
@@ -336,10 +395,19 @@ export class View{
 		const json = ( v:View )=>JSON.stringify( {...v.toJson(undefined), name: undefined} );
 		return !!b && json( a )==json( b );
 	}
-	//the same rows asked for:  alike, or a filter that differs only in a term the box cannot read, which is left out of the query
-	static sameQuery( a:View, b:View|undefined ):boolean{
-		const json = ( v:View )=>JSON.stringify( v.query(0) );
-		return !!b && json( a )==json( b );
+	//The rows read for `queried` are those `asked` shows:  the same arguments - so a filter that differs only in a term the box
+	//cannot read, which is left out of them - and no column the read left out, so a column hidden or moved.
+	static answers( queried:View|undefined, asked:View ):boolean{ return View.sameRows( queried, asked ) && View.#holds( queried!, asked ); }
+	//the same arguments, whatever the columns:  a column shown is read again on the same page
+	static sameRows( queried:View|undefined, asked:View ):boolean{
+		if( !queried )
+			return false;
+		const had = queried.#queryParts( 0 ), wants = asked.#queryParts( 0 );
+		return JSON.stringify( [had.args, had.vars] )==JSON.stringify( [wants.args, wants.vars] );
+	}
+	static #holds( queried:View, asked:View ):boolean{
+		const had = queried.#queryParts( 0 ).fields;
+		return asked.#queryParts( 0 ).fields.every( f=>had.includes(f) );
 	}
 	toJson( defaultSettings:TableSettings|undefined ):ViewJson{
 		let fields = [];

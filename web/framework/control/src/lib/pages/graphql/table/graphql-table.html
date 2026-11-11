@@ -1,4 +1,5 @@
 <mat-table style="flex-basis: 100%;" class="mat-elevation-z8 jde-dense"
+	[viewColumns]="views()" (columnsChange)="columnsChange.emit()"
 	[dataSource]="dataSource()"
 	matSort
 	(matSortChange)="onSortChange.emit($event)"
@@ -19,8 +20,8 @@
 	}
 	@for( column of columnNames().chip; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header [disabled]="!sortable(column)" [style]="columnStyle(column)"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let row" [style]="columnStyle(column)">@if( objectValue(row[column]); as value ){
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let row" viewColumn [style]="columnStyle(column)">@if( objectValue(row[column]); as value ){
 				@if( chipFilters().get(column); as held ){<!--a click filters on the value, and a second takes the term out;  stopPropagation, as the select checkbox does-->
 					<button type="button" class="chip-filter" [attr.aria-pressed]="held.has(value)" [attr.aria-label]="'Filter by ' + value" (click)="$event.stopPropagation(); onChipClick.emit({column, value})"><mat-chip [class]="chipClass(column,row)">{{value}}</mat-chip></button>
 				}
@@ -32,8 +33,8 @@
 	}
 	@for( column of columnNames().liveToggle; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header [style]="columnStyle(column)"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let row" [style]="columnStyle(column)">
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let row" viewColumn [style]="columnStyle(column)">
 				<!--stopPropagation, as the select checkbox does: without it the click reaches cellClick and the row navigates out from under the switch-->
 				<button matIconButton class="live-toggle" [class.live]="isLive(column,row)" [disabled]="pendingLive().includes(row.id)"
 					[matTooltip]="liveToggleLabel(column,row)" [attr.aria-label]="liveToggleLabel(column,row)" [attr.aria-pressed]="isLive(column,row)"
@@ -45,38 +46,38 @@
 	}
 	@for( column of columnNames().string; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header [style]="columnStyle(column)"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let row" [style]="columnStyle(column)"> {{stringValue(column,row)}} </mat-cell>
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let row" viewColumn [style]="columnStyle(column)"> {{stringValue(column,row)}} </mat-cell>
 		</ng-container>
 	}
 	@for( column of columnNames().object; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header [disabled]="!sortable(column)" [style]="columnStyle(column)"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let row" [style]="columnStyle(column)"> {{objectValue(row[column])}} </mat-cell>
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let row" viewColumn [style]="columnStyle(column)"> {{objectValue(row[column])}} </mat-cell>
 		</ng-container>
 	}
 	@for( column of columnNames().list; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let element"> {{element[column].join()}} </mat-cell>
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let element" viewColumn [style]="columnStyle(column)"> {{element[column].join()}} </mat-cell>
 		</ng-container>
 	}
 	@for( column of columnNames().date; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header class="dateColumn"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let element" class="dateColumn"> {{element[column] | date:'yy-MM-dd HH:mm a'}} </mat-cell>
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)" class="dateColumn">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let element" viewColumn [style]="columnStyle(column)" class="dateColumn"> {{element[column] | date:'yy-MM-dd HH:mm a'}} </mat-cell>
 		</ng-container>
 	}
 	@for( column of columnNames().bool; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header class="boolColumn"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let element" class="boolColumn"> {{element[column] ? '&#10003;' : '&#10005;'}} </mat-cell>
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)" class="boolColumn">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let element" viewColumn [style]="columnStyle(column)" class="boolColumn"> {{element[column] ? '&#10003;' : '&#10005;'}} </mat-cell>
 		</ng-container>
 	}
 	@for( column of columnNames().uint; track column ){
 		<ng-container [matColumnDef]="column">
-			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let element"> {{stringValue(column,element)}} </mat-cell>
+			<mat-header-cell *matHeaderCellDef viewColumn [sortable]="sortable(column)" [style]="columnStyle(column)">{{columnName(column)}}</mat-header-cell>
+			<mat-cell *matCellDef="let element" viewColumn [style]="columnStyle(column)"> {{stringValue(column,element)}} </mat-cell>
 		</ng-container>
 	}
 	<mat-header-row *matHeaderRowDef="displayedColumnNames(); sticky: true"></mat-header-row>

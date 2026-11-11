@@ -1,9 +1,9 @@
 @if( !isLoading() ) {
 	@if( isSettings() ){
-		<ql-list-settings [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [canDelete]=profile().canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
+		<ql-list-settings [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [canDelete]=profile().canRemove(view()) (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
 	} @else {
 		<ng-template #toolbar let-panel>
-			<view-toolbar [views]="profile()" [tabPanel]="panel" [tabs]="!selector()" [paged]="true" [filterValues]="filterValues()" [refreshing]="isRefreshing()" [count]="paged() ? undefined : data().length" (viewChange)="onChangeView()" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--no count on more than a page:  the pager under the table carries the range instead-->
+			<view-toolbar [views]="profile()" [tabPanel]="panel" [tabs]="!selector()" [paged]="true" [columns]="columns()" [selectable]="!selector()" [filterValues]="filterValues()" [refreshing]="isRefreshing()" [count]="paged() ? undefined : data().length" (viewChange)="onChangeView()" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--no count on more than a page:  the pager under the table carries the range instead-->
 				@if( canAdd() && !selector() ){
 					<button left [matButton]="addFilled() ? 'filled' : 'tonal'" (click)="onAdd()"><mat-icon>add</mat-icon>Add</button><!--filled only on a genuinely empty list, where Add is the one useful action (addFilled); showEmpty suppresses the flash while a reload has the rows cleared-->
 				}
@@ -19,7 +19,7 @@
 		}
 		<ng-template #rows><!--the table and what stands in for it-->
 			<div style="align-content: center; margin: auto;  text-align: center">
-				<ql-table [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() [chipFilters]=chipFilters() (onChipClick)=onChipClick($event) (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
+				<ql-table [views]=profile() (columnsChange)=onChangeView() [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() [chipFilters]=chipFilters() (onChipClick)=onChipClick($event) (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
 			</div>
 			@if( failure(); as f ){
 				<failure-state [failure]=f (retry)="onRefresh()">

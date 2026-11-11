@@ -43,9 +43,14 @@ export class QLList implements OnInit{
 
 	async ngOnInit(){
 		if( this.listData() )//embedded (QLSelector):  the host resolved the data itself, there is no route resolver to subscribe to
-			this.init( {data: this.listData()} );
+			this.#resolved( {data: this.listData()} );
 		else
-			this.#route.data.subscribe( (data)=>{ this.#queried = undefined; this.init( data ); } );
+			this.#route.data.subscribe( (data)=>this.#resolved(data) );
+	}
+	//the rows resolved are the view's
+	#resolved( data:Record<string,unknown> ){
+		this.init( data );
+		this.#queried = this.view();
 	}
 	//The rows of a reload to show checked:  those `prior` checked, by id - a reload builds new row objects - and one at most on a
 	//single-select list, where SelectionModel throws on more.
@@ -181,14 +186,22 @@ export class QLList implements OnInit{
 		this.profile().show( view );
 		await this.#refresh();
 	}
-	//The toolbar put another view on screen:  its rows, unless they are those shown or on their way - the view renamed, a copy
-	//of it, or its filter changed only in a term the box cannot read - where the page stays as it is.
+	//The toolbar or a header put another view on screen:  its rows, unless those shown or on their way hold them - the view
+	//renamed, a copy of it, a column hidden, moved or resized, or its filter changed only in a term the box cannot read - where
+	//the page stays as it is, its columns the view's even while a read is out.  A column shown is read on the same page, and a
+	//list showing a failure reads whatever the change.
 	async onChangeView(){
-		const view = this.profile().current();
-		if( !View.sameQuery(view, this.#queried ?? this.view()) )
-			await this.#refresh();
-		else if( !this.isRefreshing() )
+		const view = this.profile().current(), queried = this.#queried ?? this.view();
+		if( View.answers(queried, view) && !this.error() ){
 			this.view.set( view );
+			const multiple = this.selector() || view.showSelector;//the Fields checklist's Select
+			if( multiple!=this.selections().isMultipleSelection() )
+				this.selections.set( QLList.carriedSelection(this.selections(), this.data(), multiple) );
+		}
+		else if( View.sameRows(queried, view) )
+			await this.#reload();
+		else
+			await this.#refresh();
 	}
 	//another view, or this one edited, is a different set of pages:  from the first
 	async refresh(){

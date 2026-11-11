@@ -9,6 +9,8 @@ import { View } from '../../../model/ql/view';
 import { QLList } from './ql-list';
 import { Paginator } from '../../../shared/paginator/paginator';
 import { Provider } from '@angular/core';
+import { SelectionModel } from '@angular/cdk/collections';
+import { Subject } from 'rxjs';
 import { pageTitleStub, provideRoute, routerStub, fakeSessionStorage, flush, screenSize } from 'jde-spa/testing';
 import { id, object, required, scalar, schemaOf, slugRows, snackbarStub } from 'jde-framework/testing';
 
@@ -375,7 +377,7 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 //#231:  the list pages with `skip` through the shared resolver.  A page turn reloads at the pager's offset;  a view change is a
 //new set of pages and starts over;  a page the rows have left behind falls back to the first (QLListResolver.load).
 describe( 'QLList paging', ()=>{
-	const schema = schemaOf( "User", id(), required("name"), scalar("slug") );
+	const schema = schemaOf( "User", id(), required("name"), scalar("slug"), scalar("email") );
 	const rows = ( n:number, from=0 )=>slugRows( n, from, "user" );
 	//load:  the resolver, answering a page of `available`.  hold():  makes each load wait until the test settles it.
 	const create = ( available:any[] )=>{
@@ -486,6 +488,90 @@ describe( 'QLList paging', ()=>{
 		expect( load ).toHaveBeenCalledTimes( 1 );
 		expect( page.skip() ).toBe( 25 );
 		expect( page.view().name ).toBe( "Mine" );//the editor's, and Delete's
+	} );
+
+	//#592:  the rows on screen hold a column hidden, moved or resized, so the page stays as it is;  one shown is asked for
+	it( 'asks again for a column shown, not for one hidden, moved or resized', async ()=>{
+		const { page, load } = create( rows(40) );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		const edit = async ( change:( view:View )=>void )=>{
+			page.profile().edit( change );
+			await page.onChangeView();
+		};
+		await edit( view=>view.setDisplayed("email", true, "Email") );
+		expect( load ).toHaveBeenCalledTimes( 2 );
+		expect( [load.mock.calls[1][1].skip, page.skip()] ).toEqual( [25, 25] );//reviews-issue/592-views-fields.md #6:  on the page it was on
+		expect( page.displayedFields().map( f=>f.name ) ).toEqual( ["name", "email"] );
+		await edit( view=>view.moveField("email", 0) );
+		await edit( view=>view.setWidth("name", 200) );
+		await edit( view=>view.setDisplayed("name", false) );
+		expect( load ).toHaveBeenCalledTimes( 2 );
+		expect( page.displayedFields().map( f=>f.name ) ).toEqual( ["email"] );
+		await edit( view=>view.setDisplayed("name", true) );//the rows still hold it
+		expect( load ).toHaveBeenCalledTimes( 2 );
+	} );
+
+	//reviews-issue/592-views-fields.md #9:  the columns waited for the read, while the headers' drop places and widths followed the draft
+	it( 'takes a column resized while a read is out, its rows the read', async ()=>{
+		const { page, hold } = create( rows(40) );
+		const pending = hold();
+		another( page );
+		const read = page.onChangeView();
+		page.profile().edit( view=>view.setWidth("name", 200) );
+		await page.onChangeView();
+		const width = ()=>page.view().fields.find( f=>f.name=="name" )!.flex;
+		expect( [width(), pending.length] ).toEqual( ["0 0 200px", 1] );
+		pending[0].settle();
+		await read;
+		expect( width() ).toBe( "0 0 200px" );
+	} );
+
+	//reviews-issue/592-views-fields.md #11:  the view of a read that failed counted as read
+	it( 'reads again on any change once a read has failed', async ()=>{
+		const { page, load, hold } = create( rows(40) );
+		const pending = hold();
+		page.profile().edit( view=>view.setDisplayed("email", true, "Email") );
+		const failed = page.onChangeView();
+		pending[0].settle( new Error("gateway down") );
+		await failed;
+		expect( [page.error(), page.data()] ).toEqual( [expect.any( Error ), []] );
+		page.profile().edit( view=>view.setDisplayed("email", false) );
+		const again = page.onChangeView();
+		expect( load ).toHaveBeenCalledTimes( 2 );
+		pending[1].settle();
+		await again;
+		expect( [page.error(), page.data().length] ).toEqual( [undefined, 25] );
+	} );
+
+	//reviews-issue/592-views-fields.md #10:  a list just routed compared with the view on screen, which a hidden column narrowed
+	it( 'holds the rows the route resolved for a column hidden and shown again', async ()=>{
+		const resolved = new Subject<object>();
+		configure( undefined, provideRoute( {data: resolved} ) );
+		const view = View.fromTable( {columns: ["name", "email"], sort: "name"}, schema );
+		const profile = viewSet( [view] );
+		const page = TestBed.createComponent( QLList ).componentInstance;
+		const load = vi.spyOn( QLListResolver, 'load' ).mockImplementation( async ( _ql:any, data:any )=>({...data, results: {users: rows(3)}}) );
+		await page.ngOnInit();
+		resolved.next( {data: {routing: new ListRoute({path:'users'}), schema, profile, results: {users: rows(3)}}} );
+		for( const shown of [false, true] ){
+			profile.edit( v=>v.setDisplayed("email", shown) );
+			await page.onChangeView();
+		}
+		expect( load ).not.toHaveBeenCalled();
+		expect( page.displayedFields().map( f=>f.name ) ).toEqual( ["name", "email"] );
+	} );
+
+	//#592:  the Fields checklist's Select, where the rows on screen stay
+	it( 'lets its rows be ticked once the view shows the selector, those ticked kept', async ()=>{
+		const { page, load } = create( rows(3) );
+		page.selections.set( new SelectionModel( false, [page.data()[1]] ) );
+		page.profile().edit( view=>{ view.showSelector = true; } );
+		await page.onChangeView();
+		expect( [page.selections().isMultipleSelection(), page.selections().selected] ).toEqual( [true, [page.data()[1]]] );
+		page.profile().edit( view=>{ view.showSelector = false; } );
+		await page.onChangeView();
+		expect( page.selections().isMultipleSelection() ).toBe( false );
+		expect( load ).not.toHaveBeenCalled();
 	} );
 
 	//reviews-issue/591-views-filter-box.md #3:  each pause in a term the box cannot read asked for the same rows again

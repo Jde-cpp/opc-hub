@@ -50,6 +50,7 @@ export * from './lib/shared/pipes/enum-keys-pipe';
 export * from './lib/shared/severity-picker/severity-picker'
 export * from './lib/shared/failure-state/failure-state';
 export * from './lib/shared/snackbar/snackbar';
+export * from './lib/shared/view-columns/view-columns';
 export * from './lib/shared/view-toolbar/view-toolbar';
 export * from './lib/utils/date-utils';
 export * from './lib/utils/proto-utils';

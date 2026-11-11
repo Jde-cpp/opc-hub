@@ -15,7 +15,6 @@ describe( 'QLListSettings view name', ()=>{
 		view.name = "Mine";//the settings-shaped ctor arg carries no name; onViewSave assigns it the same way
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
-		fixture.componentRef.setInput( 'columns', {name: "Name"} );
 		fixture.componentInstance.ngOnInit();
 		fixture.detectChanges();
 		return fixture;
@@ -74,7 +73,6 @@ describe( 'QLListSettings Save and Delete', ()=>{
 		view.number = number;
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
-		fixture.componentRef.setInput( 'columns', {name: "Name"} );
 		fixture.componentInstance.ngOnInit();
 		fixture.detectChanges();
 		return fixture.componentInstance;
@@ -108,7 +106,7 @@ describe( 'QLListSettings Save and Delete', ()=>{
 	} );
 } );
 
-//#589:  the page size is the view menu's (ViewToolbar), so the Display tab has no box for it and the editor leaves the limit alone
+//#589:  the page size is the view menu's (ViewToolbar), so the editor has no box for it and leaves the limit alone
 describe( 'QLListSettings page size', ()=>{
 	it( "offers none, and keeps the view's", async ()=>{
 		const fixture = TestBed.createComponent( QLListSettings );
@@ -116,7 +114,6 @@ describe( 'QLListSettings page size', ()=>{
 		view.limit = 40;
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
-		fixture.componentRef.setInput( 'columns', {name: "Name"} );
 		fixture.componentInstance.ngOnInit();
 		await stable( fixture, 1 );
 		expect( fixture.nativeElement.querySelector('input[type=number]') ).toBeNull();
@@ -124,34 +121,34 @@ describe( 'QLListSettings page size', ()=>{
 	} );
 } );
 
-//reviews-issue/589-views-draft.md #10:  the Display tab's columns the view lacks came back in it, hidden under the host's names, so a
-//Show that changed nothing was no longer alike the view, and made a draft
+//#592:  the columns are the view menu's `Fields` and the headers', so the editor has no Display tab and leaves the fields, their
+//order, their widths and the selector as they are
 describe( 'QLListSettings Show', ()=>{
-	it( 'gives back the view it was opened on where nothing was changed', async ()=>{
-		const described = schemaOf( "User", id(), required("name"), scalar("description") );
+	it( 'gives back the view it was opened on where nothing was changed, its columns as they were', async ()=>{
 		const fixture = TestBed.createComponent( QLListSettings );
-		const view = View.fromTable( {columns: ["name"], sort: "name"}, described );
+		const view = View.fromTable( {columns: ["slug", "name"], sort: "name"}, schema );
+		view.setWidth( "slug", 90 );
+		view.showSelector = true;
 		fixture.componentRef.setInput( 'view', view );
-		fixture.componentRef.setInput( 'schema', described );
-		fixture.componentRef.setInput( 'columns', {name: "Name", description: "Notes"} );
+		fixture.componentRef.setInput( 'schema', schema );
 		fixture.componentInstance.ngOnInit();
 		await stable( fixture, 1 );
+		expect( fixture.nativeElement.querySelector('mat-tab-group') ).toBeNull();
 		const shown = fixture.componentInstance.getView( true );
-		expect( shown.fields.some( f=>f.name=="description" ) ).toBe( false );
 		expect( View.alike( shown, view ) ).toBe( true );
+		expect( shown.showSelector ).toBe( true );
 	} );
 } );
 
-//A24:  the three tabs and their tables are signal queries - getView reads every tab, and a row added on one re-renders its table.
-describe( 'QLListSettings tabs', ()=>{
-	it( 'builds the view from both tabs, its filter kept', async ()=>{
+//A24:  the sort's table is a signal query - getView reads it, and a row added re-renders its table.
+describe( 'QLListSettings sort', ()=>{
+	it( 'builds the view from the sort, its filter and its columns kept', async ()=>{
 		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( QLListSettings );
 		const view = View.fromTable( {columns: ["name", "slug"], sort: "name"}, schema );
 		view.filter = "slug:a";
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
-		fixture.componentRef.setInput( 'columns', {name: "Name", slug: "Slug"} );
 		const settings = fixture.componentInstance;
 		settings.ngOnInit();
 		await stable( fixture, 1 );

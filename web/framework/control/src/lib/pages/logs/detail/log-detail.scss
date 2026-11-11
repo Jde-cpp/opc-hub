@@ -68,6 +68,13 @@ scrollWidth>clientWidth true exactly when the text is cut, which is what drives 
 .mat-column-line {
 	flex: 0 0 45px;
 }
+.mat-column-file {
+	flex: 0 0 200px;
+}
+//the pinned cell paints the table's colour (_general.scss), so it takes the row's tint itself
+.table-row:hover .jde-pinned {
+	background: color-mix( in srgb, var(--mat-sys-on-surface) 8%, var(--mat-table-background-color, var(--mat-sys-surface)) );
+}
 /* level and tags are chips, so the cell is the flex container that lays them out.  no wrapping - .table-row is a
 fixed 30px, a second line would just be cut off; the overflow is clipped and the full set is on the cell's title.
 the mat-chip tokens shrink the 32px default chip to fit that row - they are custom properties, so they inherit

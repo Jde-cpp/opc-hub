@@ -14,6 +14,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatChip } from '@angular/material/chips';
 import {MatSelectModule} from '@angular/material/select';
 import { PageEvent, Paginator } from '../../../shared/paginator/paginator';
+import { ViewColumnCell, ViewColumnHeader, ViewColumns } from '../../../shared/view-columns/view-columns';
 import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { IGraphQL } from '../../../services/graphql';
@@ -30,7 +31,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 	selector: 'log-detail',
 	templateUrl: './log-detail.html',
 	styleUrls: ['./log-detail.scss'],
-	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, Paginator, QLListSettings, ViewToolbar]
+	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, Paginator, QLListSettings, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar]
 })
 export class LogDetail implements OnInit, OnDestroy{
 	#snackBar = inject( SnackbarService );
@@ -80,10 +81,12 @@ export class LogDetail implements OnInit, OnDestroy{
 		this.data.clear();
 		this.load();
 	}
-	//The view on screen is another:  its rows, unless they are those shown - the view renamed, or a copy of it.  At once, not once
-	//it is written, or the table keeps the last view's rows under this one's columns.
+	//The view on screen is another:  its rows, unless they are those shown - the view renamed, a copy of it, or its columns changed,
+	//since a read brings every column.  At once, not once it is written, or the table keeps the last view's rows under this one's
+	//columns.
 	onViewChange(){
-		if( !View.alike(this.view(), this.#read) )
+		const query = ( view:LogView|undefined )=>JSON.stringify( view?.query(0, this.level) );
+		if( query(this.view())!=query(this.#read) )
 			this.refresh();
 	}
 	//minimum level to show - the level goes into the query, so re-read instead of filtering what is loaded.
@@ -232,6 +235,6 @@ export class LogDetail implements OnInit, OnDestroy{
 	profileStore = inject(ProfileStore);
 	viewSet = new ViewSet( {type: LogView, key: "logs", profileStore: this.profileStore, prefs: inject(LocalPrefs)} );
 	view = this.viewSet.current;
-	#read:View|undefined;//the view the rows shown were read under, or are being read
+	#read:LogView|undefined;//the view the rows shown were read under, or are being read
 	get viewCopy(){ return LogView.copy( this.view() ); }
 }

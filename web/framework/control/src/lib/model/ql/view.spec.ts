@@ -238,3 +238,107 @@ describe( "View statics", ()=>{
 		expect( View.alike( base, undefined ) ).toBe( false );
 	} );
 } );
+
+//#592:  the Fields checklist, a header's menu, its drag and its handle change the view through these
+describe( "View's columns", ()=>{
+	const things = schemaOf( "Thing", scalar("name"), scalar("slug"), scalar("kind"), scalar("description"), scalar("created", "DateTime") );
+	const make = ()=>View.fromTable( {columns: ["name", "slug", {name: "kind", style: new Style({flex: new Flex(120), align: "right"})}], sort: "name"}, things );
+	const shown = ( view:View )=>view.fields.filter( f=>f.displayed ).map( f=>f.name );
+
+	//reviews-issue/592-views-fields.md #4
+	it( "show a column the view lacks as the route's field has it", ()=>{
+		const route = View.fromTable( {columns: ["name", {name: "created", style: new Style( 150 ), chip: {x: "ok"}, selection: "id"}], sort: "name"}, things );
+		const view = make();
+		view.setDisplayed( "created", true, "Made", route.fields.find( f=>f.name=="created" ) );
+		const shown = view.fields.find( f=>f.name=="created" )!;
+		expect( [shown.displayed, shown.displayName, shown.flex, shown.chip, shown.selection] ).toEqual( [true, "Created", "0 0 150px", {x: "ok"}, "id"] );
+		expect( route.fields.find( f=>f.name=="created" )!.style!.flex ).not.toBe( shown.style!.flex );//its own, not the route's
+	} );
+	it( "show a column after those shown, one the view lacks under the host's name for it", ()=>{
+		const view = make();
+		view.setDisplayed( "created", true, "Made" );
+		expect( shown(view) ).toEqual( ["name", "slug", "kind", "created"] );
+		expect( view.fields.at(-1)!.displayName ).toBe( "Made" );
+		expect( view.query(0).text ).toContain( " created " );
+		view.setDisplayed( "slug", false );
+		view.setDisplayed( "slug", true );//hidden, it comes back last
+		expect( shown(view) ).toEqual( ["name", "kind", "created", "slug"] );
+		view.setDisplayed( "nothing", true );
+		expect( shown(view) ).toEqual( ["name", "kind", "created", "slug"] );
+	} );
+	it( "hide a column, but never the last one shown", ()=>{
+		const view = make();
+		view.setDisplayed( "slug", false );
+		view.setDisplayed( "kind", false );
+		view.setDisplayed( "name", false );
+		expect( shown(view) ).toEqual( ["name"] );
+	} );
+	it( "move a column among those shown, whatever is hidden between them", ()=>{
+		const view = make();
+		view.setDisplayed( "slug", false );
+		view.moveField( "kind", 0 );
+		expect( shown(view) ).toEqual( ["kind", "name"] );
+		view.moveField( "kind", 1 );
+		expect( shown(view) ).toEqual( ["name", "kind"] );
+		view.moveField( "kind", 9 );//held at the last place
+		view.moveField( "name", -1 );
+		view.moveField( "slug", 0 );//not shown
+		expect( shown(view) ).toEqual( ["name", "kind"] );
+	} );
+	it( "write a width as a fixed basis, held at the floor, the alignment kept", ()=>{
+		const view = make();
+		view.setWidth( "kind", 201.4 );
+		expect( view.fields.find( f=>f.name=="kind" )!.flex ).toBe( "0 0 201px" );
+		expect( view.fields.find( f=>f.name=="kind" )!.style!.align ).toBe( "right" );
+		view.setWidth( "name", 10 );
+		expect( view.fields.find( f=>f.name=="name" )!.flex ).toBe( `0 0 ${View.minWidth}px` );
+		expect( View.minWidth ).toBe( 64 );
+	} );
+	//reviews-issue/592-views-fields.md #3, #15
+	it( "never narrow a column under the width it had where that is under the floor, nor widen it there", ()=>{
+		expect( [View.widthOf( 13, 45 ), View.widthOf( 50, 45 ), View.widthOf( 30, 100 ), View.widthOf( 30 )] ).toEqual( [45, 50, 64, 64] );
+		const view = make();
+		view.setWidth( "name", 13, 45 );
+		expect( view.fields.find( f=>f.name=="name" )!.flex ).toBe( "0 0 45px" );
+		expect( [View.flexOf( 45 ), new Flex( "0 0 45px" ).px, new Flex( "1" ).px] ).toEqual( ["0 0 45px", 45, undefined] );
+	} );
+	it( "save a width with the view, and read it back", ()=>{
+		const view = make();
+		view.setWidth( "name", 180 );
+		const back = View.fromJson( JSON.parse( JSON.stringify(view.toJson(undefined)) ), things, make() );
+		expect( back.fields.find( f=>f.name=="name" )!.flex ).toBe( "0 0 180px" );
+		expect( View.alike( back, view ) ).toBe( true );
+		expect( View.alike( view, make() ) ).toBe( false );
+	} );
+	it( "restore the route's width, or none where the route has none", ()=>{
+		const route = make(), view = make();
+		view.setWidth( "kind", 300 );
+		view.setWidth( "name", 300 );
+		view.restoreWidth( "kind", route );
+		view.restoreWidth( "name", route );
+		expect( view.fields.find( f=>f.name=="kind" )!.flex ).toBe( "0 0 120px" );
+		expect( view.fields.find( f=>f.name=="name" )!.style ).toBeUndefined();
+		expect( View.alike( view, route ) ).toBe( true );
+	} );
+	it( "pin the name, or the first column shown where the view shows none", ()=>{
+		const view = make();
+		view.moveField( "name", 2 );
+		expect( view.pinned ).toBe( "name" );
+		view.setDisplayed( "name", false );
+		expect( view.pinned ).toBe( "slug" );
+	} );
+	it( "take the rows read as the view's where it only hides, moves or resizes a column, and not where it shows or filters one", ()=>{
+		const read = make();
+		const change = ( edit:( view:View )=>void )=>{ const view = View.copy( read ); edit( view ); return View.answers( read, view ); };
+		expect( change( ()=>{} ) ).toBe( true );
+		expect( change( v=>v.setDisplayed("slug", false) ) ).toBe( true );
+		expect( change( v=>v.moveField("kind", 0) ) ).toBe( true );
+		expect( change( v=>v.setWidth("name", 200) ) ).toBe( true );
+		expect( change( v=>{ v.filter = "nothing:1"; } ) ).toBe( true );//a term the box cannot read is not sent
+		expect( change( v=>v.setDisplayed("created", true) ) ).toBe( false );
+		expect( change( v=>{ v.filter = "kind:a"; } ) ).toBe( false );
+		expect( change( v=>{ v.sort = [{active: "slug", direction: "asc"}]; } ) ).toBe( false );
+		expect( change( v=>{ v.limit = 50; } ) ).toBe( false );
+		expect( View.answers( undefined, read ) ).toBe( false );
+	} );
+} );
