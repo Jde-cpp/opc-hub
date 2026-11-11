@@ -1,15 +1,15 @@
 <span #label class="column-label" [mat-sort-header]="name" [disabled]="!sortable()"><ng-content/></span>
 @if( field() ){
-	<button type="button" class="column-menu" [attr.aria-label]="title() + ' column menu'" [matMenuTriggerFor]="menu" (mousedown)="stop($event)" (touchstart)="stop($event)"><mat-icon aria-hidden="true">more_vert</mat-icon></button>
+	<button #menuButton type="button" class="column-menu" [attr.aria-label]="title() + ' column menu'" [matMenuTriggerFor]="menu" (mousedown)="stop($event)" (touchstart)="stop($event)"><mat-icon aria-hidden="true">more_vert</mat-icon></button>
 	<!--the right edge:  a pointer's control - the menu's Wider and Narrower are the keyboard's-->
-	<span class="column-resize" aria-hidden="true" (pointerdown)="onResizeStart($event)" (pointermove)="onResizeMove($event)" (pointerup)="onResizeEnd()" (pointercancel)="onResizeEnd()" (dblclick)="onResizeReset()" (mousedown)="stop($event)" (touchstart)="stop($event)" (click)="stop($event)"></span>
+	<span class="column-resize" aria-hidden="true" (pointerdown)="onResizeStart($event)" (pointermove)="onResizeMove($event)" (pointerup)="onResizeEnd()" (pointercancel)="onResizeCancel()" (dblclick)="onResizeReset()" (mousedown)="stop($event)" (touchstart)="stop($event)" (click)="stop($event)"></span>
 	<mat-menu #menu="matMenu">
 		<ng-template matMenuContent><!--the sorts, the group, the slice and Filter by… join it with their phases-->
-			<button mat-menu-item type="button" [disabled]="place()<=0" (click)="columns.move(name, place()-1)"><mat-icon aria-hidden="true">arrow_back</mat-icon>Move left</button>
-			<button mat-menu-item type="button" [disabled]="place()<0 || place()>=count()-1" (click)="columns.move(name, place()+1)"><mat-icon aria-hidden="true">arrow_forward</mat-icon>Move right</button>
+			<button mat-menu-item type="button" [disabled]="place()<=0" (click)="moveBy(-1)"><mat-icon aria-hidden="true">arrow_back</mat-icon>Move left</button>
+			<button mat-menu-item type="button" [disabled]="place()<0 || place()>=count()-1" (click)="moveBy(1)"><mat-icon aria-hidden="true">arrow_forward</mat-icon>Move right</button>
 			<button mat-menu-item type="button" (click)="wider()"><mat-icon aria-hidden="true">add</mat-icon>Wider</button>
 			<button mat-menu-item type="button" [disabled]="atFloor" (click)="narrower()"><mat-icon aria-hidden="true">remove</mat-icon>Narrower</button>
-			<button mat-menu-item type="button" [disabled]="count()<2" (click)="columns.hide(name)"><mat-icon aria-hidden="true">visibility_off</mat-icon>Hide field</button>
+			<button mat-menu-item type="button" [disabled]="count()<2" (click)="hide()"><mat-icon aria-hidden="true">visibility_off</mat-icon>Hide field</button>
 		</ng-template>
 	</mat-menu>
 }

@@ -30,14 +30,14 @@ Click a column header to sort by that column, which is an [unsaved change](#unsa
 
 A column is changed from its header, and each change is an [unsaved change](#unsaved-changes) to the view.
 
-- **Drag a header** along the header row to move its column.
-- **Drag a header's right edge** to set the column's width, down to 64 pixels. Double-click the edge to put back the width the list gives the column.
+- **Drag a header** along the header row to move its column. On a touch screen, press and hold the header first.
+- **Drag a header's right edge** to set the column's width, down to 64 pixels, or to the column's own width where the list draws it narrower. Double-click the edge to put back the width the list gives the column.
 - A header shows a menu button when the pointer is over it or the keyboard is on it:
   - **Move left** and **Move right** move the column a place.
   - **Wider** and **Narrower** change its width a step at a time.
   - **Hide field** takes the column out of the view. The last column cannot be hidden.
 
-**Fields** in the [view's menu](#views) lists every column the list has, with the ones shown ticked and first, in their order. Tick a column to show it, after the others, and untick it to hide it. The menu stays open for the next tick.
+**Fields** in the [view's menu](#views) lists every column the list has, with the ones shown ticked and first, in their order. Tick a column to show it, after the others, and untick it to hide it. The menu stays open for the next tick, its list in the order it opened in.
 
 The **Name** column stays at the left edge when a list wider than the page is scrolled sideways. Where a view does not show the name, its first column does.
 
@@ -45,7 +45,7 @@ A list longer than its view's page size is read a page at a time. **Page size** 
 
 The pager under the table steps through the pages. Its inner pair of buttons steps one row at a time. It shows which rows are on screen, and the total once the last page has been reached.
 
-Switching or changing the view returns to the first page. The refresh button keeps the page you are on. So does opening a record and coming back, for as long as the browser tab stays open.
+Switching or changing the view returns to the first page, except a change to its columns, which keeps the page you are on. So does the refresh button. So does opening a record and coming back, for as long as the browser tab stays open.
 
 Deleted records are left out of every view that does not filter on **Deleted**. The **Deleted** view, after a list's other built-in views, lists only them, and so does `has:deleted` typed in any view's filter box. That is how to reach one and restore it.
 

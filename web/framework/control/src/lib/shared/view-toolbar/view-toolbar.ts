@@ -78,20 +78,31 @@ export class ViewToolbar{
 
 	label( view:View ):string{ return view.name ?? "Default"; }
 	//The `Fields` checklist:  the host's columns, by name with what the header reads - those the view shows first, in its order -
-	//and, where the host lets its rows be ticked, *Select* ahead of them.  A tick is a change to the draft.  The last column shown
-	//stays ticked.
+	//and, where the host lets its rows be ticked, *Select* ahead of them.  A tick is a change to the draft, which leaves the list
+	//in the order it opened in:  an item moved under the focus or the pointer would lose the one and mislead the other.  The last
+	//column shown stays ticked.
 	columns = input<Record<string,string>>( {} );
 	selectable = input<boolean>( false );
-	fields = computed<{name:string, label:string, shown:boolean}[]>( ()=>{
+	#listed = computed<{name:string, label:string, shown:boolean}[]>( ()=>{
 		const offered = this.columns(), view = this.views().current();
 		const shown = view.fields.filter( f=>f.displayed && f.name in offered );
 		const rest = Object.keys( offered ).filter( name=>!shown.some( f=>f.name==name ) );
 		return [...shown.map( f=>({name: f.name, label: f.displayName ?? offered[f.name], shown: true}) ), ...rest.map( name=>({name, label: offered[name], shown: false}) )];
 	} );
+	#opened = signal<string[]|undefined>( undefined );//the order while the checklist is open
+	fields = computed<{name:string, label:string, shown:boolean}[]>( ()=>{
+		const listed = this.#listed(), order = this.#opened();
+		const at = ( name:string )=>{ const i = order!.indexOf( name ); return i<0 ? order!.length : i; };
+		return order ? [...listed].sort( (a,b)=>at(a.name)-at(b.name) ) : listed;
+	} );
+	fieldsOpened(){ this.#opened.set( this.#listed().map( f=>f.name ) ); }
+	fieldsClosed(){ this.#opened.set( undefined ); }
 	shownCount = computed<number>( ()=>this.views().current().fields.filter( f=>f.displayed ).length );
+	//one the view lacks is the route's field for it, its width and chip with it
 	toggleField( field:{name:string, label:string, shown:boolean}, event:Event ){
 		event.stopPropagation();//the menu stays open:  a checklist takes several ticks
-		this.views().edit( view=>view.setDisplayed(field.name, !field.shown, field.label) );
+		const route = this.views().routeDefault?.fields.find( f=>f.name==field.name );
+		this.views().edit( view=>view.setDisplayed(field.name, !field.shown, field.label, route) );
 		this.viewChange.emit();
 	}
 	toggleSelector( event:Event ){

@@ -61,7 +61,8 @@ export class GraphQLTable{
 	isAllSelected(){ return this.selections().selected.length==this.dataSource().length; }
 	isSelected( row:QLRow ){ return this.selections().isSelected(row); }
 	columnName( colName:string ){ return this.columns().get( colName )?.field.displayName ?? capitalize(colName); }
-	//Applied to the header cell and the data cell from the one setting, so the two cannot drift apart.
+	//Applied to the header cell and the data cell from the one setting, so the two cannot drift apart.  Its width is viewColumn's
+	//where the table has views:  the draft's, as the header's menu and drag set it.
 	columnStyle( colName:string ):Record<string,string>{ return this.columns().get( colName )?.style ?? noStyle; }
 	objectValue( obj: unknown ): string{
 		if( obj==null )
@@ -120,7 +121,10 @@ export class GraphQLTable{
 
 	displayedColumnNames = computed( ()=>(this.selections().isMultipleSelection() ? ["select"] : []).concat( this.displayedFields().filter((x)=>x.displayed).map((x)=>x.name) ) );
 	//each field's cell, classified once per change of fields rather than once per change-detection pass and per cell
-	columns = computed( ()=>new Map( this.displayedFields().map( f=>[f.name, {field: f, kind: columnKind( f ), style: cellStyle( f.style )}] ) ) );
+	columns = computed( ()=>{
+		const width = !this.views();
+		return new Map( this.displayedFields().map( f=>[f.name, {field: f, kind: columnKind( f ), style: cellStyle( f.style, width )}] ) );
+	} );
 	//the matColumnDef lists, one per kind:  a field is in one at most, or its column is declared twice and mat-table throws
 	columnNames = computed( ()=>{
 		const y:Record<ColumnKind,string[]> = { chip: [], liveToggle: [], string: [], object: [], list: [], date: [], bool: [], uint: [] };
@@ -154,13 +158,13 @@ function columnKind( x:ViewField ):ColumnKind|undefined{
 	return undefined;
 }
 //`align` is expanded rather than passed through: it is not a CSS property, and a mat-cell is a flex container - text-align on
-//its own leaves the content wherever justify-content put it.
-function cellStyle( style:Style|undefined ):Record<string,string>{
+//its own leaves the content wherever justify-content put it.  `width`:  the flex too.
+function cellStyle( style:Style|undefined, width:boolean ):Record<string,string>{
 	if( !style )
 		return noStyle;
 	const y:Record<string,string> = {};
 	for( const [key,value] of Object.entries(style) ){
-		if( value==null )
+		if( value==null || (key=="flex" && !width) )
 			continue;
 		if( key=="align" ){
 			y["justifyContent"] = value=="right" ? "flex-end" : value=="center" ? "center" : "flex-start";

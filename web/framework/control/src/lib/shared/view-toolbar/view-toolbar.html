@@ -65,7 +65,7 @@ The menus build their entries only while open (matMenuContent).-->
 			<button mat-menu-item type="button" [matMenuTriggerFor]="viewsMenu">Views</button>
 		}
 		@if( fields().length ){
-			<button mat-menu-item type="button" [matMenuTriggerFor]="fieldsMenu">Fields</button>
+			<button mat-menu-item type="button" [matMenuTriggerFor]="fieldsMenu" (menuOpened)="fieldsOpened()" (menuClosed)="fieldsClosed()">Fields</button>
 		}
 		@if( paged() ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="pageSizeMenu">Page size</button>

@@ -4,7 +4,7 @@ import { By } from '@angular/platform-browser';
 import { CdkDragDrop } from '@angular/cdk/drag-drop';
 import { MatTabNavPanel } from '@angular/material/tabs';
 import { IPROFILE_SERVICE, LocalPrefs, ProfileStore } from 'jde-spa';
-import { View } from '../../model/ql/view';
+import { Style, View } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 import { SnackbarService } from '../snackbar/snackbar-service';
 import { ViewToolbar } from './view-toolbar';
@@ -609,8 +609,40 @@ describe( 'ViewToolbar', ()=>{
 			const shown = ()=>set.current().fields.filter( f=>f.displayed ).map( f=>[f.name, f.displayName] );
 			expect( shown() ).toEqual( [["slug", "Slug"], ["name", "Name"], ["kind", "Sort"]] );//under the host's name for it
 			await pick( fixture, "Slug" );
-			expect( ticks() ).toEqual( [["Name", "true"], ["Sort", "true"], ["Slug", "false"]] );
+			expect( ticks() ).toEqual( [["Slug", "false"], ["Name", "true"], ["Sort", "true"]] );//reviews-issue/592-views-fields.md #7:  in the order it opened in
 			expect( [set.current().isAdhoc, host.changes] ).toEqual( [true, 2] );
+		} );
+
+		it( 'lists those shown first again once it is opened again', async ()=>{
+			const { fixture, element } = await open();
+			await pick( fixture, "Slug" );
+			document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+			await settle( fixture );
+			//by the triggers' own panels:  those closed stay in the overlay
+			const entries = ( trigger:Element )=>[...document.getElementById( trigger.getAttribute( "aria-controls" )! )!.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )];
+			const menu = chevron( activeTab( element ) )!;
+			menu.click();
+			fixture.detectChanges();
+			const fields = entries( menu ).find( i=>text( i )=="Fields" )!;
+			fields.click();
+			await settle( fixture );
+			expect( entries( fields ).map( i=>[text( i ), i.getAttribute( "aria-checked" )] ) ).toEqual( [["Name", "true"], ["Slug", "false"], ["Sort", "false"]] );
+		} );
+
+		//reviews-issue/592-views-fields.md #4:  a column the view lacks came from the schema bare, without the route's width or chip
+		it( "shows a column the view lacks as the route's default view has it", async ()=>{
+			const route = [
+				View.fromTable( {columns: ["slug", "name", {name: "kind", style: new Style( 90 ), chip: {a: "ok"}}], sort: "name"}, things ),
+				View.fromConfig( {name: "Narrow", configColumns: ["slug", "name"], sort: [{active: "name", direction: "asc"}]}, things )
+			];
+			const { fixture, set, element, host } = await create( {route, schema: things} );
+			host.columns.set( columns );
+			fixture.detectChanges();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Fields" );
+			await pick( fixture, "Sort" );
+			const kind = set.current().fields.find( f=>f.name=="kind" )!;
+			expect( [set.current().name, kind.displayed, kind.flex, kind.chip] ).toEqual( ["Narrow", true, "0 0 90px", {a: "ok"}] );
 		} );
 
 		it( 'keeps the last column shown', async ()=>{

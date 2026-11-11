@@ -54,6 +54,8 @@ export class Flex{
 	toString(){
 		return `${this.flexGrow ?? 0} ${this.flexShrink ?? 0} ${this.flexBasis ?? "auto"}`;
 	}
+	//the basis in pixels, where it is one
+	get px():number|undefined{ return this.flexBasis?.endsWith( "px" ) ? parseFloat( this.flexBasis ) : undefined; }
 	flexGrow?:number;
 	flexShrink?:number;
 	flexBasis?:string
@@ -330,8 +332,9 @@ export class View{
 		return ( shown.find( f=>f.name=="name" ) ?? shown[0] )?.name;
 	}
 	//A column shown, after those that are, or hidden:  the Fields checklist's tick and the header's Hide field.  One the view lacks
-	//is the schema's, under the host's name for it.  The last column shown stays.
-	setDisplayed( name:string, displayed:boolean, displayName?:string ):void{
+	//is `route`'s - the route's field for it, with its width, chip and selection - else the schema's, under the host's name for it.
+	//The last column shown stays.
+	setDisplayed( name:string, displayed:boolean, displayName?:string, route?:ViewField ):void{
 		let field = this.fields.find( f=>f.name==name );
 		if( !displayed ){
 			if( field?.displayed && this.fields.filter( f=>f.displayed ).length>1 )
@@ -343,7 +346,7 @@ export class View{
 		const qlField = field?.qlField ?? this.schema?.fields.find( f=>f.name==name );
 		if( !qlField )
 			return;
-		field ??= new ViewField( {qlField, settings: {name, displayName}} );
+		field ??= route?.name==name ? new ViewField( route ) : new ViewField( {qlField, settings: {name, displayName}} );
 		field.displayed = true;
 		this.fields = [...this.fields.filter( f=>f!==field ), field];
 	}
@@ -358,12 +361,15 @@ export class View{
 		fields.splice( fields.indexOf(shown[to])+( to>from ? 1 : 0 ), 0, shown[from] );
 		this.fields = fields;
 	}
-	//A column's width, a fixed basis as a route writes one, never under the floor:  room for the header's menu button and its handle.
+	//A column's width, a fixed basis as a route writes one, never under the floor - room for the header's menu button and its
+	//handle - nor narrowed under `from`, the width it had, where that is less:  a column its sheet draws narrower is not widened.
 	static readonly minWidth = 64;
-	setWidth( name:string, width:number ):void{
+	static widthOf( width:number, from=Infinity ):number{ return Math.max( Math.min(View.minWidth, from), Math.round(width) ); }
+	static flexOf( width:number ):string{ return `${new Flex( width )}`; }
+	setWidth( name:string, width:number, from=Infinity ):void{
 		const field = this.fields.find( f=>f.name==name );
 		if( field )
-			field.style = new Style( {...field.style, flex: new Flex( Math.max(View.minWidth, Math.round(width)) )} );
+			field.style = new Style( {...field.style, flex: new Flex( View.widthOf(width, from) )} );
 	}
 	//the width, and the alignment with it, as the route's view has the column:  none where its sheet sizes it
 	restoreWidth( name:string, route:View|undefined ):void{
@@ -391,11 +397,17 @@ export class View{
 	}
 	//The rows read for `queried` are those `asked` shows:  the same arguments - so a filter that differs only in a term the box
 	//cannot read, which is left out of them - and no column the read left out, so a column hidden or moved.
-	static answers( queried:View|undefined, asked:View ):boolean{
+	static answers( queried:View|undefined, asked:View ):boolean{ return View.sameRows( queried, asked ) && View.#holds( queried!, asked ); }
+	//the same arguments, whatever the columns:  a column shown is read again on the same page
+	static sameRows( queried:View|undefined, asked:View ):boolean{
 		if( !queried )
 			return false;
 		const had = queried.#queryParts( 0 ), wants = asked.#queryParts( 0 );
-		return JSON.stringify( [had.args, had.vars] )==JSON.stringify( [wants.args, wants.vars] ) && wants.fields.every( f=>had.fields.includes(f) );
+		return JSON.stringify( [had.args, had.vars] )==JSON.stringify( [wants.args, wants.vars] );
+	}
+	static #holds( queried:View, asked:View ):boolean{
+		const had = queried.#queryParts( 0 ).fields;
+		return asked.#queryParts( 0 ).fields.every( f=>had.includes(f) );
 	}
 	toJson( defaultSettings:TableSettings|undefined ):ViewJson{
 		let fields = [];

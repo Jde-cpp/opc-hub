@@ -245,6 +245,15 @@ describe( "View's columns", ()=>{
 	const make = ()=>View.fromTable( {columns: ["name", "slug", {name: "kind", style: new Style({flex: new Flex(120), align: "right"})}], sort: "name"}, things );
 	const shown = ( view:View )=>view.fields.filter( f=>f.displayed ).map( f=>f.name );
 
+	//reviews-issue/592-views-fields.md #4
+	it( "show a column the view lacks as the route's field has it", ()=>{
+		const route = View.fromTable( {columns: ["name", {name: "created", style: new Style( 150 ), chip: {x: "ok"}, selection: "id"}], sort: "name"}, things );
+		const view = make();
+		view.setDisplayed( "created", true, "Made", route.fields.find( f=>f.name=="created" ) );
+		const shown = view.fields.find( f=>f.name=="created" )!;
+		expect( [shown.displayed, shown.displayName, shown.flex, shown.chip, shown.selection] ).toEqual( [true, "Created", "0 0 150px", {x: "ok"}, "id"] );
+		expect( route.fields.find( f=>f.name=="created" )!.style!.flex ).not.toBe( shown.style!.flex );//its own, not the route's
+	} );
 	it( "show a column after those shown, one the view lacks under the host's name for it", ()=>{
 		const view = make();
 		view.setDisplayed( "created", true, "Made" );
@@ -284,6 +293,14 @@ describe( "View's columns", ()=>{
 		view.setWidth( "name", 10 );
 		expect( view.fields.find( f=>f.name=="name" )!.flex ).toBe( `0 0 ${View.minWidth}px` );
 		expect( View.minWidth ).toBe( 64 );
+	} );
+	//reviews-issue/592-views-fields.md #3, #15
+	it( "never narrow a column under the width it had where that is under the floor, nor widen it there", ()=>{
+		expect( [View.widthOf( 13, 45 ), View.widthOf( 50, 45 ), View.widthOf( 30, 100 ), View.widthOf( 30 )] ).toEqual( [45, 50, 64, 64] );
+		const view = make();
+		view.setWidth( "name", 13, 45 );
+		expect( view.fields.find( f=>f.name=="name" )!.flex ).toBe( "0 0 45px" );
+		expect( [View.flexOf( 45 ), new Flex( "0 0 45px" ).px, new Flex( "1" ).px] ).toEqual( ["0 0 45px", 45, undefined] );
 	} );
 	it( "save a width with the view, and read it back", ()=>{
 		const view = make();

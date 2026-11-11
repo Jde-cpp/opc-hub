@@ -335,6 +335,33 @@ describe( 'GraphQLTable headers', ()=>{
 		expect( sorts ).not.toHaveBeenCalled();
 	} );
 
+	//reviews-issue/592-views-fields.md #5:  every move of the pointer was a draft, written to the local store
+	it( "draws the handle's drag as it goes, and writes the draft once, where the pointer is let go", async ()=>{
+		const { fixture, set, header, pointer, changes } = await open();
+		const width = ()=>set.current().fields.find( f=>f.name=="kind" )!.flex;
+		pointer( "kind", "pointerdown", 500 );
+		pointer( "kind", "pointermove", 520 );
+		pointer( "kind", "pointermove", 540 );
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, width(), set.current().isAdhoc, changes.mock.calls.length] ).toEqual( ["0 0 160px", "0 0 120px", false, 0] );
+		pointer( "kind", "pointerup" );
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, width(), set.current().isAdhoc, changes.mock.calls.length] ).toEqual( ["0 0 160px", "0 0 160px", true, 1] );
+		pointer( "kind", "pointerdown", 500 );
+		pointer( "kind", "pointermove", 400 );
+		pointer( "kind", "pointercancel" );
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, width(), changes.mock.calls.length] ).toEqual( ["0 0 160px", "0 0 160px", 1] );
+	} );
+
+	//reviews-issue/592-views-fields.md #9:  the fields the host gives lag the draft while a read is out, and their width outranked it
+	it( "draws a width from the draft, ahead of the fields its host gives", async ()=>{
+		const { fixture, set, header, element } = await open();
+		set.edit( view=>view.setWidth( "kind", 200 ) );//the host not told:  its read is out
+		await stable( fixture, 1 );
+		expect( [header( "kind" ).style.flex, element.querySelector<HTMLElement>( 'mat-cell.mat-column-kind' )!.style.flex] ).toEqual( ["0 0 200px", "0 0 200px"] );
+	} );
+
 	it( 'widens and narrows by the menu, to the floor and no further', async ()=>{
 		const { set, pick, entries } = await open();
 		const width = ()=>set.current().fields.find( f=>f.name=="kind" )!.flex;

@@ -219,6 +219,18 @@ mat-header-cell {
 	z-index: 1;
 	background: var(--mat-table-background-color, var(--mat-sys-surface));
 }
+// A view's table (ViewColumns) has rows as wide as their columns, since a row is the block its pinned cell sticks in:  a row only as
+// wide as the pane let the cell scroll away once the scroll passed the row's end.  `min-content` is the sum of the fixed bases, the
+// cells' own content contained so that a growing column with a long line in it - the logs' Message - adds only its padding;  where
+// the columns fit, the rows fill the pane as before.
+mat-table.jde-view-columns {
+	mat-header-row, mat-row {
+		min-width: min-content;
+	}
+	mat-header-cell, mat-cell {
+		contain: inline-size;
+	}
+}
 // A column header on its way to another place (ViewColumnHeader's drag):  the copy under the pointer, which CDK puts in the
 // body, and the gap it left.
 .jde-column-header.cdk-drag-preview {
