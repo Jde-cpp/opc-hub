@@ -1,16 +1,18 @@
 #include "OeeLineFeed.h"
-#include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/process/execution.h>
-#include <jde/opc/uatypes/DateTime.h>
-#include <jde/calendar/client/Calendars.h>
+#include "../hist/HistHost.h"
 #include "OeeHost.h"
+#include "OeeReads.h"
 #include "OeeSubscriber.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
-	Ω stamp( TimePoint t )ι->google::protobuf::Timestamp{ return UADateTime{ t }.ToProto(); }
-	Ω schedule( optional<uint32> calendar )ι->sp<const Calendar::Schedule>{ return calendar ? Calendar::Client::Calendars::Find( *calendar ) : nullptr; }
+	//Read on every one of `groups`, as OeeSubscribe asks it (spec *Authorization*).
+	Ω gate( const flat_set<HistGroupPK>& groups, UserPK user )ε->void{
+		for( let group : groups )
+			HistHost::Instance().Gate( group, Access::ERights::Read, false, user, SRCE_CUR );
+	}
 
 	OeeLineFeed::OeeLineFeed( OeeLinePK line, sp<Hist::IClock> clock, Duration live )ι:
 		_id{ line }, _clock{ move(clock) }, _live{ live }
@@ -19,7 +21,8 @@ namespace Jde::Opc::Gateway{
 	α OeeLineFeed::Moved( optional<OeeMachinePK> machine )ι->void{
 		{
 			lg _{ _mutex };
-			if( _subscribers.empty() || _queued || (machine && !_reach.contains(*machine)) )
+			//During a join every machine counts:  the first's reach is known only once its computation ends.
+			if( !Active() || _queued || (machine && !_adding && !_reach.contains(*machine)) )
 				return;
 			_queued = true;
 			if( let wait = _computed+_live-_clock->Now(); wait>Duration::zero() ){
@@ -40,6 +43,12 @@ namespace Jde::Opc::Gateway{
 		}
 		Post( [self=shared_from_this()]{ self->Computing(); } );
 	}
+	α OeeLineFeed::Count()ι->void{
+		if( let active = Active(); active!=_counted ){
+			_counted = active;
+			OeeHost::Instance().LineFeedActive( active );
+		}
+	}
 	α OeeLineFeed::Idle()ι->void{
 		++_serial;
 		if( auto timer = std::exchange(_timer, 0); timer )
@@ -55,35 +64,82 @@ namespace Jde::Opc::Gateway{
 				_gone = { status, string{what} };
 			ended = std::exchange( _subscribers, {} );
 			Idle();
+			Count();
 		}
 		for( let& subscriber : ended )
 			subscriber->OnEnded( status, string{what} );
 	}
 	α OeeLineFeed::Remove( const OeeSubscriber* subscriber )ι->void{
 		lg _{ _mutex };
-		if( std::erase_if(_subscribers, [subscriber]( let& s ){ return s.get()==subscriber; }) && _subscribers.empty() )
+		if( !std::erase_if(_subscribers, [subscriber]( let& s ){ return s.get()==subscriber; }) )
+			return;
+		if( !Active() )
 			Idle();
+		Count();
+	}
+	α OeeLineFeed::Regate( const flat_set<HistGroupPK>& groups )ι->void{
+		if( groups==_groups )
+			return;
+		_groups = groups;
+		vector<sp<OeeSubscriber>> subscribers;
+		{
+			lg _{ _mutex };
+			subscribers = _subscribers;
+		}
+		vector<std::pair<sp<OeeSubscriber>,std::pair<EHttpStatus,string>>> refused;
+		for( auto& subscriber : subscribers ){
+			try{
+				gate( groups, subscriber->User() );
+			}
+			catch( const std::exception& e ){
+				let exception = dynamic_cast<const Exception*>( &e );
+				refused.emplace_back( move(subscriber), std::pair{exception ? exception->HttpStatus() : EHttpStatus::Forbidden, string{e.what()}} );
+			}
+		}
+		if( refused.empty() )
+			return;
+		{
+			lg _{ _mutex };
+			std::erase_if( _subscribers, [&]( let& s ){ return std::ranges::contains(refused, s, [](let& r){ return r.first; }); } );
+			if( !Active() )
+				Idle();
+			Count();
+		}
+		for( auto& [subscriber, why] : refused )
+			subscriber->OnEnded( why.first, move(why.second) );
 	}
 
 	α OeeLineFeed::Adding( AddAwait& await, sp<OeeSubscriber> subscriber )ι->VoidTask{
 		let self = shared_from_this();
-		let refuse = [this]{//under _mutex.
+		bool joining{};
+		//Under _mutex:  purged or OEE stopping, or the line deleted since OeeSubscribe's check, which LinesChanged makes the host's
+		//before it ends the subscriptions:  one that joins past this is among them.
+		let refuse = [this]{
 			if( _gone )
 				throw Exception{ SRCE_CUR, ExceptionArgs{_gone->first}, "{}", _gone->second };
+			OeeHost::Instance().TestLine( _id );
 		};
 		try{
 			{
 				lg _{ _mutex };
 				refuse();
+				++_adding;
+				joining = true;
+				Count();
 			}
 			auto held = co_await _work.Lock();
 			FromServer::OeeStatus status;
+			flat_set<HistGroupPK> groups;
 			let began = _clock->Now();
-			co_await Compute( status );
+			co_await Compute( status, groups );
+			gate( groups, subscriber->User() );//OeeSubscribe's check was over the reach as it was then.
+			Regate( groups );
 			sp<const string> pushed;
 			vector<sp<OeeSubscriber>> others;
 			{
 				lg _{ _mutex };
+				--_adding;
+				joining = false;
 				refuse();
 				if( !subscriber->Ended() ){//else an OeeUnsubscribe or the close came first:  the ack still answers.
 					auto bytes = Jde::ms<const string>( status.SerializeAsString() );
@@ -96,6 +152,9 @@ namespace Jde::Opc::Gateway{
 					_computed = began;
 					_subscribers.push_back( move(subscriber) );
 				}
+				else if( !Active() )
+					Idle();
+				Count();
 			}
 			for( let& other : others )
 				other->OnStatus( pushed );
@@ -103,6 +162,14 @@ namespace Jde::Opc::Gateway{
 			await.Resume( move(status) );
 		}
 		catch( runtime_error& e ){
+			{
+				lg _{ _mutex };
+				if( joining )
+					--_adding;
+				if( !Active() )
+					Idle();
+				Count();
+			}
 			await.ResumeExp( move(e) );
 		}
 	}
@@ -118,7 +185,9 @@ namespace Jde::Opc::Gateway{
 				_computed = _clock->Now();//one that moves during this waits `live` from here.
 			}
 			FromServer::OeeStatus status;
-			co_await Compute( status );
+			flat_set<HistGroupPK> groups;
+			co_await Compute( status, groups );
+			Regate( groups );
 			auto bytes = Jde::ms<const string>( status.SerializeAsString() );
 			vector<sp<OeeSubscriber>> subscribers;
 			{
@@ -136,7 +205,7 @@ namespace Jde::Opc::Gateway{
 			DBG( "Line {}'s live status couldn't be computed:  {}", _id, e.what() );
 		}
 	}
-	α OeeLineFeed::Compute( FromServer::OeeStatus& y )ι->AnyVoidTask{
+	α OeeLineFeed::Compute( FromServer::OeeStatus& y, flat_set<HistGroupPK>& groups )ι->AnyVoidTask{
 		++_reads;
 		auto& host = OeeHost::Instance();
 		let reached = host.Reach( _id );
@@ -146,29 +215,22 @@ namespace Jde::Opc::Gateway{
 		if( line.Deleted )
 			throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "Line '{}' is deleted.", line.Name };
 		let now = _clock->Now();
-		let calendar = schedule( line.Calendar );
+		let calendar = OeeSchedule( line.Calendar );
 		let window = CurrentOeeWindow( calendar.get(), now );
-		let& shift = window ? window->Shift : optional<Calendar::Occurrence>{};
-		y.set_planned( !calendar || (shift && std::ranges::none_of(shift->Breaks, [now]( const Calendar::Span& b ){ return b.Start<=now && now<b.End; })) );
-		y.set_calendar_missing( line.Calendar && !calendar );
-		if( shift ){
-			y.mutable_shift()->set_name( shift->Name );
-			*y.mutable_shift()->mutable_start() = stamp( shift->Start );
-			*y.mutable_shift()->mutable_end() = stamp( shift->End );
-		}
+		SetOeeShift( y, line.Calendar, calendar.get(), window, now );
 		auto& counts = *y.mutable_machines();
 		flat_set<OeeMachinePK> reach;
-		vector<Oee::Bucket> buckets;
-		optional<vector<Oee::Reason>> reasons;
-		TimePoint end{};
+		//Each machine with time in the window so far, its rows read at once with the others'.
+		struct Read final{ const OeeHost::Machine& Machine; optional<Oee::LiveState> State; Oee::Span Range; OeeMachineRows Rows; };
+		vector<Read> reads; reads.reserve( reached->Machines.size() );
 		for( let& machine : reached->Machines ){
 			let id = machine.Row.Id;
 			reach.emplace( id );
+			groups.emplace( machine.Row.Group );
 			if( machine.Row.Deleted )//out of the line's figures until its restore (spec *The engine*).
 				continue;
-			//The engine's unwritten rows before the tables':  a row written between the two is then in both, and the table's is kept.
 			let engine = host.Engine( id );
-			let state = engine && engine->Live() ? engine->State() : nullopt;
+			auto state = engine && engine->Live() ? engine->State() : nullopt;
 			if( state && state->State==Oee::EState::Running )
 				counts.set_running( counts.running()+1 );
 			else if( state && state->State==Oee::EState::Stopped )
@@ -177,48 +239,40 @@ namespace Jde::Opc::Gateway{
 				counts.set_unknown( counts.unknown()+1 );
 			if( !window )
 				continue;
-			Oee::Span range{ window->Range.Start, std::min(state ? state->At : now, window->Range.End) };
+			const Oee::Span range{ window->Range.Start, std::min(state ? state->At : now, window->Range.End) };
+			if( range.End>range.Start )
+				reads.push_back( {machine, move(state), range, {}} );
+		}
+		vector<Oee::Reason> reasons;
+		if( reads.size() ){
+			vector<AnyVoidTask> tasks; tasks.reserve( reads.size()+1 );
+			tasks.push_back( LoadOeeReasons(reasons) );
+			for( auto& r : reads )
+				tasks.push_back( LoadOeeRows(r.Machine.Row.Id, r.Range, r.State, false, r.Rows) );
+			co_await AllTasks( move(tasks) );
+		}
+		vector<Oee::Bucket> buckets;
+		TimePoint end{};
+		for( auto& r : reads ){
+			auto range = r.Range;
+			if( !r.State )//no engine runs it:  its figures end where its rows do.
+				range.End = std::min( range.End, r.Rows.Rows.empty() ? range.Start : r.Rows.Rows.back().End() );
 			if( range.End<=range.Start )
 				continue;
-			if( !reasons ){
-				reasons.emplace();
-				for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectReasons())) )
-					reasons->push_back( OeeSql::ToReason(row) );
-			}
-			auto [intervalRows, stopRows] = co_await All( DS()->SelectAsync(OeeSql::SelectIntervalRows(id, range)), DS()->SelectAsync(OeeSql::SelectStopsOver(id, range.Start, range.End)) );
-			vector<Oee::Interval> rows;
-			for( let& row : intervalRows )
-				rows.push_back( OeeSql::ToInterval(row) );
-			if( state )
-				AppendUnwritten( rows, state->Rows, range );
-			else//no engine runs it:  its figures end where its rows do.
-				range.End = std::min( range.End, rows.empty() ? range.Start : rows.back().End() );
-			if( range.End<=range.Start )
-				continue;
-			vector<Oee::Stop> stops;
-			for( let& row : stopRows )
-				stops.push_back( OeeSql::ToStop(row) );
-			if( state && state->Open ){//as the engine has it now:  its code may have been learned since its row.
-				if( auto p = std::ranges::find(stops, state->Open->Start, &Oee::Stop::Start); p!=stops.end() )
-					*p = *state->Open;
-				else
-					stops.insert( std::ranges::upper_bound(stops, state->Open->Start, {}, &Oee::Stop::Start), *state->Open );
-			}
-			//with the stops over the window, whole:  a stop that began before it is coded from its start.
-			vector<Oee::Coding> codings;
-			for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectCodingsOver(id, {stops.empty() ? range.Start : std::min(range.Start, stops.front().Start), range.End}))) )
-				codings.push_back( OeeSql::ToCoding(row).Value );
+			SpliceOpenStop( r.Rows.Stops, r.State );
+			let codings = r.Rows.Values();
 			try{//each machine's planned time is its own calendar's (spec *Lines*).
-				if( auto figures = Oee::Figures(ToMachine(machine.Row, machine.Signals), {rows, stops, codings, *reasons}, schedule(machine.Row.Calendar).get(), range.Start, range.End); figures.size() ){
+				if( auto figures = Oee::Figures(ToMachine(r.Machine.Row, r.Machine.Signals), {r.Rows.Rows, r.Rows.Stops, codings, reasons}, OeeSchedule(r.Machine.Row.Calendar).get(), range.Start, range.End); figures.size() ){
 					buckets.push_back( move(figures.front()) );
 					end = std::max( end, range.End );
 				}
 			}
 			catch( const std::exception& e ){
-				DBG( "[{}]The live figures couldn't be computed:  {}", machine.Row.Name, e.what() );
+				DBG( "[{}]The live figures couldn't be computed:  {}", r.Machine.Row.Name, e.what() );
 			}
 		}
 		if( window && buckets.size() ){
+			let& shift = window->Shift;
 			let combined = Oee::Lines::Combine( window->Range.Start, end, shift ? shift->Name : string{}, buckets );
 			auto& figures = *y.mutable_figures() = ToOeeFigures( combined );
 			figures.set_machines( combined.Machines );

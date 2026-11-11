@@ -187,15 +187,17 @@ namespace Jde::Opc{
 	}
 
 	α Oee::Figures( const Machine& machine, const History& history, const Calendar::Schedule* schedule, TimePoint start, TimePoint end, optional<Calendar::BucketBy> by, SL sl )ε->vector<Bucket>{
+		return end<=start ? vector<Bucket>{} : Figures( machine, history, schedule, Buckets(schedule, start, end, by, machine.Name, sl) );
+	}
+	α Oee::Figures( const Machine& machine, const History& history, const Calendar::Schedule* schedule, std::span<const Calendar::Bucket> bounds )ι->vector<Bucket>{
 		vector<Bucket> y;
-		if( end<=start )
+		if( bounds.empty() )
 			return y;
-		auto buckets = Buckets( schedule, start, end, by, machine.Name, sl );
 		let cover = covered( history );
-		let stops = pieces( machine, history, clip({start, end}, cover), cover.End );
-		y.reserve( buckets.size() );
-		for( auto& bounds : buckets )
-			y.push_back( figure(machine, history, schedule, stops, cover, move(bounds)) );
+		let stops = pieces( machine, history, clip({bounds.front().Start, bounds.back().End}, cover), cover.End );
+		y.reserve( bounds.size() );
+		for( auto b : bounds )
+			y.push_back( figure(machine, history, schedule, stops, cover, move(b)) );
 		return y;
 	}
 

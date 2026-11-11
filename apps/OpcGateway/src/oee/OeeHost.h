@@ -51,14 +51,21 @@ namespace Jde::Opc::Gateway{
 		struct Reached final{ OeeLineRow Line; vector<Machine> Machines; OeeLines Lines; };
 		α Reach( OeeLinePK line )Ι->optional<Reached>;//none for no line.
 		//Past the gate (spec *Authorization*, *Open questions* #14):  Read on the group of every machine reached, one refused
-		//refusing the line.  A line that isn't there is NotFound, once the caller has passed the lines' own table.
+		//refusing the line, and on the lines' own table for a line that reaches none.  A line that isn't there is NotFound, once
+		//the caller has passed that table.
 		α Reach( OeeLinePK line, UserPK by, SRCE )Ε->Reached;
+		α TestLine( OeeLinePK line, SRCE )Ε->void;//NotFound for a line that isn't there, or is deleted.
 		//The line's live feed, made at its first ask:  none for no line, and once stopped.
 		α LineFeed( OeeLinePK line )ι->sp<OeeLineFeed>;
-		//A machine's feed's, under its engine's lock:  the machine's state changed or it closed an interval, so the lines that
-		//reach it compute again, from the executor.  Nothing while no line has a feed.
+		//A line's feed's, under its mutex:  it has gained its first subscriber or join in flight, or lost its last.
+		α LineFeedActive( bool active )ι->void{ if( active ) ++_activeLineFeeds; else --_activeLineFeeds; }
+		α ActiveLineFeeds()Ι->uint{ return _activeLineFeeds; }//for tests and diagnostics.
+		//A machine's feed's, under its engine's lock:  the machine's state changed, it closed an interval, or its rows were read
+		//again, so the lines that reach it compute again, from the executor.  Nothing while no line's feed is active.
 		α MachineMoved( OeeMachinePK id )ι->void;
-		α LineEdits()ι->CoMutex&{ return _lineEdits; }//OeeMAwait's, held over a line's or a member's checks, its write and LinesChanged.
+		//OeeMAwait's, held over a line's or a member's checks, its write and LinesChanged, and a machine's purge, whose memberships
+		//go with it:  each check reads the graph the last edit left.
+		α LineEdits()ι->CoMutex&{ return _lineEdits; }
 		//A line or a member created, edited, deleted, restored or purged, or a machine purged, whose memberships went with it:  both
 		//tables read again, and each line's feed ended, for one deleted or gone, or computed again.
 		α LinesChanged()ι->AnyVoidTask;
@@ -106,7 +113,7 @@ namespace Jde::Opc::Gateway{
 		CoMutex _codings;
 		OeeLines _lines;
 		flat_map<OeeLinePK,sp<OeeLineFeed>> _lineFeeds;
-		std::atomic<uint> _lineFeedCount{};
+		std::atomic<uint> _activeLineFeeds{};//those with a subscriber or a join in flight, which LineFeedActive counts.
 		uint _lineReads{};//LinesChanged's, so an older read that finishes last changes nothing.
 		CoMutex _lineEdits;
 	};

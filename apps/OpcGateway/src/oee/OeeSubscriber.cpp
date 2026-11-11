@@ -10,8 +10,8 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway{
-	OeeSubscriber::OeeSubscriber( wp<GatewaySocketSession> session, Jde::RequestId requestId, sp<IOeeFeed> feed )ι:
-		_session{ move(session) }, _requestId{ requestId }, _feed{ move(feed) }
+	OeeSubscriber::OeeSubscriber( wp<GatewaySocketSession> session, Jde::RequestId requestId, sp<IOeeFeed> feed, UserPK user )ι:
+		_session{ move(session) }, _requestId{ requestId }, _feed{ move(feed) }, _user{ user }
 	{}
 	α OeeSubscriber::End()ι->void{
 		if( !_ended.exchange(true) )
@@ -83,9 +83,11 @@ namespace Jde::Opc::Gateway{
 				oee.TestEnabled( SRCE_CUR );
 				feed = oee.Feed( request.machine() );
 			}
-			if( !feed )
-				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::ServiceUnavailable}, "The gateway's OEE has stopped." };
-			auto subscriber = ms<OeeSubscriber>( SharedFromThis(), requestId, move(feed) );
+			if( !feed ){//purged since its check, or OEE stopped.
+				oee.TestEnabled( SRCE_CUR );
+				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "{} {} not found.", request.line() ? "Line" : "Machine", request.line() ? request.line() : request.machine() };
+			}
+			auto subscriber = ms<OeeSubscriber>( SharedFromThis(), requestId, move(feed), UserPK() );
 			{//claimed here, on the strand, so a second subscribe with the id is refused before either joins.
 				lg _{ _histMutex };
 				if( _closed )

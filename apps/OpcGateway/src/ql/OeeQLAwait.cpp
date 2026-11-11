@@ -4,11 +4,10 @@
 #include <jde/fwk/exceptions/refuse.h>
 #include <jde/access/Authorize.h>
 #include <jde/opc/uatypes/DateTime.h>
-#include <jde/calendar/client/Calendars.h>
-#include <jde/oee/Figures.h>
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
 #include "../oee/OeeHost.h"
+#include "../oee/OeeReads.h"
 #include "HistQL.h"
 
 #define let const auto
@@ -37,9 +36,9 @@ namespace Jde::Opc::Gateway{
 		vector<Oee::Stop> Stops;
 		vector<OeeCodingRow> CodingRows;
 		vector<Oee::Coding> Codings;
-		vector<Oee::Reason> Reasons;
-		α History()Ι->Oee::History{ return { Rows, Stops, Codings, Reasons }; }
-		α Reason( uint32 id )Ι->const Oee::Reason*{ let p = std::ranges::find( Reasons, id, &Oee::Reason::Id ); return p==Reasons.end() ? nullptr : &*p; }
+		sp<const vector<Oee::Reason>> Reasons;//the read's, one list for every machine.
+		α History()Ι->Oee::History{ return { Rows, Stops, Codings, *Reasons }; }
+		α Reason( uint32 id )Ι->const Oee::Reason*{ let p = std::ranges::find( *Reasons, id, &Oee::Reason::Id ); return p==Reasons->end() ? nullptr : &*p; }
 	};
 
 	Ω bucketJson( const Oee::Bucket& b, bool shift )ι->jobject{
@@ -150,40 +149,42 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		jarray y; y.reserve( bounds.size() );
-		vector<uint> first( l.Machines.size() );//each machine's first stop that may reach the bucket:  the buckets are in order.
+		//Each machine's figures over the line's bounds, labelled as they are, its planned time within them its own calendar's (spec
+		//*Lines*):  a chunk of bounds at a time, so what is held is the machines times the chunk.
+		constexpr uint Chunk{ 256 };
+		vector<vector<Oee::Bucket>> made( l.Machines.size() );
 		vector<Oee::Bucket> buckets( l.Machines.size() );
-		for( let& b : bounds ){
+		for( uint c=0; c<bounds.size(); c+=Chunk ){
+			const std::span<const Calendar::Bucket> part{ bounds.begin()+c, std::min<uint>(Chunk, bounds.size()-c) };
 			for( uint i=0; i<l.Machines.size(); ++i ){
 				let& r = l.Machines[i];
-				//Each machine's planned time within the bucket is its own calendar's (spec *Lines*).  Its stops are narrowed to the
-				//bucket's, and its rows passed whole, since an open stop runs to where they end.
-				while( first[i]<r.Stops.size() && r.Stops[first[i]].End && *r.Stops[first[i]].End<=b.Start )
-					++first[i];
-				let from = r.Stops.begin()+first[i];
-				let to = std::partition_point( from, r.Stops.end(), [&]( const Oee::Stop& s ){ return s.Start<b.End; } );
-				let made = Oee::Figures( r.Machine, {r.Rows, {from, to}, r.Codings, r.Reasons}, r.Schedule.get(), b.Start, b.End, {}, sl );
-				buckets[i] = made.empty() ? Oee::Bucket{ b.Start, b.End } : made.front();
+				made[i] = Oee::Figures( r.Machine, r.History(), r.Schedule.get(), part );
 			}
-			auto bucket = lineBucketJson( Oee::Lines::Combine(b.Start, b.End, b.Label, buckets), by.Shift );
-			if( members ){
-				jarray listed;
-				for( let& member : direct ){
-					jobject of;
-					if( !member.Of.at("machine").is_null() )
-						of = lineBucketJson( buckets[member.Machines.front()], by.Shift );
-					else{
-						vector<Oee::Bucket> under;
-						for( let i : member.Machines )
-							under.push_back( buckets[i] );
-						of = lineBucketJson( Oee::Lines::Combine(b.Start, b.End, b.Label, under), by.Shift );
+			for( uint k=0; k<part.size(); ++k ){
+				let& b = part[k];
+				for( uint i=0; i<l.Machines.size(); ++i )
+					buckets[i] = move( made[i][k] );
+				auto bucket = lineBucketJson( Oee::Lines::Combine(b.Start, b.End, b.Label, buckets), by.Shift );
+				if( members ){
+					jarray listed;
+					for( let& member : direct ){
+						jobject of;
+						if( !member.Of.at("machine").is_null() )
+							of = lineBucketJson( buckets[member.Machines.front()], by.Shift );
+						else{
+							vector<Oee::Bucket> under;
+							for( let i : member.Machines )
+								under.push_back( buckets[i] );
+							of = lineBucketJson( Oee::Lines::Combine(b.Start, b.End, b.Label, under), by.Shift );
+						}
+						for( let& [key,value] : member.Of )
+							of[key] = value;
+						listed.emplace_back( move(of) );
 					}
-					for( let& [key,value] : member.Of )
-						of[key] = value;
-					listed.emplace_back( move(of) );
+					bucket["members"] = move( listed );
 				}
-				bucket["members"] = move( listed );
+				y.emplace_back( q.TrimColumns(move(bucket)) );
 			}
-			y.emplace_back( q.TrimColumns(move(bucket)) );
 		}
 		return y;
 	}
@@ -195,7 +196,7 @@ namespace Jde::Opc::Gateway{
 		string Key;
 		optional<std::pair<TimePoint,OeeMachinePK>> After;
 		//The stops the SQL reads start before this:  those at the cursor's start among them, for the machines after its own.
-		α Before()Ι->optional<TimePoint>{ return After ? optional<TimePoint>{ After->first+TimePoint::duration{1} } : nullopt; }
+		α Before()Ι->optional<TimePoint>{ return After ? optional<TimePoint>{ After->first+std::chrono::ceil<TimePoint::duration>(Ticks{1}) } : nullopt; }//a tick at least, whatever the clock's period.
 	};
 	//`of`:  m<id> for a machine's read, l<id> for a line's.
 	Ω stopsPage( const QL::TableQL& q, string of, Oee::Span range, SL sl )ε->StopsPage{
@@ -240,7 +241,7 @@ namespace Jde::Opc::Gateway{
 			let end = stop.End.value_or( std::max(r.Now, stop.Start) );
 			let small = end-stop.Start<r.Machine.SmallStop;
 			const Oee::Reason* coded{};
-			if( let cause = stop.Code ? std::ranges::find(r.Reasons, stop.Code, &Oee::Reason::Code) : r.Reasons.end(); cause!=r.Reasons.end() )
+			if( let cause = stop.Code ? std::ranges::find(*r.Reasons, stop.Code, &Oee::Reason::Code) : r.Reasons->end(); cause!=r.Reasons->end() )
 				coded = &*cause;
 			jarray codings;
 			const Oee::Reason* whole{};//the reason of a coding over the whole stop.
@@ -344,7 +345,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	//`row`:  the table's now, whose `processed` an engine since ended has moved.
-	Ω calendarState( optional<uint32> calendar )ι->sv{ return !calendar ? "none" : Calendar::Client::Calendars::Find( *calendar ) ? "found" : "missing"; }
+	Ω calendarState( optional<uint32> calendar )ι->sv{ return !calendar ? "none" : OeeSchedule( calendar ) ? "found" : "missing"; }
 	Ω status( const OeeHost::Machine& machine, const OeeMachineRow& row )ι->jobject{
 		auto& oee = OeeHost::Instance();
 		let engine = oee.Engine( row.Id );
@@ -374,48 +375,23 @@ namespace Jde::Opc::Gateway{
 		y = status( machine, rows.empty() ? machine.Row : rows.front() );//the table's row now, whose `processed` an engine since ended has moved.
 	}
 	//The machine's rows over r.Range into `r`, whose Row, Machine, Schedule, Range, Limit and Reasons are set.  `page`:  oeeStops',
-	//which reads no interval.
+	//which reads no interval, and its stops before the page's cursor.
 	Ω load( OeeRead& r, const StopsPage* page )ι->AnyVoidTask{
-		auto& oee = OeeHost::Instance();
-		let id = r.Row.Id;
-		//The engine's unwritten rows before the table's:  a row written between the two is then in both, and the table's is kept.
-		let engine = oee.Engine( id );
+		let engine = OeeHost::Instance().Engine( r.Row.Id );
 		let live = engine ? engine->State() : optional<Oee::LiveState>{};
-		let clock = oee.Time();
-		r.Now = live ? live->At : clock ? clock->Now() : Clock::now();
 		let before = page ? page->Before() : nullopt;
-		auto stopsSql = OeeSql::SelectStopsOver( id, r.Range.Start, before ? std::min(r.Range.End, *before) : r.Range.End );
-		if( page ){//with the machine's row:  with no engine to run an open stop on, it ends where the rows do, the table's processed, which the host's copy lags.
-			auto [stopRows, machines] = co_await All( DS()->SelectAsync(move(stopsSql)), SelectOeeMachines({.Key=DB::Key{(uint)id}, .IncludeDeleted=true}) );
-			for( let& row : stopRows )
-				r.Stops.push_back( OeeSql::ToStop(row) );
-			if( !live && machines.size() && machines.front().Processed )
-				r.Now = *machines.front().Processed;
-		}
-		else{
-			auto [stopRows, intervalRows] = co_await All( DS()->SelectAsync(move(stopsSql)), DS()->SelectAsync(OeeSql::SelectIntervalRows(id, r.Range)) );
-			for( let& row : stopRows )
-				r.Stops.push_back( OeeSql::ToStop(row) );
-			for( let& row : intervalRows )
-				r.Rows.push_back( OeeSql::ToInterval(row) );
-			if( live )
-				AppendUnwritten( r.Rows, live->Rows, r.Range );
-		}
-		auto coded = r.Range;//with the stops that overlap it, whole:  a stop is listed with every coding over it.
-		for( let& stop : r.Stops ){
-			coded.Start = std::min( coded.Start, stop.Start );
-			coded.End = std::max( coded.End, stop.End.value_or(r.Now) );
-		}
-		for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectCodingsOver(id, coded))) ){
-			r.CodingRows.push_back( OeeSql::ToCoding(row) );
-			r.Codings.push_back( r.CodingRows.back().Value );
-		}
+		OeeMachineRows rows;
+		co_await LoadOeeRows( r.Row.Id, {r.Range.Start, before ? std::min(r.Range.End, *before) : r.Range.End}, live, page!=nullptr, rows );
+		r.Now = rows.Now;
+		r.Rows = move( rows.Rows );
+		r.Stops = move( rows.Stops );
+		r.Codings = rows.Values();
+		r.CodingRows = move( rows.Codings );
 	}
-	Ω newRead( const OeeHost::Machine& machine, Oee::Span range, const vector<Oee::Reason>& reasons )ι->OeeRead{
+	Ω newRead( const OeeHost::Machine& machine, Oee::Span range, sp<const vector<Oee::Reason>> reasons )ι->OeeRead{
 		return {
-			.Row=machine.Row, .Machine=ToMachine( machine.Row, machine.Signals ),
-			.Schedule=machine.Row.Calendar ? Calendar::Client::Calendars::Find( *machine.Row.Calendar ) : nullptr,
-			.Range=range, .Now={}, .Limit=HistQL::ReadLimit(), .Rows={}, .Stops={}, .CodingRows={}, .Codings={}, .Reasons=reasons
+			.Row=machine.Row, .Machine=ToMachine( machine.Row, machine.Signals ), .Schedule=OeeSchedule( machine.Row.Calendar ),
+			.Range=range, .Now={}, .Limit=HistQL::ReadLimit(), .Rows={}, .Stops={}, .CodingRows={}, .Codings={}, .Reasons=move( reasons )
 		};
 	}
 	α OeeQLAwait::Query()ι->TAwait<jvalue>::Task{
@@ -431,16 +407,18 @@ namespace Jde::Opc::Gateway{
 			auto& oee = OeeHost::Instance();
 			if( name==LineStatusCommand ){
 				let reached = oee.Reach( *lineId );
-				if( !reached ){
-					AppClient()->Acl()->Test( "gateway", "oeeLines", Access::ERights::Read, UserPK(), sl );//the table's, before a caller learns of an id.
+				if( !reached || reached->Machines.empty() )//the table's:  before a caller learns of an id, and a line that reaches no machine has no other.
+					AppClient()->Acl()->Test( "gateway", "oeeLines", Access::ERights::Read, UserPK(), sl );
+				if( !reached )
 					throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Line {} not found.", *lineId };
-				}
+				vector<jobject> statuses( reached->Machines.size() );
+				vector<AnyVoidTask> tasks; tasks.reserve( statuses.size() );
+				for( uint i=0; i<statuses.size(); ++i )
+					tasks.push_back( machineStatus(reached->Machines[i], UserPK(), statuses[i], sl) );
+				co_await AllTasks( move(tasks), sl );
 				jarray machines;
-				for( let& machine : reached->Machines ){
-					jobject y;
-					co_await machineStatus( machine, UserPK(), y, sl );
-					machines.emplace_back( move(y) );
-				}
+				for( auto& status : statuses )
+					machines.emplace_back( move(status) );
 				let& line = reached->Line;
 				Resume( _query.TrimColumns(jobject{
 					{"line", lineJson(line)}, {"enabled", oee.Enabled()}, {"calendar", calendarState(line.Calendar)}, {"calendarId", line.Calendar ? jvalue{*line.Calendar} : jvalue{}},
@@ -476,14 +454,15 @@ namespace Jde::Opc::Gateway{
 			const Oee::Span range{ OeeQL::Time(_query, "start", sl), OeeQL::Time(_query, "end", sl) };
 			REFUSE_IF( range.Start>=range.End, "start, {}, must be before end, {}.", OeeQL::Iso(range.Start), OeeQL::Iso(range.End) );
 			let page = name==StopsCommand ? optional<StopsPage>{ stopsPage(_query, lineId ? Ƒ("l{}", *lineId) : Ƒ("m{}", *machineId), range, sl) } : nullopt;
-			vector<Oee::Reason> reasons;
-			for( let& row : co_await Any(DS()->SelectAsync(OeeSql::SelectReasons())) )
-				reasons.push_back( OeeSql::ToReason(row) );
+			auto reasons = Jde::ms<vector<Oee::Reason>>();
 			vector<OeeRead> reads; reads.reserve( machines.size() );
+			vector<AnyVoidTask> tasks; tasks.reserve( machines.size()+1 );
+			tasks.push_back( LoadOeeReasons(*reasons) );
 			for( let& machine : machines ){
 				reads.push_back( newRead(machine, range, reasons) );
-				co_await load( reads.back(), page ? &*page : nullptr );
+				tasks.push_back( load(reads.back(), page ? &*page : nullptr) );
 			}
+			co_await AllTasks( move(tasks), sl );
 			let limit = HistQL::ReadLimit();
 			jvalue y;
 			if( name==StopsCommand )
@@ -496,7 +475,7 @@ namespace Jde::Opc::Gateway{
 				y = figures( _query, reads.front(), sl );
 			else{
 				let calendar = reached->Line.Calendar;
-				y = lineFigures( _query, OeeLineRead{move(*reached), calendar ? Calendar::Client::Calendars::Find(*calendar) : nullptr, range, limit, move(reads)}, sl );
+				y = lineFigures( _query, OeeLineRead{move(*reached), OeeSchedule(calendar), range, limit, move(reads)}, sl );
 			}
 			Resume( move(y) );
 		}

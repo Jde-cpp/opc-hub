@@ -62,16 +62,22 @@ namespace Jde::Opc::Gateway{
 			let handle = Calendar::Client::Calendars::Listen( []( const flat_set<uint32>& changed ){
 				auto& host = Instance();
 				vector<sp<OeeFeed>> feeds;
+				vector<sp<OeeLineFeed>> lineFeeds;//a line's own calendar's:  its shift.  A machine's feed tells its lines of its own.
 				{
 					lg _{ host._mutex };
 					for( let& [_,entry] : host._machines ){
 						if( entry.Feed && entry.Rows.Row.Calendar && changed.contains(*entry.Rows.Row.Calendar) )
 							feeds.push_back( entry.Feed );
 					}
+					for( let& [id,feed] : host._lineFeeds ){
+						if( let line = host._lines.Find(id); line && line->Calendar && changed.contains(*line->Calendar) )
+							lineFeeds.push_back( feed );
+					}
 				}
 				for( let& feed : feeds )
 					feed->Reload();
-				host.MoveLines();//a line's shift, or a machine's planned time under it.
+				for( let& feed : lineFeeds )
+					feed->Moved();
 			} );
 			lg _{ _mutex };
 			_calendars = handle;
@@ -96,7 +102,6 @@ namespace Jde::Opc::Gateway{
 			lg _{ _mutex };
 			_stopped = true;
 			lineFeeds = std::exchange( _lineFeeds, {} );
-			_lineFeedCount = 0;
 			calendars = std::exchange( _calendars, nullopt );
 			for( auto&& [_,entry] : _machines ){
 				if( entry.Feed )
@@ -180,8 +185,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α OeeHost::Coded( OeeMachinePK id )ι->void{
 		if( auto feed = Feed(id); feed )
-			feed->Reload( OeeFeed::CodingsOnly );
-		MoveLines( id );
+			feed->Reload( OeeFeed::CodingsOnly );//and the lines that reach the machine.
 	}
 	α OeeHost::ReasonsChanged()ι->void{
 		vector<sp<OeeFeed>> feeds;
@@ -193,8 +197,7 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		for( let& feed : feeds )
-			feed->Reload( OeeFeed::ReasonsOnly );
-		MoveLines();
+			feed->Reload( OeeFeed::ReasonsOnly );//and the lines that reach each.
 	}
 	α OeeHost::Recompute( OeeMachinePK id, Oee::Span span, SL sl )ε->void{
 		let machine = Find( id );
@@ -421,8 +424,9 @@ namespace Jde::Opc::Gateway{
 				ending = std::exchange( entry.Engine, nullptr );
 		}
 		if( feed )
-			feed->Edited( machine.Row, machine.Signals, read );
-		MoveLines( id );
+			feed->Edited( machine.Row, machine.Signals, read );//and the lines that reach the machine.
+		else
+			MoveLines( id );
 		if( running ){
 			running->SetWidth( machine.Row.Width );
 			co_return;
@@ -500,31 +504,37 @@ namespace Jde::Opc::Gateway{
 	}
 	α OeeHost::Reach( OeeLinePK id, UserPK by, SL sl )Ε->Reached{
 		auto y = Reach( id );
-		if( !y ){
-			AppClient()->Acl()->Test( "gateway", "oeeLines", Access::ERights::Read, by, sl );//the table's, before a caller learns of an id.
+		if( !y || y->Machines.empty() )//the table's:  before a caller learns of an id, and a line that reaches no machine has no other.
+			AppClient()->Acl()->Test( "gateway", "oeeLines", Access::ERights::Read, by, sl );
+		if( !y )
 			throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Line {} not found.", id };
-		}
 		for( let& machine : y->Machines )
 			HistHost::Instance().Gate( machine.Row.Group, Access::ERights::Read, false, by, sl );
 		return move( *y );
+	}
+	α OeeHost::TestLine( OeeLinePK id, SL sl )Ε->void{
+		lg _{ _mutex };
+		let line = _lines.Find( id );
+		if( !line )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Line {} not found.", id };
+		if( line->Deleted )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Line '{}' is deleted.", line->Name };
 	}
 	α OeeHost::LineFeed( OeeLinePK id )ι->sp<OeeLineFeed>{
 		lg _{ _mutex };
 		if( _stopped || !_clock || !_lines.Find(id) )
 			return nullptr;
 		auto& feed = _lineFeeds[id];
-		if( !feed ){
+		if( !feed )
 			feed = ms<OeeLineFeed>( id, _clock, _live );
-			_lineFeedCount = _lineFeeds.size();
-		}
 		return feed;
 	}
 	α OeeHost::MachineMoved( OeeMachinePK id )ι->void{
-		if( _lineFeedCount )
+		if( _activeLineFeeds )
 			Post( [id]{ Instance().MoveLines( id ); } );
 	}
 	α OeeHost::MoveLines( optional<OeeMachinePK> machine )ι->void{
-		if( !_lineFeedCount )
+		if( !_activeLineFeeds )
 			return;
 		vector<sp<OeeLineFeed>> feeds;
 		{
@@ -542,7 +552,7 @@ namespace Jde::Opc::Gateway{
 			read = ++_lineReads;
 		}
 		auto [lines, members] = co_await All( SelectOeeLines(), SelectOeeLineMembers() );
-		vector<std::pair<sp<OeeLineFeed>,string>> ended;//with why:  empty for a line that's gone.
+		vector<std::pair<sp<OeeLineFeed>,bool>> ended;//with whether the line is gone, else deleted.
 		{
 			lg _{ _mutex };
 			if( read<_lineReads )
@@ -554,13 +564,12 @@ namespace Jde::Opc::Gateway{
 					++p;
 					continue;
 				}
-				ended.emplace_back( p->second, line ? line->Name : string{} );
+				ended.emplace_back( p->second, !line );
 				p = line ? std::next( p ) : _lineFeeds.erase( p );
 			}
-			_lineFeedCount = _lineFeeds.size();
 		}
-		for( let& [feed, deleted] : ended ){
-			if( deleted.empty() )
+		for( let& [feed, gone] : ended ){
+			if( gone )
 				feed->EndAll( EHttpStatus::NotFound, "The line was purged, which ends the subscription." );
 			else
 				feed->EndAll( EHttpStatus::NotFound, "The line was deleted, which ends the subscription.", false );

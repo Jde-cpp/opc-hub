@@ -1,9 +1,8 @@
 #include "OeeFeed.h"
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/process/execution.h>
-#include <jde/opc/uatypes/DateTime.h>
-#include <jde/calendar/client/Calendars.h>
 #include "OeeHost.h"
+#include "OeeReads.h"
 #include "OeeSubscriber.h"
 
 #define let const auto
@@ -11,7 +10,7 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	constexpr Duration MaxBackoff{ 1min };
 
-	Ω stamp( TimePoint t )ι->google::protobuf::Timestamp{ return UADateTime{ t }.ToProto(); }
+	Ω stamp( TimePoint t )ι->google::protobuf::Timestamp{ return OeeStamp( t ); }
 	Ω ms( Duration d )ι->int64_t{ return std::chrono::duration_cast<std::chrono::milliseconds>( d ).count(); }
 	OeeFeed::OeeFeed( OeeMachineRow row, vector<OeeSignalRow> signals, sp<Hist::IClock> clock, Duration live )ι:
 		_id{ row.Id }, _clock{ move(clock) }, _live{ live }, _row{ move(row) }, _machine{ ToMachine(_row, signals) }
@@ -74,8 +73,10 @@ namespace Jde::Opc::Gateway{
 			_row = move( row );
 			_machine = ToMachine( _row, signals );
 		}
-		if( deleted )
+		if( deleted ){
+			OeeHost::Instance().MachineMoved( _id );//out of its lines' figures.
 			EndAll( EHttpStatus::NotFound, "The machine was deleted, which ends the subscription.", false );
+		}
 		else
 			Reload();
 	}
@@ -141,9 +142,7 @@ namespace Jde::Opc::Gateway{
 		let engine = OeeHost::Instance().Engine( _id );
 		return engine && engine->Live() ? engine->State() : nullopt;
 	}
-	α OeeFeed::Schedule()Ι->sp<const Calendar::Schedule>{
-		return _row.Calendar ? Calendar::Client::Calendars::Find( *_row.Calendar ) : nullptr;
-	}
+	α OeeFeed::Schedule()Ι->sp<const Calendar::Schedule>{ return OeeSchedule( _row.Calendar ); }
 	α OeeFeed::Adding( AddAwait& await, sp<OeeSubscriber> subscriber )ι->VoidTask{
 		let self = shared_from_this();
 		bool joining{};
@@ -385,14 +384,7 @@ namespace Jde::Opc::Gateway{
 				cause.set_category( string{Oee::ToString(reason->Category)} );
 			}
 		}
-		let& shift = window ? window->Shift : optional<Calendar::Occurrence>{};
-		y.set_planned( !schedule || (shift && std::ranges::none_of(shift->Breaks, [now]( const Calendar::Span& b ){ return b.Start<=now && now<b.End; })) );
-		y.set_calendar_missing( _row.Calendar && !schedule );
-		if( shift ){
-			y.mutable_shift()->set_name( shift->Name );
-			*y.mutable_shift()->mutable_start() = stamp( shift->Start );
-			*y.mutable_shift()->mutable_end() = stamp( shift->End );
-		}
+		SetOeeShift( y, _row.Calendar, schedule.get(), window, now );
 		if( !window ){//between shifts:  nothing held so far is in the next one.
 			std::erase_if( _rows, [now]( const Oee::Interval& row ){ return row.End()<=now; } );
 			std::erase_if( _stops, [now]( let& stop ){ return stop.second.End && *stop.second.End<=now; } );
@@ -413,12 +405,7 @@ namespace Jde::Opc::Gateway{
 		vector<Oee::Stop> stops;
 		for( let& [_, stop] : _stops )
 			stops.push_back( stop );
-		if( state && state->Open ){//as the engine has it now:  its code may have been learned since its row.
-			if( auto p = std::ranges::find(stops, state->Open->Start, &Oee::Stop::Start); p!=stops.end() )
-				*p = *state->Open;
-			else
-				stops.insert( std::ranges::upper_bound(stops, state->Open->Start, {}, &Oee::Stop::Start), *state->Open );
-		}
+		SpliceOpenStop( stops, state );
 		try{
 			if( let buckets = Oee::Figures(_machine, {_rows, stops, _codings, _reasons}, schedule.get(), start, end); buckets.size() )
 				*y.mutable_figures() = ToOeeFigures( buckets.front() );

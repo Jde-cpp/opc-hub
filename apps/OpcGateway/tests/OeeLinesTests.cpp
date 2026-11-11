@@ -101,6 +101,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NE( Refused([&]{ Mutate( "updateOeeLine( id:$id, level:$level )", {{"id", a}, {"level", "Site"}} ); }).find("no higher"), string::npos ) << "above the area it is in";
 		EXPECT_NE( Refused([&]{ Mutate( "updateOeeLine( id:$id, level:$level )", {{"id", a}, {"level", "Cell"}} ); }).find("no higher"), string::npos ) << "below the line in it";
 		EXPECT_NO_THROW( Mutate("updateOeeLine( id:$id, level:$level )", {{"id", area}, {"level", "Site"}}) );
+		EXPECT_NE( Refused([&]{ Mutate( "updateOeeLine( id:$id, name:$name )", {{"id", a}, {"name", ""}} ); }).find("name is required"), string::npos ) << "an update's name, as a create's";
 		EXPECT_NE( Refused([&]{ Mutate( "deleteOeeLineMember( id:$id )", {{"id", first}} ); }).find("purge"), string::npos );
 		EXPECT_NO_THROW( Mutate("updateOeeLineMember( id:$id, sort:$sort )", {{"id", first}, {"sort", 5}}) );
 
@@ -127,6 +128,14 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Memberships(area), 0u );
 		EXPECT_FALSE( Oee().Reach(a) );
 		EXPECT_TRUE( Oee().Reach(area)->Machines.empty() );
+
+		//A line that reaches no machine has no group to gate it:  the lines' own table does.
+		constexpr sv statusQL{ "oeeLineStatus( line:$id ){ line{ name } calendarId }" };
+		EXPECT_NO_THROW( Mutate(statusQL, {{"id", area}}) ) << "the table unenforced, as it ships";
+		EnforceResource( "gateway", "oeeLines", true );
+		absl::Cleanup open = []{ try{ EnforceResource( "gateway", "oeeLines", false ); }catch( const std::exception& e ){ ADD_FAILURE() << "oeeLines wasn't opened again:  " << e.what(); } };
+		EXPECT_EQ( Status([&]{ Mutate( statusQL, {{"id", area}} ); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Status([&]{ Mutate( "oee( line:$id, start:$start, end:$end ){ oee }", {{"id", area}, {"start", Iso(from)}, {"end", Iso(from+1min)}} ); }), EHttpStatus::Forbidden );
 	}
 
 	//Two machines' shifts as backfills, pump1's of OeeTests and pump2 stopped two of its five minutes, under one calendar, and a
@@ -166,7 +175,7 @@ namespace Jde::Opc::Gateway::Tests{
 				vars[key] = value;
 			return Mutate( ql, move(vars) );
 		};
-		constexpr sv figuresQL{ "oee( line:$id, start:$start, end:$end, by:$by, members:$members ){ start end shift planned run unplanned total ideal availability performance quality oee measured partial machines coverage{ performance quality } members{ planned run oee machines machine{ id name } line{ id name level } } }" };
+		constexpr sv figuresQL{ "oee( line:$id, start:$start, end:$end, by:$by, members:$members ){ start end shift planned run unplanned total ideal availability performance quality oee measured partial machines coverage{ performance quality } members{ shift planned run oee machines machine{ id name } line{ id name level } } }" };
 		//pump1:  planned 300 s, a 90 s stop, 35 units of which 33 good at 3 s.  pump2:  a 120 s stop, 30 units at 6 s, no quality.
 		let availability = 390.0/600, performance = ( 105.0+180 )/390, quality = 33.0/35;
 		{
@@ -195,6 +204,7 @@ namespace Jde::Opc::Gateway::Tests{
 			let& first = members[0].as_object();
 			EXPECT_EQ( Json::AsNumber<uint32>(Json::AsObject(first, "machine"), "id"), m1 ) << "in member order";
 			EXPECT_TRUE( first.at("line").is_null() );
+			EXPECT_EQ( Json::AsSV(first, "shift"), "Written" ) << "a member's bucket is the line's, labelled as it is";
 			EXPECT_EQ( Number(first, "planned"), 300000 );
 			EXPECT_NEAR( Number(first, "oee"), 0.7*0.5*33/35, 1e-9 );
 			let& second = members[1].as_object();
@@ -334,11 +344,21 @@ namespace Jde::Opc::Gateway::Tests{
 
 		EXPECT_EQ( Status([&]{ Subscribe( 999'999, ms<LineHeard>() ); }), EHttpStatus::NotFound );
 		EXPECT_EQ( Status([&]{ BlockAwait<ClientSocketAwait<FromServer::OeeStatus>,FromServer::OeeStatus>( Socket().OeeSubscribe(0, ms<LineHeard>()) ); }), EHttpStatus::BadRequest ) << "neither a machine nor a line";
-		{//Read on the group of every machine it reaches.
+		let solo = lines.Create( "oeeLineLiveSolo", "Line", {{"calendarId", calendar}} );
+		AddMachine( solo, m1 );
+		auto heardSolo = ms<LineHeard>();
+		EXPECT_EQ( Subscribe(solo, heardSolo).machines().running(), 1u );
+		let soloFeed = Oee().LineFeed( solo );
+		ASSERT_TRUE( soloFeed );
+		{//Read on the group of every machine it reaches, and a machine added to a line is gated for its subscriptions as a new one is.
 			auto enforced = EnforcedHistGroups();
 			ScopeHistGroup( pump2.Group, Access::ERights::None );
 			absl::Cleanup unscope = [&]{ try{ UnscopeHistGroup( pump2.Group ); }catch( const std::exception& e ){ ADD_FAILURE() << "the group's resource wasn't deleted:  " << e.what(); } };
 			EXPECT_EQ( Status([&]{ Subscribe( line, ms<LineHeard>() ); }), EHttpStatus::Forbidden );
+			AddMachine( solo, m2 );
+			_clock->Advance( Oee().Live() );
+			ASSERT_TRUE( WaitUntil([&]{ return !heardSolo->Errors().empty(); }, 15s) ) << "pump2's figures pushed to a subscription that may not read them";
+			EXPECT_EQ( soloFeed->Subscribers(), 0u );
 		}
 		let feed = Oee().LineFeed( line );
 		ASSERT_TRUE( feed );
@@ -400,5 +420,6 @@ namespace Jde::Opc::Gateway::Tests{
 		auto again = ms<LineHeard>();
 		EXPECT_EQ( Subscribe(line, again).machines().stopped(), 1u ) << "restored, it is subscribed again";
 		EXPECT_TRUE( Unsubscribe(Socket().LastOeeSubscription()) );
+		EXPECT_EQ( Oee().ActiveLineFeeds(), 0u ) << "no line's feed has a subscriber left";
 	}
 }

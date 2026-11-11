@@ -57,9 +57,10 @@ namespace Jde::Opc::Gateway{
 		REFUSE_IF( !id, "{} is a row's id, not {}.", name, serialize(*p) );
 		return *id;
 	}
-	Ω requireName( const jobject& args, SL sl )ε->void{
+	//A create's, or an update's that names it:  never empty.
+	Ω requireName( const jobject& args, bool create, SL sl )ε->void{
 		let p = args.if_contains( "name" );
-		REFUSE_IF( !p || !p->is_string() || p->get_string().empty(), "name is required." );
+		REFUSE_IF( (p || create) && (!p || !p->is_string() || p->get_string().empty()), "name is required." );
 	}
 	Ω optionalId( const jobject& args, sv name, SL sl )ε->optional<uint32>{
 		let p = args.if_contains( name );
@@ -275,7 +276,7 @@ namespace Jde::Opc::Gateway{
 				CoGuard lineEdit;//a line's or a member's:  its checks, its write and the host's read of both tables together.
 				if( table==Machines ){
 					if( type==Create ){
-						requireName( args, sl );
+						requireName( args, true, sl );
 						let groupId = requireId( args, "histGroupId", sl );
 						auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)groupId}, .IncludeDeleted=true}) );
 						if( groups.empty() )
@@ -300,12 +301,15 @@ namespace Jde::Opc::Gateway{
 					}
 					else{
 						machineKey = rowKey( _query, sl );
-						if( type==Purge )
+						if( type==Purge ){
 							purging = MutationRowId( _query, sl );
+							lineEdit = co_await host.LineEdits().Lock();//its memberships go with it:  no line edit checks the graph in between.
+						}
 						auto rows = co_await Any( SelectOeeMachines({.Key=*machineKey, .IncludeDeleted=true}) );
 						if( rows.empty() )
 							notFound( Ƒ("Machine {} not found.", machineKey->IsPK() ? std::to_string(machineKey->PK()) : machineKey->NK()), sl );
 						if( type==Update ){
+							requireName( args, false, sl );
 							REFUSE_IF( args.contains("from"), "from is a create's:  it is where a new machine's rows start." );
 							auto signals = co_await Any( SelectOeeSignals({.Machine=rows.front().Id}) );
 							let would = thresholds( args, &rows.front(), sl );
@@ -356,8 +360,8 @@ namespace Jde::Opc::Gateway{
 				else if( table==Lines ){
 					lineEdit = co_await host.LineEdits().Lock();
 					let lines = host.Lines();
-					if( type==Create )
-						requireName( args, sl );
+					if( type==Create || type==Update )
+						requireName( args, type==Create, sl );
 					let level = args.if_contains( "level" );
 					if( (level || type==Create) && (type==Create || type==Update) )
 						REFUSE_IF( !level || !level->is_string() || !Oee::ToLevel(level->get_string()), "level is Site, Area, Line or Cell{}.", level ? Ƒ(", not {}", serialize(*level)) : string{} );
@@ -403,8 +407,8 @@ namespace Jde::Opc::Gateway{
 						notFound( Ƒ("Member {} not found.", id), sl );
 				}
 				else{//a reason.
-					if( type==Create )
-						requireName( args, sl );
+					if( type==Create || type==Update )
+						requireName( args, type==Create, sl );
 					if( let p = args.if_contains("category"); p || type==Create )
 						REFUSE_IF( !p || !p->is_string() || !Oee::ToCategory(p->get_string()), "category is Unplanned, Planned or Excluded{}.", p ? Ƒ(", not {}", serialize(*p)) : string{} );
 					if( let p = args.if_contains("code"); p && !p->is_null() && (type==Create || type==Update) ){
