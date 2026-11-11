@@ -892,3 +892,108 @@ describe( 'ViewSet', ()=>{
 		} );
 	} );
 } );
+//#595:  the slice's column is a change to the view, and its value the browser's, kept beside the drafts
+describe( 'ViewSet slice', ()=>{
+	const schema = schemaOf( "Thing", id(), required("name"), {name: "kind", type: {kind: "ENUM", name: "Kind"}}, scalar("size", "UInt") );
+	const route = ( sliceBy?:string )=>[View.fromConfig( {configColumns: ["name", "kind"], sort: [], sliceBy}, schema ), View.fromConfig( {name: "Other", configColumns: ["name"], sort: [], sliceBy}, schema )];
+	const load = async ( service=new MockProfileService(), sliceBy="kind", options:Partial<ViewSetOptions<View>>={} )=>{
+		const profileStore = runInInjectionContext( Injector.create({providers: [{provide: IPROFILE_SERVICE, useValue: service}]}), ()=>new ProfileStore() );
+		const set = new ViewSet( {type: View, key: "things", profileStore, prefs: new LocalPrefs(), ...options} );
+		await set.load( route(sliceBy || undefined), schema );
+		return { set, service };
+	};
+	const stored = ()=>JSON.parse( localStorage.getItem("u1/things/slices") ?? "null" );
+	beforeEach( ()=>localStorage.clear() );
+
+	it( 'narrows the view shown to a value, on a copy to query with, and leaves the view no draft', async ()=>{
+		const { set } = await load();
+		expect( [set.slice(), set.sliced()===set.current()] ).toEqual( [undefined, true] );
+		set.setSlice( "a" );
+		expect( [set.slice(), set.sliced().slice, set.current().slice, set.current().isAdhoc] ).toEqual( ["a", "a", undefined, false] );
+		expect( set.sliced() ).toBe( set.sliced() );//reviews-issue/595-views-slice-panel.md #14:  one copy, which a host that holds its rows reads on every push
+		set.setSlice( null );//the rows with none
+		expect( set.slice() ).toBeNull();
+		set.setSlice( undefined );
+		expect( [set.slice(), stored()] ).toEqual( [undefined, null] );
+	} );
+	it( 'keeps a value a view, and takes nothing for a view that is not sliced', async ()=>{
+		const { set } = await load();
+		set.setSlice( "a" );
+		set.select( 1 );
+		expect( set.slice() ).toBeUndefined();
+		set.setSlice( "b" );
+		set.select( 0 );
+		expect( [set.slice(), stored()] ).toEqual( ["a", {1: {field: "kind", value: "a"}, 2: {field: "kind", value: "b"}}] );
+		const bare = await load( new MockProfileService(), "" );
+		bare.set.setSlice( "a" );
+		expect( bare.set.slice() ).toBeUndefined();
+	} );
+	//reviews-issue/595-views-slice-panel.md #12:  the toolbar, the panel and the header each switched the column themselves
+	it( "switches the view's column on its draft, and says where it was already", async ()=>{
+		const { set } = await load();
+		expect( [set.setSliceBy( "kind" ), set.current().isAdhoc] ).toEqual( [false, false] );
+		expect( [set.setSliceBy( "size" ), set.current().sliceBy, set.current().isAdhoc] ).toEqual( [true, "size", true] );
+		expect( [set.setSliceBy( undefined ), set.current().sliceBy] ).toEqual( [true, undefined] );
+	} );
+	it( 'holds the value while the view is sliced by its column', async ()=>{
+		const { set } = await load();
+		set.setSlice( "a" );
+		set.edit( view=>{ view.sliceBy = "size"; } );
+		expect( [set.current().isAdhoc, set.slice()] ).toEqual( [true, undefined] );
+		set.discard( set.current() );
+		expect( set.slice() ).toBe( "a" );
+	} );
+	it( 'survives a reload, but is no part of what a Save writes', async ()=>{
+		const { set, service } = await load();
+		set.setSlice( "a" );
+		set.edit( view=>{ view.limit = 50; } );
+		await set.saveDraft( set.current() );
+		expect( JSON.parse(service.rows.get("things/views/1")!) ).toMatchObject( {sliceBy: "kind", limit: 50} );
+		expect( [...service.rows.values()].join() ).not.toContain( '"a"' );
+		const reloaded = await load( service );
+		expect( [reloaded.set.slice(), reloaded.set.sliced().slice] ).toEqual( ["a", "a"] );
+	} );
+	it( "goes with its view, and drops a stored one that is no view's or no value", async ()=>{
+		const service = new MockProfileService();
+		const { set } = await load( service );
+		set.setSlice( "a" );
+		await set.duplicate( set.current() );//the set is the user's:  views 1, 3, 2
+		set.setSlice( "c" );
+		await set.remove( set.current() );
+		expect( stored() ).toEqual( {1: {field: "kind", value: "a"}} );
+		localStorage.setItem( "u1/things/slices", JSON.stringify({1: {field: "kind", value: {}}, 2: {field: "kind", value: 3}, 9: {field: "kind", value: "a"}}) );
+		const reloaded = await load( service );
+		expect( stored() ).toEqual( {2: {field: "kind", value: 3}} );
+		reloaded.set.select( 1 );
+		expect( reloaded.set.views().map( v=>v.number ) ).toEqual( [1, 2] );
+	} );
+	//reviews-issue/595-views-slice-panel.md #8:  a Delete took the slice out of the browser at once, where it leaves the draft until
+	//the profile holds the Delete, so a failed write brought the view back without it
+	it( "keeps a deleted view's in the browser until the profile holds the Delete", async ()=>{
+		const { set, service } = await load();
+		set.setSlice( "a" );
+		service.save.mockRejectedValueOnce( new Error('offline') );
+		await expect( set.remove( set.current() ) ).rejects.toThrow( 'offline' );
+		expect( stored() ).toEqual( {1: {field: "kind", value: "a"}} );
+		const reloaded = await load( service );//the profile as it was
+		reloaded.set.select( 0 );
+		expect( reloaded.set.slice() ).toBe( "a" );
+	} );
+	//reviews-issue/595-views-slice-panel.md #9:  a pick list's fallback took a number with its Save, and left its slice under none
+	it( "keeps a pick list's fallback's through its Save", async ()=>{
+		const service = new MockProfileService();
+		service.rows.set( "things/views", JSON.stringify([1]) );
+		service.rows.set( "things/views/1", JSON.stringify(route("kind")[1].toJson(undefined)) );
+		const { set } = await load( service, "kind", {offered: view=>view.name!="Other"} );
+		expect( set.current().number ).toBe( 0 );
+		set.setSlice( "a" );
+		set.edit( view=>{ view.limit = 50; } );
+		await set.saveDraft( set.current() );
+		expect( [set.current().number, set.slice(), stored()] ).toEqual( [2, "a", {2: {field: "kind", value: "a"}}] );
+	} );
+	it( "is off where the route's list is not sliced", async ()=>{
+		const profileStore = runInInjectionContext( Injector.create({providers: [{provide: IPROFILE_SERVICE, useValue: new MockProfileService()}]}), ()=>new ProfileStore() );
+		expect( new ViewSet( {type: View, key: "things", profileStore, prefs: new LocalPrefs(), settings: {canSlice: false}} ).canSlice ).toBe( false );
+		expect( new ViewSet( {type: View, key: "things", profileStore, prefs: new LocalPrefs()} ).canSlice ).toBe( true );
+	} );
+} );

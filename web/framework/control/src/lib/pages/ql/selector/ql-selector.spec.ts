@@ -114,7 +114,7 @@ describe( 'QLSelector.fixedFilter', ()=>{
 	const deletable = slugSchema( "User", scalar("deleted", "DateTime") );
 	const data = ( columns:(string|object)[], schema=deletable )=>{
 		const view = View.fromTable( {columns: columns as string[], sort: "name"}, schema );
-		return { data: {schema, profile: {routeDefault: view, current: ()=>view}, routing: {path: "users"}} as unknown as QLListData, view };
+		return { data: {schema, profile: {routeDefault: view, current: ()=>view, sliced: ()=>view}, routing: {path: "users"}} as unknown as QLListData, view };
 	};
 	it( 'leaves out the ids it is given and the deleted rows', ()=>{
 		expect( QLSelector.fixedFilter( data(["name"]).data, [3, 4] ) ).toBe( "-id:3,4 no:deleted" );

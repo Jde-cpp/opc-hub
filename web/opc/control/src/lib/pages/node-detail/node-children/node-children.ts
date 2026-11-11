@@ -13,7 +13,7 @@ import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { cellValues, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
+import { cellValues, SliceCount, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
 import { EAccess } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
@@ -35,7 +35,7 @@ import { StructureTable } from '../../structure-table/structure-table';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,SlicePanel,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -317,13 +317,28 @@ export class NodeChildren implements OnInit, OnDestroy {
 	get showSystem():Signal<boolean>{ return this.#opcStore.showSystem; }
 	setShowSystem( show:boolean ):void{ this.#opcStore.setShowSystem( show ); }
 	rows = computed<UaNode[]>( ()=>{
-		const sorted = this.view() ? this.view().apply( this.nodes().filter( n=>this.showSystem() || !n.isSystem || this.isSelf(n) ) ) : [];//a ns-0 Variable page keeps its own row
+		const by = this.view()?.sliceBy;
+		if( by && NodeView.readColumns.includes( by ) && this.viewSet.slice()!==undefined )
+			this.#changes();//a push's reading may move a row into the value or out of it
+		const sorted = this.view() ? this.viewSet.sliced().narrowed( this.#filtered() ) : [];
 		const self = sorted.find( n=>this.isSelf(n) );//a Variable page's own row stays first, whatever the view's sort
 		return self ? [self, ...sorted.filter( n=>n!==self )] : sorted;
 	} );
+	#offered = computed<UaNode[]>( ()=>this.nodes().filter( n=>this.showSystem() || !n.isSystem || this.isSelf(n) ) );//a ns-0 Variable page keeps its own row
+	//The rows the view's filter keeps of those offered, which the rows and the slice panel's counts share.  Read again on every push,
+	//since a reading may move a row in or out, and passed on only where one did:  otherwise a push re-sorts nothing.
+	#filtered = computed<UaNode[]>( ()=>{
+		this.#changes();
+		return this.view()?.filtered( this.#offered() ) ?? [];
+	}, {equal: ( a, b )=>a.length==b.length && a.every( (n, i)=>n===b[i] )} );
+	//the slice panel's counts, of the rows under the view's filter
+	sliceCounts = computed<SliceCount[]>( ()=>{
+		this.#changes();
+		return this.view()?.sliceCounts( this.#filtered() ) ?? [];
+	} );
 	//every row the view would show is a system node the toggle hides - the Types folder's, by default:  the empty state says so, not
 	//that the view matches nothing (reviews-issue/416-address-space.md #12)
-	hiddenBySystem = computed<boolean>( ()=>!this.showSystem() && !this.rows().length && !!this.view() && this.view().apply( this.nodes() ).length>0 );
+	hiddenBySystem = computed<boolean>( ()=>!this.showSystem() && !this.rows().length && !!this.view() && this.viewSet.sliced().apply( this.nodes() ).length>0 );
 	displayedColumns = computed<string[]>( ()=>[...(this.view()?.displayedColumns ?? []), 'menu'] );//the row menu last, whatever the view shows
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
 	snapshotShown = computed<boolean>( ()=>this.displayedColumns().includes("snapshot") );//a Method row's Call is in the Snapshot cell, and in its Name cell where the view hides that (reviews-issue/318-opc-calls.md #6)

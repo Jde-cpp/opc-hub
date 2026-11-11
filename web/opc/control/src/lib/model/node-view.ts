@@ -1,4 +1,4 @@
-import { compareCells, DateUtils, Field, FilterHost, FieldKind, filterPredicate, TableSchema, View, ViewFieldSettings, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, countSlices, DateUtils, Field, FilterHost, FieldKind, filterPredicate, inSlice, SliceCount, TableSchema, View, ViewFieldSettings, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
@@ -15,6 +15,7 @@ export class NodeView extends View{
 	//from the rows;  a time;  and String for the rest - an id, a snapshot - since an OPC value's type varies by row.  The page
 	//draws its own cells, so a type changes no rendering.
 	static types:Record<string,{kind:FieldKind, name:string}> = { class: {kind: FieldKind.ENUM, name: "NodeClass"}, dataType: {kind: FieldKind.ENUM, name: "DataType"}, status: {kind: FieldKind.ENUM, name: "StatusCode"}, sourceTime: {kind: FieldKind.SCALAR, name: "DateTime"}, serverTime: {kind: FieldKind.SCALAR, name: "DateTime"} };
+	static readonly readColumns:readonly string[] = ["snapshot", "status", "sourceTime", "serverTime"];//those a reading changes
 	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: NodeView.types[name] ?? {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	//The fields in the order of `columns` and under its names, those not `shown` hidden:  the page writes the same headers, and the
 	//filter box names a column as its header reads.
@@ -30,9 +31,19 @@ export class NodeView extends View{
 
 	get displayedColumns():string[]{ return (this.showSelector ? ["select"] : []).concat( this.fields.filter(f=>f.displayed).map(f=>f.name) ); }
 
-	//the rows in view order:  filtered, then sorted by each Sort in turn (the first is primary)
-	apply( nodes:readonly UaNode[] ):UaNode[]{
-		return this.sortNodes( nodes.filter(this.predicate()) );
+	//the rows in view order:  filtered, then narrowed and sorted
+	apply( nodes:readonly UaNode[] ):UaNode[]{ return this.narrowed( this.filtered(nodes) ); }
+	filtered( nodes:readonly UaNode[] ):UaNode[]{ return nodes.filter( this.predicate() ); }
+	//The rows the filter kept, in view order:  narrowed to the slice's value on a view that carries one (ViewSet.sliced), then sorted
+	//by each Sort in turn (the first is primary).  A host that counts the slice's values reads `filtered` once for both.
+	narrowed( filtered:readonly UaNode[] ):UaNode[]{
+		const by = this.sliceBy, slice = this.slice;
+		return this.sortNodes( by && slice!==undefined ? filtered.filter( n=>inSlice(NodeView.cellValue(n, by), slice) ) : filtered );
+	}
+	//the slice panel's counts:  the rows the filter kept by the slice column's cell
+	sliceCounts( filtered:readonly UaNode[] ):SliceCount[]{
+		const by = this.sliceBy;
+		return by ? countSlices( filtered, n=>NodeView.cellValue(n, by) ) : [];
 	}
 	//the browser runs the filter, over the cells:  a comparison is read on any column
 	override filterHost():FilterHost{ return { ...super.filterHost()!, server: false, enums: undefined }; }

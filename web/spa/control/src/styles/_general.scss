@@ -145,6 +145,32 @@ mat-toolbar.jde-list-toolbar {
 	}
 }
 
+// A sliced list (jde-framework's SlicePanel, views spec *Slice by*, whose host is the row):  the panel at the left of what the list
+// shows - its table, its empty state, its pager, which the host projects into .jde-sliced-rows - which takes the rest of the row.  The zero minimum is .main-content's, for the same reason:  a
+// table wider than its room overflows it visibly and scrolls the pane sideways, the panel going with the scroll, so the pinned
+// column stays at the pane's edge.  Below the small breakpoint the panel is a button on a row of its own, ahead of the table in
+// the template as on screen.  Global because the lists are in two libraries, and here because it reads a breakpoint.
+.jde-sliced {
+	display: flex;
+	align-items: flex-start;
+
+	> .jde-sliced-rows {
+		flex: 1 1 0;
+		min-width: 0;
+	}
+}
+@media (max-width: constants.$small-breakpoint-width) {
+	.jde-sliced {
+		display: block;
+	}
+}
+// a value's count in the folded panel's menu, which renders in the overlay
+.jde-slice-count {
+	margin-left: 1rem;
+	font: var(--mat-sys-label-medium);
+	color: var(--mat-sys-on-surface-variant);
+}
+
 // The tabs' panel the four list hosts put around their table (ViewToolbar's mat-tab-nav-bar requires one):  a block, as Material
 // leaves the element inline.
 mat-tab-nav-panel {

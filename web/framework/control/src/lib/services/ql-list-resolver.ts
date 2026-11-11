@@ -10,6 +10,7 @@ import { capitalize, LocalPrefs, ProfileStore, RouteItem, RouteStore } from 'jde
 import { View, ViewFieldSettings, ViewSettings } from '../model/ql/view';
 import { Sort } from '@angular/material/sort';
 import { QLRow } from '../model/ql/slug-row';
+import { readSliceCounts, SliceCount } from '../model/ql/slice';
 
 //canNavigate: a collection with no ':slug' detail route must not offer the row click-through;  rowLink: the segments below the
 //list to a row's page where they are not its slug alone - a resource's slug repeats across schemas, so its page is schema/slug.
@@ -18,9 +19,12 @@ import { QLRow } from '../model/ql/slug-row';
 //viewName: the tab label of the default view ("Default" when unset);  filter: the default view's, the filter box's text as a
 //ViewSettings' is (resources opens on the table rows, "no:criteria");  views: further system views, see ViewSettings
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
+//sliceBy: the column the default view's slice panel lists (views spec *Slice by*);  canSlice: false for a collection whose
+//`groupBy` the server does not answer with counts - one a custom query answers without sending it back to the stock select - so
+//the list offers no slice
 export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };
 export type RowLink = { fields:string[], segments:(row:QLRow)=>string[]|undefined };
-export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, rowLink?:RowLink, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filter?:string, views?:ViewSettings[], empty?:EmptyState, noun?:string};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
+export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, rowLink?:RowLink, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filter?:string, views?:ViewSettings[], empty?:EmptyState, noun?:string, sliceBy?:string, canSlice?:boolean};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
 export type CollectionItem = string | { path:string, title?:string, data?:{summary:string, collectionName:string, tableSettings:TableSettings} };
 export class ListRoute extends RouteItem{
 	constructor( collection:string|CollectionItem ){
@@ -53,7 +57,13 @@ export type QLListData = {
 	skip?: number;//the offset of the page in results - the first page when unset
 	more?: boolean;//a row past the page exists, so the pager offers a next page (QLListResolver.page)
 	childrenKey?: string;//where the sidenav children go when it is not the list's own url:  a gateway's tabs, under the gateway's page
+	sliceCounts?: SliceCount[];//the slice panel's counts, read with the rows where the view is sliced:  the list's under its filter, not the page's
+	sliceCountsError?: unknown;//they could not be read, or the server did not count:  the panel says so, and the rows stand
+	sliceCountsOf?: SliceQuery;//the column and the count query that sliceCounts or sliceCountsError answer
 };
+//A slice panel's count query:  its column, and its text and variables as one string, which a page turn, a sort or a value picked
+//leaves as it was.
+export type SliceQuery = { by:string, query:string };
 //what load() reads and hands back - a gateway's Connections tab (GatewayData) pages the same way, under an AppInstanceRoute
 export type PageData = Omit<QLListData, "routing"> & { routing:{path:string, parent?:{path:string}} };
 
@@ -152,10 +162,10 @@ export class QLListResolver implements Resolve<QLListData> {
 	static systemViews( schema:TableSchema, settings:TableSettings ):View[]{
 		const columns = settings.columns ?? [];
 		const queried = settings.rowLink?.fields;
-		const defaultView = View.fromConfig( {name: settings.viewName, configColumns: columns, sort: View.toSort(settings.sort) ?? [{active: "name", direction: "asc"}], filter: settings.filter, queried}, schema );//settings.sort, not the name default:  a route that declares its own order (resources: schema then name) has to get it
+		const defaultView = View.fromConfig( {name: settings.viewName, configColumns: columns, sort: View.toSort(settings.sort) ?? [{active: "name", direction: "asc"}], filter: settings.filter, queried, sliceBy: settings.sliceBy}, schema );//settings.sort, not the name default:  a route that declares its own order (resources: schema then name) has to get it
 		const views = [defaultView];
 		for( const v of settings.views ?? [] )
-			views.push( View.fromConfig({name: v.name, configColumns: v.columns ?? columns, sort: View.toSort(v.sort) ?? [...defaultView.sort], filter: v.filter, queried}, schema) );
+			views.push( View.fromConfig({name: v.name, configColumns: v.columns ?? columns, sort: View.toSort(v.sort) ?? [...defaultView.sort], filter: v.filter, queried, sliceBy: v.sliceBy}, schema) );
 		const deleted = QLListResolver.deletedView( defaultView );
 		if( deleted )
 			views.push( deleted );
@@ -202,7 +212,7 @@ export class QLListResolver implements Resolve<QLListData> {
 	}
 	//routeStore null:  the rows are a pick list (QLSelector - filtered, and never the page's own collection), not the collection's sidenav children
 	static async load<T extends PageData>( ql:Pick<IGraphQL,"query">, data:T, routeStore:RouteStore|null ):Promise<T>{
-		let view = data.profile.current();
+		let view = data.profile.sliced();//narrowed to the slice's value, where one is chosen
 		if( data.fixedFilter ){//on a copy:  the profile's view is what the box edits and what a Save persists
 			view = View.copy( view );
 			view.fixedFilter = data.fixedFilter;
@@ -213,16 +223,36 @@ export class QLListResolver implements Resolve<QLListData> {
 			return ql.query<any>( q.text, q.vars );
 		};
 		let skip = data.skip ?? 0;
+		const counting = data.profile.canSlice ? QLListResolver.loadSliceCounts( ql, view, data ) : Promise.resolve( {} );//with the rows, not after them
 		let results = await query( skip );
 		if( skip && !results[collectionName].length ){//a page past the end - rows deleted since it was read:  the first page, not an empty "No … yet"
 			skip = 0;
 			results = await query( skip );
 		}
 		const page = QLListResolver.page( results[collectionName], view );
-		const y = { ...data, results: {...results, [collectionName]: page.rows}, skip, more: page.more, error: undefined };
+		const y = { ...data, results: {...results, [collectionName]: page.rows}, skip, more: page.more, error: undefined, sliceCounts: undefined, sliceCountsError: undefined, sliceCountsOf: undefined, ...await counting };
 		if( routeStore )
 			QLListResolver.setChildren( routeStore, y );
 		return y;
+	}
+	//The slice panel's counts, where the view is sliced:  `prior`'s where they answer the same query, which only a filter or the
+	//column changes - a Refresh reads them again, leaving prior none.  A failure is the panel's to say, never the rows':  it is
+	//answered, not thrown.
+	static async loadSliceCounts( ql:Pick<IGraphQL,"query">, view:View, prior?:Pick<QLListData,"sliceCounts"|"sliceCountsOf"> ):Promise<Pick<QLListData,"sliceCounts"|"sliceCountsError"|"sliceCountsOf">>{
+		const q = view.sliceQuery();
+		if( !q )
+			return {};
+		const of = { by: view.sliceBy!, query: JSON.stringify( q ) };
+		if( prior?.sliceCounts && prior.sliceCountsOf?.query==of.query )
+			return { sliceCounts: prior.sliceCounts, sliceCountsOf: of };
+		try{
+			const results = await ql.query<any>( q.text, q.vars );
+			return { sliceCounts: readSliceCounts(results[view.collectionName], of.by), sliceCountsOf: of };
+		}
+		catch( e ){
+			console.warn( `The counts of '${view.collectionName}' by '${of.by}' could not be read.`, e );
+			return { sliceCountsError: e, sliceCountsOf: of };
+		}
 	}
 	//the page's rows as the collection's sidenav children
 	static setChildren( routeStore:RouteStore, data:PageData ){

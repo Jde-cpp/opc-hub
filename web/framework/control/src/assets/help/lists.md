@@ -54,6 +54,7 @@ A column is changed from its header, and each change is an [unsaved change](#uns
 - A header shows a menu button when the pointer is over it or the keyboard is on it:
   - **Sort ascending** and **Sort descending** [sort](#sorting) by the column.
   - **Filter by…** lists the column's values, on a column with a few fixed ones. See [Filtering](#filtering).
+  - **Slice by this field** [slices](#slicing) the list by the column, and takes the slice off again on the column the list is sliced by.
   - **Move left** and **Move right** move the column a place.
   - **Wider** and **Narrower** change its width a step at a time.
   - **Hide field** takes the column out of the view. The last column cannot be hidden.
@@ -119,9 +120,23 @@ Three kinds of list differ:
 - A node's **Children** and the **Watch list** filter the rows already on screen. There `field:value` must match the cell exactly, a comparison works on any column - as numbers when both sides are numbers - and a word is looked for in every text cell, whatever its case. In the other lists the database decides whether upper and lower case differ.
 - The pick lists on a record's tabs never list deleted rows, whatever is typed. **Logs** has no filter box.
 
+### Slicing
+
+A **slice** is a panel at the left of the table that lists one column's values, each with the number of rows that have it. Click a value to narrow the list to its rows, and click it again, or **All**, to see every row again.
+
+- **Slice by** in the [view's menu](#views) picks the column, and **No slicing** takes the panel away. A header's menu has **Slice by this field**, and the column's name at the top of the panel switches to another.
+- A list is sliced by a column of numbers, of yes and no, or of fixed choices, such as a user's provider. It is not sliced by an ID, by text or by a date, nor, but on the watch list, by a number with a fraction.
+- The counts are of the whole list under its [filter](#filtering), not of the page, so typing a filter changes them. **All** shows their total, and *No* and the column's name stands for the rows with no value.
+- A column of fixed choices lists them in their own order, and the others from the lowest value up.
+- The value you click is not part of the filter: the filter box does not change. It is kept in this browser, for you alone, so it is still chosen after a reload, and it is not saved with the view. The column is part of the view, and picking one is an [unsaved change](#unsaved-changes).
+
+On a narrow window or a phone the panel is a **Slice** button above the table, whose menu holds the same values. It names the value the list is narrowed to, **Slice: Key**.
+
+**Logs** cannot be sliced.
+
 ## Views
 
-A **view** is the [filter](#filtering) on the rows, which columns are shown and in what order, and how the rows are sorted.
+A **view** is the [filter](#filtering) on the rows, which columns are shown and in what order, how the rows are sorted, and the column the list is [sliced](#slicing) by.
 
 The tabs above the bar are a list's views; click one to switch. Every list comes with a *Default* view and some with more. They are a starting set: the first change you make to them - a save, a rename, a new view, a move or a deletion - keeps the whole set as your own. From then the tabs are your views alone, to change, add to and delete as you like. Two views may share a name.
 
@@ -133,6 +148,7 @@ The active tab carries a chevron, which opens the view's menu:
 
 - **Fields** shows and hides [columns](#columns). Its first entry on a list's own page and on a node's **Children**, **Select**, shows or hides the column of checkboxes that tick rows.
 - **Sort by** sets the columns the list is [sorted](#sorting) by, and their order.
+- **Slice by** picks the column the list is [sliced](#slicing) by.
 - **Page size** is how many rows a page holds: 10, 25, 50, 100, 250 or 500. A list starts at 25 and **Logs** at 21. A node's **Children** are not read a page at a time, so their menu has none.
 - **Rename** turns the tab's name into a box. Enter keeps the new name, Escape or a blank box leaves the old one.
 - **Duplicate** adds a copy of the view, as it was last saved, after it under the same name.
@@ -140,11 +156,11 @@ The active tab carries a chevron, which opens the view's menu:
 - **Save changes** and **Discard changes** do what **Save** and **Discard** in the bar do.
 - **Delete** removes the view, its unsaved changes with it. Deleting the last one brings the list's own views back. It is greyed out on a list's own view when that is the only one.
 
-The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Fields**, **Sort by**, **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
+The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Fields**, **Sort by**, **Slice by**, **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
 
 ### Unsaved changes
 
-A change to a view - a filter typed, a sort, a column shown, hidden, moved or resized, a page size - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
+A change to a view - a filter typed, a sort, a column shown, hidden, moved or resized, a slice column, a page size - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
 
 - **Save** keeps the changes as the view. On one of a list's own views it keeps the whole set as yours, as any first change does.
 - **Discard** drops them and shows the view as it was saved.
