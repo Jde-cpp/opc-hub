@@ -197,11 +197,10 @@ namespace Jde::Opc::Emulator{
 	//PLC's own node, and `sessionUp` gates nothing.
 	α Emulator::Cycle( Duration dt, bool sessionUp )ι->void{
 		for( auto& device : _devices ){
+			device.Sample( dt );
 			for( auto& tag : device.Tags ){
 				if( !tag.Generator )
 					continue;
-				//The generator is sampled even through a fault that holds the reading: the process runs on, the sensor is blind.
-				tag.Status = tag.Quality.Apply( dt, tag.Generator->Next(dt, device.Command), tag.Value );
 				if( tag.Field ){
 					try{
 						_plc->Write( *tag.Field, tag.Value, tag.Status );
@@ -227,8 +226,14 @@ namespace Jde::Opc::Emulator{
 					continue;//nothing to write to; the value is current and goes out on the next cycle after recovery.
 				UA_Variant v;
 				UA_Boolean b = tag.Value!=0;
+				UA_UInt32 count = tag.Type==&UA_TYPES[UA_TYPES_UINT32] ? (UA_UInt32)tag.Value : 0;
+				UA_Int32 code = (UA_Int32)tag.Value;
 				if( tag.Spec.IsBool() )
 					UA_Variant_setScalar( &v, &b, &UA_TYPES[UA_TYPES_BOOLEAN] );
+				else if( tag.Type==&UA_TYPES[UA_TYPES_UINT32] )
+					UA_Variant_setScalar( &v, &count, &UA_TYPES[UA_TYPES_UINT32] );
+				else if( tag.Type==&UA_TYPES[UA_TYPES_INT32] )
+					UA_Variant_setScalar( &v, &code, &UA_TYPES[UA_TYPES_INT32] );
 				else
 					UA_Variant_setScalar( &v, &tag.Value, &UA_TYPES[UA_TYPES_DOUBLE] );
 				try{
