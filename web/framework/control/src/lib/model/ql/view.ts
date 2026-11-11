@@ -3,7 +3,7 @@ import { StringUtils } from '../../utils/string-utils';
 import { Query } from '../../services/graphql';
 import { TableSettings } from '../../services/ql-list-resolver';
 import { Field, FieldKind } from "./schema/field";
-import { filterArguments, FilterHost, FilterParse, parseFilter } from './filter-query';
+import { filterArguments, FilterHost, FilterParse, parseFilter, serverHasField, toggleFilterTerm } from './filter-query';
 import { TableSchema } from "./schema/table-schema";
 import { Sort, SortDirection } from "@angular/material/sort";
 
@@ -287,6 +287,12 @@ export class View{
 		const rest = ( this.schema?.fields ?? [] ).filter( f=>!own.has(f.name) ).map( f=>({qlField: f, displayName: StringUtils.idToDisplay(f.name)}) );
 		return { columns: [...this.fields.filter( f=>f.qlField ), ...rest], server: true, enums: this.schema?.enums };
 	}
+	//a column's value into the filter as `field:a,b`, or out of it:  a chip's click, and a pick of the header's `Filter by…`
+	toggleFilterValue( name:string, value:string ):void{
+		const host = this.filterHost(), field = this.fields.find( f=>f.name==name );
+		if( host && field )
+			this.filter = toggleFilterTerm( this.filter, host, field, value );
+	}
 	//the filter's terms and what the box could not read, the host's fixed terms after the view's
 	parsedFilter():FilterParse{
 		const host = this.filterHost();
@@ -378,12 +384,14 @@ export class View{
 		if( field )
 			field.style = style ? new Style( style ) : undefined;
 	}
-	//The sort (views spec *Sort*).  A column this refuses is in neither menu and its header does not sort:  orderBy on a grafted
-	//object field is a server error.
+	//The sort (views spec *Sort*).  A column this refuses is in neither menu and its header does not sort:  orderBy on a column the
+	//server lacks is an error.  The lists that sort their own rows have none of those kinds.
 	sortable( name:string ):boolean{
 		const field = this.fields.find( f=>f.name==name )?.qlField ?? this.schema?.fields.find( f=>f.name==name );
-		return !!field && field.type.underlyingKind!=FieldKind.OBJECT;
+		return !!field && serverHasField( field );
 	}
+	//the sort `No sorting` leaves:  none, but where the rows need an order of their own (LogView)
+	clearedSort():Sort[]{ return []; }
 	//a header's click:  the column first, the others after it as they were
 	sortFirst( sort:Sort ):void{ this.sort = [sort, ...this.sort.filter( s=>s.active!=sort.active )]; }
 	//a header menu's two sorts:  the direction, where the column stands in the sort, else the column first

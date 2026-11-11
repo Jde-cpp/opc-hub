@@ -115,7 +115,7 @@ The menus build their entries only while open (matMenuContent).-->
 		<div class="sort-rows" role="none" cdkDropList cdkDropListLockAxis="y" (cdkDropListDropped)="onSortDrop($event)" (click)="stop($event)">
 			@for( sort of sorts(); track sort.name; let i=$index ){
 				<div class="sort-row" role="none" cdkDrag [cdkDragData]="sort.name">
-					<button mat-menu-item type="button" role="menuitemcheckbox" aria-checked="true" [attr.data-sort]="sort.name" (click)="toggleSort(sort.name, $event)">
+					<button mat-menu-item type="button" [attr.data-sort]="sort.name" (click)="toggleSort(sort.name, $event)"><!--a plain item:  a click turns it the other way, so it is no checkbox, and its name carries its direction-->
 						<mat-icon aria-hidden="true">{{ sort.direction=="desc" ? "arrow_downward" : "arrow_upward" }}</mat-icon>
 						{{ sort.label }}<span class="cdk-visually-hidden">, {{ sort.direction=="desc" ? "descending" : "ascending" }}</span>
 					</button>
@@ -125,12 +125,12 @@ The menus build their entries only while open (matMenuContent).-->
 			}
 		</div>
 		@for( field of unsorted(); track field.name ){
-			<button mat-menu-item type="button" role="menuitemcheckbox" aria-checked="false" [attr.data-sort]="field.name" (click)="toggleSort(field.name, $event)">
+			<button mat-menu-item type="button" [attr.data-sort]="field.name" (click)="toggleSort(field.name, $event)">
 				<mat-icon aria-hidden="true"></mat-icon>
 				{{ field.label }}
 			</button>
 		}
-		<button mat-menu-item type="button" [disabled]="!sorts().length" (click)="clearSort()"><mat-icon aria-hidden="true"></mat-icon>No sorting</button>
+		<button mat-menu-item type="button" [disabled]="!canClearSort()" (click)="clearSort()"><mat-icon aria-hidden="true"></mat-icon>No sorting</button>
 	</ng-template>
 </mat-menu>
 <mat-menu #viewsMenu="matMenu">

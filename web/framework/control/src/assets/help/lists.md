@@ -41,7 +41,7 @@ The menu stays open for the next click.
 
 The header of the first column in the sort shows its arrow. A later one shows its arrow and its place in the sort, 2 or 3.
 
-A column the list cannot be sorted by has no sort in its menu and is not in **Sort by**. **Logs** is always sorted by time, after any other column, so **No sorting** there leaves the time.
+A column the list cannot be sorted by has no sort in its menu and is not in **Sort by**. **Logs** is always sorted by time, after any other column, so **No sorting** there leaves the time sorted the way it was.
 
 A change to the sort is an [unsaved change](#unsaved-changes) to the view.
 

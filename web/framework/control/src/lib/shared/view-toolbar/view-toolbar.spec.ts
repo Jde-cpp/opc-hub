@@ -11,6 +11,7 @@ import { ViewToolbar } from './view-toolbar';
 import { flush, MockProfileService, screenSize } from 'jde-spa/testing';
 import { object, required, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
 import { TableSchema } from '../../model/ql/schema/table-schema';
+import { LogEntries, LogView } from '../../pages/logs/log-entry';
 
 //reviews/angular-refactor.md A2:  QLList, LogDetail and NodeChildren each carried a copy of this toolbar and its stylesheet.
 //#588:  the views are tabs, the view menu on the active one's chevron and `+ New view` after them;  a pick list has a menu button.
@@ -278,7 +279,8 @@ describe( 'ViewToolbar', ()=>{
 			const { fixture, element, set } = await create();
 			openMenu( fixture, chevron( activeTab( element ) )! );
 			await pick( fixture, "Rename" );
-			await set.save( View.copy( set.current() ) );
+			set.edit( view=>{ view.limit = 50; } );
+			await set.saveDraft( set.current() );
 			fixture.detectChanges();
 			const box = renameBox( element )!;
 			expect( box ).not.toBeNull();
@@ -672,8 +674,8 @@ describe( 'ViewToolbar', ()=>{
 			await pick( y.fixture, "Sort by" );
 			return y;
 		};
-		//the entries but the moves:  what each reads, and whether the view sorts by it
-		const entries = ()=>items().filter( i=>!i.classList.contains( "sort-move" ) ).map( i=>[text( i ), i.getAttribute( "aria-checked" )] );
+		//the entries but the moves:  what each reads, a sorted one with its direction
+		const entries = ()=>items().filter( i=>!i.classList.contains( "sort-move" ) ).map( text );
 		const move = async ( fixture:ComponentFixture<Host>, label:string )=>{
 			items().find( i=>i.getAttribute( "aria-label" )==label )!.click();
 			await settle( fixture );
@@ -685,9 +687,22 @@ describe( 'ViewToolbar', ()=>{
 			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( text ) ).not.toContain( "Sort by" );
 		} );
 
-		it( "lists the view's sorts ticked, in their order, then the host's other columns the view can sort by, and No sorting", async ()=>{
+		it( "lists the view's sorts with their directions, in their order, then the host's other columns the view can sort by, and No sorting", async ()=>{
 			await open();
-			expect( entries() ).toEqual( [["Name, ascending", "true"], ["Slug", "false"], ["Sort", "false"], ["No sorting", null]] );//not Owner, a grafted object
+			expect( entries() ).toEqual( ["Name, ascending", "Slug", "Sort", "No sorting"] );//not Owner, a grafted object
+		} );
+		//reviews-issue/593-views-sort.md #8:  a sorted column was a checkbox ticked, which a click turned the other way and left ticked
+		it( 'offers the columns as plain items, no checkbox among them', async ()=>{
+			await open();
+			expect( new Set( items().map( i=>[i.getAttribute( "role" ), i.getAttribute( "aria-checked" )].join() ) ) ).toEqual( new Set( ["menuitem,"] ) );
+		} );
+		//reviews-issue/593-views-sort.md #4:  the focus went to the new entry natively, and the arrow keys went on from the old one
+		it( 'goes on from the entry a click made, by the arrow keys', async ()=>{
+			const { fixture } = await open();
+			await pick( fixture, "Sort" );
+			expect( text( document.activeElement! ) ).toBe( "Sort, ascending" );
+			panels().at( -1 )!.dispatchEvent( new KeyboardEvent( 'keydown', {key: "ArrowDown", keyCode: 40, bubbles: true, cancelable: true} ) );
+			expect( document.activeElement!.getAttribute( "aria-label" ) ).toBe( "Move Sort up" );
 		} );
 
 		it( 'adds a column after the others at a click, turns a ticked one the other way, tells the host, and stays open', async ()=>{
@@ -695,7 +710,7 @@ describe( 'ViewToolbar', ()=>{
 			await pick( fixture, "Sort" );
 			await pick( fixture, "Slug" );
 			await pick( fixture, "Sort, ascending" );
-			expect( entries() ).toEqual( [["Name, ascending", "true"], ["Sort, descending", "true"], ["Slug, ascending", "true"], ["No sorting", null]] );
+			expect( entries() ).toEqual( ["Name, ascending", "Sort, descending", "Slug, ascending", "No sorting"] );
 			expect( sorted( set ) ).toEqual( ["name asc", "kind desc", "slug asc"] );
 			expect( [set.current().isAdhoc, host.changes] ).toEqual( [true, 3] );
 		} );
@@ -739,6 +754,21 @@ describe( 'ViewToolbar', ()=>{
 			sortBy.click();
 			await settle( fixture );
 			expect( entries( sortBy ).map( i=>[text( i ), i.disabled] ) ).toEqual( [["Slug", false], ["Name", false], ["Sort", false], ["No sorting", true]] );//as Fields lists them
+		} );
+		//reviews-issue/593-views-sort.md #6:  `No sorting` emptied the sort, and LogView put its default's `time desc` back
+		it( "leaves the logs' time as it stands, and is off where the time is all the sort", async ()=>{
+			const route = LogView.default();
+			route.sort = [{active: "level", direction: "asc"}, {active: "time", direction: "asc"}];
+			const { fixture, set, host, element } = await create( {route: [route], schema: LogView.schema, type: LogView} );
+			host.columns.set( LogEntries.columns );
+			fixture.detectChanges();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Sort by" );
+			await pick( fixture, "No sorting" );
+			const toolbar = fixture.debugElement.query( By.directive( ViewToolbar ) ).componentInstance as ViewToolbar;
+			expect( [sorted( set ), toolbar.canClearSort(), host.changes] ).toEqual( [["time asc"], false, 1] );
+			toolbar.clearSort();
+			expect( host.changes ).toBe( 1 );
 		} );
 	} );
 

@@ -51,7 +51,7 @@ describe( 'ViewSet', ()=>{
 		return made;
 	};
 	const names = ( set:ViewSet<ThingView> )=>set.views().map( v=>`${v.number}:${v.name ?? "Default"}${v.isAdhoc ? "*" : ""}` );
-	//a view to save as a new one:  a copy under no number
+	//a view that is none of the set's:  a copy under no number
 	const unnumbered = ( set:ViewSet<ThingView>, name:string )=>{
 		const view = View.copy( set.current() );
 		view.name = name;
@@ -103,9 +103,9 @@ describe( 'ViewSet', ()=>{
 	describe( 'numbers', ()=>{
 		it( 'finds, replaces and removes by number:  two views of one name', async ()=>{
 			const { set, writes } = await load( stored([[1, make("Same")], [2, make("Same")]]) );
-			const edited = View.copy( set.views()[1] );
-			edited.sort = [{active: "kind", direction: "desc"}];
-			const saving = set.save( edited );
+			set.select( 1 );
+			set.sort( {active: "kind", direction: "desc"} );
+			const saving = set.saveDraft( set.current() );
 			expect( names(set) ).toEqual( ["1:Same", "2:Same"] );//the views have changed when it returns
 			expect( set.views().map( v=>v.sort[0].active ) ).toEqual( ["name", "kind"] );
 			expect( set.current().number ).toBe( 2 );
@@ -116,23 +116,15 @@ describe( 'ViewSet', ()=>{
 			expect( set.current().sort[0].active ).toBe( "kind" );
 		} );
 
-		it( 'adds a view saved under no number as the next above the highest, after the last, and shows it', async ()=>{
+		it( 'adds a view as the next above the highest, after the last, and shows it', async ()=>{
 			const { set, writes, held } = await load( stored([[5, make("A")], [2, make("B")]]) );
-			await set.save( unnumbered(set, "New") );
-			expect( names(set) ).toEqual( ["5:A", "2:B", "6:New"] );
-			expect( set.current() ).toBeInstanceOf( ThingView );//ql-list-settings emits a base View
+			await set.add();
+			expect( names(set) ).toEqual( ["5:A", "2:B", "6:View 6"] );
+			expect( set.current() ).toBeInstanceOf( ThingView );
 			expect( set.current().number ).toBe( 6 );
 			expect( remembered() ).toBe( "6" );
 			expect( writes() ).toEqual( ["things/views/6", "things/views"] );//the row, then the index that names it
 			expect( held() ).toEqual( {index: [5, 2, 6], rows: [2, 5, 6]} );
-		} );
-
-		it( 'adds a view whose number is no longer in the set', async ()=>{
-			const { set } = await load( stored([[1, make("A")], [2, make("B")]]) );
-			const gone = View.copy( set.views()[1] );
-			await set.remove( gone );
-			await set.save( gone );
-			expect( names(set) ).toEqual( ["1:A", "2:B"] );
 		} );
 	} );
 
@@ -141,22 +133,15 @@ describe( 'ViewSet', ()=>{
 			const { set, writes, held } = await load();
 			set.select( 1 );
 			set.sort( {active: "kind", direction: "asc"} );
-			await set.save( View.copy(set.current()) );
+			await set.saveDraft( set.current() );
 			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );//the twin went over its view
 			expect( set.current().isUser ).toBe( true );
 			expect( set.current().sort[0].active ).toBe( "kind" );
 			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views"] );
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );
 			set.sort( {active: "name", direction: "desc"} );
-			await set.save( View.copy(set.current()) );
+			await set.saveDraft( set.current() );
 			expect( writes() ).toEqual( ["things/views/2"] );//saved now:  a changed view's row alone
-		} );
-
-		it( 'saves the set with a new view after it', async ()=>{
-			const { set, writes } = await load();
-			await set.save( unnumbered(set, "Mine") );
-			expect( names(set) ).toEqual( ["1:Default", "2:Users", "3:Mine"] );
-			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views/3", "things/views"] );
 		} );
 
 		it( 'saves the set without a view deleted from it', async ()=>{
@@ -181,7 +166,7 @@ describe( 'ViewSet', ()=>{
 		it( 'leaves out of a saved view what the route already says', async ()=>{
 			const { set, service } = create( {}, {viewsKey: "qlList/things/views", settings: {columns: ["name", "kind"], sort: [{active: "name", direction: "asc"}]}} );
 			await set.load( route(), schema );
-			await set.save( unnumbered(set, "Mine") );
+			await set.add();
 			expect( JSON.parse(service.rows.get("qlList/things/views")!) ).toEqual( [1, 2, 3] );
 			expect( JSON.parse(service.rows.get("qlList/things/views/3")!).sort ).toBeUndefined();//the route's own sort is not repeated
 		} );
@@ -310,8 +295,8 @@ describe( 'ViewSet', ()=>{
 		it( "holds the second's writes until the first's are done, and leaves the index and the rows agreeing", async ()=>{
 			const { set, service, writes, held } = await load( stored([[1, make("A")], [2, make("B")]]) );
 			const release = holdNext( service );
-			const added = set.save( unnumbered(set, "New") ), moved = set.move( set.current(), 0 );
-			expect( names(set) ).toEqual( ["3:New", "1:A", "2:B"] );
+			const added = set.add(), moved = set.move( set.current(), 0 );
+			expect( names(set) ).toEqual( ["3:View 3", "1:A", "2:B"] );
 			await flush();
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );//the new row is on its way, and the index does not name it yet
 			release();
@@ -322,7 +307,7 @@ describe( 'ViewSet', ()=>{
 
 		it( 'writes nothing for a new view deleted at once', async ()=>{
 			const { set, writes, held } = await load( stored([[1, make("A")]]) );
-			const added = set.save( unnumbered(set, "New") ), removed = set.remove( set.current() );
+			const added = set.add(), removed = set.remove( set.current() );
 			await Promise.all( [added, removed] );
 			expect( names(set) ).toEqual( ["1:A"] );
 			expect( writes() ).toEqual( [] );
@@ -332,8 +317,8 @@ describe( 'ViewSet', ()=>{
 		it( 'makes a failed write again with the next change, the index after the row it names', async ()=>{
 			const { set, service, writes, held } = await load( stored([[1, make("A")], [2, make("B")]]) );
 			service.save.mockRejectedValueOnce( new Error('down') );
-			await expect( set.save( unnumbered(set, "New") ) ).rejects.toThrow( 'down' );
-			expect( names(set) ).toEqual( ["1:A", "2:B", "3:New"] );
+			await expect( set.add() ).rejects.toThrow( 'down' );
+			expect( names(set) ).toEqual( ["1:A", "2:B", "3:View 3"] );
 			expect( writes() ).toEqual( ["things/views/3"] );
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );//the index never named the row that is not there
 			await set.move( set.views()[0], 1 );
@@ -347,7 +332,7 @@ describe( 'ViewSet', ()=>{
 			const release = holdNext( service );
 			const renamed = set.rename( set.current(), "Z" );
 			await flush();
-			const added = set.save( unnumbered(set, "New") );
+			const added = set.add();
 			release();
 			await renamed;
 			expect( held() ).toEqual( {index: [1], rows: [1]} );
@@ -396,13 +381,13 @@ describe( 'ViewSet', ()=>{
 		it( 'keeps a change made signed out here, and writes it with the next one signed in', async ()=>{
 			const { set, service, writes, held } = await load( stored([[1, make("A")], [2, make("B")]]) );
 			service.setUser( undefined );
-			await set.save( unnumbered(set, "New") );
+			await set.add();
 			await set.remove( set.views()[0] );
-			expect( names(set) ).toEqual( ["2:B", "3:New"] );
+			expect( names(set) ).toEqual( ["2:B", "3:View 3"] );
 			expect( writes() ).toEqual( [] );
 			service.setUser( 'u1' );
 			await set.move( set.views()[1], 0 );
-			expect( names(set) ).toEqual( ["3:New", "2:B"] );
+			expect( names(set) ).toEqual( ["3:View 3", "2:B"] );
 			expect( held() ).toEqual( {index: [3, 2], rows: [2, 3]} );
 			expect( service.loadRows ).toHaveBeenCalledTimes( 1 );//the same user's:  no read
 		} );
@@ -466,7 +451,7 @@ describe( 'ViewSet', ()=>{
 		it( "shows the route's views, and refuses every change with the read's error until a read succeeds", async ()=>{
 			const { set, service, writes } = await failing();
 			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
-			for( const change of [()=>set.save( View.copy(set.current()) ), ()=>set.rename( set.current(), "x" ), ()=>set.move( set.current(), 1 ), ()=>set.remove( set.current() )] ){
+			for( const change of [()=>set.add(), ()=>set.rename( set.current(), "x" ), ()=>set.move( set.current(), 1 ), ()=>set.remove( set.current() )] ){
 				service.loadRows.mockRejectedValueOnce( new Error('still down') );
 				await expect( change() ).rejects.toThrow( 'still down' );
 			}
@@ -541,7 +526,7 @@ describe( 'ViewSet', ()=>{
 			await set.load( [make(undefined), trash()], schema );
 			expect( names(set) ).toEqual( ["1:Default"] );
 			set.sort( {active: "kind", direction: "asc"} );
-			await set.save( View.copy(set.current()) );
+			await set.saveDraft( set.current() );
 			expect( names(set) ).toEqual( ["1:Default"] );
 			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views"] );
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );
@@ -565,7 +550,8 @@ describe( 'ViewSet', ()=>{
 			expect( remembered() ).toBeNull();
 			await set.remove( set.current() );//not the set's
 			expect( writes() ).toEqual( [] );
-			await set.save( View.copy(set.current()) );
+			set.sort( {active: "kind", direction: "asc"} );
+			await set.saveDraft( set.current() );
 			expect( names(set) ).toEqual( ["2:Default"] );
 			expect( writes() ).toEqual( ["things/views/2", "things/views"] );
 			expect( held() ).toEqual( {index: [1, 2], rows: [1, 2]} );
@@ -697,7 +683,7 @@ describe( 'ViewSet', ()=>{
 			set.sort( kind );
 			set.select( 1 );
 			set.edit( view=>{ view.limit = 50; } );
-			await set.save( set.current() );
+			await set.saveDraft( set.current() );
 			expect( names(set) ).toEqual( ["1:A*", "2:B"] );
 			expect( [set.current().isUser, set.current().limit] ).toEqual( [true, 50] );
 			expect( writes() ).toEqual( ["things/views/2"] );
@@ -709,7 +695,7 @@ describe( 'ViewSet', ()=>{
 			const { set, service, writes } = await load();
 			set.select( 1 );
 			set.sort( kind );
-			await set.save( set.current() );
+			await set.saveDraft( set.current() );
 			expect( names(set) ).toEqual( ["1:Default", "2:Users"] );
 			expect( writes() ).toEqual( ["things/views/1", "things/views/2", "things/views"] );
 			expect( JSON.parse(service.rows.get("things/views/2")!).sort[0].active ).toBe( "kind" );
@@ -736,7 +722,7 @@ describe( 'ViewSet', ()=>{
 			expect( names(set) ).toEqual( ["1:A*", "2:B*"] );
 			expect( set.current() ).toBeInstanceOf( ThingView );
 			expect( [set.current().number, set.current().limit, set.views()[0].sort[0].active] ).toEqual( [2, 50, "kind"] );
-			await set.save( set.views()[0] );//a draft read back saves as one made here
+			await set.saveDraft( set.views()[0] );//a draft read back saves as one made here
 			expect( names(set) ).toEqual( ["1:A", "2:B*"] );
 		} );
 
@@ -773,7 +759,7 @@ describe( 'ViewSet', ()=>{
 			const rows = Object.fromEntries( [...first.service.rows].map( ([key, value])=>[key, JSON.parse(value)] ) );
 			const { set, service } = await load( rows );
 			expect( names(set) ).toEqual( ["1:Z*", "2:B"] );
-			await set.save( set.current() );
+			await set.saveDraft( set.current() );
 			const row = JSON.parse( service.rows.get("things/views/1")! );
 			expect( [row.name, row.sort[0].active] ).toEqual( ["Z", "kind"] );
 		} );
@@ -878,16 +864,6 @@ describe( 'ViewSet', ()=>{
 			const { set } = await load( two() );
 			expect( names(set) ).toEqual( ["1:A", "2:B*"] );
 			expect( Object.keys(drafts()!) ).toEqual( ["2"] );
-		} );
-
-		//reviews-issue/589-views-draft.md #8:  the editor's Save under a new name left the draft on the view it was opened on
-		it( "drops the draft of the view shown on the editor's Save under another name", async ()=>{
-			const { set } = await load( two() );
-			set.sort( kind );
-			await set.save( unnumbered(set, "Mine") );
-			expect( names(set) ).toEqual( ["1:A", "2:B", "3:Mine"] );
-			expect( set.current().sort[0].active ).toBe( "kind" );
-			expect( drafts() ).toBeNull();
 		} );
 
 		//reviews-issue/589-views-draft.md #11:  the last user's stayed on screen until a change read for the new one, and that read

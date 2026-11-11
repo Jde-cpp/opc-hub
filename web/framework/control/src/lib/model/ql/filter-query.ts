@@ -84,14 +84,28 @@ function findColumn( host:FilterHost, name:string ):FilterColumn|undefined{
 	const lower = name.toLowerCase();
 	return host.columns.find( c=>c.displayName.toLowerCase()==lower ) ?? host.columns.find( c=>columnName(c).toLowerCase()==lower );
 }
-//orderBy's test (graphql-table.sortable):  an object is grafted onto the row after the select, so the server has no column for it.
-function serverHasColumn( c:FilterColumn ):boolean{
-	const type = c.qlField.type;
+//A field the server has a column for, which it can filter and order by (View.sortable, graphql-table.sortable):  not an object,
+//grafted onto the row after the select, nor a list or a union, which hold no one value.
+export function serverHasField( field:Field ):boolean{
+	const type = field.type;
 	return type.kind!=FieldKind.LIST && ![FieldKind.OBJECT, FieldKind.UNION, FieldKind.LIST].includes( type.underlyingKind );
 }
+function serverHasColumn( c:FilterColumn ):boolean{ return serverHasField( c.qlField ); }
 //the column a bare word searches on a GraphQL list.
 function nameColumn( host:FilterHost ):FilterColumn|undefined{
 	return host.columns.find( c=>columnName(c)=="name" && serverHasColumn(c) );
+}
+
+//The values the filter holds for each column as `field:a,b`, from its terms that are neither negated nor comparisons:  those a
+//chip's click and `Filter by…` toggle (toggleFilterTerm).
+export function heldValues( filter:string, host:FilterHost ):Map<string,Set<string>>{
+	const y = new Map<string,Set<string>>();
+	for( const term of parseFilter(filter, host).terms.filter( t=>t.field && t.operator=="in" && !t.negated ) ){
+		const held = y.get( term.field! ) ?? new Set<string>();
+		term.values.forEach( v=>held.add(`${v}`) );
+		y.set( term.field!, held );
+	}
+	return y;
 }
 
 //A column a `field:value` term is read on:  not a live toggle, which takes has: and no: alone.  A chip there is a click target.

@@ -17,7 +17,7 @@ import { Failure, failureState } from '../../../utils/errors';
 import { FailureState } from '../../../shared/failure-state/failure-state';
 import { SelectionModel } from '@angular/cdk/collections';
 import { View, ViewField } from '../../../model/ql/view';
-import { cellValues, parseFilter, takesFilterTerm, toggleFilterTerm } from '../../../model/ql/filter-query';
+import { cellValues, heldValues, takesFilterTerm } from '../../../model/ql/filter-query';
 import { ViewSet } from '../../../model/ql/view-set';
 import { MatDialog } from '@angular/material/dialog';
 import { confirm } from '../../../shared/confirm/confirm-dialog';
@@ -221,24 +221,13 @@ export class QLList implements OnInit{
 	//click on a value it holds takes it out.  A column the box cannot filter - one the gateway grafts on - is not among them.
 	chipFilters = computed<Map<string,Set<string>>>( ()=>{
 		const view = this.profile().current(), host = view.filterHost();
-		const y = new Map<string,Set<string>>();
 		if( !host )
-			return y;
-		for( const field of view.fields.filter( f=>f.chip && takesFilterTerm(f, host) ) )
-			y.set( field.name, new Set() );
-		for( const term of parseFilter(view.filter, host).terms.filter( t=>t.operator=="in" && !t.negated ) ){
-			for( const value of term.values )
-				y.get( term.field! )?.add( `${value}` );
-		}
-		return y;
+			return new Map();
+		const held = heldValues( view.filter, host );
+		return new Map( view.fields.filter( f=>f.chip && takesFilterTerm(f, host) ).map( f=>[f.name, held.get( f.name ) ?? new Set<string>()] ) );
 	} );
 	async onChipClick( chip:{column:string, value:string} ){
-		const view = this.profile().current(), host = view.filterHost();
-		const field = view.fields.find( f=>f.name==chip.column );
-		if( !host || !field )
-			return;
-		const filter = toggleFilterTerm( view.filter, host, field, chip.value );
-		this.profile().edit( draft=>{ draft.filter = filter; } );
+		this.profile().edit( draft=>draft.toggleFilterValue(chip.column, chip.value) );
 		await this.onChangeView();
 	}
 
@@ -286,7 +275,8 @@ export class QLList implements OnInit{
 	profile = computed<ViewSet<View>>( ()=>this.resolvedData().profile );
 	routeStore = inject( RouteStore );
 	schema = computed<TableSchema>( ()=>this.resolvedData().schema );
-	get sort():Sort{ return this.view().sort?.length ? this.view().sort[0] : {active: "", direction: ""}; }
+	//the draft's, as the columns and the later sorts' places are:  the header shows the sort asked for while its rows are read
+	get sort():Sort{ return this.profile().current().sort[0] ?? {active: "", direction: ""}; }
 	canAdd = computed<boolean>( ()=>this.tableSettings().canAdd ?? true );//off the tableSettings, like canPurge - a route that set it anywhere else was silently ignored
 	canNavigate = computed<boolean>( ()=>this.tableSettings().canNavigate ?? true );
 	tableSettings = computed<TableSettings>( ()=>this.resolvedData().routing.tableSettings );

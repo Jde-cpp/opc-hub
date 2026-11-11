@@ -5,6 +5,7 @@ import { Query } from '../../services/graphql';
 import { TableSchema } from '../../model/ql/schema/table-schema';
 import { Field, FieldKind, FieldType } from '../../model/ql/schema/field';
 import { capitalize } from 'jde-spa';
+import { Sort } from '@angular/material/sort';
 
 const TagSeparator = ".";//logTags.h TagSeparator — how the server spells a combined tag as one name
 
@@ -82,10 +83,13 @@ export class LogEntries{
 	entries:Entry[];
 	strings:Map<string,string> = new Map<string,string>();
 }
+//the columns the rows are sorted by in the browser, each with its key in LogDataSource.compare
+export const logSortColumns = ["time", "level", "message", "file", "function"] as const;
+export type LogSortColumn = typeof logSortColumns[number];
 export class LogView extends View{
-	//Time is always in the sort:  the table binds sort[0], and LogDataSource orders and dedups by it.  `No sorting` clears the sort,
-	//so every LogView - a copy, a draft, a Save, a saved view as it loads - is made through these two, which put time back, last,
-	//where it is missing (reviews-issue/web-refactor-review.md #2).
+	//Time is always in the sort:  the table binds sort[0], and LogDataSource orders and dedups by it.  `No sorting` leaves it as it
+	//stands (clearedSort), and every LogView - a copy, a draft, a Save, a saved view as it loads - is made through these two, which
+	//put it back, last, where it is missing (reviews-issue/web-refactor-review.md #2).
 	static override copy<V extends View>( this:{prototype:V}, view:View ):V{ return LogView.#timed( super.copy(view) as V ); }
 	static override fromJson<V extends View>( this:{prototype:V}, json:ViewSerializedArgs, schema:TableSchema, defaultView?:View ):V{ return LogView.#timed( super.fromJson(json, schema, defaultView) as V ); }
 	static #timed<V extends View>( view:V ):V{
@@ -93,7 +97,8 @@ export class LogView extends View{
 			view.sort = [...view.sort, { active: "time", direction: "desc" }];//the default view's
 		return view;
 	}
-	override sortable( name:string ):boolean{ return ["time", "level", "message", "file", "function"].includes( name ); }//those LogDataSource.compare orders by
+	override clearedSort():Sort[]{ return this.sort.filter( s=>s.active=="time" ); }
+	override sortable( name:string ):boolean{ return ( logSortColumns as readonly string[] ).includes( name ); }
 	override filterHost(){ return undefined; }//no filter box:  the rows are a window of a paged log (views spec *Hosts*, #584)
 	override query( skip:number, level?:ELogLevel ):Query{
 		const vars:Record<string,any> = {limit: this.limit!*3, skip: skip, orderBy: this.sort};//three pages a read;  a turn onto a page not all loaded reads on (LogDataSource.turnTo)

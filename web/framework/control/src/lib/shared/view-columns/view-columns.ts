@@ -4,7 +4,7 @@ import { CdkDrag, CdkDragDrop, CdkDropList } from '@angular/cdk/drag-drop';
 import { MatIcon } from '@angular/material/icon';
 import { MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 import { MatSortHeader, SortDirection } from '@angular/material/sort';
-import { parseFilter, takesFilterTerm, toggleFilterTerm } from '../../model/ql/filter-query';
+import { heldValues, takesFilterTerm } from '../../model/ql/filter-query';
 import { Flex, View, ViewField } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 
@@ -52,15 +52,8 @@ export class ViewColumns{
 	filterValues = input<Record<string,readonly unknown[]>>( {} );
 	#filterHost = computed( ()=>this.view()?.filterHost() );
 	#held = computed( ()=>{
-		const y = new Map<string,Set<string>>(), view = this.view(), host = this.#filterHost();
-		if( !view || !host )
-			return y;
-		for( const term of parseFilter(view.filter, host).terms.filter( t=>t.field && t.operator=="in" && !t.negated ) ){
-			const held = y.get( term.field! ) ?? new Set<string>();
-			term.values.forEach( v=>held.add(`${v}`) );
-			y.set( term.field!, held );
-		}
-		return y;
+		const view = this.view(), host = this.#filterHost();
+		return view && host ? heldValues( view.filter, host ) : new Map<string,Set<string>>();
 	} );
 	filterChoices( name:string ):{value:string, held:boolean}[]{
 		const field = this.field( name ), host = this.#filterHost(), ql = field?.qlField;
@@ -73,13 +66,7 @@ export class ViewColumns{
 		return [...new Set( [...values, ...held] )].map( value=>({value, held: held.has(value)}) );
 	}
 	//a value picked:  into the filter or out of it, as a chip's click
-	filterBy( name:string, value:string ){
-		const view = this.view(), host = this.#filterHost(), field = this.field( name );
-		if( !view || !host || !field )
-			return;
-		const filter = toggleFilterTerm( view.filter, host, field, value );
-		this.#edit( draft=>{ draft.filter = filter; } );
-	}
+	filterBy( name:string, value:string ){ this.#edit( draft=>draft.toggleFilterValue(name, value) ); }
 	preview( name:string, width?:number ){ this.#preview.set( width==null ? undefined : {name, width} ); }
 
 	//`focus`:  from a header's menu, whose button the header row drawn again destroys - the column moved takes the focus, or after

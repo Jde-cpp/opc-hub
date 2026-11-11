@@ -553,6 +553,17 @@ describe( 'NodeChildren the System nodes toggle', ()=>{
 		expect( page.rows().map( n=>n.name ) ).toEqual( ['ObjectTypes'] );
 		expect( empty() ).toBeNull();
 	} );
+	//reviews-issue/593-views-sort.md #1:  with no sort, MatSort was handed Name ascending, so Name's header showed a sort not applied
+	it( 'shows no header sorted where the view has no sort', ()=>{
+		const { fixture, page } = create();
+		const node = ( i:number, name:string )=>new Variable( <any>{ns: 2, i, name, browse: {ns: 2, name}} );
+		(<any>page).setNodes( [node( 31, 'b' ), node( 32, 'a' )], false );
+		page.viewSet.edit( view=>{ view.sort = []; } );//`No sorting`
+		page.isLoading.set( false );
+		fixture.detectChanges();
+		const sorted = [...( fixture.nativeElement as HTMLElement ).querySelectorAll( 'mat-header-cell[aria-sort]' )].filter( c=>c.getAttribute( 'aria-sort' )!='none' );
+		expect( [page.rows().map( n=>n.name ), page.sort, sorted.length] ).toEqual( [['b', 'a'], {active: '', direction: ''}, 0] );
+	} );
 	it( 'says the view matched nothing when the toggle hid nothing', ()=>{
 		const { page } = create();
 		page.setShowSystem( false );

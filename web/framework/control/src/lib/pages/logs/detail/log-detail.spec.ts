@@ -336,12 +336,9 @@ describe( 'LogDetail sort', ()=>{
 	it( 'keeps its rows for a view that shows the rows it did, renamed or copied', async ()=>{
 		const { page, ql } = await create();
 		const reads = ql.ql.mock.calls.length;
-		const view = LogView.copy( page.view() );
-		view.name = 'mine';
-		view.number = 0;//a new view, the one shown under another name
-		await page.viewSet.save( view );
-		page.onViewChange();//as the toolbar says of a rename
-		expect( page.view().name ).toBe( 'mine' );
+		await page.viewSet.add();//a new view, the one shown under another name
+		page.onViewChange();//as the toolbar says of it
+		expect( page.view().name ).toBe( 'View 2' );
 		expect( ql.ql ).toHaveBeenCalledTimes( reads );
 		expect( page.data.allEntries ).toHaveLength( 2 );
 	} );
@@ -361,13 +358,10 @@ describe( 'LogDetail sort', ()=>{
 	} );
 	it( 'saves a view with no sort sorted by time', async ()=>{
 		const { fixture, page, profileStore } = await create();
-		const view = unsorted( page );
-		view.name = 'mine';
-		view.number = 0;//a new one
-		page.viewSet.save( view );
-		await tick();
+		page.viewSet.edit( view=>{ view.sort = []; view.limit = 50; } );//`No sorting`, and a change to save
+		await page.viewSet.saveDraft( page.view() );
 		expect( ()=>fixture.detectChanges() ).not.toThrow();
-		expect( JSON.parse(profileStore.save.mock.calls.find( ([key])=>key=='logs/views/2' )![1]).sort ).toEqual( [time] );
+		expect( JSON.parse(profileStore.save.mock.calls.find( ([key])=>key=='logs/views/1' )![1]).sort ).toEqual( [time] );
 	} );
 	it( 'repairs a view saved with no sort as it loads', async ()=>{
 		const { fixture, page, snackbar } = await create( [{...LogView.default().toJson( undefined ), name: 'mine', sort: []}] );
@@ -387,6 +381,18 @@ describe( 'LogDetail sort', ()=>{
 		page.onViewChange();
 		await tick();
 		expect( page.sort ).toEqual( [{active: 'level', direction: 'asc'}, time] );
+	} );
+	//reviews-issue/593-views-sort.md #3:  a third click cleared the header's sort, and onSort dropped its column from the view's
+	it( 'turns a header the other way on each click, never dropping it from the sort', async ()=>{
+		const { fixture, page } = await create();
+		const level = [...( fixture.nativeElement as HTMLElement ).querySelectorAll<HTMLElement>( 'mat-header-cell .column-label' )].find( e=>e.textContent!.includes("Level") )!;
+		const sorts:string[] = [];
+		for( let i=0; i<3; ++i ){
+			level.click();
+			fixture.detectChanges();
+			sorts.push( page.sort.map( s=>`${s.active} ${s.direction}` ).join() );
+		}
+		expect( sorts ).toEqual( ["level asc,time desc", "level desc,time desc", "level asc,time desc"] );
 	} );
 	//#593:  the header's menu and `Sort by` offer the columns the rows can be ordered by, and the editor is gone
 	it( 'sorts by the columns its rows are ordered by, and renders with no view editor', async ()=>{

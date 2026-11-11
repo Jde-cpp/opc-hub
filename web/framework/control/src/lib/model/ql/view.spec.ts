@@ -385,4 +385,14 @@ describe( "View's sort", ()=>{
 		const view = make();
 		expect( ["name", "kind", "owner", "nothing"].map( c=>view.sortable(c) ) ).toEqual( [true, true, false, false] );//kind:  the schema's, the view not holding it
 	} );
+	//reviews-issue/593-views-sort.md #2:  OBJECT alone was refused, so a list reached orderBy, which the server refuses
+	it( "refuses a list column, a flags column as the introspection gives it among them, and a union", ()=>{
+		const lists = schemaOf( "Thing", scalar("name"),
+			{name: "rights", type: {kind: "NON_NULL", name: null, ofType: {kind: "LIST", name: "Rights"}}},//a flags column, its list not wrapping its type
+			{name: "tags", type: {kind: "LIST", name: null, ofType: {kind: "SCALAR", name: "String"}}},
+			{name: "members", type: {kind: "LIST", name: null, ofType: {kind: "UNION", name: "Identity"}}},
+			{name: "identity", type: {kind: "UNION", name: "Identity"}} );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, lists );
+		expect( ["name", "rights", "tags", "members", "identity"].map( c=>view.sortable(c) ) ).toEqual( [true, false, false, false, false] );
+	} );
 } );

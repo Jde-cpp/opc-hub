@@ -330,7 +330,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	get variables():Variable[]{ return <Variable[]>this.nodes().filter((x)=>x.nodeClass==ENodeClass.Variable); }
 	selections = new SelectionModel<UaNode>(true, []);
 	//sideNav = model.required<NodeRoute>();
-	get sort():Sort{ return this.view().sort[0] ?? {active: "name", direction: "asc"}; }
+	get sort():Sort{ return this.view().sort[0] ?? {active: "", direction: ""}; }//none:  `No sorting` leaves the rows as they came, and no header shows an arrow
 	get subscription(){return this.#subscription;} #subscription:Subscription|undefined;
 	set subscription(x){ if(!x && this.subscription) this.subscription.unsubscribe(); this.#subscription=x; }
 	viewSet = NodeView.viewSet( inject(ProfileStore), inject(LocalPrefs) );

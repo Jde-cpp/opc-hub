@@ -14,7 +14,7 @@
 		<button right matIconButton type="button" aria-label="Show hidden messages" [matTooltip]="hiddenTooltip()" [disabled]="!profile.hiddenMessages.length" (click)="clearHiddenMessages()"><mat-icon>layers_clear</mat-icon></button>
 	</view-toolbar>
 	<mat-tab-nav-panel #panel>
-		<mat-table [dataSource]="data" class="mat-elevation-z8" [viewColumns]="viewSet" (columnsChange)="onViewChange()" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction">
+		<mat-table [dataSource]="data" class="mat-elevation-z8" [viewColumns]="viewSet" (columnsChange)="onViewChange()" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction" matSortDisableClear>
 			<ng-container matColumnDef="time">
 				<mat-header-cell viewColumn *matHeaderCellDef> Time </mat-header-cell>
 				<mat-cell viewColumn style="text-align: left" title="{{element.time | date }}" *matCellDef="let element"> {{element.time | date: "HH:mm:ss.SSS"}} </mat-cell>

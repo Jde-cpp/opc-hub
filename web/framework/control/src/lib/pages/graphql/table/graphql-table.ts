@@ -4,6 +4,7 @@ import { SelectionModel } from '@angular/cdk/collections';
 import { MatTableModule } from '@angular/material/table';
 import { MatSortModule, Sort } from '@angular/material/sort';
 import {FieldKind} from '../../../model/ql/schema/field';
+import { serverHasField } from '../../../model/ql/filter-query';
 import { MatCheckbox } from '@angular/material/checkbox';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIcon } from '@angular/material/icon';
@@ -78,7 +79,11 @@ export class GraphQLTable{
 		return values.length==1 ? `${values[0]}` : '';
 	}
 	stringValue( column:string, row:QLRow ):unknown{ return this.cellText()?.( column, row ) ?? row[column]; }
-	sortable( colName:string ){ return this.columns().get( colName )?.field.type.underlyingKind!=FieldKind.OBJECT; }//orderBy on a grafted object field is a server error.
+	//View.sortable's test, for a table given no views:  orderBy on a column the server lacks is an error
+	sortable( colName:string ){
+		const field = this.columns().get( colName )?.field;
+		return !field || serverHasField( field.qlField );
+	}
 
 	//A live-toggle cell (ViewFieldSettings.liveToggle).  Deliberately an icon button and not a mat-slide-toggle:  a slide
 	//toggle keeps its own checked state, so a mutation that FAILS would leave the switch showing the state the row never

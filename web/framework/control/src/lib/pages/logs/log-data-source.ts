@@ -4,7 +4,7 @@ import { Guid } from '../../model/guid';
 import { BehaviorSubject, Observable } from 'rxjs';
 
 import * as Log from 'jde-proto/Log';
-import { Entry, LogEntries, LogView } from './log-entry';
+import { Entry, LogEntries, LogSortColumn, LogView } from './log-entry';
 import { verify } from '../../utils/utils';
 import { DataSource } from '@angular/cdk/table';
 import { CollectionViewer } from '@angular/cdk/collections';
@@ -133,31 +133,24 @@ export class LogDataSource extends DataSource<Entry>{
 	visibleCount():number{
 		return this.allEntries.filter( e=>!e.hidden ).length;
 	}
+	//what each column LogView sorts by orders on:  the Record holds every one of logSortColumns and nothing else.  A blank file or
+	//function sorts first.
+	#sortKeys:Record<LogSortColumn,( e:Entry )=>string|number> = {
+		time: e=>e.time.getTime(),
+		level: e=>e.level,
+		message: e=>this.message( e ),
+		file: e=>this.file( e ) ?? "",
+		function: e=>this.function( e ) ?? ""
+	};
 	compare( a:Entry, b:Entry ){
-		let active = this.sort[0].active;
-		let result = 0;
-		if( active=='time' ){
-			if( a.time<b.time )
-				result = -1;
-			else if( a.time>b.time )
-				result = 1;
-			// else if( a.id && b.id )
-			// 	result = a.id<b.id ? -1 : 1;
-			else
-				result = 0;
+		const sort = this.sort[0], key = this.#sortKeys[sort.active as LogSortColumn];
+		if( !key ){
+			console.error( `unknown sort '${sort.active}'` );
+			return 0;
 		}
-		else if( active=='level' )
-			result = a.level==b.level ? 0 : a.level < b.level ? -1 : 1 ;
-		else if( active=='message' )
-			result = this.message(a)==this.message(b) ? 0 : this.message(a)<this.message(b) ? -1 : 1;
-		else if( active=='file' )
-			result = this.file(a)==this.file(b) ? 0 : this.file(a)!<this.file(b)! ? -1 : 1;
-		else if( active=='function' )
-			result = this.function(a)==this.function(b) ? 0 : this.function(a)!<this.function(b)! ? -1 : 1;
-		else
-			console.error( `unknown sort '${active}'` );
-
-		return this.sort[0].direction === 'asc' ? result : -result;
+		const x = key( a ), y = key( b );
+		const result = x<y ? -1 : x>y ? 1 : 0;
+		return sort.direction==='asc' ? result : -result;
 	}
 	file( entry:Entry ):string|undefined{ return this.strings.get( entry.fileId.toString() ); }
 	function( entry:Entry ):string|undefined{ return this.strings.get( entry.functionId.toString() ); }

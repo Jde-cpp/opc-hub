@@ -93,17 +93,9 @@ export class LogDetail implements OnInit, OnDestroy{
 	}
 	levels = logLevels;
 
-	//time is never left unsorted;  another column, cleared, drops out of the sort
+	//a header's click:  matSortDisableClear, so it only ever turns a column the other way, as on every list
 	onSort( sort:Sort ){
-		if( !sort.direction && sort.active=="time" )
-			sort = { active: "time", direction: "asc" };
-		if( sort.direction )
-			this.viewSet.sort( sort );
-		else{
-			const view = LogView.copy( this.view() );
-			view.sort = view.sort.filter( s=>s.active!=sort.active );
-			this.viewSet.show( view );
-		}
+		this.viewSet.sort( sort );
 		this.refresh();
 	}
 	onPagerChange( event:PageEvent ){

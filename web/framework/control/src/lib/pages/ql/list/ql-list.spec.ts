@@ -124,6 +124,13 @@ describe( 'QLList re-query failures reach the user', ()=>{
 		await page.onSortChange( {active: "slug", direction: "asc"} );
 		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
 	} );
+	//reviews-issue/593-views-sort.md #5:  MatSort followed the rows' view and the later sorts' places the draft, apart until a read landed
+	it( "shows the draft's sort in the header, its read out or failed", async ()=>{
+		const { page } = create();
+		page.profile().edit( view=>view.setSort("slug", "desc") );//a header menu's Sort descending
+		await page.onChangeView();
+		expect( [page.view().sort[0].active, page.sort] ).toEqual( ["name", {active: "slug", direction: "desc"}] );
+	} );
 
 	it( 'clears isRefreshing even when the re-query fails', async ()=>{
 		const { page } = create();

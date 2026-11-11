@@ -382,7 +382,7 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	buffer = new PushBuffer( this.trendWindow()*60_000, key=>this.ticked().has( key ) );//the ticked rows are the last to give way (420 #6)
 	static windowOf( minutes:unknown ):number{ return typeof minutes=='number' && PushBuffer.windows.includes( minutes ) ? minutes : GatewayWatch.defaultWindow; }
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes( "status" ) );
-	get sort():Sort{ return this.view().sort[0] ?? {active: "connection", direction: "asc"}; }
+	get sort():Sort{ return this.view().sort[0] ?? {active: "", direction: ""}; }//none:  `No sorting` leaves the rows as they came, and no header shows an arrow
 	get subscription(){ return this.#subscription; } #subscription:Subscription|undefined;
 	set subscription( x ){ if( !x && this.#subscription ) this.#subscription.unsubscribe(); this.#subscription = x; }
 }

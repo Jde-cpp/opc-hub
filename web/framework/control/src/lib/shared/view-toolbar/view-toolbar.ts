@@ -131,24 +131,30 @@ export class ViewToolbar{
 		if( event.previousIndex!=event.currentIndex )
 			this.#sort( view=>view.moveSort(event.item.data, event.currentIndex) );
 	}
+	//off where it would leave the sort as it is:  the logs keep their time (LogView.clearedSort)
+	canClearSort = computed<boolean>( ()=>{
+		const view = this.views().current();
+		return view.clearedSort().length<view.sort.length;
+	} );
 	clearSort(){
-		if( this.sorts().length )
-			this.#sort( view=>{ view.sort = []; } );
+		if( this.canClearSort() )
+			this.#sort( view=>{ view.sort = view.clearedSort(); } );
 	}
 	//An entry that changes place is drawn again, without the focus:  it goes to `focus`, the entry by its key, or - that one now
-	//off, a move at an end - to `fallback`.
+	//off, a move at an end - to `fallback`.  Through the item, which tells its menu, whose arrow keys go on from it.
 	#sort( change:( view:View )=>void, event?:Event, focus?:string, fallback?:string ){
 		event?.stopPropagation();
-		const panel = ( event?.currentTarget as HTMLElement|undefined )?.closest( '.mat-mdc-menu-panel' );
+		const inMenu = !!( event?.currentTarget as HTMLElement|undefined )?.closest( '.mat-mdc-menu-panel' );
 		this.views().edit( change );
 		this.viewChange.emit();
-		if( panel ){
+		if( inMenu ){
 			afterNextRender( ()=>{
-				const entry = ( key:string|undefined )=>[...panel.querySelectorAll<HTMLButtonElement>( '[data-sort]' )].find( e=>e.dataset["sort"]==key && !e.disabled );
+				const entry = ( key:string|undefined )=>this.menuItems().find( i=>i._getHostElement().dataset["sort"]==key && !i.disabled );
 				( entry( focus ) ?? entry( fallback ) )?.focus();
 			}, {injector: this.#injector} );
 		}
 	}
+	private menuItems = viewChildren( MatMenuItem );
 	//the menu's sizes, and the view's own where it is none of them, as the logs' 21
 	pageSizes = computed<number[]>( ()=>{
 		const limit = this.views().current().limit;
