@@ -18,6 +18,8 @@ namespace Jde::DB{
 		sql.Text += Select.ToString( From.HasJoin() );
 		sql.Text += '\n'+From.ToString();
 		sql.Text += '\n'+Where.Move();
+		if( !GroupBy.empty() )
+			sql.Text += "\ngroup by "+GroupBy;
 		if( !OrderBy.empty() )
 			sql.Text += "\norder by "+OrderBy;
 		if( _limit || _skip )

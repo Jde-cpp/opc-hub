@@ -161,6 +161,32 @@ namespace QL{
 		}
 	}
 
+	//A grouped query answers a row per value:  the grouped column and `count`, in the value's order.  It groups by the column
+	//addColumn selected - an enum's display name, in the joined table - since SQL Server refuses a select-list column that is
+	//not grouped;  sqlite does not.  A foreign key's target name need not be unique, so its id is grouped too, after it.
+	Ω groupStatement( const TableQL& qlTable, const DB::Table& dbTable, str groupBy, DB::Statement& statement )ε->void{
+		let badRequest = ExceptionArgs{ ELogTags::QL, 0, EHttpStatus::BadRequest };
+		if( qlTable.OrderByJson().size() || qlTable.Limit() || qlTable.Offset() )
+			throw Exception{ SRCE_CUR, badRequest, "[{}]groupBy takes no orderBy, limit or skip:  it answers a row per value, ordered by the value.", qlTable.JsonName };
+		if( !qlTable.IsPlural() )
+			throw Exception{ SRCE_CUR, badRequest, "[{}]groupBy is a collection's argument.", qlTable.JsonName };
+		if( qlTable.Tables.size() )
+			throw Exception{ SRCE_CUR, badRequest, "[{}]groupBy takes no sub-table '{}'.", qlTable.JsonName, qlTable.Tables.front().JsonName };
+		sp<DB::Column> column;
+		for( let& c : qlTable.Columns ){
+			if( c.JsonName==groupBy )
+				column = c.DBColumn;
+			else if( c.JsonName!="count" )
+				throw Exception{ SRCE_CUR, badRequest, "[{}]groupBy:\"{}\" selects '{}' and count, not '{}'.", qlTable.JsonName, groupBy, groupBy, c.JsonName };
+		}
+		if( !column || !column->Table )
+			throw Exception{ SRCE_CUR, badRequest, "[{}]groupBy:\"{}\" needs '{}' in its selection.", qlTable.JsonName, groupBy, groupBy };
+		statement.GroupBy = column->FQName();
+		if( let key = FilterColumn(dbTable, groupBy); key!=column )
+			statement.GroupBy += ", "+key->FQName();
+		statement.OrderBy = statement.GroupBy;
+	}
+
 	α findMap( const DB::Table& dbTable, string qlName )ε->optional<DB::Table::ParentChildMap>{
 		optional<DB::Table::ParentChildMap> map;
 		if( auto mapTable = find_if(dbTable.Children, [&](auto& c){return c->Map->Child->PKTable->Name==qlName;}); mapTable!=dbTable.Children.end() ) //role_members
@@ -308,6 +334,10 @@ namespace QL{
 			statement.From += { dbView->Columns[0] };
 		if( optional<DB::Criteria> criteria = dbView->Extends ? dbView->SurrogateKeys[0]->Criteria : nullopt; criteria ) //identities is_group
 			statement.Where.Add( *criteria );//group with no members.
+		if( let groupBy = qlTable.GroupBy(); groupBy ){
+			groupStatement( qlTable, *dbView, *groupBy, statement );
+			return statement;
+		}
 		statement.OrderBy = qlTable.OrderBy();
 		//a page of no order is any rows at all, and T-SQL refuses offset/fetch without an order by.  The table's own keys - an
 		//extension's is its base's id - are always in the from clause, and together they order totally.

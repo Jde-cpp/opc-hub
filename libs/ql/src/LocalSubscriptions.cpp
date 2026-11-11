@@ -107,7 +107,7 @@ namespace Jde::QL{
 	}
 	Ω passesFilter( const TableQL& fields, const jobject& available )ι->bool{
 		for( let& [name,filters] : fields.Filter().ColumnFilters ){
-			if( name=="orderBy" || name=="limit" || name=="offset" || name=="skip" )
+			if( Input::IsStatementArg(name) )
 				continue;//paging, not a predicate.  subscriptionId is consumed by Subscription's constructor.
 			let p = available.if_contains( name );
 			if( !p )

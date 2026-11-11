@@ -178,6 +178,7 @@ namespace Jde::QL::Tests{
 	//limit/offset/skip/orderBy are the statement's, not the where clause's - SelectStatement reads them from the args itself.
 	TEST( WhereClauseTests, PagingKeysAreNotPredicates ){
 		EXPECT_EQ( where(R"(items( limit:10, offset:5, skip:5, orderBy:"name" ){ id })").ToString(), "" );
+		EXPECT_EQ( where(R"(items( groupBy:"itemType" ){ itemType count })").ToString(), "" );
 		EXPECT_EQ( where(R"(items( limit:10, name:"a" ){ id })").ToString(), "where qlt_items.name=?" );
 	}
 	TEST( WhereClauseTests, AVariableIsItsValue ){

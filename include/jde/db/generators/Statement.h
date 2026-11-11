@@ -16,6 +16,7 @@ namespace Jde::DB{
 		SelectClause Select;
 		FromClause From;
 		WhereClause Where;
+		string GroupBy;
 		string OrderBy;
 	private:
 		uint _limit{};
