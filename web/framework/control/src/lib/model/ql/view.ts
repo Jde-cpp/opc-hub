@@ -3,7 +3,8 @@ import { StringUtils } from '../../utils/string-utils';
 import { Query } from '../../services/graphql';
 import { TableSettings } from '../../services/ql-list-resolver';
 import { Field, FieldKind } from "./schema/field";
-import { filterArguments, FilterHost, FilterParse, parseFilter, serverHasField, toggleFilterTerm } from './filter-query';
+import { filterArguments, FilterHost, FilterParse, FilterTerm, parseFilter, serverHasField, toggleFilterTerm } from './filter-query';
+import { SliceValue } from './slice';
 import { TableSchema } from "./schema/table-schema";
 import { Sort, SortDirection } from "@angular/material/sort";
 
@@ -147,11 +148,12 @@ export class ViewField{
 
 //A further system view a route declares beside the default one.  Whatever it leaves unset comes from the default view:  the
 //table's columns and its sort.  The default view itself is the TableSettings' own columns/sort under `viewName`.  `filter` is
-//the filter box's text, in its grammar (filter-query.ts):  "no:issuer", "provider:Key".
-export type ViewSettings = { name:string, columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, filter?:string };
-type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filter?:string, queried?:string[] };
-type ViewJson = { name:string|undefined, collectionName:string, fields:ViewFieldJson[], filter?:string, limit?:number, showSelector:boolean|undefined, sort:Sort[]|undefined };
-export type ViewSerializedArgs = { name:string|undefined, collectionName:string, fields:ViewField[], limit?:number, showSelector:boolean, sort?:Sort[], filter?:string };//sort optional:  toJson omits one that matched the default view's
+//the filter box's text, in its grammar (filter-query.ts):  "no:issuer", "provider:Key".  `sliceBy` is the column its slice panel
+//lists, its own and not the default view's.
+export type ViewSettings = { name:string, columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, filter?:string, sliceBy?:string };
+type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filter?:string, queried?:string[], sliceBy?:string };
+type ViewJson = { name:string|undefined, collectionName:string, fields:ViewFieldJson[], filter?:string, limit?:number, showSelector:boolean|undefined, sort:Sort[]|undefined, sliceBy?:string };
+export type ViewSerializedArgs = { name:string|undefined, collectionName:string, fields:ViewField[], limit?:number, showSelector:boolean, sort?:Sort[], filter?:string, sliceBy?:string };//sort optional:  toJson omits one that matched the default view's
 export enum ViewType{
 	System,
 	Adhoc,
@@ -189,6 +191,8 @@ export class View{
 		this.sort = structuredClone( view.sort );
 		this.type = view.type;
 		this.queried = view.queried;
+		this.sliceBy = view.sliceBy;
+		this.slice = view.slice;
 	}
 	private fromConfig( config:ViewConfigArgs, schema:TableSchema ):void{
 		this.name = config.name;
@@ -201,6 +205,12 @@ export class View{
 		this.filter = config.filter?.trim() ?? "";
 		const unread = this.parsedFilter().errors;//a route's filter must read - unlike a saved view's, whose bad term the box underlines, this is a config error
 		verify( !unread.length, `View '${config.name}' (${schema.collectionName}) filters on '${this.filter}' - ${unread[0]?.message}` );
+		this.#setRouteSlice( config.sliceBy );
+	}
+	//a route's slice column must be one a list is sliced by - a config error, as its filter's
+	#setRouteSlice( sliceBy:string|undefined ):void{
+		verify( !sliceBy || this.sliceable(sliceBy), `View '${this.name}' (${this.collectionName}) slices by '${sliceBy}', which is not a number, a boolean or an enum.` );
+		this.sliceBy = sliceBy;
 	}
 	private fromJson( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
 		this.name = config.name;
@@ -232,6 +242,7 @@ export class View{
 		//without it had query() filter every unenforced resource out.
 		for( const field of this.fields )
 			field.liveToggle = defaultView?.fields.find( f=>f.name==field.name )?.liveToggle;
+		this.sliceBy = config.sliceBy && this.sliceable( config.sliceBy ) ? config.sliceBy : undefined;//a column since gone, or retyped, slices nothing
 	}
 	private fromTable( config:TableSettings, schema:TableSchema ):void{
 		this.collectionName = schema.collectionName;
@@ -240,6 +251,7 @@ export class View{
 		this.sort = View.toSort( config.sort ) ?? [];
 		this.queried = config.rowLink?.fields ?? [];
 		this.appendAlwaysQueried( schema );
+		this.#setRouteSlice( config.sliceBy );
 	}
 	//TableSettings/ViewSettings accept a bare column name as shorthand for an ascending sort on it
 	static toSort( sort:Sort[]|string|undefined ):Sort[]|undefined{
@@ -305,6 +317,47 @@ export class View{
 		const { fields, args, vars } = this.#queryParts( skip );
 		return { text: `${this.collectionName}${args.length>0 ? `(${args.join(",")})` : ""}{ ${fields.join(" ")} }`, vars: vars };
 	}
+	//The slice (views spec *Slice by*).  A column a list is sliced by:  a number, a boolean or an enum, never an `ID` - a key has a
+	//value a row - nor a live toggle, whose column is a switch.  LogView refuses every one.
+	sliceable( name:string ):boolean{
+		const field = this.#field( name ), type = field?.type;
+		return !!field && type!.kind!=FieldKind.LIST && type!.underlyingName!="ID" && ( field.isNumber || field.isBoolean || field.isEnum )
+			&& !this.fields.find( f=>f.name==name )?.liveToggle;
+	}
+	//the columns `Slice by` offers, of those the host names, each as its header reads
+	sliceChoices( offered:Record<string,string> ):{name:string, label:string}[]{
+		return Object.keys( offered ).filter( name=>this.sliceable(name) ).map( name=>({name, label: this.columnLabel(name, offered)}) );
+	}
+	columnLabel( name:string, offered:Record<string,string> ):string{ return this.fields.find( f=>f.name==name )?.displayName ?? offered[name] ?? StringUtils.idToDisplay( name ); }
+	//an enum slice column's values as its schema lists them:  the panel's order, where the ids carry one - a level, a status
+	sliceOrder():string[]|undefined{
+		const field = this.sliceBy ? this.#field( this.sliceBy ) : undefined;
+		return field?.isEnum ? this.schema?.enums?.get( field.type.underlyingName )?.map( v=>v.name ) : undefined;
+	}
+	//The panel's counts:  a row per value of the slice column under the view's filter, with none of its sort, its page or its
+	//slice - `users( groupBy:"provider", …filters ){ provider count }`.  None where the view is not sliced.
+	sliceQuery():Query|undefined{
+		if( !this.sliceBy )
+			return undefined;
+		const { args, vars } = this.#filterParts( false );
+		return { text: `${this.collectionName}(${[`groupBy:${StringUtils.qlString( this.sliceBy )}`, ...args].join( "," )}){ ${this.sliceBy} count }`, vars };
+	}
+	#field( name:string ):Field|undefined{ return this.fields.find( f=>f.name==name )?.qlField ?? this.schema?.fields.find( f=>f.name==name ); }
+	//the filter as arguments, the slice's value a term of its column among the view's when `sliced`
+	#filterParts( sliced:boolean ):{args:string[], vars:Record<string,unknown>}{
+		const terms:FilterTerm[] = [...this.parsedFilter().terms];
+		if( sliced && this.sliceBy && this.slice!==undefined )
+			terms.push( {field: this.sliceBy, operator: this.slice===null ? "null" : "in", values: this.slice===null ? [] : [this.slice], negated: false, start: 0, end: 0} );
+		const { args, vars } = filterArguments( terms );//a column's terms as one argument, a term the box could not read left out
+		//Deleted rows stay out unless the view filters on `deleted` - the Deleted system view does, and so can any saved one.
+		//A live-toggle column (the Resources page's Enforced) lists every row:  `deleted` is its switch, not a trash can.
+		const deleted = this.fields.find( f=>f.name=="deleted" );
+		if( deleted && !deleted.liveToggle && !args.some(a=>a.startsWith("deleted:")) ){
+			args.push( `deleted:$deleted` );
+			vars["deleted"] = null;
+		}
+		return { args, vars };
+	}
 	#queryParts( skip:number ):{fields:string[], args:string[], vars:Record<string,unknown>}{
 		const fields = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) ).map( f=>f.queryText );//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key
 		let args = [];
@@ -319,17 +372,9 @@ export class View{
 				sortStr += `{${s.active}:${StringUtils.qlString(s.direction)}},`;//`active` is a FIELD NAME - identifiers are not quoted and must not be escaped; only the direction is a string literal
 			args.push( `orderBy:[${sortStr.slice(0,-1)}]` );
 		}
-
-		const filter = filterArguments( this.parsedFilter().terms );//a column's terms as one argument, a term the box could not read left out
+		const filter = this.#filterParts( true );
 		args.push( ...filter.args );
 		Object.assign( vars, filter.vars );
-		//Deleted rows stay out unless the view filters on `deleted` - the Deleted system view does, and so can any saved one.
-		//A live-toggle column (the Resources page's Enforced) lists every row:  `deleted` is its switch, not a trash can.
-		const deleted = this.fields.find( f=>f.name=="deleted" );
-		if( deleted && !deleted.liveToggle && !args.some(a=>a.startsWith("deleted:")) ){
-			args.push( `deleted:$deleted` );
-			vars["deleted"] = null;
-		}
 		return { fields, args, vars };
 	}
 	//The column pinned at the left as the table scrolls sideways:  the name, or the first shown where the view shows none.
@@ -387,7 +432,7 @@ export class View{
 	//The sort (views spec *Sort*).  A column this refuses is in neither menu and its header does not sort:  orderBy on a column the
 	//server lacks is an error.  The lists that sort their own rows have none of those kinds.
 	sortable( name:string ):boolean{
-		const field = this.fields.find( f=>f.name==name )?.qlField ?? this.schema?.fields.find( f=>f.name==name );
+		const field = this.#field( name );
 		return !!field && serverHasField( field );
 	}
 	//the sort `No sorting` leaves:  none, but where the rows need an order of their own (LogView)
@@ -463,10 +508,13 @@ export class View{
 			fields: fields,
 			limit: this.limit,
 			showSelector: this.showSelector,
-			sort: sort
+			sort: sort,
+			sliceBy: this.sliceBy
 		};
 	}
 	filter = "";//the filter box's text, as typed:  a saved view keeps it, and a day in it is the day of the browser that runs the query
+	sliceBy:string|undefined;//the column the slice panel lists, saved with the view
+	slice:SliceValue|undefined;//The value the rows are narrowed to, on a copy made to query with (ViewSet.sliced):  the browser's, never saved, and no part of a view's draft.
 	fixedFilter = "";//the host's own terms, anded with the view's and never shown or saved - a pick list's (QLListData.fixedFilter)
 	protected schema:TableSchema|undefined;
 	number:number = 0;//what its ViewSet knows it by, since names repeat:  the key of its profile row, never in the row.  0 until it is one of a set's.

@@ -15,6 +15,9 @@
 		<mat-tab-nav-panel #panel><ng-container [ngTemplateOutlet]="rows"/></mat-tab-nav-panel>
 	}
 	<ng-template #rows><!--the table and what stands in for it-->
+		<div class="jde-sliced">
+		<slice-panel [views]="profile()" [columns]="columns()" [counts]="slices()" [failed]="slicesError()!==undefined" (viewChange)="onChangeView()"/>
+		<div class="jde-sliced-rows">
 		<div style="align-content: center; margin: auto;  text-align: center">
 			<ql-table [views]=profile() [filterValues]=filterValues() (columnsChange)=onChangeView() [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() [chipFilters]=chipFilters() (onChipClick)=onChipClick($event) (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
 		</div>
@@ -36,5 +39,7 @@
 				<paginator [startIndex]="skip()" [pageSize]="view().limit" [length]="length()" (onPageEvent)="onPage($event)"></paginator>
 			</div>
 		}
+		</div>
+		</div>
 	</ng-template>
 }

@@ -216,3 +216,27 @@ describe( 'NodeView filter', ()=>{
 		expect( kept( "PUMP", ...nodes ) ).toEqual( ["Pump", "valve"] );
 	} );
 } );
+//#595:  the node and watch lists count their own rows for the slice panel, and narrow them to its value
+describe( 'NodeView and WatchView slice', ()=>{
+	const named = ( name:string, json:object={} )=>variable( 1, name, json );
+	it( 'slices by the small sets and the numbers, never by text or a time', ()=>{
+		expect( NodeView.default().sliceChoices( NodeView.columns ).map( c=>c.name ) ).toEqual( ["class", "dataType", "status"] );
+		expect( WatchView.default().sliceChoices( WatchView.columns ).map( c=>c.name ) ).toEqual( ["connection", "status", "sampling", "revisedSampling", "queue", "revisedQueue", "discard"] );
+	} );
+	it( 'counts the filtered rows by the cell, and narrows them to a value or to the rows with none', ()=>{
+		const failing = named( "b", {value: 2} );
+		failing.sc = bad;
+		const nodes = [named( "a", {value: 1} ), failing, named( "c", {value: 3} ), new OpcObject( <any>{ns: 2, i: 9, name: "folder", browse: {ns: 2, name: "folder"}} )];
+		const view = NodeView.default();
+		view.sliceBy = "status";
+		const good = OpcError.text( 0 ), failed = OpcError.text( bad );
+		expect( view.sliceCounts( nodes ) ).toEqual( [{value: good, count: 2}, {value: failed, count: 1}, {value: null, count: 1}] );
+		expect( view.apply( nodes, good ).map( n=>n.name ) ).toEqual( ["a", "c"] );
+		expect( view.apply( nodes, null ).map( n=>n.name ) ).toEqual( ["folder"] );
+		expect( view.apply( nodes ).length ).toBe( 4 );
+		view.filter = "name:a,b";
+		expect( view.sliceCounts( nodes ) ).toEqual( [{value: good, count: 1}, {value: failed, count: 1}] );
+		view.sliceBy = undefined;
+		expect( [view.sliceCounts( nodes ), view.apply( nodes, good ).length] ).toEqual( [[], 2] );
+	} );
+} );

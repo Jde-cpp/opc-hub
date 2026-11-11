@@ -1,4 +1,4 @@
-import { compareCells, DateUtils, Field, FilterHost, FieldKind, filterPredicate, TableSchema, View, ViewFieldSettings, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, countSlices, DateUtils, Field, FilterHost, FieldKind, filterPredicate, inSlice, SliceCount, SliceValue, TableSchema, View, ViewFieldSettings, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
@@ -30,9 +30,16 @@ export class NodeView extends View{
 
 	get displayedColumns():string[]{ return (this.showSelector ? ["select"] : []).concat( this.fields.filter(f=>f.displayed).map(f=>f.name) ); }
 
-	//the rows in view order:  filtered, then sorted by each Sort in turn (the first is primary)
-	apply( nodes:readonly UaNode[] ):UaNode[]{
-		return this.sortNodes( nodes.filter(this.predicate()) );
+	//the rows in view order:  filtered, narrowed to `slice` - the slice column's value, where one is chosen (ViewSet.slice) - then
+	//sorted by each Sort in turn (the first is primary)
+	apply( nodes:readonly UaNode[], slice?:SliceValue ):UaNode[]{
+		const by = this.sliceBy, filtered = nodes.filter( this.predicate() );
+		return this.sortNodes( by && slice!==undefined ? filtered.filter( n=>inSlice(NodeView.cellValue(n, by), slice) ) : filtered );
+	}
+	//the slice panel's counts:  the filtered rows by the slice column's cell
+	sliceCounts( nodes:readonly UaNode[] ):SliceCount[]{
+		const by = this.sliceBy;
+		return by ? countSlices( nodes.filter(this.predicate()), n=>NodeView.cellValue(n, by) ) : [];
 	}
 	//the browser runs the filter, over the cells:  a comparison is read on any column
 	override filterHost():FilterHost{ return { ...super.filterHost()!, server: false, enums: undefined }; }

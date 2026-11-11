@@ -67,6 +67,9 @@ The menus build their entries only while open (matMenuContent).-->
 		@if( sorts().length || unsorted().length ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="sortMenu">Sort by</button>
 		}
+		@if( slices().length ){
+			<button mat-menu-item type="button" [matMenuTriggerFor]="sliceMenu">Slice by</button>
+		}
 		@if( paged() ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="pageSizeMenu">Page size</button>
 		}
@@ -131,6 +134,20 @@ The menus build their entries only while open (matMenuContent).-->
 			</button>
 		}
 		<button mat-menu-item type="button" [disabled]="!canClearSort()" (click)="clearSort()"><mat-icon aria-hidden="true"></mat-icon>No sorting</button>
+	</ng-template>
+</mat-menu>
+<mat-menu #sliceMenu="matMenu">
+	<ng-template matMenuContent>
+		@for( field of slices(); track field.name ){
+			<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="field.name==views().current().sliceBy" (click)="sliceBy(field.name)">
+				<mat-icon aria-hidden="true">{{ field.name==views().current().sliceBy ? "check" : "" }}</mat-icon>
+				{{ field.label }}
+			</button>
+		}
+		<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="!views().current().sliceBy" (click)="sliceBy(undefined)">
+			<mat-icon aria-hidden="true">{{ views().current().sliceBy ? "" : "check" }}</mat-icon>
+			No slicing
+		</button>
 	</ng-template>
 </mat-menu>
 <mat-menu #viewsMenu="matMenu">

@@ -810,4 +810,30 @@ describe( 'ViewToolbar', ()=>{
 			expect( [...right.children].map( c=>c.id || c.getAttribute( "aria-label" ) || c.className ) ).toEqual( ["Refresh", "extra", "row-count"] );
 		} );
 	} );
+
+	//#595:  `Slice by` names the column the slice panel lists
+	describe( 'Slice by', ()=>{
+		const things = schemaOf( "Thing", required("name"), {name: "kind", type: {kind: "ENUM", name: "Kind"}}, scalar("size", "UInt") );
+		const sliced = ()=>[View.fromConfig( {configColumns: ["name", "kind"], sort: []}, things )];
+		const open = async ( options:Options={} )=>{
+			const y = await create( {schema: things, route: sliced(), ...options} );
+			y.host.columns.set( {name: "Name", kind: "Kind", size: "Size"} );
+			y.fixture.detectChanges();
+			return y;
+		};
+		it( "offers the columns a list is sliced by and No slicing, the view's ticked, each pick a change to the draft", async ()=>{
+			const { fixture, element, set, host } = await open();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Slice by" );
+			expect( items().map( i=>[text( i ), i.getAttribute( "aria-checked" )] ) ).toEqual( [["Kind", "false"], ["Size", "false"], ["No slicing", "true"]] );
+			await pick( fixture, "Size" );
+			expect( [set.current().sliceBy, set.current().isAdhoc, host.changes] ).toEqual( ["size", true, 1] );
+			fixture.debugElement.query( By.directive(ViewToolbar) ).componentInstance.sliceBy( undefined );//the menu's No slicing
+			expect( [set.current().sliceBy, set.current().isAdhoc, host.changes] ).toEqual( [undefined, false, 2] );
+		} );
+		it( 'is not in the menu of a list with no column to slice by, as the logs', async ()=>{
+			const { fixture, element } = await open( {type: LogView, route: [LogView.fromConfig( {configColumns: ["name", "kind"], sort: []}, things )]} );
+			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( text ) ).not.toContain( "Slice by" );
+		} );
+	} );
 } );

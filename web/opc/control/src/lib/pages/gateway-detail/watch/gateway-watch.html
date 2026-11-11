@@ -11,6 +11,9 @@
 						<button left matButton="filled" type="button" class="add-button" (click)="onAdd()"><mat-icon aria-hidden="true">add</mat-icon>Add</button>
 					</view-toolbar>
 					<mat-tab-nav-panel #panel>
+						<div class="jde-sliced">
+						<slice-panel [views]="viewSet" [columns]="columns" [counts]="slices()"/>
+						<div class="jde-sliced-rows">
 						<div class="table-wrap">
 							<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange-->
 							<mat-table [dataSource]="shown()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" [filterValues]="filterValues()" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
@@ -128,6 +131,8 @@
 								}
 							</div>
 						}
+						</div>
+						</div>
 					</mat-tab-nav-panel>
 				</ng-template>
 			</mat-tab>

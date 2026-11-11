@@ -155,6 +155,15 @@ export class ViewToolbar{
 		}
 	}
 	private menuItems = viewChildren( MatMenuItem );
+	//`Slice by` (views spec *Slice by*):  the host's columns a list is sliced by, the view's ticked, and `No slicing`.  None where
+	//the host's list is not sliced - the logs, a collection whose counts the server does not answer.
+	slices = computed<{name:string, label:string}[]>( ()=>this.views().slices ? this.views().current().sliceChoices( this.columns() ) : [] );
+	sliceBy( name:string|undefined ){
+		if( name==this.views().current().sliceBy )
+			return;
+		this.views().edit( view=>{ view.sliceBy = name; } );
+		this.viewChange.emit();
+	}
 	//the menu's sizes, and the view's own where it is none of them, as the logs' 21
 	pageSizes = computed<number[]>( ()=>{
 		const limit = this.views().current().limit;

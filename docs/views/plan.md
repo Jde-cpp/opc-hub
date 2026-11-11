@@ -236,6 +236,24 @@ After 6a, 3b and 4. One PR. `Slice by` in the view menu and the header menu, off
 
 Tests: the panel's counts and narrowing, the second click, a filter changing the counts, a slice surviving a reload but not a `Save`.
 
+Built 2026-11-11, where it differs from the text above:
+
+- **Every list there is today is answered by the stock select.** The count query selects the sliced column and `count` alone, so it carries none of the sub-tables that send `users` and `roles` to Access's custom queries, `groups` goes back to the stock select, and the gateway's `serverConnections`, `histTemplates` and `histGroups` and the app server's `calendars` name no handler. No list is switched off.
+  - A route whose collection a custom query answers without counting sets `canSlice: false` in its `TableSettings`. The list then offers no slice and reads no counts. OEE's lists will need it.
+  - A `groupBy` answer whose rows carry no `count` is refused in the browser (`readSliceCounts`), so a handler that ignores the argument shows *The counts could not be read* over the panel, not its rows as counts. The rows still load.
+- **The panel's order is the schema's for an enum**, the order `schemaWithEnums` lists its values in, so a level or a status reads in its own order. A number or a boolean column is ascending, and the rows with no value are last, as *No <field>*.
+- **The value is beside the drafts, under `slices`.** `ViewSet` keeps it by the view's number with the column it is a value of, in `LocalPrefs` under the drafts' key, and reads it back with them. It holds only while the view is sliced by that column, and it goes with its view.
+  - `ViewSet.sliced()` answers the view to query with, a copy carrying the value where one is chosen. The value is then a term on the slice column among the filter's, so `View.sameRows` tells a slice from the rows on screen.
+  - A `Save` writes `sliceBy` and leaves the value chosen: "not a `Save`" is read as the value never reaching the profile's row.
+- **A boolean's rows read `true` and `false`**, as the filter box and `Filter by…` name them.
+- **The value held stays in the panel** with a count of 0 where a filter leaves it no rows, so it can be clicked off.
+- **`QLListResolver.load` reads the counts with the rows**, in one call each, and a view whose slice column changed reads both again on the same page. A change of value starts from the first page, as a change of filter does.
+- **The panel folds below the small breakpoint**, 959px, where the sidenav becomes a drawer: `ScreenSize` has no signal for the medium one the spec's *Look* names. Folded, it is a `Slice` button on a row of its own above the table, whose menu has the column switch, *All* and the values.
+- **On a phone the list stays narrowed.** The panel and the button are absent, the menus' `Slice by` entries stay, and a value chosen at a wider width still narrows the rows. The empty state says the view matches nothing.
+- **The panel scrolls with a table wider than the pane**, so the pinned column stays at the pane's edge.
+- **The header menu's `Slice by this field` is a tick**: a second pick on the sliced column is `No slicing`.
+- **The node and watch lists re-count on every push**, since a reading can move a row to another status.
+
 ## Phase 7 - group by and sums (piece 7)
 
 Issue [#596].

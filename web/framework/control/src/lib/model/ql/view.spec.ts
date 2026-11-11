@@ -396,3 +396,45 @@ describe( "View's sort", ()=>{
 		expect( ["name", "rights", "tags", "members", "identity"].map( c=>view.sortable(c) ) ).toEqual( [true, false, false, false, false] );
 	} );
 } );
+//#595:  the slice column is the view's, saved with it, and the value the rows are narrowed to is the browser's
+describe( "View slice", ()=>{
+	const users = schemaOf( "User", {name: "id", type: {kind: "NON_NULL", name: null, ofType: {kind: "SCALAR", name: "ID"}}}, scalar("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}}, scalar("isGroup", "Boolean"),
+		scalar("logins", "UInt"), scalar("deleted", "DateTime"), object("owner", "Owner"), {name: "tags", type: {kind: "LIST", name: null, ofType: {kind: "SCALAR", name: "Int"}}} );
+	const view = ( settings:object={} )=>View.fromTable( {columns: ["name", "provider"], sort: "name", ...settings}, users );
+	it( "slices by a number, a boolean or an enum, never an ID, text, a date, an object or a list", ()=>{
+		const v = view();
+		expect( ["id", "name", "provider", "isGroup", "logins", "deleted", "owner", "tags"].map( c=>v.sliceable(c) ) ).toEqual( [false, false, true, true, true, false, false, false] );
+		expect( v.sliceChoices({name: "Name", provider: "Provider", logins: "Logins"}) ).toEqual( [{name: "provider", label: "Provider"}, {name: "logins", label: "Logins"}] );
+	} );
+	it( "counts by the column under the view's filter, with none of its sort, its page or its slice", ()=>{
+		const v = view( {sliceBy: "provider"} );
+		v.filter = "logins:>3";
+		v.slice = "Key";
+		const q = v.sliceQuery()!;
+		expect( q.text ).toBe( 'users(groupBy:"provider",logins:{gt:$logins_gt},deleted:$deleted){ provider count }' );
+		expect( q.vars ).toEqual( {logins_gt: 3, deleted: null} );
+		expect( view().sliceQuery() ).toBeUndefined();
+	} );
+	it( "narrows the rows to the slice's value, with the filter's terms on the column, and to the rows with none for null", ()=>{
+		const v = view( {sliceBy: "provider"} );
+		v.slice = "Key";
+		expect( v.query( 0 ) ).toMatchObject( {vars: {provider: ["Key"]}} );
+		v.filter = "provider:Key,Google";
+		expect( v.query( 0 ).vars["provider"] ).toEqual( ["Key"] );
+		v.filter = "";
+		v.slice = null;
+		expect( v.query( 0 ).vars["provider"] ).toEqual( [null] );
+		expect( View.sameRows( view({sliceBy: "provider"}), v ) ).toBe( false );
+	} );
+	it( "saves the column and never the value, and drops a saved column the schema no longer slices by", ()=>{
+		const v = view( {sliceBy: "provider"} );
+		v.slice = "Key";
+		const json = v.toJson( undefined );
+		expect( json ).toMatchObject( {sliceBy: "provider"} );
+		expect( JSON.stringify(json) ).not.toContain( "Key" );
+		expect( View.fromJson( json as unknown as ViewSerializedArgs, users ).sliceBy ).toBe( "provider" );
+		expect( View.fromJson( {...json, sliceBy: "name"} as unknown as ViewSerializedArgs, users ).sliceBy ).toBeUndefined();
+		expect( View.alike( v, view() ) ).toBe( false );//a change to the view, so a draft
+		expect( ()=>view( {sliceBy: "name"} ) ).toThrow();
+	} );
+} );

@@ -13,7 +13,7 @@ import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { cellValues, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
+import { cellValues, SliceCount, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
 import { EAccess } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
@@ -35,7 +35,7 @@ import { StructureTable } from '../../structure-table/structure-table';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,SlicePanel,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -317,9 +317,17 @@ export class NodeChildren implements OnInit, OnDestroy {
 	get showSystem():Signal<boolean>{ return this.#opcStore.showSystem; }
 	setShowSystem( show:boolean ):void{ this.#opcStore.setShowSystem( show ); }
 	rows = computed<UaNode[]>( ()=>{
-		const sorted = this.view() ? this.view().apply( this.nodes().filter( n=>this.showSystem() || !n.isSystem || this.isSelf(n) ) ) : [];//a ns-0 Variable page keeps its own row
+		if( this.view()?.sliceBy )
+			this.#changes();//a push's reading may move a row to another value
+		const sorted = this.view() ? this.view().apply( this.#offered(), this.viewSet.slice() ) : [];
 		const self = sorted.find( n=>this.isSelf(n) );//a Variable page's own row stays first, whatever the view's sort
 		return self ? [self, ...sorted.filter( n=>n!==self )] : sorted;
+	} );
+	#offered = computed<UaNode[]>( ()=>this.nodes().filter( n=>this.showSystem() || !n.isSystem || this.isSelf(n) ) );//a ns-0 Variable page keeps its own row
+	//the slice panel's counts, of the rows under the view's filter
+	slices = computed<SliceCount[]>( ()=>{
+		this.#changes();
+		return this.view()?.sliceCounts( this.#offered() ) ?? [];
 	} );
 	//every row the view would show is a system node the toggle hides - the Types folder's, by default:  the empty state says so, not
 	//that the view matches nothing (reviews-issue/416-address-space.md #12)

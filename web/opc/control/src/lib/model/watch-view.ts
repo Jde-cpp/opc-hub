@@ -1,4 +1,4 @@
-import { compareCells, Field, FieldKind, FilterHost, filterPredicate, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { compareCells, countSlices, Field, FieldKind, FilterHost, filterPredicate, inSlice, SliceCount, SliceValue, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { NodeView } from './node-view';
 import { OpcError } from './opc-error';
@@ -27,8 +27,9 @@ export class WatchView extends View{
 		return views.load( [WatchView.default()], WatchView.schema );
 	}
 	//the rows in view order:  filtered, then sorted by each Sort in turn.  `names` gives a connection's name by its slug.
-	apply( rows:readonly WatchRow[], names:( slug:string )=>string ):WatchRow[]{
-		const y = rows.filter( this.predicate(names) );
+	apply( rows:readonly WatchRow[], names:( slug:string )=>string, slice?:SliceValue ):WatchRow[]{
+		const by = this.sliceBy, filtered = rows.filter( this.predicate(names) );
+		const y = by && slice!==undefined ? filtered.filter( r=>inSlice(WatchView.cellValue(r, by, names), slice) ) : filtered;//narrowed to the slice's value, where one is chosen
 		const sorts = this.sort.filter( s=>s.active && s.direction );
 		if( sorts.length ){
 			y.sort( (a,b)=>{
@@ -41,6 +42,11 @@ export class WatchView extends View{
 			} );
 		}
 		return y;
+	}
+	//the slice panel's counts:  the filtered rows by the slice column's cell
+	sliceCounts( rows:readonly WatchRow[], names:( slug:string )=>string ):SliceCount[]{
+		const by = this.sliceBy;
+		return by ? countSlices( rows.filter(this.predicate(names)), r=>WatchView.cellValue(r, by, names) ) : [];
 	}
 	override filterHost():FilterHost{ return { ...super.filterHost()!, server: false, enums: undefined }; }
 	//the filter's terms as a test of a row, as NodeView's

@@ -1,0 +1,80 @@
+//240px at the table's left, on the colour under the toolbar's with an edge (views spec *Look*);  folded, a button on a row of its
+//own.  The row it shares with the table, and where that row stacks, are .jde-sliced's (_general.scss).
+:host{
+	display: block;
+	box-sizing: border-box;
+	flex: 0 0 240px;
+	align-self: stretch;
+	background: var(--mat-sys-surface-container-low);
+	border-right: 1px solid var(--mat-sys-outline-variant);
+	text-align: left;
+}
+:host(.folded){
+	flex: none;
+	align-self: auto;
+	padding: .25rem .5rem;
+	border-right: 0;
+	border-bottom: 1px solid var(--mat-sys-outline-variant);
+}
+section{
+	padding: .5rem;
+}
+.slice-field{
+	font: var(--mat-sys-title-small);
+}
+.note{
+	margin: .25rem .5rem;
+	font: var(--mat-sys-body-small);
+	color: var(--mat-sys-error);
+}
+ul{
+	margin: .25rem 0 0;
+	padding: 0;
+	list-style: none;
+}
+.slice-row{
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: .5rem;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 36px;
+	padding: 0 .75rem;
+	border: 0;
+	border-radius: 18px;
+	background: none;
+	color: var(--mat-sys-on-surface);
+	font: var(--mat-sys-body-medium);
+	text-align: left;
+	cursor: pointer;
+	&:hover{
+		background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, transparent);
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: -2px;
+	}
+	&[aria-pressed="true"]{
+		background: var(--mat-sys-secondary-container);
+		color: var(--mat-sys-on-secondary-container);
+		font-weight: 500;
+	}
+	&.none .label{
+		font-style: italic;
+	}
+}
+.label{
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.count{
+	flex: none;
+	font: var(--mat-sys-label-medium);
+	color: var(--mat-sys-on-surface-variant);
+	.slice-row[aria-pressed="true"] &{
+		color: inherit;
+	}
+}

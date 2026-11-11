@@ -25,12 +25,14 @@ import { QLRow } from '../../../model/ql/slug-row';
 import { verify } from '../../../utils/utils';
 import { PageEvent, Paginator } from '../../../shared/paginator/paginator';
 import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
+import { SlicePanel } from '../../../shared/slice-panel/slice-panel';
+import { SliceCount } from '../../../model/ql/slice';
 
 @Component({
 	selector: 'ql-list',
 	templateUrl: './ql-list.html',
 	host: {class:'main-content my-content'},
-	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, NgTemplateOutlet, Paginator, RouterLink, ViewToolbar]
+	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, NgTemplateOutlet, Paginator, RouterLink, SlicePanel, ViewToolbar]
 })
 export class QLList implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -49,7 +51,7 @@ export class QLList implements OnInit{
 	//the rows resolved are the view's
 	#resolved( data:Record<string,unknown> ){
 		this.init( data );
-		this.#queried = this.view();
+		this.#queried = this.profile().sliced();
 	}
 	//The rows of a reload to show checked:  those `prior` checked, by id - a reload builds new row objects - and one at most on a
 	//single-select list, where SelectionModel throws on more.
@@ -72,6 +74,8 @@ export class QLList implements OnInit{
 		if( !this.selector() )
 			QLListResolver.saveSkip( data, this.skip() );
 		this.more.set( data.more ?? false );
+		this.slices.set( data.slices );
+		this.slicesError.set( data.slicesError );
 		this.error.set( data.error );//a good load clears the last failure; a resolver that caught the rows query sets it
 		this.sideNav.set( data.routing );
 		let paths = [];
@@ -170,17 +174,18 @@ export class QLList implements OnInit{
 
 	//The toolbar or a header put another view on screen:  its rows, unless those shown or on their way hold them - the view
 	//renamed, a copy of it, a column hidden, moved or resized, or its filter changed only in a term the box cannot read - where
-	//the page stays as it is, its columns the view's even while a read is out.  A column shown is read on the same page, and a
-	//list showing a failure reads whatever the change.
+	//the page stays as it is, its columns the view's even while a read is out.  A column shown is read on the same page, as is
+	//another slice column, for its counts, and a list showing a failure reads whatever the change.  The slice panel says the same
+	//of its value, which narrows the rows as a filter's term does.
 	async onChangeView(){
-		const view = this.profile().current(), queried = this.#queried ?? this.view();
-		if( View.answers(queried, view) && !this.error() ){
+		const view = this.profile().current(), asked = this.profile().sliced(), queried = this.#queried ?? this.view();
+		if( View.answers(queried, asked) && queried.sliceBy==asked.sliceBy && !this.error() ){
 			this.view.set( view );
 			const multiple = this.selector() || view.showSelector;//the Fields checklist's Select
 			if( multiple!=this.selections().isMultipleSelection() )
 				this.selections.set( QLList.carriedSelection(this.selections(), this.data(), multiple) );
 		}
-		else if( View.sameRows(queried, view) )
+		else if( View.sameRows(queried, asked) )
 			await this.#reload();
 		else
 			await this.#refresh();
@@ -196,7 +201,7 @@ export class QLList implements OnInit{
 	//would put back its own page, or the rows of the view it was sent under.
 	async reload(){
 		const id = this.#reloads.next();
-		this.#queried = this.profile().current();
+		this.#queried = this.profile().sliced();
 		this.isRefreshing.set( true );
 		try{
 			const reload = await QLListResolver.load( this.#ql(), {...this.resolvedData(), skip: this.skip()}, null );
@@ -292,13 +297,16 @@ export class QLList implements OnInit{
 		const routing = this.resolvedData().routing;
 		return failureState( this.error(), routing.tableSettings?.noun ?? routing.title.toLowerCase() );
 	});
-	//the rows the view's filters narrowed:  they are not the default view's.  Against the default, not against none - the
+	//the rows the view's filters, or its slice, narrowed:  they are not the default view's.  Against the default, not against none - the
 	//resources page's default filters on criteria <null>, and a database no service has started against must still say so.
 	//The route's default, not the first tab, which is whichever view the user put there.
 	viewFiltered = computed<boolean>( ()=>{
 		const home = this.profile().routeDefault;
-		return !!home && !!this.view() && !View.sameFilters( this.view(), home );
+		return !!home && !!this.view() && ( !View.sameFilters(this.view(), home) || this.profile().slice()!==undefined );
 	});
+	//the slice panel's counts, read with the rows (QLListResolver.load):  undefined where the view is not sliced, or they failed
+	slices = signal<SliceCount[]|undefined>( undefined );
+	slicesError = signal<unknown>( undefined );
 	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilter?.includes( "-id:" ), selector: this.selector()}) );
 	showEmpty = computed<boolean>( ()=>!this.isRefreshing() && this.error()===undefined && !this.data().length );//not while a reload has the rows cleared
 	addFilled = computed<boolean>( ()=>this.showEmpty() && !this.viewFiltered() );//Add is the one useful action only on a genuinely empty list - not under a filter, a refusal or a failure (#fail and loadOrFail empty the rows too)

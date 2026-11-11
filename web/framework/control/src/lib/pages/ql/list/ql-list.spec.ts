@@ -663,3 +663,90 @@ describe( 'QLList paging', ()=>{
 		} );
 	} );
 } );
+//#595:  a sliced list reads its counts with its rows - the groupBy query under the view's filter - and a value narrows the rows
+describe( 'QLList slice', ()=>{
+	const schema = schemaOf( "User", id(), required("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}} );
+	const users = [{id: 1, name: "ann", provider: "Key"}, {id: 2, name: "bob", provider: "Google"}, {id: 3, name: "cat", provider: "Key"}, {id: 4, name: "dan", provider: null}];
+	//A list over `users`, answered by a server that filters on provider and name and counts by provider.  `counted` false:  a
+	//custom query that ignores groupBy and answers its rows.
+	const create = async ( {sliceBy="provider", counted=true}:{sliceBy?:string; counted?:boolean}={} )=>{
+		const matching = ( vars:Record<string,any> )=>users.filter( u=>( !vars["provider"] || vars["provider"].includes(u.provider) ) && ( !vars["name_glob"] || u.name.includes( vars["name_glob"].replaceAll("*", "") ) ) );
+		const query = vi.fn( async ( text:string, vars:Record<string,any> )=>{
+			const rows = matching( vars );
+			if( !text.includes("groupBy") || !counted )
+				return { users: rows };
+			const providers = [...new Set( rows.map( u=>u.provider ) )];
+			return { users: providers.map( provider=>({provider, count: rows.filter( u=>u.provider==provider ).length}) ) };
+		} );
+		configure( undefined, {provide: IGRAPHQL, useValue: {query}} );
+		const fixture = TestBed.createComponent( QLList );
+		const page = fixture.componentInstance;
+		const profile = viewSet( [View.fromTable({columns: ["name", "provider"], sort: "name", sliceBy: sliceBy || undefined}, schema)] );
+		const data = { routing: new ListRoute({path: 'users'}), schema, profile, columns: {name: "Name", provider: "Provider"}, results: null } as unknown as QLListData;
+		fixture.componentRef.setInput( 'listData', await QLListResolver.load({query: query as any}, data, null) );//resolved by its host, as a pick list's
+		await page.ngOnInit();
+		fixture.detectChanges();
+		const counts = ()=>query.mock.calls.filter( ([text])=>text.includes("groupBy") );
+		const names = ()=>page.data().map( r=>r.name );
+		const panel = ()=>[...( fixture.nativeElement as HTMLElement ).querySelectorAll( 'button.slice-row' )].map( r=>r.textContent!.replace( /\s+/g, " " ).trim() );
+		return { page, fixture, query, counts, names, panel };
+	};
+
+	it( "reads the counts with the rows:  the view's filter, and none of its sort or page", async ()=>{
+		const { page, counts, panel } = await create();
+		expect( counts() ).toEqual( [['users(groupBy:"provider"){ provider count }', {}]] );
+		expect( page.slices() ).toEqual( [{value: "Key", count: 2}, {value: "Google", count: 1}, {value: null, count: 1}] );
+		expect( panel() ).toEqual( ["All4", "Google1", "Key2", "No Provider1"] );
+	} );
+
+	it( 'reads no counts for a view that is not sliced, and reads them once it is', async ()=>{
+		const { page, counts, fixture, panel } = await create( {sliceBy: ""} );
+		expect( [counts().length, page.slices()] ).toEqual( [0, undefined] );
+		page.profile().edit( view=>{ view.sliceBy = "provider"; } );
+		await page.onChangeView();
+		fixture.detectChanges();
+		expect( [counts().length, panel().length] ).toEqual( [1, 4] );
+	} );
+
+	it( 'narrows the rows to the value picked from the first page, the counts still the whole list, and widens them again', async ()=>{
+		const { page, names, fixture, panel } = await create();
+		page.skip.set( 25 );
+		page.profile().setSlice( "Key" );
+		await page.onChangeView();
+		fixture.detectChanges();
+		expect( [names(), page.skip(), page.viewFiltered()] ).toEqual( [["ann", "cat"], 0, true] );
+		expect( panel() ).toEqual( ["All4", "Google1", "Key2", "No Provider1"] );
+		page.profile().setSlice( null );
+		await page.onChangeView();
+		expect( names() ).toEqual( ["dan"] );
+		page.profile().setSlice( undefined );
+		await page.onChangeView();
+		expect( [names().length, page.viewFiltered()] ).toEqual( [4, false] );
+	} );
+
+	it( 'counts again under a filter typed, the slice kept', async ()=>{
+		const { page, names } = await create();
+		page.profile().setSlice( "Key" );
+		await page.onChangeView();
+		page.profile().edit( view=>{ view.filter = "a"; } );//ann, cat and dan
+		await page.onChangeView();
+		expect( page.slices() ).toEqual( [{value: "Key", count: 2}, {value: null, count: 1}] );
+		expect( names() ).toEqual( ["ann", "cat"] );
+	} );
+
+	it( 'says the counts could not be read where the server answers rows, and keeps the rows', async ()=>{
+		const { page, names, fixture } = await create( {counted: false} );
+		fixture.detectChanges();
+		expect( [page.slices(), `${page.slicesError()}`, names().length] ).toEqual( [undefined, "Error: The server did not count by 'provider'.", 4] );
+		expect( ( fixture.nativeElement as HTMLElement ).querySelector( 'slice-panel .note' ) ).not.toBeNull();
+	} );
+
+	it( "reads no counts where the route's list is not sliced", async ()=>{
+		const query = vi.fn( async ()=>({users}) );
+		configure();
+		const profile = QLListResolver.viewSet( "users", TestBed.inject(ProfileStore), TestBed.inject(LocalPrefs), {columns: [], canSlice: false} );
+		profile.reset( [View.fromTable({columns: ["name"], sort: "name", sliceBy: "provider"}, schema)], schema );
+		await QLListResolver.load( {query: query as any}, {routing: new ListRoute({path: 'users'}), schema, profile, columns: {}, results: null} as unknown as QLListData, null );
+		expect( query ).toHaveBeenCalledTimes( 1 );
+	} );
+} );

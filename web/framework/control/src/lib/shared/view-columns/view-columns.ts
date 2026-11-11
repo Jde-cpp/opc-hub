@@ -12,7 +12,7 @@ import { ViewSet } from '../../model/ql/view-set';
 //node's children and the watch list:  on the mat-table, with `viewColumn` on each header cell and cell of a column the view holds.
 //A header then has its menu and its resize handle and drags along the header row, each a change to the view's draft, after which
 //`columnsChange` tells the host the view on screen is another, as the toolbar's `viewChange` does.  The menu sorts by the column
-//and, where the filter box reads its few values, filters on them (*Sort*, `Filter by…`).  The header cells are the drop
+//and, where the filter box reads its few values, filters on them (*Sort*, `Filter by…`), and slices the list by it (*Slice by*).  The header cells are the drop
 //list's items wherever the table puts them:  a cell's injector is the column's, not the header row's, so the list is the table.
 //`jde-view-columns` makes the rows as wide as their columns (_general.scss), the block a pinned cell sticks in.
 @Directive({
@@ -67,6 +67,10 @@ export class ViewColumns{
 	}
 	//a value picked:  into the filter or out of it, as a chip's click
 	filterBy( name:string, value:string ){ this.#edit( draft=>draft.toggleFilterValue(name, value) ); }
+	//`Slice by this field`:  on a column a list is sliced by, ticked on the view's, where a second pick is `No slicing`
+	canSlice( name:string ):boolean{ return !!this.views()?.slices && !!this.view()?.sliceable( name ); }
+	slicedBy( name:string ):boolean{ return this.view()?.sliceBy==name; }
+	sliceBy( name:string ){ this.#edit( view=>{ view.sliceBy = view.sliceBy==name ? undefined : name; } ); }
 	preview( name:string, width?:number ){ this.#preview.set( width==null ? undefined : {name, width} ); }
 
 	//`focus`:  from a header's menu, whose button the header row drawn again destroys - the column moved takes the focus, or after
@@ -179,6 +183,9 @@ export class ViewColumnHeader implements AfterViewInit, OnDestroy{
 	later = computed( ()=>{ const sorted = this.sorted(); return sorted && sorted.place>0 ? sorted : undefined; } );//a second or later sort
 	sort( direction:SortDirection ){ this.columns.sort( this.name, direction ); }
 	choices = computed( ()=>this.columns.filterChoices(this.name) );
+	canSlice = computed<boolean>( ()=>this.columns.canSlice(this.name) );
+	sliced = computed<boolean>( ()=>this.columns.slicedBy(this.name) );
+	slice(){ this.columns.sliceBy( this.name ); }
 	filterBy( value:string, event:Event ){
 		event.stopPropagation();//the menu stays open:  a filter takes several values
 		this.columns.filterBy( this.name, value );

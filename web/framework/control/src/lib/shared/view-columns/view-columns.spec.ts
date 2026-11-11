@@ -269,4 +269,19 @@ describe( 'ViewColumns on a hand-built table', ()=>{
 			expect( ticks( ( await choices( y, "line" ) )() ) ).toEqual( [["1", "false"], ["2", "false"], ["9", "true"]] );
 		} );
 	} );
+
+	//#595
+	it( 'slices by a boolean column from its menu, ticked on the column sliced by, and not by text', async ()=>{
+		const y = await open( ["time", "message", "ok"] );
+		expect( ( await y.menu( "message" ) ).some( i=>i.textContent!.includes( "Slice by this field" ) ) ).toBe( false );
+		document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+		await stable( y.fixture, 1 );
+		await y.pick( "ok", "Slice by this field" );
+		expect( [y.set.current().sliceBy, y.set.current().isAdhoc, y.host.changes] ).toEqual( ["ok", true, 1] );
+		expect( ( await y.menu( "ok" ) ).find( i=>i.textContent!.includes( "Slice by this field" ) )!.getAttribute( "aria-checked" ) ).toBe( "true" );
+		document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+		await stable( y.fixture, 1 );
+		await y.pick( "ok", "Slice by this field" );
+		expect( y.set.current().sliceBy ).toBeUndefined();
+	} );
 } );
