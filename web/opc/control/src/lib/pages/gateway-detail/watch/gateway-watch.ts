@@ -10,7 +10,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle, LocalPrefs, ProfileStore, RouteItem } from 'jde-spa';
-import { cellValues, errorMessage, QLListSettings, SnackbarService, View, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
+import { cellValues, errorMessage, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
@@ -45,7 +45,7 @@ import { WatchTrend } from './watch-trend';
 	templateUrl: './gateway-watch.html',
 	styleUrls: ['./gateway-watch.scss'],
 	host: {class: 'main-content my-content gateway-watch'},
-	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, QLListSettings, StructureTable, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar, WatchTrend]
+	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, StructureTable, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar, WatchTrend]
 })
 export class GatewayWatch implements OnInit, OnDestroy{
 	static readonly prefsOwner = 'gatewayWatch';
@@ -326,11 +326,8 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		this.#prefs.set( GatewayWatch.prefsOwner, 'trendWindow', minutes==GatewayWatch.defaultWindow ? null : minutes );
 	}
 
-	//The view tabs and settings panel, as the children table has them
+	//the header's click:  the rows follow the view on their own
 	onSortChange( sort:Sort ){ this.viewSet.sort( sort ); }
-	onViewShow( view:View ){ this.isSettings.set( false ); this.viewSet.show( view ); }
-	onViewSave( view:View ){ this.viewSet.save( view ).catch( e=>this.#snackbar.exception( "Could not save view.", e ) ); this.isSettings.set( false ); }
-	onViewDelete( view:View ){ this.viewSet.remove( view ).catch( e=>this.#snackbar.exception( "Could not delete view.", e ) ); this.isSettings.set( false ); }
 	//the cells' values by column, which the filter box suggests
 	filterValues = computed<Record<string,unknown[]>>( ()=>{
 		this.#changes();//a describe's names and a push's reading land on the rows in place
@@ -366,13 +363,10 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	connections = signal<HistConnection[]>( [] );
 	isLoading = signal( true );
 	isRefreshing = signal( false );
-	isSettings = signal( false );
 	error = signal<string|undefined>( undefined );
 	viewSet = WatchView.viewSet( inject( ProfileStore ), inject( LocalPrefs ) );
 	view = this.viewSet.current;
-	viewCopy = computed<WatchView>( ()=>WatchView.copy( this.view() ) );
 	columns = WatchView.columns;
-	schema = WatchView.schema;
 	shown = computed<WatchRow[]>( ()=>{
 		this.#changes();
 		return this.view() ? this.view().apply( this.rows(), this.names ) : [];

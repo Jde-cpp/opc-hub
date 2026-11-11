@@ -30,9 +30,6 @@
 		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="refreshing()" (click)="refresh.emit()">
 			<mat-icon>refresh</mat-icon>
 		</button>
-		<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="edit.emit()">
-			<mat-icon>tune</mat-icon>
-		</button>
 		<ng-content select="[right]"/>
 		@if( count()!==undefined ){
 			<span class="row-count">{{ count() }} {{ count()==1 ? "row" : "rows" }}</span>
@@ -66,6 +63,9 @@ The menus build their entries only while open (matMenuContent).-->
 		}
 		@if( fields().length ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="fieldsMenu" (menuOpened)="fieldsOpened()" (menuClosed)="fieldsClosed()">Fields</button>
+		}
+		@if( sorts().length || unsorted().length ){
+			<button mat-menu-item type="button" [matMenuTriggerFor]="sortMenu">Sort by</button>
 		}
 		@if( paged() ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="pageSizeMenu">Page size</button>
@@ -107,6 +107,30 @@ The menus build their entries only while open (matMenuContent).-->
 				{{ field.label }}
 			</button>
 		}
+	</ng-template>
+</mat-menu>
+<mat-menu #sortMenu="matMenu">
+	<ng-template matMenuContent>
+		<!--the view's sorts, dragged into order:  a click released on another row is the list's, not the panel's, which would close-->
+		<div class="sort-rows" role="none" cdkDropList cdkDropListLockAxis="y" (cdkDropListDropped)="onSortDrop($event)" (click)="stop($event)">
+			@for( sort of sorts(); track sort.name; let i=$index ){
+				<div class="sort-row" role="none" cdkDrag [cdkDragData]="sort.name">
+					<button mat-menu-item type="button" role="menuitemcheckbox" aria-checked="true" [attr.data-sort]="sort.name" (click)="toggleSort(sort.name, $event)">
+						<mat-icon aria-hidden="true">{{ sort.direction=="desc" ? "arrow_downward" : "arrow_upward" }}</mat-icon>
+						{{ sort.label }}<span class="cdk-visually-hidden">, {{ sort.direction=="desc" ? "descending" : "ascending" }}</span>
+					</button>
+					<button mat-menu-item type="button" class="sort-move" title="Move up" [attr.aria-label]="'Move ' + sort.label + ' up'" [attr.data-sort]="sort.name + '/up'" [disabled]="i==0" (click)="moveSort(sort.name, -1, $event)"><mat-icon aria-hidden="true">keyboard_arrow_up</mat-icon></button>
+					<button mat-menu-item type="button" class="sort-move" title="Move down" [attr.aria-label]="'Move ' + sort.label + ' down'" [attr.data-sort]="sort.name + '/down'" [disabled]="i==sorts().length-1" (click)="moveSort(sort.name, 1, $event)"><mat-icon aria-hidden="true">keyboard_arrow_down</mat-icon></button>
+				</div>
+			}
+		</div>
+		@for( field of unsorted(); track field.name ){
+			<button mat-menu-item type="button" role="menuitemcheckbox" aria-checked="false" [attr.data-sort]="field.name" (click)="toggleSort(field.name, $event)">
+				<mat-icon aria-hidden="true"></mat-icon>
+				{{ field.label }}
+			</button>
+		}
+		<button mat-menu-item type="button" [disabled]="!sorts().length" (click)="clearSort()"><mat-icon aria-hidden="true"></mat-icon>No sorting</button>
 	</ng-template>
 </mat-menu>
 <mat-menu #viewsMenu="matMenu">

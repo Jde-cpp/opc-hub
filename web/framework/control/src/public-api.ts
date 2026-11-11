@@ -17,7 +17,6 @@ export * from './lib/pages/page-heading';
 export * from './lib/pages/framework-pages';
 export * from './lib/pages/cards/card-status';
 export * from './lib/pages/ql/list/ql-list';
-export * from './lib/pages/ql/list/ql-list-settings/ql-list-settings';
 export * from './lib/pages/ql/list/ql-list-route-service';
 export * from './lib/pages/ql/selector/ql-selector';
 

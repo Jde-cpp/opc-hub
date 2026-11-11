@@ -13,7 +13,7 @@ A node's **Children**, a gateway's **Watch list** and an application server's **
 
 ## Lists
 
-Above a list are its views, a row of tabs, and under them the bar with **Add**, the [filter box](#filtering), the refresh button, the tune button and, when the list fits on one page, the row count. **Discard** and **Save** join the bar, after the filter box, while the view has unsaved changes.
+Above a list are its views, a row of tabs, and under them the bar with **Add**, the [filter box](#filtering), the refresh button and, when the list fits on one page, the row count. **Discard** and **Save** join the bar, after the filter box, while the view has unsaved changes.
 
 **Add** starts a new record. A list whose rows are not created by hand has no **Add**.
 
@@ -24,7 +24,26 @@ Click a row to open the record. Two kinds of list differ:
 - A **Resources** row under [Access](/access) opens a read-only page of who holds rights on it, not an editable record.
 - The pick lists on a record's tabs (a group's **Users**, say) have no **Add**. A click ticks the row, and the record's **Save** keeps the picks.
 
-Click a column header to sort by that column, which is an [unsaved change](#unsaved-changes) to the view.
+### Sorting
+
+Click a column header to sort by that column, and click it again to sort the other way. The column goes first in the sort, ahead of the columns the view already sorts by.
+
+The header's [menu](#columns) has **Sort ascending** and **Sort descending**, which set the direction outright. On a column the view already sorts by they leave its place in the sort as it is.
+
+**Sort by** in the [view's menu](#views) is the whole sort:
+
+- The columns the view sorts by come first, in their order, each with an arrow for its direction. Click one to turn it the other way.
+- Drag one of them to another place in the sort, or use the up and down buttons at its end.
+- Click a column under them to add it, ascending, after the others.
+- **No sorting** clears the sort.
+
+The menu stays open for the next click.
+
+The header of the first column in the sort shows its arrow. A later one shows its arrow and its place in the sort, 2 or 3.
+
+A column the list cannot be sorted by has no sort in its menu and is not in **Sort by**. **Logs** is always sorted by time, after any other column, so **No sorting** there leaves the time.
+
+A change to the sort is an [unsaved change](#unsaved-changes) to the view.
 
 ### Columns
 
@@ -33,6 +52,8 @@ A column is changed from its header, and each change is an [unsaved change](#uns
 - **Drag a header** along the header row to move its column. On a touch screen, press and hold the header first.
 - **Drag a header's right edge** to set the column's width, down to 64 pixels, or to the column's own width where the list draws it narrower. Double-click the edge to put back the width the list gives the column.
 - A header shows a menu button when the pointer is over it or the keyboard is on it:
+  - **Sort ascending** and **Sort descending** [sort](#sorting) by the column.
+  - **Filter by…** lists the column's values, on a column with a few fixed ones. See [Filtering](#filtering).
   - **Move left** and **Move right** move the column a place.
   - **Wider** and **Narrower** change its width a step at a time.
   - **Hide field** takes the column out of the view. The last column cannot be hidden.
@@ -90,6 +111,8 @@ A term the box cannot read is underlined, and the line under the box says why. T
 
 A chip in a row - a user's provider, say - is a shortcut: click it to add `provider:Google` to the filter, and click it again to take the term out. Click a chip of another value in the same column and it joins the term, `provider:Google,Key`, the rows with either; a click on one of those takes it back out.
 
+**Filter by…** in a column header's menu does the same from a list of the column's values, each ticked while the filter holds it. The menu stays open for the next tick. It is offered on a column of chips, of fixed choices or of yes and no.
+
 Three kinds of list differ:
 
 - On **Resources** under [Access](/access) only `has:enforced` and `no:enforced` are read on the **Enforced** column.
@@ -109,6 +132,7 @@ The view you were last on is remembered in this browser.
 The active tab carries a chevron, which opens the view's menu:
 
 - **Fields** shows and hides [columns](#columns). Its first entry on a list's own page and on a node's **Children**, **Select**, shows or hides the column of checkboxes that tick rows.
+- **Sort by** sets the columns the list is [sorted](#sorting) by, and their order.
 - **Page size** is how many rows a page holds: 10, 25, 50, 100, 250 or 500. A list starts at 25 and **Logs** at 21. A node's **Children** are not read a page at a time, so their menu has none.
 - **Rename** turns the tab's name into a box. Enter keeps the new name, Escape or a blank box leaves the old one.
 - **Duplicate** adds a copy of the view, as it was last saved, after it under the same name.
@@ -116,11 +140,11 @@ The active tab carries a chevron, which opens the view's menu:
 - **Save changes** and **Discard changes** do what **Save** and **Discard** in the bar do.
 - **Delete** removes the view, its unsaved changes with it. Deleting the last one brings the list's own views back. It is greyed out on a list's own view when that is the only one.
 
-The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Fields**, **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
+The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Fields**, **Sort by**, **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
 
 ### Unsaved changes
 
-A change to a view - a filter typed, a header sort, a column shown, hidden, moved or resized, a page size, the editor's **Show** - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
+A change to a view - a filter typed, a sort, a column shown, hidden, moved or resized, a page size - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
 
 - **Save** keeps the changes as the view. On one of a list's own views it keeps the whole set as yours, as any first change does.
 - **Discard** drops them and shows the view as it was saved.
@@ -128,15 +152,6 @@ A change to a view - a filter typed, a header sort, a column shown, hidden, move
 Each view has its own unsaved changes, and they stay while you look at another tab, open a record or reload the page. They are kept in this browser, for you alone, until you save or discard them: another browser does not have them, and nor does anyone else who signs in on this one. A change that puts the view back as it was saved leaves nothing to save, and the dot goes.
 
 **Rename** names the view at once, whether or not it has unsaved changes. **New view** copies the view as it shows, unsaved changes included, and **Duplicate** as it was saved.
-
-The tune button in the bar edits the current view's sort: the columns to sort by, in order, each ascending or descending.
-
-The editor's bar:
-
-- **Save** keeps the view. Under the name it had, it writes over that view; under another name, it is saved as a new view after the others, and the view you opened the editor on is left as it was saved. A view needs a name.
-- **Show** applies the changes without saving them, as [unsaved changes](#unsaved-changes).
-- **Delete** removes the view, as the view menu's does.
-- **Cancel** returns to the list unchanged.
 
 Saved views are kept with your profile, so they follow you between browsers. Unsaved changes do not.
 

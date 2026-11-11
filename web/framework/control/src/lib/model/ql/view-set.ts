@@ -6,7 +6,7 @@ import { TableSchema } from './schema/table-schema';
 import { View, ViewSerializedArgs, ViewType, ViewClass } from './view';
 
 export type ViewSetOptions<V extends View> = {
-	type:ViewClass<V>;//ql-list-settings emits a base View:  every view is re-made as this, so a subclass keeps its query()/apply()
+	type:ViewClass<V>;//every view is re-made as this, so a subclass keeps its query()/apply() whatever class it is handed
 	key:string;//the LocalPrefs owner of the selected view's number and, under the user's key, of the drafts
 	viewsKey?:string;//the profile row of the index, a view's row under it as `/<number>` - `<key>/views` when unset
 	profileStore:ProfileStore;
@@ -100,7 +100,7 @@ export class ViewSet<V extends View>{
 		this.show( view );
 	}
 	sort( sort:Sort ){
-		this.edit( view=>{ view.sort = [sort, ...view.sort.filter( s=>s.active!=sort.active )]; } );
+		this.edit( view=>view.sortFirst(sort) );
 	}
 	//the view as it was saved, its draft dropped.  false where it has none.
 	discard( view:View ):boolean{
@@ -121,8 +121,8 @@ export class ViewSet<V extends View>{
 		this.#remember();
 		return true;
 	}
-	//The editor's Save:  over the view of its number, whose draft goes, or, under a number that is none of the set's, a new view
-	//after the last - a Save under another name, of the view shown, whose draft goes instead.  It is the one shown.  The returned
+	//`view` saved:  over the view of its number, whose draft goes, or, under a number that is none of the set's, a new view
+	//after the last, of the view shown, whose draft goes instead.  It is the one shown.  The returned
 	//promise is the profile's writes;  the views have changed when it is returned, unless the profile is still to be read.
 	save( view:View, shown?:()=>void ):Promise<void>{
 		const from = this.current()?.number ?? 0;
@@ -353,7 +353,7 @@ export class ViewSet<V extends View>{
 	}
 	#rowKey( number:number ):string{ return `${this.#viewsKey}/${number}`; }
 	#json( view:V ):string{ return JSON.stringify( view.toJson(this.#settings) ); }
-	//`view` over the view of its number, or after the last under the next number, where it is the editor's of the view numbered
+	//`view` over the view of its number, or after the last under the next number, where it is made of the view numbered
 	//`from`.  The number whose draft went.
 	#save( view:View, from:number ):number{
 		const saved = this.#type.copy( view );

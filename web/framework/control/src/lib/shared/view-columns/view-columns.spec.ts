@@ -3,21 +3,21 @@ import { TestBed } from '@angular/core/testing';
 import { MatSortModule, Sort } from '@angular/material/sort';
 import { MatTableModule } from '@angular/material/table';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { View } from '../../model/ql/view';
+import { View, ViewFieldSettings } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 import { ViewColumnCell, ViewColumnHeader, ViewColumns } from './view-columns';
-import { required, scalar, schemaOf } from 'jde-framework/testing';
+import { object, required, scalar, schemaOf } from 'jde-framework/testing';
 import { stable } from 'jde-spa/testing';
 import { By } from '@angular/platform-browser';
 import { CdkDrag } from '@angular/cdk/drag-drop';
 
 //#592:  a hand-built table - the logs', a node's children, the watch list - sizes its columns in its sheet and binds no style, so
 //the directive is on its cells as well as its headers:  a width where the view gives one, and nothing where the sheet has it.
-const schema = schemaOf( "Entry", required("time"), scalar("message"), scalar("line") );
+const schema = schemaOf( "Entry", required("time"), scalar("message"), scalar("line"), scalar("ok", "Boolean"), object("owner", "Owner") );
 
 @Component({
 	imports: [MatSortModule, MatTableModule, ViewColumnCell, ViewColumnHeader, ViewColumns],
-	template: `<mat-table [dataSource]="rows" [viewColumns]="views" (columnsChange)="changes=changes+1" matSort (matSortChange)="sorts.push($event)">
+	template: `<mat-table [dataSource]="rows" [viewColumns]="views" [filterValues]="values" (columnsChange)="changes=changes+1" matSort (matSortChange)="sorts.push($event)">
 		<ng-container matColumnDef="time">
 			<mat-header-cell viewColumn *matHeaderCellDef> Time </mat-header-cell>
 			<mat-cell viewColumn *matCellDef="let r">{{ r.time }}</mat-cell>
@@ -29,6 +29,14 @@ const schema = schemaOf( "Entry", required("time"), scalar("message"), scalar("l
 		<ng-container matColumnDef="line">
 			<mat-header-cell viewColumn [sortable]="false" *matHeaderCellDef> Line </mat-header-cell>
 			<mat-cell viewColumn *matCellDef="let r">{{ r.line }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="ok">
+			<mat-header-cell viewColumn *matHeaderCellDef> Ok </mat-header-cell>
+			<mat-cell viewColumn *matCellDef="let r">{{ r.ok }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="owner">
+			<mat-header-cell viewColumn *matHeaderCellDef> Owner </mat-header-cell>
+			<mat-cell viewColumn *matCellDef="let r">{{ r.owner }}</mat-cell>
 		</ng-container>
 		<ng-container matColumnDef="actions">
 			<mat-header-cell *matHeaderCellDef></mat-header-cell>
@@ -42,16 +50,19 @@ class Host{
 	views:ViewSet<View> = null as any;//before the first render
 	rows = [{time: "10:00", message: "a", line: 1}, {time: "10:01", message: "b", line: 2}];
 	columns = ()=>[...this.views.current().fields.filter( f=>f.displayed ).map( f=>f.name ), "actions"];
+	values:Record<string,unknown[]> = {};
 	changes = 0;
 	sorts:Sort[] = [];
 }
 
 describe( 'ViewColumns on a hand-built table', ()=>{
-	const open = async ()=>{
+	//`columns`:  the view's, the time, the message and the line unless given;  `values`:  the rows' by column, as the host has them
+	const open = async ( columns:(string|ViewFieldSettings)[]=["time", "message", "line"], values:Record<string,unknown[]>={} )=>{
 		const set = new ViewSet( {type: View, key: "entries", profileStore: TestBed.inject( ProfileStore ), prefs: new LocalPrefs()} );
-		set.reset( [View.fromTable({columns: ["time", "message", "line"], sort: "time"}, schema)], schema );
+		set.reset( [View.fromTable({columns, sort: "time"}, schema)], schema );
 		const fixture = TestBed.createComponent( Host );
 		fixture.componentInstance.views = set;
+		fixture.componentInstance.values = values;
 		await stable( fixture, 1 );
 		const element = fixture.nativeElement as HTMLElement;
 		const header = ( name:string )=>element.querySelector<HTMLElement>( `mat-header-cell.mat-column-${name}` )!;
@@ -62,7 +73,13 @@ describe( 'ViewColumns on a hand-built table', ()=>{
 			[...[...document.querySelectorAll( '.mat-mdc-menu-panel' )].at( -1 )!.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )].find( i=>i.textContent!.includes( entry ) )!.click();
 			await stable( fixture, 1 );
 		};
-		return { fixture, host: fixture.componentInstance, set, element, header, cells, pick };
+		//a header's menu, opened:  its entries
+		const menu = async ( name:string )=>{
+			header( name ).querySelector<HTMLButtonElement>( 'button.column-menu' )!.click();
+			await stable( fixture, 1 );
+			return [...[...document.querySelectorAll( '.mat-mdc-menu-panel' )].at( -1 )!.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )];
+		};
+		return { fixture, host: fixture.componentInstance, set, element, header, cells, pick, menu };
 	};
 	beforeEach( ()=>localStorage.clear() );
 
@@ -157,5 +174,99 @@ describe( 'ViewColumns on a hand-built table', ()=>{
 		expect( cells( "message" ).every( c=>c.classList.contains( "jde-pinned" ) ) ).toBe( true );
 		await pick( "message", "Hide field" );
 		expect( order() ).toEqual( ["time", "line", "actions"] );
+	} );
+
+	//#593 (views spec *Sort*)
+	describe( 'the sort', ()=>{
+		const sorted = ( set:ViewSet<View> )=>set.current().sort.map( s=>`${s.active} ${s.direction}` );
+		const entry = ( entries:HTMLButtonElement[], text:string )=>entries.find( i=>i.textContent!.includes( text ) );
+
+		it( "is set from a header's menu:  the direction where the view sorts by the column, else the column first", async ()=>{
+			const { pick, set, host } = await open();
+			await pick( "message", "Sort descending" );
+			expect( sorted( set ) ).toEqual( ["message desc", "time asc"] );
+			await pick( "time", "Sort descending" );
+			expect( sorted( set ) ).toEqual( ["message desc", "time desc"] );
+			expect( [set.current().isAdhoc, host.changes] ).toEqual( [true, 2] );
+		} );
+
+		it( "says the direction the view has in a header's menu", async ()=>{
+			const { menu } = await open();
+			const entries = await menu( "time" );
+			expect( ["Sort ascending", "Sort descending"].map( t=>[entry( entries, t )!.getAttribute( "role" ), entry( entries, t )!.getAttribute( "aria-checked" )] ) ).toEqual( [["menuitemradio", "true"], ["menuitemradio", "false"]] );
+		} );
+
+		it( 'is not offered on a column the host or the view refuses, whose header does not sort either', async ()=>{
+			const { menu, header, host, fixture } = await open( ["time", "line", "owner"] );
+			for( const column of ["line", "owner"] ){//the host's [sortable], and a grafted object
+				expect( entry( await menu( column ), "Sort ascending" ) ).toBeUndefined();
+				document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+				await stable( fixture, 1 );
+				header( column ).querySelector<HTMLElement>( '.mat-sort-header-container' )!.click();
+			}
+			expect( host.sorts ).toEqual( [] );
+			expect( header( "owner" ).hasAttribute( "aria-sort" ) ).toBe( false );
+		} );
+
+		it( "numbers a second and later sort's header, with its arrow, and leaves the first to Material", async ()=>{
+			const { fixture, header, set, element } = await open();
+			const places = ()=>["time", "message", "line"].map( c=>header( c ).querySelector( '.sort-place' )?.textContent );
+			expect( places() ).toEqual( [undefined, undefined, undefined] );
+			set.edit( view=>{ view.toggleSort("message"); view.toggleSort("message"); view.toggleSort("line"); } );
+			await stable( fixture, 1 );
+			expect( places() ).toEqual( [undefined, "arrow_downward2sorted descending, sort 2", undefined] );//the line:  its header does not sort
+			expect( header( "message" ).querySelector( '.sort-place [aria-hidden=true]:not(mat-icon)' )!.textContent ).toBe( "2" );
+			expect( [...element.querySelectorAll( '.jde-sorted-later' )].map( e=>e.closest( 'mat-header-cell' ) ) ).toEqual( [header( "message" )] );
+		} );
+	} );
+
+	//#593:  on a chip, enum or boolean column the box can filter
+	describe( 'Filter by…', ()=>{
+		const columns = ["time", "message", {name: "line", chip: {"1": "ok", "2": "warn"}}, "ok"] as (string|ViewFieldSettings)[];
+		//the entries of a column's `Filter by…`, each with its tick
+		const choices = async ( y:Awaited<ReturnType<typeof open>>, name:string )=>{
+			( await y.menu( name ) ).find( i=>i.textContent!.includes( "Filter by…" ) )!.click();
+			await stable( y.fixture, 1 );
+			return ()=>[...[...document.querySelectorAll( '.mat-mdc-menu-panel' )].at( -1 )!.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )];
+		};
+		const ticks = ( entries:HTMLButtonElement[] )=>entries.map( i=>[i.textContent!.replace( /check_box(_outline_blank)?/, "" ).trim(), i.getAttribute( "aria-checked" )] );
+
+		it( 'is on a chip or a boolean column alone', async ()=>{
+			const y = await open( columns );
+			const offered:boolean[] = [];
+			for( const column of ["time", "message", "line", "ok"] ){
+				offered.push( ( await y.menu( column ) ).some( i=>i.textContent!.includes( "Filter by…" ) ) );
+				document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+				await stable( y.fixture, 1 );
+			}
+			expect( offered ).toEqual( [false, false, true, true] );
+		} );
+
+		it( "lists a chip column's values and the rows', adds a pick to the filter and takes it out again, the menu staying open", async ()=>{
+			const y = await open( columns, {line: [2, 7]} );
+			const entries = await choices( y, "line" );
+			expect( ticks( entries() ) ).toEqual( [["1", "false"], ["2", "false"], ["7", "false"]] );
+			entries()[2].click();
+			await stable( y.fixture, 1 );
+			expect( [y.set.current().filter, y.host.changes] ).toEqual( ["Line:7", 1] );
+			entries()[0].click();
+			await stable( y.fixture, 1 );
+			expect( y.set.current().filter ).toBe( "Line:7,1" );
+			expect( ticks( entries() ) ).toEqual( [["1", "true"], ["2", "false"], ["7", "true"]] );
+			entries()[2].click();
+			entries()[0].click();
+			await stable( y.fixture, 1 );
+			expect( [y.set.current().filter, y.set.current().isAdhoc, y.host.changes] ).toEqual( ["", false, 4] );
+		} );
+
+		it( "lists true and false for a boolean column, and a value the filter holds that the rows do not", async ()=>{
+			const y = await open( columns );
+			y.set.edit( view=>{ view.filter = "ok:true line:9"; } );
+			await stable( y.fixture, 1 );
+			expect( ticks( ( await choices( y, "ok" ) )() ) ).toEqual( [["true", "true"], ["false", "false"]] );
+			document.querySelectorAll<HTMLElement>( '.cdk-overlay-backdrop' ).forEach( b=>b.click() );
+			await stable( y.fixture, 1 );
+			expect( ticks( ( await choices( y, "line" ) )() ) ).toEqual( [["1", "false"], ["2", "false"], ["9", "true"]] );
+		} );
 	} );
 } );

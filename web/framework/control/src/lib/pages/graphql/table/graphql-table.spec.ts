@@ -252,7 +252,7 @@ describe( 'GraphQLTable headers', ()=>{
 		expect( element.querySelectorAll( '.column-resize' ).length ).toBe( 3 );
 		expect( element.querySelector( 'mat-header-cell.mat-column-select .column-menu' ) ).toBeNull();
 		expect( header( "slug" ).querySelector( 'button.column-menu' )!.getAttribute( "aria-label" ) ).toBe( "Slug column menu" );
-		expect( await entries( "slug" ) ).toEqual( ["Move left", "Move right", "Wider", "Narrower", "Hide field"] );
+		expect( await entries( "slug" ) ).toEqual( ["Sort ascending", "Sort descending", "Move left", "Move right", "Wider", "Narrower", "Hide field"] );
 	} );
 
 	it( 'sorts from a span around the label, and says the sort on the cell alone', async ()=>{

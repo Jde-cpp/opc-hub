@@ -1,9 +1,10 @@
-import { Component, ElementRef, computed, effect, inject, input, output, signal, viewChild, viewChildren } from '@angular/core';
+import { Component, ElementRef, Injector, afterNextRender, computed, effect, inject, input, output, signal, viewChild, viewChildren } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { CdkDrag, CdkDragDrop, CdkDropList } from '@angular/cdk/drag-drop';
 import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
+import { SortDirection } from '@angular/material/sort';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatTabLink, MatTabNav, MatTabNavPanel } from '@angular/material/tabs';
 import { MatToolbar } from '@angular/material/toolbar';
@@ -17,7 +18,7 @@ import { SnackbarService } from '../snackbar/snackbar-service';
 
 //A ViewSet's face, the same over every list (views spec *The view bar*):  the tabs row - a tab per view, the view menu on the
 //active one's chevron, `+ New view` after them, the tabs dragged into order - over the list toolbar, whose zones are the host's
-//own controls left (`[left]`) and, right, Refresh, the view editor's button, the host's (`[right]`) and the row count, with the
+//own controls left (`[left]`) and, right, Refresh, the host's (`[right]`) and the row count, with the
 //reload bar under it.  `+ New view` and the rename box stand outside the tablist, which may hold tabs alone.  The toolbar changes
 //the set itself and says when a write failed;  the host hears `viewChange` when the view on screen is another, and re-reads unless
 //its rows are a computed of it or the rows it read hold what the view asks (View.answers).  The centre zone is the filter box, where the view
@@ -33,6 +34,7 @@ import { SnackbarService } from '../snackbar/snackbar-service';
 })
 export class ViewToolbar{
 	#snackbar = inject( SnackbarService );
+	#injector = inject( Injector );
 	constructor(){
 		effect( ()=>{//the rename box, as it appears
 			const input = this.renameInput()?.nativeElement;
@@ -49,7 +51,6 @@ export class ViewToolbar{
 	refreshing = input<boolean>( false );
 	count = input<number>();//the rows shown, where that is the whole count - none while a pager carries the range
 	viewChange = output<void>();//the view on screen is another.  Not `change`:  a native change event bubbling out of a projected input would reach the same binding
-	edit = output<void>();
 	refresh = output<void>();
 	filterValues = input<Record<string,readonly unknown[]>>( {} );//the rows' values by column, which the filter box suggests
 	filterHost = computed<FilterHost|undefined>( ()=>this.views().current()?.filterHost() );//none:  no box - the logs
@@ -109,6 +110,44 @@ export class ViewToolbar{
 		event.stopPropagation();
 		this.views().edit( view=>{ view.showSelector = !view.showSelector; } );
 		this.viewChange.emit();
+	}
+	//`Sort by` (views spec *Sort*):  the columns the view sorts by, in their order, each with its direction - a click turns one the
+	//other way, and it is dragged, or moved up and down, to another place - then the host's others the view can sort by, a click
+	//adding one after those.  `No sorting` clears it.  Each is a change to the draft, and the menu stays open for the next.
+	sorts = computed<{name:string, label:string, direction:SortDirection}[]>( ()=>{
+		const view = this.views().current(), offered = this.columns();
+		return view.sort.filter( s=>s.active && s.direction ).map( s=>({name: s.active, label: offered[s.active] ?? view.fields.find( f=>f.name==s.active )?.displayName ?? s.active, direction: s.direction}) );
+	} );
+	unsorted = computed<{name:string, label:string}[]>( ()=>{
+		const view = this.views().current(), sorted = new Set( view.sort.map( s=>s.active ) );
+		return this.#listed().filter( f=>!sorted.has(f.name) && view.sortable(f.name) );
+	} );
+	toggleSort( name:string, event:Event ){ this.#sort( view=>view.toggleSort(name), event, name ); }
+	moveSort( name:string, by:number, event:Event ){
+		const to = this.sorts().findIndex( s=>s.name==name )+by;
+		this.#sort( view=>view.moveSort(name, to), event, `${name}/${by<0 ? "up" : "down"}`, name );
+	}
+	onSortDrop( event:CdkDragDrop<unknown> ){
+		if( event.previousIndex!=event.currentIndex )
+			this.#sort( view=>view.moveSort(event.item.data, event.currentIndex) );
+	}
+	clearSort(){
+		if( this.sorts().length )
+			this.#sort( view=>{ view.sort = []; } );
+	}
+	//An entry that changes place is drawn again, without the focus:  it goes to `focus`, the entry by its key, or - that one now
+	//off, a move at an end - to `fallback`.
+	#sort( change:( view:View )=>void, event?:Event, focus?:string, fallback?:string ){
+		event?.stopPropagation();
+		const panel = ( event?.currentTarget as HTMLElement|undefined )?.closest( '.mat-mdc-menu-panel' );
+		this.views().edit( change );
+		this.viewChange.emit();
+		if( panel ){
+			afterNextRender( ()=>{
+				const entry = ( key:string|undefined )=>[...panel.querySelectorAll<HTMLButtonElement>( '[data-sort]' )].find( e=>e.dataset["sort"]==key && !e.disabled );
+				( entry( focus ) ?? entry( fallback ) )?.focus();
+			}, {injector: this.#injector} );
+		}
 	}
 	//the menu's sizes, and the view's own where it is none of them, as the logs' 21
 	pageSizes = computed<number[]>( ()=>{

@@ -69,7 +69,25 @@
 	margin-inline-start: 4px;
 	white-space: nowrap;
 }
-//a tab on its way:  the copy under the pointer, and the gap it left
+//`Sort by`:  a sort's row is its entry, which takes the room, and its two moves at the end
+.sort-row{
+	display: flex;
+	align-items: stretch;
+	background: var(--mat-menu-container-color, var(--mat-sys-surface-container));
+	.mat-mdc-menu-item{
+		flex: 1 1 auto;
+		width: auto;
+	}
+	.sort-move{
+		flex: none;
+		min-width: 0;
+		padding-inline: 4px;
+		mat-icon{
+			margin: 0;
+		}
+	}
+}
+//a tab or a sort's row on its way:  the copy under the pointer, and the gap it left
 .cdk-drag-preview{
 	box-sizing: border-box;
 	border-radius: 4px;

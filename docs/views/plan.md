@@ -192,6 +192,17 @@ With the Sort tab gone the editor has nothing left: `ql-list-settings` and its s
 
 Tests: the ordered sort reaching `View.query`, the numbered indicator, `Filter by…` adding and removing a term, and that each host renders with no editor.
 
+Built 2026-11-11, where it differs from the text above:
+
+- **The header menu's sorts keep a column's place.** `Sort ascending` and `Sort descending` set the direction where the view already sorts by the column, and put the column first where it does not, as a header's click does (`View.setSort`, `View.sortFirst` in [`view.ts`](../../web/framework/control/src/lib/model/ql/view.ts)). The entry of the direction the view has is checked.
+- **`Sort by` lists the sorts first, then the rest.** The view's sorts come first in their order, each with its direction's arrow, then the host's other columns in the order `Fields` lists them. An entry that changes place is drawn again, so the focus is handed to it. The menu stays open but for `No sorting`.
+- **`Move up` and `Move down` are two buttons at the end of a sort's row**, menu items of their own named for the column, so a pointer has them without a drag and the arrow keys reach them. The row is the CDK drag's item.
+- **What a list can sort by is the view's to say** (`View.sortable`): not a grafted object column, and on the logs the five columns `LogDataSource.compare` orders by. The logs' Tags and User headers sorted before, to an *unknown sort* error in the console; they no longer do. The header's `[sortable]` input stays for a table without views.
+- **The numbered indicator is the header's**, an arrow and the place after the label, with the direction and the place said for a screen reader. Material's hover arrow is off on such a header. The cell's `aria-sort` is still MatSort's, the first sort's alone.
+- **`Filter by…` is a submenu of the column's values**, each ticked where the filter holds it as `field:a,b`: an enum's values from the schema, `true` and `false`, else the chip's values with those of the rows the host has, and any the filter holds. It stays open for the next tick. The hosts hand the headers the values they hand the filter box (`filterValues` on `ViewColumns`). The logs have no filter, so no entry.
+- **`ViewSet.save` stays**, with no caller left but the specs, which make their saved views through it.
+- **Checked in the browser** on the users list, the logs and the watch list: `Sort by` with its clicks, moves and a drag, the numbered headers, the header's sorts, `Filter by…` on the users' Provider, and each page with no tune button. A node's Children were not, with no OpcServer running.
+
 ## Phase 6a - the QL's groupBy (piece 6, first half)
 
 Issue [#594].

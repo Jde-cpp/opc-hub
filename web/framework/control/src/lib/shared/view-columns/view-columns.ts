@@ -3,14 +3,16 @@ import { CdkColumnDef } from '@angular/cdk/table';
 import { CdkDrag, CdkDragDrop, CdkDropList } from '@angular/cdk/drag-drop';
 import { MatIcon } from '@angular/material/icon';
 import { MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
-import { MatSortHeader } from '@angular/material/sort';
+import { MatSortHeader, SortDirection } from '@angular/material/sort';
+import { parseFilter, takesFilterTerm, toggleFilterTerm } from '../../model/ql/filter-query';
 import { Flex, View, ViewField } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 
 //A table's columns as its view has them (views spec *Fields*), the same over ql-table and the hand-built tables of the logs, a
 //node's children and the watch list:  on the mat-table, with `viewColumn` on each header cell and cell of a column the view holds.
 //A header then has its menu and its resize handle and drags along the header row, each a change to the view's draft, after which
-//`columnsChange` tells the host the view on screen is another, as the toolbar's `viewChange` does.  The header cells are the drop
+//`columnsChange` tells the host the view on screen is another, as the toolbar's `viewChange` does.  The menu sorts by the column
+//and, where the filter box reads its few values, filters on them (*Sort*, `Filter by…`).  The header cells are the drop
 //list's items wherever the table puts them:  a cell's injector is the column's, not the header row's, so the list is the table.
 //`jde-view-columns` makes the rows as wide as their columns (_general.scss), the block a pinned cell sticks in.
 @Directive({
@@ -40,6 +42,44 @@ export class ViewColumns{
 		return preview?.name==name ? View.flexOf( preview.width ) : this.#flexes().get( name );
 	}
 	#preview = signal<{name:string, width:number}|undefined>( undefined );
+	//a column's place in the view's sort, from 0, and its direction
+	#sorts = computed( ()=>new Map( this.view()?.sort.filter( s=>s.active && s.direction ).map( (s, i)=>[s.active, {place: i, direction: s.direction}] ) ) );
+	sortOf( name:string ):{place:number, direction:SortDirection}|undefined{ return this.#sorts().get( name ); }
+	sort( name:string, direction:SortDirection ){ this.#edit( view=>view.setSort(name, direction) ); }
+
+	//`Filter by…`:  the values of a chip, enum or boolean column the box can filter, each held where the filter has it as
+	//`field:a,b` - a column's fixed choices, else its chip's and those of the rows the host has, and whatever the filter holds
+	filterValues = input<Record<string,readonly unknown[]>>( {} );
+	#filterHost = computed( ()=>this.view()?.filterHost() );
+	#held = computed( ()=>{
+		const y = new Map<string,Set<string>>(), view = this.view(), host = this.#filterHost();
+		if( !view || !host )
+			return y;
+		for( const term of parseFilter(view.filter, host).terms.filter( t=>t.field && t.operator=="in" && !t.negated ) ){
+			const held = y.get( term.field! ) ?? new Set<string>();
+			term.values.forEach( v=>held.add(`${v}`) );
+			y.set( term.field!, held );
+		}
+		return y;
+	} );
+	filterChoices( name:string ):{value:string, held:boolean}[]{
+		const field = this.field( name ), host = this.#filterHost(), ql = field?.qlField;
+		if( !field || !ql || !host || !takesFilterTerm(field, host) || !( field.chip || ql.isEnum || ql.isBoolean ) )
+			return [];
+		const held = this.#held().get( name ) ?? new Set<string>();
+		const fixed = ql.isBoolean ? ["true", "false"] : ql.isEnum ? host.enums?.get( ql.type.underlyingName )?.map( v=>v.name ) : undefined;
+		const loaded = ( this.filterValues()[name] ?? [] ).filter( v=>["string", "number", "boolean"].includes(typeof v) && v!=="" ).map( v=>`${v}` );
+		const values = fixed ?? [...Object.keys( field.chip ?? {} ), ...loaded];
+		return [...new Set( [...values, ...held] )].map( value=>({value, held: held.has(value)}) );
+	}
+	//a value picked:  into the filter or out of it, as a chip's click
+	filterBy( name:string, value:string ){
+		const view = this.view(), host = this.#filterHost(), field = this.field( name );
+		if( !view || !host || !field )
+			return;
+		const filter = toggleFilterTerm( view.filter, host, field, value );
+		this.#edit( draft=>{ draft.filter = filter; } );
+	}
 	preview( name:string, width?:number ){ this.#preview.set( width==null ? undefined : {name, width} ); }
 
 	//`focus`:  from a header's menu, whose button the header row drawn again destroys - the column moved takes the focus, or after
@@ -93,7 +133,8 @@ export class ViewColumnCell{
 //A column's header cell.  The sort header is a span around the label, not the cell:  Material's sorts on any click within it and
 //puts what it is given inside a button, so the menu button and the handle are beside it, and the cell says `aria-sort` itself.
 //The menu button shows on hover and focus;  the handle is the cell's right edge, dragged for a width, double-clicked for the
-//route's.  A press on either is kept from the header's drag, and a touch drags the header only after a press and hold, so a
+//route's.  Material draws the arrow of the one column MatSort holds, the view's first sort:  a later one's arrow and its place
+//are drawn here.  A press on either is kept from the header's drag, and a touch drags the header only after a press and hold, so a
 //swipe that starts on the header row scrolls.
 @Component({
 	selector: 'mat-header-cell[viewColumn]',
@@ -145,7 +186,16 @@ export class ViewColumnHeader implements AfterViewInit, OnDestroy{
 	title = computed<string>( ()=>this.field()?.displayName ?? this.name );
 	place = computed<number>( ()=>this.columns.place(this.name) );
 	count = computed<number>( ()=>this.columns.shown().length );
-	ariaSort = computed<string|null>( ()=>this.sortable() ? this.#sorted() : null );
+	canSort = computed<boolean>( ()=>this.sortable() && ( this.columns.view()?.sortable(this.name) ?? true ) );
+	ariaSort = computed<string|null>( ()=>this.canSort() ? this.#sorted() : null );
+	sorted = computed( ()=>this.canSort() ? this.columns.sortOf(this.name) : undefined );
+	later = computed( ()=>{ const sorted = this.sorted(); return sorted && sorted.place>0 ? sorted : undefined; } );//a second or later sort
+	sort( direction:SortDirection ){ this.columns.sort( this.name, direction ); }
+	choices = computed( ()=>this.columns.filterChoices(this.name) );
+	filterBy( value:string, event:Event ){
+		event.stopPropagation();//the menu stays open:  a filter takes several values
+		this.columns.filterBy( this.name, value );
+	}
 	//kept from the cell:  a press would start its drag
 	stop( event:Event ){ event.stopPropagation(); }
 	moveBy( by:number ){ this.columns.move( this.name, this.place()+by, true ); }

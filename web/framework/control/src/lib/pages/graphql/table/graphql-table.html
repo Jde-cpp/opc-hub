@@ -1,5 +1,5 @@
 <mat-table style="flex-basis: 100%;" class="mat-elevation-z8 jde-dense"
-	[viewColumns]="views()" (columnsChange)="columnsChange.emit()"
+	[viewColumns]="views()" [filterValues]="filterValues()" (columnsChange)="columnsChange.emit()"
 	[dataSource]="dataSource()"
 	matSort
 	(matSortChange)="onSortChange.emit($event)"

@@ -114,10 +114,11 @@ export class GraphQLTable{
 	//a plain chip.
 	chipFilters = input<ReadonlyMap<string,ReadonlySet<string>>>( new Map() );
 	onChipClick = output<{column:string, value:string}>();
-	//The list's views, where its headers change them (ViewColumns):  a column hidden, moved or resized is a change to the draft,
-	//said by `columnsChange`.  None, and the headers only sort.
+	//The list's views, where its headers change them (ViewColumns):  a column hidden, moved, resized, sorted or filtered by is a
+	//change to the draft, said by `columnsChange`.  None, and the headers only sort.
 	views = input<ViewSet<View>>();
 	columnsChange = output<void>();
+	filterValues = input<Record<string,readonly unknown[]>>( {} );//the rows' values by column, for a header's `Filter by…`
 
 	displayedColumnNames = computed( ()=>(this.selections().isMultipleSelection() ? ["select"] : []).concat( this.displayedFields().filter((x)=>x.displayed).map((x)=>x.name) ) );
 	//each field's cell, classified once per change of fields rather than once per change-detection pass and per cell

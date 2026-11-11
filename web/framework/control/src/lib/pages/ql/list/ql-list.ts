@@ -1,7 +1,6 @@
 import { Component, ElementRef, OnInit, input, signal, model, computed, inject } from '@angular/core';
 import {ActivatedRoute, Router, RouterLink} from '@angular/router';
 import {Sort} from '@angular/material/sort';
-import { QLListSettings } from './ql-list-settings/ql-list-settings';
 import {SnackbarService} from '../../../shared/snackbar/snackbar-service'
 import {IGRAPHQL, IGraphQL, EnumValue } from '../../../services/graphql';
 import {TableSchema}  from '../../../model/ql/schema/table-schema';
@@ -31,7 +30,7 @@ import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 	selector: 'ql-list',
 	templateUrl: './ql-list.html',
 	host: {class:'main-content my-content'},
-	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, NgTemplateOutlet, Paginator, QLListSettings, RouterLink, ViewToolbar]
+	imports: [FailureState, GraphQLTable, MatButton, MatIcon, MatTabNavPanel, NgTemplateOutlet, Paginator, RouterLink, ViewToolbar]
 })
 export class QLList implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -169,23 +168,6 @@ export class QLList implements OnInit{
 		await this.#reload();
 	}
 
-	async onViewSave( view:View ){
-		this.data.set( [] );
-		try{
-			await this.profile().save( view );//awaited, or the catch below is dead code
-		}
-		catch( e ){
-			this.#snackbar.exception( "Could not save view.", e );
-		}
-		await this.#refresh();
-		this.isSettings.set( false );
-	}
-	async onViewShow( view:View ){
-		this.data.set( [] );
-		this.isSettings.set( false );
-		this.profile().show( view );
-		await this.#refresh();
-	}
 	//The toolbar or a header put another view on screen:  its rows, unless those shown or on their way hold them - the view
 	//renamed, a copy of it, a column hidden, moved or resized, or its filter changed only in a term the box cannot read - where
 	//the page stays as it is, its columns the view's even while a read is out.  A column shown is read on the same page, and a
@@ -233,22 +215,7 @@ export class QLList implements OnInit{
 				this.isRefreshing.set( false );
 		}
 	}
-	//As LogDetail:  awaited, said as a delete, and a re-query only where the view on screen went with it
-	//(reviews-issue/web-refactor-review.md #6)
-	async onViewDelete( view:View ){
-		const current = this.profile().current();
-		try{
-			await this.profile().remove( view );
-		}
-		catch( e ){
-			this.#snackbar.exception( "Could not delete view.", e );
-		}
-		if( this.profile().current()!==current )
-			await this.#refresh();
-		this.isSettings.set( false );
-	}
-
-	//the loaded rows' values by column, which the filter box suggests after a field's colon
+	//the loaded rows' values by column, which the filter box suggests after a field's colon and a header's `Filter by…` lists
 	filterValues = computed<Record<string,unknown[]>>( ()=>cellValues( this.view().fields.map( f=>f.name ), this.data(), ( row, column )=>row[column] ) );
 	//The chip columns a click filters on, each with the values the filter holds as `field:a,b`:  a click adds the value, and a
 	//click on a value it holds takes it out.  A column the box cannot filter - one the gateway grafts on - is not among them.
@@ -275,10 +242,6 @@ export class QLList implements OnInit{
 		await this.onChangeView();
 	}
 
-	onViewCancel(){
-		this.isSettings.set( false );
-	}
-
 	sideNav = model<RouteItem>();//optional:  embedded in a detail page's tab the host owns the sidenav
 	listData = input<QLListData>();//pre-resolved by the host instead of the route (QLSelector); `data` is the rows
 	//The service the rows come from where the host holds it - a gateway's tabs, the page's Gateway;  else the route's IGRAPHQL.
@@ -298,7 +261,6 @@ export class QLList implements OnInit{
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );
 	#reloads = new Latest();
-	isSettings = signal<boolean>( false );
 	selections = model<SelectionModel<QLRow>>( null as any );//rows, not ids - QLSelector maps them to its callers' id selection
 
 	displayedFields = computed<ViewField[]>( ()=>{
@@ -319,7 +281,6 @@ export class QLList implements OnInit{
 	more = signal<boolean>( false );
 	paged = computed<boolean>( ()=>this.more() || this.skip()>0 );
 	length = computed<number|undefined>( ()=>this.more() ? undefined : this.skip()+this.data().length );
-	excludedColumns = computed<string[]>( ()=>this.tableSettings().excludedColumns ?? [] );
 	enums = computed<Map<string, EnumValue[]>>( ()=>this.schema().enums );
 	resolvedData = signal<QLListData>(null as any);
 	profile = computed<ViewSet<View>>( ()=>this.resolvedData().profile );

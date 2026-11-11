@@ -9,6 +9,20 @@
 	min-width: 0;
 	overflow: hidden;
 }
+//a second or later sort:  its arrow and its place, after the label (Material's own arrow there is off, _general.scss)
+.sort-place{
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	margin-inline-start: 2px;
+	font-size: 11px;
+	color: var(--mat-sys-on-surface-variant);
+	mat-icon{
+		font-size: 16px;
+		width: 16px;
+		height: 16px;
+	}
+}
 //shown on hover and focus, and while its menu is open:  always where nothing hovers
 .column-menu{
 	position: absolute;

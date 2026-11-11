@@ -1,15 +1,32 @@
-<span #label class="column-label" [mat-sort-header]="name" [disabled]="!sortable()"><ng-content/></span>
+<span #label class="column-label" [class.jde-sorted-later]="!!later()" [mat-sort-header]="name" [disabled]="!canSort()"><ng-content/></span>
+@if( later(); as sort ){
+	<span class="sort-place"><mat-icon aria-hidden="true">{{ sort.direction=="desc" ? "arrow_downward" : "arrow_upward" }}</mat-icon><span aria-hidden="true">{{ sort.place+1 }}</span><span class="cdk-visually-hidden">sorted {{ sort.direction=="desc" ? "descending" : "ascending" }}, sort {{ sort.place+1 }}</span></span>
+}
 @if( field() ){
 	<button #menuButton type="button" class="column-menu" [attr.aria-label]="title() + ' column menu'" [matMenuTriggerFor]="menu" (mousedown)="stop($event)" (touchstart)="stop($event)"><mat-icon aria-hidden="true">more_vert</mat-icon></button>
 	<!--the right edge:  a pointer's control - the menu's Wider and Narrower are the keyboard's-->
 	<span class="column-resize" aria-hidden="true" (pointerdown)="onResizeStart($event)" (pointermove)="onResizeMove($event)" (pointerup)="onResizeEnd()" (pointercancel)="onResizeCancel()" (dblclick)="onResizeReset()" (mousedown)="stop($event)" (touchstart)="stop($event)" (click)="stop($event)"></span>
 	<mat-menu #menu="matMenu">
-		<ng-template matMenuContent><!--the sorts, the group, the slice and Filter by… join it with their phases-->
+		<ng-template matMenuContent><!--the group and the slice join it with their phases-->
+			@if( canSort() ){
+				<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="sorted()?.direction=='asc'" (click)="sort('asc')"><mat-icon aria-hidden="true">arrow_upward</mat-icon>Sort ascending</button>
+				<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="sorted()?.direction=='desc'" (click)="sort('desc')"><mat-icon aria-hidden="true">arrow_downward</mat-icon>Sort descending</button>
+			}
+			@if( choices().length ){
+				<button mat-menu-item type="button" [matMenuTriggerFor]="filterMenu"><mat-icon aria-hidden="true">filter_list</mat-icon>Filter by…</button>
+			}
 			<button mat-menu-item type="button" [disabled]="place()<=0" (click)="moveBy(-1)"><mat-icon aria-hidden="true">arrow_back</mat-icon>Move left</button>
 			<button mat-menu-item type="button" [disabled]="place()<0 || place()>=count()-1" (click)="moveBy(1)"><mat-icon aria-hidden="true">arrow_forward</mat-icon>Move right</button>
 			<button mat-menu-item type="button" (click)="wider()"><mat-icon aria-hidden="true">add</mat-icon>Wider</button>
 			<button mat-menu-item type="button" [disabled]="atFloor" (click)="narrower()"><mat-icon aria-hidden="true">remove</mat-icon>Narrower</button>
 			<button mat-menu-item type="button" [disabled]="count()<2" (click)="hide()"><mat-icon aria-hidden="true">visibility_off</mat-icon>Hide field</button>
+		</ng-template>
+	</mat-menu>
+	<mat-menu #filterMenu="matMenu">
+		<ng-template matMenuContent>
+			@for( choice of choices(); track choice.value ){
+				<button mat-menu-item type="button" role="menuitemcheckbox" [attr.aria-checked]="choice.held" (click)="filterBy(choice.value, $event)"><mat-icon aria-hidden="true">{{ choice.held ? "check_box" : "check_box_outline_blank" }}</mat-icon>{{ choice.value }}</button>
+			}
 		</ng-template>
 	</mat-menu>
 }
