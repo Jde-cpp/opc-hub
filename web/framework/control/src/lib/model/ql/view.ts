@@ -318,11 +318,12 @@ export class View{
 		return { text: `${this.collectionName}${args.length>0 ? `(${args.join(",")})` : ""}{ ${fields.join(" ")} }`, vars: vars };
 	}
 	//The slice (views spec *Slice by*).  A column a list is sliced by:  a number, a boolean or an enum, never an `ID` - a key has a
-	//value a row - nor a live toggle, whose column is a switch.  LogView refuses every one.
+	//value a row - nor a live toggle, whose column is a switch.  LogView refuses every one.  A `Float` only where the browser
+	//narrows the rows:  a server compares `in:[0.1]` with the value it stored, which the one it answered need not equal.
 	sliceable( name:string ):boolean{
 		const field = this.#field( name ), type = field?.type;
 		return !!field && type!.kind!=FieldKind.LIST && type!.underlyingName!="ID" && ( field.isNumber || field.isBoolean || field.isEnum )
-			&& !this.fields.find( f=>f.name==name )?.liveToggle;
+			&& !( type!.underlyingName=="Float" && this.filterHost()?.server!==false ) && !this.fields.find( f=>f.name==name )?.liveToggle;
 	}
 	//the columns `Slice by` offers, of those the host names, each as its header reads
 	sliceChoices( offered:Record<string,string> ):{name:string, label:string}[]{
@@ -514,7 +515,7 @@ export class View{
 	}
 	filter = "";//the filter box's text, as typed:  a saved view keeps it, and a day in it is the day of the browser that runs the query
 	sliceBy:string|undefined;//the column the slice panel lists, saved with the view
-	slice:SliceValue|undefined;//The value the rows are narrowed to, on a copy made to query with (ViewSet.sliced):  the browser's, never saved, and no part of a view's draft.
+	slice:SliceValue|undefined;//The value the rows are narrowed to, on the copy a host reads its rows with (ViewSet.sliced):  the browser's, never saved, and no part of a view's draft.
 	fixedFilter = "";//the host's own terms, anded with the view's and never shown or saved - a pick list's (QLListData.fixedFilter)
 	protected schema:TableSchema|undefined;
 	number:number = 0;//what its ViewSet knows it by, since names repeat:  the key of its profile row, never in the row.  0 until it is one of a set's.

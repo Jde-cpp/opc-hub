@@ -68,9 +68,12 @@ export class ViewColumns{
 	//a value picked:  into the filter or out of it, as a chip's click
 	filterBy( name:string, value:string ){ this.#edit( draft=>draft.toggleFilterValue(name, value) ); }
 	//`Slice by this field`:  on a column a list is sliced by, ticked on the view's, where a second pick is `No slicing`
-	canSlice( name:string ):boolean{ return !!this.views()?.slices && !!this.view()?.sliceable( name ); }
+	canSlice( name:string ):boolean{ return !!this.views()?.canSlice && !!this.view()?.sliceable( name ); }
 	slicedBy( name:string ):boolean{ return this.view()?.sliceBy==name; }
-	sliceBy( name:string ){ this.#edit( view=>{ view.sliceBy = view.sliceBy==name ? undefined : name; } ); }
+	sliceBy( name:string ){
+		if( this.views()?.setSliceBy( this.slicedBy(name) ? undefined : name ) )
+			this.columnsChange.emit();
+	}
 	preview( name:string, width?:number ){ this.#preview.set( width==null ? undefined : {name, width} ); }
 
 	//`focus`:  from a header's menu, whose button the header row drawn again destroys - the column moved takes the focus, or after

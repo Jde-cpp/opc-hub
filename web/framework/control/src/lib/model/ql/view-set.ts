@@ -55,7 +55,7 @@ export class ViewSet<V extends View>{
 		this.#prefs = options.prefs;
 		this.#settings = options.settings;
 		this.#offered = options.offered;
-		this.slices = options.settings?.canSlice ?? true;
+		this.canSlice = options.settings?.canSlice ?? true;
 	}
 	//The route's views and the profile's over them, once the profile is read - nothing shows before.  A failed read is not a
 	//failed load:  the list opens on the route's views.
@@ -79,7 +79,7 @@ export class ViewSet<V extends View>{
 		this.#saved = this.#known = false;
 		this.#fallback = undefined;
 		this.#drafts.clear();
-		this.#slices.set( new Map() );
+		this.#held.set( new Map() );
 		this.#draftsFor.set( this.#profileStore.userKey );
 		this.#selected = this.#prefs.viewNumber( this.#key );
 		this.#publish();
@@ -123,7 +123,7 @@ export class ViewSet<V extends View>{
 	//user's is off screen, as the drafts are.
 	readonly slice = computed<SliceValue|undefined>( ()=>{
 		const view = this.current(), owner = this.#draftsFor();
-		const held = view?.sliceBy && ( owner===undefined || owner==this.#profileStore.userKey ) ? this.#slices().get( view.number ) : undefined;
+		const held = view?.sliceBy && ( owner===undefined || owner==this.#profileStore.userKey ) ? this.#held().get( view.number ) : undefined;
 		return held && held.field==view.sliceBy ? held.value : undefined;
 	} );
 	//the panel's click:  nothing where the view is not sliced
@@ -132,22 +132,31 @@ export class ViewSet<V extends View>{
 		if( !view?.sliceBy )
 			return;
 		this.#claim();
-		const slices = new Map( this.#slices() );
+		const held = new Map( this.#held() );
 		if( value===undefined )
-			slices.delete( view.number );
+			held.delete( view.number );
 		else
-			slices.set( view.number, {field: view.sliceBy, value} );
-		this.#slices.set( slices );
+			held.set( view.number, {field: view.sliceBy, value} );
+		this.#held.set( held );
 		this.#storeSlice( view.number );
 	}
-	//the view shown as a host queries with it:  itself, or - narrowed - a copy that carries the value (View.slice)
-	sliced():V{
+	//The view shown as a host reads its rows with it:  itself, or - narrowed - a copy that carries the value (View.slice).  The one
+	//way a value reaches the rows, whether a host queries them or holds them.
+	readonly sliced = computed<V>( ()=>{
 		const view = this.current(), value = this.slice();
 		if( value===undefined )
 			return view;
 		const y = this.#type.copy( view );
 		y.slice = value;
 		return y;
+	} );
+	//The view shown sliced by `name`, or by none, on its draft:  `Slice by`, the panel's column and `Slice by this field`.  false
+	//where it already is.
+	setSliceBy( name:string|undefined ):boolean{
+		if( name==this.current().sliceBy )
+			return false;
+		this.edit( view=>{ view.sliceBy = name; } );
+		return true;
 	}
 	//false for an index that is not there
 	select( index:number ):boolean{
@@ -175,6 +184,7 @@ export class ViewSet<V extends View>{
 			const at = views.findIndex( v=>v.number==saved.number );
 			if( at<0 ){
 				saved.number = this.#next;
+				this.#moveSlice( view.number, saved.number );//a pick list's fallback's, under no number
 				views.push( saved );
 			}
 			else
@@ -239,9 +249,12 @@ export class ViewSet<V extends View>{
 			if( !this.#members.some( v=>v.number==view.number ) )
 				return;
 			this.#drafts.delete( view.number );
-			this.#dropSlice( view.number );
+			this.#moveSlice( view.number, undefined );
 			this.#set( this.#members.filter( v=>v.number!=view.number ) );
-		}, ()=>this.#store( [view.number] ) );
+		}, ()=>{
+			this.#store( [view.number] );
+			this.#storeSlice( view.number );//as its draft:  a failed write leaves it for a reload
+		} );
 	}
 
 	//A change to the set:  made at once, and its writes queued, `landed` called once they are done.  Where the profile is still to
@@ -298,7 +311,7 @@ export class ViewSet<V extends View>{
 		const reader = this.#profileStore.userKey, replaced = saved.length>0 || this.#saved, owner = this.#draftsFor();
 		if( replaced || ( owner!==undefined && owner!=reader ) ){//of the set replaced, or another user's.  One made signed out, or before the read, is kept.
 			this.#drafts.clear();
-			this.#slices.set( new Map() );
+			this.#held.set( new Map() );
 		}
 		this.#draftsFor.set( reader );
 		this.#known = true;
@@ -319,8 +332,8 @@ export class ViewSet<V extends View>{
 	#claim():void{
 		const user = this.#profileStore.userKey, owner = this.#draftsFor();
 		if( owner!==undefined && owner!=user ){
-			if( this.#slices().size )
-				this.#slices.set( new Map() );
+			if( this.#held().size )
+				this.#held.set( new Map() );
 			if( this.#drafts.size ){
 				this.#drafts.clear();
 				this.#publish();
@@ -394,39 +407,46 @@ export class ViewSet<V extends View>{
 		const owner = this.#draftsKey;
 		if( !owner )
 			return;
-		const stored = this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#slicesName, {} ) ?? {};
-		const slices = new Map( this.#slices() );
+		const stored = this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#heldName, {} ) ?? {};
+		const held = new Map( this.#held() );
 		for( const [key, json] of Object.entries(stored) ){
 			const number = +key, slice = json as Partial<StoredSlice>|null;
 			const read = typeof slice?.field=="string" && ( slice.value===null || ["string", "number", "boolean"].includes(typeof slice.value) );
-			if( read && !slices.has(number) && this.#members.some( v=>v.number==number ) )
-				slices.set( number, {field: slice!.field!, value: slice!.value!} );
+			if( read && !held.has(number) && this.#members.some( v=>v.number==number ) )
+				held.set( number, {field: slice!.field!, value: slice!.value!} );
 		}
-		this.#slices.set( slices );
-		const kept = Object.fromEntries( [...slices].filter( ([number])=>number>0 ) );
+		this.#held.set( held );
+		const kept = Object.fromEntries( [...held].filter( ([number])=>number>0 ) );
 		if( JSON.stringify(kept)!=JSON.stringify(stored) )
-			this.#prefs.set( owner, ViewSet.#slicesName, Object.keys(kept).length ? kept : null );
+			this.#prefs.set( owner, ViewSet.#heldName, Object.keys(kept).length ? kept : null );
 	}
 	//the slice of `number` as it is here, into the browser's entry, the others as it holds them
 	#storeSlice( number:number ):void{
 		const owner = this.#draftsKey;
 		if( !owner || number<=0 )//not the fallback's, which is no view's
 			return;
-		const stored = { ...this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#slicesName, {} ) };
-		const slice = this.#slices().get( number );
+		const stored = { ...this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#heldName, {} ) };
+		const slice = this.#held().get( number );
 		if( slice )
 			stored[number] = slice;
 		else
 			delete stored[number];
-		this.#prefs.set( owner, ViewSet.#slicesName, Object.keys(stored).length ? stored : null );
+		this.#prefs.set( owner, ViewSet.#heldName, Object.keys(stored).length ? stored : null );
 	}
-	#dropSlice( number:number ):void{
-		if( !this.#slices().has(number) )
+	//the slice of `from` as `to`'s, written to the browser, or - `to` undefined - dropped here alone
+	#moveSlice( from:number, to:number|undefined ):void{
+		const slice = this.#held().get( from );
+		if( !slice )
 			return;
-		const slices = new Map( this.#slices() );
-		slices.delete( number );
-		this.#slices.set( slices );
-		this.#storeSlice( number );
+		const held = new Map( this.#held() );
+		held.delete( from );
+		if( to!==undefined )
+			held.set( to, slice );
+		this.#held.set( held );
+		if( to!==undefined ){
+			this.#storeSlice( from );
+			this.#storeSlice( to );
+		}
 	}
 	//The set as this turn starts:  its rows, then the index, then the rows no longer in it, ProfileStore skipping what it already
 	//holds.  A later change's view is named only by the index of its own turn, which has written its row.  A failed write leaves the
@@ -502,9 +522,9 @@ export class ViewSet<V extends View>{
 	#drafts = new Map<number,V>();//by its view's number
 	#draftsFor = signal<string|undefined>( undefined );//whose they are:  undefined made signed out
 	static readonly #draftsName = "drafts";
-	#slices = signal<ReadonlyMap<number,StoredSlice>>( new Map() );//by its view's number
-	static readonly #slicesName = "slices";
-	readonly slices:boolean;//the host's list can be sliced (TableSettings.canSlice)
+	#held = signal<ReadonlyMap<number,StoredSlice>>( new Map() );//the values the views are narrowed to, by the view's number
+	static readonly #heldName = "slices";
+	readonly canSlice:boolean;//the host's list can be sliced (TableSettings.canSlice)
 	#fallback:V|undefined;
 	#selected = 0;//the number of the view shown
 	#known = false;//the profile's rows were read

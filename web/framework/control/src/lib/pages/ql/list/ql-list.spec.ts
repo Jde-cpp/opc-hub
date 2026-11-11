@@ -665,24 +665,26 @@ describe( 'QLList paging', ()=>{
 } );
 //#595:  a sliced list reads its counts with its rows - the groupBy query under the view's filter - and a value narrows the rows
 describe( 'QLList slice', ()=>{
-	const schema = schemaOf( "User", id(), required("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}} );
-	const users = [{id: 1, name: "ann", provider: "Key"}, {id: 2, name: "bob", provider: "Google"}, {id: 3, name: "cat", provider: "Key"}, {id: 4, name: "dan", provider: null}];
-	//A list over `users`, answered by a server that filters on provider and name and counts by provider.  `counted` false:  a
-	//custom query that ignores groupBy and answers its rows.
+	beforeEach( ()=>{ vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} ); } );//a count query refused says so
+	afterEach( ()=>vi.restoreAllMocks() );
+	const schema = schemaOf( "User", id(), required("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}}, scalar("isGroup", "Boolean") );
+	const users = [{id: 1, name: "ann", provider: "Key", isGroup: false}, {id: 2, name: "bob", provider: "Google", isGroup: true}, {id: 3, name: "cat", provider: "Key", isGroup: false}, {id: 4, name: "dan", provider: null, isGroup: false}];
+	//A list over `users`, answered by a server that filters on provider and name and counts by the column grouped by.  `counted`
+	//false:  a custom query that ignores groupBy and answers its rows.
 	const create = async ( {sliceBy="provider", counted=true}:{sliceBy?:string; counted?:boolean}={} )=>{
 		const matching = ( vars:Record<string,any> )=>users.filter( u=>( !vars["provider"] || vars["provider"].includes(u.provider) ) && ( !vars["name_glob"] || u.name.includes( vars["name_glob"].replaceAll("*", "") ) ) );
 		const query = vi.fn( async ( text:string, vars:Record<string,any> )=>{
 			const rows = matching( vars );
 			if( !text.includes("groupBy") || !counted )
 				return { users: rows };
-			const providers = [...new Set( rows.map( u=>u.provider ) )];
-			return { users: providers.map( provider=>({provider, count: rows.filter( u=>u.provider==provider ).length}) ) };
+			const by = /groupBy:"(\w+)"/.exec( text )![1] as keyof typeof users[0];
+			return { users: [...new Set( rows.map( u=>u[by] ) )].map( value=>({[by]: value, count: rows.filter( u=>u[by]==value ).length}) ) };
 		} );
 		configure( undefined, {provide: IGRAPHQL, useValue: {query}} );
 		const fixture = TestBed.createComponent( QLList );
 		const page = fixture.componentInstance;
 		const profile = viewSet( [View.fromTable({columns: ["name", "provider"], sort: "name", sliceBy: sliceBy || undefined}, schema)] );
-		const data = { routing: new ListRoute({path: 'users'}), schema, profile, columns: {name: "Name", provider: "Provider"}, results: null } as unknown as QLListData;
+		const data = { routing: new ListRoute({path: 'users'}), schema, profile, columns: {name: "Name", provider: "Provider", isGroup: "Is Group"}, results: null } as unknown as QLListData;
 		fixture.componentRef.setInput( 'listData', await QLListResolver.load({query: query as any}, data, null) );//resolved by its host, as a pick list's
 		await page.ngOnInit();
 		fixture.detectChanges();
@@ -695,13 +697,13 @@ describe( 'QLList slice', ()=>{
 	it( "reads the counts with the rows:  the view's filter, and none of its sort or page", async ()=>{
 		const { page, counts, panel } = await create();
 		expect( counts() ).toEqual( [['users(groupBy:"provider"){ provider count }', {}]] );
-		expect( page.slices() ).toEqual( [{value: "Key", count: 2}, {value: "Google", count: 1}, {value: null, count: 1}] );
+		expect( page.sliceCounts() ).toEqual( [{value: "Key", count: 2}, {value: "Google", count: 1}, {value: null, count: 1}] );
 		expect( panel() ).toEqual( ["All4", "Google1", "Key2", "No Provider1"] );
 	} );
 
 	it( 'reads no counts for a view that is not sliced, and reads them once it is', async ()=>{
 		const { page, counts, fixture, panel } = await create( {sliceBy: ""} );
-		expect( [counts().length, page.slices()] ).toEqual( [0, undefined] );
+		expect( [counts().length, page.sliceCounts()] ).toEqual( [0, undefined] );
 		page.profile().edit( view=>{ view.sliceBy = "provider"; } );
 		await page.onChangeView();
 		fixture.detectChanges();
@@ -730,15 +732,48 @@ describe( 'QLList slice', ()=>{
 		await page.onChangeView();
 		page.profile().edit( view=>{ view.filter = "a"; } );//ann, cat and dan
 		await page.onChangeView();
-		expect( page.slices() ).toEqual( [{value: "Key", count: 2}, {value: null, count: 1}] );
+		expect( page.sliceCounts() ).toEqual( [{value: "Key", count: 2}, {value: null, count: 1}] );
 		expect( names() ).toEqual( ["ann", "cat"] );
 	} );
 
 	it( 'says the counts could not be read where the server answers rows, and keeps the rows', async ()=>{
 		const { page, names, fixture } = await create( {counted: false} );
 		fixture.detectChanges();
-		expect( [page.slices(), `${page.slicesError()}`, names().length] ).toEqual( [undefined, "Error: The server did not count by 'provider'.", 4] );
+		expect( [page.sliceCounts(), `${page.sliceCountsError()}`, names().length] ).toEqual( [undefined, "Error: The server did not count by 'provider'.", 4] );
 		expect( ( fixture.nativeElement as HTMLElement ).querySelector( 'slice-panel .note' ) ).not.toBeNull();
+	} );
+
+	//reviews-issue/595-views-slice-panel.md #2:  a column switched showed the last one's counts under its name until its own were
+	//read, and a click on one held a value of the wrong column
+	it( "shows another column's counts only once they are read", async ()=>{
+		const { page, fixture, panel } = await create();
+		page.profile().edit( view=>{ view.sliceBy = "isGroup"; } );
+		const changed = page.onChangeView();
+		fixture.detectChanges();
+		expect( [page.panelCounts(), panel()] ).toEqual( [undefined, ["All"]] );
+		await changed;
+		fixture.detectChanges();
+		expect( panel() ).toEqual( ["All4", "false3", "true1"] );
+	} );
+	//reviews-issue/595-views-slice-panel.md #7:  every page turn, sort and value picked read the counts again
+	it( 'reads the counts again only where the filter or the column changed, or on a Refresh', async ()=>{
+		const { page, counts } = await create();
+		page.profile().setSlice( "Key" );
+		await page.onChangeView();
+		await page.onSortChange( {active: "name", direction: "desc"} );
+		expect( [counts().length, page.panelCounts()!.length] ).toEqual( [1, 3] );
+		page.profile().edit( view=>{ view.filter = "a"; } );
+		await page.onChangeView();
+		expect( counts().length ).toBe( 2 );
+		await page.onRefresh();
+		expect( counts().length ).toBe( 3 );
+	} );
+	//reviews-issue/595-views-slice-panel.md #11:  a failed read left the last counts beside the failure
+	it( 'drops the counts with the rows where a read fails', async ()=>{
+		const { page, query } = await create();
+		query.mockRejectedValue( new Error("down") );
+		await page.onRefresh();
+		expect( [`${page.error()}`, page.sliceCounts(), page.panelFailure()] ).toEqual( ["Error: down", undefined, undefined] );
 	} );
 
 	it( "reads no counts where the route's list is not sliced", async ()=>{

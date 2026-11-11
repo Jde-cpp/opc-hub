@@ -399,11 +399,12 @@ describe( "View's sort", ()=>{
 //#595:  the slice column is the view's, saved with it, and the value the rows are narrowed to is the browser's
 describe( "View slice", ()=>{
 	const users = schemaOf( "User", {name: "id", type: {kind: "NON_NULL", name: null, ofType: {kind: "SCALAR", name: "ID"}}}, scalar("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}}, scalar("isGroup", "Boolean"),
-		scalar("logins", "UInt"), scalar("deleted", "DateTime"), object("owner", "Owner"), {name: "tags", type: {kind: "LIST", name: null, ofType: {kind: "SCALAR", name: "Int"}}} );
+		scalar("logins", "UInt"), scalar("deleted", "DateTime"), object("owner", "Owner"), {name: "tags", type: {kind: "LIST", name: null, ofType: {kind: "SCALAR", name: "Int"}}}, scalar("rate", "Float") );
 	const view = ( settings:object={} )=>View.fromTable( {columns: ["name", "provider"], sort: "name", ...settings}, users );
-	it( "slices by a number, a boolean or an enum, never an ID, text, a date, an object or a list", ()=>{
+	//reviews-issue/595-views-slice-panel.md #6:  a Float was offered, which the server's `in:[…]` need not match
+	it( "slices by a number, a boolean or an enum, never an ID, text, a date, an object, a list or a Float", ()=>{
 		const v = view();
-		expect( ["id", "name", "provider", "isGroup", "logins", "deleted", "owner", "tags"].map( c=>v.sliceable(c) ) ).toEqual( [false, false, true, true, true, false, false, false] );
+		expect( ["id", "name", "provider", "isGroup", "logins", "deleted", "owner", "tags", "rate"].map( c=>v.sliceable(c) ) ).toEqual( [false, false, true, true, true, false, false, false, false] );
 		expect( v.sliceChoices({name: "Name", provider: "Provider", logins: "Logins"}) ).toEqual( [{name: "provider", label: "Provider"}, {name: "logins", label: "Logins"}] );
 	} );
 	it( "counts by the column under the view's filter, with none of its sort, its page or its slice", ()=>{

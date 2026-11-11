@@ -57,9 +57,13 @@ export type QLListData = {
 	skip?: number;//the offset of the page in results - the first page when unset
 	more?: boolean;//a row past the page exists, so the pager offers a next page (QLListResolver.page)
 	childrenKey?: string;//where the sidenav children go when it is not the list's own url:  a gateway's tabs, under the gateway's page
-	slices?: SliceCount[];//the slice panel's counts, read with the rows where the view is sliced:  the list's under its filter, not the page's
-	slicesError?: unknown;//they could not be read, or the server did not count:  the panel says so, and the rows stand
+	sliceCounts?: SliceCount[];//the slice panel's counts, read with the rows where the view is sliced:  the list's under its filter, not the page's
+	sliceCountsError?: unknown;//they could not be read, or the server did not count:  the panel says so, and the rows stand
+	sliceCountsOf?: SliceQuery;//the column and the count query that sliceCounts or sliceCountsError answer
 };
+//A slice panel's count query:  its column, and its text and variables as one string, which a page turn, a sort or a value picked
+//leaves as it was.
+export type SliceQuery = { by:string, query:string };
 //what load() reads and hands back - a gateway's Connections tab (GatewayData) pages the same way, under an AppInstanceRoute
 export type PageData = Omit<QLListData, "routing"> & { routing:{path:string, parent?:{path:string}} };
 
@@ -219,29 +223,35 @@ export class QLListResolver implements Resolve<QLListData> {
 			return ql.query<any>( q.text, q.vars );
 		};
 		let skip = data.skip ?? 0;
-		const counting = data.profile.slices ? QLListResolver.sliceCounts( ql, view ) : Promise.resolve( {} );//with the rows, not after them
+		const counting = data.profile.canSlice ? QLListResolver.loadSliceCounts( ql, view, data ) : Promise.resolve( {} );//with the rows, not after them
 		let results = await query( skip );
 		if( skip && !results[collectionName].length ){//a page past the end - rows deleted since it was read:  the first page, not an empty "No … yet"
 			skip = 0;
 			results = await query( skip );
 		}
 		const page = QLListResolver.page( results[collectionName], view );
-		const y = { ...data, results: {...results, [collectionName]: page.rows}, skip, more: page.more, error: undefined, slices: undefined, slicesError: undefined, ...await counting };
+		const y = { ...data, results: {...results, [collectionName]: page.rows}, skip, more: page.more, error: undefined, sliceCounts: undefined, sliceCountsError: undefined, sliceCountsOf: undefined, ...await counting };
 		if( routeStore )
 			QLListResolver.setChildren( routeStore, y );
 		return y;
 	}
-	//The slice panel's counts, where the view is sliced.  A failure is the panel's to say, never the rows':  it is answered, not thrown.
-	static async sliceCounts( ql:Pick<IGraphQL,"query">, view:View ):Promise<{slices?:SliceCount[], slicesError?:unknown}>{
+	//The slice panel's counts, where the view is sliced:  `prior`'s where they answer the same query, which only a filter or the
+	//column changes - a Refresh reads them again, leaving prior none.  A failure is the panel's to say, never the rows':  it is
+	//answered, not thrown.
+	static async loadSliceCounts( ql:Pick<IGraphQL,"query">, view:View, prior?:Pick<QLListData,"sliceCounts"|"sliceCountsOf"> ):Promise<Pick<QLListData,"sliceCounts"|"sliceCountsError"|"sliceCountsOf">>{
 		const q = view.sliceQuery();
 		if( !q )
 			return {};
+		const of = { by: view.sliceBy!, query: JSON.stringify( q ) };
+		if( prior?.sliceCounts && prior.sliceCountsOf?.query==of.query )
+			return { sliceCounts: prior.sliceCounts, sliceCountsOf: of };
 		try{
 			const results = await ql.query<any>( q.text, q.vars );
-			return { slices: readSliceCounts(results[view.collectionName], view.sliceBy!) };
+			return { sliceCounts: readSliceCounts(results[view.collectionName], of.by), sliceCountsOf: of };
 		}
 		catch( e ){
-			return { slicesError: e };
+			console.warn( `The counts of '${view.collectionName}' by '${of.by}' could not be read.`, e );
+			return { sliceCountsError: e, sliceCountsOf: of };
 		}
 	}
 	//the page's rows as the collection's sidenav children

@@ -1,7 +1,6 @@
 //240px at the table's left, on the colour under the toolbar's with an edge (views spec *Look*);  folded, a button on a row of its
-//own.  The row it shares with the table, and where that row stacks, are .jde-sliced's (_general.scss).
-:host{
-	display: block;
+//own.  The row it shares with the table, and where that row stacks, are .jde-sliced's (_general.scss), the host's class.
+.panel{
 	box-sizing: border-box;
 	flex: 0 0 240px;
 	align-self: stretch;
@@ -9,7 +8,7 @@
 	border-right: 1px solid var(--mat-sys-outline-variant);
 	text-align: left;
 }
-:host(.folded){
+.panel.folded{
 	flex: none;
 	align-self: auto;
 	padding: .25rem .5rem;

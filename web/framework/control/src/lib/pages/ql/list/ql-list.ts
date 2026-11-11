@@ -74,8 +74,9 @@ export class QLList implements OnInit{
 		if( !this.selector() )
 			QLListResolver.saveSkip( data, this.skip() );
 		this.more.set( data.more ?? false );
-		this.slices.set( data.slices );
-		this.slicesError.set( data.slicesError );
+		this.sliceCounts.set( data.sliceCounts );
+		this.sliceCountsError.set( data.sliceCountsError );
+		this.#countedBy.set( data.sliceCountsOf?.by );
 		this.error.set( data.error );//a good load clears the last failure; a resolver that caught the rows query sets it
 		this.sideNav.set( data.routing );
 		let paths = [];
@@ -144,7 +145,7 @@ export class QLList implements OnInit{
 	}
 
 	async onRefresh(){
-		await this.#reload();//the same page; keep the current rows visible, the progress bar signals the reload
+		await this.#reload( true );//the same page; keep the current rows visible, the progress bar signals the reload
 	}
 
 	//refresh() and reload() are only ever driven from template event handlers, so a rejection has nowhere to go but the
@@ -154,16 +155,18 @@ export class QLList implements OnInit{
 		try{ await this.refresh(); }
 		catch( e ){ this.#fail( e ); }
 	}
-	async #reload(){
-		try{ await this.reload(); }
+	async #reload( recount=false ){
+		try{ await this.reload( recount ); }
 		catch( e ){ this.#fail( e ); }
 	}
 	//the snackbar goes in ten seconds; the page keeps saying it.  The rows are dropped too:  a refresh keeps them on screen
-	//while it runs, and leaving stale rows under a failure reads as "current".
+	//while it runs, and leaving stale rows under a failure reads as "current".  So are the slice panel's counts.
 	#fail( e:unknown ){
 		this.#snackbar.exception( "Could not refresh data.", e );
 		this.error.set( e );
 		this.data.set( [] );
+		this.sliceCounts.set( undefined );
+		this.sliceCountsError.set( undefined );
 	}
 
 	async onPage( e:PageEvent ){
@@ -198,13 +201,14 @@ export class QLList implements OnInit{
 	}
 	//every path that re-queries goes through here so isRefreshing covers the whole load, not just the Refresh button.
 	//Only the latest call lands:  page turns and view changes don't wait for each other, and an older query finishing last
-	//would put back its own page, or the rows of the view it was sent under.
-	async reload(){
+	//would put back its own page, or the rows of the view it was sent under.  The slice panel's counts are read again where the
+	//filter or the column changed, or `recount` - a Refresh - asks.
+	async reload( recount=false ){
 		const id = this.#reloads.next();
 		this.#queried = this.profile().sliced();
 		this.isRefreshing.set( true );
 		try{
-			const reload = await QLListResolver.load( this.#ql(), {...this.resolvedData(), skip: this.skip()}, null );
+			const reload = await QLListResolver.load( this.#ql(), {...this.resolvedData(), skip: this.skip(), ...( recount ? {sliceCounts: undefined} : {} )}, null );
 			if( !this.#reloads.is(id) )
 				return;
 			if( !this.selector() )
@@ -305,8 +309,12 @@ export class QLList implements OnInit{
 		return !!home && !!this.view() && ( !View.sameFilters(this.view(), home) || this.profile().slice()!==undefined );
 	});
 	//the slice panel's counts, read with the rows (QLListResolver.load):  undefined where the view is not sliced, or they failed
-	slices = signal<SliceCount[]|undefined>( undefined );
-	slicesError = signal<unknown>( undefined );
+	sliceCounts = signal<SliceCount[]|undefined>( undefined );
+	sliceCountsError = signal<unknown>( undefined );
+	#countedBy = signal<string|undefined>( undefined );//the column they are of
+	//what the panel shows:  the counts of the column it lists alone, so another column, picked while a read is out, shows none
+	panelCounts = computed<SliceCount[]|undefined>( ()=>this.#countedBy()==this.profile().current().sliceBy ? this.sliceCounts() : undefined );
+	panelFailure = computed<unknown>( ()=>this.#countedBy()==this.profile().current().sliceBy ? this.sliceCountsError() : undefined );
 	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilter?.includes( "-id:" ), selector: this.selector()}) );
 	showEmpty = computed<boolean>( ()=>!this.isRefreshing() && this.error()===undefined && !this.data().length );//not while a reload has the rows cleared
 	addFilled = computed<boolean>( ()=>this.showEmpty() && !this.viewFiltered() );//Add is the one useful action only on a genuinely empty list - not under a filter, a refusal or a failure (#fail and loadOrFail empty the rows too)

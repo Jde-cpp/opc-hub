@@ -125,12 +125,12 @@ Three kinds of list differ:
 A **slice** is a panel at the left of the table that lists one column's values, each with the number of rows that have it. Click a value to narrow the list to its rows, and click it again, or **All**, to see every row again.
 
 - **Slice by** in the [view's menu](#views) picks the column, and **No slicing** takes the panel away. A header's menu has **Slice by this field**, and the column's name at the top of the panel switches to another.
-- A list is sliced by a column of numbers, of yes and no, or of fixed choices, such as a user's provider. It is not sliced by an ID, by text or by a date.
+- A list is sliced by a column of numbers, of yes and no, or of fixed choices, such as a user's provider. It is not sliced by an ID, by text or by a date, nor, but on the watch list, by a number with a fraction.
 - The counts are of the whole list under its [filter](#filtering), not of the page, so typing a filter changes them. **All** shows their total, and *No* and the column's name stands for the rows with no value.
 - A column of fixed choices lists them in their own order, and the others from the lowest value up.
 - The value you click is not part of the filter: the filter box does not change. It is kept in this browser, for you alone, so it is still chosen after a reload, and it is not saved with the view. The column is part of the view, and picking one is an [unsaved change](#unsaved-changes).
 
-On a narrow window the panel is a **Slice** button above the table, whose menu holds the same values. On a phone there is no panel or button, and the list stays narrowed to the value last chosen.
+On a narrow window or a phone the panel is a **Slice** button above the table, whose menu holds the same values. It names the value the list is narrowed to, **Slice: Key**.
 
 **Logs** cannot be sliced.
 

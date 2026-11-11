@@ -1,21 +1,23 @@
 @if( field(); as f ){
-	@if( folded() ){
-		<button matButton type="button" class="slice-button" [matMenuTriggerFor]="valuesMenu"><mat-icon aria-hidden="true">vertical_split</mat-icon>Slice@if( heldLabel(); as label ){: {{ label }}}</button>
-	}
-	@else{
-		<section [attr.aria-label]="'Slice by ' + f.label">
-			<button matButton type="button" class="slice-field" [matMenuTriggerFor]="fieldMenu">{{ f.label }}<mat-icon aria-hidden="true" iconPositionEnd>expand_more</mat-icon></button>
-			@if( failed() ){
-				<p class="note" role="status">The counts could not be read.</p>
-			}
-			<ul>
-				<li><button type="button" class="slice-row" [attr.aria-pressed]="held()===undefined" (click)="all()"><span class="label">All</span><span class="count">{{ total() }}</span></button></li>
-				@for( row of rows(); track row.key ){
-					<li><button type="button" class="slice-row" [class.none]="row.value===null" [attr.aria-pressed]="row.held" (click)="pick(row)"><span class="label">{{ row.label }}</span><span class="count">{{ row.count }}</span></button></li>
+	<div class="panel" [class.folded]="folded()">
+		@if( folded() ){
+			<button matButton type="button" class="slice-button" [matMenuTriggerFor]="valuesMenu"><mat-icon aria-hidden="true">vertical_split</mat-icon>Slice@if( heldLabel(); as label ){: {{ label }}}</button>
+		}
+		@else{
+			<section [attr.aria-label]="'Slice by ' + f.label">
+				<button matButton type="button" class="slice-field" [matMenuTriggerFor]="fieldMenu">{{ f.label }}<mat-icon aria-hidden="true" iconPositionEnd>expand_more</mat-icon></button>
+				@if( failure()!==undefined ){
+					<p class="note" role="status">The counts could not be read.@if( reason(); as reason ){ {{ reason }}}</p>
 				}
-			</ul>
-		</section>
-	}
+				<ul>
+					<li><button type="button" class="slice-row" [attr.aria-pressed]="held()===undefined" (click)="all()"><span class="label">All</span><span class="count">{{ total() }}</span></button></li>
+					@for( row of rows(); track row.key ){
+						<li><button type="button" class="slice-row" [class.none]="row.value===null" [attr.aria-pressed]="row.held" (click)="pick(row)"><span class="label">{{ row.label }}</span><span class="count">{{ row.count }}</span></button></li>
+					}
+				</ul>
+			</section>
+		}
+	</div>
 	<mat-menu #valuesMenu="matMenu">
 		<ng-template matMenuContent>
 			<button mat-menu-item type="button" [matMenuTriggerFor]="fieldMenu">Slice by {{ f.label }}</button>
@@ -46,3 +48,4 @@
 		</ng-template>
 	</mat-menu>
 }
+<div #content class="jde-sliced-rows"><ng-content/></div>

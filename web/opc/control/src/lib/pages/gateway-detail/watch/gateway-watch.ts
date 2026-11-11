@@ -369,13 +369,15 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	columns = WatchView.columns;
 	shown = computed<WatchRow[]>( ()=>{
 		this.#changes();
-		return this.view() ? this.view().apply( this.rows(), this.names, this.viewSet.slice() ) : [];
+		return this.view() ? this.viewSet.sliced().narrowed( this.#filtered(), this.names ) : [];
+	} );
+	//the rows the view's filter keeps, which the rows shown and the slice panel's counts share:  read again on every push
+	#filtered = computed<WatchRow[]>( ()=>{
+		this.#changes();
+		return this.view()?.filtered( this.rows(), this.names ) ?? [];
 	} );
 	//the slice panel's counts, of the rows under the view's filter
-	slices = computed<SliceCount[]>( ()=>{
-		this.#changes();
-		return this.view()?.sliceCounts( this.rows(), this.names ) ?? [];
-	} );
+	sliceCounts = computed<SliceCount[]>( ()=>this.view()?.sliceCounts( this.#filtered(), this.names ) ?? [] );
 	displayedColumns = computed<string[]>( ()=>['trend', ...(this.view()?.displayedColumns ?? []), 'actions'] );
 	//not kept between visits:  the ticked rows aren't, so a page left on Trend reopened on an empty one (420 #9)
 	tabIndex = signal( 0 );

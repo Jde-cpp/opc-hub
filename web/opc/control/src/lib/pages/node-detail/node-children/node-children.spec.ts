@@ -196,6 +196,48 @@ describe( 'NodeChildren subscription values', ()=>{
 			push( {value: 6, sc: 0} );
 			expect( page.filterValues()['snapshot'] ).toEqual( [6] );
 		} );
+		//reviews-issue/595-views-slice-panel.md #5:  sliced, every push read the rows again, so they re-sorted by any slice column with
+		//no value held, where an unsliced view's stay put
+		it( 'reads the rows again on a push only while the slice holds a value of a column a reading changes', ()=>{
+			const { page, row, push } = subscribed();
+			page.viewSet.reset( [NodeView.default()], NodeView.schema );
+			page.viewSet.edit( view=>{ view.sliceBy = "class"; } );
+			page.viewSet.setSlice( "Variable" );
+			const rows = page.rows();
+			push( {value: 6, sc: 0} );
+			expect( page.rows() ).toBe( rows );
+			page.viewSet.edit( view=>{ view.sliceBy = "status"; } );
+			expect( page.rows() ).toEqual( [row] );
+			push( {sc: bad} );
+			expect( page.rows() ).toEqual( [row] );//no value held
+			page.viewSet.setSlice( OpcError.text(0) );
+			expect( page.rows() ).toEqual( [] );
+			push( {value: 7, sc: 0} );
+			expect( page.rows() ).toEqual( [row] );
+		} );
+		//reviews-issue/595-views-slice-panel.md #13:  the rows and the counts each ran the filter over every row on a push
+		it( 'runs the filter once a push for the rows and the counts', ()=>{
+			const { page, row, push } = subscribed();
+			page.viewSet.reset( [NodeView.default()], NodeView.schema );
+			page.viewSet.edit( view=>{ view.sliceBy = "status"; } );
+			push( {value: 6, sc: 0} );
+			page.viewSet.setSlice( OpcError.text(0) );
+			expect( [page.rows(), page.sliceCounts()] ).toEqual( [[row], [{value: OpcError.text(0), count: 1}]] );
+			const predicate = vi.spyOn( NodeView.prototype, 'predicate' );
+			push( {sc: bad} );
+			expect( [page.rows(), page.sliceCounts().length, predicate.mock.calls.length] ).toEqual( [[], 1, 1] );
+			predicate.mockRestore();
+		} );
+		//the filter is read again on a push for the counts, and the rows follow it where a row left or joined it
+		it( 'takes a row out of the rows when a push leaves it outside the filter', ()=>{
+			const { page, push } = subscribed();
+			page.viewSet.reset( [NodeView.default()], NodeView.schema );
+			push( {value: 6, sc: 0} );
+			page.viewSet.edit( view=>{ view.filter = `status:${OpcError.text(0)}`; } );
+			expect( page.rows().length ).toBe( 1 );
+			push( {sc: bad} );
+			expect( page.rows() ).toEqual( [] );
+		} );
 
 		it( 'holds the last value, locked, through a Bad reading', ()=>{
 			const { page, row, push } = subscribed();
@@ -569,6 +611,19 @@ describe( 'NodeChildren the System nodes toggle', ()=>{
 		page.setShowSystem( false );
 		(<any>page).setNodes( [], false );
 		expect( page.hiddenBySystem() ).toBe( false );
+	} );
+	//reviews-issue/595-views-slice-panel.md #1:  the toggle's test left the slice out, so a value no row holds said the toggle hid the rows
+	it( "says the toggle hid the rows only where it hid the slice's", ()=>{
+		const { page } = create();
+		const own = new Variable( <any>{ns: 2, i: 30, name: 'mine', browse: {ns: 2, name: 'mine'}} );
+		const types = new OpcObject( <any>{ns: 0, i: 88, name: 'ObjectTypes', browse: {ns: 0, name: 'ObjectTypes'}} );
+		(<any>page).setNodes( [own, types], false );
+		page.setShowSystem( false );
+		page.viewSet.edit( view=>{ view.sliceBy = "class"; } );
+		page.viewSet.setSlice( "Object" );
+		expect( [page.rows().length, page.hiddenBySystem()] ).toEqual( [0, true] );
+		page.viewSet.setSlice( "Method" );
+		expect( [page.rows().length, page.hiddenBySystem()] ).toEqual( [0, false] );
 	} );
 
 	//reviews-issue/416-address-space.md #15:  the toggle's state was kept in four places - this component's signal, LocalPrefs, the

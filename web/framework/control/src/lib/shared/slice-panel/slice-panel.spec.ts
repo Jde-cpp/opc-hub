@@ -15,13 +15,13 @@ const schema = new TableSchema( {name: "Thing", enums: new Map( [["Level", [{id:
 
 @Component({
 	imports: [SlicePanel],
-	template: `<slice-panel [views]="views" [columns]="columns" [counts]="counts()" [failed]="failed()" (viewChange)="changes=changes+1"/>`
+	template: `<slice-panel [views]="views" [columns]="columns" [counts]="counts()" [failure]="failure()" (viewChange)="changes=changes+1"><button type="button" class="header">Name</button></slice-panel>`
 })
 class Host{
 	views:ViewSet<View> = null as any;//before the first render
 	columns = {name: "Name", level: "Level", size: "Size"};
 	counts = signal<SliceCount[]|undefined>( [{value: "Critical", count: 3}, {value: "Debug", count: 4}, {value: null, count: 1}] );
-	failed = signal( false );
+	failure = signal<unknown>( undefined );
 	changes = 0;
 }
 
@@ -82,10 +82,10 @@ describe( 'SlicePanel', ()=>{
 		await stable( fixture, 1 );
 		expect( read() ).toEqual( [["All", "2", "false"], ["Debug", "2", "false"], ["Critical", "0", "true"]] );
 		host.counts.set( undefined );
-		host.failed.set( true );
+		host.failure.set( new Error("The server did not count by 'level'.") );
 		await stable( fixture, 1 );
 		expect( read() ).toEqual( [["All", "", "false"], ["Critical", "", "true"]] );
-		expect( element.querySelector( '.note' )!.textContent ).toContain( "could not be read" );
+		expect( element.querySelector( '.note' )!.textContent ).toBe( "The counts could not be read. The server did not count by 'level'." );//reviews-issue/595-views-slice-panel.md #11:  the reason was dropped
 	} );
 
 	it( "switches the column from its name, a change to the view's draft, and goes with No slicing", async ()=>{
@@ -97,12 +97,37 @@ describe( 'SlicePanel', ()=>{
 		expect( [set.current().sliceBy, set.current().isAdhoc, host.changes] ).toEqual( ["size", true, 1] );
 		( await menu( element.querySelector<HTMLElement>( 'button.slice-field' )! ) ).at( -1 )!.click();
 		await stable( fixture, 1 );
-		expect( [set.current().sliceBy, element.querySelector( 'section' ), getComputedStyle( element.querySelector('slice-panel')! ).display] ).toEqual( [undefined, null, "none"] );
+		expect( [set.current().sliceBy, element.querySelector( '.panel' )] ).toEqual( [undefined, null] );
 	} );
 
-	it( 'is nothing where the view is not sliced', async ()=>{
+	//reviews-issue/595-views-slice-panel.md #4:  No slicing took the menu's button with the panel, so the focus fell to the page
+	it( 'hands the focus to the rows when No slicing takes the panel', async ()=>{
+		const { menu, element, fixture } = await open();
+		const trigger = element.querySelector<HTMLElement>( 'button.slice-field' )!;
+		trigger.focus();
+		( await menu( trigger ) ).at( -1 )!.click();
+		await stable( fixture, 2 );
+		expect( document.activeElement ).toBe( element.querySelector( 'button.header' ) );
+	} );
+	it( 'hands the focus to the rows when No slicing from the folded menu takes the button', async ()=>{
+		const { menu, element, fixture } = await open( {width: 'small'} );
+		const trigger = element.querySelector<HTMLElement>( 'button.slice-button' )!;
+		trigger.focus();
+		( await menu( ( await menu( trigger ) )[0] ) ).at( -1 )!.click();
+		await stable( fixture, 2 );
+		expect( [element.querySelector( 'button.slice-button' ), document.activeElement] ).toEqual( [null, element.querySelector( 'button.header' )] );
+	} );
+
+	//reviews-issue/595-views-slice-panel.md #14:  each host wrote the row the panel shares with its table
+	it( "holds the host's rows beside the panel, in the row .jde-sliced lays out", async ()=>{
+		const { element } = await open();
+		const host = element.querySelector( 'slice-panel' )!;
+		expect( [host.classList.contains( "jde-sliced" ), [...host.children].filter( c=>c.tagName=="DIV" ).map( c=>c.className )] ).toEqual( [true, ["panel", "jde-sliced-rows"]] );
+		expect( host.querySelector( '.jde-sliced-rows > button.header' ) ).not.toBeNull();
+	} );
+	it( 'is the rows alone where the view is not sliced', async ()=>{
 		const { element } = await open( {sliceBy: ""} );
-		expect( element.querySelector( 'slice-panel' )!.children.length ).toBe( 0 );
+		expect( [element.querySelector( '.panel' ), element.querySelector( '.jde-sliced-rows > button.header' )?.textContent] ).toEqual( [null, "Name"] );
 	} );
 
 	it( 'folds to a Slice button on a small screen, its menu the same rows', async ()=>{
@@ -117,8 +142,15 @@ describe( 'SlicePanel', ()=>{
 		expect( [set.slice(), text( element.querySelector('button.slice-button')! )] ).toEqual( ["Debug", "Slice: Debug"] );
 	} );
 
-	it( 'is absent on a phone', async ()=>{
-		const { element } = await open( {width: 'extra-small'} );
-		expect( element.querySelector( 'slice-panel' )!.children.length ).toBe( 0 );
+	//reviews-issue/595-views-slice-panel.md #10, ruled 2026-11-11:  absent on a phone, the panel left the rows narrowed with nothing to say so
+	it( 'folds to the Slice button on a phone too, which says the value held and clears it', async ()=>{
+		const { element, menu, text, set, fixture } = await open( {width: 'extra-small'} );
+		set.setSlice( "Critical" );
+		await stable( fixture, 1 );
+		const button = element.querySelector<HTMLButtonElement>( 'button.slice-button' )!;
+		expect( [element.querySelector( 'section' ), text( button )] ).toEqual( [null, "Slice: Critical"] );
+		( await menu( button ) )[1].click();
+		await stable( fixture, 1 );
+		expect( [set.slice(), set.current().isAdhoc] ).toEqual( [undefined, false] );
 	} );
 } );
