@@ -17,7 +17,7 @@
 	<ng-template #rows><!--the table and what stands in for it-->
 		<slice-panel [views]="profile()" [columns]="columns()" [counts]="panelCounts()" [failure]="panelFailure()" (viewChange)="onChangeView()">
 		<div style="align-content: center; margin: auto;  text-align: center">
-			<ql-table [views]=profile() [filterValues]=filterValues() (columnsChange)=onChangeView() [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() [chipFilters]=chipFilters() (onChipClick)=onChipClick($event) (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
+			<ql-table [views]=profile() [filterValues]=filterValues() (columnsChange)=onChangeView() [dataSource]=data() [grouping]=grouping() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() [chipFilters]=chipFilters() (onChipClick)=onChipClick($event) (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
 		</div>
 		@if( failure(); as f ){
 			<failure-state [failure]=f (retry)="onRefresh()">

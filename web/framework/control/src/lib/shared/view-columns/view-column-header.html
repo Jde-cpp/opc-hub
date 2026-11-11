@@ -7,13 +7,16 @@
 	<!--the right edge:  a pointer's control - the menu's Wider and Narrower are the keyboard's-->
 	<span class="column-resize" aria-hidden="true" (pointerdown)="onResizeStart($event)" (pointermove)="onResizeMove($event)" (pointerup)="onResizeEnd()" (pointercancel)="onResizeCancel()" (dblclick)="onResizeReset()" (mousedown)="stop($event)" (touchstart)="stop($event)" (click)="stop($event)"></span>
 	<mat-menu #menu="matMenu">
-		<ng-template matMenuContent><!--the group joins it with its phase-->
+		<ng-template matMenuContent>
 			@if( canSort() ){
 				<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="sorted()?.direction=='asc'" (click)="sort('asc')"><mat-icon aria-hidden="true">arrow_upward</mat-icon>Sort ascending</button>
 				<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="sorted()?.direction=='desc'" (click)="sort('desc')"><mat-icon aria-hidden="true">arrow_downward</mat-icon>Sort descending</button>
 			}
 			@if( choices().length ){
 				<button mat-menu-item type="button" [matMenuTriggerFor]="filterMenu"><mat-icon aria-hidden="true">filter_list</mat-icon>Filter by…</button>
+			}
+			@if( canGroup() ){
+				<button mat-menu-item type="button" role="menuitemcheckbox" [attr.aria-checked]="grouped()" (click)="group()"><mat-icon aria-hidden="true">table_rows</mat-icon>Group by this field</button>
 			}
 			@if( canSlice() ){
 				<button mat-menu-item type="button" role="menuitemcheckbox" [attr.aria-checked]="sliced()" (click)="slice()"><mat-icon aria-hidden="true">vertical_split</mat-icon>Slice by this field</button>

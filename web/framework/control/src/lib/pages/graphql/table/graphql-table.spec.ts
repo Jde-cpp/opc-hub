@@ -387,3 +387,66 @@ describe( 'GraphQLTable headers', ()=>{
 		expect( element.querySelector( '.column-menu, .column-resize, .jde-pinned' ) ).toBeNull();
 	} );
 } );
+//#596:  a grouped page's rows under a header per value - a second row definition - with the selection over the rows alone
+describe( 'GraphQLTable groups', ()=>{
+	const things = schemaOf( "Thing", required("name"), {name: "kind", type: {kind: "ENUM", name: "Kind"}}, scalar("size", "UInt") );
+	const rows = [{id: 1, name: "a", kind: "x", size: 1}, {id: 2, name: "b", kind: "x", size: 2}, {id: 3, name: "c", kind: null, size: 4}];
+	const open = async ( multiple=false )=>{
+		TestBed.configureTestingModule({ providers: [{ provide: SnackbarService, useValue: snackbarStub() }] });
+		const set = new ViewSet( {type: View, key: "things", profileStore: TestBed.inject( ProfileStore ), prefs: new LocalPrefs()} );
+		set.reset( [View.fromTable({columns: ["name", {name: "kind", chip: {x: "ok"}}], sort: "name", groupBy: "kind", sums: ["size"]}, things)], things );
+		const fixture = TestBed.createComponent( GraphQLTable );
+		fixture.componentRef.setInput( 'dataSource', rows );
+		fixture.componentRef.setInput( 'displayedFields', set.current().fields.filter( f=>f.displayed ) );
+		fixture.componentRef.setInput( 'selections', new SelectionModel<any>(multiple, []) );
+		fixture.componentRef.setInput( 'views', set );
+		fixture.componentRef.setInput( 'grouping', set.current().grouping( {size: "Size"}, [{value: "x", count: 5}, {value: null, count: 1}] ) );
+		await stable( fixture, 1 );
+		const element = fixture.nativeElement as HTMLElement;
+		const drawn = ()=>[...element.querySelectorAll( 'mat-row' )].map( r=>[...r.querySelectorAll( '.jde-group-cell mat-chip, .group-value, .group-count, .group-sum, mat-cell:not(.jde-group-cell)' )].map( e=>e.textContent!.replace( /\s+/g, " " ).trim() ).filter( t=>t ).join( ", " ) );
+		return { fixture, set, element, drawn, table: fixture.componentInstance };
+	};
+	beforeEach( ()=>localStorage.clear() );
+
+	it( "heads each group with its value, its count of the list's, and its sums", async ()=>{
+		const { element, drawn } = await open();
+		expect( drawn() ).toEqual( ["x, 2 of 5 rows, Size 3", "a, x", "b, x", "No Kind, 1 row, Size 4", "c"] );
+		const headers = element.querySelectorAll( 'mat-row.jde-group-row' );
+		expect( [headers.length, headers[0].querySelector( 'mat-chip' )!.classList.contains( "chip-ok" ), headers[1].querySelector( 'mat-chip' )] ).toEqual( [2, true, null] );
+		expect( element.querySelector( 'mat-table' )!.classList.contains( "jde-grouped" ) ).toBe( true );
+	} );
+	it( "collapses a group from its chevron, in the list's views, and opens it again", async ()=>{
+		const { fixture, set, element, drawn } = await open();
+		const chevron = ()=>element.querySelector<HTMLButtonElement>( 'mat-row.jde-group-row button.group-toggle' )!;
+		expect( [chevron().getAttribute( "aria-label" ), chevron().getAttribute( "aria-expanded" )] ).toEqual( ["Collapse x", "true"] );
+		chevron().click();
+		await stable( fixture, 1 );
+		expect( [drawn(), [...set.collapsed()]] ).toEqual( [["x, 2 of 5 rows, Size 3", "No Kind, 1 row, Size 4", "c"], ["string:x"]] );
+		expect( [chevron().getAttribute( "aria-label" ), chevron().getAttribute( "aria-expanded" )] ).toEqual( ["Expand x", "false"] );
+		chevron().click();
+		await stable( fixture, 1 );
+		expect( drawn().length ).toBe( 5 );
+	} );
+	it( 'selects all over the rows alone, a collapsed group among them, and never a header', async ()=>{
+		const { fixture, set, table, element } = await open( true );
+		set.toggleGroup( "string:x" );
+		await stable( fixture, 1 );
+		expect( table.isAllSelected() ).toBe( false );
+		table.toggleAll();
+		await stable( fixture, 1 );
+		expect( [table.selections().selected, table.isAllSelected()] ).toEqual( [rows, true] );
+		expect( element.querySelector( 'mat-row.jde-group-row mat-checkbox' ) ).toBeNull();
+		table.toggleAll();
+		expect( table.selections().selected ).toEqual( [] );
+	} );
+	it( 'draws a plain table where the list is not grouped, and does not open a row on a click on a header', async ()=>{
+		const { fixture, table, drawn, element } = await open();
+		const activated = vi.fn();
+		table.onRowActivate.subscribe( activated );
+		element.querySelector<HTMLElement>( 'mat-row.jde-group-row' )!.click();
+		expect( activated ).not.toHaveBeenCalled();
+		fixture.componentRef.setInput( 'grouping', undefined );
+		await stable( fixture, 1 );
+		expect( drawn() ).toEqual( ["a, x", "b, x", "c"] );
+	} );
+} );

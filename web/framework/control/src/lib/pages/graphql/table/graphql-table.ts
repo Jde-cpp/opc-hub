@@ -14,6 +14,8 @@ import { Style, View, ViewField } from '../../../model/ql/view';
 import { ViewSet } from '../../../model/ql/view-set';
 import { ViewColumnCell, ViewColumnHeader, ViewColumns } from '../../../shared/view-columns/view-columns';
 import { QLRow } from '../../../model/ql/slug-row';
+import { GroupHeader, Grouping, groupRows, isGroupHeader } from '../../../model/ql/group';
+import { GroupHeaderCell } from '../../../shared/group-header/group-header';
 import { capitalize } from 'jde-spa';
 
 //A host's text for a text or a number cell in place of the row's value, or undefined to show the value:  a group's root by its browse
@@ -24,7 +26,7 @@ export type CellText = ( column:string, row:QLRow )=>string|undefined;
 	selector: 'ql-table',
 	styleUrls: ['./graphql-table.scss'],
 	templateUrl: './graphql-table.html',
-	imports: [DatePipe, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip, ViewColumnCell, ViewColumnHeader, ViewColumns]
+	imports: [DatePipe, GroupHeaderCell, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip, ViewColumnCell, ViewColumnHeader, ViewColumns]
 })
 export class GraphQLTable{
 
@@ -104,7 +106,16 @@ export class GraphQLTable{
 		return tone ? `chip-${tone}` : "";
 	}
 
-	dataSource=input.required<QLRow[]>();
+	dataSource=input.required<QLRow[]>();//the rows, which the selection reads:  the table draws `rows`, the groups' headers among them
+	//What the rows are grouped by (views spec *Group by*), none for a plain table:  each run of a value under a header row, a second
+	//row definition, whose chevron collapses it in the list's views.
+	grouping = input<Grouping>();
+	rows = computed<(QLRow|GroupHeader)[]>( ()=>{
+		const grouping = this.grouping();
+		return grouping ? groupRows( this.dataSource(), grouping, ( row, column )=>row[column], this.views()?.collapsed() ) : this.dataSource();
+	} );
+	readonly isGroup = ( _:number, row:unknown )=>isGroupHeader( row );
+	readonly groupColumns = ["jde-group"];
 	displayedFields = input.required<ViewField[]>();
 	selections=model.required<SelectionModel<QLRow>>();
 	//showDeleted = input<boolean>( false );

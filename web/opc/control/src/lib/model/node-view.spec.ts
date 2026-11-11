@@ -240,3 +240,22 @@ describe( 'NodeView and WatchView slice', ()=>{
 		expect( [counts(), narrowed( good ).length] ).toEqual( [[], 2] );
 	} );
 } );
+//#596:  the node and watch lists cut their groups from their own rows, sorted by the group column first
+describe( 'NodeView and WatchView group', ()=>{
+	it( 'sums no column of a node list, where none is always a number, and the numbers of the watch list', ()=>{
+		expect( NodeView.default().sumChoices( NodeView.columns ) ).toEqual( [] );
+		expect( WatchView.default().sumChoices( WatchView.columns ).map( c=>c.name ) ).toEqual( ["sampling", "revisedSampling", "queue", "revisedQueue"] );
+	} );
+	it( "sorts by the group column first, the view's sort within a group", ()=>{
+		const failing = variable( 1, "a", {value: 2} );
+		failing.sc = bad;
+		const nodes = [variable( 2, "c", {value: 1} ), failing, variable( 3, "b", {value: 3} )];
+		const view = NodeView.default();
+		view.setGroupBy( "status" );
+		const failed = OpcError.text( bad ), good = OpcError.text( 0 );//Bad… sorts ahead of Good
+		expect( view.apply( nodes ).map( n=>[NodeView.cellValue(n, "status"), n.name] ) ).toEqual( [[failed, "a"], [good, "b"], [good, "c"]] );
+		view.sort = [{active: "name", direction: "desc"}];
+		expect( view.sortNodes( nodes ).map( n=>n.name ) ).toEqual( ["a", "c", "b"] );
+		expect( view.grouping( NodeView.columns ) ).toEqual( {by: "status", label: "Status", chip: undefined, sums: [], totals: undefined} );
+	} );
+} );

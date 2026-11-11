@@ -1,0 +1,47 @@
+//the value in title-small (views spec *Look*), then the count and the sums, dimmed
+:host{
+	gap: .75rem;
+}
+.group-toggle{
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 32px;
+	height: 32px;
+	margin-left: -8px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: none;
+	color: inherit;
+	cursor: pointer;
+	&:hover{
+		background: color-mix(in srgb, var(--mat-sys-on-surface) 8%, transparent);
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+	}
+}
+.group-value{
+	font: var(--mat-sys-title-small);
+	&.none{
+		font-style: italic;
+	}
+}
+mat-chip{
+	flex: 0 0 auto;
+	--mat-chip-container-height: 22px;
+	--mat-chip-container-shape-radius: 11px;
+	--mat-chip-label-text-size: 11px;
+	--mat-chip-label-text-line-height: 22px;
+}
+.group-count, .group-sum{
+	flex: none;
+	font: var(--mat-sys-label-medium);
+	color: var(--mat-sys-on-surface-variant);
+	white-space: nowrap;
+}
+.sum{
+	color: var(--mat-sys-on-surface);
+}

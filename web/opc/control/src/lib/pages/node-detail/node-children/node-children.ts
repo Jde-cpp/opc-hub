@@ -13,7 +13,7 @@ import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { cellValues, SliceCount, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
+import { cellValues, GroupHeader, GroupHeaderCell, groupRows, isGroupHeader, SliceCount, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
 import { EAccess } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
@@ -35,7 +35,7 @@ import { StructureTable } from '../../structure-table/structure-table';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,SlicePanel,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,GroupHeaderCell,SlicePanel,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -324,6 +324,19 @@ export class NodeChildren implements OnInit, OnDestroy {
 		const self = sorted.find( n=>this.isSelf(n) );//a Variable page's own row stays first, whatever the view's sort
 		return self ? [self, ...sorted.filter( n=>n!==self )] : sorted;
 	} );
+	//The table's rows:  the view's, under a header per group where it is grouped (views spec *Group by*), a collapsed group's
+	//left out.  Every row is here, so a header's count is its group's.  A reading can move a row to another status, so a view
+	//grouped by a column a reading changes is cut again on a push.
+	tableRows = computed<(UaNode|GroupHeader)[]>( ()=>{
+		const grouping = this.view()?.grouping( this.columns );
+		if( !grouping )
+			return this.rows();
+		if( NodeView.readColumns.includes( grouping.by ) )
+			this.#changes();
+		return groupRows( this.rows(), grouping, NodeView.cellValue, this.viewSet.collapsed() );
+	} );
+	readonly isGroup = ( _:number, row:unknown )=>isGroupHeader( row );
+	readonly groupColumns = ["jde-group"];
 	#offered = computed<UaNode[]>( ()=>this.nodes().filter( n=>this.showSystem() || !n.isSystem || this.isSelf(n) ) );//a ns-0 Variable page keeps its own row
 	//The rows the view's filter keeps of those offered, which the rows and the slice panel's counts share.  Read again on every push,
 	//since a reading may move a row in or out, and passed on only where one did:  otherwise a push re-sorts nothing.

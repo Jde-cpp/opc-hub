@@ -14,7 +14,7 @@
 						<slice-panel [views]="viewSet" [columns]="columns" [counts]="sliceCounts()">
 						<div class="table-wrap">
 							<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange-->
-							<mat-table [dataSource]="shown()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" [filterValues]="filterValues()" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
+							<mat-table [dataSource]="tableRows()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" [filterValues]="filterValues()" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
 								<ng-container matColumnDef="trend"><!--the rows the Trend tab draws, up to the palette's eight (#420)-->
 									<mat-header-cell *matHeaderCellDef> Trend </mat-header-cell>
 									<mat-cell *matCellDef="let r">
@@ -112,8 +112,12 @@
 										<button matIconButton type="button" class="row-action" (click)="remove(r)" [attr.aria-label]="'Remove ' + r.name" matTooltip="Remove"><mat-icon aria-hidden="true" fontIcon="close"></mat-icon></button>
 									</mat-cell>
 								</ng-container>
+								<ng-container matColumnDef="jde-group"><!--a group's header, the one cell of its row-->
+									<mat-cell *matCellDef="let group" [groupHeader]="group" (groupToggle)="viewSet.toggleGroup(group.key)"></mat-cell>
+								</ng-container>
 								<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
 								<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
+								<mat-row *matRowDef="let row; columns: groupColumns; when: isGroup" class="jde-group-row"></mat-row>
 							</mat-table>
 						</div>
 						@if( !shown().length ){

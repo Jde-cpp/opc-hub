@@ -2,7 +2,7 @@ import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { BehaviorSubject } from 'rxjs';
 import { ProfileStore, RouteItem } from 'jde-spa';
-import { SnackbarService } from 'jde-framework';
+import { isGroupHeader, SnackbarService } from 'jde-framework';
 import { NodeId } from '../../../model/node-id';
 import { Variable } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
@@ -430,5 +430,23 @@ describe( 'GatewayWatch', ()=>{
 		const element = fixture.nativeElement as HTMLElement;
 		expect( [!!element.querySelector( 'view-toolbar' ), !!element.querySelector( 'mat-table' )] ).toEqual( [true, true] );
 		expect( element.querySelector( 'ql-list-settings, button[aria-label="Edit view"]' ) ).toBeNull();
+	} );
+
+	//#596:  the list's groups, cut from the rows shown, with a header's count and sums its group's
+	it( 'heads the rows with their groups, summed, a header row each, and collapses one', async ()=>{
+		const { page, fixture } = await create( [item( 'local', A, {samplingInterval: 100} ), item( 'plc', B, {samplingInterval: 250} ), item( 'plc', C, {samplingInterval: 500} )], pumps() );
+		const draw = async ()=>{
+			fixture.componentRef.changeDetectorRef.detectChanges();
+			await flush( 3 );
+		};
+		await draw();//the page's first pass runs ngOnInit again, which loads the views anew
+		page.viewSet.edit( view=>{ view.setGroupBy( "connection" ); view.toggleSum( "sampling" ); } );
+		const headed = ()=>page.tableRows().map( r=>isGroupHeader( r ) ? `${r.label} ${r.count} ${r.sums.map( s=>`${s.label} ${s.sum}` )}` : r.name );
+		expect( headed() ).toEqual( ["Local 1 Sampling 100", "rpm", "PLC 2 Sampling 750", "flow", "level"] );
+		await draw();
+		const element = fixture.nativeElement as HTMLElement;
+		expect( [element.querySelectorAll( 'mat-row.jde-group-row' ).length, element.querySelectorAll( 'mat-row' ).length] ).toEqual( [2, 5] );
+		page.viewSet.toggleGroup( "string:PLC" );
+		expect( [headed(), page.shown().length] ).toEqual( [["Local 1 Sampling 100", "rpm", "PLC 2 Sampling 750"], 3] );
 	} );
 } );

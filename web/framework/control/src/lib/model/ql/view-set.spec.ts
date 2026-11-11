@@ -997,3 +997,64 @@ describe( 'ViewSet slice', ()=>{
 		expect( new ViewSet( {type: View, key: "things", profileStore, prefs: new LocalPrefs()} ).canSlice ).toBe( true );
 	} );
 } );
+//#596:  the group column is a change to the view, and the groups collapsed the browser's, kept beside the drafts
+describe( 'ViewSet group', ()=>{
+	const schema = schemaOf( "Thing", id(), required("name"), {name: "kind", type: {kind: "ENUM", name: "Kind"}}, scalar("size", "UInt") );
+	const route = ( groupBy?:string )=>[View.fromConfig( {configColumns: ["name", "kind"], sort: [], groupBy}, schema ), View.fromConfig( {name: "Other", configColumns: ["name"], sort: [], groupBy}, schema )];
+	const load = async ( service=new MockProfileService(), groupBy="kind" )=>{
+		const profileStore = runInInjectionContext( Injector.create({providers: [{provide: IPROFILE_SERVICE, useValue: service}]}), ()=>new ProfileStore() );
+		const set = new ViewSet( {type: View, key: "things", profileStore, prefs: new LocalPrefs()} );
+		await set.load( route(groupBy || undefined), schema );
+		return { set, service };
+	};
+	const stored = ()=>JSON.parse( localStorage.getItem("u1/things/collapsed") ?? "null" );
+	beforeEach( ()=>localStorage.clear() );
+
+	it( 'groups the view shown on its draft, and says whether that changed it', async ()=>{
+		const { set } = await load();
+		expect( [set.setGroupBy( "kind" ), set.current().isAdhoc] ).toEqual( [false, false] );
+		expect( [set.setGroupBy( "size" ), set.current().groupBy, set.current().isAdhoc] ).toEqual( [true, "size", true] );
+		expect( [set.setGroupBy( undefined ), set.current().groupBy] ).toEqual( [true, undefined] );
+	} );
+	it( "collapses a group and opens it again, a view's own, leaving the view no draft", async ()=>{
+		const { set } = await load();
+		set.toggleGroup( "string:a" );
+		set.toggleGroup( "string:b" );
+		expect( [[...set.collapsed()], set.current().isAdhoc] ).toEqual( [["string:a", "string:b"], false] );
+		set.select( 1 );
+		expect( set.collapsed().size ).toBe( 0 );
+		set.toggleGroup( "string:c" );
+		set.select( 0 );
+		set.toggleGroup( "string:a" );
+		expect( [[...set.collapsed()], stored()] ).toEqual( [["string:b"], {1: {field: "kind", value: ["string:b"]}, 2: {field: "kind", value: ["string:c"]}}] );
+		set.toggleGroup( "string:b" );
+		expect( stored() ).toEqual( {2: {field: "kind", value: ["string:c"]}} );
+	} );
+	it( 'holds them while the view is grouped by their column, and takes none for a view that is not grouped', async ()=>{
+		const { set } = await load();
+		set.toggleGroup( "string:a" );
+		set.setGroupBy( "size" );
+		expect( set.collapsed().size ).toBe( 0 );
+		set.discard( set.current() );
+		expect( [...set.collapsed()] ).toEqual( ["string:a"] );
+		const bare = await load( new MockProfileService(), "" );
+		bare.set.toggleGroup( "string:a" );
+		expect( bare.set.collapsed().size ).toBe( 0 );
+	} );
+	it( "survives a reload, is no part of what a Save writes, goes with its view, and drops a stored one that is no view's or no keys", async ()=>{
+		const { set, service } = await load();
+		set.toggleGroup( "string:a" );
+		set.edit( view=>{ view.limit = 50; } );
+		await set.saveDraft( set.current() );
+		expect( JSON.parse(service.rows.get("things/views/1")!) ).toMatchObject( {groupBy: "kind", limit: 50} );
+		expect( [...service.rows.values()].join() ).not.toContain( "string:a" );
+		expect( [...( await load(service) ).set.collapsed()] ).toEqual( ["string:a"] );
+		set.select( 1 );
+		set.toggleGroup( "string:b" );
+		await set.remove( set.current() );
+		expect( stored() ).toEqual( {1: {field: "kind", value: ["string:a"]}} );
+		localStorage.setItem( "u1/things/collapsed", JSON.stringify({1: {field: "kind", value: "a"}, 9: {field: "kind", value: ["string:a"]}}) );
+		await load( service );
+		expect( stored() ).toBeNull();
+	} );
+} );

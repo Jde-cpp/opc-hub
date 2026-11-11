@@ -266,6 +266,23 @@ After 6a, 3b and 4. One PR. `Group by` and `Field sum` in the menus, the same co
 
 Tests: the flattening as a pure function, including a page break, null and collapse; the whole-list count with and without a slice; a sum leaving out `ID` columns; select-all over a grouped page.
 
+Built 2026-11-11, where it differs from the text above:
+
+- **The flattening is `groupRows`** ([`group.ts`](../../web/framework/control/src/lib/model/ql/group.ts)): the rows with a `GroupHeader` ahead of each run of one value, a class so that no row is taken for one. A host calls it with what `View.grouping` answers - the column, its header's name, its chip's tones, the sums and, on a GraphQL list, the counts of the whole list - and the set of groups collapsed. It cuts where the value changes, so a page that starts inside a group starts with its header.
+- **The header is a cell, the same in all three tables.** `GroupHeaderCell` ([`group-header.ts`](../../web/framework/control/src/lib/shared/group-header/group-header.ts)) goes on the one `mat-cell` of a column of its own, `jde-group`, which a second row definition draws `when` the row is a header. `ql-table` keeps `dataSource` as the rows, which the selection reads, and draws `rows`, the headers among them.
+- **The group column sorts as the view sorts it.** It is the rows' first sort (`View.ordered`), ascending, or descending where the view's own sort has the column descending, so a click on its header turns the groups round. The view's `sort` is left as the user set it: `Sort by` and the headers show that alone.
+- **The group column and the sums are read though the view hides them.** A column the view lacks joins its fields hidden, and the query selects it, so a hidden column groups the rows and is summed.
+- **`Field sum` is greyed out until the view is grouped**, where a tick would show nothing. It is absent, with `Group by`, where the list has no column to group by: the logs.
+- **A sum is the page's**, as the count is, and counts the rows of a collapsed group. A fraction's sum is rounded to six places.
+- **The whole-list count is read with the rows, as the panel's counts are** (`QLListResolver.loadGroupCounts`): the `groupBy` query on the group column under the view's filter and its slice's value, kept while that query is the same and read again by `Refresh`. A list whose route sets `canSlice: false` reads none, and its headers show the page's count. A failed read is logged and leaves the page's counts: the header has no room to say why.
+- **The collapsed set is beside the drafts, under `collapsed`**, by the view's number with the group column it is of, as the slice's value is. `ViewSet` keeps the two through one helper (`Beside`).
+- **A header's value is text but for a chip column**, whose chip it draws in its tone. A boolean reads `true` and `false`, as in the slice panel.
+- **A grouped table is as wide as its columns** (`.jde-grouped` in [`_general.scss`](../../web/spa/control/src/styles/_general.scss)), so that a header's row, which has one cell, is as wide as the rows under it. Its cell sticks at the pane's left as the pinned column does.
+- **The header sticks under the column headers in `ql-table`**, whose header row sticks. The hand-built tables' header rows do not stick, so there a group's header sticks at the pane's top.
+- **A node's Children cut their groups again on a push** only where the group column is one a reading changes; the watch list cuts on every push.
+- **Select-all takes the rows of a collapsed group** with the others, since it reads the page's rows.
+- **Checked in the browser** on the users list, grouped by Provider: the headers with their chips and counts, a sum, the chevron, the header stuck under the column headers, and the group's cell at the left of a table scrolled sideways at 700px. The *12 of 40* was not seen there: the hub running predates 6a and refuses `groupBy`, so the headers showed the page's counts, as on a failed read. A node's Children and the watch list were not walked.
+
 ## Phase 8 - keyboard (piece 8)
 
 Issue [#597].

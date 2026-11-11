@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { config } from 'rxjs';
-import { SnackbarService } from 'jde-framework';
+import { GroupHeader, isGroupHeader, SnackbarService } from 'jde-framework';
 import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
 import { Enum } from '../../../model/enum';
@@ -227,6 +227,20 @@ describe( 'NodeChildren subscription values', ()=>{
 			push( {sc: bad} );
 			expect( [page.rows(), page.sliceCounts().length, predicate.mock.calls.length] ).toEqual( [[], 1, 1] );
 			predicate.mockRestore();
+		} );
+		//#596
+		it( 'heads the rows with their groups, cut again on a push where a reading changes the group column, and collapses one', ()=>{
+			const { page, row, push } = subscribed();
+			page.viewSet.reset( [NodeView.default()], NodeView.schema );
+			expect( page.tableRows() ).toBe( page.rows() );
+			page.viewSet.setGroupBy( "status" );
+			push( {value: 6, sc: 0} );
+			const headed = ()=>page.tableRows().map( r=>isGroupHeader( r ) ? `${r.label} ${r.count}` : r.name );
+			expect( headed() ).toEqual( [`${OpcError.text(0)} 1`, "q"] );
+			push( {sc: bad} );
+			expect( headed() ).toEqual( [`${OpcError.text(bad)} 1`, "q"] );
+			page.viewSet.toggleGroup( ( page.tableRows()[0] as GroupHeader ).key );
+			expect( [headed(), page.rows()] ).toEqual( [[`${OpcError.text(bad)} 1`], [row]] );//the rows, and their count, are the view's still
 		} );
 		//the filter is read again on a push for the counts, and the rows follow it where a row left or joined it
 		it( 'takes a row out of the rows when a push leaves it outside the filter', ()=>{

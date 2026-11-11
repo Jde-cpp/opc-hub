@@ -785,3 +785,76 @@ describe( 'QLList slice', ()=>{
 		expect( query ).toHaveBeenCalledTimes( 1 );
 	} );
 } );
+//#596:  a grouped list reads each group's count over the whole list with its rows, and a page's headers say theirs of it
+describe( 'QLList group', ()=>{
+	const schema = schemaOf( "User", id(), required("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}}, scalar("logins", "UInt") );
+	afterEach( ()=>vi.restoreAllMocks() );
+	const users = [{id: 1, name: "ann", provider: "Google", logins: 1}, {id: 2, name: "bob", provider: "Key", logins: 2}, {id: 3, name: "cat", provider: "Key", logins: 4}, {id: 4, name: "dan", provider: "Key", logins: 8}];
+	//a list over `users` a page of `limit`, answered by a server that pages, filters on provider and counts by the column grouped by
+	const create = async ( {groupBy="provider", limit=2, canSlice=true}:{groupBy?:string; limit?:number; canSlice?:boolean}={} )=>{
+		const query = vi.fn( async ( text:string, vars:Record<string,any> )=>{
+			const rows = users.filter( u=>!vars["provider"] || vars["provider"].includes(u.provider) );
+			if( text.includes("groupBy") ){
+				const by = /groupBy:"(\w+)"/.exec( text )![1] as keyof typeof users[0];
+				return { users: [...new Set( rows.map( u=>u[by] ) )].map( value=>({[by]: value, count: rows.filter( u=>u[by]==value ).length}) ) };
+			}
+			const skip = +( /skip:(\d+)/.exec( text )?.[1] ?? 0 ), take = +( /limit:(\d+)/.exec( text )?.[1] ?? rows.length );
+			return { users: rows.slice( skip, skip+take ) };
+		} );
+		configure( undefined, {provide: IGRAPHQL, useValue: {query}} );
+		const fixture = TestBed.createComponent( QLList );
+		const page = fixture.componentInstance;
+		const settings = {columns: ["name", "provider"], sort: "name", groupBy: groupBy || undefined, sums: ["logins"], sliceBy: "provider", canSlice};
+		const profile = QLListResolver.viewSet( "users", TestBed.inject(ProfileStore), TestBed.inject(LocalPrefs), settings );
+		const view = View.fromTable( settings, schema );
+		view.limit = limit;
+		profile.reset( [view], schema );
+		const data = { routing: new ListRoute({path: 'users'}), schema, profile, columns: {name: "Name", provider: "Provider", logins: "Logins"}, results: null } as unknown as QLListData;
+		fixture.componentRef.setInput( 'listData', await QLListResolver.load({query: query as any}, data, null) );
+		await page.ngOnInit();
+		fixture.detectChanges();
+		const counts = ()=>query.mock.calls.filter( ([text])=>text.includes('groupBy:"provider",') || text.includes('groupBy:"provider")') ).length;
+		const headers = ()=>[...( fixture.nativeElement as HTMLElement ).querySelectorAll( 'mat-row.jde-group-row' )].map( r=>[...r.querySelectorAll( '.group-value, .group-count, .group-sum' )].map( e=>e.textContent!.replace( /\s+/g, " " ).trim() ).join( ", " ) );
+		return { page, fixture, query, counts, headers };
+	};
+
+	it( "reads the rows by the group column first, and each group's count with them, a header saying its page's of the list's", async ()=>{
+		const { page, query, headers } = await create();
+		expect( query.mock.calls.map( ([text])=>text ) ).toContain( 'users(limit:3,orderBy:[{provider:"asc"},{name:"asc"},{id:"asc"}]){ id name provider logins }' );
+		expect( page.grouping() ).toMatchObject( {by: "provider", label: "Provider", sums: [{name: "logins", label: "Logins"}], totals: [{value: "Google", count: 1}, {value: "Key", count: 3}]} );
+		expect( headers() ).toEqual( ["Google, 1 row, Logins 1", "Key, 1 of 3 rows, Logins 2"] );
+	} );
+	it( 'repeats the header of a group a page break cut, on the next page', async ()=>{
+		const { page, fixture, headers, counts } = await create();
+		const read = counts();
+		vi.spyOn( Paginator, 'showFirstRow' ).mockImplementation( ()=>{} );
+		await page.onPage( {startIndex: 2, pageSize: 2} as any );
+		fixture.detectChanges();
+		expect( [headers(), counts()] ).toEqual( [["Key, 2 of 3 rows, Logins 12"], read] );//the counts kept:  their query is the same
+	} );
+	it( "counts a group under the slice's value", async ()=>{
+		const { page, fixture, headers } = await create( {limit: 1} );
+		page.profile().setSlice( "Key" );
+		await page.onChangeView();
+		fixture.detectChanges();
+		expect( headers() ).toEqual( ["Key, 1 of 3 rows, Logins 2"] );
+		expect( page.grouping()!.totals ).toEqual( [{value: "Key", count: 3}] );
+	} );
+	it( 'reads the rows again, and the counts, for another group column, and neither for a sum', async ()=>{
+		const { page, fixture, query, headers } = await create( {groupBy: ""} );
+		expect( [headers(), page.grouping()] ).toEqual( [[], undefined] );
+		page.profile().setGroupBy( "provider" );
+		await page.onChangeView();
+		fixture.detectChanges();
+		expect( headers() ).toEqual( ["Google, 1 row, Logins 1", "Key, 1 of 3 rows, Logins 2"] );
+		const read = query.mock.calls.length;
+		page.profile().edit( view=>view.toggleSum("logins") );
+		await page.onChangeView();
+		fixture.detectChanges();
+		expect( [headers(), query.mock.calls.length] ).toEqual( [["Google, 1 row", "Key, 1 of 3 rows"], read] );
+	} );
+	it( "heads the groups with the page's counts alone where the route's list is not counted", async ()=>{
+		const { page, headers, query } = await create( {canSlice: false} );
+		expect( [headers(), page.grouping()!.totals, query.mock.calls.some( ([text])=>text.includes("groupBy") )] ).toEqual( [["Google, 1 row, Logins 1", "Key, 1 row, Logins 2"], undefined, false] );
+	} );
+} );

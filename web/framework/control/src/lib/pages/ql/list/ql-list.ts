@@ -27,6 +27,7 @@ import { PageEvent, Paginator } from '../../../shared/paginator/paginator';
 import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 import { SlicePanel } from '../../../shared/slice-panel/slice-panel';
 import { SliceCount } from '../../../model/ql/slice';
+import { Grouping } from '../../../model/ql/group';
 
 @Component({
 	selector: 'ql-list',
@@ -77,6 +78,7 @@ export class QLList implements OnInit{
 		this.sliceCounts.set( data.sliceCounts );
 		this.sliceCountsError.set( data.sliceCountsError );
 		this.#countedBy.set( data.sliceCountsOf?.by );
+		this.#groupCounts.set( data.groupCounts );
 		this.error.set( data.error );//a good load clears the last failure; a resolver that caught the rows query sets it
 		this.sideNav.set( data.routing );
 		let paths = [];
@@ -167,6 +169,7 @@ export class QLList implements OnInit{
 		this.data.set( [] );
 		this.sliceCounts.set( undefined );
 		this.sliceCountsError.set( undefined );
+		this.#groupCounts.set( undefined );
 	}
 
 	async onPage( e:PageEvent ){
@@ -178,11 +181,11 @@ export class QLList implements OnInit{
 	//The toolbar or a header put another view on screen:  its rows, unless those shown or on their way hold them - the view
 	//renamed, a copy of it, a column hidden, moved or resized, or its filter changed only in a term the box cannot read - where
 	//the page stays as it is, its columns the view's even while a read is out.  A column shown is read on the same page, as is
-	//another slice column, for its counts, and a list showing a failure reads whatever the change.  The slice panel says the same
+	//another slice or group column, for its counts, and a list showing a failure reads whatever the change.  The slice panel says the same
 	//of its value, which narrows the rows as a filter's term does.
 	async onChangeView(){
 		const view = this.profile().current(), asked = this.profile().sliced(), queried = this.#queried ?? this.view();
-		if( View.answers(queried, asked) && queried.sliceBy==asked.sliceBy && !this.error() ){
+		if( View.answers(queried, asked) && queried.sliceBy==asked.sliceBy && queried.groupBy==asked.groupBy && !this.error() ){
 			this.view.set( view );
 			const multiple = this.selector() || view.showSelector;//the Fields checklist's Select
 			if( multiple!=this.selections().isMultipleSelection() )
@@ -202,13 +205,13 @@ export class QLList implements OnInit{
 	//every path that re-queries goes through here so isRefreshing covers the whole load, not just the Refresh button.
 	//Only the latest call lands:  page turns and view changes don't wait for each other, and an older query finishing last
 	//would put back its own page, or the rows of the view it was sent under.  The slice panel's counts are read again where the
-	//filter or the column changed, or `recount` - a Refresh - asks.
+	//filter or the column changed, or `recount` - a Refresh - asks, and the groups' with them.
 	async reload( recount=false ){
 		const id = this.#reloads.next();
 		this.#queried = this.profile().sliced();
 		this.isRefreshing.set( true );
 		try{
-			const reload = await QLListResolver.load( this.#ql(), {...this.resolvedData(), skip: this.skip(), ...( recount ? {sliceCounts: undefined} : {} )}, null );
+			const reload = await QLListResolver.load( this.#ql(), {...this.resolvedData(), skip: this.skip(), ...( recount ? {sliceCounts: undefined, groupCounts: undefined} : {} )}, null );
 			if( !this.#reloads.is(id) )
 				return;
 			if( !this.selector() )
@@ -315,6 +318,10 @@ export class QLList implements OnInit{
 	//what the panel shows:  the counts of the column it lists alone, so another column, picked while a read is out, shows none
 	panelCounts = computed<SliceCount[]|undefined>( ()=>this.#countedBy()==this.profile().current().sliceBy ? this.sliceCounts() : undefined );
 	panelFailure = computed<unknown>( ()=>this.#countedBy()==this.profile().current().sliceBy ? this.sliceCountsError() : undefined );
+	//What the rows are grouped by (views spec *Group by*), as the view they were read under has it, with each group's count over
+	//the whole list where it was read:  a header then says *12 of 40* on a page that holds a part of its group.
+	#groupCounts = signal<SliceCount[]|undefined>( undefined );
+	grouping = computed<Grouping|undefined>( ()=>this.view()?.grouping( this.columns(), this.#groupCounts() ) );
 	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilter?.includes( "-id:" ), selector: this.selector()}) );
 	showEmpty = computed<boolean>( ()=>!this.isRefreshing() && this.error()===undefined && !this.data().length );//not while a reload has the rows cleared
 	addFilled = computed<boolean>( ()=>this.showEmpty() && !this.viewFiltered() );//Add is the one useful action only on a genuinely empty list - not under a filter, a refusal or a failure (#fail and loadOrFail empty the rows too)

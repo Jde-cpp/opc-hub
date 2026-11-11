@@ -270,6 +270,20 @@ describe( 'ViewColumns on a hand-built table', ()=>{
 		} );
 	} );
 
+	//#596
+	it( 'groups by a boolean column from its menu, ticked on the column grouped by, and not by text', async ()=>{
+		const y = await open( ["time", "message", "ok"] );
+		expect( ( await y.menu( "message" ) ).some( i=>i.textContent!.includes( "Group by this field" ) ) ).toBe( false );
+		document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+		await stable( y.fixture, 1 );
+		await y.pick( "ok", "Group by this field" );
+		expect( [y.set.current().groupBy, y.set.current().isAdhoc, y.host.changes] ).toEqual( ["ok", true, 1] );
+		expect( ( await y.menu( "ok" ) ).find( i=>i.textContent!.includes( "Group by this field" ) )!.getAttribute( "aria-checked" ) ).toBe( "true" );
+		document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+		await stable( y.fixture, 1 );
+		await y.pick( "ok", "Group by this field" );
+		expect( y.set.current().groupBy ).toBeUndefined();
+	} );
 	//#595
 	it( 'slices by a boolean column from its menu, ticked on the column sliced by, and not by text', async ()=>{
 		const y = await open( ["time", "message", "ok"] );

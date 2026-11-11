@@ -1,0 +1,12 @@
+@let group = header();
+<button type="button" class="group-toggle" [attr.aria-expanded]="!group.collapsed" [attr.aria-label]="(group.collapsed ? 'Expand ' : 'Collapse ') + group.label" (click)="groupToggle.emit()"><mat-icon aria-hidden="true">{{ group.collapsed ? "chevron_right" : "expand_more" }}</mat-icon></button>
+@if( group.chip ){
+	<mat-chip [class]="group.tone ? 'chip-' + group.tone : ''">{{ group.label }}</mat-chip>
+}
+@else{
+	<span class="group-value" [class.none]="group.value===null">{{ group.label }}</span>
+}
+<span class="group-count">{{ group.count }}@if( group.of!==undefined ){ of {{ group.of }}}<span class="cdk-visually-hidden"> {{ (group.of ?? group.count)==1 ? "row" : "rows" }}</span></span>
+@for( sum of group.sums; track sum.name ){
+	<span class="group-sum">{{ sum.label }} <span class="sum">{{ sum.sum }}</span></span>
+}

@@ -7,6 +7,7 @@ export * from './lib/model/ql/view';
 export * from './lib/model/ql/view-set';
 export * from './lib/model/ql/filter-query';
 export * from './lib/model/ql/slice';
+export * from './lib/model/ql/group';
 export * from './lib/model/ql/schema/meta-object';
 export * from './lib/model/ql/schema/table-schema';
 export * from './lib/model/ql/schema/field';
@@ -51,6 +52,7 @@ export * from './lib/shared/severity-picker/severity-picker'
 export * from './lib/shared/failure-state/failure-state';
 export * from './lib/shared/snackbar/snackbar';
 export * from './lib/shared/slice-panel/slice-panel';
+export * from './lib/shared/group-header/group-header';
 export * from './lib/shared/view-columns/view-columns';
 export * from './lib/shared/view-toolbar/view-toolbar';
 export * from './lib/utils/date-utils';
