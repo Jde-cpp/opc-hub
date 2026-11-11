@@ -22,11 +22,15 @@ The one port serves:
 - `/opc` - the gateway's OPC socket.
 - `/graphql` - one endpoint over access, app and gateway.
 
-Beside it, the gateway role's own OPC UA endpoint, `opc.tcp://<host>:4841` (`Opc.Gateway.jsonnet` `gateway.server`,
-[`docs/servers/spec.md`](../../docs/servers/spec.md)): a SCADA or a UA client browses what the hub collects, with the
-hub's sessions behind it.  It presents the hub's own certificate, trusts the client certificates under
-`<ProgramData>/Jde-Cpp/OpcHub/ssl/servers/clients`, and writes one it refuses to `ssl/servers/rejected` for you to move
-over.  Its `users` list, the user-name logins, is plain text at rest, as the collector's `hist.credentials` are: put a
+Beside it, the gateway role serves its own OPC UA endpoint, `opc.tcp://<host>:4841` (`Opc.Gateway.jsonnet`
+`gateway.server`, [`docs/servers/spec.md`](../../docs/servers/spec.md)).  A SCADA or a UA client browses what the hub
+collects, with the hub's sessions behind it.
+
+The endpoint presents the hub's own certificate.  It trusts the client certificates under
+`<ProgramData>/Jde-Cpp/OpcHub/ssl/servers/clients`.  It writes a certificate it refuses to `ssl/servers/rejected`, for
+you to move over.
+
+Its `users` list holds the user-name logins, in plain text at rest, as the collector's `hist.credentials` are.  Put a
 secret through the `$(ENV)` expansion the key passcodes use (`"$(OPERATOR_PASSWORD)"`), set in the service's
 environment.
 
@@ -79,9 +83,15 @@ comment there) and restart the service.  A listed dir that is never created logs
 
 ## Tests
 
-`Jde.Opc.Hub.Tests` (`tests/`) embeds the hub (1973) plus an OpcServer (1975, opc.tcp 4975) - ports nothing else binds,
-so it runs beside a live hub.  `ctest --timeout 300 -R Jde.Opc.Hub.Tests`.  `CalendarClientTests` is the gateway
-role's cache of the shift calendars, filled and kept current in-process
+`Jde.Opc.Hub.Tests` (`tests/`) embeds the hub and an OpcServer on ports nothing else binds, so it runs beside a live
+hub:
+
+- the hub: http 1973, and its OPC UA endpoint on opc.tcp 4976;
+- the OpcServer: http 1975, and opc.tcp 4975.
+
+Run it with `ctest --timeout 300 -R Jde.Opc.Hub.Tests`.
+
+`CalendarClientTests` covers the gateway role's cache of the shift calendars, filled and kept current in-process
 ([spec](../../docs/calendar/spec.md) *The client*).
 
 ## Frontend
@@ -126,12 +136,15 @@ The settings they ship:
    - The finish page's "Start now" box starts the products; later, `net start Jde.OpcHub` / `net start Jde.OpcServer`,
      or the Start Menu shortcuts (a console window each).  The database is sqlite, one file per product under
      `C:\ProgramData\Jde-Cpp\<Product>`, created on the first start - no SQL Server, no setup script.
-2) Browse to http://localhost:1967/ (the finish page's link) - from another machine, `http://<hub>:1967/`; the page
-   calls the hub by the name it was browsed by.  The all-users installer allows inbound TCP 1967 (and 4840 with the
-   OPC UA Server) through Windows Firewall; a current-user install cannot open a port, so it listens on loopback only
-   (no firewall prompt) and the products answer that machine alone - for another machine, install for all users, or
-   set `listenAddress: null` in both products' `args/install-user` (the hub's and the OpcServer's) and have an
-   administrator open the ports.
+2) Browse to http://localhost:1967/ (the finish page's link).  From another machine, browse to `http://<hub>:1967/`;
+   the page calls the hub by the name it was browsed by.
+   - The all-users installer allows inbound TCP 1967 and 4841 (the hub's OPC UA endpoint) through Windows Firewall,
+     and 4840 with the OPC UA Server.
+   - A current-user install cannot open a port.  It listens on loopback only (no firewall prompt), so the products
+     answer that machine alone.
+   - For another machine, install for all users.  Or set `listenAddress: null` in both products' `args/install-user`
+     (the hub's and the OpcServer's) and have an administrator open TCP 1967 and 4841 (and 4840 for the OPC UA Server).
+
    `https://<hub>:1967/` works too:  the hub answers TLS on the same port, and a page browsed that way calls it over
    https and wss.  Its certificate is self-signed for `localhost`, the machine's name and `127.0.0.1` (or your own
    pair - [`setup/README.md`](setup/README.md) "Notes"), so another machine's browser has to trust it first.
@@ -152,13 +165,19 @@ The settings they ship:
 4) Uninstall: Settings > Apps (a current-user install also has an Uninstall shortcut in its Start Menu folder).  The
    database, certificates and logs under `C:\ProgramData\Jde-Cpp` are left in place.
 
-IIS is optional - the site behind IIS instead of, or beside, the hub's own url.  Windows features: Internet Information
-Services > World Wide Web Services > Common HTTP Features > *Static Content* and *Default Document*, nothing else.  IIS
-Manager > Add Website: site name `OpcHub`, physical path `C:\Program Files\Jde-Cpp\Web` (the current-user install's
-`Web` dir), binding http, port 8071.  Reloading or bookmarking a route (`/login`, `/gateways`) is a 404 there until
-the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is installed and the `<rewrite>` rule in
-`Web\web.config` is uncommented (it sends every path that is not a file to `index.html`); the page then calls the hub's
-1967 by the host it was browsed from.
+IIS is optional.  It serves the site instead of, or beside, the hub's own url.
+
+- Windows features: Internet Information Services > World Wide Web Services > Common HTTP Features > *Static Content*
+  and *Default Document*, nothing else.
+- IIS Manager > Add Website: site name `OpcHub`, physical path `C:\Program Files\Jde-Cpp\Web` (the current-user
+  install's `Web` dir), binding http, port 8071.
+
+Reloading or bookmarking a route (`/login`, `/gateways`) is a 404 there until:
+
+- the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is installed, and
+- the `<rewrite>` rule in `Web\web.config` is uncommented.  It sends every path that is not a file to `index.html`.
+
+The page then calls the hub's 1967 by the host it was browsed from.
 
 ### Linux
 
@@ -168,7 +187,7 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
    the first start.  Without root, the tarball's `install.sh` installs under your account and runs the products as
    `systemctl --user` units (`--opcserver` for the server).  Like the Windows current-user mode, it listens on
    `127.0.0.1` only.  To reach it from another machine, use the `.deb`, or set `listenAddress: null` in both
-   products' `args/install-user` (the hub's and the OpcServer's) and open the ports.
+   products' `args/install-user` (the hub's and the OpcServer's) and open TCP 1967 and 4841 (and 4840 for the server).
 2) Browse to http://localhost:1967/ - the hub serves the site; the packaged nginx site on 8071 is optional
    (`sudo ln -s /etc/jde-cpp/nginx-opchub.conf /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`).
 3) Log in, as above - Google with the OPC UA Server component, otherwise a connection's own `<slug>\<user>`.
@@ -198,5 +217,6 @@ Roles are seeded, but the first grant is manual.  Every resource ships unenforce
 
 ## Not done here
 
-Soak support (`apps/OpcGateway/soak/soak.sh` launches the split deployment's three servers - the AppServer, the gateway
-and the OpcServer - not the hub), source consolidation under this directory.
+- Soak support.  `apps/OpcGateway/soak/soak.sh` launches the split deployment's three servers (the AppServer, the
+  gateway and the OpcServer), not the hub.
+- Source consolidation under this directory.
