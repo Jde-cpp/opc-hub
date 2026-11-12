@@ -2,11 +2,11 @@ name: Win2025 Deps
 
 # Builds the third-party libraries defined in build/CMakeLists.txt (the -repos
 # superbuild: fmt, spdlog, abseil, protobuf, open62541, ryml, jsonnet, gtest,
-# zlib, libxml2, plus boost_json) in Release on the GitHub-hosted windows-2025
-# (VS2026) image, and saves the result to actions/cache. The companion
-# win2025-build.yml restores this cache and builds the repo's own exe/DLLs; it
-# never builds deps itself (strict coupling), so this workflow must have run at
-# least once on `main` before the build workflow can succeed.
+# quickjs-ng, zlib, libxml2, plus boost_json) in Release on the GitHub-hosted
+# windows-2025 (VS2026) image, and saves the result to actions/cache. The
+# companion win2025-build.yml restores this cache and builds the repo's own
+# exe/DLLs; it never builds deps itself (strict coupling), so this workflow must
+# have run at least once on `main` before the build workflow can succeed.
 #
 # Cache visibility: GitHub scopes caches to the creating branch + its default
 # branch. Dispatch this on `main` so the deps cache is visible to every branch/PR.

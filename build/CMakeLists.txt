@@ -521,6 +521,21 @@ ExternalProject_Add(open62541-nodeset-loader
 		${nodesetLoaderArgs}
 )
 
+# quickjs-ng, the engine of the flows' Function node.  QJS_BUILD_LIBC off keeps quickjs-libc.c - the std and os modules,
+# a script's way to files, sockets and processes - out of the library:  only upstream's own executables link it.  It
+# installs under qjs/, its package's name, so find_package( qjs CONFIG ) reaches it in the prefix.
+ExternalProject_Add(quickjs
+	GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
+	GIT_TAG v0.18.0
+	PREFIX quickjs
+	INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/qjs
+	CMAKE_ARGS ${stdArgs}
+		-DBUILD_SHARED_LIBS=OFF
+		-DQJS_BUILD_LIBC=OFF
+		-DQJS_BUILD_EXAMPLES=OFF
+		-DQJS_ENABLE_INSTALL=ON
+)
+
 ExternalProject_Add_StepDependencies( spdlog configure fmt )
 ExternalProject_Add_StepDependencies( absl configure gtest )
 ExternalProject_Add_StepDependencies( protobuf configure absl )
