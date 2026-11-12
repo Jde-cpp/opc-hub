@@ -45,7 +45,7 @@ export class HistAdminResolver implements Resolve<GatewayDetailData<any>>{
 			}
 			else
 				this.#snackbar.exception( `Could not load '${slug}'`, e );
-			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, ['..'] ) );//<page>/<kind>, which redirects to the page
+			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, route.data['suffix'] ? ['../..'] : ['..'] ) );//<page>/<kind>, which redirects to the page:  '..' drops one segment, the suffix's under a row's own
 			return null as unknown as GatewayDetailData<any>;
 		}
 	}

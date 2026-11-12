@@ -101,6 +101,17 @@ section .notice{
 		color: var(--mat-sys-tertiary);
 	}
 }
+/* a hint's icon beside its label:  focusable, so the tooltip reaches the keyboard too */
+.hint-icon{
+	@include status.icon-size( 16px );
+	margin-inline-start: 4px;
+	vertical-align: text-bottom;
+	color: var(--mat-sys-on-surface-variant);
+	cursor: help;
+}
+.lead .hint-icon{
+	color: inherit;
+}
 /* the loss split:  three small tables side by side, one under the other where they don't fit */
 .split{
 	display: flex;

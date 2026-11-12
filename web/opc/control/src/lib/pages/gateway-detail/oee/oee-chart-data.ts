@@ -95,7 +95,9 @@ export function lossName( l:OeeLoss ):string{ return l.kind=='small' ? 'Small st
 //The trend:  a column of OEE, in percent, per bucket of `oee` by shift or day, none where the bucket has no planned time.
 //`day` names a bucket's day on the axis.
 export type OeeTrendBy = 'shift'|'day';
-export function toOeeTrend( buckets:OeeBucket[], by:OeeTrendBy, day=( d:Date )=>d.toLocaleDateString( undefined, {month: 'short', day: 'numeric'} ) ):ColumnData{
+//A bucket's day by its start:  the browser's date, or UTC's for a machine with no calendar, whose days the gateway takes as UTC's.
+export const oeeDayName = ( utc=false )=>( d:Date )=>d.toLocaleDateString( undefined, {month: 'short', day: 'numeric', ...(utc ? {timeZone: 'UTC'} : {})} );
+export function toOeeTrend( buckets:OeeBucket[], by:OeeTrendBy, day=oeeDayName() ):ColumnData{
 	const categories = buckets.map( b=>by=='shift' && b.shift ? `${b.shift} ${day( b.start )}` : day( b.start ) );
 	const points = buckets.map( ( b, i ):ColumnPoint=>({
 		y: b.oee==undefined ? null : Number( ( b.oee*100 ).toFixed( 1 ) ), color: trendColor,

@@ -26,7 +26,7 @@ const stopJson = ( id:number, extra:object={} )=>({ id, start: iso( 8, 12 ), end
 //The page over stubs:  `service` records each read and answers what the test set on `answers`;  `status` is the machine's, a
 //calendar found by default;  `addOn` is how the add-on settled;  `dialog` is what the coding dialog was opened with, and
 //`closeWith` what it answers.  `open` moves the page to another machine, as the router does.
-const create = async ( {calendar='found', addOn='loaded'}:{calendar?:string; addOn?:'loaded'|'absent'}={} )=>{
+const create = async ( {calendar='found', addOn='loaded', status}:{calendar?:string; addOn?:'loaded'|'absent'; status?:Error}={} )=>{
 	const answers = {
 		timelineRefusals: 0,
 		stops: [stopJson( 7 )], continuation: <string|undefined>undefined,
@@ -37,7 +37,7 @@ const create = async ( {calendar='found', addOn='loaded'}:{calendar?:string; add
 		availability: 0.8, performance: 1.04, quality: 0.95, oee: 0.684, teep: 0.556, measured: ['availability', 'performance', 'quality'], partial: true };
 	const service = {
 		reasons: vi.fn( async ()=>[Jam] ),
-		shift: vi.fn( async ( _g:unknown, _id:number, now:Date )=>( {start: new Date( now.getTime()-3600000 ), end: new Date( now.getTime()+3600000 )} ) ),
+		shift: vi.fn( async ( _g:unknown, _id:number, now:Date )=>( {start: new Date( now.getTime()-3600000 ), end: new Date( now.getTime()+3600000 ), name: 'First'} ) ),
 		figures: vi.fn( async ( _g:unknown, _id:number, _range:OeeSpan, by?:string )=>{
 			if( answers.figures && !by )
 				throw answers.figures;
@@ -50,10 +50,11 @@ const create = async ( {calendar='found', addOn='loaded'}:{calendar?:string; add
 				throw new Error( '(400)It is 12000 segments, more than readLimit, 10000:  narrow the range.' );
 			return toOeeTimeline( [{planned: [], segments: [{start: iso( 8, 12 ), end: iso( 8, 40 ), state: 'stopped', stop: 7, small: false, uncoded: true}, {start: iso( 9 ), end: iso( 9, 5 ), state: 'stopped', stop: 99, small: false, uncoded: true}]}] );
 		} ),
-		code: vi.fn( async ( _g:unknown, _id:number, _call:OeeCodingCall )=>{} ),
+		stop: vi.fn( async ( _g:unknown, _id:number, id:number, _at:Date )=>id==99 ? toOeeStop( stopJson( 99, {start: iso( 9 ), end: iso( 9, 5 ), codings: [{id: 12, start: iso( 9 ), end: iso( 9, 2 ), reason: Jam, userName: 'op'}]} ) ) : undefined ),
+		code: vi.fn( async ( _g:unknown, _id:number, _call:OeeCodingCall )=>undefined ),
 		uncode: vi.fn( async ( _g:unknown, _id:number )=>{} )
 	};
-	const admin = { status: vi.fn( async ()=>({enabled: true, calendar, engine: 'live'}) ) };
+	const admin = { status: vi.fn( async ()=>{ if( status ) throw status; return {enabled: true, calendar, engine: 'live'}; } ) };
 	const loader = { state: signal( addOn ), load: vi.fn( async ()=>addOn=='loaded' ? {} : undefined ) };
 	const dialog = vi.spyOn( OeeCodingDialog, 'open' ).mockImplementation( async ()=>answers.closeWith );
 	const gateway = { slug: 'g' };
@@ -90,7 +91,8 @@ describe( 'OeeMachinePage', ()=>{
 		expect( range.end.getTime()-range.start.getTime() ).toBe( 3600000 );//the shift so far:  it ends now
 		for( const read of [p.service.figures, p.service.stops, p.service.losses, p.service.timeline] )
 			expect( read.mock.calls[0].slice( 0, 3 ) ).toEqual( [p.gateway, 4, range] );
-		expect( p.service.figures.mock.calls.map( c=>c[3] ) ).toEqual( expect.arrayContaining( [undefined, 'shift'] ) );//the figures, and the trend by shift
+		expect( p.service.figures.mock.calls.map( c=>c[3] ) ).toEqual( [undefined] );//the trend by shift is the figures' one bucket
+		expect( p.page.trend().map( b=>b.shift ) ).toEqual( ['First'] );
 		expect( p.service.stops.mock.calls[0][3] ).toEqual( {uncoded: false, limit: 50} );
 		expect( p.page.errors() ).toEqual( {} );
 		expect( p.page.loading() ).toBe( 0 );
@@ -133,10 +135,13 @@ describe( 'OeeMachinePage', ()=>{
 		p.answers.figures = new Error( 'Forbidden.' );
 		await p.page.refresh();
 		await stable( p.fixture );
-		expect( p.page.errors() ).toEqual( {figures: 'Forbidden.'} );
+		expect( p.page.errors() ).toEqual( {figures: 'Forbidden.', trend: 'Forbidden.'} );//the trend by shift over This shift is the figures' bucket
 		expect( p.page.bucket() ).toBeUndefined();
 		expect( p.text( '#oee-figures ~ .refused' ) ).toEqual( ['Forbidden.'] );
 		expect( p.page.stops() ).toHaveLength( 1 );
+		expect( p.page.losses() ).toHaveLength( 2 );
+		await p.page.pick( 'today' );
+		expect( p.page.errors() ).toEqual( {figures: 'Forbidden.'} );
 		expect( p.page.trend() ).toHaveLength( 1 );
 	} );
 	it( 'is its figures and tables without the add-on:  no chart, no timeline read, the trend as rows', async ()=>{
@@ -176,7 +181,9 @@ describe( 'OeeMachinePage', ()=>{
 		const reads = p.service.figures.mock.calls.length;
 		await p.page.code( p.page.stops()[0] );
 		expect( p.dialogData().stop ).toBe( p.page.stops()[0] );
-		expect( p.dialogData().reasons ).toEqual( [Jam] );
+		expect( p.dialogData().reasons() ).toEqual( {list: [Jam]} );
+		await p.dialogData().reread();
+		expect( p.service.stop ).toHaveBeenCalledWith( p.gateway, 4, 7, p.page.stops()[0].start );
 		expect( p.service.figures.mock.calls.length ).toBe( reads );//closed with nothing sent:  nothing read
 		await p.dialogData().code( {start: 'a', end: 'b', reason: 3} );
 		expect( p.service.code ).toHaveBeenCalledWith( p.gateway, 4, {start: 'a', end: 'b', reason: 3} );
@@ -184,16 +191,98 @@ describe( 'OeeMachinePage', ()=>{
 		expect( p.service.uncode ).toHaveBeenCalledWith( p.gateway, 9 );
 		p.answers.closeWith = true;
 		await p.page.code( p.page.stops()[0] );
-		expect( p.service.figures.mock.calls.length ).toBe( reads+2 );//the figures and the trend
+		expect( p.service.figures.mock.calls.length ).toBe( reads+1 );//the figures, which the trend by shift shares
 		expect( p.service.losses.mock.calls.length ).toBe( 2 );
 	} );
-	it( "opens the dialog from a band on the table's stop, or on the chart's pieces of one the table lacks", async ()=>{
+	it( "opens the dialog from a band on the table's stop, or on the gateway's of one the table lacks", async ()=>{
 		const p = await create();
 		const [seven, other] = p.page.timeline()!.segments;
 		p.charts()[0].pick.emit( seven );
 		expect( p.dialogData().stop ).toBe( p.page.stops()[0] );
+		expect( p.service.stop ).not.toHaveBeenCalled();
 		await p.page.codeSegment( other );
-		expect( p.dialogData().stop ).toEqual( {start: other.start, startText: other.startText, end: other.end, endText: other.endText, codings: []} );
+		expect( p.service.stop ).toHaveBeenCalledWith( p.gateway, 4, 99, other.start );
+		expect( p.dialogData().stop ).toMatchObject( {id: 99, codings: [{id: 12}]} );//whole, with its codings
+		const opened = p.dialog.mock.calls.length;
+		await p.page.codeSegment( {...other, stop: 98} );
+		expect( p.dialog.mock.calls.length ).toBe( opened );
+		expect( p.page.errors().timeline ).toMatch( /^The stop is gone/ );
+	} );
+	it( "drops a refresh's stops that land after the Uncoded toggle's, and the toggle's that land after a later refresh's", async ()=>{
+		const p = await create();
+		let answer!:( page:any )=>void;
+		p.service.stops.mockImplementationOnce( ()=>new Promise<any>( r=>answer = r ) );
+		const refresh = p.page.refresh();
+		await flush( 2 );
+		await p.page.setUncodedOnly( true );//answers at once
+		answer( {stops: [toOeeStop( stopJson( 1 ) ), toOeeStop( stopJson( 2 ) )], continuation: 'all'} );
+		await refresh;
+		expect( p.page.stops().map( s=>s.id ) ).toEqual( [7] );//the toggle's
+		expect( p.page.hasMore() ).toBe( false );
+		p.service.stops.mockImplementationOnce( ()=>new Promise<any>( r=>answer = r ) );
+		const toggle = p.page.setUncodedOnly( false );
+		await p.page.refresh();
+		answer( {stops: [toOeeStop( stopJson( 1 ) )]} );
+		await toggle;
+		expect( p.page.stops().map( s=>s.id ) ).toEqual( [7] );//the refresh's
+	} );
+	it( "keeps the stops paged in through a coding's refresh", async ()=>{
+		const p = await create();
+		p.answers.stops = Array.from( {length: 50}, ( _, i )=>stopJson( 100-i ) );
+		p.answers.continuation = 'next';
+		await p.page.refresh();
+		p.answers.stops = Array.from( {length: 10}, ( _, i )=>stopJson( 50-i ) );
+		await p.page.loadMore();
+		expect( p.page.stops() ).toHaveLength( 60 );
+		p.answers.closeWith = true;
+		await p.page.code( p.page.stops()[55] );
+		expect( p.service.stops.mock.calls.at( -1 )![3] ).toEqual( {uncoded: false, limit: 60} );
+		await p.page.refresh();
+		expect( p.service.stops.mock.calls.at( -1 )![3] ).toEqual( {uncoded: false, limit: 50} );//Refresh reads the first page
+	} );
+	it( 'stops narrowing a refused timeline once the page has moved on', async ()=>{
+		const p = await create();
+		const refusal = new Error( '(400)It is 12000 segments, more than readLimit, 10000:  narrow the range.' );
+		let refuse!:( e:Error )=>void;
+		const before = p.service.timeline.mock.calls.length;
+		p.service.timeline.mockImplementationOnce( async ()=>{ throw refusal; } ).mockImplementationOnce( ()=>new Promise<any>( ( _r, reject )=>refuse = reject ) );
+		const yesterday = p.page.pick( 'yesterday' );
+		await flush( 2 );
+		const today = p.page.pick( 'today' );
+		await flush( 2 );
+		refuse( refusal );
+		await Promise.all( [yesterday, today] );
+		const midnight = new Date( new Date().getFullYear(), new Date().getMonth(), new Date().getDate() ).getTime();
+		expect( p.service.timeline.mock.calls.slice( before ).filter( c=>c[2].end.getTime()==midnight ) ).toHaveLength( 2 );
+		expect( p.page.loading() ).toBe( 0 );
+		expect( p.page.narrowed() ).toBeUndefined();
+		expect( p.page.errors() ).toEqual( {} );
+	} );
+	it( "keeps This shift's bounds while it runs, and says a refused shift read as the error", async ()=>{
+		const p = await create();
+		await p.page.refresh();
+		expect( p.service.shift ).toHaveBeenCalledTimes( 1 );//still running:  its end is past now
+		p.service.shift.mockRejectedValueOnce( new Error( 'Timed out.' ) );
+		await p.open( {id: 5, name: 'Pump 2', slug: 'pump2'} );
+		expect( p.service.shift ).toHaveBeenCalledTimes( 2 );//another machine's
+		expect( p.page.rangeProblem() ).toBe( "Could not find the machine's shift:  Timed out." );
+		expect( p.page.bucket() ).toBeUndefined();
+	} );
+	it( 'says a refused status read, and opens on today with no shift', async ()=>{
+		const p = await create( {status: new Error( 'Forbidden.' )} );
+		expect( p.page.period() ).toBe( 'today' );
+		expect( p.page.periods().map( x=>x.id ) ).not.toContain( 'shift' );
+		expect( p.page.statusProblem() ).toBe( "Could not read the machine's calendar, so This shift isn't offered:  Forbidden." );
+		expect( p.text( '.notice' ).some( t=>t.includes( "This shift isn't offered" ) ) ).toBe( true );
+		expect( p.page.utcDays() ).toBe( false );
+	} );
+	it( "names a machine with no calendar's days as UTC's", async ()=>{
+		const p = await create( {calendar: 'none'} );
+		expect( p.page.utcDays() ).toBe( true );
+		expect( p.charts()[2].spec().title ).toBe( 'OEE of Pump 1 by day (UTC)' );
+		TestBed.resetTestingModule();//a second page in the one test, without the add-on
+		const absent = await create( {calendar: 'none', addOn: 'absent'} );
+		expect( absent.text( 'table[aria-label="OEE by bucket"] th[scope="col"]' )[0] ).toBe( 'Day (UTC)' );
 	} );
 	it( "drops another machine's answers when the router moves the page on", async ()=>{
 		const p = await create();

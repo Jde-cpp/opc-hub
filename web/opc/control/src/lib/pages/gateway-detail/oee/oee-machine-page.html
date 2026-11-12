@@ -24,6 +24,9 @@
 		<a matButton [routerLink]="['..']" matTooltip="The machine's properties and signals"><mat-icon>settings</mat-icon>Machine</a>
 	</div>
 	<mat-progress-bar class="refresh-bar" [mode]="loading()>0 ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the period"></mat-progress-bar>
+	@if( statusProblem(); as p ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>{{ p }}</p>
+	}
 	@if( rangeProblem(); as p ){
 		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>{{ p }}</p>
 	}
@@ -42,9 +45,9 @@
 		@if( bucket(); as b ){
 			<dl class="factors">
 				@for( f of factors(); track f.label ){
-					<div class="factor" [class.lead]="f.lead" [matTooltip]="f.hint">
-						<dt>{{ f.label }}</dt>
-						<dd>{{ f.value }}@if( f.over ){ <mat-icon class="over" fontIcon="warning" aria-label="Above 100%:  the ideal cycle is too slow" matTooltip="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow."></mat-icon>}</dd>
+					<div class="factor" [class.lead]="f.lead">
+						<dt>{{ f.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="f.hint" [matTooltip]="f.hint"></mat-icon></dt>
+						<dd>{{ f.value }}@if( f.over ){ <mat-icon class="over" role="img" tabindex="0" fontIcon="warning" aria-label="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow." matTooltip="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow."></mat-icon>}</dd>
 					</div>
 				}
 			</dl>
@@ -57,7 +60,7 @@
 						<thead><tr><th scope="col">Planned time</th><th scope="col" class="num">{{ duration(b.planned) }}</th><th scope="col" class="num">Share</th></tr></thead>
 						<tbody>
 							@for( row of s.planned; track row.id ){
-								<tr [matTooltip]="row.hint"><th scope="row">{{ row.label }}</th><td class="num">{{ duration(row.ms) }}</td><td class="num">{{ percent(row.share) }}</td></tr>
+								<tr><th scope="row">{{ row.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="row.hint" [matTooltip]="row.hint"></mat-icon></th><td class="num">{{ duration(row.ms) }}</td><td class="num">{{ percent(row.share) }}</td></tr>
 							}
 						</tbody>
 					</table>
@@ -65,7 +68,7 @@
 						<thead><tr><th scope="col">Beside it</th><th scope="col" class="num">Time</th><th scope="col" class="num">Share</th></tr></thead>
 						<tbody>
 							@for( row of s.beside; track row.id ){
-								<tr [matTooltip]="row.hint"><th scope="row">{{ row.label }}</th><td class="num">{{ duration(row.ms) }}</td><td class="num">{{ row.share==undefined ? '' : percent(row.share) + ' of run' }}</td></tr>
+								<tr><th scope="row">{{ row.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="row.hint" [matTooltip]="row.hint"></mat-icon></th><td class="num">{{ duration(row.ms) }}</td><td class="num">{{ row.share==undefined ? '' : percent(row.share) + ' of run' }}</td></tr>
 							}
 						</tbody>
 					</table>
@@ -140,10 +143,10 @@
 		}
 		@else if( trend().length ){<!--the chart's columns as rows-->
 			<table class="list" aria-label="OEE by bucket">
-				<thead><tr><th scope="col">{{ trendBy()=='shift' ? 'Shift' : 'Day' }}</th><th scope="col" class="num">OEE</th><th scope="col" class="num">Availability</th><th scope="col" class="num">Performance</th><th scope="col" class="num">Quality</th></tr></thead>
+				<thead><tr><th scope="col">{{ trendBy()=='shift' ? 'Shift' : utcDays() ? 'Day (UTC)' : 'Day' }}</th><th scope="col" class="num">OEE</th><th scope="col" class="num">Availability</th><th scope="col" class="num">Performance</th><th scope="col" class="num">Quality</th></tr></thead>
 				<tbody>
 					@for( b of trend(); track $index ){
-						<tr><th scope="row">{{ b.shift }} {{ b.start | date:'yyyy-MM-dd HH:mm' }}</th><td class="num">{{ percent(b.oee) }}</td><td class="num">{{ percent(b.availability) }}</td><td class="num">{{ percent(b.performance) }}</td><td class="num">{{ percent(b.quality) }}</td></tr>
+						<tr><th scope="row">{{ b.shift }} {{ b.start | date:'yyyy-MM-dd HH:mm':(trendBy()=='day' && utcDays() ? 'UTC' : undefined) }}</th><td class="num">{{ percent(b.oee) }}</td><td class="num">{{ percent(b.availability) }}</td><td class="num">{{ percent(b.performance) }}</td><td class="num">{{ percent(b.quality) }}</td></tr>
 					}
 				</tbody>
 			</table>
@@ -180,7 +183,7 @@
 					</mat-cell>
 				</ng-container>
 				<ng-container matColumnDef="code">
-					<mat-header-cell *matHeaderCellDef matTooltip="The Reason signal's value">Code</mat-header-cell>
+					<mat-header-cell *matHeaderCellDef>Code<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" aria-label="The Reason signal's value" matTooltip="The Reason signal's value"></mat-icon></mat-header-cell>
 					<mat-cell *matCellDef="let s">{{ codeText(s) }}</mat-cell>
 				</ng-container>
 				<ng-container matColumnDef="comment">

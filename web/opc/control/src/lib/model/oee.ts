@@ -4,7 +4,7 @@
 //so a stop's and a segment's bounds keep their text beside the Date the page draws with.
 
 export type OeeReasonRef = { id:number; name:string; category:string };
-function toReasonRef( json:any ):OeeReasonRef|undefined{
+export function toReasonRef( json:any ):OeeReasonRef|undefined{
 	return json && json.id!=null ? { id: Number( json.id ), name: String( json.name ?? json.id ), category: String( json.category ?? '' ) } : undefined;
 }
 const optional = ( v:unknown ):number|undefined=>v==null ? undefined : Number( v );
@@ -29,7 +29,7 @@ export function toOeeBucket( json:any ):OeeBucket{
 }
 
 export type OeeCoding = { id:number; start:Date; end:Date; reason?:OeeReasonRef; comment?:string; userName:string; time?:Date };
-function toOeeCoding( json:any ):OeeCoding{
+export function toOeeCoding( json:any ):OeeCoding{
 	return { id: Number( json.id ), start: new Date( json.start ), end: new Date( json.end ), reason: toReasonRef( json.reason ), comment: json.comment || undefined, userName: String( json.userName ?? '' ), time: json.time ? new Date( json.time ) : undefined };
 }
 //A stop of `oeeStops`:  `ms` an open one's so far, `reason` the coding's that covers it whole, else its code's.
@@ -55,6 +55,7 @@ export function toOeeLoss( json:any ):OeeLoss{
 //`oeeTimeline`, what the Gantt chart draws:  the calendar's occurrences over the range, their breaks to cut out, and the
 //machine's time cut at every change, a stop cut again where its codings split it.
 export type OeeSpan = { start:Date; end:Date };
+export type OeeShift = OeeSpan & { name?:string };//a shift bucket's bounds and its occurrence's name
 export type OeeOccurrence = OeeSpan & { name?:string; shift?:number; breaks:OeeSpan[] };
 export type OeeState = 'running'|'stopped'|'unknown';
 export type OeeSegment = OeeSpan & { startText:string; endText:string; state:OeeState; stop?:number; reason?:OeeReasonRef; small:boolean; uncoded:boolean; coding?:{id:number; comment?:string; userName?:string} };
@@ -90,8 +91,8 @@ export function oeePeriodRange( period:OeePeriod, now:Date, given:{shift?:OeeSpa
 		case 'week': return { start: day( monday ), end: now };
 		case 'lastWeek': return { start: day( monday-7 ), end: day( monday ) };
 		case 'custom':{
-			const start = given.from, end = given.to ?? now;
-			return start && isFinite( start.getTime() ) && isFinite( end.getTime() ) && start<end ? { start, end: end<now ? end : now } : undefined;
+			const start = given.from, to = given.to ?? now, end = to<now ? to : now;//clipped first, so a From past now is refused
+			return start && isFinite( start.getTime() ) && isFinite( to.getTime() ) && start<end ? { start, end } : undefined;
 		}
 	}
 }

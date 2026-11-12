@@ -117,6 +117,8 @@ The timeline is a Gantt chart of the period, in two rows:
 
 The legend under it names each colour. Hover a band for its times, its length, its reason and a coding's comment. Drag to zoom.
 
+Each figure and each row of the split has an info icon. Hover it, or move to it with Tab, for what the figure means.
+
 Click a stop's band to code it.
 
 A period with more stops than the gateway reads at once is shown from a later start, and a notice says from when.
@@ -125,7 +127,7 @@ A period with more stops than the gateway reads at once is shown from a later st
 
 **Losses** is a Pareto: the time lost to each reason, to uncoded stops and to small stops, longest first. The table under it has the same rows with each one's share and stop count.
 
-**Trend** is OEE for each shift or each day of the period.
+**Trend** is OEE for each shift or each day of the period. A machine with no calendar has UTC days, which the trend labels as such.
 
 The timeline and the two charts need the add-on the install does not include - see [Trend chart](/help/gateways#trend-chart). Without it the page is its figures and its tables.
 
@@ -141,7 +143,7 @@ The timeline and the two charts need the add-on the install does not include - s
 
 A reason over the same time replaces the one there. The dialog lists the codings already over the stop, each with a remove button. To go back from a split to one reason, remove the second coding first.
 
-A stop still open is coded to now.
+A stop still open is read again when **Code** is pressed. If it has ended since, it is coded to its end, otherwise to now.
 
 Coding needs Update on the codings table, removing one needs Delete, and both need Read on the machine's group. On a gateway whose codings resource is not enforced, anyone who can read the group can code.
 

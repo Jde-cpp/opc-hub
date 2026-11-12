@@ -1,5 +1,5 @@
 import { Service } from '@angular/core';
-import { OeeBucket, OeeCodingCall, OeeLoss, OeeReasonRef, OeeSpan, OeeStopsPage, OeeTimeline, toOeeBucket, toOeeLoss, toOeeStopsPage, toOeeTimeline } from '../model/oee';
+import { OeeBucket, OeeCoding, OeeCodingCall, OeeLoss, OeeReasonRef, OeeShift, OeeSpan, OeeStop, OeeStopsPage, OeeTimeline, toOeeBucket, toOeeCoding, toOeeLoss, toOeeStopsPage, toOeeTimeline, toReasonRef } from '../model/oee';
 import { HistPoster, HistReader } from './history-service';
 
 const bucket = 'start end shift planned run unplanned plannedStop small excluded unknown total good reject outside ideal availability performance quality oee teep measured partial';
@@ -35,26 +35,36 @@ export class OeeService{
 		return toOeeTimeline( data?.oeeTimeline );
 	}
 	static readonly timelineQuery = `oeeTimeline( machine: $machine, start: $start, end: $end ){ planned{ shift name start end breaks } segments{ start end state stop ${reason} small uncoded coding } }`;
-	//The calendar's occurrence at `now`, or the last before it:  the newest shift bucket of the day and a half behind it.  None
-	//where the machine has no shift there;  a machine with no calendar refuses the read.
-	async shift( reader:HistReader, machine:number, now:Date ):Promise<OeeSpan|undefined>{
-		const data = await reader.query<any>( OeeService.shiftQuery, {machine, start: new Date( now.getTime()-36*3600000 ).toISOString(), end: now.toISOString(), by: 'shift'} );
-		const last = ( <any[]>(data?.oee ?? []) ).at( -1 );
-		return last ? { start: new Date( last.start ), end: new Date( last.end ) } : undefined;
+	//The calendar's occurrence at `now`, or the last before it:  the newest shift bucket begun in the day and a half behind it.
+	//The read runs a day past now, so a running shift's bucket isn't cut at now and its end is the occurrence's.  None where the
+	//machine has no shift there;  a machine with no calendar refuses the read.
+	async shift( reader:HistReader, machine:number, now:Date ):Promise<OeeShift|undefined>{
+		const data = await reader.query<any>( OeeService.shiftQuery, {machine, start: new Date( now.getTime()-36*3600000 ).toISOString(), end: new Date( now.getTime()+24*3600000 ).toISOString(), by: 'shift'} );
+		const last = ( <any[]>(data?.oee ?? []) ).filter( b=>new Date( b.start )<=now ).at( -1 );
+		return last ? { start: new Date( last.start ), end: new Date( last.end ), name: last.shift || undefined } : undefined;
 	}
 	static readonly shiftQuery = 'oee( machine: $machine, start: $start, end: $end, by: $by ){ start end shift }';
 	//the reasons a stop is coded with:  the live ones
 	async reasons( reader:HistReader ):Promise<OeeReasonRef[]>{
 		const data = await reader.query<any>( OeeService.reasonsQuery );
-		return ( <any[]>(data?.oeeReasons ?? []) ).map( r=>({ id: Number( r.id ), name: String( r.name ?? r.id ), category: String( r.category ?? '' ) }) ).sort( ( a, b )=>a.name.localeCompare( b.name ) );
+		return ( <any[]>(data?.oeeReasons ?? []) ).map( r=>toReasonRef( r )! ).sort( ( a, b )=>a.name.localeCompare( b.name ) );
 	}
 	static readonly reasonsQuery = 'oeeReasons( deleted: null ){ id name category }';
-
-	//A reason over a range of the machine's time, replacing the coding at the same start.  Needs Update on the codings.
-	async code( poster:HistPoster, machine:number, call:OeeCodingCall ):Promise<void>{
-		await poster.postQL<any>( OeeService.codeMutation, {machine, start: call.start, end: call.end, reason: call.reason, comment: call.comment ?? null} );
+	//The stop of `id` as the gateway has it now, read at a time within it:  its start, or where the period cuts it.  None where
+	//the engine has since made its stops again.
+	async stop( reader:HistReader, machine:number, id:number, at:Date ):Promise<OeeStop|undefined>{
+		const page = await this.stops( reader, machine, {start: at, end: new Date( at.getTime()+1 )}, {uncoded: false, limit: 2} );//a stop ending where it starts is the other
+		return page.stops.find( s=>s.id==id );
 	}
-	static readonly codeMutation = 'mutation codeOee( machine: $machine, start: $start, end: $end, reason: $reason, comment: $comment ){ id }';
+
+	//A reason over a range of the machine's time, replacing the coding at the same start, which keeps its id.  The coding as
+	//written;  needs Update on the codings.
+	async code( poster:HistPoster, machine:number, call:OeeCodingCall ):Promise<OeeCoding|undefined>{
+		const data = await poster.postQL<any>( OeeService.codeMutation, {machine, start: call.start, end: call.end, reason: call.reason, comment: call.comment ?? null} );
+		const written = Array.isArray( data?.codeOee ) ? data.codeOee[0] : data?.codeOee;
+		return written?.id==null ? undefined : toOeeCoding( written );
+	}
+	static readonly codeMutation = `mutation codeOee( machine: $machine, start: $start, end: $end, reason: $reason, comment: $comment ){ id start end ${reason} comment userName time }`;
 	//a coding taken away.  Needs Delete on the codings.
 	async uncode( poster:HistPoster, id:number ):Promise<void>{
 		await poster.postQL<any>( OeeService.uncodeMutation, {id} );

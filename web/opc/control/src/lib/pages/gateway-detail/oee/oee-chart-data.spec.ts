@@ -1,5 +1,5 @@
 import { OeeSegment, toOeeBucket, toOeeLoss, toOeeTimeline } from '../../../model/oee';
-import { codable, oeeKindColors, plannedColor, plannedPieces, segmentKind, toGantt, toOeeTrend, toPareto, trendColor } from './oee-chart-data';
+import { codable, oeeDayName, oeeKindColors, plannedColor, plannedPieces, segmentKind, toGantt, toOeeTrend, toPareto, trendColor } from './oee-chart-data';
 
 const t = ( h:number, m=0 )=>new Date( Date.UTC( 2026, 10, 11, h, m ) );
 const iso = ( h:number, m=0 )=>t( h, m ).toISOString();
@@ -98,5 +98,10 @@ describe( 'oee chart data', ()=>{
 		expect( byShift.points[1].custom.text ).toContain( 'Partial' );
 		expect( toOeeTrend( buckets, 'day', day ).categories ).toEqual( ['11-11', '11-11'] );
 		expect( byShift.legend ).toEqual( [] );//one series:  its title names it
+	} );
+	it( "names a machine's UTC day by UTC's date, which the browser's may not be", ()=>{
+		const late = new Date( '2026-11-11T23:30:00Z' );
+		expect( oeeDayName( true )( late ) ).toBe( late.toLocaleDateString( undefined, {month: 'short', day: 'numeric', timeZone: 'UTC'} ) );
+		expect( oeeDayName()( late ) ).toBe( late.toLocaleDateString( undefined, {month: 'short', day: 'numeric'} ) );
 	} );
 } );

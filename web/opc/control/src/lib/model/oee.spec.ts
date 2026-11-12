@@ -76,6 +76,7 @@ describe( 'oee model', ()=>{
 		expect( oeePeriodRange( 'custom', now, {from: at( 6 ), to: at( 12 )} ) ).toEqual( {start: at( 6 ), end: now} );//nothing is read past now
 		expect( oeePeriodRange( 'custom', now, {from: at( 8 ), to: at( 6 )} ) ).toBeUndefined();
 		expect( oeePeriodRange( 'custom', now, {from: at( 10 )} ) ).toBeUndefined();
+		expect( oeePeriodRange( 'custom', now, {from: at( 10 ), to: at( 12 )} ) ).toBeUndefined();//a From past now, though before its To
 		expect( oeePeriodRange( 'custom', now ) ).toBeUndefined();
 	} );
 	it( 'narrows a refused range to its newer half, down to a minute', ()=>{
