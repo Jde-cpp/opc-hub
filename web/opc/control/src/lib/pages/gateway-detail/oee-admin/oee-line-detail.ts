@@ -31,7 +31,7 @@ type MemberRow = { member:OeeLineMember; name:string; kind:string; link?:string[
 //The gateway is the row's, from HistAdminResolver.
 @Component({
 	templateUrl: './oee-line-detail.html',
-	styleUrls: ['../hist-admin/hist-admin-shared.scss', './oee-machine-detail.scss'],
+	styleUrls: ['../hist-admin/hist-admin-shared.scss', './oee-machine-detail.scss', './oee-line-detail.scss'],
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content my-content oee-line-detail'},
