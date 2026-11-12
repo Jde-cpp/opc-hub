@@ -1,0 +1,71 @@
+@if( error(); as e ){
+	<div class="jde-empty" role="alert"><mat-icon aria-hidden="true">error_outline</mat-icon><p class="title">Could not read the machines.</p><p class="detail">{{ e }}</p></div>
+}
+@else if( loading() ){
+	<mat-progress-bar mode="indeterminate" aria-label="Reading the machines"></mat-progress-bar>
+}
+@else if( !machines().length ){
+	<div class="jde-empty" role="note">
+		<mat-icon aria-hidden="true">precision_manufacturing</mat-icon>
+		<p class="title">No machines to show.</p>
+		<p class="detail">A machine is made on the gateway's Machines tab.  The dashboard shows those whose group you may read.</p>
+		<div class="actions"><a matButton="filled" [routerLink]="['..']">Open the gateway</a></div>
+	</div>
+}
+@else{
+	@if( chartState()=='absent' ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The chart draws with Highcharts Stock, which the install does not include.  <a [routerLink]="['/help/gateways']" fragment="trend-chart">How to add it</a></p>
+	}
+	@else if( chartState()=='failed' ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The chart could not load Highcharts Stock.  Reload the page to try again.</p>
+	}
+	<section aria-labelledby="oee-tiles">
+		<h3 id="oee-tiles">Machines</h3>
+		@if( tileViews().length ){
+			<ul class="tiles">
+				@for( t of tileViews(); track t.machine.id ){
+					<li>
+						<a class="tile" [class.off]="t.view.state=='none'" [routerLink]="['../machines', t.machine.slug, 'oee']">
+							<span class="name">{{ t.machine.name }}</span>
+							<span class="state"><span class="dot" aria-hidden="true" [style.background]="t.color"></span><span>{{ t.view.stateLabel }}@if( t.view.since ){ since {{ t.view.since | date:'MMM d, HH:mm' }}}@if( t.view.length ){, {{ t.view.length }}}</span></span>
+							@if( t.view.reason; as r ){
+								<span class="reason"><span>{{ r.name }}</span> <span class="category">{{ r.category }}</span></span>
+							}
+							@else if( t.view.badge ){
+								<span class="reason"><span class="badge" [class.uncoded]="t.view.badge=='Uncoded'">{{ t.view.badge }}</span></span>
+							}
+							<span class="figures">
+								@for( f of t.view.figures; track f.label ){
+									<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
+								}
+							</span>
+							@if( t.view.period ){
+								<span class="note">{{ t.view.period }}, so far@if( t.view.partial ){, partial}</span>
+							}
+							@for( n of t.view.notes; track n ){
+								<span class="note">{{ n }}</span>
+							}
+						</a>
+					</li>
+				}
+			</ul>
+		}
+		@else{
+			<p class="empty">Every machine is in a line.</p>
+		}
+	</section>
+	@if( chartState()=='loaded' ){
+		<section aria-labelledby="oee-gantt">
+			<h3 id="oee-gantt">Current shift</h3>
+			@if( ganttSpec(); as spec ){
+				<oee-chart [spec]="spec" (band)="open($event)"></oee-chart>
+			}
+			@else{
+				<p class="empty">No machine has a shift to draw yet.</p>
+			}
+			@if( between().length ){
+				<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>Between shifts:  {{ between().join( ', ' ) }}</p>
+			}
+		</section>
+	}
+}

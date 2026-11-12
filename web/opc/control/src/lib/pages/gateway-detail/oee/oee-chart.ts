@@ -1,13 +1,13 @@
-import { afterRenderEffect, Component, ElementRef, inject, input, OnDestroy, OnInit, output, signal, untracked, viewChild } from '@angular/core';
+import { afterRenderEffect, Component, computed, ElementRef, inject, input, OnDestroy, OnInit, output, signal, untracked, viewChild } from '@angular/core';
 import type Highcharts from 'highcharts/esm/highstock';
 import { OeeSegment, OeeSpan } from '../../../model/oee';
 import { HC, HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { codable, ColumnPoint, GanttPoint, OeeLegendItem } from './oee-chart-data';
 
 //What a chart of the machine's page draws:  the Gantt chart's two rows over the period, or a row of columns - the Pareto's
-//minutes, the trend's percent.
+//minutes, the trend's percent.  The dashboard's Gantt chart (#406) names its `rows`, one per machine, and a band's `y` is its row's.
 export type OeeChartSpec = { title:string; description:string; legend:OeeLegendItem[] } & (
-	{ kind:'gantt'; range:OeeSpan; planned:GanttPoint[]; state:GanttPoint[] }
+	{ kind:'gantt'; range:OeeSpan; planned:GanttPoint[]; state:GanttPoint[]; rows?:string[] }
 	| { kind:'columns'; categories:string[]; points:ColumnPoint[]; name:string; axis:string; percent:boolean } );
 
 //A chart of the machine's OEE page (#405), through the add-on the History trend loads (HighchartsLoader, #302):  the Gantt
@@ -18,7 +18,7 @@ export type OeeChartSpec = { title:string; description:string; legend:OeeLegendI
 	selector: 'oee-chart',
 	template: `
 		@if( highcharts() ){
-			<div #plot class="plot" [class.gantt]="spec().kind=='gantt'"></div>
+			<div #plot class="plot" [class.gantt]="spec().kind=='gantt'" [style.height.px]="height()"></div>
 			@if( spec().legend.length ){
 				<ul class="legend" aria-label="Legend">
 					@for( l of spec().legend; track l.label ){
@@ -51,8 +51,12 @@ export class OeeChart implements OnInit, OnDestroy{
 					this.#chart = H.chart( plot, this.#options( spec ) );
 					this.#kind = spec.kind;
 				}
-				else
+				else{
 					this.#chart.update( this.#options( spec ), true, true, false );
+					if( this.#height!=this.height() )
+						this.#chart.reflow();
+				}
+				this.#height = this.height();
 			} );
 		} );
 	}
@@ -66,6 +70,9 @@ export class OeeChart implements OnInit, OnDestroy{
 	}
 	spec = input.required<OeeChartSpec>();
 	pick = output<OeeSegment>();//a stop's band clicked, or entered from the keyboard
+	band = output<GanttPoint>();//any band of the state rows, clicked or entered:  the dashboard opens its row's machine
+	//a row per machine is as tall as its rows;  the others' heights are the sheet's
+	readonly height = computed( ()=>{ const spec = this.spec(); return spec.kind=='gantt' && spec.rows ? 56+32*Math.max( 1, spec.rows.length ) : null; } );
 	plot = viewChild<ElementRef<HTMLDivElement>>( 'plot' );
 	highcharts = signal<HC|undefined>( undefined );
 	moduleFailed = signal( false );//the add-on is there, and its xrange module didn't load
@@ -92,12 +99,12 @@ export class OeeChart implements OnInit, OnDestroy{
 			return { ...shared,
 				chart: { type: 'xrange', backgroundColor: 'transparent', style: {fontFamily: 'inherit'}, animation: false, zooming: {type: 'x'}, spacing: [8, 8, 8, 8] },
 				xAxis: { ...axis, type: 'datetime', min: spec.range.start.getTime(), max: spec.range.end.getTime(), gridLineWidth: 1, tickPixelInterval: 140 },
-				yAxis: { ...axis, categories: ['Planned', 'State'], reversed: true, title: {text: null}, gridLineWidth: 0 },
+				yAxis: { ...axis, categories: spec.rows ?? ['Planned', 'State'], min: 0, max: ( spec.rows?.length ?? 2 )-1, reversed: true, title: {text: null}, gridLineWidth: 0 },
 				plotOptions: { series: {animation: false, states: {inactive: {opacity: 1}}} },
 				series: [
 					{ ...row, id: 'planned', name: 'Planned time', data: spec.planned },
 					//the smallest band is three pixels, so a small stop is seen at all;  a stop's band opens its coding
-					{ ...row, id: 'state', name: 'State', data: spec.state, cursor: 'pointer', point: {events: {click(){ const s = <OeeSegment|undefined>(<any>this.options).custom?.segment; if( s && codable( s ) ) self.pick.emit( s ); }}} }
+					{ ...row, id: 'state', name: 'State', data: spec.state, cursor: 'pointer', point: {events: {click(){ const s = <OeeSegment|undefined>(<any>this.options).custom?.segment; self.band.emit( <GanttPoint><unknown>this.options ); if( s && codable( s ) ) self.pick.emit( s ); }}} }
 				]
 			};
 		}
@@ -115,4 +122,5 @@ export class OeeChart implements OnInit, OnDestroy{
 	#loader = inject( HighchartsLoader );
 	#chart:Highcharts.Chart|undefined;
 	#kind:OeeChartSpec['kind']|undefined;
+	#height:number|null = null;
 }

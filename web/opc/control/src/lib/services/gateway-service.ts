@@ -23,6 +23,7 @@ import { ExNodeId } from '../model/ex-node-id';
 import { ExtensionObject, Reading, shortestFloat, Structure, toReading, toValue, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
 import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound, qlTime } from '../model/hist';
+import { OeeLiveEvent, toOeeLiveStatus } from '../model/oee-live';
 import { Revised, WatchParameters } from '../model/watch';
 import { baseEventFields, EventFields } from '../model/event';
 import { isBad } from '../model/status-code';
@@ -122,6 +123,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		subjects.forEach( s=>s.error(e) );
 		for( const live of [...this.#hist.values()] )//the socket carried the historian subscriptions too:  each subscribes again once the gateway is back
 			this.#histDropped( live );
+		for( const live of [...this.#oee.values()] )//and OEE's, as the historian's
+			this.#oeeDropped( live );
 		for( const [owner, live] of [...this.#events] ){//and the event subscriptions, whose streams end:  the tab subscribes again (spec *Events*)
 			this.#events.delete( owner );
 			live.subscriber.error( e );
@@ -156,6 +159,10 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#histSnapshot( requestId, message.histSnapshot );
 				else if( message.histRecords )
 					this.#histRecords( requestId, message.histRecords );
+				else if( message.oeeSubscribeAck )
+					this.#oeeStatus( requestId, message.oeeSubscribeAck.status );
+				else if( message.oeeStatus )
+					this.#oeeStatus( requestId, message.oeeStatus );
 				else if( message.monitoredItemModified )
 					this.#itemModified( message.monitoredItemModified );
 				else if( message.eventValues )
@@ -164,7 +171,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#eventsRestored( message.eventsRestored );
 				else if( message.exception ){
 					const e = message.exception;
-					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
+					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) && !this.#oeeException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
 						throw e;
 				}
 				else
@@ -623,6 +630,55 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		return { node: Gateway.toProto( [node] )[0], namespaceUri: "", serverIndex: 0 };
 	}
 
+	//A machine's live OEE (oee spec *Live*, #406):  OeeSubscribe on this socket, in histSubscribe's shape - the request id names it
+	//on the wire, and the teardown forgets it as it sends OeeUnsubscribe.  The stream delivers the status of
+	//the ack, then each the gateway pushes:  at once on a state change, and every /gateway/oee/live at most while anything else of
+	//it changes.  After `dropped` this subscribes again, histRetryDelay later and again on each failure, and the ack's status
+	//follows.  An exception under the id ends it:  the machine deleted or purged, OEE stopping, or a refusal of the subscribe itself.
+	oeeSubscribe( machine:number ):Observable<OeeLiveEvent>{
+		return new Observable<OeeLiveEvent>( subscriber=>{
+			const live:OeeLive = { machine, subscriber, requestId: 0, down: false };
+			this.#oeeSend( live );
+			return ()=>{
+				clearTimeout( live.retry );
+				if( this.#oee.delete( live.requestId ) )//still the gateway's:  not ended by it, nor waiting out a drop
+					this.sendPromise<void>( {oeeUnsubscribe: <FromClient.OeeUnsubscribe>{subscription: live.requestId}}, `oeeUnsubscribe ${live.requestId}` ).catch( e=>console.warn( `oeeUnsubscribe ${live.requestId} - ${errorText(e)}` ) );
+			};
+		} );
+	}
+	#oeeSend( live:OeeLive ){
+		const requestId = this.getRequestId();
+		live.requestId = requestId;
+		live.retry = undefined;
+		this.#oee.set( requestId, live );
+		this.sendWithId( {oeeSubscribe: <FromClient.OeeSubscribe>{machine: live.machine, line: 0}}, requestId, `oeeSubscribe machine: ${live.machine}` );
+	}
+	#oeeStatus( requestId:number, status:FromServer.OeeStatus|undefined ){
+		const live = this.#oee.get( requestId );
+		if( !live )
+			return;//an ended subscription's, already on the wire
+		live.down = false;
+		live.subscriber.next( {kind: 'status', status: toOeeLiveStatus( status )} );
+	}
+	#oeeException( requestId:number, e:{what:string; code:number; statusCode:number} ):boolean{
+		const live = this.#oee.get( requestId );
+		if( !live )
+			return false;
+		this.#oee.delete( requestId );
+		live.subscriber.error( {error: {requestId, message: e.what, sc: e.code, httpStatus: e.statusCode}} );
+		return true;
+	}
+	#oeeDropped( live:OeeLive ){
+		this.#oee.delete( live.requestId );
+		if( !live.down ){
+			live.down = true;
+			live.subscriber.next( {kind: 'dropped'} );
+		}
+		clearTimeout( live.retry );
+		live.retry = setTimeout( ()=>this.#oeeSend( live ), Gateway.histRetryDelay );
+	}
+	#oee = new Map<number,OeeLive>();//by the OeeSubscribe's request id
+
 	private static toGuid( proto:Uint8Array ):Guid{ let guid = new Guid(); guid.value = proto; return guid; }
 	private static toValue( proto:Common.Value ):Value{
 		//protobufjs exposed a virtual `of` getter naming the set oneof field; ts-proto emits plain optionals, so each arm
@@ -892,6 +948,7 @@ export type HistEvent =
 	{ kind:'records'; values:HistValue[]; modifications:HistPushedModification[] } |
 	{ kind:'dropped' };
 type HistLive = { args:HistSubscribeArgs; subscriber:Subscriber<HistEvent>; requestId:number; down:boolean; latest:Map<number,Date>; retry?:ReturnType<typeof setTimeout> };//down:  dropped and not acked since;  latest:  by slot
+type OeeLive = { machine:number; subscriber:Subscriber<OeeLiveEvent>; requestId:number; down:boolean; retry?:ReturnType<typeof setTimeout> };
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );
 //A node known by id alone, placed (NodePlace) in one query:  the search's id hits, a References target, a node-access link.  The reader

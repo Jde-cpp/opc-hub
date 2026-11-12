@@ -59,15 +59,27 @@ export function toGantt( timeline:OeeTimeline, range:OeeSpan ):GanttData{
 		const name = o.name ?? ( o.shift==undefined ? 'Planned' : `Shift ${o.shift}` );
 		return { x: p.start.getTime(), x2: p.end.getTime(), y: 0, color: plannedColor, name, custom: tip( [name, spanText( p )] ) };
 	} ) );
-	const state = timeline.segments.filter( s=>s.end>s.start ).map( ( s ):GanttPoint=>{
-		const kind = segmentKind( s );
-		const name = s.state=='stopped' ? s.reason?.name ?? oeeKindLabels[kind] : oeeKindLabels[kind];
-		const what = s.state=='stopped' && s.reason ? `${s.reason.category}${s.small ? ', a small stop' : ''}` : s.state=='stopped' && s.small && kind!='small' ? 'A small stop' : undefined;
-		const coded = s.coding ? [s.coding.comment, s.coding.userName ? `Coded by ${s.coding.userName}` : undefined] : [];
-		return { x: s.start.getTime(), x2: s.end.getTime(), y: 1, color: oeeKindColors[kind], name, custom: { ...tip( [name, what, spanText( s ), ...coded, codable( s ) ? 'Click to code the stop' : undefined] ), kind, segment: s } };
-	} );
+	const state = timeline.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, 1, codable( s ) ? 'Click to code the stop' : undefined ) );
+	return { planned, state, legend: [...( planned.length ? [{color: plannedColor, label: 'Planned time'}] : [] ), ...kindLegend( state )] };
+}
+//a segment's band on row `y`:  `hint` what a click on it does, `row` whose it is where the chart has a row per machine
+function statePoint( s:OeeSegment, y:number, hint:string|undefined, row?:string ):GanttPoint{
+	const kind = segmentKind( s );
+	const name = s.state=='stopped' ? s.reason?.name ?? oeeKindLabels[kind] : oeeKindLabels[kind];
+	const what = s.state=='stopped' && s.reason ? `${s.reason.category}${s.small ? ', a small stop' : ''}` : s.state=='stopped' && s.small && kind!='small' ? 'A small stop' : undefined;
+	const coded = s.coding ? [s.coding.comment, s.coding.userName ? `Coded by ${s.coding.userName}` : undefined] : [];
+	return { x: s.start.getTime(), x2: s.end.getTime(), y, color: oeeKindColors[kind], name, custom: { ...tip( [row ? `${row}:  ${name}` : name, what, spanText( s ), ...coded, hint] ), kind, segment: s } };
+}
+function kindLegend( state:GanttPoint[] ):OeeLegendItem[]{
 	const used = new Set( state.map( p=>p.custom.kind ) );
-	return { planned, state, legend: [...( planned.length ? [{color: plannedColor, label: 'Planned time'}] : [] ), ...oeeKinds.filter( k=>used.has( k ) ).map( k=>({color: oeeKindColors[k], label: oeeKindLabels[k]}) )] };
+	return oeeKinds.filter( k=>used.has( k ) ).map( k=>({color: oeeKindColors[k], label: oeeKindLabels[k]}) );
+}
+//The dashboard's Gantt chart (#406):  a row per machine, each its state over its own shift, with no planned row.  `range` is
+//what the axis covers, every machine's shift.
+export type GanttRow = { name:string; segments:OeeSegment[] };
+export function toGanttRows( rows:GanttRow[] ):GanttData & {rows:string[]}{
+	const state = rows.flatMap( ( r, y )=>r.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, y, "Click to open the machine's OEE page", r.name ) ) );
+	return { rows: rows.map( r=>r.name ), planned: [], state, legend: kindLegend( state ) };
 }
 
 //A column:  `label` its direct label, where the chart has room for them.

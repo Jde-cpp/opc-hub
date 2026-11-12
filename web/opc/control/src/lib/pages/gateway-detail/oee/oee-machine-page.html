@@ -21,6 +21,7 @@
 		@if( range(); as r ){
 			<span class="range">{{ r.start | date:'yyyy-MM-dd HH:mm' }} to {{ r.end | date:'yyyy-MM-dd HH:mm' }}</span>
 		}
+		<a matButton [routerLink]="['../../../oee']" matTooltip="Every machine of the gateway, live"><mat-icon>monitoring</mat-icon>Dashboard</a>
 		<a matButton [routerLink]="['..']" matTooltip="The machine's properties and signals"><mat-icon>settings</mat-icon>Machine</a>
 	</div>
 	<mat-progress-bar class="refresh-bar" [mode]="loading()>0 ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the period"></mat-progress-bar>
