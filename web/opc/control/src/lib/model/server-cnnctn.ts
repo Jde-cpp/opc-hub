@@ -38,6 +38,9 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	//url segment, and " eng-test" went into all three.  Trimmed on the way out (mutation); what is left must match the gateway's
 	//own rule, which refuses anything else (ServerCnnctnMAwait, at the create).
 	static slugPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+	//the url segments of the lists under a gateway's page, ahead of ':connection' in app.routes.ts, which would shadow a connection's
+	//page:  the watch list (419-watch #12), the historian's (#337), the calendars (#391) and OEE's (#404).  As ServerCnnctn::SlugError.
+	static readonly reservedSlugs = ['watch', 'templates', 'groups', 'calendars', 'machines', 'reasons'];
 	//The gateway's save rules on the settings (ServerCnnctn::SettingsError), said under the field before Save tries them:  Sign or
 	//Sign & Encrypt, by the mode or by a secured policy, needs the certificate URI that puts the gateway's certificate on the channel;
 	//a policy of None and a secured channel, or a secured policy and a mode of None, contradict;  0 is the default only for the ping
@@ -46,7 +49,7 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 		const slug = this.slug?.trim();
 		if( field=="slug" )
 			return slug && !ServerCnnctn.slugPattern.test( slug ) ? "Letters, digits, '.', '_' and '-' only, starting with a letter or digit."
-				: slug=="watch" ? "Taken by the gateway's watch list, whose url segment it is." : undefined;//as ServerCnnctn::SlugError (419-watch #12)
+				: ServerCnnctn.reservedSlugs.includes( slug ) ? "Taken by a list on the gateway's page, whose url segment it is." : undefined;
 		if( (durationNames as readonly string[]).includes(field) ){
 			const ms = ServerCnnctn.toMs( this[field as ConnectionSettingName] );
 			return ms===0 && field!="pingInterval" ? "0 is not allowed:  leave it empty for the default."

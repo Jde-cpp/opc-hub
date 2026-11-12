@@ -12,6 +12,9 @@ import { GoogleAuthService } from '../google-auth-service';
 import { StringUtils } from '../../utils/string-utils';
 import { errorMessage } from '../../utils/errors';
 
+export type Registration = { id?:number; instanceId?:number; instanceName:string; programName:string };
+const stripProgram = ( p:string )=>p?.startsWith( "Jde." ) ? p.substring( 4 ) : p;
+
 @Injectable( {providedIn: 'root'} )
 export class AppService extends ProtoService<FromClient.Transmission,FromServer.Message> implements IGraphQL, IAuth{
 	constructor(){
@@ -59,12 +62,16 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	async instancePK( instanceName:string, programName?:string ):Promise<number|undefined>{ return (await this.instancePKs( instanceName, [programName] ))[0]; }
 	//each program's registration of the instance, from the one read
 	async instancePKs( instanceName:string, programNames:(string|undefined)[] ):Promise<(number|undefined)[]>{
-		const connections = await this.queryArray<{id?:number, instanceId?:number, instanceName:string, programName:string}>( "connections(deleted:null){instanceId instanceName programName}" );
-		const strip = ( p:string )=> p?.startsWith("Jde.") ? p.substring(4) : p;
+		const registrations = await this.registrations();
 		return programNames.map( programName=>{
-			const match = connections.find( c=>c.instanceName==instanceName && (!programName || strip(c.programName)==strip(programName)) );//instance names are only unique per program — "Debug" exists for both the AppServer and the gateway
+			const match = registrations.find( c=>c.instanceName==instanceName && (!programName || c.programName==stripProgram(programName)) );//instance names are only unique per program — "Debug" exists for both the AppServer and the gateway
 			return match?.instanceId ?? match?.id;//servers whose connections view predates the instanceId column emit the instance pk under 'id'
 		} );
+	}
+	//the instances registered, the program named without its `Jde.`:  AppServer, OpcGateway, or OpcHub for a hub
+	async registrations():Promise<Registration[]>{
+		const connections = await this.queryArray<Registration>( "connections(deleted:null){instanceId instanceName programName}" );
+		return connections.map( c=>({...c, programName: stripProgram( c.programName )}) );
 	}
 
 	async login( user:User ):Promise<void>{

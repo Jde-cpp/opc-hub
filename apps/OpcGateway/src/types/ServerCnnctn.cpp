@@ -50,8 +50,10 @@ namespace Jde::Opc::Gateway{
 		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
 		if( !valid )
 			return mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
-		//the web's route to the gateway's watch list, apps/gateways/<instance>/watch, would shadow the connection's page (419-watch #12)
-		return slug=="watch" ? mu<Exception>( string{"Slug 'watch' is not valid:  it is the url segment of the gateway's watch list."}, ExceptionArgs{EHttpStatus::BadRequest}, sl ) : nullptr;
+		//the web's routes under a gateway, apps/gateways/<instance>/<segment>, would shadow the connection's page:  the watch list
+		//(419-watch #12), the historian's lists (#337), the calendars (#391) and OEE's lists (#404).  As ServerCnnctn.fieldError.
+		constexpr std::array reserved{ "watch"sv, "templates"sv, "groups"sv, "calendars"sv, "machines"sv, "reasons"sv };
+		return std::ranges::contains( reserved, slug ) ? mu<Exception>( Ƒ("Slug '{}' is not valid:  it is the url segment of a list on the gateway's page.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl ) : nullptr;
 	}
 	α ServerCnnctn::SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>{
 		using ClientSecurity::PolicyName;

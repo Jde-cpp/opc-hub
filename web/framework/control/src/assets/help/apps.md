@@ -22,10 +22,11 @@ The installer's layout: the application server and the gateway run as one proces
 
 The **OpcHub** card comes first. It is the process this site is served by.
 
-Its page has nine tabs:
+Its page has eleven tabs:
 
 - **Connections**, the OPC UA servers the hub talks to, described under [Gateways](/help/gateways)
 - **Templates** and **Groups**, its historian's, described under [Historian groups and templates](/help/gateways/groups)
+- **Machines** and **Reasons**, its OEE's, described under [OEE](/help/gateways/oee)
 - **Endpoint**, its own OPC UA endpoint and the sessions on it, described under [Gateways](/help/gateways)
 - **Watch**, which opens the watch list, described under [Watching](/help/gateways#watching)
 - [Logs](#logs)

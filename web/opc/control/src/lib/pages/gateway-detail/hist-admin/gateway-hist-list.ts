@@ -6,10 +6,11 @@ import { parseHistNodeText } from '../../../model/hist-admin';
 import { Gateway } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
-import { HistAdminKind, histAdminListRoute } from './hist-admin-list-route';
+import { GatewayListKind, gatewayListRoute } from '../gateway-list-route';
 
-//The historian's two lists on a gateway's page (#337), beside Connections:  each a ql-list over the gateway's own table, resolved
-//here when its tab opens rather than by the page's resolver, and a row opens `templates/<slug>` or `groups/<slug>` under the page
+//The historian's two lists on a gateway's page (#337), beside Connections, and OEE's two, Machines and Reasons (#404):  each a
+//ql-list over the gateway's own table, resolved here when its tab opens rather than by the page's resolver, and a row opens
+//`templates/<slug>`, `groups/<slug>`, `machines/<slug>` or `reasons/<slug>` under the page
 //(QLList.linkPrefix).  The rows go under `<url>/<kind>` in the RouteStore, where the detail's resolver finds its siblings.  A group's
 //root shows by its browse path, as the group's Properties shows it, once its connection's server places it.
 @Component({
@@ -26,7 +27,7 @@ import { HistAdminKind, histAdminListRoute } from './hist-admin-list-route';
 })
 export class GatewayHistList implements OnInit{
 	gateway = input.required<Gateway>();
-	kind = input.required<HistAdminKind>();
+	kind = input.required<GatewayListKind>();
 	url = input.required<string>();//the page's url, apps/gateways/<instance>:  the key the rows go under, with the kind
 	listData = signal<QLListData|undefined>( undefined );
 	error = signal<string|undefined>( undefined );
@@ -46,11 +47,11 @@ export class GatewayHistList implements OnInit{
 	}
 	async ngOnInit(){
 		try{
-			const data = await QLListResolver.data( this.gateway(), histAdminListRoute( this.kind() ), this.#profileStore, this.#prefs );
+			const data = await QLListResolver.data( this.gateway(), gatewayListRoute( this.kind() ), this.#profileStore, this.#prefs );
 			const paged = { ...data, childrenKey: `${this.url()}/${this.kind()}` };
 			this.listData.set( await QLListResolver.loadOrFail( this.gateway(), {...paged, skip: QLListResolver.savedSkip( paged )}, this.#routeStore ) );
 		}
-		catch( e ){//no schema:  the gateway is down, or has no hist tables
+		catch( e ){//no schema:  the gateway is down, or has no such tables
 			this.error.set( errorMessage(e) );
 		}
 	}

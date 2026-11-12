@@ -63,8 +63,9 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 
 	async onSubmitClick(){
 		try{
-			await this.ql.mutate( this.upsert().mutation(this.row) );
+			const answer = await this.ql.mutate<unknown>( this.upsert().mutation(this.row) );
 			this.afterMutate();
+			this.saved( answer );
 			this.router.navigate( ['..'], {relativeTo: this.route} );
 		}
 		catch( e ){
@@ -113,6 +114,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	protected abstract upsert():T;//the edited row to save - the one thing every page assembles differently
 	protected abstract onRow():void;//per-page state off the freshly loaded `row`
 	protected saveFailed( e:unknown ):void{ this.snackbar.exception( "Save failed.", e ); }//a page that says a refusal on its form (CalendarDetail)
+	protected saved( _answer:unknown ):void{}//the save's answer, for a page whose server says more than the row (OeeMachineDetail's warnings)
 	protected get deleteWarning():string|undefined{ return undefined; }//what a Delete costs beyond the row, which it then confirms with:  none, and a Delete is one click, as a Restore undoes it
 	protected get purgeWarning():string{ return ""; }//the same for the Purge's confirmation, after its own words
 	protected afterMutate():void{}//a save, delete, restore or purge landed - for a page whose row something else caches (ClientDetail, reviews/m3-closing.md #5)

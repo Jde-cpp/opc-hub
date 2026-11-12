@@ -1,0 +1,136 @@
+<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start" [(selectedIndex)]="tabIndex">
+	<mat-tab>
+		<ng-template mat-tab-label>Properties</ng-template>
+		<ng-template matTabContent>
+			<properties [ctor]=ctor [(record)]=properties type="oeeMachine" [schema]=schema [order]=fieldOrder [readonlyFields]="isNew ? [] : ['slug']" [excludedColumns]=excludedFields [units]=units [hints]=hints></properties>
+			<section class="form-section" aria-label="Production">
+				<h3>Production</h3>
+				@if( isNew ){ <p class="hint">The group whose members are the machine's signals:  one machine a group, fixed once the machine is made.  Its signals are picked once it is saved.</p> }
+				<div class="fields">
+					<mat-form-field class="wide" [class.readonly]="!isNew" subscriptSizing="dynamic">
+						<mat-label>Group</mat-label>
+						<mat-select [value]="machine.histGroupId" (selectionChange)="setGroup($event.value)" [disabled]="!isNew" [required]="isNew">
+							@for( g of groups(); track g.id ){
+								<mat-option [value]="g.id">{{ g.name }}</mat-option>
+							}
+						</mat-select>
+						@if( groupLink(); as link ){ <mat-hint><a [routerLink]="link">Open the group</a></mat-hint> }
+					</mat-form-field>
+					<mat-form-field>
+						<mat-label>Ideal as</mat-label>
+						<mat-select [value]="idealMode()" (selectionChange)="setIdealMode($event.value)">
+							<mat-option value="cycle">A cycle time</mat-option>
+							<mat-option value="rate">A rate</mat-option>
+						</mat-select>
+					</mat-form-field>
+					<mat-form-field>
+						<mat-label>{{ idealMode()=='cycle' ? 'Ideal cycle time' : 'Ideal rate' }}</mat-label>
+						<!--not while it is half typed, which reads blank and would write blank back over it-->
+						<input matInput type="number" min="0" step="any" [value]="idealText()" (input)="$any($event.target).validity.badInput || setIdeal($any($event.target).value)">
+						<span matTextSuffix>{{ idealMode()=='cycle' ? 's a unit' : 'a minute' }}</span>
+						<mat-hint [class.error]="machine.idealInvalid">{{ idealHint() }}</mat-hint>
+					</mat-form-field>
+					<mat-form-field>
+						<mat-label>Interval</mat-label>
+						<mat-select [value]="machine.width/60000" (selectionChange)="setWidth($event.value)">
+							@for( w of widths(); track w ){
+								<mat-option [value]="w">{{ w }} {{ w==1 ? 'minute' : 'minutes' }}</mat-option>
+							}
+						</mat-select>
+						<mat-hint>The width of the rows the engine writes</mat-hint>
+					</mat-form-field>
+					<mat-form-field subscriptSizing="dynamic">
+						<mat-label>Calendar</mat-label>
+						<mat-select [value]="machine.calendarId ?? 0" (selectionChange)="setCalendar($event.value)">
+							<mat-option [value]="0">None - planned around the clock</mat-option>
+							@for( c of calendars() ?? []; track c.id ){
+								<mat-option [value]="c.id">{{ c.name }}</mat-option>
+							}
+							@if( missingCalendar(); as id ){
+								<mat-option [value]="id">Calendar {{ id }}{{ calendars() ? ' - not found' : '' }}</mat-option>
+							}
+						</mat-select>
+						@if( calendarLink(); as link ){ <mat-hint><a [routerLink]="link">Open the calendar</a></mat-hint> }
+					</mat-form-field>
+				</div>
+				@if( saveError(); as e ){
+					<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+				}
+			</section>
+		</ng-template>
+	</mat-tab>
+	@if( !isNew ){<!--a signal is a row under the machine's id:  nothing to pick until the machine is saved-->
+		<mat-tab>
+			<ng-template mat-tab-label>Signals</ng-template>
+			<ng-template matTabContent>
+				<div class="tab-body">
+					<p class="hint">The group's members in their roles.  A machine has a State signal or a count, Total or Rate, or both.  Each pick applies as it is made, and the engine starts again a few seconds after the last.</p>
+					@if( statusText(); as s ){ <p class="hint status" role="status">{{ s }}</p> }
+					<mat-progress-bar class="refresh-bar" [mode]="signals.loading() || signals.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the signals"></mat-progress-bar>
+					@for( r of roles; track r.role ){
+						<div class="signal">
+							<div class="role">
+								<span class="name">{{ r.role }}</span>
+								<span class="hint">{{ r.hint }}</span>
+							</div>
+							<mat-form-field subscriptSizing="dynamic">
+								<mat-label>{{ r.role }} member</mat-label>
+								<mat-select [value]="signalOf(r.role)?.nodeId ?? 0" (selectionChange)="setSignal(r.role, $event.value, $event.source)" [disabled]="signals.busy()">
+									<mat-option [value]="0">None</mat-option>
+									@for( m of members(); track m.id ){
+										<mat-option [value]="m.id">{{ memberLabel(m) }}</mat-option>
+									}
+								</mat-select>
+							</mat-form-field>
+							@if( signalOf(r.role); as s ){
+								@if( r.role=='State' ){
+									<mat-form-field subscriptSizing="dynamic">
+										<mat-label>Running values</mat-label>
+										<input matInput #running [value]="runningText(s)" (change)="setRunning(s, running.value, running)" [disabled]="signals.busy()">
+										<mat-hint>true, or 2, 3 for a code</mat-hint>
+									</mat-form-field>
+								}
+								@else if( r.role=='Rate' ){
+									<mat-form-field subscriptSizing="dynamic">
+										<mat-label>The rate is per</mat-label>
+										<mat-select [value]="s.ratePeriod" (selectionChange)="setRatePeriod(s, $event.value, $event.source)" [disabled]="signals.busy()">
+											@for( p of ratePeriodsOf(s); track p.ms ){
+												<mat-option [value]="p.ms">{{ p.label }}</mat-option>
+											}
+										</mat-select>
+									</mat-form-field>
+								}
+							}
+							@for( w of warnings()[r.role] ?? []; track w ){
+								<p class="warning" role="status"><mat-icon aria-hidden="true" fontIcon="warning"></mat-icon>{{ w }}</p>
+							}
+						</div>
+					}
+					@if( !signals.loading() && !members().length && !signals.error() ){
+						<p class="empty" role="status">The group has no members to pick from.  Add them on the group's Members tab.</p>
+					}
+					@if( signals.error(); as e ){
+						<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+					}
+					<section class="recompute" aria-label="Recompute">
+						<h3>Recompute</h3>
+						<p class="hint">Makes the machine's stops and intervals over a range again from its group's history.  The calendar, the reasons, the ideal and the small-stop threshold are applied when a figure is read, and need none.@if( recompute() ){  <strong>An engine input changed:</strong>  the rows before now were made with the old one.}</p>
+						<div class="tab-toolbar">
+							<mat-form-field subscriptSizing="dynamic">
+								<mat-label>From</mat-label>
+								<input matInput type="datetime-local" [value]="recomputeFrom()" (input)="recomputeFrom.set($any($event.target).value)">
+							</mat-form-field>
+							<mat-form-field subscriptSizing="dynamic">
+								<mat-label>To</mat-label>
+								<input matInput type="datetime-local" [value]="recomputeTo()" (input)="recomputeTo.set($any($event.target).value)">
+								<mat-hint>Blank is now</mat-hint>
+							</mat-form-field>
+							<button matButton="tonal" type="button" (click)="recomputeRows()" [disabled]="!recomputeRange() || signals.busy()"><mat-icon>replay</mat-icon>Recompute</button>
+						</div>
+					</section>
+				</div>
+			</ng-template>
+		</mat-tab>
+	}
+</mat-tab-group>
+<detail-actions [page]="this"/><!--a deleted machine keeps its rows and holds its group:  Purge takes them and frees it-->

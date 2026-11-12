@@ -4,9 +4,10 @@ import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 import { DetailResolver, DetailRoute, SlugNotFoundError, SnackbarService } from 'jde-framework';
 import { GATEWAY_SERVICE } from '../gateway-service';
 import { GatewayDetailData } from './client-resolver';
-import { HistAdminKind, histAdminListRoute } from '../../pages/gateway-detail/hist-admin/hist-admin-list-route';
+import { GatewayListKind, gatewayListRoute } from '../../pages/gateway-detail/gateway-list-route';
 
-//A template's or a group's row for its page (#337), under the gateway page's `templates/:slug` and `groups/:slug` routes, as
+//A template's or a group's row for its page (#337), and a machine's or a reason's (#404), under the gateway page's
+//`templates/:slug`, `groups/:slug`, `machines/:slug` and `reasons/:slug` routes, each naming its kind in its data, as
 //ClientResolver resolves a connection's:  the gateway is the url's, the row is DetailResolver's query of the gateway's table, and
 //the siblings are the rows the page's list put in the RouteStore under `<page url>/<kind>` (GatewayHistList).  The sidenav's
 //parent is the page itself ('.'), so a sibling link is `./<kind>/<slug>` from the sidenav's route, which is the page's.
@@ -21,14 +22,14 @@ export class HistAdminResolver implements Resolve<GatewayDetailData<any>>{
 	resolve( route:ActivatedRouteSnapshot, state:RouterStateSnapshot ):Promise<GatewayDetailData<any>>{ return this.#load( route, state.url ); }
 
 	async #load( route:ActivatedRouteSnapshot, url:string ):Promise<GatewayDetailData<any>>{
-		const kind = <HistAdminKind>route.data['kind'];
+		const kind = <GatewayListKind>route.data['kind'];
 		const slug = route.paramMap.get( 'slug' )!;
 		const parent = route.parent!;
 		const instance = parent.url[parent.url.length-1].path;
 		const parentUrl = parent.url.map( s=>s.path ).join( '/' );
 		try{
 			const gateway = await this.#gatewayService.gateway( instance );
-			const list = histAdminListRoute( kind );
+			const list = gatewayListRoute( kind );
 			const siblings = this.#routeStore.getChildren( `${parentUrl}/${kind}` ).map( s=>new RouteItem( {path: `${kind}/${s.path}`, title: s.title} ) );
 			const routing = new DetailRoute( `${kind}/${slug}`, siblings.find( s=>s.path==`${kind}/${slug}` )?.title, siblings, new RouteItem( {path: '.', title: instance} ) );
 			routing.tableSettings = list.tableSettings;

@@ -17,6 +17,16 @@
 					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
+			<ng-template instanceTab="Machines" instanceTabHelp="oee-machines-and-reasons"><!--OEE's machines and reasons (#404), lists as the historian's two are-->
+				@for( g of [gateway()]; track g ){
+					<gateway-hist-list [gateway]=g! kind="machines" [url]=url()></gateway-hist-list>
+				}
+			</ng-template>
+			<ng-template instanceTab="Reasons" instanceTabHelp="oee-machines-and-reasons">
+				@for( g of [gateway()]; track g ){
+					<gateway-hist-list [gateway]=g! kind="reasons" [url]=url()></gateway-hist-list>
+				}
+			</ng-template>
 			<ng-template instanceTab="Endpoint" instanceTabHelp="endpoint"><!--the gateway's own OPC UA endpoint and its sessions (#388), keyed on the gateway as the lists are-->
 				@for( g of [gateway()]; track g ){
 					<gateway-endpoint [gateway]=g!></gateway-endpoint>
