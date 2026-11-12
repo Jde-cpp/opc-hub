@@ -86,6 +86,8 @@ Each machine that is in no line has a **tile**:
 
 A tile says when the machine is outside planned time or between shifts, and when the connection to the gateway is lost. It then shows the last the gateway said until the connection is back.
 
+When the gateway stops sending a machine - it was deleted, or OEE stopped - its tile says why, and its row stays as it was. When the gateway no longer knows your session, the tile says to sign in again.
+
 Under the tiles, **Current shift** is a Gantt chart with a row for each machine, a line's machines after the others. Each row covers that machine's own shift. Its last band grows as the machine reports, and a new band starts when its state changes. A machine between shifts has no row, and is named under the chart.
 
 A tile and a band open the machine's OEE page, on its shift.

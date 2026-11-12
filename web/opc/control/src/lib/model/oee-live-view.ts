@@ -32,11 +32,11 @@ export function oeeTileView( tile:OeeTile ):OeeTileView{
 	const figures = [['Availability', f?.availability], ['Performance', f?.performance], ['Quality', f?.quality], ['OEE', f?.oee]].map( ( [label, v] )=>({ label: <string>label, value: oeePercent( <number|undefined>v ) }) );
 	if( !s )
 		return { state: 'none', stateLabel: tile.link=='ended' ? 'Ended' : tile.link=='dropped' ? 'Disconnected' : 'Connecting', figures, partial: false, notes: tile.ended ? [tile.ended] : [] };
-	const stopped = s.state=='stopped', at = f?.end;
+	const stopped = s.state=='stopped', at = f?.end, between = oeeBetweenShifts( s );
 	const notes:string[] = [];
 	if( tile.link=='dropped' )
 		notes.push( 'The connection to the gateway was lost:  this is the last it said.' );
-	if( !f )
+	if( between )
 		notes.push( 'Between shifts.' );
 	else if( !s.planned )
 		notes.push( 'Outside planned time.' );
@@ -46,36 +46,53 @@ export function oeeTileView( tile:OeeTile ):OeeTileView{
 		state: s.state, stateLabel: s.state=='running' ? 'Running' : stopped ? 'Stopped' : 'Unknown',
 		since: s.since, length: s.since && at && at>s.since ? oeeDuration( at.getTime()-s.since.getTime() ) : undefined,
 		reason: stopped ? s.stop?.reason : undefined, badge: !stopped || s.stop?.reason ? undefined : s.stop?.small ? 'Small stop' : 'Uncoded',
-		period: s.shift ? s.shift.name ?? 'Shift' : f ? 'UTC day' : undefined, figures, partial: f?.partial===true, notes
+		period: s.shift ? s.shift.name ?? 'Shift' : between ? undefined : 'UTC day', figures, partial: f?.partial===true, notes
 	};
 }
+//Between shifts:  a calendar found, and none of its shifts now - without a calendar every time is planned (SetOeeShift).  A
+//status with no figures is no sign of it:  the gateway has none before it has read the machine's rows, for a machine no engine
+//runs that has no rows yet, at the first instant of a shift or a UTC day, or where they couldn't be computed.
+export function oeeBetweenShifts( status:OeeLiveStatus ):boolean{ return !status.shift && !status.planned; }
 
 const dayMs = 86400000;
 //What the dashboard's Gantt chart covers for a machine:  its calendar's occurrence now, or without one the UTC day the
-//figures are over.  None between shifts.
-export function oeeLiveRange( status:OeeLiveStatus ):OeeSpan|undefined{
+//figures are over, or with none `now`'s.  None between shifts.
+export function oeeLiveRange( status:OeeLiveStatus, now:Date ):OeeSpan|undefined{
 	if( status.shift )
 		return { start: status.shift.start, end: status.shift.end };
-	const start = status.figures?.start;
-	return start ? { start, end: new Date( start.getTime()+dayMs ) } : undefined;
+	if( oeeBetweenShifts( status ) )
+		return undefined;
+	const start = status.figures?.start ?? new Date( Math.floor( now.getTime()/dayMs )*dayMs );
+	return { start, end: new Date( start.getTime()+dayMs ) };
 }
-//the band a status is, from `start` to `end`:  a stop's with its reason, small, or uncoded.  Its stop's id isn't the feed's to say.
-export function oeeLiveSegment( status:OeeLiveStatus, start:Date, end:Date ):OeeSegment{
+//what a status's band is:  its state, and a stop's reason, small, or uncoded
+export function oeeLiveMark( status:OeeLiveStatus ):Pick<OeeSegment,'state'|'reason'|'small'|'uncoded'>{
 	const stopped = status.state=='stopped', reason = stopped ? status.stop?.reason : undefined, small = stopped && status.stop?.small===true;
-	return { start, end, startText: start.toISOString(), endText: end.toISOString(), state: status.state, reason, small, uncoded: stopped && !small && !reason };
+	return { state: status.state, reason, small, uncoded: stopped && !small && !reason };
+}
+//the band a status is, from `start` to `end`.  Its stop's id isn't the feed's to say.
+export function oeeLiveSegment( status:OeeLiveStatus, start:Date, end:Date ):OeeSegment{
+	return { start, end, startText: start.toISOString(), endText: end.toISOString(), ...oeeLiveMark( status ) };
 }
 //A machine's bands after a status (spec *The Gantt chart*):  the last grows to the engine's time - `now` where the status has
 //no figures - while the state is the one it is, and a new one opens where the state began:  the band before ends there, and
 //what was drawn past it is cut.
-//A stop's last band takes the status's reason and `small` when it is the stop whole;  a piece a coding cut keeps its own.
+//A stop's last band takes the status's reason and `small` when it is the stop whole, as the chart has it begin;  a piece a
+//coding cut keeps its own.  The whole stop's coding, read with it, stays only while its reason is the status's.
 //`from` is where the chart begins:  no band starts before it.
 export function growOeeBands( segments:OeeSegment[], status:OeeLiveStatus, now:Date, from?:Date ):OeeSegment[]{
 	const last = segments.at( -1 ), at = status.figures?.end ?? now, since = status.since;
 	if( last && last.state==status.state && ( !since || since<=last.end ) ){
 		const end = at>last.end ? at : last.end, stop = status.stop;
-		const whole = status.state=='stopped' && !!stop && ( !stop.start || last.start<=stop.start );
-		const grown:OeeSegment = whole ? { ...last, ...oeeLiveSegment( status, last.start, end ), startText: last.startText, stop: last.stop }
-			: { ...last, end, endText: end.toISOString(), ...(stop ? {small: stop.small, uncoded: last.uncoded && !stop.small} : {}) };
+		const begun = stop?.start && from && stop.start<from ? from : stop?.start;//a stop begun before the chart is drawn from its start
+		const whole = status.state=='stopped' && !!stop && ( !begun || last.start<=begun );
+		let grown:OeeSegment;
+		if( whole ){
+			const { coding, ...band } = last, mark = oeeLiveMark( status );
+			grown = { ...band, ...mark, end, endText: end.toISOString(), ...(coding && mark.reason?.id===last.reason?.id ? {coding} : {}) };
+		}
+		else
+			grown = { ...last, end, endText: end.toISOString(), ...(stop ? {small: stop.small, uncoded: last.uncoded && !stop.small} : {}) };
 		return [...segments.slice( 0, -1 ), grown];
 	}
 	let start = since ?? last?.end ?? at;

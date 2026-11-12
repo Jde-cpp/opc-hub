@@ -24,25 +24,26 @@
 		@if( tileViews().length ){
 			<ul class="tiles">
 				@for( t of tileViews(); track t.machine.id ){
+					@let v = t.view();
 					<li>
-						<a class="tile" [class.off]="t.view.state=='none'" [routerLink]="['../machines', t.machine.slug, 'oee']">
+						<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../machines', t.machine.slug, 'oee']">
 							<span class="name">{{ t.machine.name }}</span>
-							<span class="state"><span class="dot" aria-hidden="true" [style.background]="t.color"></span><span>{{ t.view.stateLabel }}@if( t.view.since ){ since {{ t.view.since | date:'MMM d, HH:mm' }}}@if( t.view.length ){, {{ t.view.length }}}</span></span>
-							@if( t.view.reason; as r ){
+							<span class="state"><span class="dot" aria-hidden="true" [style.background]="v.color"></span><span>{{ v.stateLabel }}@if( v.since ){ since {{ v.since | date:'MMM d, HH:mm' }}}@if( v.length ){, {{ v.length }}}</span></span>
+							@if( v.reason; as r ){
 								<span class="reason"><span>{{ r.name }}</span> <span class="category">{{ r.category }}</span></span>
 							}
-							@else if( t.view.badge ){
-								<span class="reason"><span class="badge" [class.uncoded]="t.view.badge=='Uncoded'">{{ t.view.badge }}</span></span>
+							@else if( v.badge ){
+								<span class="reason"><span class="badge" [class.uncoded]="v.badge=='Uncoded'">{{ v.badge }}</span></span>
 							}
 							<span class="figures">
-								@for( f of t.view.figures; track f.label ){
+								@for( f of v.figures; track f.label ){
 									<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
 								}
 							</span>
-							@if( t.view.period ){
-								<span class="note">{{ t.view.period }}, so far@if( t.view.partial ){, partial}</span>
+							@if( v.period ){
+								<span class="note">{{ v.period }}, so far@if( v.partial ){, partial}</span>
 							}
-							@for( n of t.view.notes; track n ){
+							@for( n of v.notes; track n ){
 								<span class="note">{{ n }}</span>
 							}
 						</a>

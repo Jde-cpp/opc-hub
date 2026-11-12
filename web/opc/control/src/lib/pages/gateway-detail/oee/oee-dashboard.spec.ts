@@ -139,6 +139,23 @@ describe( 'OeeDashboard', ()=>{
 		expect( p.spans( 4 )!.at( -1 ) ).toEqual( ['running', '08:40', '09:01'] );
 		expect( p.tiles() ).toHaveLength( 2 );
 	} );
+	it( "draws an ended machine's row while it shares the live rows' time, which alone set the axis", async ()=>{
+		const p = await create();
+		await p.push( 4, running( t( 8, 40 ), t( 9, 1 ) ) );
+		await p.push( 5, running( t( 8, 40 ), t( 9, 1 ) ) );
+		p.gateway.feed( 4 ).error( {error: {requestId: 1, message: 'OEE stopped.', sc: 0, httpStatus: 503}} );
+		expect( p.page.bands().map( b=>[b.machine.id, b.ended] ) ).toEqual( [[4, true], [5, false]] );
+		await p.push( 5, {...running( t( 14 ), t( 14, 1 ) ), shift: {name: 'Second', start: t( 14 ), end: t( 22 )}} );
+		expect( p.page.bands().map( b=>b.machine.id ) ).toEqual( [5] );
+		expect( p.chart()!.spec() ).toMatchObject( {range: {start: t( 14 ), end: t( 22 )}} );
+	} );
+	it( "keeps the tile of a machine refused for a session the gateway doesn't know, saying so", async ()=>{
+		const p = await create();
+		p.gateway.feed( 5 ).error( {error: {requestId: 2, message: 'User not found.', sc: 0, httpStatus: 401}} );
+		p.fixture.detectChanges();
+		expect( p.tiles()[1] ).toBe( "Pump 2 Ended Availability – Performance – Quality – OEE – The gateway doesn't know your session any more: sign in again to see this machine." );
+		expect( p.page.machines().map( m=>m.id ) ).toEqual( [4, 5, 6] );
+	} );
 	it( 'has neither tile nor row for a machine whose group the user may not read', async ()=>{
 		const p = await create();
 		p.gateway.feed( 5 ).error( {error: {requestId: 2, message: 'No Read on the group.', sc: 0, httpStatus: 403}} );
@@ -155,6 +172,31 @@ describe( 'OeeDashboard', ()=>{
 		await p.push( 4, running( t( 9, 20 ), t( 9, 30 ) ) );
 		expect( p.service.timeline ).toHaveBeenCalledTimes( 2 );
 		expect( p.tiles()[0] ).not.toContain( 'was lost' );
+	} );
+	it( 'keeps a dropped row drawn, and growing, while it is read again', async ()=>{
+		const p = await create();
+		await p.push( 4, running( t( 8, 40 ), t( 9, 1 ) ) );
+		p.service.timeline.mockReturnValueOnce( new Promise( ()=>{} ) );//the read again, unanswered
+		p.gateway.feed( 4 ).next( {kind: 'dropped'} );
+		await p.push( 4, stopped( t( 9, 20 ), t( 9, 30 ) ) );
+		expect( p.service.timeline ).toHaveBeenCalledTimes( 2 );
+		expect( p.spans( 4 ) ).toEqual( [['running', '06:00', '08:12'], ['stopped', '08:12', '08:40'], ['running', '08:40', '09:20'], ['stopped', '09:20', '09:30']] );
+	} );
+	it( 'draws a row over the UTC day for a machine with no calendar and no figures yet, which is not between shifts', async ()=>{
+		const p = await create();
+		await p.push( 4, {state: 'unknown', planned: true, calendarMissing: false} );
+		expect( p.page.between() ).toEqual( [] );
+		const range = p.page.bands()[0].range;
+		expect( [range.start.getTime()%86400000, range.end.getTime()-range.start.getTime()] ).toEqual( [0, 86400000] );
+		expect( p.tiles()[0] ).not.toContain( 'Between shifts' );
+	} );
+	it( "redraws a pushed machine's tile alone", async ()=>{
+		const p = await create();
+		const views = p.page.tileViews(), other = views[1].view();
+		await p.push( 4, running( t( 8, 40 ), t( 9, 1 ) ) );
+		expect( p.page.tileViews() ).toBe( views );
+		expect( views[1].view() ).toBe( other );
+		expect( views[0].view().stateLabel ).toBe( 'Running' );
 	} );
 	it( 'is its tiles without the add-on:  no timeline read, no chart, and a notice', async ()=>{
 		const p = await create( {addOn: 'absent'} );

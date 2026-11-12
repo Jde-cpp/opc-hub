@@ -121,10 +121,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		this.#subscriptions.clear();
 		this.#nodes.clear();
 		subjects.forEach( s=>s.error(e) );
-		for( const live of [...this.#hist.values()] )//the socket carried the historian subscriptions too:  each subscribes again once the gateway is back
-			this.#histDropped( live );
-		for( const live of [...this.#oee.values()] )//and OEE's, as the historian's
-			this.#oeeDropped( live );
+		this.#hist.dropped();//the socket carried the historian subscriptions too:  each subscribes again once the gateway is back
+		this.#oee.dropped();//and OEE's, as the historian's
 		for( const [owner, live] of [...this.#events] ){//and the event subscriptions, whose streams end:  the tab subscribes again (spec *Events*)
 			this.#events.delete( owner );
 			live.subscriber.error( e );
@@ -171,7 +169,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#eventsRestored( message.eventsRestored );
 				else if( message.exception ){
 					const e = message.exception;
-					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) && !this.#oeeException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
+					if( !this.processError( e, requestId ) && !this.#hist.exception( requestId, e ) && !this.#oee.exception( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
 						throw e;
 				}
 				else
@@ -519,50 +517,35 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			}));
 	}
 
-	//A historian subscription (spec *Subscriptions*):  HistSubscribe on this socket, whose request id names it on the wire.  The
-	//teardown forgets it as it sends HistUnsubscribe, so a page or push already on the wire, and the ack the gateway still sends
-	//for one unsubscribed while registering, find no subscription and are dropped:  the ids aren't reused, so one unknown is an
-	//ended subscription's (historian-live-trend #10).  The stream delivers the ack, the snapshot's pages, then the records as the
-	//historian stores them, each record's node by its slot in `args.nodes`, which the ack's statuses follow too.  A dropped socket
-	//drops the subscription on the gateway, so after `dropped` this subscribes again, histRetryDelay later and again on each
-	//failure, from where its nodes' records delivered leave off (histResumeTime) - the snapshot then fills the outage, and each
-	//node's bound is a value the caller holds - and the ack and pages follow on the stream, for the caller to merge.  An edit made
-	//meanwhile to a record before that isn't delivered:  a modification is pushed, and the snapshot is records.  An exception
-	//under the id ends it:  the gateway's NotFound for a group removed, ServiceUnavailable for a historian stopped, or a refusal
-	//of the HistSubscribe itself.
+	//A historian subscription (spec *Subscriptions*):  HistSubscribe on this socket, its lifecycle LiveSubscriptions' - so a page
+	//or push already on the wire, and the ack the gateway still sends for one unsubscribed while registering, find no
+	//subscription and are dropped (historian-live-trend #10).  The stream delivers the ack, the snapshot's pages, then the records
+	//as the historian stores them, each record's node by its slot in `args.nodes`, which the ack's statuses follow too.  A dropped
+	//socket drops the subscription on the gateway, so after `dropped` this subscribes again from where its nodes' records
+	//delivered leave off (histResumeTime) - the snapshot then fills the outage, and each node's bound is a value the caller holds -
+	//and the ack and pages follow on the stream, for the caller to merge.  An edit made meanwhile to a record before that isn't
+	//delivered:  a modification is pushed, and the snapshot is records.  An exception under the id ends it:  the gateway's NotFound
+	//for a group removed, ServiceUnavailable for a historian stopped, or a refusal of the HistSubscribe itself.
 	histSubscribe( args:HistSubscribeArgs ):Observable<HistEvent>{
-		return new Observable<HistEvent>( subscriber=>{
-			const live:HistLive = { args, subscriber, requestId: 0, down: false, latest: new Map() };
-			this.#histSend( live, args.from );
-			return ()=>{
-				clearTimeout( live.retry );
-				if( this.#hist.delete( live.requestId ) )//still the gateway's:  not ended by it, nor waiting out a drop
-					this.sendPromise<void>( {histUnsubscribe: <FromClient.HistUnsubscribe>{subscription: live.requestId}}, `histUnsubscribe ${live.requestId}` ).catch( e=>console.warn( `histUnsubscribe ${live.requestId} - ${errorText(e)}` ) );
-			};
-		} );
+		return new Observable<HistEvent>( subscriber=>this.#hist.open( {args, subscriber, requestId: 0, down: false, latest: new Map()} ) );
 	}
-	#histSend( live:HistLive, from:Date|undefined ){
-		const requestId = this.getRequestId();
-		live.requestId = requestId;
-		live.retry = undefined;
-		this.#hist.set( requestId, live );
-		const request:FromClient.HistSubscribe = { group: live.args.group, nodes: live.args.nodes.map( n=>Gateway.toExProto(n) ), fromTime: from };
-		this.sendWithId( {histSubscribe: request}, requestId, `histSubscribe group: ${live.args.group}, nodeCount: ${live.args.nodes.length}, from: ${from?.toISOString() ?? "now"}` );
-	}
+	#hist = new LiveSubscriptions<HistLive,HistEvent>( ()=>this.getRequestId(),
+		( live, requestId, again )=>{
+			const from = again ? histResumeTime( live.latest.values() ) ?? live.args.from : live.args.from;
+			const request:FromClient.HistSubscribe = { group: live.args.group, nodes: live.args.nodes.map( n=>Gateway.toExProto(n) ), fromTime: from };
+			this.sendWithId( {histSubscribe: request}, requestId, `histSubscribe group: ${live.args.group}, nodeCount: ${live.args.nodes.length}, from: ${from?.toISOString() ?? "now"}` );
+		},
+		subscription=>this.sendPromise<void>( {histUnsubscribe: <FromClient.HistUnsubscribe>{subscription}}, `histUnsubscribe ${subscription}` ).catch( e=>console.warn( `histUnsubscribe ${subscription} - ${errorText(e)}` ) ) );
 	#histAck( requestId:number, ack:FromServer.HistSubscribeAck ){
-		const live = this.#hist.get( requestId );
-		if( !live )
-			return;
-		live.down = false;
-		live.subscriber.next( {kind: 'ack', statuses: ack.statuses.map( sc=>sc>>>0 )} );
+		this.#hist.acked( requestId )?.subscriber.next( {kind: 'ack', statuses: ack.statuses.map( sc=>sc>>>0 )} );
 	}
 	#histSnapshot( requestId:number, page:FromServer.HistSnapshot ){
-		const live = this.#hist.get( requestId );
+		const live = this.#hist.find( requestId );
 		if( live )
 			live.subscriber.next( {kind: 'snapshot', values: this.#histValues( live, page.values ), more: page.more} );
 	}
 	#histRecords( requestId:number, records:FromServer.HistRecords ){
-		const live = this.#hist.get( requestId );
+		const live = this.#hist.find( requestId );
 		if( !live )
 			return;
 		const modifications:HistPushedModification[] = [];
@@ -589,26 +572,6 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		}
 		return values;
 	}
-	#histException( requestId:number, e:{what:string; code:number; statusCode:number} ):boolean{
-		const live = this.#hist.get( requestId );
-		if( !live )
-			return false;
-		this.#hist.delete( requestId );
-		live.subscriber.error( {error: {requestId, message: e.what, sc: e.code, httpStatus: e.statusCode}} );
-		return true;
-	}
-	//`dropped` once an outage, from its first drop to the next ack:  gated by the ack, a drop before the first was silent, and the
-	//tab loaded with nothing said for as long as the gateway was down (historian-live-trend #8)
-	#histDropped( live:HistLive ){
-		this.#hist.delete( live.requestId );
-		if( !live.down ){
-			live.down = true;
-			live.subscriber.next( {kind: 'dropped'} );
-		}
-		clearTimeout( live.retry );
-		live.retry = setTimeout( ()=>this.#histSend( live, histResumeTime( live.latest.values() ) ?? live.args.from ), Gateway.histRetryDelay );
-	}
-	#hist = new Map<number,HistLive>();//by the HistSubscribe's request id, which names the subscription on the wire
 	static readonly histRetryDelay = 5_000;//ms after a drop before subscribing again, and between tries while the gateway is down
 	//a record of a subscription, its node by slot (spec *Subscriptions*);  one naming a slot the subscribe didn't is dropped
 	private static toHistValue( proto:FromServer.HistValue, nodes:NodeId[] ):HistValue|undefined{
@@ -630,54 +593,20 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		return { node: Gateway.toProto( [node] )[0], namespaceUri: "", serverIndex: 0 };
 	}
 
-	//A machine's live OEE (oee spec *Live*, #406):  OeeSubscribe on this socket, in histSubscribe's shape - the request id names it
-	//on the wire, and the teardown forgets it as it sends OeeUnsubscribe.  The stream delivers the status of
-	//the ack, then each the gateway pushes:  at once on a state change, and every /gateway/oee/live at most while anything else of
-	//it changes.  After `dropped` this subscribes again, histRetryDelay later and again on each failure, and the ack's status
-	//follows.  An exception under the id ends it:  the machine deleted or purged, OEE stopping, or a refusal of the subscribe itself.
+	//A machine's live OEE (oee spec *Live*, #406):  OeeSubscribe on this socket, its lifecycle LiveSubscriptions' as the
+	//historian's is.  The stream delivers the status of the ack, then each the gateway pushes:  at once on a state change, and
+	//every /gateway/oee/live at most while anything else of it changes.  After `dropped` the ack's status follows the subscribe
+	//again.  An exception under the id ends it:  the machine deleted or purged, OEE stopping, or a refusal of the subscribe itself.
 	oeeSubscribe( machine:number ):Observable<OeeLiveEvent>{
-		return new Observable<OeeLiveEvent>( subscriber=>{
-			const live:OeeLive = { machine, subscriber, requestId: 0, down: false };
-			this.#oeeSend( live );
-			return ()=>{
-				clearTimeout( live.retry );
-				if( this.#oee.delete( live.requestId ) )//still the gateway's:  not ended by it, nor waiting out a drop
-					this.sendPromise<void>( {oeeUnsubscribe: <FromClient.OeeUnsubscribe>{subscription: live.requestId}}, `oeeUnsubscribe ${live.requestId}` ).catch( e=>console.warn( `oeeUnsubscribe ${live.requestId} - ${errorText(e)}` ) );
-			};
-		} );
+		return new Observable<OeeLiveEvent>( subscriber=>this.#oee.open( {machine, subscriber, requestId: 0, down: false} ) );
 	}
-	#oeeSend( live:OeeLive ){
-		const requestId = this.getRequestId();
-		live.requestId = requestId;
-		live.retry = undefined;
-		this.#oee.set( requestId, live );
-		this.sendWithId( {oeeSubscribe: <FromClient.OeeSubscribe>{machine: live.machine, line: 0}}, requestId, `oeeSubscribe machine: ${live.machine}` );
-	}
+	#oee = new LiveSubscriptions<OeeLive,OeeLiveEvent>( ()=>this.getRequestId(),
+		( live, requestId )=>this.sendWithId( {oeeSubscribe: <FromClient.OeeSubscribe>{machine: live.machine, line: 0}}, requestId, `oeeSubscribe machine: ${live.machine}` ),
+		subscription=>this.sendPromise<void>( {oeeUnsubscribe: <FromClient.OeeUnsubscribe>{subscription}}, `oeeUnsubscribe ${subscription}` ).catch( e=>console.warn( `oeeUnsubscribe ${subscription} - ${errorText(e)}` ) ) );
+	//the ack's and each pushed:  one for an ended subscription, already on the wire, finds none
 	#oeeStatus( requestId:number, status:FromServer.OeeStatus|undefined ){
-		const live = this.#oee.get( requestId );
-		if( !live )
-			return;//an ended subscription's, already on the wire
-		live.down = false;
-		live.subscriber.next( {kind: 'status', status: toOeeLiveStatus( status )} );
+		this.#oee.acked( requestId )?.subscriber.next( {kind: 'status', status: toOeeLiveStatus( status )} );
 	}
-	#oeeException( requestId:number, e:{what:string; code:number; statusCode:number} ):boolean{
-		const live = this.#oee.get( requestId );
-		if( !live )
-			return false;
-		this.#oee.delete( requestId );
-		live.subscriber.error( {error: {requestId, message: e.what, sc: e.code, httpStatus: e.statusCode}} );
-		return true;
-	}
-	#oeeDropped( live:OeeLive ){
-		this.#oee.delete( live.requestId );
-		if( !live.down ){
-			live.down = true;
-			live.subscriber.next( {kind: 'dropped'} );
-		}
-		clearTimeout( live.retry );
-		live.retry = setTimeout( ()=>this.#oeeSend( live ), Gateway.histRetryDelay );
-	}
-	#oee = new Map<number,OeeLive>();//by the OeeSubscribe's request id
 
 	private static toGuid( proto:Uint8Array ):Guid{ let guid = new Guid(); guid.value = proto; return guid; }
 	private static toValue( proto:Common.Value ):Value{
@@ -947,8 +876,67 @@ export type HistEvent =
 	{ kind:'snapshot'; values:HistValue[]; more:boolean } |
 	{ kind:'records'; values:HistValue[]; modifications:HistPushedModification[] } |
 	{ kind:'dropped' };
-type HistLive = { args:HistSubscribeArgs; subscriber:Subscriber<HistEvent>; requestId:number; down:boolean; latest:Map<number,Date>; retry?:ReturnType<typeof setTimeout> };//down:  dropped and not acked since;  latest:  by slot
-type OeeLive = { machine:number; subscriber:Subscriber<OeeLiveEvent>; requestId:number; down:boolean; retry?:ReturnType<typeof setTimeout> };
+//down:  dropped and not acked since
+type SocketLive<TEvent> = { subscriber:Subscriber<TEvent>; requestId:number; down:boolean; retry?:ReturnType<typeof setTimeout> };
+type HistLive = SocketLive<HistEvent> & { args:HistSubscribeArgs; latest:Map<number,Date> };//latest:  by slot
+type OeeLive = SocketLive<OeeLiveEvent> & { machine:number };
+//A live subscription's lifecycle on the gateway's socket, the historian's and OEE's.  Its request id names it on the wire.  The
+//teardown forgets it as it unsubscribes, so what is still on the wire for it finds no subscription and is dropped:  the ids
+//aren't reused, so one unknown is an ended subscription's.  The socket's drop says `dropped` once an outage, from its first drop
+//to the next ack - gated by the ack, a drop before the first was silent (historian-live-trend #8) - and subscribes again under a
+//new id, Gateway.histRetryDelay later and again on each failure, until the listener goes.  An exception under the id ends it.
+class LiveSubscriptions<TLive extends SocketLive<TEvent>, TEvent extends {kind:string}>{
+	//`subscribe` sends the request under the id, `again` after a drop;  `unsubscribe` ends the one the id names
+	constructor( private readonly requestId:()=>number, private readonly subscribe:( live:TLive, requestId:number, again:boolean )=>void, private readonly unsubscribe:( subscription:number )=>void ){}
+	//the subscription's teardown
+	open( live:TLive ):()=>void{
+		this.#send( live, false );
+		return ()=>{
+			clearTimeout( live.retry );
+			if( this.#live.delete( live.requestId ) )//still the gateway's:  not ended by it, nor waiting out a drop
+				this.unsubscribe( live.requestId );
+		};
+	}
+	find( requestId:number ):TLive|undefined{ return this.#live.get( requestId ); }
+	//its ack:  a drop after it is said again
+	acked( requestId:number ):TLive|undefined{
+		const live = this.#live.get( requestId );
+		if( live )
+			live.down = false;
+		return live;
+	}
+	exception( requestId:number, e:{what:string; code:number; statusCode:number} ):boolean{
+		const live = this.#live.get( requestId );
+		if( !live )
+			return false;
+		this.#live.delete( requestId );
+		live.subscriber.error( {error: {requestId, message: e.what, sc: e.code, httpStatus: e.statusCode}} );
+		return true;
+	}
+	//The socket went, and every subscription with it.  The retry is set before `dropped` is said, so a listener that goes on
+	//hearing it clears it.
+	dropped():void{
+		for( const live of [...this.#live.values()] ){
+			this.#live.delete( live.requestId );
+			clearTimeout( live.retry );
+			live.retry = setTimeout( ()=>this.#send( live, true ), Gateway.histRetryDelay );
+			if( !live.down ){
+				live.down = true;
+				live.subscriber.next( <TEvent>{kind: 'dropped'} );
+			}
+		}
+	}
+	#send( live:TLive, again:boolean ):void{
+		if( live.subscriber.closed )
+			return;
+		const requestId = this.requestId();
+		live.requestId = requestId;
+		live.retry = undefined;
+		this.#live.set( requestId, live );
+		this.subscribe( live, requestId, again );
+	}
+	#live = new Map<number,TLive>();//by request id
+}
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );
 //A node known by id alone, placed (NodePlace) in one query:  the search's id hits, a References target, a node-access link.  The reader

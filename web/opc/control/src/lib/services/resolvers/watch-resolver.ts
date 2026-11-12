@@ -26,7 +26,8 @@ export class WatchResolver implements Resolve<WatchPageData>{
 			return { gateway, routing };
 		}
 		catch( e ){//no gateway of that name - a stale bookmark - says so and lands on the gateway page, as the historian's pages do
-			this.#snackbar.exception( `Could not open the ${title[0].toLowerCase()}${title.slice( 1 )} of '${instance}'.`, e );
+			const label = /^.[a-z]/.test( title ) ? title[0].toLowerCase()+title.slice( 1 ) : title;//an acronym keeps its case
+			this.#snackbar.exception( `Could not open the ${label} of '${instance}'.`, e );
 			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, ['..'] ) );
 			return null as unknown as WatchPageData;
 		}

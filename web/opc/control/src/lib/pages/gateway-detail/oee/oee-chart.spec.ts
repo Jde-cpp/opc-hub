@@ -1,10 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import type Highcharts from 'highcharts/esm/highstock';
-import { toOeeLoss, toOeeTimeline } from '../../../model/oee';
+import { OeeSegment, toOeeLoss, toOeeTimeline } from '../../../model/oee';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { OeeChart, OeeChartSpec } from './oee-chart';
 import { oeeKindColors, toGantt, toGanttRows, toPareto } from './oee-chart-data';
-import { silence, stable } from 'jde-spa/testing';
+import { flush, silence, stable } from 'jde-spa/testing';
 import { BundledHighcharts } from 'jde-opc/testing';
 
 const t = ( h:number, m=0 )=>new Date( Date.UTC( 2026, 10, 11, h, m ) );
@@ -70,6 +70,24 @@ describe( 'OeeChart', ()=>{
 		expect( plot.style.height ).toBe( '152px' );
 		expect( chart!.yAxis[0].options.max ).toBe( 2 );
 		expect( chart!.series[1].points ).toHaveLength( 9 );
+		fixture.destroy();
+	} );
+	it( "keeps a zoom as the dashboard's data changes, and waits on an open tooltip", async ()=>{
+		const rows = ( segments:OeeSegment[] ):OeeChartSpec=>({ kind: 'gantt', title: 'The current shift', description: 'd', range, ...toGanttRows( [{name: 'Pump 1', segments}] ) });
+		const { fixture, chart } = await draw( rows( timeline.segments.slice( 0, 2 ) ) );
+		chart!.xAxis[0].setExtremes( t( 7 ).getTime(), t( 9 ).getTime() );//the user's zoom
+		fixture.componentRef.setInput( 'spec', rows( timeline.segments ) );
+		await stable( fixture );
+		expect( chart!.series[1].points ).toHaveLength( 3 );
+		expect( [chart!.xAxis[0].min, chart!.xAxis[0].max] ).toEqual( [t( 7 ).getTime(), t( 9 ).getTime()] );
+		(<any>chart).hoverPoint = chart!.series[1].points[0];//a band's tooltip open
+		fixture.componentRef.setInput( 'spec', rows( timeline.segments.slice( 0, 1 ) ) );
+		await stable( fixture );
+		expect( chart!.series[1].points ).toHaveLength( 3 );
+		(<any>chart).hoverPoint = undefined;
+		(<any>chart!.series[1].points[0]).firePointEvent( 'mouseOut' );
+		await flush( 2 );
+		expect( chart!.series[1].points ).toHaveLength( 1 );
 		fixture.destroy();
 	} );
 	it( 'redraws in place when the data changes, and anew when the kind does', async ()=>{

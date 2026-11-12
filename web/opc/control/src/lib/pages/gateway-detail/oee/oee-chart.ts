@@ -50,14 +50,32 @@ export class OeeChart implements OnInit, OnDestroy{
 					this.#chart?.destroy();
 					this.#chart = H.chart( plot, this.#options( spec ) );
 					this.#kind = spec.kind;
+					this.#height = this.height();
 				}
-				else{
-					this.#chart.update( this.#options( spec ), true, true, false );
-					if( this.#height!=this.height() )
-						this.#chart.reflow();
-				}
-				this.#height = this.height();
+				else
+					this.#redraw( spec );
 			} );
+		} );
+	}
+	//The chart's data again, in place:  a zoom the user made stands.  While a band is hovered or focused its tooltip stands, and
+	//the data waits for it to close - the dashboard's grows every few seconds.
+	#redraw( spec:OeeChartSpec ):void{
+		const chart = this.#chart!;
+		if( (<any>chart).hoverPoint ){
+			this.#pending = spec;
+			return;
+		}
+		this.#pending = undefined;
+		chart.update( this.#options( spec ), true, true, false );
+		if( this.#height!=this.height() )
+			chart.reflow();
+		this.#height = this.height();
+	}
+	//a band's tooltip closed:  the data that waited on it, once the pointer has settled on no other band
+	#left():void{
+		setTimeout( ()=>{
+			if( this.#chart && this.#pending )
+				this.#redraw( this.#pending );
 		} );
 	}
 	ngOnInit(){
@@ -96,15 +114,16 @@ export class OeeChart implements OnInit, OnDestroy{
 		const axis = { gridLineColor: grid, lineColor: grid, tickColor: grid, labels: {style: {color: muted}} };
 		if( spec.kind=='gantt' ){
 			const row = { type: <const>'xrange', borderWidth: 0, borderRadius: 2, pointWidth: 24, minPointLength: 3, turboThreshold: 0, dataLabels: {enabled: false} };
+			const left = { mouseOut(){ self.#left(); } };
 			return { ...shared,
 				chart: { type: 'xrange', backgroundColor: 'transparent', style: {fontFamily: 'inherit'}, animation: false, zooming: {type: 'x'}, spacing: [8, 8, 8, 8] },
 				xAxis: { ...axis, type: 'datetime', min: spec.range.start.getTime(), max: spec.range.end.getTime(), gridLineWidth: 1, tickPixelInterval: 140 },
 				yAxis: { ...axis, categories: spec.rows ?? ['Planned', 'State'], min: 0, max: ( spec.rows?.length ?? 2 )-1, reversed: true, title: {text: null}, gridLineWidth: 0 },
 				plotOptions: { series: {animation: false, states: {inactive: {opacity: 1}}} },
 				series: [
-					{ ...row, id: 'planned', name: 'Planned time', data: spec.planned },
+					{ ...row, id: 'planned', name: 'Planned time', data: spec.planned, point: {events: left} },
 					//the smallest band is three pixels, so a small stop is seen at all;  a stop's band opens its coding
-					{ ...row, id: 'state', name: 'State', data: spec.state, cursor: 'pointer', point: {events: {click(){ const s = <OeeSegment|undefined>(<any>this.options).custom?.segment; self.band.emit( <GanttPoint><unknown>this.options ); if( s && codable( s ) ) self.pick.emit( s ); }}} }
+					{ ...row, id: 'state', name: 'State', data: spec.state, cursor: 'pointer', point: {events: {...left, click(){ const s = <OeeSegment|undefined>(<any>this.options).custom?.segment; self.band.emit( <GanttPoint><unknown>this.options ); if( s && codable( s ) ) self.pick.emit( s ); }}} }
 				]
 			};
 		}
@@ -122,5 +141,6 @@ export class OeeChart implements OnInit, OnDestroy{
 	#loader = inject( HighchartsLoader );
 	#chart:Highcharts.Chart|undefined;
 	#kind:OeeChartSpec['kind']|undefined;
+	#pending:OeeChartSpec|undefined;//one waiting on a tooltip
 	#height:number|null = null;
 }

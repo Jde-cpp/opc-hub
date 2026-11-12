@@ -25,7 +25,7 @@ const spanText = ( s:OeeSpan )=>`${clock( s.start )} to ${clock( s.end )}, ${oee
 //What a segment is drawn as:  running, unknown, or a stop in its reason's category, and with no reason a small one and an
 //uncoded one each in a colour of its own.  The gateway marks a small stop with no reason uncoded too:  small says more.
 //An unknown span carries its row's id, as a stop does, and is no stop:  codable() is what a click opens.
-export function segmentKind( s:OeeSegment ):OeeKind{
+export function segmentKind( s:Pick<OeeSegment,'state'|'reason'|'small'> ):OeeKind{
 	if( s.state!='stopped' )
 		return s.state;
 	const category = s.reason?.category;

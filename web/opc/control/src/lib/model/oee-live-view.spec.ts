@@ -34,6 +34,14 @@ describe( 'a tile', ()=>{
 		const between = live( {state: 'stopped', since: t( 14 ), planned: false, calendarMissing: false, stop: {start: t( 14 ), small: false}} );
 		expect( [between.period, between.length, between.notes, between.figures.map( f=>f.value )] ).toEqual( [undefined, undefined, ['Between shifts.'], ['–', '–', '–', '–']] );
 	} );
+	//the gateway has no figures before it reads the rows, for a machine no engine runs with no rows yet, at a shift's first instant
+	it( 'is no time between shifts for a status with no figures, in a shift or without a calendar', ()=>{
+		const live = ( status:OeeLiveStatus )=>oeeTileView( oeeTileNext( oeeTile( machine ), {kind: 'status', status} ) );
+		const first = live( {state: 'unknown', planned: true, shift, calendarMissing: false} );
+		expect( [first.period, first.notes, first.figures.map( f=>f.value )] ).toEqual( ['First', [], ['–', '–', '–', '–']] );
+		const none = live( {state: 'unknown', planned: true, calendarMissing: false} );
+		expect( [none.period, none.notes] ).toEqual( ['UTC day', []] );
+	} );
 	it( 'keeps what the gateway last said across a drop, marked, and is live again with the next status', ()=>{
 		let tile = oeeTileNext( oeeTile( machine ), {kind: 'status', status: running( t( 7 ), t( 8 ) )} );
 		tile = oeeTileNext( tile, {kind: 'dropped'} );
@@ -109,9 +117,25 @@ describe( 'the live bands', ()=>{
 		const bands = growOeeBands( read(), stopped( t( 8, 50 ), t( 9, 1 ) ), t( 12 ) );
 		expect( spans( bands ).slice( -2 ) ).toEqual( [['running', '08:40:00', '08:50:00'], ['stopped', '08:50:00', '09:01:00']] );
 	} );
-	it( "covers the calendar's shift, or without one the UTC day of the figures, and nothing between shifts", ()=>{
-		expect( oeeLiveRange( running( t( 7 ), t( 8 ) ) ) ).toEqual( {start: t( 6 ), end: t( 14 )} );
-		expect( oeeLiveRange( {...running( t( 7 ), t( 8 ) ), shift: undefined, figures: figures( t( 8 ), {start: t( 0 )} )} ) ).toEqual( {start: t( 0 ), end: t( 24 )} );
-		expect( oeeLiveRange( {state: 'running', planned: false, calendarMissing: false} ) ).toBeUndefined();
+	it( "covers the calendar's shift, or without one the UTC day of the figures or of now, and nothing between shifts", ()=>{
+		expect( oeeLiveRange( running( t( 7 ), t( 8 ) ), t( 12 ) ) ).toEqual( {start: t( 6 ), end: t( 14 )} );
+		expect( oeeLiveRange( {...running( t( 7 ), t( 8 ) ), shift: undefined, figures: figures( t( 8 ), {start: t( 0 )} )}, t( 12 ) ) ).toEqual( {start: t( 0 ), end: t( 24 )} );
+		expect( oeeLiveRange( {state: 'unknown', planned: true, calendarMissing: false}, t( 12 ) ) ).toEqual( {start: t( 0 ), end: t( 24 )} );//no figures yet
+		expect( oeeLiveRange( {state: 'unknown', planned: true, shift, calendarMissing: false}, t( 12 ) ) ).toEqual( {start: t( 6 ), end: t( 14 )} );
+		expect( oeeLiveRange( {state: 'running', planned: false, calendarMissing: false}, t( 12 ) ) ).toBeUndefined();
+	} );
+	it( 'gives a stop begun before the chart the reason it is coded with', ()=>{
+		let bands = growOeeBands( [], stopped( t( 5, 50 ), t( 6, 30 ) ), t( 12 ), t( 6 ) );
+		expect( [spans( bands ), bands[0].uncoded] ).toEqual( [[['stopped', '06:00:00', '06:30:00']], true] );
+		bands = growOeeBands( bands, stopped( t( 5, 50 ), t( 6, 31 ), {reason: Jam} ), t( 12 ), t( 6 ) );
+		expect( bands[0] ).toMatchObject( {reason: Jam, uncoded: false, startText: iso( t( 6 ) )} );
+	} );
+	it( "keeps a stop's coding while the status has its reason, and drops it once the stop is coded otherwise", ()=>{
+		const coded = toOeeTimeline( [{planned: [], segments: [{start: iso( t( 9 ) ), end: iso( t( 9, 5 ) ), state: 'stopped', stop: 7, reason: Jam, small: false, uncoded: false, coding: {id: 2, comment: 'size change', userName: 'op'}}]}] ).segments;
+		let bands = growOeeBands( coded, stopped( t( 9 ), t( 9, 6 ), {reason: Jam} ), t( 12 ) );
+		expect( bands[0].coding ).toEqual( {id: 2, comment: 'size change', userName: 'op'} );
+		bands = growOeeBands( bands, stopped( t( 9 ), t( 9, 7 ) ), t( 12 ) );
+		expect( bands[0] ).toMatchObject( {reason: undefined, uncoded: true, stop: 7} );
+		expect( 'coding' in bands[0] ).toBe( false );
 	} );
 } );

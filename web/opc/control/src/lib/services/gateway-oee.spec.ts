@@ -98,5 +98,13 @@ describe( 'Gateway.oeeSubscribe', ()=>{
 			expect( gateway.subscribes ).toHaveLength( 1 );
 			expect( gateway.unsubscribes ).toHaveLength( 0 );
 		} );
+		it( 'subscribes no more for a listener that goes on hearing of the drop', ()=>{
+			const gateway = new OeeGateway();
+			const subscription = gateway.oeeSubscribe( 4 ).subscribe( e=>{ if( e.kind=='dropped' ) subscription.unsubscribe(); } );
+			gateway.drop();
+			vi.advanceTimersByTime( 2*Gateway.histRetryDelay );
+			expect( gateway.subscribes ).toHaveLength( 1 );
+			expect( gateway.unsubscribes ).toHaveLength( 0 );
+		} );
 	} );
 } );
