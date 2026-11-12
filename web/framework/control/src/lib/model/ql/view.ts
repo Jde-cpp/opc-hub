@@ -220,7 +220,6 @@ export class View{
 		this.sliceBy = config.sliceBy;
 		this.groupBy = config.groupBy;
 		this.sums = [...config.sums ?? []];
-		this.#queryGrouped();
 	}
 	private fromJson( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
 		this.name = config.name;
@@ -255,7 +254,6 @@ export class View{
 		this.sliceBy = config.sliceBy && this.sliceable( config.sliceBy ) ? config.sliceBy : undefined;//a column since gone, or retyped, slices nothing
 		this.groupBy = config.groupBy && this.sliceable( config.groupBy ) ? config.groupBy : undefined;//nor groups
 		this.sums = ( Array.isArray(config.sums) ? config.sums : [] ).filter( name=>this.summable(name) );
-		this.#queryGrouped();//toJson persists displayed fields alone
 	}
 	private fromTable( config:TableSettings, schema:TableSchema ):void{
 		this.collectionName = schema.collectionName;
@@ -366,10 +364,7 @@ export class View{
 		return by ? [this.sort.find( s=>s.active==by && s.direction ) ?? {active: by, direction: "asc"}, ...this.sort.filter( s=>s.active!=by )] : this.sort;
 	}
 	//the view grouped by `name`, or by none
-	setGroupBy( name:string|undefined ):void{
-		this.groupBy = name;
-		this.#queryGrouped();
-	}
+	setGroupBy( name:string|undefined ):void{ this.groupBy = name; }
 	//A column a group's header sums:  a number the schema marks as one, never an `ID` nor a live toggle.
 	summable( name:string ):boolean{
 		const field = this.#field( name );
@@ -382,20 +377,20 @@ export class View{
 	//a column into the sums, after the others, or out of them
 	toggleSum( name:string ):void{
 		this.sums = this.sums.includes( name ) ? this.sums.filter( s=>s!=name ) : [...this.sums, name];
-		this.#queryGrouped();
 	}
-	//The group column and the sums are read with the rows though the view hides them:  a column the view lacks joins it, hidden.
-	#queryGrouped():void{
-		for( const name of [this.groupBy, ...this.sums] ){
+	//The group column and the sums are read with the rows though the view hides them, or lacks them:  one it lacks is selected as
+	//the schema has it, and never joins its fields, which a Save writes and the Fields checklist shows (reviews-issue/596-views-group-by.md #3).
+	#groupedQueryText():string[]{
+		return [...new Set( [this.groupBy, ...this.sums] )].flatMap( name=>{
 			const field = name && !this.fields.some( f=>f.name==name ) ? this.schema?.fields.find( f=>f.name==name ) : undefined;
-			if( field )
-				this.fields.push( new ViewField({qlField: field, settings: {name: field.name, hidden: true}}) );
-		}
+			return field ? [new ViewField( {qlField: field} ).queryText] : [];
+		} );
 	}
-	//What the rows are grouped by, for groupRows:  none where the view is not grouped.  `totals`, the counts groupQuery answers.
-	grouping( offered:Record<string,string>, totals?:readonly SliceCount[] ):Grouping|undefined{
-		const by = this.groupBy;
-		return by ? { by, label: this.columnLabel(by, offered), chip: this.fields.find( f=>f.name==by )?.chip, sums: this.sums.map( name=>({name, label: this.columnLabel(name, offered)}) ), totals } : undefined;
+	//What the rows are grouped by, for groupRows:  none where the view is not grouped.  The chip is the view's field's, else
+	//`route`'s - the route's default view (ViewSet.routeDefault), for a column the view lacks.  `totals`, the counts groupQuery answers.
+	grouping( offered:Record<string,string>, route?:View, totals?:readonly SliceCount[] ):Grouping|undefined{
+		const by = this.groupBy, chip = ( this.fields.find( f=>f.name==by ) ?? route?.fields.find( f=>f.name==by ) )?.chip;
+		return by ? { by, label: this.columnLabel(by, offered), chip, sums: this.sums.map( name=>({name, label: this.columnLabel(name, offered)}) ), totals } : undefined;
 	}
 	//A group's count over the whole list, which a page shows a part of:  a row per value of the group column under the view's
 	//filter and its slice's value, the query the slice panel's counts are read with.  None where the view is not grouped.
@@ -417,7 +412,7 @@ export class View{
 		return { args, vars };
 	}
 	#queryParts( skip:number ):{fields:string[], args:string[], vars:Record<string,unknown>}{
-		const fields = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) || f.name==this.groupBy || this.sums.includes(f.name) ).map( f=>f.queryText );//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key;  the group column and the sums are what a group's header reads
+		const fields = [...this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) || f.name==this.groupBy || this.sums.includes(f.name) ).map( f=>f.queryText ), ...this.#groupedQueryText()];//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key;  the group column and the sums are what a group's header reads
 		let args = [];
 		let vars:Record<string,unknown> = {};
 		if( this.limit )

@@ -321,7 +321,7 @@ export class QLList implements OnInit{
 	//What the rows are grouped by (views spec *Group by*), as the view they were read under has it, with each group's count over
 	//the whole list where it was read:  a header then says *12 of 40* on a page that holds a part of its group.
 	#groupCounts = signal<SliceCount[]|undefined>( undefined );
-	grouping = computed<Grouping|undefined>( ()=>this.view()?.grouping( this.columns(), this.#groupCounts() ) );
+	grouping = computed<Grouping|undefined>( ()=>this.view()?.grouping( this.columns(), this.profile().routeDefault, this.#groupCounts() ) );
 	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilter?.includes( "-id:" ), selector: this.selector()}) );
 	showEmpty = computed<boolean>( ()=>!this.isRefreshing() && this.error()===undefined && !this.data().length );//not while a reload has the rows cleared
 	addFilled = computed<boolean>( ()=>this.showEmpty() && !this.viewFiltered() );//Add is the one useful action only on a genuinely empty list - not under a filter, a refusal or a failure (#fail and loadOrFail empty the rows too)

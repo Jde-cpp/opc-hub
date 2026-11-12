@@ -400,7 +400,7 @@ describe( 'GraphQLTable groups', ()=>{
 		fixture.componentRef.setInput( 'displayedFields', set.current().fields.filter( f=>f.displayed ) );
 		fixture.componentRef.setInput( 'selections', new SelectionModel<any>(multiple, []) );
 		fixture.componentRef.setInput( 'views', set );
-		fixture.componentRef.setInput( 'grouping', set.current().grouping( {size: "Size"}, [{value: "x", count: 5}, {value: null, count: 1}] ) );
+		fixture.componentRef.setInput( 'grouping', set.current().grouping( {size: "Size"}, undefined, [{value: "x", count: 5}, {value: null, count: 1}] ) );
 		await stable( fixture, 1 );
 		const element = fixture.nativeElement as HTMLElement;
 		const drawn = ()=>[...element.querySelectorAll( 'mat-row' )].map( r=>[...r.querySelectorAll( '.jde-group-cell mat-chip, .group-value, .group-count, .group-sum, mat-cell:not(.jde-group-cell)' )].map( e=>e.textContent!.replace( /\s+/g, " " ).trim() ).filter( t=>t ).join( ", " ) );
@@ -427,17 +427,34 @@ describe( 'GraphQLTable groups', ()=>{
 		await stable( fixture, 1 );
 		expect( drawn().length ).toBe( 5 );
 	} );
-	it( 'selects all over the rows alone, a collapsed group among them, and never a header', async ()=>{
+	//reviews-issue/596-views-group-by.md #7, ruled 2026-11-11:  select-all took the rows of a collapsed group, which an action then took
+	it( "selects all over the rows on screen, never a header, and leaves a collapsed group's as they were", async ()=>{
 		const { fixture, set, table, element } = await open( true );
+		table.toggle( rows[0] );//before its group is collapsed
 		set.toggleGroup( "string:x" );
 		await stable( fixture, 1 );
 		expect( table.isAllSelected() ).toBe( false );
 		table.toggleAll();
 		await stable( fixture, 1 );
-		expect( [table.selections().selected, table.isAllSelected()] ).toEqual( [rows, true] );
+		expect( [table.selections().selected, table.isAllSelected()] ).toEqual( [[rows[0], rows[2]], true] );
 		expect( element.querySelector( 'mat-row.jde-group-row mat-checkbox' ) ).toBeNull();
 		table.toggleAll();
-		expect( table.selections().selected ).toEqual( [] );
+		expect( table.selections().selected ).toEqual( [rows[0]] );
+		set.toggleGroup( "string:x" );
+		table.toggleAll();
+		expect( table.selections().selected ).toEqual( rows );
+	} );
+	//reviews-issue/596-views-group-by.md #2:  each header was made anew whenever the rows were, its row drawn again, and the focus on
+	//its chevron fell to the page
+	it( "keeps a header's row, and the focus on its chevron, as its group collapses and the view is edited", async ()=>{
+		const { fixture, set, element } = await open();
+		const chevron = element.querySelector<HTMLButtonElement>( 'mat-row.jde-group-row button.group-toggle' )!;
+		chevron.focus();
+		chevron.click();
+		await stable( fixture, 1 );
+		set.edit( view=>{ view.filter = "a"; } );//a new collapsed set, so new headers
+		await stable( fixture, 1 );
+		expect( [element.querySelector( 'mat-row.jde-group-row button.group-toggle' )===chevron, document.activeElement===chevron, chevron.getAttribute( "aria-label" )] ).toEqual( [true, true, "Expand x"] );
 	} );
 	it( 'draws a plain table where the list is not grouped, and does not open a row on a click on a header', async ()=>{
 		const { fixture, table, drawn, element } = await open();

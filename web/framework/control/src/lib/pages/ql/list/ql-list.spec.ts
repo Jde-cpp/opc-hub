@@ -824,6 +824,13 @@ describe( 'QLList group', ()=>{
 		expect( page.grouping() ).toMatchObject( {by: "provider", label: "Provider", sums: [{name: "logins", label: "Logins"}], totals: [{value: "Google", count: 1}, {value: "Key", count: 3}]} );
 		expect( headers() ).toEqual( ["Google, 1 row, Logins 1", "Key, 1 of 3 rows, Logins 2"] );
 	} );
+	//reviews-issue/596-views-group-by.md #10:  grouped and sliced by one column with no value held, the same count query went twice
+	it( 'reads the counts once where the slice panel and the groups ask the same', async ()=>{
+		const { page, counts } = await create();
+		expect( [counts(), page.grouping()!.totals] ).toEqual( [1, page.panelCounts()] );
+		await page.onRefresh();
+		expect( counts() ).toBe( 2 );
+	} );
 	it( 'repeats the header of a group a page break cut, on the next page', async ()=>{
 		const { page, fixture, headers, counts } = await create();
 		const read = counts();

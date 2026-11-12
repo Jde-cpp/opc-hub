@@ -226,7 +226,7 @@ export class QLListResolver implements Resolve<QLListData> {
 			return ql.query<any>( q.text, q.vars );
 		};
 		let skip = data.skip ?? 0;
-		const counting = data.profile.canSlice ? Promise.all( [QLListResolver.loadSliceCounts(ql, view, data), QLListResolver.loadGroupCounts(ql, view, data)] ).then( ([slices, groups])=>({...slices, ...groups}) ) : Promise.resolve( {} );//with the rows, not after them
+		const counting = data.profile.canSlice ? QLListResolver.loadCounts( ql, view, data ) : Promise.resolve( {} );//with the rows, not after them
 		let results = await query( skip );
 		if( skip && !results[collectionName].length ){//a page past the end - rows deleted since it was read:  the first page, not an empty "No … yet"
 			skip = 0;
@@ -244,6 +244,14 @@ export class QLListResolver implements Resolve<QLListData> {
 	static async loadSliceCounts( ql:Pick<IGraphQL,"query">, view:View, prior?:Pick<QLListData,"sliceCounts"|"sliceCountsOf"> ):Promise<Pick<QLListData,"sliceCounts"|"sliceCountsError"|"sliceCountsOf">>{
 		const y = await QLListResolver.counts( ql, view, view.sliceBy, view.sliceQuery(), prior?.sliceCounts, prior?.sliceCountsOf );
 		return y ? { sliceCounts: y.counts, sliceCountsError: y.error, sliceCountsOf: y.of } : {};
+	}
+	//The panel's counts and the groups':  one query for both where they ask the same, a view grouped and sliced by one column with no
+	//value held (reviews-issue/596-views-group-by.md #10).
+	static async loadCounts( ql:Pick<IGraphQL,"query">, view:View, prior?:Pick<QLListData,"sliceCounts"|"sliceCountsOf"|"groupCounts"|"groupCountsOf"> ):Promise<Pick<QLListData,"sliceCounts"|"sliceCountsError"|"sliceCountsOf"|"groupCounts"|"groupCountsOf">>{
+		const slicing = QLListResolver.loadSliceCounts( ql, view, prior );
+		const same = !!view.groupBy && view.sliceBy==view.groupBy && JSON.stringify( view.sliceQuery() )==JSON.stringify( view.groupQuery() );
+		const [slices, groups] = await Promise.all( [slicing, same ? slicing.then( s=>s.sliceCountsOf ? {groupCounts: s.sliceCounts, groupCountsOf: s.sliceCountsOf} : {} ) : QLListResolver.loadGroupCounts( ql, view, prior )] );
+		return { ...slices, ...groups };
 	}
 	//Each group's count over the whole list, where the view is grouped, kept as the panel's are.  A failure leaves the headers the
 	//page's counts.

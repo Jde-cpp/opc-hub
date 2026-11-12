@@ -9,9 +9,19 @@ describe( 'groupRows', ()=>{
 	//the headers as `label count`, the rows by name
 	const read = ( y:(Row|GroupHeader)[] )=>y.map( r=>isGroupHeader( r ) ? `${r.label} ${r.count}${r.of===undefined ? "" : ` of ${r.of}`}` : r.name );
 
-	it( 'puts a header ahead of each run of a value, with its count, and the rows with none under No <field>', ()=>{
+	it( "puts a header ahead of each value's rows, with its count, and the rows with none under No <field>", ()=>{
 		expect( read( groupRows(rows, grouping(), cell) ) ).toEqual( ["x 2", "a", "b", "y 1", "c", "No Kind 2", "d", "e"] );
 		expect( groupRows( [], grouping(), cell ) ).toEqual( [] );
+	} );
+	//reviews-issue/596-views-group-by.md #1:  the rows were cut where the value changed, so rows out of the group column's order - a
+	//node's after a push, a Variable page's own row first - had a header for each run, two of one key
+	it( "gathers a value's rows under one header whatever their order, the groups as their values first come", ()=>{
+		const mixed = [rows[2], rows[0], rows[3], rows[1], rows[4]];
+		expect( read( groupRows(mixed, grouping(), cell) ) ).toEqual( ["y 1", "c", "x 2", "a", "b", "No Kind 2", "d", "e"] );
+	} );
+	//reviews-issue/596-views-group-by.md #6:  counts read before rows were added said *5 of 3*
+	it( "says the list's count only where it holds more than the rows here", ()=>{
+		expect( read( groupRows(rows, grouping({totals: [{value: "x", count: 1}, {value: "y", count: 1}]}), cell) ).slice( 0, 4 ) ).toEqual( ["x 2", "a", "b", "y 1"] );
 	} );
 	it( "repeats a group's header on the page a page break left the rest of it on, each with its page's count of the list's", ()=>{
 		const totals = [{value: "x", count: 2}, {value: "y", count: 1}, {value: null, count: 2}];

@@ -266,6 +266,11 @@ mat-table.jde-view-columns.jde-grouped {
 	width: max-content;
 	min-width: 100%;
 	box-sizing: border-box;
+
+	// a page turn brings its first row in under its group's header, which sticks over it (jde-framework's Paginator.showFirstRow)
+	> mat-row:not(.jde-group-row) {
+		scroll-margin-top: var(--mat-table-row-item-container-height, 52px);
+	}
 }
 mat-row.jde-group-row {
 	position: sticky;

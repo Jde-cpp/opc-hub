@@ -10,7 +10,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle, LocalPrefs, ProfileStore, RouteItem } from 'jde-spa';
-import { cellValues, errorMessage, GroupHeader, GroupHeaderCell, groupRows, isGroupHeader, SliceCount, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
+import { cellValues, errorMessage, groupColumns, GroupHeader, GroupHeaderCell, groupRows, isGroupRow, SliceCount, trackGroupRow, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
@@ -374,11 +374,12 @@ export class GatewayWatch implements OnInit, OnDestroy{
 	//The table's rows:  those shown, under a header per group where the view is grouped (views spec *Group by*), a collapsed
 	//group's left out.  Every row is here, so a header's count and its sums are its group's, cut again on every push.
 	tableRows = computed<(WatchRow|GroupHeader)[]>( ()=>{
-		const grouping = this.view()?.grouping( this.columns );
+		const grouping = this.view()?.grouping( this.columns, this.viewSet.routeDefault );
 		return grouping ? groupRows( this.shown(), grouping, ( row, column )=>WatchView.cellValue(row, column, this.names), this.viewSet.collapsed() ) : this.shown();
 	} );
-	readonly isGroup = ( _:number, row:unknown )=>isGroupHeader( row );
-	readonly groupColumns = ["jde-group"];
+	readonly isGroup = isGroupRow;
+	readonly groupColumns = groupColumns;
+	readonly trackRow = trackGroupRow;//a header keeps its row through a push, and the focus on its chevron
 	//the rows the view's filter keeps, which the rows shown and the slice panel's counts share:  read again on every push
 	#filtered = computed<WatchRow[]>( ()=>{
 		this.#changes();

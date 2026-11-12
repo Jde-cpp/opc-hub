@@ -14,7 +14,7 @@ import { Style, View, ViewField } from '../../../model/ql/view';
 import { ViewSet } from '../../../model/ql/view-set';
 import { ViewColumnCell, ViewColumnHeader, ViewColumns } from '../../../shared/view-columns/view-columns';
 import { QLRow } from '../../../model/ql/slug-row';
-import { GroupHeader, Grouping, groupRows, isGroupHeader } from '../../../model/ql/group';
+import { groupColumns, GroupHeader, Grouping, groupRows, isGroupHeader, isGroupRow, trackGroupRow } from '../../../model/ql/group';
 import { GroupHeaderCell } from '../../../shared/group-header/group-header';
 import { capitalize } from 'jde-spa';
 
@@ -42,11 +42,11 @@ export class GraphQLTable{
 		return new SelectionModel<QLRow>( selections.isMultipleSelection(), rows );
 	}
 
+	//The rows on screen, all ticked or all off:  a collapsed group's are left as they were (reviews-issue/596-views-group-by.md #7).
 	toggleAll(){
-		if( this.isAllSelected() )
-			this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), []) );
-		else
-			this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), [...this.dataSource()]) );
+		const shown = new Set( this.shownRows() );
+		const kept = this.selections().selected.filter( r=>!shown.has(r) && this.dataSource().includes(r) );
+		this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), this.isAllSelected() ? kept : [...kept, ...shown]) );
 	}
 
 	cellClick( row:QLRow ){
@@ -61,7 +61,7 @@ export class GraphQLTable{
 		this.onRowActivate.emit( row );
 	}
 
-	isAllSelected(){ return this.selections().selected.length==this.dataSource().length; }
+	isAllSelected(){ return this.shownRows().every( r=>this.selections().isSelected(r) ); }
 	isSelected( row:QLRow ){ return this.selections().isSelected(row); }
 	columnName( colName:string ){ return this.columns().get( colName )?.field.displayName ?? capitalize(colName); }
 	//Applied to the header cell and the data cell from the one setting, so the two cannot drift apart.  Its width is viewColumn's
@@ -106,16 +106,18 @@ export class GraphQLTable{
 		return tone ? `chip-${tone}` : "";
 	}
 
-	dataSource=input.required<QLRow[]>();//the rows, which the selection reads:  the table draws `rows`, the groups' headers among them
-	//What the rows are grouped by (views spec *Group by*), none for a plain table:  each run of a value under a header row, a second
+	dataSource=input.required<QLRow[]>();//the page's rows:  the table draws `rows`, the groups' headers among them
+	//What the rows are grouped by (views spec *Group by*), none for a plain table:  each value's rows under a header row, a second
 	//row definition, whose chevron collapses it in the list's views.
 	grouping = input<Grouping>();
 	rows = computed<(QLRow|GroupHeader)[]>( ()=>{
 		const grouping = this.grouping();
 		return grouping ? groupRows( this.dataSource(), grouping, ( row, column )=>row[column], this.views()?.collapsed() ) : this.dataSource();
 	} );
-	readonly isGroup = ( _:number, row:unknown )=>isGroupHeader( row );
-	readonly groupColumns = ["jde-group"];
+	shownRows = computed<QLRow[]>( ()=>this.rows().filter( (r):r is QLRow=>!isGroupHeader(r) ) );//those on screen, which select-all reads
+	readonly isGroup = isGroupRow;
+	readonly groupColumns = groupColumns;
+	readonly trackRow = trackGroupRow;
 	displayedFields = input.required<ViewField[]>();
 	selections=model.required<SelectionModel<QLRow>>();
 	//showDeleted = input<boolean>( false );

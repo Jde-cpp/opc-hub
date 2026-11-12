@@ -144,7 +144,7 @@ A **grouped** list puts its rows under a header for each value of one column. Th
 - The rows are sorted by the group column first, so the rows of a value stay together, and by the view's own [sort](#sorting) within a group. Sort by the group column to turn the groups' order round.
 - The chevron at the left of a header collapses its group, and opens it again. The groups you collapse are kept in this browser, for you alone, and are not saved with the view.
 - The count is of the rows on the page. Where the list holds more rows of the value than the page shows, the header says so: *12 of 40*. A group that runs past the end of a page has its header again at the top of the next. The count of the whole list follows the [filter](#filtering) and the value picked in a [slice](#slicing).
-- **Field sum** in the view's menu ticks the number columns to add up, such as *Sessions 12*. It is greyed out until the list is grouped. A sum is of the rows on the page, whether or not their column is shown, and it counts the rows of a collapsed group.
+- **Field sum** in the view's menu ticks the number columns to add up, such as the **Watch list**'s *Queue 12*. It is greyed out until the list is grouped. A sum is of the rows on the page, whether or not their column is shown, and it counts the rows of a collapsed group.
 - *No* and the column's name heads the rows with no value.
 
 On a node's **Children** and on the **Watch list** every row is on the page, so a header's count and sums are its group's. A node's **Children** have no number column to sum. **Logs** cannot be grouped.

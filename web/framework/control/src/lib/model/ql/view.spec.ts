@@ -1,5 +1,6 @@
 import { Flex, Style, View, ViewField, type ViewFieldSettings, type ViewSerializedArgs } from './view';
 import { object, scalar, schemaOf, serverConnectionSchema } from 'jde-framework/testing';
+import type { TableSettings } from '../../services/ql-list-resolver';
 
 const schema = serverConnectionSchema();
 
@@ -481,8 +482,26 @@ describe( "View group", ()=>{
 	it( "says what the rows are grouped by, under the headers' names", ()=>{
 		const v = view( {columns: ["name", {name: "provider", displayName: "Sign-in", chip: {Key: "ok"}}], groupBy: "provider", sums: ["logins"]} );
 		const totals = [{value: "Key", count: 3}];
-		expect( v.grouping( {logins: "Logins"}, totals ) ).toEqual( {by: "provider", label: "Sign-in", chip: {Key: "ok"}, sums: [{name: "logins", label: "Logins"}], totals} );
+		expect( v.grouping( {logins: "Logins"}, undefined, totals ) ).toEqual( {by: "provider", label: "Sign-in", chip: {Key: "ok"}, sums: [{name: "logins", label: "Logins"}], totals} );
 		expect( view().grouping( {} ) ).toBeUndefined();
+	} );
+	//reviews-issue/596-views-group-by.md #3:  a column the view lacked joined its fields as the schema has it - no chip, width or
+	//name - and stayed there, so a Save wrote it so and the Fields checklist showed it bare
+	it( "never makes a column it lacks one of its fields:  groups under the route's chip, and shows it later as the route has it", ()=>{
+		const settings:TableSettings = {columns: ["name", {name: "provider", displayName: "Sign-in", style: new Style( 100 ), chip: {Key: "ok"}}], sort: "name"};
+		const route = View.fromTable( settings, users );
+		const saved = View.fromJson( {...route.toJson( settings ), fields: [{name: "name"}]} as unknown as ViewSerializedArgs, users, route );
+		const json = JSON.stringify( saved.toJson(settings) ), lacks = ()=>!saved.fields.some( f=>f.name=="provider" || f.name=="logins" );
+		saved.setGroupBy( "provider" );
+		saved.toggleSum( "logins" );
+		expect( [lacks(), saved.query( 0 ).text.includes( " provider logins }" ), saved.grouping( {provider: "Provider"}, route )] ).toEqual( [true, true, {by: "provider", label: "Provider", chip: {Key: "ok"}, sums: [{name: "logins", label: "Logins"}], totals: undefined}] );
+		saved.toggleSum( "logins" );
+		saved.setGroupBy( undefined );
+		expect( [lacks(), JSON.stringify( saved.toJson(settings) )] ).toEqual( [true, json] );//no draft left by a group taken off
+		saved.setGroupBy( "provider" );
+		saved.setDisplayed( "provider", true, "Provider", route.fields.find( f=>f.name=="provider" ) );
+		const shown = saved.fields.find( f=>f.name=="provider" )!;
+		expect( [shown.displayed, shown.displayName, shown.flex, shown.chip] ).toEqual( [true, "Sign-in", "0 0 100px", {Key: "ok"}] );
 	} );
 	it( "saves the column and the sums, and drops a saved one the schema no longer groups by or sums", ()=>{
 		const v = view( {groupBy: "provider", sums: ["logins"]} );

@@ -74,6 +74,17 @@ describe( 'Paginator.showFirstRow', ()=>{
 		expect( scroll ).not.toHaveBeenCalled();
 	} );
 
+	//reviews-issue/596-views-group-by.md #4:  the first row was a group's header, which sticks, so it was in view and nothing scrolled
+	it( "brings the first row into view past a group's header", ()=>{
+		const host = document.createElement( 'div' );
+		host.innerHTML = '<mat-header-row></mat-header-row><mat-row class="jde-group-row"></mat-row><mat-row></mat-row>';
+		const [header, first] = [...host.querySelectorAll<HTMLElement>( 'mat-row' )];
+		header.scrollIntoView = vi.fn();
+		first.scrollIntoView = vi.fn();
+		Paginator.showFirstRow( host, 0, 25 );
+		expect( [header.scrollIntoView, first.scrollIntoView].map( s=>( s as ReturnType<typeof vi.fn> ).mock.calls.length ) ).toEqual( [0, 1] );
+	} );
+
 	it( 'leaves a list with no rows alone', ()=>{
 		expect( ()=>Paginator.showFirstRow( document.createElement('div'), 0, 25 ) ).not.toThrow();
 	} );
