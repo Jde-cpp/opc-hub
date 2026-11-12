@@ -1,2 +1,5 @@
 # LF in the repo and in every checkout, Windows included.  text=auto leaves binaries alone.
 * text=auto eol=lf
+
+# The fuzz corpus is bytes as they are:  a file that reads as text keeps its CRs.
+libs/opc/openProtocol/tests/corpus/* -text
