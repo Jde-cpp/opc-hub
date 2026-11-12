@@ -1,4 +1,4 @@
-import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
+import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { BehaviorSubject } from 'rxjs';
 import { ProfileStore, RouteItem } from 'jde-spa';
@@ -44,7 +44,6 @@ const create = async ( items:WatchItemJson[], described:Map<string,{node:Variabl
 	const profile = profileStoreStub( {'gateways/g/watch': {items}, 'gateways/h/watch': {items}} );
 	const dialog = dialogStub();
 	TestBed.configureTestingModule( {providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },//the page is driven by hand:  the zoneless fixture's own first change detection would run ngOnInit a second time
 		screenSize(),
 		pageTitleStub,
 		provideRoute( {data} ),
@@ -56,7 +55,7 @@ const create = async ( items:WatchItemJson[], described:Map<string,{node:Variabl
 	]} );
 	const fixture = TestBed.createComponent( GatewayWatch );
 	const page = fixture.componentInstance;
-	await page.ngOnInit();
+	fixture.detectChanges();//its first change detection runs ngOnInit
 	await flush( 3 );
 	const saved = ()=>profile.save.mock.calls.filter( ([key])=>key=='gateways/g/watch' ).map( ([, v])=>(<any>v).items as WatchItemJson[] );
 	const row = ( opc:string, node:NodeId )=>page.rows().find( r=>r.key==WatchRow.keyOf( opc, node ) )!;
@@ -403,11 +402,11 @@ describe( 'GatewayWatch', ()=>{
 	} );
 
 	it( 'names an enumeration\'s value and spells the cells', async ()=>{
-		const described = pumps();
-		described.set( `local/${A.uaString()}`, {node: variable( 1, 'state', {dataType: {ns: 2, i: 3001}, value: 2} ), path: 'Objects/pump1/state'} );
+		const described = pumps(), state = variable( 1, 'state', {dataType: {ns: 2, i: 3001}, value: 2} );
+		state.customDataType = <any>{ id: new NodeId( {ns: 2, i: 3001} ), name: 'PumpState', enumValues: [{id: 1, name: 'Off'}, {id: 2, name: 'Running'}] };//as the gateway's describe resolves it
+		described.set( `local/${A.uaString()}`, {node: state, path: 'Objects/pump1/state'} );
 		const { page, row } = await create( [item( 'local', A, {samplingInterval: 100, filter: {trigger: 2, deadbandType: 0, deadbandValue: 0}} )], described );
 		const a = row( 'local', A );
-		a.variable!.customDataType = <any>{ id: new NodeId( {ns: 2, i: 3001} ), name: 'PumpState', enumValues: [{id: 1, name: 'Off'}, {id: 2, name: 'Running'}] };
 		expect( page.valueText( a ) ).toBe( 'Running' );
 		expect( page.cell( a, 'value' ) ).toBe( 'Running' );//what the filter and the sort read:  the number, while the cell said the name (419-watch #13)
 		expect( page.filterValues()['value'] ).toEqual( ['Running'] );
@@ -423,10 +422,8 @@ describe( 'GatewayWatch', ()=>{
 	//#593:  the Sort tab was the editor's last, and the editor went with it
 	it( 'renders its list with no view editor', async ()=>{
 		const { fixture } = await create( [item( 'local', A )], pumps() );
-		for( let pass = 0; pass<2; ++pass ){//the page's own detector:  the fixture's first pass checks for no changes, which a page already opened by hand trips
-			fixture.componentRef.changeDetectorRef.detectChanges();
-			await flush( 3 );
-		}
+		fixture.detectChanges();
+		await flush( 3 );
 		const element = fixture.nativeElement as HTMLElement;
 		expect( [!!element.querySelector( 'view-toolbar' ), !!element.querySelector( 'mat-table' )] ).toEqual( [true, true] );
 		expect( element.querySelector( 'ql-list-settings, button[aria-label="Edit view"]' ) ).toBeNull();
@@ -436,10 +433,9 @@ describe( 'GatewayWatch', ()=>{
 	it( 'heads the rows with their groups, summed, a header row each, and collapses one', async ()=>{
 		const { page, fixture } = await create( [item( 'local', A, {samplingInterval: 100} ), item( 'plc', B, {samplingInterval: 250} ), item( 'plc', C, {samplingInterval: 500} )], pumps() );
 		const draw = async ()=>{
-			fixture.componentRef.changeDetectorRef.detectChanges();
+			fixture.detectChanges();
 			await flush( 3 );
 		};
-		await draw();//the page's first pass runs ngOnInit again, which loads the views anew
 		page.viewSet.edit( view=>{ view.setGroupBy( "connection" ); view.toggleSum( "sampling" ); } );
 		const headed = ()=>page.tableRows().map( r=>isGroupHeader( r ) ? `${r.label} ${r.count} ${r.sums.map( s=>`${s.label} ${s.sum}` )}` : r.name );
 		expect( headed() ).toEqual( ["Local 1 Sampling 100", "rpm", "PLC 2 Sampling 750", "flow", "level"] );

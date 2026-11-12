@@ -35,7 +35,7 @@ const create = async ( pageRow:any, {saved, render=false, registrations=[{instan
 	const hist = { groupMembers: vi.fn( async ()=>[member( 7, 'status' ), member( 8, 'totalCount' ), member( 9, 'motorRpm' )] ) };
 	const app = { registrations: vi.fn( async ()=>registrations ) };
 	const {snackbar, router, data} = configureDetailPage( pageRow, {gateway, providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },//the page is driven by hand:  the fixture's own first change detection would run ngOnInit again
+		{ provide: ComponentFixtureAutoDetect, useValue: render },//a rendered page detects changes itself, as an app does:  turned off, a zoneless tick inside flush() leaves the next detectChanges() nothing to refresh (NG0100).  One driven by hand doesn't, or its first change detection would run ngOnInit a second time, onto the row #load nulled
 		{ provide: OeeAdminService, useValue: admin },
 		{ provide: HistAdminService, useValue: hist },
 		{ provide: CalendarService, useValue: {calendars: async ()=>[{id: 2, name: 'Plant', slug: 'plant', timeZone: 'UTC', dayStart: 360}]} },

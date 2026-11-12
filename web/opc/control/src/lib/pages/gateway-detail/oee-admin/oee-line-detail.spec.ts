@@ -18,7 +18,9 @@ const plantOf = ():OeePlant=>({
 	members: [member( 1, 10, {line: 11}, 0 ), member( 2, 11, {machine: 1}, 0 ), member( 3, 11, {line: 13}, 0 ), member( 4, 11, {machine: 2}, 5 ), member( 5, 12, {machine: 3}, 0 )]
 });
 //The page over stubs:  `mutations` reads what Save sent the gateway, whose `mutate` throws `refusal` when there is one;  the
-//admin service records each edit of the members, `refuse` making the next throw, and the plant is read again after each.
+//admin service records each edit of the members, `refuse` making the next throw, and the plant is read again after each.  A
+//rendered page detects changes itself, as an app does:  with ComponentFixtureAutoDetect false, zoneless ticks that run during
+//flush() skip the fixture's view and clear the app's dirty flags, so a later detectChanges() refreshes nothing (NG0100).
 const create = async ( pageRow:any, {refusal, render=false}:{refusal?:string; render?:boolean}={} )=>{
 	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{ if( refusal ) throw new Error( refusal ); } ) };
 	const mutations = ()=>gateway.mutate.mock.calls.flatMap( ([m])=>Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m] );
@@ -30,7 +32,7 @@ const create = async ( pageRow:any, {refusal, render=false}:{refusal?:string; re
 	const admin = { addLineMember: edit(), sortLineMember: edit(), purgeLineMember: edit() };
 	const service = { plant: vi.fn( async ( _g:unknown, _strict:boolean )=>answers.plant ) };
 	const {snackbar, router, data} = configureDetailPage( pageRow, {gateway, providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },
+		{ provide: ComponentFixtureAutoDetect, useValue: render },
 		{ provide: OeeAdminService, useValue: admin },
 		{ provide: OeeService, useValue: service },
 		{ provide: CalendarService, useValue: {calendars: async ()=>[{id: 2, name: 'Plant', slug: 'plant', timeZone: 'UTC', dayStart: 360}]} },
@@ -77,11 +79,17 @@ describe( 'OeeLineDetail', ()=>{
 		expect( [d.page.saveError(), d.page.line.calendarId] ).toEqual( [undefined, undefined] );
 	} );
 	it( "links the line's calendar, and shows one the application server's list lacks by its id", async ()=>{
-		const d = await create( row );
+		const d = await create( row, {render: true} );
 		const calendar = ()=>[d.page.calendars.link( d.page.line.calendarId ), d.page.calendars.missing( d.page.line.calendarId )];
+		const hint = ()=>d.fixture.nativeElement.querySelector( 'oee-calendar-field mat-hint' );
 		expect( calendar() ).toEqual( [['/apps/gateways', 'g', 'calendars', 'plant'], undefined] );
+		d.fixture.detectChanges();//the calendars land after the first render
+		expect( hint().textContent.replace( /\s+/g, ' ' ) ).toBe( "The line's shifts and days. Each machine is planned by its own. Open the calendar" );
+		expect( hint().querySelector( 'a' )?.textContent ).toBe( 'Open the calendar' );//its href is the field's spec's:  the router here is a stub
 		await d.open( {...row, calendarId: 7} );
 		expect( calendar() ).toEqual( [undefined, 7] );
+		d.fixture.detectChanges();
+		expect( hint().querySelector( 'a' ) ).toBeNull();
 	} );
 	it( 'lists the members in their order, each with its page, and one whose machine is deleted by its id', async ()=>{
 		const d = await create( row );
