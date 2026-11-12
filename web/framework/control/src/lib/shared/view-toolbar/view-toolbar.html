@@ -54,7 +54,7 @@
 </ng-template>
 <mat-progress-bar class="refresh-bar" [mode]="refreshing() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Refreshing"></mat-progress-bar>
 <ng-template #name let-view>{{ label(view) }}@if( view.isAdhoc ){<span class="draft-dot" aria-hidden="true"></span><span class="cdk-visually-hidden">, unsaved changes</span>}</ng-template>
-<!--the view menu:  the active tab's, or a pick list's button's with the views first.  The entries of the later phases join it.
+<!--the view menu:  the active tab's, or a pick list's button's with the views first.
 The menus build their entries only while open (matMenuContent).-->
 <mat-menu #viewMenu="matMenu">
 	<ng-template matMenuContent>
@@ -64,11 +64,17 @@ The menus build their entries only while open (matMenuContent).-->
 		@if( fields().length ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="fieldsMenu" (menuOpened)="fieldsOpened()" (menuClosed)="fieldsClosed()">Fields</button>
 		}
+		@if( groupChoices().length ){
+			<button mat-menu-item type="button" [matMenuTriggerFor]="groupMenu">Group by</button>
+		}
 		@if( sorts().length || unsorted().length ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="sortMenu">Sort by</button>
 		}
 		@if( sliceChoices().length ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="sliceMenu">Slice by</button>
+		}
+		@if( sumChoices().length ){
+			<button mat-menu-item type="button" [disabled]="!views().current().groupBy" [matMenuTriggerFor]="sumMenu">Field sum</button>
 		}
 		@if( paged() ){
 			<button mat-menu-item type="button" [matMenuTriggerFor]="pageSizeMenu">Page size</button>
@@ -148,6 +154,30 @@ The menus build their entries only while open (matMenuContent).-->
 			<mat-icon aria-hidden="true">{{ views().current().sliceBy ? "" : "check" }}</mat-icon>
 			No slicing
 		</button>
+	</ng-template>
+</mat-menu>
+<mat-menu #groupMenu="matMenu">
+	<ng-template matMenuContent>
+		@for( field of groupChoices(); track field.name ){
+			<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="field.name==views().current().groupBy" (click)="groupBy(field.name)">
+				<mat-icon aria-hidden="true">{{ field.name==views().current().groupBy ? "check" : "" }}</mat-icon>
+				{{ field.label }}
+			</button>
+		}
+		<button mat-menu-item type="button" role="menuitemradio" [attr.aria-checked]="!views().current().groupBy" (click)="groupBy(undefined)">
+			<mat-icon aria-hidden="true">{{ views().current().groupBy ? "" : "check" }}</mat-icon>
+			No grouping
+		</button>
+	</ng-template>
+</mat-menu>
+<mat-menu #sumMenu="matMenu">
+	<ng-template matMenuContent>
+		@for( field of sumChoices(); track field.name ){
+			<button mat-menu-item type="button" role="menuitemcheckbox" [attr.aria-checked]="views().current().sums.includes(field.name)" (click)="toggleSum(field.name, $event)">
+				<mat-icon aria-hidden="true">{{ views().current().sums.includes(field.name) ? "check_box" : "check_box_outline_blank" }}</mat-icon>
+				{{ field.label }}
+			</button>
+		}
 	</ng-template>
 </mat-menu>
 <mat-menu #viewsMenu="matMenu">

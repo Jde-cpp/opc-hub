@@ -162,6 +162,20 @@ export class ViewToolbar{
 		if( this.views().setSliceBy(name) )
 			this.viewChange.emit();
 	}
+	//`Group by` (views spec *Group by*):  the columns a list is sliced by, the view's ticked, and `No grouping`.  `Field sum`:  the
+	//host's number columns, those a group's header sums ticked - off while the view is not grouped, where it would show nothing,
+	//and absent where the host's list is not grouped at all, the logs.  Its menu stays open for the next tick.
+	groupChoices = computed<{name:string, label:string}[]>( ()=>this.views().current().sliceChoices( this.columns() ) );
+	groupBy( name:string|undefined ){
+		if( this.views().setGroupBy(name) )
+			this.viewChange.emit();
+	}
+	sumChoices = computed<{name:string, label:string}[]>( ()=>this.groupChoices().length ? this.views().current().sumChoices( this.columns() ) : [] );
+	toggleSum( name:string, event:Event ){
+		event.stopPropagation();
+		this.views().edit( view=>view.toggleSum(name) );
+		this.viewChange.emit();
+	}
 	//the menu's sizes, and the view's own where it is none of them, as the logs' 21
 	pageSizes = computed<number[]>( ()=>{
 		const limit = this.views().current().limit;

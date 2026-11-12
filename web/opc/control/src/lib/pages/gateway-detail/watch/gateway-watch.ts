@@ -10,7 +10,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle, LocalPrefs, ProfileStore, RouteItem } from 'jde-spa';
-import { cellValues, errorMessage, SliceCount, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
+import { cellValues, errorMessage, groupColumns, GroupHeader, GroupHeaderCell, groupRows, isGroupRow, SliceCount, trackGroupRow, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
@@ -45,7 +45,7 @@ import { WatchTrend } from './watch-trend';
 	templateUrl: './gateway-watch.html',
 	styleUrls: ['./gateway-watch.scss'],
 	host: {class: 'main-content my-content gateway-watch'},
-	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, SlicePanel, StructureTable, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar, WatchTrend]
+	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, GroupHeaderCell, SlicePanel, StructureTable, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar, WatchTrend]
 })
 export class GatewayWatch implements OnInit, OnDestroy{
 	static readonly prefsOwner = 'gatewayWatch';
@@ -371,6 +371,15 @@ export class GatewayWatch implements OnInit, OnDestroy{
 		this.#changes();
 		return this.view() ? this.viewSet.sliced().narrowed( this.#filtered(), this.names ) : [];
 	} );
+	//The table's rows:  those shown, under a header per group where the view is grouped (views spec *Group by*), a collapsed
+	//group's left out.  Every row is here, so a header's count and its sums are its group's, cut again on every push.
+	tableRows = computed<(WatchRow|GroupHeader)[]>( ()=>{
+		const grouping = this.view()?.grouping( this.columns, this.viewSet.routeDefault );
+		return grouping ? groupRows( this.shown(), grouping, ( row, column )=>WatchView.cellValue(row, column, this.names), this.viewSet.collapsed() ) : this.shown();
+	} );
+	readonly isGroup = isGroupRow;
+	readonly groupColumns = groupColumns;
+	readonly trackRow = trackGroupRow;//a header keeps its row through a push, and the focus on its chevron
 	//the rows the view's filter keeps, which the rows shown and the slice panel's counts share:  read again on every push
 	#filtered = computed<WatchRow[]>( ()=>{
 		this.#changes();

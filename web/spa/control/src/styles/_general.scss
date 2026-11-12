@@ -257,6 +257,39 @@ mat-table.jde-view-columns {
 		contain: inline-size;
 	}
 }
+// A grouped view's table (views spec *Group by*):  a header row per group (jde-framework's GroupHeaderCell), on the colour above the
+// toolbar's, stuck under the column headers where those stick - the table says how far down, `--jde-group-top` - over a pinned
+// cell's z-index 1 and under the header row's 100.  The table is as wide as its columns, so that a group's row, which has one
+// cell, is as wide as the rows it heads, and its cell stays at the pane's left as they scroll sideways.  Global because the tables
+// are in two libraries.
+mat-table.jde-view-columns.jde-grouped {
+	width: max-content;
+	min-width: 100%;
+	box-sizing: border-box;
+
+	// a page turn brings its first row in under its group's header, which sticks over it (jde-framework's Paginator.showFirstRow)
+	> mat-row:not(.jde-group-row) {
+		scroll-margin-top: var(--mat-table-row-item-container-height, 52px);
+	}
+}
+mat-row.jde-group-row {
+	position: sticky;
+	top: var(--jde-group-top, 0px);
+	z-index: 2;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--mat-table-row-item-outline-color, var(--mat-sys-outline));
+	background: var(--mat-sys-surface-container-high);
+
+	// the rule under the row is the row's:  the cell's would end where the cell does
+	> .jde-group-cell {
+		position: sticky;
+		left: 0;
+		flex: 0 0 auto;
+		contain: none;
+		border-bottom: 0;
+		background: inherit;
+	}
+}
 // A view's second or later sort draws its own arrow and place (ViewColumnHeader), where Material's sort header would hint one of
 // its own on hover.  Global, as the arrow is Material's element.
 .jde-column-header .jde-sorted-later .mat-sort-header-arrow {

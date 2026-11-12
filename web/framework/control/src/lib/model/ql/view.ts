@@ -4,7 +4,8 @@ import { Query } from '../../services/graphql';
 import { TableSettings } from '../../services/ql-list-resolver';
 import { Field, FieldKind } from "./schema/field";
 import { filterArguments, FilterHost, FilterParse, FilterTerm, parseFilter, serverHasField, toggleFilterTerm } from './filter-query';
-import { SliceValue } from './slice';
+import { SliceCount, SliceValue } from './slice';
+import type { Grouping } from './group';
 import { TableSchema } from "./schema/table-schema";
 import { Sort, SortDirection } from "@angular/material/sort";
 
@@ -149,11 +150,12 @@ export class ViewField{
 //A further system view a route declares beside the default one.  Whatever it leaves unset comes from the default view:  the
 //table's columns and its sort.  The default view itself is the TableSettings' own columns/sort under `viewName`.  `filter` is
 //the filter box's text, in its grammar (filter-query.ts):  "no:issuer", "provider:Key".  `sliceBy` is the column its slice panel
-//lists, its own and not the default view's.
-export type ViewSettings = { name:string, columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, filter?:string, sliceBy?:string };
-type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filter?:string, queried?:string[], sliceBy?:string };
-type ViewJson = { name:string|undefined, collectionName:string, fields:ViewFieldJson[], filter?:string, limit?:number, showSelector:boolean|undefined, sort:Sort[]|undefined, sliceBy?:string };
-export type ViewSerializedArgs = { name:string|undefined, collectionName:string, fields:ViewField[], limit?:number, showSelector:boolean, sort?:Sort[], filter?:string, sliceBy?:string };//sort optional:  toJson omits one that matched the default view's
+//lists, `groupBy` the column its rows are grouped by and `sums` the columns a group's header sums, its own and not the default
+//view's.
+export type ViewSettings = { name:string, columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, filter?:string, sliceBy?:string, groupBy?:string, sums?:string[] };
+type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filter?:string, queried?:string[], sliceBy?:string, groupBy?:string, sums?:string[] };
+type ViewJson = { name:string|undefined, collectionName:string, fields:ViewFieldJson[], filter?:string, limit?:number, showSelector:boolean|undefined, sort:Sort[]|undefined, sliceBy?:string, groupBy?:string, sums?:string[] };
+export type ViewSerializedArgs = { name:string|undefined, collectionName:string, fields:ViewField[], limit?:number, showSelector:boolean, sort?:Sort[], filter?:string, sliceBy?:string, groupBy?:string, sums?:string[] };//sort optional:  toJson omits one that matched the default view's
 export enum ViewType{
 	System,
 	Adhoc,
@@ -193,6 +195,8 @@ export class View{
 		this.queried = view.queried;
 		this.sliceBy = view.sliceBy;
 		this.slice = view.slice;
+		this.groupBy = view.groupBy;
+		this.sums = [...view.sums];
 	}
 	private fromConfig( config:ViewConfigArgs, schema:TableSchema ):void{
 		this.name = config.name;
@@ -205,12 +209,17 @@ export class View{
 		this.filter = config.filter?.trim() ?? "";
 		const unread = this.parsedFilter().errors;//a route's filter must read - unlike a saved view's, whose bad term the box underlines, this is a config error
 		verify( !unread.length, `View '${config.name}' (${schema.collectionName}) filters on '${this.filter}' - ${unread[0]?.message}` );
-		this.#setRouteSlice( config.sliceBy );
+		this.#setRoute( config );
 	}
-	//a route's slice column must be one a list is sliced by - a config error, as its filter's
-	#setRouteSlice( sliceBy:string|undefined ):void{
-		verify( !sliceBy || this.sliceable(sliceBy), `View '${this.name}' (${this.collectionName}) slices by '${sliceBy}', which is not a number, a boolean or an enum.` );
-		this.sliceBy = sliceBy;
+	//a route's slice and group columns must be ones a list is sliced by, and its sums numbers - a config error, as its filter's
+	#setRoute( config:{sliceBy?:string, groupBy?:string, sums?:string[]} ):void{
+		for( const by of [config.sliceBy, config.groupBy] )
+			verify( !by || this.sliceable(by), `View '${this.name}' (${this.collectionName}) slices or groups by '${by}', which is not a number, a boolean or an enum.` );
+		const unsummed = config.sums?.find( name=>!this.summable(name) );
+		verify( !unsummed, `View '${this.name}' (${this.collectionName}) sums '${unsummed}', which is not a number.` );
+		this.sliceBy = config.sliceBy;
+		this.groupBy = config.groupBy;
+		this.sums = [...config.sums ?? []];
 	}
 	private fromJson( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
 		this.name = config.name;
@@ -243,6 +252,8 @@ export class View{
 		for( const field of this.fields )
 			field.liveToggle = defaultView?.fields.find( f=>f.name==field.name )?.liveToggle;
 		this.sliceBy = config.sliceBy && this.sliceable( config.sliceBy ) ? config.sliceBy : undefined;//a column since gone, or retyped, slices nothing
+		this.groupBy = config.groupBy && this.sliceable( config.groupBy ) ? config.groupBy : undefined;//nor groups
+		this.sums = ( Array.isArray(config.sums) ? config.sums : [] ).filter( name=>this.summable(name) );
 	}
 	private fromTable( config:TableSettings, schema:TableSchema ):void{
 		this.collectionName = schema.collectionName;
@@ -251,7 +262,7 @@ export class View{
 		this.sort = View.toSort( config.sort ) ?? [];
 		this.queried = config.rowLink?.fields ?? [];
 		this.appendAlwaysQueried( schema );
-		this.#setRouteSlice( config.sliceBy );
+		this.#setRoute( config );
 	}
 	//TableSettings/ViewSettings accept a bare column name as shorthand for an ascending sort on it
 	static toSort( sort:Sort[]|string|undefined ):Sort[]|undefined{
@@ -338,11 +349,52 @@ export class View{
 	//The panel's counts:  a row per value of the slice column under the view's filter, with none of its sort, its page or its
 	//slice - `users( groupBy:"provider", …filters ){ provider count }`.  None where the view is not sliced.
 	sliceQuery():Query|undefined{
-		if( !this.sliceBy )
-			return undefined;
-		const { args, vars } = this.#filterParts( false );
-		return { text: `${this.collectionName}(${[`groupBy:${StringUtils.qlString( this.sliceBy )}`, ...args].join( "," )}){ ${this.sliceBy} count }`, vars };
+		return this.sliceBy ? this.#countQuery( this.sliceBy, false ) : undefined;
 	}
+	//the counts of `by`'s values:  under the view's filter and, `sliced`, its slice's value
+	#countQuery( by:string, sliced:boolean ):Query{
+		const { args, vars } = this.#filterParts( sliced );
+		return { text: `${this.collectionName}(${[`groupBy:${StringUtils.qlString( by )}`, ...args].join( "," )}){ ${by} count }`, vars };
+	}
+	//The groups (views spec *Group by*).  A list is grouped by a column it is sliced by, the same rule (sliceable), and the group
+	//column is its rows' first sort, ahead of the view's own, so the rows of a value are one run:  ascending, or as the view sorts
+	//by the column.
+	get ordered():Sort[]{
+		const by = this.groupBy;
+		return by ? [this.sort.find( s=>s.active==by && s.direction ) ?? {active: by, direction: "asc"}, ...this.sort.filter( s=>s.active!=by )] : this.sort;
+	}
+	//the view grouped by `name`, or by none
+	setGroupBy( name:string|undefined ):void{ this.groupBy = name; }
+	//A column a group's header sums:  a number the schema marks as one, never an `ID` nor a live toggle.
+	summable( name:string ):boolean{
+		const field = this.#field( name );
+		return !!field && field.isNumber && field.type.kind!=FieldKind.LIST && field.type.underlyingName!="ID" && !this.fields.find( f=>f.name==name )?.liveToggle;
+	}
+	//the columns `Field sum` offers, of those the host names
+	sumChoices( offered:Record<string,string> ):{name:string, label:string}[]{
+		return Object.keys( offered ).filter( name=>this.summable(name) ).map( name=>({name, label: this.columnLabel(name, offered)}) );
+	}
+	//a column into the sums, after the others, or out of them
+	toggleSum( name:string ):void{
+		this.sums = this.sums.includes( name ) ? this.sums.filter( s=>s!=name ) : [...this.sums, name];
+	}
+	//The group column and the sums are read with the rows though the view hides them, or lacks them:  one it lacks is selected as
+	//the schema has it, and never joins its fields, which a Save writes and the Fields checklist shows (reviews-issue/596-views-group-by.md #3).
+	#groupedQueryText():string[]{
+		return [...new Set( [this.groupBy, ...this.sums] )].flatMap( name=>{
+			const field = name && !this.fields.some( f=>f.name==name ) ? this.schema?.fields.find( f=>f.name==name ) : undefined;
+			return field ? [new ViewField( {qlField: field} ).queryText] : [];
+		} );
+	}
+	//What the rows are grouped by, for groupRows:  none where the view is not grouped.  The chip is the view's field's, else
+	//`route`'s - the route's default view (ViewSet.routeDefault), for a column the view lacks.  `totals`, the counts groupQuery answers.
+	grouping( offered:Record<string,string>, route?:View, totals?:readonly SliceCount[] ):Grouping|undefined{
+		const by = this.groupBy, chip = ( this.fields.find( f=>f.name==by ) ?? route?.fields.find( f=>f.name==by ) )?.chip;
+		return by ? { by, label: this.columnLabel(by, offered), chip, sums: this.sums.map( name=>({name, label: this.columnLabel(name, offered)}) ), totals } : undefined;
+	}
+	//A group's count over the whole list, which a page shows a part of:  a row per value of the group column under the view's
+	//filter and its slice's value, the query the slice panel's counts are read with.  None where the view is not grouped.
+	groupQuery():Query|undefined{ return this.groupBy ? this.#countQuery( this.groupBy, true ) : undefined; }
 	#field( name:string ):Field|undefined{ return this.fields.find( f=>f.name==name )?.qlField ?? this.schema?.fields.find( f=>f.name==name ); }
 	//the filter as arguments, the slice's value a term of its column among the view's when `sliced`
 	#filterParts( sliced:boolean ):{args:string[], vars:Record<string,unknown>}{
@@ -360,16 +412,17 @@ export class View{
 		return { args, vars };
 	}
 	#queryParts( skip:number ):{fields:string[], args:string[], vars:Record<string,unknown>}{
-		const fields = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) ).map( f=>f.queryText );//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key
+		const fields = [...this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) || f.name==this.groupBy || this.sums.includes(f.name) ).map( f=>f.queryText ), ...this.#groupedQueryText()];//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key;  the group column and the sums are what a group's header reads
 		let args = [];
 		let vars:Record<string,unknown> = {};
 		if( this.limit )
 			args.push( `limit:${this.limit}` );
 		if( skip )
 			args.push( `skip:${skip}` );
-		if( this.sort?.length ){
+		const sort = this.ordered;
+		if( sort?.length ){
 			let sortStr = '';
-			for( let s of this.sort )
+			for( let s of sort )
 				sortStr += `{${s.active}:${StringUtils.qlString(s.direction)}},`;//`active` is a FIELD NAME - identifiers are not quoted and must not be escaped; only the direction is a string literal
 			args.push( `orderBy:[${sortStr.slice(0,-1)}]` );
 		}
@@ -510,11 +563,15 @@ export class View{
 			limit: this.limit,
 			showSelector: this.showSelector,
 			sort: sort,
-			sliceBy: this.sliceBy
+			sliceBy: this.sliceBy,
+			groupBy: this.groupBy,
+			sums: this.sums.length ? this.sums : undefined
 		};
 	}
 	filter = "";//the filter box's text, as typed:  a saved view keeps it, and a day in it is the day of the browser that runs the query
 	sliceBy:string|undefined;//the column the slice panel lists, saved with the view
+	groupBy:string|undefined;//the column the rows are grouped by, saved with the view
+	sums:string[] = [];//the columns a group's header sums, saved with the view
 	slice:SliceValue|undefined;//The value the rows are narrowed to, on the copy a host reads its rows with (ViewSet.sliced):  the browser's, never saved, and no part of a view's draft.
 	fixedFilter = "";//the host's own terms, anded with the view's and never shown or saved - a pick list's (QLListData.fixedFilter)
 	protected schema:TableSchema|undefined;

@@ -21,10 +21,11 @@ import { readSliceCounts, SliceCount } from '../model/ql/slice';
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
 //sliceBy: the column the default view's slice panel lists (views spec *Slice by*);  canSlice: false for a collection whose
 //`groupBy` the server does not answer with counts - one a custom query answers without sending it back to the stock select - so
-//the list offers no slice
+//the list offers no slice, and its groups show no count of the whole list
+//groupBy: the column the default view's rows are grouped by, and sums: the columns a group's header sums (views spec *Group by*)
 export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };
 export type RowLink = { fields:string[], segments:(row:QLRow)=>string[]|undefined };
-export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, rowLink?:RowLink, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filter?:string, views?:ViewSettings[], empty?:EmptyState, noun?:string, sliceBy?:string, canSlice?:boolean};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
+export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, rowLink?:RowLink, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filter?:string, views?:ViewSettings[], empty?:EmptyState, noun?:string, sliceBy?:string, canSlice?:boolean, groupBy?:string, sums?:string[]};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
 export type CollectionItem = string | { path:string, title?:string, data?:{summary:string, collectionName:string, tableSettings:TableSettings} };
 export class ListRoute extends RouteItem{
 	constructor( collection:string|CollectionItem ){
@@ -60,8 +61,10 @@ export type QLListData = {
 	sliceCounts?: SliceCount[];//the slice panel's counts, read with the rows where the view is sliced:  the list's under its filter, not the page's
 	sliceCountsError?: unknown;//they could not be read, or the server did not count:  the panel says so, and the rows stand
 	sliceCountsOf?: SliceQuery;//the column and the count query that sliceCounts or sliceCountsError answer
+	groupCounts?: SliceCount[];//each group's count over the whole list, read with the rows where the view is grouped:  none where they failed, and a header then shows the page's alone
+	groupCountsOf?: SliceQuery;//the column and the count query that groupCounts answer
 };
-//A slice panel's count query:  its column, and its text and variables as one string, which a page turn, a sort or a value picked
+//A count query, the slice panel's or the groups':  its column, and its text and variables as one string, which a page turn, a sort or a value picked
 //leaves as it was.
 export type SliceQuery = { by:string, query:string };
 //what load() reads and hands back - a gateway's Connections tab (GatewayData) pages the same way, under an AppInstanceRoute
@@ -162,10 +165,10 @@ export class QLListResolver implements Resolve<QLListData> {
 	static systemViews( schema:TableSchema, settings:TableSettings ):View[]{
 		const columns = settings.columns ?? [];
 		const queried = settings.rowLink?.fields;
-		const defaultView = View.fromConfig( {name: settings.viewName, configColumns: columns, sort: View.toSort(settings.sort) ?? [{active: "name", direction: "asc"}], filter: settings.filter, queried, sliceBy: settings.sliceBy}, schema );//settings.sort, not the name default:  a route that declares its own order (resources: schema then name) has to get it
+		const defaultView = View.fromConfig( {name: settings.viewName, configColumns: columns, sort: View.toSort(settings.sort) ?? [{active: "name", direction: "asc"}], filter: settings.filter, queried, sliceBy: settings.sliceBy, groupBy: settings.groupBy, sums: settings.sums}, schema );//settings.sort, not the name default:  a route that declares its own order (resources: schema then name) has to get it
 		const views = [defaultView];
 		for( const v of settings.views ?? [] )
-			views.push( View.fromConfig({name: v.name, configColumns: v.columns ?? columns, sort: View.toSort(v.sort) ?? [...defaultView.sort], filter: v.filter, queried, sliceBy: v.sliceBy}, schema) );
+			views.push( View.fromConfig({name: v.name, configColumns: v.columns ?? columns, sort: View.toSort(v.sort) ?? [...defaultView.sort], filter: v.filter, queried, sliceBy: v.sliceBy, groupBy: v.groupBy, sums: v.sums}, schema) );
 		const deleted = QLListResolver.deletedView( defaultView );
 		if( deleted )
 			views.push( deleted );
@@ -223,14 +226,14 @@ export class QLListResolver implements Resolve<QLListData> {
 			return ql.query<any>( q.text, q.vars );
 		};
 		let skip = data.skip ?? 0;
-		const counting = data.profile.canSlice ? QLListResolver.loadSliceCounts( ql, view, data ) : Promise.resolve( {} );//with the rows, not after them
+		const counting = data.profile.canSlice ? QLListResolver.loadCounts( ql, view, data ) : Promise.resolve( {} );//with the rows, not after them
 		let results = await query( skip );
 		if( skip && !results[collectionName].length ){//a page past the end - rows deleted since it was read:  the first page, not an empty "No … yet"
 			skip = 0;
 			results = await query( skip );
 		}
 		const page = QLListResolver.page( results[collectionName], view );
-		const y = { ...data, results: {...results, [collectionName]: page.rows}, skip, more: page.more, error: undefined, sliceCounts: undefined, sliceCountsError: undefined, sliceCountsOf: undefined, ...await counting };
+		const y = { ...data, results: {...results, [collectionName]: page.rows}, skip, more: page.more, error: undefined, sliceCounts: undefined, sliceCountsError: undefined, sliceCountsOf: undefined, groupCounts: undefined, groupCountsOf: undefined, ...await counting };
 		if( routeStore )
 			QLListResolver.setChildren( routeStore, y );
 		return y;
@@ -239,19 +242,37 @@ export class QLListResolver implements Resolve<QLListData> {
 	//column changes - a Refresh reads them again, leaving prior none.  A failure is the panel's to say, never the rows':  it is
 	//answered, not thrown.
 	static async loadSliceCounts( ql:Pick<IGraphQL,"query">, view:View, prior?:Pick<QLListData,"sliceCounts"|"sliceCountsOf"> ):Promise<Pick<QLListData,"sliceCounts"|"sliceCountsError"|"sliceCountsOf">>{
-		const q = view.sliceQuery();
-		if( !q )
-			return {};
-		const of = { by: view.sliceBy!, query: JSON.stringify( q ) };
-		if( prior?.sliceCounts && prior.sliceCountsOf?.query==of.query )
-			return { sliceCounts: prior.sliceCounts, sliceCountsOf: of };
+		const y = await QLListResolver.counts( ql, view, view.sliceBy, view.sliceQuery(), prior?.sliceCounts, prior?.sliceCountsOf );
+		return y ? { sliceCounts: y.counts, sliceCountsError: y.error, sliceCountsOf: y.of } : {};
+	}
+	//The panel's counts and the groups':  one query for both where they ask the same, a view grouped and sliced by one column with no
+	//value held (reviews-issue/596-views-group-by.md #10).
+	static async loadCounts( ql:Pick<IGraphQL,"query">, view:View, prior?:Pick<QLListData,"sliceCounts"|"sliceCountsOf"|"groupCounts"|"groupCountsOf"> ):Promise<Pick<QLListData,"sliceCounts"|"sliceCountsError"|"sliceCountsOf"|"groupCounts"|"groupCountsOf">>{
+		const slicing = QLListResolver.loadSliceCounts( ql, view, prior );
+		const same = !!view.groupBy && view.sliceBy==view.groupBy && JSON.stringify( view.sliceQuery() )==JSON.stringify( view.groupQuery() );
+		const [slices, groups] = await Promise.all( [slicing, same ? slicing.then( s=>s.sliceCountsOf ? {groupCounts: s.sliceCounts, groupCountsOf: s.sliceCountsOf} : {} ) : QLListResolver.loadGroupCounts( ql, view, prior )] );
+		return { ...slices, ...groups };
+	}
+	//Each group's count over the whole list, where the view is grouped, kept as the panel's are.  A failure leaves the headers the
+	//page's counts.
+	static async loadGroupCounts( ql:Pick<IGraphQL,"query">, view:View, prior?:Pick<QLListData,"groupCounts"|"groupCountsOf"> ):Promise<Pick<QLListData,"groupCounts"|"groupCountsOf">>{
+		const y = await QLListResolver.counts( ql, view, view.groupBy, view.groupQuery(), prior?.groupCounts, prior?.groupCountsOf );
+		return y ? { groupCounts: y.counts, groupCountsOf: y.of } : {};
+	}
+	//the counts `q` answers by the column `by`:  `prior`, where they answered the same query
+	private static async counts( ql:Pick<IGraphQL,"query">, view:View, by:string|undefined, q:Query|undefined, prior:SliceCount[]|undefined, priorOf:SliceQuery|undefined ):Promise<{counts?:SliceCount[], error?:unknown, of:SliceQuery}|undefined>{
+		if( !q || !by )
+			return undefined;
+		const of = { by, query: JSON.stringify( q ) };
+		if( prior && priorOf?.query==of.query )
+			return { counts: prior, of };
 		try{
 			const results = await ql.query<any>( q.text, q.vars );
-			return { sliceCounts: readSliceCounts(results[view.collectionName], of.by), sliceCountsOf: of };
+			return { counts: readSliceCounts(results[view.collectionName], by), of };
 		}
 		catch( e ){
-			console.warn( `The counts of '${view.collectionName}' by '${of.by}' could not be read.`, e );
-			return { sliceCountsError: e, sliceCountsOf: of };
+			console.warn( `The counts of '${view.collectionName}' by '${by}' could not be read.`, e );
+			return { error: e, of };
 		}
 	}
 	//the page's rows as the collection's sidenav children

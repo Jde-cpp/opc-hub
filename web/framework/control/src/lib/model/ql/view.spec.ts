@@ -1,5 +1,6 @@
 import { Flex, Style, View, ViewField, type ViewFieldSettings, type ViewSerializedArgs } from './view';
 import { object, scalar, schemaOf, serverConnectionSchema } from 'jde-framework/testing';
+import type { TableSettings } from '../../services/ql-list-resolver';
 
 const schema = serverConnectionSchema();
 
@@ -437,5 +438,82 @@ describe( "View slice", ()=>{
 		expect( View.fromJson( {...json, sliceBy: "name"} as unknown as ViewSerializedArgs, users ).sliceBy ).toBeUndefined();
 		expect( View.alike( v, view() ) ).toBe( false );//a change to the view, so a draft
 		expect( ()=>view( {sliceBy: "name"} ) ).toThrow();
+	} );
+} );
+//#596:  the group column and the sums are the view's, saved with it, and the group column is its rows' first sort
+describe( "View group", ()=>{
+	const users = schemaOf( "User", {name: "id", type: {kind: "NON_NULL", name: null, ofType: {kind: "SCALAR", name: "ID"}}}, scalar("name"), {name: "provider", type: {kind: "ENUM", name: "Provider"}}, scalar("isGroup", "Boolean"),
+		scalar("logins", "UInt"), scalar("deleted", "DateTime"), {name: "tags", type: {kind: "LIST", name: null, ofType: {kind: "SCALAR", name: "Int"}}}, scalar("rate", "Float") );
+	const view = ( settings:object={} )=>View.fromTable( {columns: ["name", "provider"], sort: "name", ...settings}, users );
+	it( "sorts by the group column first, ascending or as the view sorts by it, ahead of the view's own", ()=>{
+		const v = view( {groupBy: "provider"} );
+		expect( v.ordered ).toEqual( [{active: "provider", direction: "asc"}, {active: "name", direction: "asc"}] );
+		expect( v.query( 0 ).text ).toContain( 'orderBy:[{provider:"asc"},{name:"asc"}]' );
+		v.sort = [{active: "name", direction: "asc"}, {active: "provider", direction: "desc"}];
+		expect( v.ordered ).toEqual( [{active: "provider", direction: "desc"}, {active: "name", direction: "asc"}] );
+		expect( [v.sort.length, view().ordered] ).toEqual( [2, [{active: "name", direction: "asc"}]] );//the view's sort is as the user left it
+		expect( View.sameRows( view(), view({groupBy: "provider"}) ) ).toBe( false );//another order:  read again
+	} );
+	it( "counts a group over the whole list:  under the view's filter, with its slice's value and without", ()=>{
+		const v = view( {groupBy: "isGroup", sliceBy: "provider"} );
+		v.filter = "logins:>3";
+		expect( v.groupQuery() ).toEqual( {text: 'users(groupBy:"isGroup",logins:{gt:$logins_gt},deleted:$deleted){ isGroup count }', vars: {logins_gt: 3, deleted: null}} );
+		v.slice = "Key";
+		expect( v.groupQuery() ).toEqual( {text: 'users(groupBy:"isGroup",logins:{gt:$logins_gt},provider:$provider,deleted:$deleted){ isGroup count }', vars: {logins_gt: 3, provider: ["Key"], deleted: null}} );
+		expect( view().groupQuery() ).toBeUndefined();
+	} );
+	it( "sums a number, never an ID, text, a boolean, a date or a list", ()=>{
+		const v = view();
+		expect( ["id", "name", "provider", "isGroup", "logins", "deleted", "tags", "rate"].map( c=>v.summable(c) ) ).toEqual( [false, false, false, false, true, false, false, true] );
+		expect( v.sumChoices({id: "ID", name: "Name", logins: "Logins", rate: "Rate"}) ).toEqual( [{name: "logins", label: "Logins"}, {name: "rate", label: "Rate"}] );
+	} );
+	it( "reads the group column and the sums with the rows though the view hides them", ()=>{
+		const v = view();
+		expect( v.query( 0 ).text ).not.toContain( "logins" );
+		v.setGroupBy( "isGroup" );
+		v.toggleSum( "logins" );
+		expect( v.query( 0 ).text ).toContain( "{ id name provider isGroup logins }" );
+		expect( v.fields.filter( f=>f.displayed ).map( f=>f.name ) ).toEqual( ["name", "provider"] );
+		expect( View.answers( view(), v ) ).toBe( false );//columns the rows read lack
+		v.toggleSum( "logins" );
+		v.setGroupBy( undefined );
+		expect( [v.sums, v.query( 0 ).text.includes( "logins" ), View.alike( v, view() )] ).toEqual( [[], false, true] );
+	} );
+	it( "says what the rows are grouped by, under the headers' names", ()=>{
+		const v = view( {columns: ["name", {name: "provider", displayName: "Sign-in", chip: {Key: "ok"}}], groupBy: "provider", sums: ["logins"]} );
+		const totals = [{value: "Key", count: 3}];
+		expect( v.grouping( {logins: "Logins"}, undefined, totals ) ).toEqual( {by: "provider", label: "Sign-in", chip: {Key: "ok"}, sums: [{name: "logins", label: "Logins"}], totals} );
+		expect( view().grouping( {} ) ).toBeUndefined();
+	} );
+	//reviews-issue/596-views-group-by.md #3:  a column the view lacked joined its fields as the schema has it - no chip, width or
+	//name - and stayed there, so a Save wrote it so and the Fields checklist showed it bare
+	it( "never makes a column it lacks one of its fields:  groups under the route's chip, and shows it later as the route has it", ()=>{
+		const settings:TableSettings = {columns: ["name", {name: "provider", displayName: "Sign-in", style: new Style( 100 ), chip: {Key: "ok"}}], sort: "name"};
+		const route = View.fromTable( settings, users );
+		const saved = View.fromJson( {...route.toJson( settings ), fields: [{name: "name"}]} as unknown as ViewSerializedArgs, users, route );
+		const json = JSON.stringify( saved.toJson(settings) ), lacks = ()=>!saved.fields.some( f=>f.name=="provider" || f.name=="logins" );
+		saved.setGroupBy( "provider" );
+		saved.toggleSum( "logins" );
+		expect( [lacks(), saved.query( 0 ).text.includes( " provider logins }" ), saved.grouping( {provider: "Provider"}, route )] ).toEqual( [true, true, {by: "provider", label: "Provider", chip: {Key: "ok"}, sums: [{name: "logins", label: "Logins"}], totals: undefined}] );
+		saved.toggleSum( "logins" );
+		saved.setGroupBy( undefined );
+		expect( [lacks(), JSON.stringify( saved.toJson(settings) )] ).toEqual( [true, json] );//no draft left by a group taken off
+		saved.setGroupBy( "provider" );
+		saved.setDisplayed( "provider", true, "Provider", route.fields.find( f=>f.name=="provider" ) );
+		const shown = saved.fields.find( f=>f.name=="provider" )!;
+		expect( [shown.displayed, shown.displayName, shown.flex, shown.chip] ).toEqual( [true, "Sign-in", "0 0 100px", {Key: "ok"}] );
+	} );
+	it( "saves the column and the sums, and drops a saved one the schema no longer groups by or sums", ()=>{
+		const v = view( {groupBy: "provider", sums: ["logins"]} );
+		const json = v.toJson( undefined );
+		expect( json ).toMatchObject( {groupBy: "provider", sums: ["logins"]} );
+		expect( view().toJson( undefined ) ).toMatchObject( {groupBy: undefined, sums: undefined} );
+		const saved = View.fromJson( json as unknown as ViewSerializedArgs, users );
+		expect( [saved.groupBy, saved.sums, saved.query( 0 ).text.includes( "logins" )] ).toEqual( ["provider", ["logins"], true] );
+		const stale = View.fromJson( {...json, groupBy: "name", sums: ["name", "gone"]} as unknown as ViewSerializedArgs, users );
+		expect( [stale.groupBy, stale.sums] ).toEqual( [undefined, []] );
+		expect( [View.copy( v ).groupBy, View.copy( v ).sums, View.alike( v, view() )] ).toEqual( ["provider", ["logins"], false] );
+		expect( ()=>view( {groupBy: "name"} ) ).toThrow();
+		expect( ()=>view( {sums: ["provider"]} ) ).toThrow();
 	} );
 } );

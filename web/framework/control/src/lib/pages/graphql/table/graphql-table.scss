@@ -1,11 +1,20 @@
 /* The whole row is the click target - it opens the row's detail page, or checks it in selector mode - so it has to say so
    before it is clicked.  A state layer over `transparent`, not a flat colour, so it composites over whatever the row
    already has under it (.highlight's selection, the sticky header's backdrop) instead of replacing it. */
+//the header row is sticky, and a group's header sticks under it (_general.scss)
+mat-table
+{
+	--jde-group-top: var(--mat-table-header-container-height, 56px);
+}
 mat-row
 {
 	cursor: pointer;
 }
-mat-row:hover
+mat-row.jde-group-row
+{
+	cursor: default;
+}
+mat-row:not(.jde-group-row):hover
 {
 	background: color-mix( in srgb, var(--mat-sys-on-surface) 8%, transparent );
 }

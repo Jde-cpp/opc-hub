@@ -34,7 +34,7 @@ export class WatchView extends View{
 	narrowed( filtered:readonly WatchRow[], names:( slug:string )=>string ):WatchRow[]{
 		const by = this.sliceBy, slice = this.slice;
 		const y = by && slice!==undefined ? filtered.filter( r=>inSlice(WatchView.cellValue(r, by, names), slice) ) : [...filtered];
-		const sorts = this.sort.filter( s=>s.active && s.direction );
+		const sorts = this.ordered.filter( s=>s.active && s.direction );//the group column first
 		if( sorts.length ){
 			y.sort( (a,b)=>{
 				for( const s of sorts ){

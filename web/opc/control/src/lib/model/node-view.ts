@@ -55,7 +55,7 @@ export class NodeView extends View{
 	//the sort alone, on a copy:  the sidenav takes the siblings through this without the filters (OpcStore.setRoute), so it lists them as the parent's table did
 	sortNodes( nodes:readonly UaNode[] ):UaNode[]{
 		const rows = [...nodes];
-		const sorts = this.sort.filter( s=>s.active && s.direction );
+		const sorts = this.ordered.filter( s=>s.active && s.direction );//the group column first
 		if( sorts.length ){
 			rows.sort( (a,b)=>{
 				for( const s of sorts ){

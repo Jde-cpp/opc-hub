@@ -6,7 +6,33 @@ import { TableSchema } from './schema/table-schema';
 import { SliceValue } from './slice';
 import { View, ViewSerializedArgs, ViewType, ViewClass } from './view';
 
-type StoredSlice = { field:string, value:SliceValue };
+//State of the moment of a set's views, kept in the browser beside the drafts under `name`:  by the view's number, with the column
+//it is of, which it holds for.  `reads` tells a stored value from what a hand, or an older build, left there.
+type Kept<T> = { field:string, value:T };
+class Beside<T>{
+	constructor( readonly name:string, readonly reads:( value:unknown )=>boolean ){}
+	readonly all = signal<ReadonlyMap<number,Kept<T>>>( new Map() );
+	//the view's, where it is of `field`
+	of( number:number, field:string|undefined ):T|undefined{
+		const kept = this.all().get( number );
+		return kept && field && kept.field==field ? kept.value : undefined;
+	}
+	set( number:number, kept:Kept<T>|undefined ):void{
+		const all = new Map( this.all() );
+		if( kept )
+			all.set( number, kept );
+		else
+			all.delete( number );
+		this.all.set( all );
+	}
+	clear():void{
+		if( this.all().size )
+			this.all.set( new Map() );
+	}
+}
+const isSliceValue = ( value:unknown ):boolean=>value===null || ["string", "number", "boolean"].includes( typeof value );
+const isKeys = ( value:unknown ):boolean=>Array.isArray( value ) && value.every( k=>typeof k=="string" );
+const noKeys:ReadonlySet<string> = new Set();
 
 export type ViewSetOptions<V extends View> = {
 	type:ViewClass<V>;//every view is re-made as this, so a subclass keeps its query()/apply() whatever class it is handed
@@ -46,6 +72,8 @@ export type ViewSetOptions<V extends View> = {
 //The slice (views spec *Slice by*):  the column is the view's, saved with it as any change is, and the value the rows are narrowed
 //to is the browser's - kept beside the drafts, under the same key and by the view's number with the column it is a value of, and
 //never in a view's row.  It holds while the view is sliced by that column, and goes with its view.
+//The groups (views spec *Group by*):  the group column and the sums are the view's, and the groups collapsed are the browser's, kept
+//as the slice's value is, by the view's number with the column they are values of.
 export class ViewSet<V extends View>{
 	constructor( options:ViewSetOptions<V> ){
 		this.#type = options.type;
@@ -79,7 +107,7 @@ export class ViewSet<V extends View>{
 		this.#saved = this.#known = false;
 		this.#fallback = undefined;
 		this.#drafts.clear();
-		this.#held.set( new Map() );
+		this.#clearBeside();
 		this.#draftsFor.set( this.#profileStore.userKey );
 		this.#selected = this.#prefs.viewNumber( this.#key );
 		this.#publish();
@@ -122,23 +150,22 @@ export class ViewSet<V extends View>{
 	//The value the view shown is narrowed to, of its slice column:  undefined for none, null for the rows with no value.  Another
 	//user's is off screen, as the drafts are.
 	readonly slice = computed<SliceValue|undefined>( ()=>{
-		const view = this.current(), owner = this.#draftsFor();
-		const held = view?.sliceBy && ( owner===undefined || owner==this.#profileStore.userKey ) ? this.#held().get( view.number ) : undefined;
-		return held && held.field==view.sliceBy ? held.value : undefined;
+		const view = this.current();
+		return view && this.#ownsDrafts() ? this.#held.of( view.number, view.sliceBy ) : undefined;
 	} );
+	//the drafts, and what is kept beside them, are whoever is signed in's, or nobody's
+	#ownsDrafts():boolean{
+		const owner = this.#draftsFor();
+		return owner===undefined || owner==this.#profileStore.userKey;
+	}
 	//the panel's click:  nothing where the view is not sliced
 	setSlice( value:SliceValue|undefined ):void{
 		const view = this.current();
 		if( !view?.sliceBy )
 			return;
 		this.#claim();
-		const held = new Map( this.#held() );
-		if( value===undefined )
-			held.delete( view.number );
-		else
-			held.set( view.number, {field: view.sliceBy, value} );
-		this.#held.set( held );
-		this.#storeSlice( view.number );
+		this.#held.set( view.number, value===undefined ? undefined : {field: view.sliceBy, value} );
+		this.#storeBeside( this.#held, view.number );
 	}
 	//The view shown as a host reads its rows with it:  itself, or - narrowed - a copy that carries the value (View.slice).  The one
 	//way a value reaches the rows, whether a host queries them or holds them.
@@ -157,6 +184,29 @@ export class ViewSet<V extends View>{
 			return false;
 		this.edit( view=>{ view.sliceBy = name; } );
 		return true;
+	}
+	//The view shown grouped by `name`, or by none, on its draft:  `Group by` and `Group by this field`.  false where it already is.
+	setGroupBy( name:string|undefined ):boolean{
+		if( name==this.current().groupBy )
+			return false;
+		this.edit( view=>view.setGroupBy(name) );
+		return true;
+	}
+	//the groups of the view shown that are collapsed, by their keys (GroupHeader.key):  another user's are off screen, as the drafts are
+	readonly collapsed = computed<ReadonlySet<string>>( ()=>{
+		const view = this.current();
+		const keys = view && this.#ownsDrafts() ? this.#folded.of( view.number, view.groupBy ) : undefined;
+		return keys ? new Set( keys ) : noKeys;
+	} );
+	//a group's chevron:  nothing where the view is not grouped
+	toggleGroup( key:string ):void{
+		const view = this.current();
+		if( !view?.groupBy )
+			return;
+		this.#claim();
+		const keys = this.collapsed().has( key ) ? [...this.collapsed()].filter( k=>k!=key ) : [...this.collapsed(), key];
+		this.#folded.set( view.number, keys.length ? {field: view.groupBy, value: keys} : undefined );
+		this.#storeBeside( this.#folded, view.number );
 	}
 	//false for an index that is not there
 	select( index:number ):boolean{
@@ -184,7 +234,7 @@ export class ViewSet<V extends View>{
 			const at = views.findIndex( v=>v.number==saved.number );
 			if( at<0 ){
 				saved.number = this.#next;
-				this.#moveSlice( view.number, saved.number );//a pick list's fallback's, under no number
+				this.#moveBeside( view.number, saved.number );//a pick list's fallback's, under no number
 				views.push( saved );
 			}
 			else
@@ -249,11 +299,12 @@ export class ViewSet<V extends View>{
 			if( !this.#members.some( v=>v.number==view.number ) )
 				return;
 			this.#drafts.delete( view.number );
-			this.#moveSlice( view.number, undefined );
+			this.#moveBeside( view.number, undefined );
 			this.#set( this.#members.filter( v=>v.number!=view.number ) );
 		}, ()=>{
 			this.#store( [view.number] );
-			this.#storeSlice( view.number );//as its draft:  a failed write leaves it for a reload
+			for( const kept of this.#beside )
+				this.#storeBeside( kept, view.number );//as its draft:  a failed write leaves it for a reload
 		} );
 	}
 
@@ -311,7 +362,7 @@ export class ViewSet<V extends View>{
 		const reader = this.#profileStore.userKey, replaced = saved.length>0 || this.#saved, owner = this.#draftsFor();
 		if( replaced || ( owner!==undefined && owner!=reader ) ){//of the set replaced, or another user's.  One made signed out, or before the read, is kept.
 			this.#drafts.clear();
-			this.#held.set( new Map() );
+			this.#clearBeside();
 		}
 		this.#draftsFor.set( reader );
 		this.#known = true;
@@ -324,7 +375,8 @@ export class ViewSet<V extends View>{
 			this.#selected = this.#prefs.viewNumber( this.#key );
 		}
 		this.#restoreDrafts();
-		this.#restoreSlices();
+		for( const kept of this.#beside )
+			this.#restoreBeside( kept );
 		this.#publish();
 	}
 	//The drafts are the user's they were made for, or nobody's, made signed out, which whoever signs in takes.  Another user's go
@@ -332,8 +384,7 @@ export class ViewSet<V extends View>{
 	#claim():void{
 		const user = this.#profileStore.userKey, owner = this.#draftsFor();
 		if( owner!==undefined && owner!=user ){
-			if( this.#held().size )
-				this.#held.set( new Map() );
+			this.#clearBeside();
 			if( this.#drafts.size ){
 				this.#drafts.clear();
 				this.#publish();
@@ -401,53 +452,52 @@ export class ViewSet<V extends View>{
 		}
 		this.#prefs.set( owner, ViewSet.#draftsName, Object.keys(stored).length ? stored : null );
 	}
-	//The browser's slices of the set's views, under those chosen here, which are written to it.  One whose view is gone, or that
-	//is no column and value, is dropped.  It is written only where that changed it.
-	#restoreSlices():void{
+	//The browser's entry of `kept` for the set's views, under what was chosen here, which is written to it.  One whose view is gone,
+	//or that is no column and value, is dropped.  It is written only where that changed it.
+	#restoreBeside<T>( kept:Beside<T> ):void{
 		const owner = this.#draftsKey;
 		if( !owner )
 			return;
-		const stored = this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#heldName, {} ) ?? {};
-		const held = new Map( this.#held() );
+		const stored = this.#prefs.get<Record<string,unknown>>( owner, kept.name, {} ) ?? {};
+		const all = new Map( kept.all() );
 		for( const [key, json] of Object.entries(stored) ){
-			const number = +key, slice = json as Partial<StoredSlice>|null;
-			const read = typeof slice?.field=="string" && ( slice.value===null || ["string", "number", "boolean"].includes(typeof slice.value) );
-			if( read && !held.has(number) && this.#members.some( v=>v.number==number ) )
-				held.set( number, {field: slice!.field!, value: slice!.value!} );
+			const number = +key, entry = json as Partial<Kept<T>>|null;
+			if( typeof entry?.field=="string" && kept.reads( entry.value ) && !all.has(number) && this.#members.some( v=>v.number==number ) )
+				all.set( number, {field: entry.field, value: entry.value!} );
 		}
-		this.#held.set( held );
-		const kept = Object.fromEntries( [...held].filter( ([number])=>number>0 ) );
-		if( JSON.stringify(kept)!=JSON.stringify(stored) )
-			this.#prefs.set( owner, ViewSet.#heldName, Object.keys(kept).length ? kept : null );
+		kept.all.set( all );
+		const written = Object.fromEntries( [...all].filter( ([number])=>number>0 ) );
+		if( JSON.stringify(written)!=JSON.stringify(stored) )
+			this.#prefs.set( owner, kept.name, Object.keys(written).length ? written : null );
 	}
-	//the slice of `number` as it is here, into the browser's entry, the others as it holds them
-	#storeSlice( number:number ):void{
+	//`kept` of `number` as it is here, into the browser's entry, the others as it holds them
+	#storeBeside<T>( kept:Beside<T>, number:number ):void{
 		const owner = this.#draftsKey;
 		if( !owner || number<=0 )//not the fallback's, which is no view's
 			return;
-		const stored = { ...this.#prefs.get<Record<string,unknown>>( owner, ViewSet.#heldName, {} ) };
-		const slice = this.#held().get( number );
-		if( slice )
-			stored[number] = slice;
+		const stored = { ...this.#prefs.get<Record<string,unknown>>( owner, kept.name, {} ) };
+		const entry = kept.all().get( number );
+		if( entry )
+			stored[number] = entry;
 		else
 			delete stored[number];
-		this.#prefs.set( owner, ViewSet.#heldName, Object.keys(stored).length ? stored : null );
+		this.#prefs.set( owner, kept.name, Object.keys(stored).length ? stored : null );
 	}
-	//the slice of `from` as `to`'s, written to the browser, or - `to` undefined - dropped here alone
-	#moveSlice( from:number, to:number|undefined ):void{
-		const slice = this.#held().get( from );
-		if( !slice )
-			return;
-		const held = new Map( this.#held() );
-		held.delete( from );
-		if( to!==undefined )
-			held.set( to, slice );
-		this.#held.set( held );
-		if( to!==undefined ){
-			this.#storeSlice( from );
-			this.#storeSlice( to );
+	//what is kept of `from` as `to`'s, written to the browser, or - `to` undefined - dropped here alone
+	#moveBeside( from:number, to:number|undefined ):void{
+		for( const kept of this.#beside ){
+			const entry = kept.all().get( from );
+			if( !entry )
+				continue;
+			kept.set( from, undefined );
+			if( to!==undefined ){
+				kept.set( to, entry );
+				this.#storeBeside( kept, from );
+				this.#storeBeside( kept, to );
+			}
 		}
 	}
+	#clearBeside():void{ this.#beside.forEach( kept=>kept.clear() ); }
 	//The set as this turn starts:  its rows, then the index, then the rows no longer in it, ProfileStore skipping what it already
 	//holds.  A later change's view is named only by the index of its own turn, which has written its row.  A failed write leaves the
 	//store not knowing what the server holds, so the next change makes it again.
@@ -522,8 +572,9 @@ export class ViewSet<V extends View>{
 	#drafts = new Map<number,V>();//by its view's number
 	#draftsFor = signal<string|undefined>( undefined );//whose they are:  undefined made signed out
 	static readonly #draftsName = "drafts";
-	#held = signal<ReadonlyMap<number,StoredSlice>>( new Map() );//the values the views are narrowed to, by the view's number
-	static readonly #heldName = "slices";
+	#held = new Beside<SliceValue>( "slices", isSliceValue );//the values the views are narrowed to
+	#folded = new Beside<string[]>( "collapsed", isKeys );//the groups collapsed, by their keys
+	#beside:Beside<any>[] = [this.#held, this.#folded];
 	readonly canSlice:boolean;//the host's list can be sliced (TableSettings.canSlice)
 	#fallback:V|undefined;
 	#selected = 0;//the number of the view shown

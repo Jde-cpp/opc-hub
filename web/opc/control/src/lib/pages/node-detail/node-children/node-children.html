@@ -7,7 +7,7 @@
 		<slice-panel [views]="viewSet" [columns]="columns" [counts]="sliceCounts()">
 		<div style="align-content: center; margin: auto; text-align: center">
 			<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange rather than sorting the table in place-->
-			<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" [filterValues]="filterValues()" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
+			<mat-table [dataSource]="tableRows()" [trackBy]="trackRow" class="mat-elevation-z8 jde-dense" [viewColumns]="viewSet" [filterValues]="filterValues()" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
 				<ng-container matColumnDef="select">
 					<mat-header-cell *matHeaderCellDef>
 						<mat-checkbox (change)="$event ? toggleAllRows() : null"
@@ -137,8 +137,12 @@
 						}
 					</mat-cell>
 				</ng-container>
+				<ng-container matColumnDef="jde-group"><!--a group's header, the one cell of its row-->
+					<mat-cell *matCellDef="let group" [groupHeader]="group" (groupToggle)="viewSet.toggleGroup(group.key)"></mat-cell>
+				</ng-container>
 				<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
 				<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
+				<mat-row *matRowDef="let row; columns: groupColumns; when: isGroup" class="jde-group-row"></mat-row>
 			</mat-table>
 		</div>
 		@if( !isRefreshing() && !rows().length ){

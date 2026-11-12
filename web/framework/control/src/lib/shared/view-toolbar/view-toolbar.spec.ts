@@ -836,4 +836,40 @@ describe( 'ViewToolbar', ()=>{
 			expect( openMenu( fixture, chevron( activeTab( element ) )! ).map( text ) ).not.toContain( "Slice by" );
 		} );
 	} );
+
+	//#596:  `Group by` names the column the rows are grouped by, and `Field sum` the numbers a group's header sums
+	describe( 'Group by and Field sum', ()=>{
+		const things = schemaOf( "Thing", required("name"), {name: "kind", type: {kind: "ENUM", name: "Kind"}}, scalar("size", "UInt") );
+		const open = async ( options:Options={} )=>{
+			const y = await create( {schema: things, route: [View.fromConfig( {configColumns: ["name", "kind"], sort: []}, things )], ...options} );
+			y.host.columns.set( {name: "Name", kind: "Kind", size: "Size"} );
+			y.fixture.detectChanges();
+			return { ...y, toolbar: y.fixture.debugElement.query( By.directive(ViewToolbar) ).componentInstance as ViewToolbar };
+		};
+		it( "offers the columns a list is grouped by and No grouping, the view's ticked, each pick a change to the draft", async ()=>{
+			const { fixture, element, set, host, toolbar } = await open();
+			openMenu( fixture, chevron( activeTab( element ) )! );
+			await pick( fixture, "Group by" );
+			expect( items().map( i=>[text( i ), i.getAttribute( "aria-checked" )] ) ).toEqual( [["Kind", "false"], ["Size", "false"], ["No grouping", "true"]] );
+			await pick( fixture, "Size" );
+			expect( [set.current().groupBy, set.current().isAdhoc, host.changes] ).toEqual( ["size", true, 1] );
+			toolbar.groupBy( undefined );//the menu's No grouping
+			expect( [set.current().groupBy, set.current().isAdhoc, host.changes] ).toEqual( [undefined, false, 2] );
+		} );
+		it( 'offers the number columns to sum, off until the view is grouped, each tick a change to the draft', async ()=>{
+			const { fixture, element, set, host, toolbar } = await open();
+			const entry = openMenu( fixture, chevron( activeTab( element ) )! ).find( i=>text( i )=="Field sum" )!;
+			expect( [entry.disabled, toolbar.sumChoices()] ).toEqual( [true, [{name: "size", label: "Size"}]] );
+			toolbar.groupBy( "kind" );
+			toolbar.toggleSum( "size", new Event("click") );
+			expect( [set.current().sums, set.current().isAdhoc, host.changes] ).toEqual( [["size"], true, 2] );
+			toolbar.toggleSum( "size", new Event("click") );
+			expect( set.current().sums ).toEqual( [] );
+		} );
+		it( 'has neither in the menu of a list with no column to group by, as the logs', async ()=>{
+			const { fixture, element } = await open( {type: LogView, route: [LogView.fromConfig( {configColumns: ["name", "kind"], sort: []}, things )]} );
+			const entries = openMenu( fixture, chevron( activeTab( element ) )! ).map( text );
+			expect( [entries.includes( "Group by" ), entries.includes( "Field sum" )] ).toEqual( [false, false] );
+		} );
+	} );
 } );

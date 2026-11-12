@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { config } from 'rxjs';
-import { SnackbarService } from 'jde-framework';
+import { GroupHeader, isGroupHeader, SnackbarService } from 'jde-framework';
 import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
 import { Enum } from '../../../model/enum';
@@ -227,6 +227,36 @@ describe( 'NodeChildren subscription values', ()=>{
 			push( {sc: bad} );
 			expect( [page.rows(), page.sliceCounts().length, predicate.mock.calls.length] ).toEqual( [[], 1, 1] );
 			predicate.mockRestore();
+		} );
+		//#596
+		it( 'heads the rows with their groups, cut again on a push where a reading changes the group column, and collapses one', ()=>{
+			const { page, row, push } = subscribed();
+			page.viewSet.reset( [NodeView.default()], NodeView.schema );
+			expect( page.tableRows() ).toBe( page.rows() );
+			page.viewSet.setGroupBy( "status" );
+			push( {value: 6, sc: 0} );
+			const headed = ()=>page.tableRows().map( r=>isGroupHeader( r ) ? `${r.label} ${r.count}` : r.name );
+			expect( headed() ).toEqual( [`${OpcError.text(0)} 1`, "q"] );
+			push( {sc: bad} );
+			expect( headed() ).toEqual( [`${OpcError.text(bad)} 1`, "q"] );
+			page.viewSet.toggleGroup( ( page.tableRows()[0] as GroupHeader ).key );
+			expect( [headed(), page.rows()] ).toEqual( [[`${OpcError.text(bad)} 1`], [row]] );//the rows, and their count, are the view's still
+		} );
+		//reviews-issue/596-views-group-by.md #1:  the rows were cut where the status changed, in the order of their last sort, so a push
+		//that moved a row to another status split its old group in two, under headers of one key
+		it( 'gathers a row a push moves to another status under its new group, one header a value', ()=>{
+			const d = create();
+			const rows = ["a", "b", "c"].map( ( name, i )=>variable( 11+i, name, {value: 5, userAccessLevel: EAccess.Read | EAccess.Write} ) );
+			d.setNodes( rows, true );
+			d.page.onSubscriptionChange( {added: rows, removed: []} as any );
+			const push = ( row:Variable, reading:object )=>d.gateway.values.next( {opcId: 'local', node: row.nodeId, ...reading} as any );
+			d.page.viewSet.reset( [NodeView.default()], NodeView.schema );
+			d.page.viewSet.setGroupBy( "status" );
+			rows.forEach( r=>push( r, {value: 6, sc: 0} ) );
+			const headed = ()=>d.page.tableRows().map( r=>isGroupHeader( r ) ? `${r.label} ${r.count}` : r.name );
+			expect( headed() ).toEqual( [`${OpcError.text(0)} 3`, "a", "b", "c"] );
+			push( rows[1], {sc: bad} );
+			expect( headed() ).toEqual( [`${OpcError.text(0)} 2`, "a", "c", `${OpcError.text(bad)} 1`, "b"] );
 		} );
 		//the filter is read again on a push for the counts, and the rows follow it where a row left or joined it
 		it( 'takes a row out of the rows when a push leaves it outside the filter', ()=>{
@@ -579,6 +609,33 @@ describe( 'NodeChildren the System nodes toggle', ()=>{
 
 	//reviews-issue/416-address-space.md #12:  the Types folder's children are all system nodes, so its page was empty by default and said
 	//"No node matches this view." - the view's filters, which weren't the cause
+	//reviews-issue/596-views-group-by.md #15, ruled 2026-11-11:  the page's own row, first whatever the sort, started a group of its
+	//own ahead of the others;  it goes in its group, which comes first
+	it( "puts a Variable page's own row first in its group, which comes first", ()=>{
+		const { page, self } = create();
+		const bad = 0x808C0000;
+		const node = ( i:number, name:string, sc:number )=>Object.assign( new Variable( <any>{ns: 2, i, name, browse: {ns: 2, name}} ), {value: 1, sc} );
+		Object.assign( self, {value: 1, sc: 0} );
+		(<any>page).setNodes( [self, node( 31, 'bad', bad ), node( 32, 'good', 0 )], false );
+		page.viewSet.setGroupBy( "status" );
+		const headed = page.tableRows().map( r=>isGroupHeader( r ) ? `${r.label} ${r.count}` : r.name );
+		expect( headed ).toEqual( [`${OpcError.text(0)} 2`, "CurrentTime", "good", `${OpcError.text(bad)} 1`, "bad"] );
+	} );
+	//reviews-issue/596-views-group-by.md #7, ruled 2026-11-11:  select-all took the variables of a collapsed group
+	it( "selects all over the rows on screen, a collapsed group's left as they were", ()=>{
+		const { page } = create();
+		const node = ( i:number, name:string, sc:number )=>Object.assign( new Variable( <any>{ns: 2, i, name, browse: {ns: 2, name}} ), {value: 1, sc} );
+		const [bad, good, other] = [node( 31, 'bad', 0x808C0000 ), node( 32, 'good', 0 ), node( 33, 'other', 0 )];
+		(<any>page).setNodes( [bad, good, other], false );
+		page.viewSet.setGroupBy( "status" );
+		page.selections.select( bad );
+		page.viewSet.toggleGroup( `string:${OpcError.text(0x808C0000)}` );
+		expect( page.isAllSelected() ).toBe( false );
+		page.toggleAllRows();
+		expect( [page.selections.selected, page.isAllSelected()] ).toEqual( [[bad, good, other], true] );
+		page.toggleAllRows();
+		expect( page.selections.selected ).toEqual( [bad] );
+	} );
 	it( 'says the toggle hid every row, and turns it on from there', ()=>{
 		const { fixture, page } = create();
 		const objectTypes = new OpcObject( <any>{ns: 0, i: 88, name: 'ObjectTypes', browse: {ns: 0, name: 'ObjectTypes'}, description: {text: ''}} );//as the browse answers it

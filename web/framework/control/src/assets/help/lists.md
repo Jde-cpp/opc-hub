@@ -54,6 +54,7 @@ A column is changed from its header, and each change is an [unsaved change](#uns
 - A header shows a menu button when the pointer is over it or the keyboard is on it:
   - **Sort ascending** and **Sort descending** [sort](#sorting) by the column.
   - **Filter by…** lists the column's values, on a column with a few fixed ones. See [Filtering](#filtering).
+  - **Group by this field** [groups](#grouping) the rows by the column, and takes the groups off again on the column the list is grouped by.
   - **Slice by this field** [slices](#slicing) the list by the column, and takes the slice off again on the column the list is sliced by.
   - **Move left** and **Move right** move the column a place.
   - **Wider** and **Narrower** change its width a step at a time.
@@ -134,9 +135,23 @@ On a narrow window or a phone the panel is a **Slice** button above the table, w
 
 **Logs** cannot be sliced.
 
+### Grouping
+
+A **grouped** list puts its rows under a header for each value of one column. The header shows the value, the number of rows under it, and the sums you choose.
+
+- **Group by** in the [view's menu](#views) picks the column, and **No grouping** takes the headers away. A header's menu has **Group by this field**.
+- A list is grouped by the columns it can be [sliced](#slicing) by.
+- The rows are sorted by the group column first, so the rows of a value stay together, and by the view's own [sort](#sorting) within a group. Sort by the group column to turn the groups' order round.
+- The chevron at the left of a header collapses its group, and opens it again. The groups you collapse are kept in this browser, for you alone, and are not saved with the view.
+- The count is of the rows on the page. Where the list holds more rows of the value than the page shows, the header says so: *12 of 40*. A group that runs past the end of a page has its header again at the top of the next. The count of the whole list follows the [filter](#filtering) and the value picked in a [slice](#slicing).
+- **Field sum** in the view's menu ticks the number columns to add up, such as the **Watch list**'s *Queue 12*. It is greyed out until the list is grouped. A sum is of the rows on the page, whether or not their column is shown, and it counts the rows of a collapsed group.
+- *No* and the column's name heads the rows with no value.
+
+On a node's **Children** and on the **Watch list** every row is on the page, so a header's count and sums are its group's. A node's **Children** have no number column to sum. **Logs** cannot be grouped.
+
 ## Views
 
-A **view** is the [filter](#filtering) on the rows, which columns are shown and in what order, how the rows are sorted, and the column the list is [sliced](#slicing) by.
+A **view** is the [filter](#filtering) on the rows, which columns are shown and in what order, how the rows are sorted, the column they are [grouped](#grouping) by with the sums in its headers, and the column the list is [sliced](#slicing) by.
 
 The tabs above the bar are a list's views; click one to switch. Every list comes with a *Default* view and some with more. They are a starting set: the first change you make to them - a save, a rename, a new view, a move or a deletion - keeps the whole set as your own. From then the tabs are your views alone, to change, add to and delete as you like. Two views may share a name.
 
@@ -147,8 +162,10 @@ The view you were last on is remembered in this browser.
 The active tab carries a chevron, which opens the view's menu:
 
 - **Fields** shows and hides [columns](#columns). Its first entry on a list's own page and on a node's **Children**, **Select**, shows or hides the column of checkboxes that tick rows.
+- **Group by** picks the column the rows are [grouped](#grouping) by.
 - **Sort by** sets the columns the list is [sorted](#sorting) by, and their order.
 - **Slice by** picks the column the list is [sliced](#slicing) by.
+- **Field sum** ticks the number columns a group's header adds up.
 - **Page size** is how many rows a page holds: 10, 25, 50, 100, 250 or 500. A list starts at 25 and **Logs** at 21. A node's **Children** are not read a page at a time, so their menu has none.
 - **Rename** turns the tab's name into a box. Enter keeps the new name, Escape or a blank box leaves the old one.
 - **Duplicate** adds a copy of the view, as it was last saved, after it under the same name.
@@ -156,11 +173,11 @@ The active tab carries a chevron, which opens the view's menu:
 - **Save changes** and **Discard changes** do what **Save** and **Discard** in the bar do.
 - **Delete** removes the view, its unsaved changes with it. Deleting the last one brings the list's own views back. It is greyed out on a list's own view when that is the only one.
 
-The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Fields**, **Sort by**, **Slice by**, **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
+The pick lists on a record's tabs have no tabs row: the button at the left of their bar shows the view's name, and its menu's **Views** lists the views to switch between, over **Fields**, **Group by**, **Sort by**, **Slice by**, **Field sum**, **Page size**, **Save changes** and **Discard changes**. A pick list shares its views, and their unsaved changes, with the list's own page. It leaves out a view saved to list deleted rows, and never lists a deleted row itself, whatever its filter says.
 
 ### Unsaved changes
 
-A change to a view - a filter typed, a sort, a column shown, hidden, moved or resized, a slice column, a page size - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
+A change to a view - a filter typed, a sort, a column shown, hidden, moved or resized, a group or a slice column, a sum, a page size - applies at once and is not saved. The view's tab shows a dot after its name, and **Discard** and **Save** appear in the bar.
 
 - **Save** keeps the changes as the view. On one of a list's own views it keeps the whole set as yours, as any first change does.
 - **Discard** drops them and shows the view as it was saved.

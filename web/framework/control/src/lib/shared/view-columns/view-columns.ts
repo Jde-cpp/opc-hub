@@ -12,13 +12,13 @@ import { ViewSet } from '../../model/ql/view-set';
 //node's children and the watch list:  on the mat-table, with `viewColumn` on each header cell and cell of a column the view holds.
 //A header then has its menu and its resize handle and drags along the header row, each a change to the view's draft, after which
 //`columnsChange` tells the host the view on screen is another, as the toolbar's `viewChange` does.  The menu sorts by the column
-//and, where the filter box reads its few values, filters on them (*Sort*, `Filter by…`), and slices the list by it (*Slice by*).  The header cells are the drop
+//and, where the filter box reads its few values, filters on them (*Sort*, `Filter by…`), and slices the list by it (*Slice by*) or groups its rows by it (*Group by*).  The header cells are the drop
 //list's items wherever the table puts them:  a cell's injector is the column's, not the header row's, so the list is the table.
 //`jde-view-columns` makes the rows as wide as their columns (_general.scss), the block a pinned cell sticks in.
 @Directive({
 	selector: 'mat-table[viewColumns]',
 	hostDirectives: [CdkDropList],
-	host: { class: 'jde-view-columns' }
+	host: { class: 'jde-view-columns', '[class.jde-grouped]': '!!view()?.groupBy' }
 })
 export class ViewColumns{
 	constructor(){
@@ -72,6 +72,13 @@ export class ViewColumns{
 	slicedBy( name:string ):boolean{ return this.view()?.sliceBy==name; }
 	sliceBy( name:string ){
 		if( this.views()?.setSliceBy( this.slicedBy(name) ? undefined : name ) )
+			this.columnsChange.emit();
+	}
+	//`Group by this field`, on the same columns and ticked the same way, a second pick `No grouping`
+	canGroup( name:string ):boolean{ return !!this.view()?.sliceable( name ); }
+	groupedBy( name:string ):boolean{ return this.view()?.groupBy==name; }
+	groupBy( name:string ){
+		if( this.views()?.setGroupBy( this.groupedBy(name) ? undefined : name ) )
 			this.columnsChange.emit();
 	}
 	preview( name:string, width?:number ){ this.#preview.set( width==null ? undefined : {name, width} ); }
@@ -189,6 +196,9 @@ export class ViewColumnHeader implements AfterViewInit, OnDestroy{
 	canSlice = computed<boolean>( ()=>this.columns.canSlice(this.name) );
 	sliced = computed<boolean>( ()=>this.columns.slicedBy(this.name) );
 	slice(){ this.columns.sliceBy( this.name ); }
+	canGroup = computed<boolean>( ()=>this.columns.canGroup(this.name) );
+	grouped = computed<boolean>( ()=>this.columns.groupedBy(this.name) );
+	group(){ this.columns.groupBy( this.name ); }
 	filterBy( value:string, event:Event ){
 		event.stopPropagation();//the menu stays open:  a filter takes several values
 		this.columns.filterBy( this.name, value );
