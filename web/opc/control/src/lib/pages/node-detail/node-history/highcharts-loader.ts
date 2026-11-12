@@ -17,6 +17,16 @@ export class HighchartsLoader{
 	//life, 'failed' until a load succeeds.
 	readonly state = computed( ()=>this.#state() );
 	get highcharts():HC|undefined{ return this.#highcharts; }//once loaded, before the state says so
+	//With the `xrange` series, a module of the same folder the OEE Gantt chart draws with (#405), imported once highstock has run,
+	//as the accessibility module is, and asked for by that chart alone:  a folder without it costs the trend nothing.  A rejection
+	//is kept for nothing, as load's.
+	xrange():Promise<HC|undefined>{
+		return this.#xrange ??= this.load().then( async H=>{
+			if( H )
+				await this.importFile( 'modules/xrange.js' );
+			return H;
+		} ).catch( e=>{ this.#xrange = undefined; throw e; } );
+	}
 	static readonly folder = 'addons/highcharts/esm/';//under the site's base href
 	//by URL from the site;  a spec's are the package's own, bundled into the test
 	protected importFile( file:string ):Promise<any>{ return import(/* @vite-ignore */ this.#base+file); }
@@ -46,6 +56,7 @@ export class HighchartsLoader{
 	#base = new URL( HighchartsLoader.folder, document.baseURI ).href;
 	#highcharts:HC|undefined;
 	#loading:Promise<HC|undefined>|undefined;
+	#xrange:Promise<HC|undefined>|undefined;
 	#state = signal<'loaded'|'absent'|'failed'|undefined>( undefined );
 }
 //A failed import says nothing of why, so ask for its first file:  a definite no - the hub's 404, or the page nginx and IIS answer

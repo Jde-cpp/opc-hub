@@ -5,6 +5,7 @@
 			<properties [ctor]=ctor [(record)]=properties type="oeeMachine" [schema]=schema [order]=fieldOrder [readonlyFields]="isNew ? [] : ['slug']" [excludedColumns]=excludedFields [units]=units [hints]=hints></properties>
 			<section class="form-section" aria-label="Production">
 				<h3>Production</h3>
+				@if( !isNew ){ <p class="hint">Its figures, Gantt chart, losses and stops, where stops are coded:  <a [routerLink]="['oee']">the machine's OEE page</a>.</p> }
 				@if( isNew ){ <p class="hint">The group whose members are the machine's signals:  one machine a group, fixed once the machine is made.  Its signals are picked once it is saved.</p> }
 				<div class="fields">
 					<mat-form-field class="wide" [class.readonly]="!isNew" subscriptSizing="dynamic">

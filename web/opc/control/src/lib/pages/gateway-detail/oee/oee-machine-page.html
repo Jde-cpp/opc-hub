@@ -1,0 +1,208 @@
+@if( machine(); as m ){
+	<div class="period-bar">
+		<mat-button-toggle-group hideSingleSelectionIndicator aria-label="Period" [value]="period()" (change)="pick($event.value)">
+			@for( p of periods(); track p.id ){
+				<mat-button-toggle [value]="p.id">{{ p.label }}</mat-button-toggle>
+			}
+		</mat-button-toggle-group>
+		@if( period()=='custom' ){
+			<mat-form-field subscriptSizing="dynamic">
+				<mat-label>From</mat-label>
+				<input matInput type="datetime-local" [value]="customFrom()" (input)="customFrom.set($any($event.target).value)" (change)="refresh()">
+			</mat-form-field>
+			<mat-form-field subscriptSizing="dynamic">
+				<mat-label>To</mat-label>
+				<input matInput type="datetime-local" [value]="customTo()" (input)="customTo.set($any($event.target).value)" (change)="refresh()">
+				<mat-hint>Blank is now</mat-hint>
+			</mat-form-field>
+		}
+		<button matButton type="button" (click)="refresh()" [disabled]="loading()>0" matTooltip="Read the period again, to now"><mat-icon>refresh</mat-icon>Refresh</button>
+		<span class="spacer"></span>
+		@if( range(); as r ){
+			<span class="range">{{ r.start | date:'yyyy-MM-dd HH:mm' }} to {{ r.end | date:'yyyy-MM-dd HH:mm' }}</span>
+		}
+		<a matButton [routerLink]="['..']" matTooltip="The machine's properties and signals"><mat-icon>settings</mat-icon>Machine</a>
+	</div>
+	<mat-progress-bar class="refresh-bar" [mode]="loading()>0 ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the period"></mat-progress-bar>
+	@if( statusProblem(); as p ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>{{ p }}</p>
+	}
+	@if( rangeProblem(); as p ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>{{ p }}</p>
+	}
+	@if( chartState()=='absent' ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The charts draw with Highcharts Stock, which the install does not include.  <a [routerLink]="['/help/gateways']" fragment="trend-chart">How to add it</a></p>
+	}
+	@else if( chartState()=='failed' ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The charts could not load Highcharts Stock.  Reload the page to try again.</p>
+	}
+
+	<section aria-labelledby="oee-figures">
+		<h3 id="oee-figures">Figures</h3>
+		@if( errors().figures; as e ){
+			<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+		}
+		@if( bucket(); as b ){
+			<dl class="factors">
+				@for( f of factors(); track f.label ){
+					<div class="factor" [class.lead]="f.lead">
+						<dt>{{ f.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="f.hint" [matTooltip]="f.hint"></mat-icon></dt>
+						<dd>{{ f.value }}@if( f.over ){ <mat-icon class="over" role="img" tabindex="0" fontIcon="warning" aria-label="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow." matTooltip="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow."></mat-icon>}</dd>
+					</div>
+				}
+			</dl>
+			@if( b.partial ){
+				<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>Partial:  the period has unknown time, or rows the engine has yet to write.</p>
+			}
+			@if( split(); as s ){
+				<div class="split">
+					<table aria-label="Planned time">
+						<thead><tr><th scope="col">Planned time</th><th scope="col" class="num">{{ duration(b.planned) }}</th><th scope="col" class="num">Share</th></tr></thead>
+						<tbody>
+							@for( row of s.planned; track row.id ){
+								<tr><th scope="row">{{ row.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="row.hint" [matTooltip]="row.hint"></mat-icon></th><td class="num">{{ duration(row.ms) }}</td><td class="num">{{ percent(row.share) }}</td></tr>
+							}
+						</tbody>
+					</table>
+					<table aria-label="Time beside the split">
+						<thead><tr><th scope="col">Beside it</th><th scope="col" class="num">Time</th><th scope="col" class="num">Share</th></tr></thead>
+						<tbody>
+							@for( row of s.beside; track row.id ){
+								<tr><th scope="row">{{ row.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="row.hint" [matTooltip]="row.hint"></mat-icon></th><td class="num">{{ duration(row.ms) }}</td><td class="num">{{ row.share==undefined ? '' : percent(row.share) + ' of run' }}</td></tr>
+							}
+						</tbody>
+					</table>
+					<table aria-label="Counts">
+						<thead><tr><th scope="col">Counts</th><th scope="col" class="num">In planned time</th></tr></thead>
+						<tbody>
+							@for( c of counts(); track c.label ){
+								<tr><th scope="row">{{ c.label }}</th><td class="num">{{ c.text }}</td></tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		}
+	</section>
+
+	@if( chartState()=='loaded' ){
+		<section aria-labelledby="oee-timeline">
+			<h3 id="oee-timeline">Timeline</h3>
+			@if( narrowed(); as n ){
+				<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>The period has more stops than the gateway reads at once:  the chart shows {{ n.start | date:'yyyy-MM-dd HH:mm' }} to {{ n.end | date:'yyyy-MM-dd HH:mm' }}.</p>
+			}
+			@if( errors().timeline; as e ){
+				<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+			}
+			@if( ganttSpec(); as spec ){
+				<oee-chart [spec]="spec" (pick)="codeSegment($event)"></oee-chart>
+			}
+		</section>
+	}
+
+	<section aria-labelledby="oee-losses">
+		<h3 id="oee-losses">Losses</h3>
+		@if( errors().losses; as e ){
+			<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+		}
+		@if( chartState()=='loaded' ){
+			@if( paretoSpec(); as spec ){
+				<oee-chart [spec]="spec"></oee-chart>
+			}
+		}
+		@if( losses().length ){
+			<table class="list" aria-label="Losses">
+				<thead><tr><th scope="col">Loss</th><th scope="col">Category</th><th scope="col" class="num">Time</th><th scope="col" class="num">Share</th><th scope="col" class="num">Stops</th></tr></thead>
+				<tbody>
+					@for( l of losses(); track $index ){
+						<tr><th scope="row">{{ lossName(l) }}</th><td>{{ l.reason?.category }}</td><td class="num">{{ duration(l.ms) }}</td><td class="num">{{ lostMs() ? percent(l.ms/lostMs()) : '' }}</td><td class="num">{{ l.stops }}</td></tr>
+					}
+				</tbody>
+			</table>
+		}
+		@else if( range() && !loading() && !errors().losses ){
+			<p class="empty" role="status">No time lost in the period.</p>
+		}
+	</section>
+
+	<section aria-labelledby="oee-trend">
+		<div class="heading">
+			<h3 id="oee-trend">Trend</h3>
+			<mat-button-toggle-group hideSingleSelectionIndicator aria-label="Trend by" [value]="trendBy()" (change)="setTrendBy($event.value)">
+				@if( hasShifts() ){ <mat-button-toggle value="shift">By shift</mat-button-toggle> }
+				<mat-button-toggle value="day">By day</mat-button-toggle>
+			</mat-button-toggle-group>
+		</div>
+		@if( errors().trend; as e ){
+			<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+		}
+		@if( chartState()=='loaded' ){
+			@if( trendSpec(); as spec ){
+				<oee-chart [spec]="spec"></oee-chart>
+			}
+		}
+		@else if( trend().length ){<!--the chart's columns as rows-->
+			<table class="list" aria-label="OEE by bucket">
+				<thead><tr><th scope="col">{{ trendBy()=='shift' ? 'Shift' : utcDays() ? 'Day (UTC)' : 'Day' }}</th><th scope="col" class="num">OEE</th><th scope="col" class="num">Availability</th><th scope="col" class="num">Performance</th><th scope="col" class="num">Quality</th></tr></thead>
+				<tbody>
+					@for( b of trend(); track $index ){
+						<tr><th scope="row">{{ b.shift }} {{ b.start | date:'yyyy-MM-dd HH:mm':(trendBy()=='day' && utcDays() ? 'UTC' : undefined) }}</th><td class="num">{{ percent(b.oee) }}</td><td class="num">{{ percent(b.availability) }}</td><td class="num">{{ percent(b.performance) }}</td><td class="num">{{ percent(b.quality) }}</td></tr>
+					}
+				</tbody>
+			</table>
+		}
+	</section>
+
+	<section aria-labelledby="oee-stops">
+		<div class="heading">
+			<h3 id="oee-stops">Stops</h3>
+			<mat-slide-toggle [checked]="uncodedOnly()" (change)="setUncodedOnly($event.checked)" matTooltip="Only the stops with time no reason covers">Uncoded</mat-slide-toggle>
+		</div>
+		@if( errors().stops; as e ){
+			<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+		}
+		@if( stops().length ){
+			<mat-table [dataSource]="stops()" class="jde-dense" aria-label="Stops, newest first">
+				<ng-container matColumnDef="start">
+					<mat-header-cell *matHeaderCellDef>Start</mat-header-cell>
+					<mat-cell *matCellDef="let s">{{ s.start | date:'yyyy-MM-dd HH:mm:ss' }}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="end">
+					<mat-header-cell *matHeaderCellDef>End</mat-header-cell>
+					<mat-cell *matCellDef="let s">@if( s.open ){<span class="open">Open</span>}@else{{{ s.end | date:'yyyy-MM-dd HH:mm:ss' }}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="length">
+					<mat-header-cell *matHeaderCellDef>Length</mat-header-cell>
+					<mat-cell *matCellDef="let s">{{ duration(s.ms) }}@if( s.small ){ <span class="tag">small</span>}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="reason">
+					<mat-header-cell *matHeaderCellDef>Reason</mat-header-cell>
+					<mat-cell *matCellDef="let s">
+						@if( s.uncoded ){ <mat-icon class="uncoded" aria-hidden="true" fontIcon="help_outline"></mat-icon> }
+						<span>{{ reasonText(s) }}@if( s.reason ){ <span class="category">{{ s.reason.category }}</span>}</span>
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="code">
+					<mat-header-cell *matHeaderCellDef>Code<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" aria-label="The Reason signal's value" matTooltip="The Reason signal's value"></mat-icon></mat-header-cell>
+					<mat-cell *matCellDef="let s">{{ codeText(s) }}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="comment">
+					<mat-header-cell *matHeaderCellDef>Comment</mat-header-cell>
+					<mat-cell *matCellDef="let s"><span class="comments">@for( c of comments(s); track $index ){<span>{{ c }}</span>}</span></mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="actions">
+					<mat-header-cell *matHeaderCellDef></mat-header-cell>
+					<mat-cell *matCellDef="let s"><button matButton type="button" (click)="code(s)" [attr.aria-label]="'Code the stop of ' + (s.start | date:'yyyy-MM-dd HH:mm:ss')">Code</button></mat-cell>
+				</ng-container>
+				<mat-header-row *matHeaderRowDef="stopColumns"></mat-header-row>
+				<mat-row *matRowDef="let row; columns: stopColumns"></mat-row>
+			</mat-table>
+			@if( hasMore() ){
+				<button matButton type="button" class="more" (click)="loadMore()" [disabled]="loading()>0"><mat-icon>expand_more</mat-icon>Earlier stops</button>
+			}
+		}
+		@else if( range() && !loading() && !errors().stops ){
+			<p class="empty" role="status">{{ uncodedOnly() ? 'No uncoded stops in the period.' : 'No stops in the period.' }}</p>
+		}
+	</section>
+}

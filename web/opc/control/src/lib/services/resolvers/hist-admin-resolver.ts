@@ -10,7 +10,9 @@ import { GatewayListKind, gatewayListRoute } from '../../pages/gateway-detail/ga
 //`templates/:slug`, `groups/:slug`, `machines/:slug` and `reasons/:slug` routes, each naming its kind in its data, as
 //ClientResolver resolves a connection's:  the gateway is the url's, the row is DetailResolver's query of the gateway's table, and
 //the siblings are the rows the page's list put in the RouteStore under `<page url>/<kind>` (GatewayHistList).  The sidenav's
-//parent is the page itself ('.'), so a sibling link is `./<kind>/<slug>` from the sidenav's route, which is the page's.
+//parent is the page itself ('.'), so a sibling link is `./<kind>/<slug>` from the sidenav's route, which is the page's.  A route
+//under a row's own, a machine's `machines/:slug/oee` (#405), names its segment as `data.suffix`, and its siblings are the other
+//rows' pages of that segment.
 @Injectable()
 export class HistAdminResolver implements Resolve<GatewayDetailData<any>>{
 	#router = inject( Router );
@@ -30,8 +32,9 @@ export class HistAdminResolver implements Resolve<GatewayDetailData<any>>{
 		try{
 			const gateway = await this.#gatewayService.gateway( instance );
 			const list = gatewayListRoute( kind );
-			const siblings = this.#routeStore.getChildren( `${parentUrl}/${kind}` ).map( s=>new RouteItem( {path: `${kind}/${s.path}`, title: s.title} ) );
-			const routing = new DetailRoute( `${kind}/${slug}`, siblings.find( s=>s.path==`${kind}/${slug}` )?.title, siblings, new RouteItem( {path: '.', title: instance} ) );
+			const suffix = route.data['suffix'] ? `/${route.data['suffix']}` : '';
+			const siblings = this.#routeStore.getChildren( `${parentUrl}/${kind}` ).map( s=>new RouteItem( {path: `${kind}/${s.path}${suffix}`, title: s.title} ) );
+			const routing = new DetailRoute( `${kind}/${slug}${suffix}`, siblings.find( s=>s.path==`${kind}/${slug}${suffix}` )?.title, siblings, new RouteItem( {path: '.', title: instance} ) );
 			routing.tableSettings = list.tableSettings;
 			return { ...await DetailResolver.load( gateway, list.collectionName, slug, routing, null ), gateway };//null vars, as the gateway's other detail sends
 		}
@@ -42,7 +45,7 @@ export class HistAdminResolver implements Resolve<GatewayDetailData<any>>{
 			}
 			else
 				this.#snackbar.exception( `Could not load '${slug}'`, e );
-			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, ['..'] ) );//<page>/<kind>, which redirects to the page
+			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, route.data['suffix'] ? ['../..'] : ['..'] ) );//<page>/<kind>, which redirects to the page:  '..' drops one segment, the suffix's under a row's own
 			return null as unknown as GatewayDetailData<any>;
 		}
 	}

@@ -8,3 +8,4 @@ export const loadHistGroupDetail = ()=>import( './gateway-detail/hist-admin/hist
 export const loadGatewayWatch = ()=>import( './gateway-detail/watch/gateway-watch' ).then( m=>m.GatewayWatch );
 export const loadOeeMachineDetail = ()=>import( './gateway-detail/oee-admin/oee-machine-detail' ).then( m=>m.OeeMachineDetail );
 export const loadOeeReasonDetail = ()=>import( './gateway-detail/oee-admin/oee-reason-detail' ).then( m=>m.OeeReasonDetail );
+export const loadOeeMachinePage = ()=>import( './gateway-detail/oee/oee-machine-page' ).then( m=>m.OeeMachinePage );
