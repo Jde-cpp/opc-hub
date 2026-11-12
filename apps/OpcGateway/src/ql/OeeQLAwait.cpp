@@ -22,7 +22,7 @@ namespace Jde::Opc::Gateway{
 	Ω ms( Duration d )ι->int64_t{ return std::chrono::duration_cast<std::chrono::milliseconds>( d ).count(); }
 	Ω ticks( TimePoint t )ι->int64_t{ return UADateTime{ t }.UA(); }
 	Ω number( optional<double> v )ι->jvalue{ return v ? jvalue{ *v } : jvalue{}; }
-	Ω machineJson( const OeeMachineRow& row )ι->jobject{ return { {"id", row.Id}, {"name", row.Name} }; }
+	Ω machineJson( const OeeMachineRow& row )ι->jobject{ return { {"id", row.Id}, {"name", row.Name}, {"slug", row.Slug} }; }
 
 	//What a read is made from:  the machine as the formulas take it, its calendar's snapshot, and the range's rows.
 	struct OeeRead final{
@@ -104,7 +104,7 @@ namespace Jde::Opc::Gateway{
 		uint Limit;
 		vector<OeeRead> Machines;
 	};
-	Ω lineJson( const OeeLineRow& row )ι->jobject{ return { {"id", row.Id}, {"name", row.Name}, {"level", row.Level ? jvalue{Oee::ToString(*row.Level)} : jvalue{}} }; }
+	Ω lineJson( const OeeLineRow& row )ι->jobject{ return { {"id", row.Id}, {"name", row.Name}, {"slug", row.Slug}, {"level", row.Level ? jvalue{Oee::ToString(*row.Level)} : jvalue{}} }; }
 	Ω lineBucketJson( const Oee::Bucket& b, bool shift )ι->jobject{
 		auto y = bucketJson( b, shift );
 		y["machines"] = b.Machines;

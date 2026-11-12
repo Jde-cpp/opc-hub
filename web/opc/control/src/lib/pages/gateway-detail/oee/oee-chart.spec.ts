@@ -3,7 +3,7 @@ import type Highcharts from 'highcharts/esm/highstock';
 import { OeeSegment, toOeeLoss, toOeeTimeline } from '../../../model/oee';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { OeeChart, OeeChartSpec } from './oee-chart';
-import { oeeKindColors, toGantt, toGanttRows, toPareto } from './oee-chart-data';
+import { GanttPoint, oeeKindColors, toGantt, toGanttRows, toPareto } from './oee-chart-data';
 import { flush, silence, stable } from 'jde-spa/testing';
 import { BundledHighcharts } from 'jde-opc/testing';
 
@@ -28,10 +28,9 @@ const draw = async ( spec:OeeChartSpec, loader:HighchartsLoader = new BundledHig
 	await stable( fixture );
 	const plot:HTMLElement = fixture.nativeElement.querySelector( '.plot' );
 	const chart = H.charts.find( c=>c && c.container.parentElement==plot );
-	const picked:unknown[] = [], bands:{y:number}[] = [];
-	fixture.componentInstance.pick.subscribe( s=>picked.push( s ) );
+	const bands:GanttPoint[] = [];
 	fixture.componentInstance.band.subscribe( p=>bands.push( p ) );
-	return { fixture, plot, chart, picked, bands };
+	return { fixture, plot, chart, bands };
 };
 
 describe( 'OeeChart', ()=>{
@@ -46,30 +45,38 @@ describe( 'OeeChart', ()=>{
 		expect( [...fixture.nativeElement.querySelectorAll( '.legend li' )].map( ( li:any )=>li.textContent.trim() ) ).toEqual( ['Planned time', 'Running', 'Uncoded stop'] );
 		fixture.destroy();
 	} );
-	it( "emits a stop's segment when its band is clicked, and nothing for running time", async ()=>{
-		const { fixture, chart, picked } = await draw( gantt );
+	it( "emits a clicked band's point with its segment, a stop's or running time's", async ()=>{
+		const { fixture, chart, bands } = await draw( gantt );
 		const [running, stop] = chart!.series[1].points;
 		(<any>running).firePointEvent( 'click' );
-		expect( picked ).toEqual( [] );
 		(<any>stop).firePointEvent( 'click' );
-		expect( picked ).toEqual( [timeline.segments[1]] );
+		expect( bands.map( b=>b.custom.segment ) ).toEqual( [timeline.segments[0], timeline.segments[1]] );
 		fixture.destroy();
 	} );
 	//the dashboard's (#406):  a row per machine, as tall as its rows, and any band says which row it is on
 	it( "draws a row per machine named on the axis, grows with its rows, and emits a band's point whatever it is", async ()=>{
 		const rows = ( names:string[] ):OeeChartSpec=>({ kind: 'gantt', title: 'The current shift', description: 'd', range, ...toGanttRows( names.map( name=>({name, segments: timeline.segments}) ) ) });
-		const { fixture, chart, plot, picked, bands } = await draw( rows( ['Pump 1', 'Pump 2'] ) );
+		const { fixture, chart, plot, bands } = await draw( rows( ['Pump 1', 'Pump 2'] ) );
 		expect( chart!.yAxis[0].options.categories ).toEqual( ['Pump 1', 'Pump 2'] );
 		expect( chart!.series.map( s=>s.points.length ) ).toEqual( [0, 6] );
 		expect( plot.style.height ).toBe( '120px' );
 		(<any>chart!.series[1].points[3]).firePointEvent( 'click' );//Pump 2's running time
 		expect( bands.map( p=>p.y ) ).toEqual( [1] );
-		expect( picked ).toEqual( [] );
 		fixture.componentRef.setInput( 'spec', rows( ['Pump 1', 'Pump 2', 'Pump 3'] ) );
 		await stable( fixture );
 		expect( plot.style.height ).toBe( '152px' );
 		expect( chart!.yAxis[0].options.max ).toBe( 2 );
 		expect( chart!.series[1].points ).toHaveLength( 9 );
+		fixture.destroy();
+	} );
+	//#409:  a row that names a line stands over its machines' rows
+	it( "names a line's row in bold, and escapes every row's name", async ()=>{
+		const spec:OeeChartSpec = { kind: 'gantt', title: 'The current shift', description: 'd', range, ...toGanttRows( [{name: 'Pump <1>', segments: timeline.segments, group: 'Area A&B'}, {name: 'Pump 2', segments: timeline.segments}] ) };
+		const { fixture, chart, plot } = await draw( spec );
+		expect( chart!.yAxis[0].options.categories ).toEqual( ['Area A&B', 'Pump <1>', 'Pump 2'] );
+		const label = <( this:object )=>string>chart!.yAxis[0].options.labels!.formatter;
+		expect( [0, 1, 2].map( pos=>label.call( {pos, value: chart!.yAxis[0].options.categories![pos]} ) ) ).toEqual( ['<b>Area A&amp;B</b>', 'Pump &lt;1&gt;', 'Pump 2'] );
+		expect( [plot.style.height, [...new Set( chart!.series[1].points.map( p=>p.y ) )]] ).toEqual( ['152px', [1, 2]] );
 		fixture.destroy();
 	} );
 	it( "keeps a zoom as the dashboard's data changes, and waits on an open tooltip", async ()=>{

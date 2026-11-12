@@ -1,6 +1,6 @@
-import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
+import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
-import { Mutation } from 'jde-framework';
+import { Mutation, Properties } from 'jde-framework';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { histThresholdBlank } from '../../../model/hist';
 import { HistPick, HistTemplate } from '../../../model/hist-admin';
@@ -26,12 +26,12 @@ const create = async ( pageRow:any )=>{
 	const dialog = dialogStub( true );//a confirmation's answer;  the picker's picks are its own, none until a test gives some
 	dialog.answers.set( HistNodePickerDialog, undefined );
 	const {data, snackbar} = configureDetailPage( pageRow, {gateway, providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },//the page is driven by hand:  the zoneless fixture's own first change detection would run ngOnInit a second time, onto the row #load nulled
 		{ provide: HistAdminService, useValue: admin },
 		{ provide: MatDialog, useValue: dialog }
 	]} );
-	const page = TestBed.createComponent( HistTemplateDetail ).componentInstance;
-	page.ngOnInit();
+	TestBed.overrideComponent( Properties, {set: {template: '', imports: []}} );//the form reads a whole schema
+	const fixture = TestBed.createComponent( HistTemplateDetail ), page = fixture.componentInstance;
+	fixture.detectChanges();//its first change detection runs ngOnInit
 	await flush( 3 );
 	return { page, mutations, admin, snackbar, dialog, data };
 };

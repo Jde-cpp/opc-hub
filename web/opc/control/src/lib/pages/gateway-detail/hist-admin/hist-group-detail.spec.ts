@@ -54,7 +54,7 @@ const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tc
 	const dialog = dialogStub( true );//a confirmation's answer;  the picker's picks are its own, none until a test gives some
 	dialog.answers.set( HistNodePickerDialog, undefined );
 	const {data, snackbar} = configureDetailPage( pageRow, {gateway, providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },//the page is driven by hand:  the zoneless fixture's own first change detection would run ngOnInit a second time, onto the row #load nulled
+		{ provide: ComponentFixtureAutoDetect, useValue: render },//a rendered page detects changes itself, as an app does:  turned off, a zoneless tick inside flush() leaves the next detectChanges() nothing to refresh (NG0100).  One driven by hand doesn't, or its first change detection would run ngOnInit a second time, onto the row #load nulled
 		{ provide: HistAdminService, useValue: admin },
 		{ provide: HistoryService, useValue: {} },
 		{ provide: OpcStore, useValue: {getConnection: async ()=>pumpsServer} },

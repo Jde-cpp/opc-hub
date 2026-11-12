@@ -175,7 +175,7 @@ namespace Jde::Opc::Gateway::Tests{
 				vars[key] = value;
 			return Mutate( ql, move(vars) );
 		};
-		constexpr sv figuresQL{ "oee( line:$id, start:$start, end:$end, by:$by, members:$members ){ start end shift planned run unplanned total ideal availability performance quality oee measured partial machines coverage{ performance quality } members{ shift planned run oee machines machine{ id name } line{ id name level } } }" };
+		constexpr sv figuresQL{ "oee( line:$id, start:$start, end:$end, by:$by, members:$members ){ start end shift planned run unplanned total ideal availability performance quality oee measured partial machines coverage{ performance quality } members{ shift planned run oee machines machine{ id name slug } line{ id name slug level } } }" };
 		//pump1:  planned 300 s, a 90 s stop, 35 units of which 33 good at 3 s.  pump2:  a 120 s stop, 30 units at 6 s, no quality.
 		let availability = 390.0/600, performance = ( 105.0+180 )/390, quality = 33.0/35;
 		{
@@ -203,6 +203,7 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_EQ( members.size(), 2u ) << serialize( members );
 			let& first = members[0].as_object();
 			EXPECT_EQ( Json::AsNumber<uint32>(Json::AsObject(first, "machine"), "id"), m1 ) << "in member order";
+			EXPECT_EQ( Json::AsSV(Json::AsObject(first, "machine"), "slug"), pump1.Slug ) << "its page's";
 			EXPECT_TRUE( first.at("line").is_null() );
 			EXPECT_EQ( Json::AsSV(first, "shift"), "Written" ) << "a member's bucket is the line's, labelled as it is";
 			EXPECT_EQ( Number(first, "planned"), 300000 );
@@ -226,6 +227,7 @@ namespace Jde::Opc::Gateway::Tests{
 			let& member = members[0].as_object();
 			EXPECT_EQ( Json::AsNumber<uint32>(Json::AsObject(member, "line"), "id"), line );
 			EXPECT_EQ( Json::AsSV(Json::AsObject(member, "line"), "level"), "Line" );
+			EXPECT_EQ( Json::AsSV(Json::AsObject(member, "line"), "slug"), "oeeLine" );
 			EXPECT_TRUE( member.at("machine").is_null() );
 			EXPECT_EQ( Number(member, "machines"), 2 );
 			EXPECT_NEAR( Number(member, "oee"), availability*performance*quality, 1e-9 );

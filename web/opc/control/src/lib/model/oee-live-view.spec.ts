@@ -10,6 +10,27 @@ const running = ( since:Date, at:Date ):OeeLiveStatus=>({ state: 'running', sinc
 const stopped = ( since:Date, at:Date, stop:object={} ):OeeLiveStatus=>({ state: 'stopped', since, planned: true, shift, figures: figures( at ), calendarMissing: false, stop: {start: since, small: false, ...stop} });
 const machine = { id: 4, name: 'Pump 1', slug: 'pump1' };
 
+describe( "a line's tile", ()=>{
+	const counts = ( running:number, stopped:number, unknown=0 ):OeeLiveStatus=>({ state: 'unknown', planned: true, shift, figures: figures( t( 9 ) ), calendarMissing: false, machines: {running, stopped, unknown} });
+	const line = { id: 2, name: 'Packaging', slug: 'packaging' };
+	it( 'says its machines running and stopped in the state\'s place, those unknown where it has any, with the shift\'s figures', ()=>{
+		let tile = oeeTile( line );
+		expect( oeeTileView( tile ) ).toMatchObject( {state: 'none', stateLabel: 'Connecting'} );
+		tile = oeeTileNext( tile, {kind: 'status', status: counts( 3, 1 )} );
+		expect( oeeTileView( tile ) ).toMatchObject( {state: 'line', stateLabel: '3 running, 1 stopped', counts: {running: 3, stopped: 1, unknown: 0}, period: 'First', notes: [],
+			figures: [{label: 'Availability', value: '80.0%'}, {label: 'Performance', value: '90.0%'}, {label: 'Quality', value: '95.0%'}, {label: 'OEE', value: '68.4%'}]} );
+		tile = oeeTileNext( tile, {kind: 'status', status: counts( 0, 0, 4 )} );
+		expect( oeeTileView( tile ).stateLabel ).toBe( '0 running, 0 stopped, 4 unknown' );
+	} );
+	it( 'says its own calendar\'s time between shifts, a drop and an end, as a machine\'s does', ()=>{
+		let tile = oeeTileNext( oeeTile( line ), {kind: 'status', status: {state: 'unknown', planned: false, calendarMissing: false, machines: {running: 0, stopped: 2, unknown: 0}}} );
+		expect( oeeTileView( tile ) ).toMatchObject( {state: 'line', stateLabel: '0 running, 2 stopped', period: undefined, notes: ['Between shifts.']} );
+		tile = oeeTileNext( tile, {kind: 'dropped'} );
+		expect( oeeTileView( tile ).notes[0] ).toContain( 'was lost' );
+		tile = oeeTileNext( tile, {kind: 'ended', message: "Line 'Packaging' was deleted." } );
+		expect( oeeTileView( tile ) ).toMatchObject( {state: 'none', stateLabel: 'Ended', notes: ["Line 'Packaging' was deleted."]} );
+	} );
+} );
 describe( 'a tile', ()=>{
 	it( 'follows a sequence of statuses:  running, a small stop, uncoded once it outlasts the threshold, coded, running again', ()=>{
 		let tile = oeeTile( machine );

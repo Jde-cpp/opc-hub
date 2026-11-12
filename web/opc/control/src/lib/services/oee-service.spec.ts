@@ -27,16 +27,43 @@ describe( 'OeeService', ()=>{
 		await service.stops( g, 4, range, {uncoded: false, limit: 50, continuation: 'next'} );
 		expect( g.query ).toHaveBeenLastCalledWith( `oeeStops( machine: $machine, start: $start, end: $end, uncoded: $uncoded, limit: $limit, continuation: $continuation ){ ${OeeService.stopsSelection} }`, {machine: 4, ...span, uncoded: false, limit: 50, continuation: 'next'} );
 	} );
-	it( "reads the dashboard's machines by name, each with whether a live line holds it", async ()=>{
+	it( "reads the gateway's machines by name, with its live lines and every membership", async ()=>{
+		const members = [{id: 1, oeeLineId: 1, oeeMachineId: 5, memberLineId: null, sort: 0}, {id: 2, oeeLineId: 3, oeeMachineId: null, memberLineId: 1, sort: 1}];
 		const g = { query: vi.fn( async ( ql:string )=><any>( ql==OeeService.machinesQuery ? {oeeMachines: [{id: 5, name: 'Pump 2', slug: 'pump2'}, {id: 4, name: 'Pump 1', slug: 'pump1'}]}
-			: ql==OeeService.linesQuery ? {oeeLines: [{id: 1}]} : {oeeLineMembers: [{oeeLineId: 1, oeeMachineId: 5}, {oeeLineId: 1, oeeMachineId: null}, {oeeLineId: 2, oeeMachineId: 4}]} ) ) };
-		expect( await service.machines( g ) ).toEqual( [{id: 4, name: 'Pump 1', slug: 'pump1', inLine: false}, {id: 5, name: 'Pump 2', slug: 'pump2', inLine: true}] );//line 2 deleted, its members not yet purged
-		expect( g.query.mock.calls.map( ([ql])=>ql ) ).toEqual( ['oeeMachines( deleted: null ){ id name slug }', 'oeeLines( deleted: null ){ id }', 'oeeLineMembers{ oeeLineId oeeMachineId }'] );
+			: ql==OeeService.linesQuery ? {oeeLines: [{id: 1, name: 'Filling', slug: 'filling', level: 'Line'}]} : {oeeLineMembers: members} ) ) };
+		expect( await service.plant( g ) ).toEqual( {
+			machines: [{id: 4, name: 'Pump 1', slug: 'pump1'}, {id: 5, name: 'Pump 2', slug: 'pump2'}], lines: [{id: 1, name: 'Filling', slug: 'filling', level: 'Line'}],
+			members: [{id: 1, lineId: 1, machineId: 5, memberLineId: undefined, sort: 0}, {id: 2, lineId: 3, machineId: undefined, memberLineId: 1, sort: 1}]//line 3 deleted, its members not yet purged
+		} );
+		expect( g.query.mock.calls.map( ([ql])=>ql ).sort() ).toEqual( ['oeeLineMembers{ id oeeLineId oeeMachineId memberLineId sort }', 'oeeLines( deleted: null ){ id name slug level }', 'oeeMachines( deleted: null ){ id name slug }'] );
 		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
 		const refused = { query: vi.fn( async ( ql:string )=>{ if( ql==OeeService.lineMembersQuery ) throw new Error( '(403)No Read on oeeLineMembers.' ); return <any>{oeeMachines: [{id: 4, name: 'Pump 1', slug: 'pump1'}]}; } ) };
-		expect( await service.machines( refused ) ).toEqual( [{id: 4, name: 'Pump 1', slug: 'pump1', inLine: false}] );//the members withheld:  every machine has its tile
+		expect( await service.plant( refused ) ).toEqual( {machines: [{id: 4, name: 'Pump 1', slug: 'pump1'}], lines: [], members: []} );//the members withheld:  every machine is in no line
 		expect( warn ).toHaveBeenCalledTimes( 1 );
 		warn.mockRestore();
+		await expect( service.plant( refused, true ) ).rejects.toThrow( 'No Read on oeeLineMembers.' );//a page that edits them says so
+	} );
+	it( "reads a line in a machine's place:  its figures with its members', its stops naming their machines, a timeline per machine", async ()=>{
+		const member = { start: span.start, end: span.end, planned: 100, oee: 0.5, measured: [], partial: false };
+		const f = stub( {oee: [{...member, planned: 200, machines: 2, coverage: {performance: 1, quality: 0}, members: [{...member, machine: {id: 4, name: 'Pump 1', slug: 'pump1'}}, {...member, machines: 1, line: {id: 3, name: 'Cell A', slug: 'cell-a', level: 'Cell'}}]}]} );
+		const [bucket] = await service.figures( f, {line: 2}, range, undefined, true );
+		expect( [bucket.machines, bucket.coverage, bucket.members!.map( m=>[m.machine, m.line, m.planned] )] ).toEqual( [2, {performance: 1, quality: 0}, [[{id: 4, name: 'Pump 1', slug: 'pump1'}, undefined, 100], [undefined, {id: 3, name: 'Cell A', slug: 'cell-a', level: 'Cell'}, 100]]] );
+		expect( f.query ).toHaveBeenLastCalledWith( OeeService.figuresQL( 'line', false, true ), {line: 2, ...span, members: true} );
+		expect( OeeService.figuresQL( 'line', false, true ) ).toMatch( /^oee\( line: \$line, start: \$start, end: \$end, members: \$members \)\{ start .* partial machines coverage\{ performance quality \} members\{ start .* partial machines machine\{ id name slug \} line\{ id name slug level \} \} \}$/ );
+		const s = stub( {oeeStops: {stops: [{id: 7, start: span.start, end: span.end, ms: 1, small: false, open: false, uncoded: true, codings: [], machine: {id: 5, name: 'Pump 2'}}]}} );
+		expect( ( await service.stops( s, {line: 2}, range, {uncoded: false, limit: 50} ) ).stops[0].machine ).toEqual( {id: 5, name: 'Pump 2'} );
+		expect( s.query.mock.calls[0] ).toEqual( [`oeeStops( line: $line, start: $start, end: $end, uncoded: $uncoded, limit: $limit ){ ${OeeService.lineStopsSelection} }`, {line: 2, ...span, uncoded: false, limit: 50}] );
+		expect( OeeService.lineStopsSelection ).toMatch( / time \} machine\{ id name \} \}$/ );
+		const l = stub( {oeeLosses: []} );
+		await service.losses( l, {line: 2}, range );
+		expect( l.query ).toHaveBeenCalledWith( 'oeeLosses( line: $line, start: $start, end: $end ){ kind reason{ id name category } ms stops }', {line: 2, ...span} );
+		const t = stub( {oeeTimeline: [{machine: {id: 4, name: 'Pump 1'}, planned: [], segments: []}, {machine: {id: 5, name: 'Pump 2'}, planned: [], segments: [{start: span.start, end: span.end, state: 'running', small: false, uncoded: false}]}]} );
+		expect( ( await service.timelines( t, 2, range ) ).map( x=>[x.machine.name, x.segments.length] ) ).toEqual( [['Pump 1', 0], ['Pump 2', 1]] );
+		expect( t.query ).toHaveBeenCalledWith( OeeService.lineTimelineQuery, {line: 2, ...span} );
+		expect( OeeService.lineTimelineQuery ).toContain( 'oeeTimeline( line: $line, start: $start, end: $end ){ machine{ id name } planned{' );
+		const sh = stub( {oee: []} );
+		await service.shift( sh, {line: 2}, new Date( '2026-11-11T09:30:00Z' ) );
+		expect( sh.query.mock.calls[0][0] ).toBe( 'oee( line: $line, start: $start, end: $end, by: $by ){ start end shift }' );
 	} );
 	it( 'reads the losses and the timeline', async ()=>{
 		const l = stub( {oeeLosses: [{kind: 'uncoded', reason: null, ms: 1200000, stops: 1}]} );

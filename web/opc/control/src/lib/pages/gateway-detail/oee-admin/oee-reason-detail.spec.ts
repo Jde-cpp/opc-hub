@@ -1,4 +1,4 @@
-import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
+import { TestBed } from '@angular/core/testing';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { Mutation, Properties } from 'jde-framework';
 import { OeeReason } from '../../../model/oee-admin';
@@ -10,7 +10,6 @@ import { configureDetailPage } from 'jde-framework/testing';
 const create = async ( pageRow:any, refusal?:string )=>{
 	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{ if( refusal ) throw new Error( refusal ); } ) };
 	const {snackbar, router} = configureDetailPage( pageRow, {gateway, providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },
 		{ provide: MAT_TABS_CONFIG, useValue: {animationDuration: '0ms'} }
 	]} );
 	TestBed.overrideComponent( Properties, {set: {template: '', imports: []}} );//the form reads a whole schema

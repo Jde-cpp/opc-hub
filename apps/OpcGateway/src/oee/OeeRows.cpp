@@ -39,7 +39,8 @@ namespace Jde::Opc::Gateway{
 			.Width = fromMs( r.Get<uint32>(6) ),
 			.Processed = timeCell( r, 7 ),
 			.Name = r.TakeString( 8 ),
-			.Deleted = !r.IsNull( 9 )
+			.Slug = r.TakeString( 9 ),
+			.Deleted = !r.IsNull( 10 )
 		};
 	}
 	Ω signalRow( DB::Row&& r )->OeeSignalRow{
@@ -88,7 +89,7 @@ namespace Jde::Opc{
 			where.Add( view->GetColumnPtr("deleted"), nullptr );
 		if( filter.Key )
 			where.Add( view->GetColumnPtr(filter.Key->IsPK() ? "oee_machine_id" : "slug"), filter.Key->IsPK() ? DB::Value{filter.Key->PK()} : DB::Value{filter.Key->NK()} );
-		return { select(OeeTable::Machines, {"oee_machine_id", "hist_group_id", "calendar_id", "ideal_cycle", "small_stop", "idle_timeout", "width", "processed", "name", "deleted"}, move(where), sl), machineRow, sl };
+		return { select(OeeTable::Machines, {"oee_machine_id", "hist_group_id", "calendar_id", "ideal_cycle", "small_stop", "idle_timeout", "width", "processed", "name", "slug", "deleted"}, move(where), sl), machineRow, sl };
 	}
 	α Gateway::SelectOeeSignals( OeeSignalFilter filter, SL sl )ι->HistRowsAwait<OeeSignalRow>{
 		let view = GetViewPtr( OeeTable::Signals );

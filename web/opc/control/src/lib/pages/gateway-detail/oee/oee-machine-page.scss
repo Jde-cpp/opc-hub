@@ -27,6 +27,15 @@
 		font-variant-numeric: tabular-nums;
 	}
 }
+/* a line's page is headed by its level and its name */
+.line-heading{
+	margin: .75rem 24px .5rem;
+	font: var(--mat-sys-title-large);
+	.level{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-title-small);
+	}
+}
 .refresh-bar{
 	--mat-progress-bar-track-height: 2px;
 	--mat-progress-bar-active-indicator-height: 2px;

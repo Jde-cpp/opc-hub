@@ -1,4 +1,7 @@
-@if( machine(); as m ){
+@if( subject(); as subject ){
+	@if( subject.line; as l ){
+		<h2 class="line-heading"><span class="level">{{ l.level }}</span> {{ l.name }}</h2>
+	}
 	<div class="period-bar">
 		<mat-button-toggle-group hideSingleSelectionIndicator aria-label="Period" [value]="period()" (change)="pick($event.value)">
 			@for( p of periods(); track p.id ){
@@ -21,8 +24,8 @@
 		@if( range(); as r ){
 			<span class="range">{{ r.start | date:'yyyy-MM-dd HH:mm' }} to {{ r.end | date:'yyyy-MM-dd HH:mm' }}</span>
 		}
-		<a matButton [routerLink]="['../../../oee']" matTooltip="Every machine of the gateway, live"><mat-icon>monitoring</mat-icon>Dashboard</a>
-		<a matButton [routerLink]="['..']" matTooltip="The machine's properties and signals"><mat-icon>settings</mat-icon>Machine</a>
+		<a matButton [routerLink]="['../../../oee']" matTooltip="Every line and machine of the gateway, live"><mat-icon>monitoring</mat-icon>Dashboard</a>
+		<a matButton [routerLink]="['..']" [matTooltip]="subject.settings.tip"><mat-icon>settings</mat-icon>{{ subject.settings.label }}</a>
 	</div>
 	<mat-progress-bar class="refresh-bar" [mode]="loading()>0 ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the period"></mat-progress-bar>
 	@if( statusProblem(); as p ){
@@ -38,6 +41,29 @@
 		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The charts could not load Highcharts Stock.  Reload the page to try again.</p>
 	}
 
+	@if( members().length ){
+		<section aria-labelledby="oee-members">
+			<h3 id="oee-members">Members</h3>
+			<ul class="tiles">
+				@for( t of members(); track t.key ){
+					<li>
+						<a class="tile" [routerLink]="t.link ?? null">
+							<span class="name">{{ t.name }}</span>
+							<span class="category">{{ t.kind }}</span>
+							<span class="figures">
+								@for( f of t.figures; track f.label ){
+									<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
+								}
+							</span>
+							@if( t.partial ){
+								<span class="note">Partial</span>
+							}
+						</a>
+					</li>
+				}
+			</ul>
+		</section>
+	}
 	<section aria-labelledby="oee-figures">
 		<h3 id="oee-figures">Figures</h3>
 		@if( errors().figures; as e ){
@@ -48,7 +74,7 @@
 				@for( f of factors(); track f.label ){
 					<div class="factor" [class.lead]="f.lead">
 						<dt>{{ f.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="f.hint" [matTooltip]="f.hint"></mat-icon></dt>
-						<dd>{{ f.value }}@if( f.over ){ <mat-icon class="over" role="img" tabindex="0" fontIcon="warning" aria-label="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow." matTooltip="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow."></mat-icon>}</dd>
+						<dd>{{ f.value }}@if( f.over ){ <mat-icon class="over" role="img" tabindex="0" fontIcon="warning" [attr.aria-label]="subject.hints.over" [matTooltip]="subject.hints.over"></mat-icon>}</dd>
 					</div>
 				}
 			</dl>
@@ -73,8 +99,8 @@
 							}
 						</tbody>
 					</table>
-					<table aria-label="Counts">
-						<thead><tr><th scope="col">Counts</th><th scope="col" class="num">In planned time</th></tr></thead>
+					<table [attr.aria-label]="subject.counts.title">
+						<thead><tr><th scope="col">{{ subject.counts.title }}</th><th scope="col" class="num">{{ subject.counts.column }}</th></tr></thead>
 						<tbody>
 							@for( c of counts(); track c.label ){
 								<tr><th scope="row">{{ c.label }}</th><td class="num">{{ c.text }}</td></tr>
@@ -96,7 +122,7 @@
 				<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
 			}
 			@if( ganttSpec(); as spec ){
-				<oee-chart [spec]="spec" (pick)="codeSegment($event)"></oee-chart>
+				<oee-chart [spec]="spec" (band)="codeBand($event)"></oee-chart>
 			}
 		</section>
 	}
@@ -164,6 +190,10 @@
 		}
 		@if( stops().length ){
 			<mat-table [dataSource]="stops()" class="jde-dense" aria-label="Stops, newest first">
+				<ng-container matColumnDef="machine">
+					<mat-header-cell *matHeaderCellDef>Machine</mat-header-cell>
+					<mat-cell *matCellDef="let s">{{ s.machine?.name }}</mat-cell>
+				</ng-container>
 				<ng-container matColumnDef="start">
 					<mat-header-cell *matHeaderCellDef>Start</mat-header-cell>
 					<mat-cell *matCellDef="let s">{{ s.start | date:'yyyy-MM-dd HH:mm:ss' }}</mat-cell>
@@ -193,10 +223,10 @@
 				</ng-container>
 				<ng-container matColumnDef="actions">
 					<mat-header-cell *matHeaderCellDef></mat-header-cell>
-					<mat-cell *matCellDef="let s"><button matButton type="button" (click)="code(s)" [attr.aria-label]="'Code the stop of ' + (s.start | date:'yyyy-MM-dd HH:mm:ss')">Code</button></mat-cell>
+					<mat-cell *matCellDef="let s">@if( codedOn(s) ){<button matButton type="button" (click)="code(s)" [attr.aria-label]="'Code the stop of ' + (s.machine ? s.machine.name + ', ' : '') + (s.start | date:'yyyy-MM-dd HH:mm:ss')">Code</button>}</mat-cell>
 				</ng-container>
-				<mat-header-row *matHeaderRowDef="stopColumns"></mat-header-row>
-				<mat-row *matRowDef="let row; columns: stopColumns"></mat-row>
+				<mat-header-row *matHeaderRowDef="stopColumns()"></mat-header-row>
+				<mat-row *matRowDef="let row; columns: stopColumns()"></mat-row>
 			</mat-table>
 			@if( hasMore() ){
 				<button matButton type="button" class="more" (click)="loadMore()" [disabled]="loading()>0"><mat-icon>expand_more</mat-icon>Earlier stops</button>

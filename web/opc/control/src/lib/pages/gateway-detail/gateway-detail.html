@@ -23,6 +23,11 @@
 					<gateway-hist-list [gateway]=g! kind="machines" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
+			<ng-template instanceTab="Lines" instanceTabHelp="oee-machines-and-reasons"><!--the lines the machines are in (#409)-->
+				@for( g of [gateway()]; track g ){
+					<gateway-hist-list [gateway]=g! kind="lines" [url]=url()></gateway-hist-list>
+				}
+			</ng-template>
 			<ng-template instanceTab="Reasons" instanceTabHelp="oee-machines-and-reasons">
 				@for( g of [gateway()]; track g ){
 					<gateway-hist-list [gateway]=g! kind="reasons" [url]=url()></gateway-hist-list>

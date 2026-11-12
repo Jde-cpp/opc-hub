@@ -5,6 +5,7 @@ import { provideRouter, Router } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
 import { OeeSpan, toOeeTimeline } from '../../../model/oee';
 import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
+import { OeeLineMember } from '../../../model/oee-lines';
 import { OeeService } from '../../../services/oee-service';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { OeeChart, OeeChartSpec } from './oee-chart';
@@ -25,19 +26,21 @@ const shift = { name: 'First', start: t( 6 ), end: t( 14 ) };
 const figures = ( at:Date )=>({ start: shift.start, end: at, availability: 0.8, performance: 0.9, quality: 0.95, oee: 0.684, partial: false });
 const running = ( since:Date, at:Date ):OeeLiveStatus=>({ state: 'running', since, planned: true, shift, figures: figures( at ), calendarMissing: false });
 const stopped = ( since:Date, at:Date, stop:object={} ):OeeLiveStatus=>({ state: 'stopped', since, planned: true, shift, figures: figures( at ), calendarMissing: false, stop: {start: since, small: false, ...stop} });
-const all = [{id: 4, name: 'Pump 1', slug: 'pump1', inLine: false}, {id: 5, name: 'Pump 2', slug: 'pump2', inLine: false}, {id: 6, name: 'Filler', slug: 'filler', inLine: true}];
-//The page over stubs:  a gateway whose oeeSubscribe opens a feed per machine, `push` a status on one;  `service` answers the
-//machines and each machine's timeline, read to 09:00;  `addOn` is how the add-on settled.  `open` moves the page to another
+const all = [{id: 4, name: 'Pump 1', slug: 'pump1'}, {id: 5, name: 'Pump 2', slug: 'pump2'}, {id: 6, name: 'Filler', slug: 'filler'}];
+const Packaging = {id: 1, name: 'Packaging', slug: 'packaging', level: 'Line'};
+const lineStatus = ( at:Date, machines:{running:number; stopped:number; unknown:number} ):OeeLiveStatus=>({ state: 'unknown', planned: true, shift, figures: figures( at ), calendarMissing: false, machines });
+//The page over stubs:  a gateway whose oeeSubscribe opens a feed per machine, `push` a status on one, and oeeSubscribeLine one
+//per line, under its id negated;  `service` answers the machines, with the Filler in a line, and each machine's timeline, read to 09:00;  `addOn` is how the add-on settled.  `open` moves the page to another
 //gateway, as the router does.
-const create = async ( {machines=all, addOn='loaded', timeline}:{machines?:typeof all; addOn?:'loaded'|'absent'; timeline?:Error}={} )=>{
+const create = async ( {machines=all, lines=[Packaging], members=[{id: 1, lineId: 1, machineId: 6, sort: 0}], addOn='loaded', timeline}:{machines?:typeof all; lines?:(typeof Packaging)[]; members?:OeeLineMember[]; addOn?:'loaded'|'absent'; timeline?:Error}={} )=>{
 	const gatewayOf = ( name:string )=>{
 		const feeds = new Map<number,Feed<OeeLiveEvent,number>>();
 		const feed = ( id:number )=>feeds.get( id ) ?? feeds.set( id, new Feed<OeeLiveEvent,number>() ).get( id )!;
-		return { name, slug: name, feed, oeeSubscribe: vi.fn( ( machine:number )=>feed( machine ).open( machine ) ) };
+		return { name, slug: name, feed, oeeSubscribe: vi.fn( ( machine:number )=>feed( machine ).open( machine ) ), oeeSubscribeLine: vi.fn( ( line:number )=>feed( -line ).open( -line ) ) };
 	};
 	const gateway = gatewayOf( 'gw' );
 	const service = {
-		machines: vi.fn( async ()=>machines ),
+		plant: vi.fn( async ()=>({machines, lines, members}) ),
 		timeline: vi.fn( async ( _g:unknown, _id:number, _range:OeeSpan )=>{
 			if( timeline )
 				throw timeline;
@@ -62,7 +65,7 @@ const create = async ( {machines=all, addOn='loaded', timeline}:{machines?:typeo
 		await flush( 4 );
 		fixture.detectChanges();
 	};
-	const tiles = ()=>[...fixture.nativeElement.querySelectorAll( '.tile' )].map( ( a:any )=>[...a.querySelectorAll( '*' )].filter( ( e:any )=>!e.children.length ).map( ( e:any )=>e.textContent.trim().replace( /\s+/g, ' ' ) ).filter( ( x:string )=>!!x ).join( ' ' ) );//a tile's texts, leaf by leaf
+	const tiles = ( of='oee-tiles' )=>[...fixture.nativeElement.querySelectorAll( `section[aria-labelledby=${of}] .tile` )].map( ( a:any )=>[...a.querySelectorAll( '*' )].filter( ( e:any )=>!e.children.length ).map( ( e:any )=>e.textContent.trim().replace( /\s+/g, ' ' ) ).filter( ( x:string )=>!!x ).join( ' ' ) );//a tile's texts, leaf by leaf
 	const chart = ()=><ChartStub|undefined>fixture.debugElement.query( By.directive( ChartStub ) )?.componentInstance;
 	const spans = ( machine:number )=>page.bands().find( b=>b.machine.id==machine )?.segments.map( s=>[s.state, s.start.toISOString().slice( 11, 16 ), s.end.toISOString().slice( 11, 16 )] );
 	const open = async ( next:ReturnType<typeof gatewayOf> )=>{
@@ -77,7 +80,7 @@ describe( 'OeeDashboard', ()=>{
 	it( 'subscribes to every machine, and has a tile for each in no line', async ()=>{
 		const p = await create();
 		expect( p.title.title ).toBe( 'gw - OEE' );
-		expect( p.gateway.oeeSubscribe.mock.calls.map( ([id])=>id ) ).toEqual( [4, 5, 6] );
+		expect( p.gateway.oeeSubscribe.mock.calls.map( ([id])=>id ) ).toEqual( [6, 4, 5] );//the chart's order:  a line's machines first
 		expect( p.tiles() ).toEqual( ['Pump 1 Connecting Availability – Performance – Quality – OEE –', 'Pump 2 Connecting Availability – Performance – Quality – OEE –'] );
 		await p.push( 4, running( t( 8, 40 ), t( 9, 1 ) ) );
 		await p.push( 5, stopped( t( 8, 50 ), t( 9, 1 ) ) );
@@ -109,14 +112,57 @@ describe( 'OeeDashboard', ()=>{
 		p.gateway.feed( 4 ).next( {kind: 'status', status: stopped( t( 9, 4 ), t( 9, 5 ), {small: true} )} );//its first is drawn at once
 		expect( p.spans( 4 )!.at( -1 ) ).toEqual( ['stopped', '09:04', '09:05'] );
 	} );
-	it( "draws a row for a line's machine too, after the tiles' machines, and opens a band's machine", async ()=>{
+	it( "draws a line's machines under a row that names it, the machines in no line under No line, and opens a band's machine", async ()=>{
 		const p = await create();
 		await p.push( 6, running( t( 8, 40 ), t( 9, 1 ) ) );
 		await p.push( 5, {...running( t( 8, 40 ), t( 9, 1 ) ), shift: {name: 'Late', start: t( 8 ), end: t( 16 )}} );
 		const spec = p.chart()!.spec();
-		expect( spec.kind=='gantt' && [spec.rows, spec.range] ).toEqual( [['Pump 2', 'Filler'], {start: t( 6 ), end: t( 16 )}] );
-		p.chart()!.band.emit( {y: 1} );
+		if( spec.kind!='gantt' )
+			throw new Error( 'not a Gantt chart' );
+		expect( [spec.rows, spec.groups, spec.range, [...new Set( spec.state.map( b=>b.y ) )]] ).toEqual( [['Line Packaging', 'Filler', 'No line', 'Pump 2'], [0, 2], {start: t( 6 ), end: t( 16 )}, [1, 3]] );
+		p.chart()!.band.emit( {y: 0} );//the line's row has no band, and opens nothing
+		expect( p.navigate ).not.toHaveBeenCalled();
+		p.chart()!.band.emit( spec.state.find( b=>b.y==1 ) );
 		expect( p.navigate.mock.calls.at( -1 )![0] ).toEqual( ['../machines', 'filler', 'oee'] );
+		const pump2 = spec.state.find( b=>b.y==3 )!;
+		await p.push( 4, running( t( 8, 40 ), t( 9, 1 ) ) );//Pump 1's row lands above Pump 2's while the chart, a band hovered, still draws the old rows
+		expect( p.page.bands().map( b=>b.machine.name ) ).toEqual( ['Filler', 'Pump 1', 'Pump 2'] );
+		p.chart()!.band.emit( pump2 );
+		expect( p.navigate.mock.calls.at( -1 )![0] ).toEqual( ['../machines', 'pump2', 'oee'] );//the band's own machine, not its row's now
+	} );
+	it( 'has a tile for each line in no line, in level order, live with its machines running and stopped', async ()=>{
+		const Site = {id: 2, name: 'Plant', slug: 'plant', level: 'Site'}, Cell = {id: 3, name: 'Cell', slug: 'cell', level: 'Cell'};
+		const p = await create( {lines: [Packaging, Cell, Site], members: [{id: 1, lineId: 1, machineId: 6, sort: 0}, {id: 2, lineId: 1, memberLineId: 3, sort: 1}, {id: 3, lineId: 3, machineId: 5, sort: 0}]} );
+		expect( p.gateway.oeeSubscribeLine.mock.calls.map( ([id])=>id ) ).toEqual( [2, 1] );//the cell is in a line
+		expect( p.tiles( 'oee-line-tiles' ) ).toEqual( ['Plant Site Connecting Availability – Performance – Quality – OEE –', 'Packaging Line Connecting Availability – Performance – Quality – OEE –'] );
+		expect( p.tiles().map( x=>x.slice( 0, 6 ) ) ).toEqual( ['Pump 1'] );
+		p.gateway.feed( -1 ).next( {kind: 'status', status: lineStatus( t( 9, 1 ), {running: 1, stopped: 1, unknown: 0} )} );
+		p.fixture.detectChanges();
+		expect( p.tiles( 'oee-line-tiles' )[1] ).toBe( 'Packaging Line 1 running, 1 stopped Availability 80.0% Performance 90.0% Quality 95.0% OEE 68.4% First, so far' );
+		p.gateway.feed( -1 ).next( {kind: 'dropped'} );
+		p.fixture.detectChanges();
+		expect( p.tiles( 'oee-line-tiles' )[1] ).toContain( 'The connection to the gateway was lost' );
+	} );
+	it( "has no tile for a line one of whose machines the user may not read, its machines in no line, and keeps one the gateway ends, saying why", async ()=>{
+		const Site = {id: 2, name: 'Plant', slug: 'plant', level: 'Site'};
+		const p = await create( {lines: [Packaging, Site]} );
+		await p.push( 6, running( t( 8, 40 ), t( 9, 1 ) ) );
+		await p.push( 5, running( t( 8, 40 ), t( 9, 1 ) ) );
+		expect( p.chart()!.spec() ).toMatchObject( {rows: ['Line Packaging', 'Filler', 'No line', 'Pump 2']} );
+		p.gateway.feed( -1 ).error( {error: {requestId: 1, message: 'No Read on the group.', sc: 0, httpStatus: 403}} );
+		p.gateway.feed( -2 ).error( {error: {requestId: 2, message: "Line 'Plant' was deleted, which ends the subscription.", sc: 0, httpStatus: 404}} );
+		p.fixture.detectChanges();
+		expect( p.tiles( 'oee-line-tiles' ) ).toEqual( ["Plant Site Ended Availability – Performance – Quality – OEE – Line 'Plant' was deleted, which ends the subscription."] );
+		expect( p.tiles().map( x=>x.split( ' Running' )[0].split( ' Connecting' )[0] ) ).toEqual( ['Pump 1', 'Pump 2', 'Filler'] );//the line's machine the user may read, a tile of its own
+		expect( p.chart()!.spec() ).toMatchObject( {rows: ['Pump 2', 'Filler'], groups: []} );//no line has rows:  no header
+	} );
+	it( "gives a refused line's machines tiles, where every machine was in it", async ()=>{
+		const p = await create( {machines: [all[2]]} );
+		expect( p.fixture.nativeElement.querySelector( '#oee-tiles' ) ).toBeNull();
+		p.gateway.feed( -1 ).error( {error: {requestId: 1, message: 'No Read on the group.', sc: 0, httpStatus: 403}} );
+		p.fixture.detectChanges();
+		expect( p.tiles() ).toEqual( ['Filler Connecting Availability – Performance – Quality – OEE –'] );
+		expect( p.fixture.nativeElement.textContent ).not.toContain( 'Every machine is in a line.' );
 	} );
 	it( 'reads the row again for another shift, and has no row between shifts', async ()=>{
 		const p = await create();
@@ -154,14 +200,14 @@ describe( 'OeeDashboard', ()=>{
 		p.gateway.feed( 5 ).error( {error: {requestId: 2, message: 'User not found.', sc: 0, httpStatus: 401}} );
 		p.fixture.detectChanges();
 		expect( p.tiles()[1] ).toBe( "Pump 2 Ended Availability – Performance – Quality – OEE – The gateway doesn't know your session any more: sign in again to see this machine." );
-		expect( p.page.machines().map( m=>m.id ) ).toEqual( [4, 5, 6] );
+		expect( p.page.machines().map( m=>m.id ) ).toEqual( [6, 4, 5] );
 	} );
 	it( 'has neither tile nor row for a machine whose group the user may not read', async ()=>{
 		const p = await create();
 		p.gateway.feed( 5 ).error( {error: {requestId: 2, message: 'No Read on the group.', sc: 0, httpStatus: 403}} );
 		p.fixture.detectChanges();
 		expect( p.tiles().map( x=>x.split( ' ' ).slice( 0, 2 ).join( ' ' ) ) ).toEqual( ['Pump 1'] );
-		expect( p.page.machines().map( m=>m.id ) ).toEqual( [4, 6] );
+		expect( p.page.machines().map( m=>m.id ) ).toEqual( [6, 4] );
 	} );
 	it( 'marks a tile whose socket dropped, and reads its row again at the next status', async ()=>{
 		const p = await create();
@@ -218,18 +264,18 @@ describe( 'OeeDashboard', ()=>{
 		await p.push( 4, running( t( 8, 40 ), t( 9, 1 ) ) );
 		const other = p.gatewayOf( 'other' );
 		await p.open( other );
-		expect( [4, 5, 6].map( id=>p.gateway.feed( id ).subscribers.length ) ).toEqual( [0, 0, 0] );
-		expect( other.oeeSubscribe ).toHaveBeenCalledTimes( 3 );
+		expect( [4, 5, 6, -1].map( id=>p.gateway.feed( id ).subscribers.length ) ).toEqual( [0, 0, 0, 0] );
+		expect( [other.oeeSubscribe.mock.calls.length, other.oeeSubscribeLine.mock.calls.length] ).toEqual( [3, 1] );
 		expect( [p.title.title, p.page.bands()] ).toEqual( ['other - OEE', []] );
 		p.fixture.destroy();
-		expect( [4, 5, 6].map( id=>other.feed( id ).subscribers.length ) ).toEqual( [0, 0, 0] );
+		expect( [4, 5, 6, -1].map( id=>other.feed( id ).subscribers.length ) ).toEqual( [0, 0, 0, 0] );
 	} );
 	it( 'says so where there is no machine, and where the machines cannot be read', async ()=>{
 		const none = await create( {machines: []} );
 		expect( none.fixture.nativeElement.textContent ).toContain( 'No machines to show.' );
 		TestBed.resetTestingModule();//a second page in the one test
 		const p = await create();
-		p.service.machines.mockRejectedValueOnce( new Error( '(403)No Read on oeeMachines.' ) );
+		p.service.plant.mockRejectedValueOnce( new Error( '(403)No Read on oeeMachines.' ) );
 		await p.open( p.gatewayOf( 'other' ) );
 		expect( p.fixture.nativeElement.textContent ).toContain( 'Could not read the machines.' );
 		expect( p.fixture.nativeElement.textContent ).toContain( 'No Read on oeeMachines.' );

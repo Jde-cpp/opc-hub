@@ -19,9 +19,40 @@
 	@else if( chartState()=='failed' ){
 		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The chart could not load Highcharts Stock.  Reload the page to try again.</p>
 	}
-	<section aria-labelledby="oee-tiles">
-		<h3 id="oee-tiles">Machines</h3>
-		@if( tileViews().length ){
+	<ng-template #figures let-v><!--a tile's figures, what they are over, and what it has to say-->
+		<span class="figures">
+			@for( f of v.figures; track f.label ){
+				<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
+			}
+		</span>
+		@if( v.period ){
+			<span class="note">{{ v.period }}, so far@if( v.partial ){, partial}</span>
+		}
+		@for( n of v.notes; track n ){
+			<span class="note">{{ n }}</span>
+		}
+	</ng-template>
+	@if( lineTiles().length ){
+		<section aria-labelledby="oee-line-tiles">
+			<h3 id="oee-line-tiles">Lines</h3>
+			<ul class="tiles">
+				@for( t of lineTiles(); track t.line.id ){
+					@let v = t.view();
+					<li>
+						<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../lines', t.line.slug, 'oee']">
+							<span class="name">{{ t.line.name }}</span>
+							<span class="category">{{ t.line.level }}</span>
+							<span class="state">{{ v.stateLabel }}</span>
+							<ng-container [ngTemplateOutlet]="figures" [ngTemplateOutletContext]="{$implicit: v}"></ng-container>
+						</a>
+					</li>
+				}
+			</ul>
+		</section>
+	}
+	@if( tileViews().length ){<!--none where every machine is in a line with a tile-->
+		<section aria-labelledby="oee-tiles">
+			<h3 id="oee-tiles">Machines</h3>
 			<ul class="tiles">
 				@for( t of tileViews(); track t.machine.id ){
 					@let v = t.view();
@@ -35,26 +66,13 @@
 							@else if( v.badge ){
 								<span class="reason"><span class="badge" [class.uncoded]="v.badge=='Uncoded'">{{ v.badge }}</span></span>
 							}
-							<span class="figures">
-								@for( f of v.figures; track f.label ){
-									<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
-								}
-							</span>
-							@if( v.period ){
-								<span class="note">{{ v.period }}, so far@if( v.partial ){, partial}</span>
-							}
-							@for( n of v.notes; track n ){
-								<span class="note">{{ n }}</span>
-							}
+							<ng-container [ngTemplateOutlet]="figures" [ngTemplateOutletContext]="{$implicit: v}"></ng-container>
 						</a>
 					</li>
 				}
 			</ul>
-		}
-		@else{
-			<p class="empty">Every machine is in a line.</p>
-		}
-	</section>
+		</section>
+	}
 	@if( chartState()=='loaded' ){
 		<section aria-labelledby="oee-gantt">
 			<h3 id="oee-gantt">Current shift</h3>

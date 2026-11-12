@@ -110,11 +110,11 @@ The **Trend** tab draws the rows ticked in the list's **Trend** column, up to ei
 
 ## Instances
 
-Under [Applications](/apps), a gateway instance's page has the tabs [Applications help](/help/apps#opchub) lists. Its own seven:
+Under [Applications](/apps), a gateway instance's page has the tabs [Applications help](/help/apps#opchub) lists. Its own eight:
 
 - **Connections** lists its server connections. The **Status** column reads *Connected*, *Idle* or *Error*. Press **Add** to connect the gateway to another OPC server, or open a row to edit one.
 - **Templates** and **Groups** are the gateway historian's: what it stores, and by what rules. See [Historian groups and templates](/help/gateways/groups).
-- **Machines** and **Reasons** are OEE's: the machines whose stops and figures the gateway works out from its groups, and the reasons a stop is coded with. See [OEE](/help/gateways/oee).
+- **Machines**, **Lines** and **Reasons** are OEE's: the machines whose stops and figures the gateway works out from its groups, the lines that combine them, and the reasons a stop is coded with. See [OEE](/help/gateways/oee).
 - **Endpoint** is the gateway's own OPC UA endpoint, where a SCADA or any UA client reads what the gateway collects. See [Endpoint](#endpoint).
 - **Watch** opens the gateway's watch list, the live values you chose to follow. See [Watching](#watching).
 
@@ -150,7 +150,7 @@ The gateway keeps the history of the nodes in its groups, each a template applie
 
 ## OEE machines and reasons
 
-A machine is a historian group whose members are given roles, which the gateway turns into stops and OEE figures. A reason is what a stop is coded with. They have a page of their own: [OEE](/help/gateways/oee).
+A machine is a historian group whose members are given roles, which the gateway turns into stops and OEE figures. A line is a set of machines and of lines whose figures are combined. A reason is what a stop is coded with. They have a page of their own: [OEE](/help/gateways/oee).
 
 ## Security
 

@@ -1,5 +1,5 @@
-import { OeeSegment, toOeeBucket, toOeeLoss, toOeeTimeline } from '../../../model/oee';
-import { codable, oeeDayName, oeeKindColors, plannedColor, plannedPieces, segmentKind, toGantt, toGanttRows, toOeeTrend, toPareto, trendColor } from './oee-chart-data';
+import { OeeSegment, toOeeBucket, toOeeLoss, toOeeTimeline, toOeeTimelines } from '../../../model/oee';
+import { codable, oeeDayName, oeeKindColors, plannedColor, plannedPieces, segmentKind, toGantt, toGanttPairs, toGanttRows, toOeeTrend, toPareto, trendColor } from './oee-chart-data';
 
 const t = ( h:number, m=0 )=>new Date( Date.UTC( 2026, 10, 11, h, m ) );
 const iso = ( h:number, m=0 )=>t( h, m ).toISOString();
@@ -75,7 +75,7 @@ describe( 'oee chart data', ()=>{
 		expect( rows.state[1].custom.text ).toMatch( /^Pump 1:  Changeover, Planned, .*, size change, Coded by op, Click to open the machine's OEE page$/ );
 		expect( rows.state[2].custom.tip ).toContain( '<b>Pump &lt;2&gt;:  Jam</b>' );
 		expect( rows.legend.map( l=>l.label ) ).toEqual( ['Running', 'Unplanned stop', 'Planned stop', 'Small stop'] );
-		expect( toGanttRows( [{name: 'Idle', segments: []}] ) ).toEqual( {rows: ['Idle'], planned: [], state: [], legend: []} );
+		expect( toGanttRows( [{name: 'Idle', segments: []}] ) ).toEqual( {rows: ['Idle'], groups: [], planned: [], state: [], legend: []} );
 	} );
 	it( 'escapes a reason and a comment in the hover', ()=>{
 		const g = toGantt( toOeeTimeline( [{planned: [], segments: [segment( [8, 0], [9, 0], {stop: 1, reason: {id: 1, name: '<Jam & co>', category: 'Unplanned'}, coding: {id: 1, comment: '<img src=x>'}} )]}] ), range );
@@ -107,11 +107,46 @@ describe( 'oee chart data', ()=>{
 		expect( byShift.points[0].custom.text ).toContain( 'Availability 80.0%, performance 90.0%, quality 95.0%' );
 		expect( byShift.points[1].custom.text ).toContain( 'Partial' );
 		expect( toOeeTrend( buckets, 'day', day ).categories ).toEqual( ['11-11', '11-11'] );
+		expect( byShift.points[0].custom.text ).toContain( `${( 16006 ).toLocaleString()} good of ${( 16848 ).toLocaleString()}` );
+		expect( toOeeTrend( buckets, 'shift', day, false ).points[0].custom.text ).not.toContain( 'good of' );//a line's, whose counts don't add
 		expect( byShift.legend ).toEqual( [] );//one series:  its title names it
 	} );
 	it( "names a machine's UTC day by UTC's date, which the browser's may not be", ()=>{
 		const late = new Date( '2026-11-11T23:30:00Z' );
 		expect( oeeDayName( true )( late ) ).toBe( late.toLocaleDateString( undefined, {month: 'short', day: 'numeric', timeZone: 'UTC'} ) );
 		expect( oeeDayName()( late ) ).toBe( late.toLocaleDateString( undefined, {month: 'short', day: 'numeric'} ) );
+	} );
+} );
+describe( 'the grouped rows', ()=>{
+	const band = ( from:[number,number], to:[number,number], extra:object={} )=>toOeeTimeline( [{planned: [], segments: [segment( from, to, extra )]}] ).segments;
+	it( "puts a line's machines under a row that names it, one for each run of its rows, with no band of its own, each band carrying its machine", ()=>{
+		const pump = ( id:number )=>({id, name: `Pump ${id}`, slug: `pump${id}`});
+		const rows = toGanttRows( [
+			{name: 'Pump 1', machine: pump( 1 ), segments: band( [6, 0], [7, 0], {state: 'running'} ), group: 'Area Packaging'}, {name: 'Pump 2', machine: pump( 2 ), segments: band( [6, 0], [7, 0], {stop: 1, reason: Jam} ), group: 'Area Packaging'},
+			{name: 'Pump 1', machine: pump( 1 ), segments: band( [6, 0], [7, 0], {state: 'running'} ), group: 'Line Every pump'},
+			{name: 'Pump 4', machine: pump( 4 ), segments: band( [6, 0], [6, 0], {state: 'running'} ), group: 'No line'}, {name: 'Pump 5', machine: pump( 5 ), segments: band( [6, 0], [7, 0], {state: 'unknown'} ), group: 'No line'}
+		] );
+		expect( rows.rows ).toEqual( ['Area Packaging', 'Pump 1', 'Pump 2', 'Line Every pump', 'Pump 1', 'No line', 'Pump 4', 'Pump 5'] );
+		expect( rows.groups ).toEqual( [0, 3, 5] );
+		expect( rows.state.map( b=>[b.y, b.custom.kind, b.custom.machine?.slug] ) ).toEqual( [[1, 'running', 'pump1'], [2, 'Unplanned', 'pump2'], [4, 'running', 'pump1'], [7, 'unknown', 'pump5']] );//a band of no length isn't drawn
+		expect( rows.state[1].custom.text ).toContain( 'Pump 2:  Jam' );
+		expect( rows.planned ).toEqual( [] );
+	} );
+	it( 'is a row per machine with no group', ()=>{
+		expect( toGanttRows( [{name: 'Pump 1', segments: []}, {name: 'Pump 2', segments: []}] ) ).toMatchObject( {rows: ['Pump 1', 'Pump 2'], groups: []} );
+	} );
+	it( "draws a line's page a pair of rows per machine, its planned time over its state", ()=>{
+		const planned = [{shift: 1, name: 'First', start: iso( 6 ), end: iso( 14 ), breaks: [{start: iso( 10 ), end: iso( 10, 20 )}]}];
+		const timelines = toOeeTimelines( [
+			{machine: {id: 4, name: 'Pump 1'}, planned, segments: [segment( [6, 0], [8, 0], {state: 'running'} ), segment( [8, 0], [8, 30], {stop: 2, uncoded: true} )]},
+			{machine: {id: 5, name: 'Pump 2'}, planned: [], segments: [segment( [6, 0], [9, 0], {state: 'unknown', stop: 3} )]}
+		] );
+		const gantt = toGanttPairs( timelines, {start: t( 6 ), end: t( 14 )} );
+		expect( gantt.rows ).toEqual( ['Pump 1, planned', 'Pump 1', 'Pump 2, planned', 'Pump 2'] );
+		expect( gantt.planned.map( b=>[b.y, b.x, b.x2] ) ).toEqual( [[0, t( 6 ).getTime(), t( 10 ).getTime()], [0, t( 10, 20 ).getTime(), t( 14 ).getTime()]] );
+		expect( gantt.state.map( b=>[b.y, b.custom.kind, b.custom.machine?.id] ) ).toEqual( [[1, 'running', 4], [1, 'uncoded', 4], [3, 'unknown', 5]] );
+		expect( gantt.state[1].custom.text ).toMatch( /^Pump 1:  Uncoded stop, .*Click to code the stop$/ );
+		expect( gantt.state[2].custom.text ).not.toContain( 'Click' );//an unknown span is no stop
+		expect( gantt.legend.map( l=>l.label ) ).toEqual( ['Planned time', 'Running', 'Uncoded stop', 'Unknown'] );
 	} );
 } );

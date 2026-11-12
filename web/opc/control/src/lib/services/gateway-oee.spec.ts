@@ -31,6 +31,17 @@ describe( 'Gateway.oeeSubscribe', ()=>{
 		expect( s.events[1] ).toMatchObject( {kind: 'status', status: {since, stop: {start: since, small: true, reason: undefined}}} );
 		s.subscription.unsubscribe();
 	} );
+	it( "sends OeeSubscribe with a line, whose statuses carry its machines' counts", ()=>{
+		const gateway = new OeeGateway();
+		const events:OeeLiveEvent[] = [];
+		const subscription = gateway.oeeSubscribeLine( 2 ).subscribe( e=>events.push( e ) );
+		const sent = gateway.subscribes.at( -1 )!;
+		expect( sent.m.oeeSubscribe ).toEqual( {machine: 0, line: 2} );
+		gateway.receive( {requestId: sent.requestId, oeeSubscribeAck: {status: {state: 0, planned: true, calendarMissing: false, machines: {running: 3, stopped: 1, unknown: 0}}}} );
+		expect( events ).toMatchObject( [{kind: 'status', status: {state: 'unknown', machines: {running: 3, stopped: 1, unknown: 0}}}] );
+		subscription.unsubscribe();
+		expect( gateway.unsubscribes.map( x=>x.m.oeeUnsubscribe ) ).toEqual( [{subscription: sent.requestId}] );
+	} );
 	it( 'keeps two machines apart by their ids', ()=>{
 		const gateway = new OeeGateway();
 		const a = listen( gateway, 4 ), b = listen( gateway, 5 );

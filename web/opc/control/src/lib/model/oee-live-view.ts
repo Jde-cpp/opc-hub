@@ -1,12 +1,13 @@
 import { oeeDuration, oeePercent, OeeReasonRef, OeeSegment, OeeSpan, OeeState } from './oee';
-import { OeeLiveEvent, OeeLiveStatus } from './oee-live';
+import { OeeLiveCounts, OeeLiveEvent, OeeLiveStatus } from './oee-live';
 
 //What the dashboard makes of a machine's live OEE (#406, docs/oee/spec.md *Web*, *The Gantt chart*):  a tile's model from the
 //sequence of its statuses, and the Gantt chart's last band, which grows with each and gives way to a new one on a state change.
 
 export type OeeMachineRef = { id:number; name:string; slug:string };
 //A tile:  its machine, how its subscription stands, and the last status it brought.  `ended` is why the gateway ended it - the
-//machine deleted, OEE stopping - after which nothing follows.
+//machine deleted, OEE stopping - after which nothing follows.  A line's tile (#409) is the same, the line in the machine's place:
+//its statuses carry its machines' counts.
 export type OeeTileLink = 'connecting'|'live'|'dropped'|'ended';
 export type OeeTile = { machine:OeeMachineRef; link:OeeTileLink; status?:OeeLiveStatus; ended?:string };
 export function oeeTile( machine:OeeMachineRef ):OeeTile{ return { machine, link: 'connecting' }; }
@@ -21,15 +22,19 @@ export function oeeTileNext( tile:OeeTile, event:OeeLiveEvent|{kind:'ended'; mes
 	}
 }
 //A tile as it reads:  the state and since when, for how long by the engine's time, the stop's reason or why it has none, and
-//the shift's four figures, dashes where one isn't measured or the machine is between shifts.
+//the shift's four figures, dashes where one isn't measured or the machine is between shifts.  A line's says its machines
+//running and stopped, and those unknown where it has any, in the state's place.
 export type OeeTileView = {
-	state:OeeState|'none'; stateLabel:string; since?:Date; length?:string;
+	state:OeeState|'none'|'line'; stateLabel:string; since?:Date; length?:string; counts?:OeeLiveCounts;
 	reason?:OeeReasonRef; badge?:'Uncoded'|'Small stop';
 	period?:string; figures:{label:string; value:string}[]; partial:boolean; notes:string[];
 };
+//a tile's four figures, each a dash where it isn't measured:  the dashboard's tiles' and a line's page's members'
+export function oeeTileFigures( f:{availability?:number; performance?:number; quality?:number; oee?:number}|undefined ):{label:string; value:string}[]{
+	return [['Availability', f?.availability], ['Performance', f?.performance], ['Quality', f?.quality], ['OEE', f?.oee]].map( ( [label, v] )=>({ label: <string>label, value: oeePercent( <number|undefined>v ) }) );
+}
 export function oeeTileView( tile:OeeTile ):OeeTileView{
-	const s = tile.status, f = s?.figures;
-	const figures = [['Availability', f?.availability], ['Performance', f?.performance], ['Quality', f?.quality], ['OEE', f?.oee]].map( ( [label, v] )=>({ label: <string>label, value: oeePercent( <number|undefined>v ) }) );
+	const s = tile.status, f = s?.figures, figures = oeeTileFigures( f );
 	if( !s )
 		return { state: 'none', stateLabel: tile.link=='ended' ? 'Ended' : tile.link=='dropped' ? 'Disconnected' : 'Connecting', figures, partial: false, notes: tile.ended ? [tile.ended] : [] };
 	const stopped = s.state=='stopped', at = f?.end, between = oeeBetweenShifts( s );
@@ -42,11 +47,16 @@ export function oeeTileView( tile:OeeTile ):OeeTileView{
 		notes.push( 'Outside planned time.' );
 	if( s.calendarMissing )
 		notes.push( "Its calendar isn't found, so the figures are the UTC day's." );
+	const period = s.shift ? s.shift.name ?? 'Shift' : between ? undefined : 'UTC day';
+	if( s.machines ){
+		const c = s.machines;
+		return { state: 'line', stateLabel: `${c.running} running, ${c.stopped} stopped${c.unknown ? `, ${c.unknown} unknown` : ''}`, counts: c, period, figures, partial: f?.partial===true, notes };
+	}
 	return {
 		state: s.state, stateLabel: s.state=='running' ? 'Running' : stopped ? 'Stopped' : 'Unknown',
 		since: s.since, length: s.since && at && at>s.since ? oeeDuration( at.getTime()-s.since.getTime() ) : undefined,
 		reason: stopped ? s.stop?.reason : undefined, badge: !stopped || s.stop?.reason ? undefined : s.stop?.small ? 'Small stop' : 'Uncoded',
-		period: s.shift ? s.shift.name ?? 'Shift' : between ? undefined : 'UTC day', figures, partial: f?.partial===true, notes
+		period, figures, partial: f?.partial===true, notes
 	};
 }
 //Between shifts:  a calendar found, and none of its shifts now - without a calendar every time is planned (SetOeeShift).  A
