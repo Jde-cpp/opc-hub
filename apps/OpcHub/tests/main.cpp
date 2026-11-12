@@ -3,6 +3,7 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/issue.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include "../../AppServer/src/appStartup.h"
 #include "../../OpcGateway/src/UAClient.h"
 #include "../../OpcGateway/tests/utils/helpers.h"
@@ -18,6 +19,7 @@ namespace Jde{
 #endif
 	Ω startup( int argc, char **argv )ε->void{
 		Logging::AddTags( Opc::TagNames );
+		Logging::AddTags( Opc::OpenProtocol::TagNames );//the gateway library's Open Protocol sessions log under it.
 		Process::Startup( argc, argv, "Tests.OpcHub", "OpcHub tests", true );
 		App::Server::InitLogging();//as the hub: the AppServer's - the one Logging::Init in the process.
 		let embedded = Settings::FindBool( "/testing/embeddedOpcServer" ).value_or( true );

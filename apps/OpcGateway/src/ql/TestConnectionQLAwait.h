@@ -13,6 +13,12 @@ namespace Jde::Opc::Gateway{
 	//registered, and a failure is this mutation's error, never the slug's connectionStatus.  The connection page's Test Connection,
 	//before the first save and to retry a saved connection without a reload.  A mutation, not a query:  it connects to a url of the
 	//caller's choosing and issues the slug's certificate, which a GET - a cross-site <img> on an unenforced install - must not do.
+	//
+	//With `kind` and `driver`, the row's two (docs/open-protocol/spec.md *The row*), under the save's rules for them:  a kind with a
+	//driver builds no client.  testConnection( opc, url, kind:"open-protocol", driver ){ controllerName supplierCode
+	//openProtocolVersion controllerSoftwareVersion toolSoftwareVersion controllerSerialNumber systemType systemSubtype stationId
+	//stationName } opens a session to the controller at the url, starts and stops communication (OpenProtocolTestAwait), and
+	//answers what MID 0002 said of it in place of the description, the security attributes and the namespaces.
 	struct TestConnectionQLAwait final : QL::IQLTableMutationExe{
 		using base = QL::IQLTableMutationExe;
 		TestConnectionQLAwait( QL::MutationQL&& m, QL::Creds&& creds, SRCE )ι:base{ move(m), move(creds), sl }{}

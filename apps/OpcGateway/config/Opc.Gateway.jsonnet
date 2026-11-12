@@ -123,6 +123,12 @@ function( sync=false )
 			//open62541's own limits (0 unlimited where it reads so);  absent keeps them.  sessionTimeout and minSamplingInterval are ISO 8601;
 			//maxSecureChannels is never left below maxSessions.
 			limits:: { maxSessions: 100, maxSecureChannels: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }
+		},
+		//The drivers (docs/open-protocol/spec.md, *The driver server*):  a connection of a kind with one, an Open Protocol tightening
+		//controller's, is served by a UA server of the gateway's own on loopback, which the row's clients dial in place of its url.
+		//A `::` key is its default, shown hidden.
+		drivers:{
+			portBase:: 4870 //a driver row's server listens on 127.0.0.1 at portBase + its row id, every kind;  the tests take 4970
 		}
 	},
 	calendars:: { retryWait: "PT30S" }, //Calendars.cpp:  how soon a subscribe or read of the shift calendars that failed is tried again.

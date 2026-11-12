@@ -25,6 +25,12 @@ installed.
   can reach, each a url, a certificate uri and a slug.  `config/release-opcServer.mutation` seeds the bundled
   `Jde.Opc.Server` as the default connection, which the installers apply with the OPC UA Server component.
   `config/access-opcGateway.mutation`, the `OpcGateway` group and role, is applied by nothing yet.
+
+  A row's `kind` says what it connects to: `ua`, the default, or `open-protocol`, a tightening controller at
+  `open-protocol://host[:port]` with a time zone and revision ceilings in `driver`
+  ([`spec.md`](../../docs/open-protocol/spec.md), *The row*).  The gateway's clients dial such a row's own UA server on loopback, at `/gateway/drivers/portBase` plus the
+  row's id, in place of its url; the driver that serves it is the plan's Phase 4, so until then the row saves and
+  Test Connection names the controller, and nothing else connects.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.
@@ -127,6 +133,9 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
   - `GatewayWritesTests`: a client's Write, held for the source's answer.
 - `AppClientTests`, `ConnectCoalesceTests`, `RemoveClientTests`, `KeepAliveTests`: the AppServer link and the client
   life cycle.
+- `DriverRowTests`: a connection of a kind with a driver ([plan](../../docs/open-protocol/plan.md) *Phase 3*) - the
+  row's `kind` and `driver`, its save rules, the dial of the driver's server at 4970 plus the row's id, and
+  `testConnection` against the Open Protocol library's test controller on 4645.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.

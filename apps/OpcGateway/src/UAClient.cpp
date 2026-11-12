@@ -1011,7 +1011,10 @@ namespace Jde::Opc::Gateway{
 		//Pre-concurrency: nothing drives this client's run_iterate until Process below starts the loop, so the direct
 		//UA_Client_connectAsync/SetClient calls here are single-threaded. Process must stay the LAST statement - after
 		//it, every UA_Client_* call must go through the strand (PostUA).
-		_connectUrl = ReachableUrl( Url(), Handle() );//security-matrix #10 - see the header.  A probe of the first address, and only for a name with several.
+		//A row of a kind with a driver dials its driver's server on loopback, never the url, which is the driver's to dial
+		//(docs/open-protocol/spec.md *The row*).  Any other:  security-matrix #10 - see the header.  A probe of the first address, and
+		//only for a name with several.
+		_connectUrl = _opcServer.HasDriver() ? _opcServer.DriverUrl() : ReachableUrl( Url(), Handle() );
 		DBG( "[{}]Connecting to '{}', using '{}'", hex(Handle()), _connectUrl, _credential.ToString() );
 		let sc = UA_Client_connectAsync( UAPointer(), _connectUrl.c_str() ); THROW_IFX( sc, UAException(sc) );
 		auto p = shared_from_this();

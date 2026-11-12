@@ -6,6 +6,7 @@
 #include <jde/fwk/crypto/issue.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include "../src/GatewayAppClient.h"
 #include "../src/gatewayStartup.h"
 #include "../src/UAClient.h"
@@ -31,6 +32,7 @@ namespace Jde{
 	}
 	Ω startup( int argc, char **argv )ε->void{
 		Logging::AddTags( Opc::TagNames );
+		Logging::AddTags( Opc::OpenProtocol::TagNames );//the gateway library's Open Protocol sessions log under it.
 		Process::Startup( argc, argv, "Tests.Opc", "Opc tests", true );
 		Opc::Gateway::AppClient()->InitLogging( Opc::Gateway::AppClient() );
 		if( Settings::FindBool("/testing/embeddedAppServer").value_or(true) )//the fresh db enrolls the gateway+opcServer client certs every run: /access/trustedCertDirs anchors their dirs, each startup ensures its own cert, and TrustVerify rescans - no pre-anchoring of the CLIENT certs here.  The other direction (client trusts each embedded server's cert) is covered by Web::Server::Start's self-anchor.

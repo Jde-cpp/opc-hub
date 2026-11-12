@@ -6,7 +6,8 @@ local logsDir = args.logsDir;
 	testing:{
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
 		embeddedAppServer:: true,
-		embeddedOpcServer:: true
+		embeddedOpcServer:: true,
+		openProtocolPort:: 4645 //the test controller's (DriverRowTests):  a controller's 4545 plus 100, as the ports below are.
 	},
 	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://127.0.0.1:4940", users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{
@@ -90,7 +91,8 @@ local logsDir = args.logsDir;
 			rejectedCertDir: logsDir + "/rejected/opc-gateway-tests",
 			users: instance.opc.users,
 			limits: { maxSecureChannels: 120 } //UASettings::ReadLimits, the emulator's reader too (GatewayServerTests.TheBlockIsReadAndTheEndpointRuns)
-		}
+		},
+		drivers:{ portBase: 4970 } //a driver row's server, at 4970 plus its row's id (DriverRowTests):  the shipped 4870 plus 100.
 	},
 	opcServer:{
 		slug: "TestServer",

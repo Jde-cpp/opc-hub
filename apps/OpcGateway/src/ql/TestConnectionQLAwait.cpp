@@ -3,6 +3,7 @@
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/str.h>
 #include "../async/NamespacesAwait.h"
+#include "../async/OpenProtocolTestAwait.h"
 #include "../async/TestConnectAwait.h"
 #include "../async/UAStrandAwait.h"
 #include "../UAClient.h"
@@ -12,6 +13,30 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway{
+	//What MID 0002 answered, of the fields `q` selects (Open Protocol Tables 13 to 18):  null where its revision carries none.
+	Ω identity( const QL::TableQL& q, const OpenProtocol::Mid0002& id )ι->jobject{
+		jobject y;
+		let text = [&]( sv name, str value ){
+			if( q.FindColumn(name) )
+				y[name] = value.empty() ? jvalue{} : jvalue{ value };
+		};
+		let number = [&]( sv name, optional<uint32_t> value ){
+			if( q.FindColumn(name) )
+				y[name] = value ? jvalue{ *value } : jvalue{};
+		};
+		text( "controllerName", id.ControllerName );
+		text( "supplierCode", id.SupplierCode );
+		text( "openProtocolVersion", id.OpenProtocolVersion );
+		text( "controllerSoftwareVersion", id.ControllerSoftwareVersion );
+		text( "toolSoftwareVersion", id.ToolSoftwareVersion );
+		text( "controllerSerialNumber", id.ControllerSerialNumber );
+		number( "systemType", id.SystemType );
+		number( "systemSubtype", id.SystemSubtype );
+		number( "stationId", id.StationId );
+		text( "stationName", id.StationName );
+		return y;
+	}
+
 	α TestConnectionQLAwait::Query()ι->TAwait<jvalue>::Task{
 		sp<UAClient> client;
 		try{
@@ -21,18 +46,27 @@ namespace Jde::Opc::Gateway{
 			let slug = string{ Str::Trim(sv{_query.As<jstring>("opc")}) };
 			if( auto e = ServerCnnctn::SlugError(slug, _sl); e )//the slug names the certificate file - never a path.
 				e->Throw();
-			ServerCnnctn cnnctn{ string{Str::Trim(sv{_query.As<jstring>("url")})} };
-			THROW_IFX( cnnctn.Url.empty(), Exception(_sl, {EHttpStatus::BadRequest}, "A url is required.") );
+			let url = string{ Str::Trim(sv{_query.As<jstring>("url")}) };
+			THROW_IFX( url.empty(), Exception(_sl, {EHttpStatus::BadRequest}, "A url is required.") );
+			ServerCnnctn cnnctn{ url };
 			cnnctn.Slug = slug;
 			cnnctn.Name = slug;
-			//The certificateUri and the spec's connection settings, as the save merges them, under the save's rules:  the test connects
-			//as the row Save would save, and a row Save would refuse is refused here (spec *Connection settings*).
+			//The kind and its driver, the certificateUri and the spec's connection settings, as the save merges them, under the save's
+			//rules:  the test connects as the row Save would save, and a row Save would refuse is refused here (spec *Connection settings*).
 			cnnctn = MergeSettings( _query, move(cnnctn), _sl );
-			if( auto e = ServerCnnctn::SettingsError(cnnctn, _sl); e )
+			cnnctn.Url = url;//trimmed, where the merge has it as sent.
+			if( auto e = RowError(_query, cnnctn, _sl); e )
 				e->Throw();
+			jvalue y = jobject{};//MutationsAwait keys it under the command name.
+			if( cnnctn.HasDriver() ){//no client and no TestConnectAwait (docs/open-protocol/spec.md *The row*):  Open Protocol's is the one kind with a driver.
+				let connection = co_await OpenProtocolTestAwait{ OpenProtocolRow{cnnctn, _sl}, _sl };
+				if( _query.ResultRequest )
+					y = identity( *_query.ResultRequest, connection.Identity );
+				Resume( move(y) );
+				co_return;
+			}
 			let cred = SessionCredential( session->SessionId, session->UserPK, slug ).value_or( Credential{} );//what a connect to the saved row would present (ConnectAwait).
 			client = co_await TestConnectAwait{ move(cnnctn), move(cred), _sl };
-			jvalue y = jobject{};//MutationsAwait keys it under the command name.
 			if( _query.ResultRequest ){
 				optional<Namespaces> namespaces;
 				if( _query.ResultRequest->FindTable("namespaces") )//a round trip - only when selected.

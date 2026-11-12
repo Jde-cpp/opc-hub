@@ -1,6 +1,7 @@
 #include <jde/fwk.h>
 #include <jde/fwk/process/process.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include "../../AppServer/src/appStartup.h"
 #include "hubStartup.h"
 #include <jde/fwk/process/cpu.h>
@@ -15,6 +16,7 @@
 		return EXIT_FAILURE;
 	using namespace Jde;
 	Logging::AddTags( Opc::TagNames );//the gateway's ua* tag names, before the settings' tag levels are parsed.
+	Logging::AddTags( Opc::OpenProtocol::TagNames );//the gateway library's Open Protocol sessions log under it.
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.OpcHub", "Jde OPC hub - AppServer + OpcGateway in one process." );

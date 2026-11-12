@@ -1,11 +1,14 @@
 ﻿#include "ServerCnnctn.h"
+#include <jde/fwk/settings.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/Row.h>
 #include <jde/db/generators/Functions.h>
 #include <jde/db/generators/Statement.h>
 #include <jde/db/generators/WhereClause.h>
 #include <jde/opc/ClientSecurity.h>
+#include "../GatewayAppClient.h"
 #include "../opcInternal.h"
+#include "OpenProtocolRow.h"
 
 #define let const auto
 
@@ -25,8 +28,12 @@ namespace Jde::Opc::Gateway{
 		RequestTimeout{ r.GetOpt<uint32>(11) },
 		PingInterval{ r.GetOpt<uint32>(12) },
 		Ttl{ r.GetOpt<uint32>(13) },
-		Locale{ r.TakeString(14) }
-	{}
+		Locale{ r.TakeString(14) },
+		Kind{ r.TakeString(15) },
+		Driver{ r.TakeString(16) }
+	{
+		SupplyDriver();
+	}
 	ServerCnnctn::ServerCnnctn( jobject&& o )ε:
 		Id{ Json::FindNumber<uint32>(o, "id").value_or(0) },
 		Url{ Json::FindDefaultSV(o, "url") },
@@ -43,8 +50,25 @@ namespace Jde::Opc::Gateway{
 		RequestTimeout{ Json::FindNumber<uint32>(o, "requestTimeout") },
 		PingInterval{ Json::FindNumber<uint32>(o, "pingInterval") },
 		Ttl{ Json::FindNumber<uint32>(o, "ttl") },
-		Locale{ Json::FindDefaultSV(o, "locale") }
-	{}
+		Locale{ Json::FindDefaultSV(o, "locale") },
+		Kind{ Json::FindDefaultSV(o, "kind") },
+		Driver{ Json::FindDefaultSV(o, "driver") }
+	{
+		SupplyDriver();
+	}
+	α ServerCnnctn::SupplyDriver()ι->void{
+		if( !HasDriver() )
+			return;
+		let& ssl = AppClient()->SslSettings;
+		CertificateUri = ssl ? ssl->Certificate.SanUri() : string{};
+		DefaultBrowseNs = DriverBrowseNs;
+	}
+	α ServerCnnctn::DriverUrl( SL sl )Ε->string{
+		let portBase = Settings::FindNumber<uint>( "/gateway/drivers/portBase" ).value_or( 4870 );
+		let port = portBase+Id;
+		THROW_IFSL( port>65535, "Connection '{}' has no driver port:  /gateway/drivers/portBase, {}, plus its id, {}, is past 65535.", Slug, portBase, Id );
+		return Ƒ( "opc.tcp://127.0.0.1:{}", port );
+	}
 	α ServerCnnctn::SlugError( sv slug, SL sl )ι->up<Exception>{
 		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
 		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
@@ -84,6 +108,21 @@ namespace Jde::Opc::Gateway{
 			return refuse( Ƒ("Security policy None leaves the channel open, which security mode {} secures:  {}.", row.EffectiveMode(), mode.size() ? "pick a secured policy, or security mode None" : "a certificate URI means Sign & Encrypt unless the mode is set to None") );
 		return nullptr;
 	}
+	α ServerCnnctn::KindError( const ServerCnnctn& row, SL sl )ι->up<Exception>{
+		let refuse = [sl]( string what ){ return mu<Exception>( move(what), ExceptionArgs{EHttpStatus::BadRequest}, sl ); };
+		let& kind = row.Kind;
+		if( kind.empty() || kind==KindUa )
+			return row.Driver.empty() ? nullptr : refuse( Ƒ("A {} connection takes no driver settings:  they are a driver kind's, {}'s.", KindUa, KindOpenProtocol) );
+		if( kind!=KindOpenProtocol )
+			return refuse( Ƒ("Kind '{}' is not one of {} or {}.", kind, KindUa, KindOpenProtocol) );
+		try{
+			(void)OpenProtocolRow{ row, sl };
+		}
+		catch( Exception& e ){
+			return e.Move();
+		}
+		return nullptr;
+	}
 	α ServerCnnctn::ToJson()Ι->jobject{
 		jobject o;
 		o.emplace( "id", Id );
@@ -104,6 +143,8 @@ namespace Jde::Opc::Gateway{
 		o.emplace( "pingInterval", number(PingInterval) );
 		o.emplace( "ttl", number(Ttl) );
 		o.emplace( "locale", text(Locale) );
+		o.emplace( "kind", text(Kind) );
+		o.emplace( "driver", text(Driver) );
 		return o;
 	}
 
@@ -122,7 +163,7 @@ namespace Jde::Opc::Gateway{
 					where.Add( view->GetColumnPtr("is_default"), true );
 			}
 		}
-		auto statement = DB::Statement{ {view->GetColumns({"server_connection_id", "url", "certificate_uri", "is_default", "default_browse_ns", "name", "slug", "deleted", "security_mode", "security_policy", "session_timeout", "request_timeout", "ping_interval", "ttl", "locale"})}, {view}, move(where) };
+		auto statement = DB::Statement{ {view->GetColumns({"server_connection_id", "url", "certificate_uri", "is_default", "default_browse_ns", "name", "slug", "deleted", "security_mode", "security_policy", "session_timeout", "request_timeout", "ping_interval", "ttl", "locale", "kind", "driver"})}, {view}, move(where) };
 		try{
 			vector<ServerCnnctn> y;
 			auto rows = co_await DS()->SelectAsync( statement.Move() );

@@ -2,6 +2,7 @@
 #include <jde/fwk/process/process.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include "GatewayAppClient.h"
 #include "gatewayStartup.h"
 #include <jde/fwk/process/cpu.h>
@@ -16,6 +17,7 @@
 		return EXIT_FAILURE;
 	using namespace Jde;
 	Logging::AddTags( Opc::TagNames );
+	Logging::AddTags( Opc::OpenProtocol::TagNames );//the gateway library's Open Protocol sessions log under it.
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.OpcGateway", "Jde OPC gateway - the website's OPC UA client sessions." );
