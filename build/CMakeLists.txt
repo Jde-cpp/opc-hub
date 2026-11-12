@@ -65,7 +65,6 @@ set( abslTag 20260526.0 )
 set( abslHwAccel 2 )
 set( rymlTag v0.10.0 )
 set( open62541Tag v1.5.10 )
-set( quickjsTag v0.18.0 ) #nothing here compiles against it, so nothing echoes it.
 
 ExternalProject_Add(fmt
 	GIT_REPOSITORY https://github.com/fmtlib/fmt.git
@@ -523,14 +522,13 @@ ExternalProject_Add(open62541-nodeset-loader
 )
 
 # quickjs-ng, the engine of the flows' Function node.  QJS_BUILD_LIBC off keeps quickjs-libc.c - the std and os modules,
-# a script's way to files, sockets and processes - out of the library:  only upstream's own executables link it.  Its
-# package is qjs (lib/cmake/qjs), which a find_package search of the prefix does not reach under quickjs/:  a consumer
-# appends ${CMAKE_INSTALL_PREFIX}/quickjs to CMAKE_PREFIX_PATH first, as the sqlite driver does for sqlite.
+# a script's way to files, sockets and processes - out of the library:  only upstream's own executables link it.  It
+# installs under qjs/, its package's name, so find_package( qjs CONFIG ) reaches it in the prefix.
 ExternalProject_Add(quickjs
 	GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
-	GIT_TAG ${quickjsTag}
+	GIT_TAG v0.18.0
 	PREFIX quickjs
-	INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/quickjs
+	INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/qjs
 	CMAKE_ARGS ${stdArgs}
 		-DBUILD_SHARED_LIBS=OFF
 		-DQJS_BUILD_LIBC=OFF
