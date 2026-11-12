@@ -68,7 +68,12 @@ debian(){ #the first of these packages that has a copyright file
 #resolved up front:  a die inside the $(...) of a printf argument would not stop the script
 fmtTag=$(tag fmt); spdlogTag=$(tag spdlog); abslTag=$(tag absl); rymlTag=$(tag ryml); jsonnetTag=$(tag jsonnet)
 protobufTag=$(tag protobuf); open62541Tag=$(tag open62541); nodesetTag=$(tag open62541-nodeset-loader)
-zlibTag=$(tag zlib); libxml2Tag=$(tag LibXml2)
+zlibTag=$(tag zlib); libxml2Tag=$(tag LibXml2); quickjsTag=$(tag quickjs)
+#quickjs-ng's LICENSE is MIT alone:  the Unicode license its generated tables are under is the comment that heads them
+quickjs=$reposDir/quickjs/src/quickjs
+[ -f "$quickjs/libunicode-table.h" ] || die "$quickjs/libunicode-table.h is missing"
+unicodeNotice=$(sed -n '/^UNICODE LICENSE V3$/,/^\*\/$/p' "$quickjs/libunicode-table.h" | sed -e '$d' -e 's/[ \t\r]*$//')
+[ -n "$unicodeNotice" ] || die "no Unicode license notice heads $quickjs/libunicode-table.h"
 boostLicense=$(ls -d "$libs"/boost_*/LICENSE_1_0.txt 2>/dev/null | sort -V | tail -1)
 [ -n "$boostLicense" ] || die "no $libs/boost_*/LICENSE_1_0.txt"
 icuPackage=$(cd /usr/share/doc && ls -d libicu[0-9]* 2>/dev/null | sort -V | tail -1)
@@ -135,6 +140,12 @@ HEADER
 	section "open62541-nodeset-loader $nodesetTag" https://github.com/open62541/open62541-nodeset-loader MPL-2.0 \
 		"Source code: the URL above, at the commit above.  Modified: CMakeLists.txt (-Werror, a stale install() line, an added config-file install rule) and src/Nodeset.c (a second BrowseName namespace mapping open62541 1.5.8+ already applies, and a node loop that stopped at the first node the server refused) - see build/CMakeLists.txt."
 	text "$reposDir/nodeset-loader/src/open62541-nodeset-loader/LICENSE"
+
+	section "QuickJS-NG $quickjsTag" https://github.com/quickjs-ng/quickjs MIT
+	text "$quickjs/LICENSE"
+	section "Unicode data tables (bundled in QuickJS-NG $quickjsTag)" https://www.unicode.org/ucd/ Unicode-3.0 \
+		"libunicode-table.h, generated from the Unicode Character Database."
+	printf '%s\n' "$unicodeNotice"
 
 	section "Boost" https://www.boost.org BSL-1.0
 	text "$boostLicense"

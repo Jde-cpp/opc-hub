@@ -1,0 +1,226 @@
+@use '../../status';
+
+:host{
+	display: block;
+	width: 100%;
+}
+/* the period:  its toggles, a custom range's two fields and Refresh, wrapping where the pane is narrow, with what it resolved to
+   and the way to the machine's own page at the far end */
+.period-bar{
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: .5rem;
+	box-sizing: border-box;
+	padding: .5rem 16px;
+	background: var(--mat-sys-surface-container);
+	color: var(--mat-sys-on-surface);
+	mat-form-field{
+		flex: 0 1 220px;
+	}
+	.spacer{
+		flex: 1 1 0;
+	}
+	.range{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+		font-variant-numeric: tabular-nums;
+	}
+}
+/* a line's page is headed by its level and its name */
+.line-heading{
+	margin: .75rem 24px .5rem;
+	font: var(--mat-sys-title-large);
+	.level{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-title-small);
+	}
+}
+.refresh-bar{
+	--mat-progress-bar-track-height: 2px;
+	--mat-progress-bar-active-indicator-height: 2px;
+}
+section{
+	box-sizing: border-box;
+	padding: 0 24px;
+	margin-top: 1rem;
+	h3{
+		margin: 0 0 .5rem;
+		font: var(--mat-sys-title-medium);
+	}
+	.heading{
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: .25rem 1rem;
+		margin-bottom: .5rem;
+		h3{
+			margin: 0;
+		}
+	}
+}
+.notice{
+	@include status.refused( .5rem 24px 0, var(--mat-sys-on-surface-variant) );
+	mat-icon{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+section .notice{
+	margin-inline: 0;
+}
+.refused{
+	@include status.refused( 0 0 .5rem );
+}
+.empty{
+	margin: 0;
+	color: var(--mat-sys-on-surface-variant);
+}
+/* the five factors, OEE first and largest;  a row that wraps to as many columns as the pane has */
+.factors{
+	display: grid;
+	grid-template-columns: repeat( auto-fit, minmax( 140px, 1fr ) );
+	gap: .75rem;
+	margin: 0 0 .75rem;
+	.factor{
+		padding: .75rem 1rem;
+		border-radius: 12px;
+		background: var(--mat-sys-surface-container-low);
+		&.lead{
+			background: var(--mat-sys-secondary-container);
+			color: var(--mat-sys-on-secondary-container);
+		}
+	}
+	dt{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-label-large);
+	}
+	.lead dt{
+		color: inherit;
+	}
+	dd{
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: .125rem 0 0;
+		font: var(--mat-sys-headline-medium);
+		font-variant-numeric: tabular-nums;
+	}
+	.over{
+		@include status.icon-size( 20px );
+		color: var(--mat-sys-tertiary);
+	}
+}
+/* a hint's icon beside its label:  focusable, so the tooltip reaches the keyboard too */
+.hint-icon{
+	@include status.icon-size( 16px );
+	margin-inline-start: 4px;
+	vertical-align: text-bottom;
+	color: var(--mat-sys-on-surface-variant);
+	cursor: help;
+}
+.lead .hint-icon{
+	color: inherit;
+}
+/* the loss split:  three small tables side by side, one under the other where they don't fit */
+.split{
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: .75rem 2.5rem;
+}
+table{
+	border-collapse: collapse;
+	font: var(--mat-sys-body-medium);
+	th, td{
+		padding: .25rem .75rem .25rem 0;
+		text-align: start;
+		font-weight: normal;
+	}
+	thead th{
+		border-bottom: 1px solid var(--mat-sys-outline-variant);
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-label-large);
+	}
+	.num{
+		padding-inline: .75rem 0;
+		text-align: end;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	&.list{
+		margin-top: .5rem;
+		th, td{
+			padding-inline-end: 1.5rem;
+		}
+	}
+}
+oee-chart{
+	margin-bottom: .25rem;
+}
+mat-table{
+	width: 100%;
+}
+/* a stop coded in parts has a comment a line:  the row grows with them */
+mat-row{
+	height: auto;
+	min-height: var(--mat-table-row-item-container-height);
+}
+.mat-column-start, .mat-column-end{
+	flex: 0 0 170px;
+	padding-inline: 5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.mat-column-length{
+	flex: 0 0 130px;
+	gap: 6px;
+	padding-inline: 5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.mat-column-reason{
+	flex: 1 1 200px;
+	min-width: 0;
+	gap: 4px;
+	padding-inline: 5px;
+	.uncoded{
+		flex: 0 0 auto;
+		@include status.icon-size;
+		color: var(--mat-sys-tertiary);
+	}
+	.category{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+.mat-column-code{
+	flex: 0 0 70px;
+	padding-inline: 5px;
+	font-variant-numeric: tabular-nums;
+}
+.mat-column-comment{
+	flex: 2 1 240px;
+	min-width: 0;
+	padding-inline: 5px;
+	.comments{
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		span{
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+	}
+}
+.mat-column-actions{
+	flex: 0 0 88px;
+	padding-inline: 0;
+	justify-content: flex-end;
+}
+.tag, .open{
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-label-small);
+}
+.more{
+	margin: .25rem 0 1rem;
+}

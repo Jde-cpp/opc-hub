@@ -51,4 +51,26 @@ describe( 'HighchartsLoader', ()=>{
 		expect( loader.state() ).toBe( 'loaded' );
 		expect( loader.highcharts ).toBe( 'H' );
 	} );
+	//the OEE Gantt chart's module (#405):  asked for by that chart alone, once highstock and the accessibility module have run
+	it( 'imports the xrange module on its own call, once, after the load', async ()=>{
+		const importFile = vi.fn( async ( file:string )=>file=='highstock.js' ? {default: 'H'} : {} );
+		const asked = ()=>importFile.mock.calls.map( ([file])=>file );
+		const loader = new (class extends HighchartsLoader{ protected override importFile( file:string ){ return importFile( file ); } })();
+		expect( await loader.load() ).toBe( 'H' );
+		expect( asked() ).toEqual( ['highstock.js', 'modules/accessibility.js'] );
+		const first = loader.xrange();
+		expect( loader.xrange() ).toBe( first );
+		expect( await first ).toBe( 'H' );
+		expect( asked() ).toEqual( ['highstock.js', 'modules/accessibility.js', 'modules/xrange.js'] );
+	} );
+	it( 'answers no xrange without the add-on, and tries a module that failed again', async ()=>{
+		answering( answer( 404 ) );
+		const absent = new HighchartsLoader();
+		expect( await absent.xrange() ).toBeUndefined();
+		const importFile = vi.fn( async ( file:string )=>{ if( file=='modules/xrange.js' && importFile.mock.calls.length==3 ) throw new TypeError( 'Failed to fetch' ); return {default: 'H'}; } );
+		const loader = new (class extends HighchartsLoader{ protected override importFile( file:string ){ return importFile( file ); } })();
+		await expect( loader.xrange() ).rejects.toBeDefined();
+		expect( loader.state() ).toBe( 'loaded' );//the trend's own load stands
+		expect( await loader.xrange() ).toBe( 'H' );
+	} );
 } );

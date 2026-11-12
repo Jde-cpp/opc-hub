@@ -35,7 +35,7 @@ const create = async ( pageRow:any, {saved, render=false, registrations=[{instan
 	const hist = { groupMembers: vi.fn( async ()=>[member( 7, 'status' ), member( 8, 'totalCount' ), member( 9, 'motorRpm' )] ) };
 	const app = { registrations: vi.fn( async ()=>registrations ) };
 	const {snackbar, router, data} = configureDetailPage( pageRow, {gateway, providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },//the page is driven by hand:  the fixture's own first change detection would run ngOnInit again
+		{ provide: ComponentFixtureAutoDetect, useValue: render },//a rendered page detects changes itself, as an app does:  turned off, a zoneless tick inside flush() leaves the next detectChanges() nothing to refresh (NG0100).  One driven by hand doesn't, or its first change detection would run ngOnInit a second time, onto the row #load nulled
 		{ provide: OeeAdminService, useValue: admin },
 		{ provide: HistAdminService, useValue: hist },
 		{ provide: CalendarService, useValue: {calendars: async ()=>[{id: 2, name: 'Plant', slug: 'plant', timeZone: 'UTC', dayStart: 360}]} },
@@ -124,15 +124,16 @@ describe( 'OeeMachineDetail', ()=>{
 		expect( d.page.members().map( m=>d.page.memberLabel( m ) ) ).toEqual( ['status', 'totalCount', 'motorRpm'] );
 		expect( d.page.statusText() ).toBe( 'The engine is live, the machine running.' );
 		expect( d.page.groupLink() ).toEqual( ['/apps/gateways', 'g', 'groups', 'pumps'] );
-		expect( d.page.calendarLink() ).toEqual( ['/apps/gateways', 'g', 'calendars', 'plant'] );//a hub's calendars are a tab of its own page
-		expect( d.page.missingCalendar() ).toBeUndefined();
+		const link = ()=>d.page.calendars.link( d.page.machine.calendarId ), missing = ()=>d.page.calendars.missing( d.page.machine.calendarId );
+		expect( link() ).toEqual( ['/apps/gateways', 'g', 'calendars', 'plant'] );//a hub's calendars are a tab of its own page
+		expect( missing() ).toBeUndefined();
 		d.page.setCalendar( 3 );
-		expect( d.page.missingCalendar() ).toBe( 3 );
-		expect( d.page.calendarLink() ).toBeUndefined();
+		expect( missing() ).toBe( 3 );
+		expect( link() ).toBeUndefined();
 	} );
 	it( "links a stand-alone gateway's calendar on its application server's page", async ()=>{
 		const d = await create( row, {registrations: [{instanceName: 'g', programName: 'OpcGateway'}, {instanceName: 'g', programName: 'OpcHub'}, {instanceName: 'app', programName: 'AppServer'}]} );
-		expect( d.page.calendarLink() ).toEqual( ['/apps/appServers', 'app', 'calendars', 'plant'] );//an OpcGateway under the slug:  no hub, as GatewayDetail.isHub
+		expect( d.page.calendars.link( 2 ) ).toEqual( ['/apps/appServers', 'app', 'calendars', 'plant'] );//an OpcGateway under the slug:  no hub, as GatewayDetail.isHub
 	} );
 	it( 'sends a pick at once, with its warnings beside the role', async ()=>{
 		const d = await create( row );

@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeMachineDetail, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
@@ -161,6 +161,35 @@ export const routes: Routes = [
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},
+			{//a machine's figures, Gantt chart, losses, trend and stops (#405):  the machine's row by the same resolver, under its own page
+				path: 'machines/:slug/oee',
+				loadComponent: loadOeeMachinePage,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE", kind: "machines", suffix: "oee" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			//OEE's lines (#409):  a line's page, and under it its OEE page, which is the machine's over the line's machines
+			{ path: 'lines', pathMatch: 'full', redirectTo: '' },
+			{
+				path: 'lines/:slug',
+				loadComponent: loadOeeLineDetail,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE line", kind: "lines" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			{
+				path: 'lines/:slug/oee',
+				loadComponent: loadOeeMachinePage,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE", kind: "lines", suffix: "oee" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
 			{
 				path: 'reasons/:slug',
 				loadComponent: loadOeeReasonDetail,
@@ -169,6 +198,14 @@ export const routes: Routes = [
 				data: { summary: "OEE stop reason", kind: "reasons" },
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
+			},
+			{//OEE's dashboard (#406):  a live tile per machine and the Gantt chart of the current shift, a page under the gateway's as the watch list is
+				path: 'oee',
+				loadComponent: loadOeeDashboard,
+				providers: [ WatchResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE dashboard" },
+				resolve: { pageData: WatchResolver }
 			},
 			...calendarRoutes,//ahead of ':connection' too
 			{//the watch list (#419):  rows from any of the gateway's connections, ahead of ':connection', which would take the segment for one

@@ -8,9 +8,9 @@ import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
 import { GatewayListKind, gatewayListRoute } from '../gateway-list-route';
 
-//The historian's two lists on a gateway's page (#337), beside Connections, and OEE's two, Machines and Reasons (#404):  each a
+//The historian's two lists on a gateway's page (#337), beside Connections, and OEE's, Machines, Lines and Reasons (#404, #409):  each a
 //ql-list over the gateway's own table, resolved here when its tab opens rather than by the page's resolver, and a row opens
-//`templates/<slug>`, `groups/<slug>`, `machines/<slug>` or `reasons/<slug>` under the page
+//`templates/<slug>`, `groups/<slug>`, `machines/<slug>`, `lines/<slug>` or `reasons/<slug>` under the page
 //(QLList.linkPrefix).  The rows go under `<url>/<kind>` in the RouteStore, where the detail's resolver finds its siblings.  A group's
 //root shows by its browse path, as the group's Properties shows it, once its connection's server places it.
 @Component({

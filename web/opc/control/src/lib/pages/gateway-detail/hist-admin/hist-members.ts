@@ -10,23 +10,28 @@ export class HistMembers<T>{
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );
 
-	//`read` answers what the tab shows, and `land` takes it only while `current()` holds:  the router reuses the page for another
-	//record meanwhile, maybe another gateway's with the same id.
+	//`read` answers what the tab shows, and `land` takes it, or its refusal is said, only while `current()` holds and no later read
+	//has begun:  the router reuses the page for another record meanwhile, maybe another gateway's with the same id.  The last read
+	//begun ends `loading`.
 	async read<R>( read:()=>Promise<R>, land:( answer:R )=>void, current:()=>boolean ):Promise<void>{
+		const n = ++this.#reads, last = ()=>n==this.#reads;
 		this.loading.set( true );
 		this.error.set( undefined );
 		try{
 			const answer = await read();
-			if( current() )
+			if( last() && current() )
 				land( answer );
 		}
 		catch( e ){
-			this.error.set( errorMessage(e) );
+			if( last() && current() )
+				this.error.set( errorMessage(e) );
 		}
 		finally{
-			this.loading.set( false );
+			if( last() )
+				this.loading.set( false );
 		}
 	}
+	#reads = 0;
 	//a mutation and what follows it - the read again - with `busy` held across both;  a refusal is a toast
 	async mutate( act:()=>Promise<unknown>, refused:string ):Promise<void>{
 		this.busy.set( true );

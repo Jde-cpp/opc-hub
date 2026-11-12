@@ -84,7 +84,7 @@ describe( 'ServerCnnctn.slug', ()=>{
 		}
 	} );
 	it( 'refuses anything else, and will not save', ()=>{
-		for( const slug of ["eng test", "eng\\test", "-eng", ".eng", "ëng", "a/b", "watch", " watch ", "templates", "groups", "calendars", "machines", "reasons"] ){//the lists' url segments (419-watch #12, 404 #1)
+		for( const slug of ["eng test", "eng\\test", "-eng", ".eng", "ëng", "a/b", "watch", " watch ", "templates", "groups", "calendars", "machines", "lines", "reasons", "oee"] ){//the lists' url segments (419-watch #12, 404 #1, #409), and the dashboard's (#406)
 			expect( create(slug).fieldError("slug") ).toBeDefined();
 			expect( create(slug).canSave ).toBe( false );
 		}

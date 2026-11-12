@@ -8,7 +8,7 @@ Overall equipment effectiveness is the share of its planned time a machine spent
 
 The gateway works it out from what its historian already keeps. A **machine** is a [historian group](/help/gateways/groups) whose members are given roles: its run state, its counts, its stop reason. The gateway turns the group's records into stops and per-interval rows, and computes the figures when they are read.
 
-Machines and reasons are edited from the gateway's page under [Applications](/apps), on its **Machines** and **Reasons** tabs.
+Machines, lines and reasons are edited from the gateway's page under [Applications](/apps), on its **Machines**, **Lines** and **Reasons** tabs. The Machines tab opens the [dashboard](#the-dashboard), every machine live.
 
 OEE runs on a gateway whose settings have an `oee` block and a historian.
 
@@ -59,7 +59,33 @@ A State signal's running values, a Rate's time unit, and the idle timeout of a m
 
 ### Deleted machines
 
-A deleted machine keeps its rows and still holds its group, so the group can't be deleted or purged. **Purge** removes the machine with its stops, intervals, codings and signals.
+A deleted machine keeps its rows and still holds its group, so the group can't be deleted or purged. It is out of its lines' figures until it is restored. **Purge** removes the machine with its stops, intervals, codings and signals, and takes it out of its lines.
+
+## Lines
+
+A line is a named set of machines and of lines. Its figures are its members' combined, each factor weighted by the time it is over.
+
+Press **Add** on the Lines tab. A line's **Properties** tab holds, under its name:
+
+- **Level** - its place in the plant: *Site*, *Area*, *Line* or *Cell*. The level names the line on the pages and orders the dashboard. It changes no figure.
+- **Calendar** - the [shift calendar](/help/calendars) the line's shifts and days are by. Each machine is still planned by its own calendar. With none, the line's days begin at midnight UTC.
+
+### Members
+
+A saved line has a **Members** tab. **Add a member** lists what the line may hold:
+
+- the machines neither it nor a line above it reaches yet. A machine is once within a line, through its member lines too, so one the area above this line already reaches isn't offered.
+- the lines of a level no higher than its own: an area holds areas, lines and cells, and a line holds lines and cells. A line that holds this one isn't offered, nor one that reaches a machine this line or a line above it reaches.
+
+The arrows move a member up or down, which is the order the pages list the members in. The bin removes it. Each change applies as it is made.
+
+A machine may be in several lines, and so may a line. A line of every machine of one kind, across areas, is a line too.
+
+When someone else changed the lines since the tab was read, the gateway may refuse a pick that would put a machine in a line twice. It says so on the tab.
+
+### Deleted lines
+
+A deleted line has no tile and is out of the figures of the lines it is in. It keeps its members until it is restored or purged. **Purge** removes it with its memberships.
 
 ## Reasons
 
@@ -74,8 +100,121 @@ A code names one reason, deleted reasons included.
 
 A deleted reason keeps resolving the stops it coded and leaves the pickers. One that a coding names can't be purged.
 
+## The dashboard
+
+**OEE dashboard** on the gateway's Machines tab opens `oee` under the gateway's page. It is live: nothing on it needs a refresh.
+
+Each line that is in no line has a **tile**, the site or the areas first:
+
+- how many of its machines are running and stopped, and how many are unknown when any is
+- the availability, performance, quality and OEE of its shift so far, by the line's own calendar
+
+A line's tile opens the [line's OEE page](#the-lines-oee-page). A line with a machine whose group you may not read has no tile. Its machines you may read are then shown as machines in no line, each with a tile of its own.
+
+Each machine that is in no line has a **tile**:
+
+- its state - Running, Stopped or Unknown - since when, and for how long
+- a stop's reason, or **Uncoded** when it has none. A stop still shorter than the machine's threshold says **Small stop**.
+- the availability, performance, quality and OEE of its shift so far. A machine with no calendar has its UTC day's.
+
+A tile says when the machine is outside planned time or between shifts, and when the connection to the gateway is lost. It then shows the last the gateway said until the connection is back.
+
+When the gateway stops sending a machine - it was deleted, or OEE stopped - its tile says why, and its row stays as it was. When the gateway no longer knows your session, the tile says to sign in again.
+
+Under the tiles, **Current shift** is a Gantt chart with a row for each machine, in the tiles' order. A line's machines are under a row that names the line, in bold, and the machines in no line come last, under **No line**. Each row covers that machine's own shift. Its last band grows as the machine reports, and a new band starts when its state changes. A machine between shifts has no row, and is named under the chart.
+
+A tile and a band open the machine's OEE page, on its shift.
+
+The dashboard shows the machines whose group you may read, and the lines whose every machine you may read.
+
+## The machine's OEE page
+
+A saved machine's Properties tab links to its OEE page, `machines/<slug>/oee` under the gateway's page. **Dashboard** at its top goes back to the dashboard.
+
+Pick a **period** at the top:
+
+- **This shift** - the shift the machine's calendar is in, or its last one. Offered when the machine has a calendar.
+- **Today**, **Yesterday**, **This week** and **Last week** - by this browser's clock, a week from Monday
+- **Custom** - a From and a To. A blank To is now.
+
+A period that is still running ends now. **Refresh** reads it again.
+
+### Figures
+
+The five figures are OEE, its three factors and **TEEP**, which is OEE times planned time over the whole period. A factor the machine doesn't measure shows a dash, and OEE is the product of the rest.
+
+A performance above 100% is marked: the machine beats its ideal cycle, so the ideal is too slow.
+
+Under them, the **planned time** is split into:
+
+- **Run** - planned time less the stops below. Small stops are part of it.
+- **Unplanned stops** - stops coded Unplanned, or not coded
+- **Planned stops** - stops coded Planned
+
+Beside the split:
+
+- **Small stops** - stops shorter than the machine's small-stop threshold. They lower performance, not availability.
+- **Excluded** - stops coded Excluded, taken out of planned time
+- **Unknown** - time the feed was down, taken out of planned time
+
+The **counts** are those made in planned time. **Outside planned time** is what the machine made in a break or outside its shifts, which is in no factor.
+
+*Partial* means the period has unknown time, or rows the gateway has yet to write.
+
+### Timeline
+
+The timeline is a Gantt chart of the period, in two rows:
+
+- **Planned** - each shift, with its breaks cut out
+- **State** - running, each stop in its reason's category, uncoded stops, small stops, and unknown time
+
+The legend under it names each colour. Hover a band for its times, its length, its reason and a coding's comment. Drag to zoom.
+
+Each figure and each row of the split has an info icon. Hover it, or move to it with Tab, for what the figure means.
+
+Click a stop's band to code it.
+
+A period with more stops than the gateway reads at once is shown from a later start, and a notice says from when.
+
+### Losses and trend
+
+**Losses** is a Pareto: the time lost to each reason, to uncoded stops and to small stops, longest first. The table under it has the same rows with each one's share and stop count.
+
+**Trend** is OEE for each shift or each day of the period. A machine with no calendar has UTC days, which the trend labels as such.
+
+The timeline and the two charts need the add-on the install does not include - see [Trend chart](/help/gateways#trend-chart). Without it the page is its figures and its tables.
+
+### Stops and coding
+
+**Stops** lists the period's stops, newest first. **Uncoded** keeps only the stops with time no reason covers.
+
+**Code** on a row, or a click on a stop's band, opens the coding dialog:
+
+- **Reason** - one of the gateway's reasons
+- **Comment** - optional
+- **Split the stop** - for a stop that had two causes: a time inside the stop, and a reason and comment for the part after it
+
+A reason over the same time replaces the one there. The dialog lists the codings already over the stop, each with a remove button. To go back from a split to one reason, remove the second coding first.
+
+A stop still open is read again when **Code** is pressed. If it has ended since, it is coded to its end, otherwise to now.
+
+Coding needs Update on the codings table, removing one needs Delete, and both need Read on the machine's group. On a gateway whose codings resource is not enforced, anyone who can read the group can code.
+
+## The line's OEE page
+
+A saved line's Properties tab links to its OEE page, `lines/<slug>/oee` under the gateway's page. It is headed by the line's level and name, and works as the machine's page does, over every machine the line reaches:
+
+- **Members** - a tile for each direct member, a machine or a line, with its own figures over the period. A tile opens that member's OEE page.
+- **Figures** - the line's, its machines' combined. In place of the counts, **Coverage** says how many machines the line reaches and how many of them performance and quality are over: a machine with no ideal measures no performance, and one with no Good or Reject signal no quality.
+- **Timeline** - a pair of rows for each machine, its planned time over its state
+- **Losses** - summed across the machines
+- **Stops** - every machine's, with a **Machine** column. A stop is coded there, on its machine, as on the machine's page.
+- **Trend** - the line's OEE by shift or day. Its hover leaves out the counts, which are in each machine's own unit.
+
+**This shift** is the line's own calendar's. Reading a line needs Read on the group of every machine it reaches.
+
 ## Access
 
-The machines and reasons are tables of the gateway, switched on the [Resources](/access/resources) page as its other tables are.
+The machines, lines, line members and reasons are tables of the gateway, switched on the [Resources](/access/resources) page as its other tables are.
 
 A machine's figures and stops need Read on its group, as the group's history does.

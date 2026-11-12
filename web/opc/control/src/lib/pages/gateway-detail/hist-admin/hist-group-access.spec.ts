@@ -1,4 +1,4 @@
-import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
+import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { provideRouter } from '@angular/router';
 import { Rights } from 'jde-access';
@@ -25,7 +25,6 @@ const create = async ( rows:any[], roles:any[]=[ops], tableRoles:any[]=[] )=>{
 	const snackbar = snackbarStub();
 	const dialog = dialogStub( true );
 	TestBed.configureTestingModule({ providers: [
-		{ provide: ComponentFixtureAutoDetect, useValue: false },
 		provideRouter( [] ),//the Resources link
 		{ provide: AppService, useValue: appService },
 		{ provide: SnackbarService, useValue: snackbar },

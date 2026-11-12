@@ -1,0 +1,86 @@
+<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start" [(selectedIndex)]="tabIndex">
+	<mat-tab>
+		<ng-template mat-tab-label>Properties</ng-template>
+		<ng-template matTabContent>
+			<properties [ctor]=ctor [(record)]=properties type="oeeLine" [schema]=schema [order]=fieldOrder [readonlyFields]="isNew ? [] : ['slug']" [excludedColumns]=excludedFields [picks]=picks [hints]=hints></properties>
+			<section class="form-section" aria-label="Production">
+				<h3>Production</h3>
+				@if( !isNew ){ <p class="hint">Its members' figures combined, with their Gantt chart, losses and stops:  <a [routerLink]="['oee']">the line's OEE page</a>.</p> }
+				@if( isNew ){ <p class="hint">Its machines and lines are picked once it is saved.</p> }
+				<div class="fields">
+					<oee-calendar-field [calendars]="calendars.calendars()" [url]="calendars.url()" [calendarId]="line.calendarId" none="None - its days begin at midnight UTC" hint="The line's shifts and days.  Each machine is planned by its own." (picked)="setCalendar($event)"/>
+				</div>
+				@if( saveError(); as e ){
+					<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+				}
+			</section>
+		</ng-template>
+	</mat-tab>
+	@if( !isNew ){<!--a member is a row under the line's id:  nothing to pick until the line is saved-->
+		<mat-tab>
+			<ng-template mat-tab-label>Members</ng-template>
+			<ng-template matTabContent>
+				<div class="tab-body">
+					<p class="hint">The machines and lines the line is of, in the order its pages list them.  A machine is once within a line, and a member line's level is no higher than the line's own.  Each change applies as it is made.</p>
+					<div class="tab-toolbar">
+						<mat-form-field subscriptSizing="dynamic">
+							<mat-label>Add a member</mat-label>
+							<mat-select (selectionChange)="add($event.value, $event.source)" [disabled]="members.busy() || !(candidates().machines.length || candidates().lines.length)">
+								@if( candidates().machines.length ){
+									<mat-optgroup label="Machines">
+										@for( m of candidates().machines; track m.id ){
+											<mat-option [value]="'m' + m.id">{{ m.name }}</mat-option>
+										}
+									</mat-optgroup>
+								}
+								@if( candidates().lines.length ){
+									<mat-optgroup label="Lines">
+										@for( l of candidates().lines; track l.id ){
+											<mat-option [value]="'l' + l.id">{{ l.name }} - {{ l.level }}</mat-option>
+										}
+									</mat-optgroup>
+								}
+							</mat-select>
+						</mat-form-field>
+						<button matIconButton type="button" (click)="refresh()" [disabled]="members.loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+						<span class="count">{{ rows().length }} {{ rows().length==1 ? 'member' : 'members' }}</span>
+					</div>
+					<mat-progress-bar class="refresh-bar" [mode]="members.loading() || members.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the members"></mat-progress-bar>
+					@if( rows().length ){
+						<mat-table [dataSource]="rows()" class="mat-elevation-z2 jde-dense">
+							<ng-container matColumnDef="place">
+								<mat-header-cell *matHeaderCellDef>Place</mat-header-cell>
+								<mat-cell *matCellDef="let r; let i = index">{{ i+1 }}</mat-cell>
+							</ng-container>
+							<ng-container matColumnDef="name">
+								<mat-header-cell *matHeaderCellDef>Member</mat-header-cell>
+								<mat-cell *matCellDef="let r">@if( r.link ){<a [routerLink]="r.link">{{ r.name }}</a>}@else{<span class="cell-value inherits">{{ r.name }}</span>}</mat-cell>
+							</ng-container>
+							<ng-container matColumnDef="kind">
+								<mat-header-cell *matHeaderCellDef>Kind</mat-header-cell>
+								<mat-cell *matCellDef="let r">{{ r.kind }}</mat-cell>
+							</ng-container>
+							<ng-container matColumnDef="actions">
+								<mat-header-cell *matHeaderCellDef></mat-header-cell>
+								<mat-cell *matCellDef="let r">
+									<button matIconButton type="button" (click)="move(r, -1)" [disabled]="members.busy() || r.first" [attr.aria-label]="'Move ' + r.name + ' up'" matTooltip="Move up"><mat-icon>arrow_upward</mat-icon></button>
+									<button matIconButton type="button" (click)="move(r, 1)" [disabled]="members.busy() || r.last" [attr.aria-label]="'Move ' + r.name + ' down'" matTooltip="Move down"><mat-icon>arrow_downward</mat-icon></button>
+									<button matIconButton type="button" (click)="remove(r)" [disabled]="members.busy()" [attr.aria-label]="'Remove ' + r.name" matTooltip="Remove"><mat-icon>delete</mat-icon></button>
+								</mat-cell>
+							</ng-container>
+							<mat-header-row *matHeaderRowDef="memberColumns"></mat-header-row>
+							<mat-row *matRowDef="let row; columns: memberColumns"></mat-row>
+						</mat-table>
+					}
+					@else if( !members.loading() && !members.error() ){
+						<p class="empty" role="status">The line has no members.  Add a machine or a line above.</p>
+					}
+					@if( members.error(); as e ){
+						<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+					}
+				</div>
+			</ng-template>
+		</mat-tab>
+	}
+</mat-tab-group>
+<detail-actions [page]="this"/><!--a deleted line keeps its members and its memberships:  Purge takes them-->

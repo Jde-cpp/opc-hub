@@ -6,6 +6,7 @@ import { anonymousAuthStore, qlAnswering } from 'jde-framework/testing';
 import * as FromServer from 'jde-proto/Opc.FromServer';
 import { Attribute } from '../lib/model/attribute';
 import { HistTime, HistValue } from '../lib/model/hist';
+import { OeeLiveEvent } from '../lib/model/oee-live';
 import { CallResult } from '../lib/model/method';
 import { UaNode, Variable } from '../lib/model/node';
 import { NodeId, NodeKey } from '../lib/model/node-id';
@@ -26,7 +27,7 @@ export class BundledHighcharts extends HighchartsLoader{
 		const svg = <any>SVGElement.prototype;
 		svg.getBBox ??= function( this:SVGElement ){ return { x: 0, y: 0, width: 7*(this.textContent?.length ?? 0), height: 12 }; };
 	}
-	protected override importFile( file:string ){ return file=='highstock.js' ? import('highcharts/esm/highstock') : import('highcharts/esm/modules/accessibility'); }
+	protected override importFile( file:string ):Promise<any>{ return file=='highstock.js' ? import('highcharts/esm/highstock') : file=='modules/xrange.js' ? import('highcharts/esm/modules/xrange') : import('highcharts/esm/modules/accessibility'); }
 }
 //A Variable as a browse answers it:  ns 2, browsed by `name`, with `json` on top.
 export const variable = ( i:number, name:string, json:object={} )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}, ...json} );
@@ -68,13 +69,15 @@ export class Feed<T, A=unknown>{
 
 //A Gateway for a page or a resolver to read through:  query/queryArray answer from `answers` as qlAnswering does, querySingle
 //nothing, browseObjectsFolder a node's children in `tree` by its key, references and attributes none, and subscribe/histSubscribe/
-//subscribeEvents open `values`/`histEvents`/`events` for the test to feed;  historyEvents answers nothing, Good, refreshConditions Good
+//subscribeEvents/oeeSubscribe open `values`/`histEvents`/`events`/`oeeEvents` for the test to feed;  historyEvents answers nothing, Good, refreshConditions Good
 //and call a Good result with no outputs.  Assign over whatever
 //else a test needs.
 export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tree=new Map<NodeKey,UaNode[]>() ){
-	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>(), events = new Feed<EventPush, {node:NodeId; select:string[]}>();
+	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>(), events = new Feed<EventPush, {node:NodeId; select:string[]}>(), oeeEvents = new Feed<OeeLiveEvent, number>();
 	return {
-		slug, values, histEvents, events,
+		slug, name: slug, values, histEvents, events, oeeEvents,
+		oeeSubscribe: vi.fn( ( machine:number )=>oeeEvents.open( machine ) ),
+		oeeSubscribeLine: vi.fn( ( line:number )=>oeeEvents.open( -line ) ),//a line's feed is under its id negated
 		subscribeEvents: vi.fn( ( _opc:string, node:NodeId, select:string[], _owner?:string )=>events.open( {node, select} ) ),
 		historyEvents: vi.fn( async ( _opc:string, _node:NodeId, _args:HistEventsArgs ):Promise<HistEventsPage>=>({ status: 0, events: [] }) ),
 		refreshConditions: vi.fn( async ( _opc:string, _node:NodeId ):Promise<StatusCode>=>0 ),

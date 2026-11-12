@@ -30,4 +30,23 @@ describe( 'HistMembers', ()=>{
 		expect( members.busy() ).toBe( false );
 		expect( snackbar.exception ).toHaveBeenCalledWith( 'Could not remove the node.', expect.any( Error ) );
 	} );
+
+	it( "says nothing of another record's refusal, and keeps loading while the later read is under way", async ()=>{
+		const { members } = create();
+		let refuse!:( e:Error )=>void, answer!:( rows:number[] )=>void, record = 'A';
+		const a = members.read( ()=>new Promise<number[]>( ( _r, reject )=>refuse = reject ), rows=>members.rows.set( rows ), ()=>record=='A' );
+		record = 'B';
+		const b = members.read( ()=>new Promise<number[]>( r=>answer = r ), rows=>members.rows.set( rows ), ()=>record=='B' );
+		refuse( new Error( "No Read on A's group." ) );
+		await a;
+		expect( [members.error(), members.loading()] ).toEqual( [undefined, true] );
+		answer( [4] );
+		await b;
+		expect( [members.rows(), members.loading()] ).toEqual( [[4], false] );
+		const c = members.read( ()=>new Promise<number[]>( r=>answer = r ), rows=>members.rows.set( rows ), ()=>true );
+		await members.read( async ()=>[5], rows=>members.rows.set( rows ), ()=>true );
+		answer( [6] );//the earlier of two reads of one record, landing last
+		await c;
+		expect( members.rows() ).toEqual( [5] );
+	} );
 } );

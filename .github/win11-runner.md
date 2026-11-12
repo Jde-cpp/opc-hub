@@ -95,7 +95,7 @@ The `-jde` build does **not** build third-party dependencies; they must already 
 
 | Path | Purpose |
 |------|---------|
-| `%REPO_DIR%\install\clang++\Debug` | fmt / zlib / libxml2 / open62541 / protobuf / abseil / gtest / spdlog / jsonnet / ryml / NodesetLoader — `CMAKE_PREFIX_PATH`. fmt/zlib/libxml2 ship DLLs that CMake POST_BUILD-copies next to each test exe. |
+| `%REPO_DIR%\install\clang++\Debug` | fmt / zlib / libxml2 / open62541 / protobuf / abseil / gtest / spdlog / jsonnet / ryml / NodesetLoader / quickjs-ng (`qjs`) — `CMAKE_PREFIX_PATH`. fmt/zlib/libxml2 ship DLLs that CMake POST_BUILD-copies next to each test exe. |
 | `%REPO_DIR%\boostorg\boost_1_91_0` | Boost **source** — on Windows `functions.cmake` compiles `boost_json` from source (no `find_package(Boost)`). |
 | `%VCPKG_ROOT%\installed` | vcpkg deps for triplet `x64-windows` (OpenSSL, sqlite3), **dynamically** linked - `libcrypto-3-x64.dll`, `libssl-3-x64.dll`, `sqlite3.dll` ship beside the binaries.  Was `x64-windows-static-md`: a static OpenSSL was linked into every module that touched crypto (4.5 MB of `Jde.DB.MySql.dll`, 3.9 MB of `Jde.dll`), and two copies meant two error stacks and two RNGs in one process. |
 | `%UA_NODE_SETS%` | Clone of [OPCFoundation/UA-Nodeset](https://github.com/OPCFoundation/UA-Nodeset) — the OpcServer UALoadTests read it. |

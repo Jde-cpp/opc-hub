@@ -129,11 +129,11 @@ local oeeCoding = {
 	oeeLineStatus: oeeLineStatus,
 	OeeMember: oee,
 	OeeCoverage: { fields: [ { name: "performance", type: NonNull(UInt) }, { name: "quality", type: NonNull(UInt) } ] },
-	OeeLineRef: { fields: [ { name: "id", type: NonNull(UInt) }, { name: "name", type: NonNull(String) }, { name: "level", type: String } ] },
+	OeeLineRef: { fields: [ { name: "id", type: NonNull(UInt) }, { name: "name", type: NonNull(String) }, { name: "slug", type: NonNull(String) }, { name: "level", type: String } ] },
 	OeeCodingRead: oeeCoding,
 	codeOee: oeeCoding,
 	uncodeOee: { fields: [ { name: "id", type: NonNull(UInt) } ] },
-	OeeMachineRef: { fields: [ { name: "id", type: NonNull(UInt) }, { name: "name", type: NonNull(String) } ] },
+	OeeMachineRef: { fields: [ { name: "id", type: NonNull(UInt) }, { name: "name", type: NonNull(String) }, { name: "slug", type: NonNull(String) } ] },
 	OeeReasonRef: { fields: [ { name: "id", type: NonNull(UInt) }, { name: "name", type: NonNull(String) }, { name: "category", type: NonNull(String) } ] },
 	OeeStopRead: {
 		fields: [

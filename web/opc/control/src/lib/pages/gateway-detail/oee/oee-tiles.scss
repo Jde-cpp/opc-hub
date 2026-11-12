@@ -1,0 +1,92 @@
+/* The dashboard's tiles and a line's page's members' (#409):  a tile per machine or line, as many to a row as the pane holds;
+   each is one link, to its OEE page */
+.tiles{
+	display: grid;
+	grid-template-columns: repeat( auto-fill, minmax( 280px, 1fr ) );
+	gap: .75rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.tile{
+	display: flex;
+	flex-direction: column;
+	gap: .25rem;
+	box-sizing: border-box;
+	height: 100%;
+	padding: .75rem 1rem;
+	border-radius: 12px;
+	background: var(--mat-sys-surface-container-low);
+	color: var(--mat-sys-on-surface);
+	text-decoration: none;
+	&:hover{
+		background: var(--mat-sys-surface-container-high);
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: 2px;
+	}
+	&.off .figures{
+		color: var(--mat-sys-on-surface-variant);
+	}
+	.name{
+		font: var(--mat-sys-title-medium);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.state{
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font: var(--mat-sys-body-medium);
+		font-variant-numeric: tabular-nums;
+	}
+	/* the state's colour is the chart's for it;  the word beside it says it */
+	.dot{
+		flex: 0 0 auto;
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+	}
+	.reason{
+		min-height: 1.5rem;
+		font: var(--mat-sys-body-medium);
+	}
+	.category, .note{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+	.badge{
+		padding: 1px 8px;
+		border-radius: 8px;
+		background: var(--mat-sys-surface-container-highest);
+		font: var(--mat-sys-label-medium);
+		&.uncoded{
+			background: var(--mat-sys-tertiary-container);
+			color: var(--mat-sys-on-tertiary-container);
+		}
+	}
+	.figures{
+		display: flex;
+		justify-content: space-between;
+		gap: .5rem;
+		margin-top: .25rem;
+	}
+	.figure{
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		.label{
+			color: var(--mat-sys-on-surface-variant);
+			font: var(--mat-sys-label-small);
+		}
+		.value{
+			font: var(--mat-sys-title-medium);
+			font-variant-numeric: tabular-nums;
+		}
+		&.lead .value{
+			font-weight: 700;
+		}
+	}
+}

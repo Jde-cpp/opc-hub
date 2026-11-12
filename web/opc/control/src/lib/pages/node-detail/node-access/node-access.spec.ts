@@ -1,4 +1,4 @@
-import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
+import { TestBed } from '@angular/core/testing';
 import { AppService, MutationType, SnackbarService } from 'jde-framework';
 import { Rights } from 'jde-access';
 import { NodeAccess } from './node-access';
@@ -13,10 +13,10 @@ const row = ( allowed:number, denied:number, permissionId=3 ):RolePermission=>
 //angular-review3 #2: Remove-vs-Add was decided from `args` - the CHANGED fields - so clearing one side of a two-sided
 //permission looked like "no rights left" and deleted the whole permissionRight, taking the other side with it.
 describe( 'NodeAccess.onToggle', ()=>{
-	//the page holding one role's row, and that role
+	//the page holding one role's row, set by hand, and that role:  its first change detection, which loads, waits for a tick these
+	//synchronous tests end before
 	const create = ( allowed:number, denied:number, permissionId=3 )=>{
 		TestBed.configureTestingModule({ providers: [
-			{ provide: ComponentFixtureAutoDetect, useValue: false },//no load(): the rows are set by hand below
 			{ provide: AppService, useValue: {} },
 			{ provide: SnackbarService, useValue: snackbarStub() }
 		]});

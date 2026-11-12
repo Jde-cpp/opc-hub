@@ -1,0 +1,31 @@
+@use '../../status';
+
+:host{
+	display: block;
+	width: 100%;
+}
+section{
+	box-sizing: border-box;
+	padding: 0 24px;
+	margin-top: 1rem;
+	h3{
+		margin: 0 0 .5rem;
+		font: var(--mat-sys-title-medium);
+	}
+}
+.notice{
+	@include status.refused( .5rem 24px 0, var(--mat-sys-on-surface-variant) );
+	mat-icon{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+section .notice{
+	margin-inline: 0;
+}
+.empty{
+	margin: 0;
+	color: var(--mat-sys-on-surface-variant);
+}
+oee-chart{
+	margin-bottom: .25rem;
+}

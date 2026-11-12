@@ -1,0 +1,90 @@
+@if( error(); as e ){
+	<div class="jde-empty" role="alert"><mat-icon aria-hidden="true">error_outline</mat-icon><p class="title">Could not read the machines.</p><p class="detail">{{ e }}</p></div>
+}
+@else if( loading() ){
+	<mat-progress-bar mode="indeterminate" aria-label="Reading the machines"></mat-progress-bar>
+}
+@else if( !machines().length ){
+	<div class="jde-empty" role="note">
+		<mat-icon aria-hidden="true">precision_manufacturing</mat-icon>
+		<p class="title">No machines to show.</p>
+		<p class="detail">A machine is made on the gateway's Machines tab.  The dashboard shows those whose group you may read.</p>
+		<div class="actions"><a matButton="filled" [routerLink]="['..']">Open the gateway</a></div>
+	</div>
+}
+@else{
+	@if( chartState()=='absent' ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The chart draws with Highcharts Stock, which the install does not include.  <a [routerLink]="['/help/gateways']" fragment="trend-chart">How to add it</a></p>
+	}
+	@else if( chartState()=='failed' ){
+		<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The chart could not load Highcharts Stock.  Reload the page to try again.</p>
+	}
+	<ng-template #figures let-v><!--a tile's figures, what they are over, and what it has to say-->
+		<span class="figures">
+			@for( f of v.figures; track f.label ){
+				<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
+			}
+		</span>
+		@if( v.period ){
+			<span class="note">{{ v.period }}, so far@if( v.partial ){, partial}</span>
+		}
+		@for( n of v.notes; track n ){
+			<span class="note">{{ n }}</span>
+		}
+	</ng-template>
+	@if( lineTiles().length ){
+		<section aria-labelledby="oee-line-tiles">
+			<h3 id="oee-line-tiles">Lines</h3>
+			<ul class="tiles">
+				@for( t of lineTiles(); track t.line.id ){
+					@let v = t.view();
+					<li>
+						<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../lines', t.line.slug, 'oee']">
+							<span class="name">{{ t.line.name }}</span>
+							<span class="category">{{ t.line.level }}</span>
+							<span class="state">{{ v.stateLabel }}</span>
+							<ng-container [ngTemplateOutlet]="figures" [ngTemplateOutletContext]="{$implicit: v}"></ng-container>
+						</a>
+					</li>
+				}
+			</ul>
+		</section>
+	}
+	@if( tileViews().length ){<!--none where every machine is in a line with a tile-->
+		<section aria-labelledby="oee-tiles">
+			<h3 id="oee-tiles">Machines</h3>
+			<ul class="tiles">
+				@for( t of tileViews(); track t.machine.id ){
+					@let v = t.view();
+					<li>
+						<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../machines', t.machine.slug, 'oee']">
+							<span class="name">{{ t.machine.name }}</span>
+							<span class="state"><span class="dot" aria-hidden="true" [style.background]="v.color"></span><span>{{ v.stateLabel }}@if( v.since ){ since {{ v.since | date:'MMM d, HH:mm' }}}@if( v.length ){, {{ v.length }}}</span></span>
+							@if( v.reason; as r ){
+								<span class="reason"><span>{{ r.name }}</span> <span class="category">{{ r.category }}</span></span>
+							}
+							@else if( v.badge ){
+								<span class="reason"><span class="badge" [class.uncoded]="v.badge=='Uncoded'">{{ v.badge }}</span></span>
+							}
+							<ng-container [ngTemplateOutlet]="figures" [ngTemplateOutletContext]="{$implicit: v}"></ng-container>
+						</a>
+					</li>
+				}
+			</ul>
+		</section>
+	}
+	@if( chartState()=='loaded' ){
+		<section aria-labelledby="oee-gantt">
+			<h3 id="oee-gantt">Current shift</h3>
+			@if( ganttSpec(); as spec ){
+				<oee-chart [spec]="spec" (band)="open($event)"></oee-chart>
+			}
+			@else{
+				<p class="empty">No machine has a shift to draw yet.</p>
+			}
+			@if( between().length ){
+				<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>Between shifts:  {{ between().join( ', ' ) }}</p>
+			}
+		</section>
+	}
+}
