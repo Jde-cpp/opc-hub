@@ -54,6 +54,8 @@ namespace OpenProtocol{
 	Τ Ω decodeAs( const Header& head, sv data )ι->Expected<Body>{
 		if( !head.Revision || head.Revision>T::MaxRevision )
 			return refuse( ERefusal::UnknownRevision, "MID {:04} revision {} is not 1 to {}, the revisions the codec reads.", head.Mid, head.Revision, T::MaxRevision );
+		if( head.Parts>1 )
+			return refuse( ERefusal::Linked, "MID {:04} is part {} of {}, and the codec joins no linked message.", head.Mid, head.Part, head.Parts );
 		T m;
 		Reader reader{ data, head };
 		Walk( m, reader, head.Revision );
@@ -112,8 +114,6 @@ namespace OpenProtocol{
 	}
 
 	α OpenProtocol::DecodeBody( const Header& head, sv data )ι->Expected<Body>{
-		if( head.Parts>1 )
-			return refuse( ERefusal::Linked, "MID {:04} is part {} of {}, and the codec joins no linked message.", head.Mid, head.Part, head.Parts );
 		return decodeOneOf( std::type_identity<Body>{}, head, data );
 	}
 
@@ -123,7 +123,7 @@ namespace OpenProtocol{
 			return std::unexpected{ head.error() };
 		let length = head->Length;
 		if( frame.size()<length || frame.size()>length+1u )
-			return refuse( ERefusal::Length, "MID {:04}:  the length is {} and the frame {} bytes before its NUL.", head->Head.Mid, length, frame.size()-( frame.size()>length ? 1 : 0 ) );
+			return refuse( ERefusal::Length, "MID {:04}:  the length {} and its NUL make {} bytes, and the frame is {}.", head->Head.Mid, length, length+1, frame.size() );
 		if( frame.size()==length || frame[length]!='\0' )
 			return refuse( ERefusal::Nul, "MID {:04}:  no NUL follows the length's {} bytes.", head->Head.Mid, length );
 		return DecodeBody( head->Head, frame.substr(HeaderSize, length-HeaderSize) ).transform( [&]( Body&& body ){ return Message{head->Head, move(body)}; } );

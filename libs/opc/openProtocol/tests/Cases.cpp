@@ -3,7 +3,8 @@
 //A case per MID at each of its revisions, its frame written from the table each function names:  a row is the table's
 //Byte column, its parameter id and the value's bytes, with the member the value is beside it.  Where a table's Byte
 //column is a misprint the row says so and counts from the widths in its Value column.
-namespace Jde::Opc::OpenProtocol::Tests{
+namespace Jde::Opc::OpenProtocol{
+namespace Tests{
 	constexpr sv Vin{ "KPOL3456JKLO897" };
 
 	//Tables 13 to 18.
@@ -489,8 +490,8 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		}
 	}
 	template<class... T> Ω noData( std::type_identity<variant<T...>>, vector<Case>& y )ι->void{ ( addNoData<T>(y), ... ); }
-
-	α Cases()ι->vector<Case>{
+}
+	α Tests::Cases()ι->vector<Case>{
 		vector<Case> y;
 		noData( std::type_identity<Body>{}, y );
 		let each = [&]( uint16_t last, Case (*revision)(uint16_t)ι ){
@@ -522,7 +523,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	//spacing being a layout's;  the header after the revision is spaces, as printed.  §5.8.6's MID 0065 example is left
 	//out:  as printed its batch counter is three digits against Table 123's four and its own length of 118, and its last
 	//bytes are no parameter 11.
-	α Examples()ι->vector<Case>{
+	α Tests::Examples()ι->vector<Case>{
 		vector<Case> y;
 		let add = [&]( sv section, sv file, string frame, Header head, Body body ){
 			head.Mid = MidOf( body );

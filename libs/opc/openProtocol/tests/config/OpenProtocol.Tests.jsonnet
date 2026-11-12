@@ -17,7 +17,7 @@ local logsDir = std.extVar("logsDir");
 				exception: "Trace",
 				test: "Trace",
 				settings: "Debug",
-				openProtocol: "Trace"
+				openProtocol: "Information" //the corpus's frames log bytes past their layouts at Debug, hundreds of lines.
 			},
 			sinks:{
 				console:{},

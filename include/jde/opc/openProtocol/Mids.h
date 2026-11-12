@@ -2,9 +2,11 @@
 
 //A type per MID the driver speaks, each the union of its revisions' fields under the specification's names (Atlas Copco
 //9836 4415 01, Release 2.20.1).  A number is nullopt and a text empty where the wire's field is all spaces, a value not
-//supported or not defined (§2.3, Table 3), and where the frame's revision does not carry the field.  A text comes without
-//its padding.  A torque is the wire's integer over 100, in the unit the result's TorqueUnit names.  A number's type is its
-//field's range, a tightening id's ten digits a uint32_t, and the decoder refuses one past it.
+//supported or not defined (§2.3, Table 3), and where the frame's revision does not carry the field.  A time is nullopt
+//there too, and where its digits name no date, 0000-00-00:00:00:00 among them.  A text comes without its padding, in
+//UTF-8, a byte past ASCII read as Latin-1's character and written back as that byte.  A torque is the wire's integer over
+//100, in the unit the result's TorqueUnit names.  A number's type is its field's range, a tightening id's ten digits a
+//uint32_t, and the decoder refuses one past it.
 namespace Jde::Opc::OpenProtocol{
 	using LocalTime = std::chrono::local_seconds;//the wire's YYYY-MM-DD:HH:MM:SS as it stands, in no zone.
 

@@ -27,8 +27,8 @@ namespace Jde::Opc::OpenProtocol::Tests{
 			ASSERT_TRUE( head ) << revision;
 			EXPECT_EQ( head->Head.Revision, 1 ) << revision;
 		}
-		EXPECT_EQ( header(after(0, "002"))->Head.Revision, 2 );
-		EXPECT_EQ( header(after(0, "999"))->Head.Revision, 999 );
+		EXPECT_EQ( header(after(0, "002")).value().Head.Revision, 2 );
+		EXPECT_EQ( header(after(0, "999")).value().Head.Revision, 999 );
 	}
 
 	TEST( HeaderTests, FieldsRead ){
@@ -94,6 +94,13 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_EQ( two.error().Code, ERefusal::Linked );
 	}
 
+	//A part of a MID with no type, or past its type's last revision, is refused as that, which a controller's side answers
+	//with MID 0004 code 99 or 97.
+	TEST( HeaderTests, LinkedPartOfAnUnknownMid ){
+		EXPECT_EQ( Refused("00200900"+after(Parts, "21")+'\0'), ERefusal::UnknownMid );
+		EXPECT_EQ( Refused(Frame({.Mid=Mid0005::Id, .Revision=Mid0005::MaxRevision+1, .Parts=2, .Part=1}, "0018")), ERefusal::UnknownRevision );
+	}
+
 	TEST( HeaderTests, FrameSizeIsTheLengthAndItsNul ){
 		EXPECT_FALSE( FrameSize("002").value() ) << "not the length's four digits yet";
 		EXPECT_EQ( FrameSize("0020").value(), 21u );
@@ -113,6 +120,9 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_EQ( Refused(ExampleFrame("    0001003", {})), ERefusal::Length ) << "the length has no default";
 		EXPECT_EQ( Refused(withoutNul(ExampleFrame("00240005", "001"))), ERefusal::Length ) << "a byte short of its length";
 		EXPECT_EQ( Refused(ExampleFrame("00240005", "00180")), ERefusal::Length ) << "a byte past its length";
+		let noNul = Decode( withoutNul(ExampleFrame("00240005", "00180"))+'0' );
+		ASSERT_FALSE( noNul );
+		EXPECT_TRUE( noNul.error().What.contains("make 25 bytes, and the frame is 26") ) << "the bytes given, with no NUL among them:  " << noNul.error().What;
 		//A length past 9999 has no four digits:  the field's largest, against a frame of 10 000 bytes and its NUL.
 		EXPECT_EQ( Refused(ExampleFrame("99990050", string(9'980, 'A'))), ERefusal::Length );
 		//A fifth digit reads as the MID's first:  a length of 1000, which the frame is not.

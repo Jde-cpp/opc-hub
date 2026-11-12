@@ -1,3 +1,5 @@
+#include <jde/tests/Capture.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include "helpers.h"
 
 //The data field's rules (§2.3, Table 3), each through the smallest MID that has the field:  a number's digits and its
@@ -29,16 +31,16 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	}
 
 	TEST( FieldTests, NumberZeroPadded ){
-		EXPECT_EQ( decoded<Mid0018>(1, "000")->Pset, 0 );
-		EXPECT_EQ( decoded<Mid0018>(1, "999")->Pset, 999 );
+		EXPECT_EQ( decoded<Mid0018>(1, "000").value().Pset, 0 );
+		EXPECT_EQ( decoded<Mid0018>(1, "999").value().Pset, 999 );
 		EXPECT_EQ( dataOf(Mid0018{.Pset=7}).value(), "007" );
 		EXPECT_EQ( dataOf(Mid0064{.TighteningId=4294967295}, 7).value(), "4294967295" );
 	}
 
 	//The specification's own MID 0061 and 0065 examples write their tightening ids left-justified, spaces after them.
 	TEST( FieldTests, NumberWithSpacesAfter ){
-		EXPECT_EQ( decoded<Mid0064>(1, "345675    ")->TighteningId, 345675u );
-		EXPECT_EQ( decoded<Mid0018>(1, "7  ")->Pset, 7 );
+		EXPECT_EQ( decoded<Mid0064>(1, "345675    ").value().TighteningId, 345675u );
+		EXPECT_EQ( decoded<Mid0018>(1, "7  ").value().Pset, 7 );
 	}
 
 	TEST( FieldTests, MixedNumber ){
@@ -79,27 +81,69 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_EQ( refusal<Mid0005>(1, "001"), ERefusal::Field );
 	}
 
+	//Bytes after the revision's last field, as a later firmware's parameters would be, are ignored and logged.
 	TEST( FieldTests, BytesPastTheLayout ){
-		EXPECT_EQ( refusal<Mid0018>(1, "0120"), ERefusal::Field );
-		EXPECT_EQ( refusal<Mid0003>(1, "0"), ERefusal::Field ) << "a MID with no data field";
-		EXPECT_EQ( refusal<Mid0071>(1, "01E404021031042008-06-02:10:14:26051"), ERefusal::Field ) << "revision 3's tool health under a header of revision 1";
-		EXPECT_EQ( refusal<Mid0004>(1, "0018002"), ERefusal::Field ) << "revision 2's three-digit code under a header of revision 1";
+		Logging::Capture capture{ LogTag, ELogLevel::Debug };
+		EXPECT_EQ( decoded<Mid0018>(1, "0120").value().Pset, 12 );
+		EXPECT_TRUE( decoded<Mid0003>(1, "0") ) << "a MID with no data field";
+		let health = decoded<Mid0071>( 1, "01E404021031042008-06-02:10:14:26051" );
+		ASSERT_TRUE( health ) << health.error().What;
+		EXPECT_TRUE( *health==(Mid0071{.ErrorCode="E404", .ControllerReady=1, .ToolReady=1, .Time=At(2008, 6, 2, 10, 14, 26)}) ) << "revision 3's tool health under a header of revision 1, read as revision 1";
+		let lines = capture.Find( []( const Logging::Entry& e ){ return e.Message().ends_with(", the revision's last."); } );
+		ASSERT_EQ( lines.size(), 3u );
+		EXPECT_EQ( lines[0].Message(), "MID 0018 revision 1:  ignored '0', after byte 23, the revision's last." );
+		EXPECT_EQ( lines[1].Message(), "MID 0003 revision 1:  ignored '0', after byte 20, the revision's last." );
+		EXPECT_EQ( lines[2].Message(), "MID 0071 revision 1:  ignored '051', after byte 53, the revision's last." );
+		//The cost:  a later revision's data field under an earlier revision's header, read by the earlier layout.
+		EXPECT_EQ( decoded<Mid0004>(1, "0018002").value().Code, 0 ) << "revision 2's code 002 under a header of revision 1";
+		//The first time for a MID and revision is a Warning, unless a test before had it.
+		EXPECT_EQ( decoded<Mid0018>(1, "0120").value().Pset, 12 );
+		let again = capture.Find( []( const Logging::Entry& e ){ return e.Message().starts_with("MID 0018 revision 1:"); } );
+		ASSERT_EQ( again.size(), 2u );
+		EXPECT_EQ( again[1].Level, ELogLevel::Debug );
 	}
 
 	TEST( FieldTests, TextWithoutItsPadding ){
 		let alarm = decoded<Mid0074>( 2, "E40  " );
 		ASSERT_TRUE( alarm );
 		EXPECT_EQ( alarm->ErrorCode, "E40" );
-		EXPECT_EQ( decoded<Mid0074>(2, " E40 ")->ErrorCode, " E40" ) << "the spaces before stay";
-		EXPECT_EQ( decoded<Mid0074>(2, "     ")->ErrorCode, "" );
-		EXPECT_EQ( decoded<Mid0074>(2, "~\x7F{} ")->ErrorCode, "~\x7F{}" ) << "0x20 to 0x7F";
+		EXPECT_EQ( decoded<Mid0074>(2, " E40 ").value().ErrorCode, " E40" ) << "the spaces before stay";
+		EXPECT_EQ( decoded<Mid0074>(2, "     ").value().ErrorCode, "" );
+		EXPECT_EQ( decoded<Mid0074>(2, "~\x7F{} ").value().ErrorCode, "~\x7F{}" ) << "0x20 to 0x7F";
 		EXPECT_EQ( dataOf(Mid0074{.ErrorCode="E4"}, 2).value(), "E4   " );
 	}
 
 	TEST( FieldTests, TextOutsideItsCharacters ){
-		for( char outside : {'\x1F', '\t', '\n', '\0', '\x80', '\xE9', '\xFF'} ){
-			EXPECT_EQ( refusal<Mid0074>(1, string{'E', outside, '0', '6'}), ERefusal::Field ) << (int)(uint8_t)outside;
-			EXPECT_TRUE( valueRefused(Mid0074{.ErrorCode=string{'E', outside}}) ) << (int)(uint8_t)outside;
+		for( char control : {'\x1F', '\t', '\n', '\0'} ){
+			EXPECT_EQ( refusal<Mid0074>(1, string{'E', control, '0', '6'}), ERefusal::Field ) << (int)(uint8_t)control;
+			EXPECT_TRUE( valueRefused(Mid0074{.ErrorCode=string{'E', control}}) ) << (int)(uint8_t)control;
+		}
+		//No UTF-8, or a character past Latin-1's U+00FF:  a lone continuation byte, Latin-1's own é, a lead byte cut short,
+		//an overlong é, a lead byte before a space, U+0100 and the euro sign.
+		constexpr array<sv,8> notLatin1{ "E\x80", "\xE9", "\xFF", "E\xC3", "\xC1\xA9", "\xC3 ", "\xC4\x80", "\xE2\x82\xAC" };
+		for( uint i=0; i<notLatin1.size(); ++i )
+			EXPECT_TRUE( valueRefused(Mid0074{.ErrorCode=string{notLatin1[i]}}) ) << "case " << i;
+		EXPECT_TRUE( valueRefused(Mid0050{.Vin="VIN \xE2\x82\xAC"}) );
+	}
+
+	//A byte past ASCII is Latin-1's character, held as UTF-8:  what code page a controller writes is Phase 10's to see,
+	//and Latin-1 loses no byte of it.
+	TEST( FieldTests, TextPastAscii ){
+		EXPECT_EQ( decoded<Mid0074>(1, "\xC9\xFC\x80\xFF").value().ErrorCode, "\xC3\x89\xC3\xBC\xC2\x80\xC3\xBF" );
+		EXPECT_EQ( decoded<Mid0050>(1, "S\xFC" "d   ").value().Vin, "S\xC3\xBC" "d" );
+		EXPECT_EQ( dataOf(Mid0074{.ErrorCode="\xC3\x89"}).value(), "\xC9   " ) << "padded by characters, not UTF-8's bytes";
+		EXPECT_EQ( dataOf(Mid0074{.ErrorCode="\xC3\x89\xC3\x89\xC3\x89\xC3\x89"}).value(), "\xC9\xC9\xC9\xC9" );
+		EXPECT_TRUE( valueRefused(Mid0074{.ErrorCode="\xC3\x89\xC3\x89\xC3\x89\xC3\x89\xC3\x89"}) ) << "five characters at revision 1";
+		string vin;
+		for( uint i=0; i<25; ++i )
+			vin += "\xC3\xBC";
+		EXPECT_EQ( dataOf(Mid0050{.Vin=vin}).value(), string(25, '\xFC') );
+		EXPECT_TRUE( valueRefused(Mid0050{.Vin=vin+"V"}) ) << "26 characters";
+		for( uint b=0x20; b<=0xFF; ++b ){
+			let wire = string{ 'E', (char)b, '0', '6' };
+			let text = decoded<Mid0074>( 1, wire );
+			ASSERT_TRUE( text ) << b << ":  " << text.error().What;
+			EXPECT_EQ( dataOf(*text).value(), wire ) << b;
 		}
 	}
 
@@ -112,25 +156,32 @@ namespace Jde::Opc::OpenProtocol::Tests{
 
 	//MID 0050's number runs to the data field's end, 25 characters at most.
 	TEST( FieldTests, TextToTheEnd ){
-		EXPECT_EQ( decoded<Mid0050>(1, "")->Vin, "" );
-		EXPECT_EQ( decoded<Mid0050>(1, "V")->Vin, "V" );
-		EXPECT_EQ( decoded<Mid0050>(1, "VIN 1   ")->Vin, "VIN 1" );
-		EXPECT_EQ( decoded<Mid0050>(1, string(25, 'V'))->Vin, string(25, 'V') );
+		EXPECT_EQ( decoded<Mid0050>(1, "").value().Vin, "" );
+		EXPECT_EQ( decoded<Mid0050>(1, "V").value().Vin, "V" );
+		EXPECT_EQ( decoded<Mid0050>(1, "VIN 1   ").value().Vin, "VIN 1" );
+		EXPECT_EQ( decoded<Mid0050>(1, string(25, 'V')).value().Vin, string(25, 'V') );
 		EXPECT_EQ( refusal<Mid0050>(1, string(26, 'V')), ERefusal::Field );
 		EXPECT_EQ( refusal<Mid0050>(1, "VIN\x01"), ERefusal::Field );
 	}
 
 	TEST( FieldTests, Time ){
-		EXPECT_EQ( decoded<Mid0081>(1, "2026-11-12:06:30:00")->Time, At(2026, 11, 12, 6, 30, 0) );
-		EXPECT_EQ( decoded<Mid0081>(1, "2024-02-29:23:59:59")->Time, At(2024, 2, 29, 23, 59, 59) );
-		EXPECT_EQ( decoded<Mid0081>(1, "0000-01-01:00:00:00")->Time, At(0, 1, 1, 0, 0, 0) );
-		EXPECT_EQ( decoded<Mid0081>(1, "9999-12-31:23:59:59")->Time, At(9999, 12, 31, 23, 59, 59) );
-		EXPECT_FALSE( decoded<Mid0081>(1, string(19, ' '))->Time ) << "not sent";
+		EXPECT_EQ( decoded<Mid0081>(1, "2026-11-12:06:30:00").value().Time, At(2026, 11, 12, 6, 30, 0) );
+		EXPECT_EQ( decoded<Mid0081>(1, "2024-02-29:23:59:59").value().Time, At(2024, 2, 29, 23, 59, 59) );
+		EXPECT_EQ( decoded<Mid0081>(1, "0000-01-01:00:00:00").value().Time, At(0, 1, 1, 0, 0, 0) );
+		EXPECT_EQ( decoded<Mid0081>(1, "9999-12-31:23:59:59").value().Time, At(9999, 12, 31, 23, 59, 59) );
+		EXPECT_FALSE( decoded<Mid0081>(1, string(19, ' ')).value().Time ) << "not sent";
 		EXPECT_EQ( dataOf(Mid0081{.Time=At(2026, 1, 2, 3, 4, 5)}).value(), "2026-01-02:03:04:05" );
 		EXPECT_EQ( dataOf(Mid0081{}).value(), string(19, ' ') );
 		for( sv time : {"2026-11-12 06:30:00", "2026/11/12:06:30:00", "2026-11-12:06.30.00", "2026-11-12:06:30:0 ", "2026-11-12:06:30   ", " 026-11-12:06:30:00", "20261112063000     ",
-			"2026-00-12:06:30:00", "2026-13-12:06:30:00", "2026-11-00:06:30:00", "2026-11-31:06:30:00", "2026-02-29:06:30:00", "2026-11-12:24:00:00", "2026-11-12:06:60:00", "2026-11-12:06:30:60"} )
+			"2026-1x-12:06:30:00", "0000-00-00:00:00:0\x7F"} )
 			EXPECT_EQ( refusal<Mid0081>(1, time), ERefusal::Field ) << time;
+		//Digits in the shape that name no date or time of day are a controller's placeholder, read as not set.
+		for( sv time : {"0000-00-00:00:00:00", "2026-00-12:06:30:00", "2026-13-12:06:30:00", "2026-11-00:06:30:00", "2026-11-31:06:30:00", "2026-02-29:06:30:00",
+			"2026-11-12:24:00:00", "2026-11-12:06:60:00", "2026-11-12:06:30:60", "9999-99-99:99:99:99"} ){
+			let unset = decoded<Mid0081>( 1, time );
+			ASSERT_TRUE( unset ) << time << ":  " << unset.error().What;
+			EXPECT_FALSE( unset->Time ) << time;
+		}
 		EXPECT_TRUE( valueRefused(Mid0081{.Time=At(10'000, 1, 1, 0, 0, 0)}) );
 		EXPECT_TRUE( valueRefused(Mid0081{.Time=At(-1, 12, 31, 23, 59, 59)}) );
 		EXPECT_TRUE( valueRefused(Mid0081{.Time=LocalTime::max()}) );
@@ -143,7 +194,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		let torque = []( sv digits ){
 			let blank = []( sv id, uint width ){ return string{ id }+string( width, ' ' ); };
 			return decoded<Mid0015>( 2, "01012"+blank("02", 25)+blank("03", 19)+blank("04", 1)+blank("05", 2)+"06"+string{ digits }
-				+blank("07", 6)+blank("08", 6)+blank("09", 5)+blank("10", 5)+blank("11", 5)+blank("12", 6)+blank("13", 6) )->TorqueMin;
+				+blank("07", 6)+blank("08", 6)+blank("09", 5)+blank("10", 5)+blank("11", 5)+blank("12", 6)+blank("13", 6) ).value().TorqueMin;
 		};
 		EXPECT_EQ( torque("000739"), 7.39 );
 		EXPECT_EQ( torque("000000"), 0. );

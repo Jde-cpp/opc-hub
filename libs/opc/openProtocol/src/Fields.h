@@ -16,10 +16,12 @@ namespace Jde::Opc::OpenProtocol{
 				v = (T)*n;
 		}
 		α Scaled( uint8_t id, optional<double>& v, uint8_t width )ι->void;//the integer over 100.
-		α Text( uint8_t id, string& v, uint16_t width )ι->void;//0x20 to 0x7F, without the spaces after it.
+		α Text( uint8_t id, string& v, uint16_t width )ι->void;//Latin-1 as UTF-8, without the spaces after it.
 		α Time( uint8_t id, optional<LocalTime>& v )ι->void;
 		α Rest( string& v, uint16_t max )ι->void;//a text that runs to the data field's end.
-		α Finish()ι->optional<Refusal>;//the refusal, one for bytes after the last field among them.
+		//The refusal.  Bytes after the last field, as a later firmware's parameters would be, are ignored:  logged at Warning
+		//the first time the process sees them for a MID and revision, and at Debug after.
+		α Finish()ι->optional<Refusal>;
 	private:
 		α Take( uint8_t id, uint16_t width )ι->optional<sv>;
 		α Number( uint8_t id, uint8_t width, uint64_t max )ι->optional<uint64_t>;
@@ -44,6 +46,7 @@ namespace Jde::Opc::OpenProtocol{
 		optional<Refusal> Refused;
 	private:
 		α Id( uint8_t id )ι->void;
+		α Latin1( uint8_t id, sv v )ι->optional<string>;//`v`'s wire bytes, refused where it is no text.
 		α Number( uint8_t id, optional<uint64_t> v, uint8_t width )ι->void;
 		α Refuse( uint8_t id, string&& why )ι->void;
 		const Header& _head;

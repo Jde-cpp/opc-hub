@@ -1,5 +1,6 @@
 #include "Fields.h"
 #include <cmath>
+#include <jde/opc/openProtocol/logTags.h>
 
 #define let const auto
 
@@ -18,8 +19,35 @@ namespace OpenProtocol{
 			? Ƒ( "MID {:04} revision {}, parameter {:02} at byte {}", head.Mid, head.Revision, id, byte )
 			: Ƒ( "MID {:04} revision {}, byte {}", head.Mid, head.Revision, byte );
 	}
-	Ω isText( sv v )ι->bool{
-		return std::ranges::all_of( v, []( char c ){ return (uint8_t)c>=0x20 && (uint8_t)c<=0x7F; } );
+	//A text's bytes past ASCII are Latin-1, one character each, so none is lost whatever code page the controller writes.
+	Ω isControl( char c )ι->bool{ return (uint8_t)c<0x20; }
+	Ω toUtf8( sv latin1 )ι->string{
+		string y;
+		y.reserve( latin1.size() );
+		for( let c : latin1 ){
+			if( let b = (uint8_t)c; b<0x80 )
+				y += c;
+			else{
+				y += (char)( 0xC0 | b>>6 );
+				y += (char)( 0x80 | (b & 0x3F) );
+			}
+		}
+		return y;
+	}
+	//nullopt where `utf8` is not UTF-8, or has a character past U+00FF or below U+0020.
+	Ω toLatin1( sv utf8 )ι->optional<string>{
+		string y;
+		y.reserve( utf8.size() );
+		for( uint i=0; i<utf8.size(); ++i ){
+			let b = (uint8_t)utf8[i];
+			if( b>=0x20 && b<0x80 )
+				y += utf8[i];
+			else if( (b==0xC2 || b==0xC3) && i+1<utf8.size() && ((uint8_t)utf8[i+1] & 0xC0)==0x80 )
+				y += (char)( (b & 0x03)<<6 | ((uint8_t)utf8[++i] & 0x3F) );
+			else
+				return nullopt;
+		}
+		return y;
 	}
 	Ω withoutPadding( sv field )ι->sv{ return field.substr( 0, field.find_last_not_of(' ')+1 ); }
 
@@ -73,10 +101,10 @@ namespace OpenProtocol{
 			v = *n/100.0;
 	}
 	α Reader::SetText( uint8_t id, uint start, sv field, string& v )ι->void{
-		if( isText(field) )
-			v = withoutPadding( field );
+		if( std::ranges::any_of(field, isControl) )
+			Refuse( id, start, Ƒ("{} has a control byte, below 0x20", Quote(field)) );
 		else
-			Refuse( id, start, Ƒ("{} has a byte outside a text's 0x20 to 0x7F", Quote(field)) );
+			v = toUtf8( withoutPadding(field) );
 	}
 	α Reader::Text( uint8_t id, string& v, uint16_t width )ι->void{
 		let start = _i;
@@ -89,24 +117,21 @@ namespace OpenProtocol{
 		if( !field || withoutPadding(*field).empty() )
 			return;
 		constexpr sv shape{ "dddd-dd-dd:dd:dd:dd" };
-		bool shaped{ true };
-		for( uint i=0; i<shape.size() && shaped; ++i )
-			shaped = shape[i]=='d' ? (*field)[i]>='0' && (*field)[i]<='9' : (*field)[i]==shape[i];
+		for( uint i=0; i<shape.size(); ++i ){
+			if( shape[i]=='d' ? (*field)[i]<'0' || (*field)[i]>'9' : (*field)[i]!=shape[i] )
+				return Refuse( id, start, Ƒ("{} is not a YYYY-MM-DD:HH:MM:SS", Quote(*field)) );
+		}
 		let part = [&]( uint at, uint digits )ι{
 			uint y{};
 			for( uint i=at; i<at+digits; ++i )
 				y = y*10+( (*field)[i]-'0' );
 			return y;
 		};
-		if( shaped ){
-			let ymd = year{ (int)part(0, 4) }/month{ (unsigned)part(5, 2) }/day{ (unsigned)part(8, 2) };
-			let h = part( 11, 2 ), m = part( 14, 2 ), s = part( 17, 2 );
-			if( ymd.ok() && h<24 && m<60 && s<60 ){
-				v = local_days{ ymd }+hours{ h }+minutes{ m }+seconds{ s };
-				return;
-			}
-		}
-		Refuse( id, start, Ƒ("{} is not a YYYY-MM-DD:HH:MM:SS", Quote(*field)) );
+		let ymd = year{ (int)part(0, 4) }/month{ (unsigned)part(5, 2) }/day{ (unsigned)part(8, 2) };
+		let h = part( 11, 2 ), m = part( 14, 2 ), s = part( 17, 2 );
+		//Digits that name no date, 0000-00-00:00:00:00 among them, are a controller's placeholder:  the time is not set.
+		if( ymd.ok() && h<24 && m<60 && s<60 )
+			v = local_days{ ymd }+hours{ h }+minutes{ m }+seconds{ s };
 	}
 	α Reader::Rest( string& v, uint16_t max )ι->void{
 		if( _refusal )
@@ -119,8 +144,12 @@ namespace OpenProtocol{
 		SetText( 0, start, field, v );
 	}
 	α Reader::Finish()ι->optional<Refusal>{
-		if( !_refusal && _i<_data.size() )
-			_refusal = Refusal{ ERefusal::Field, Ƒ("MID {:04} revision {}:  the data field runs {} past byte {}, the revision's last.", _head.Mid, _head.Revision, _data.size()-_i, HeaderSize+_i) };
+		if( !_refusal && _i<_data.size() ){
+			let past = _data.substr( _i );
+			let first = Logging::ShouldLog( ELogLevel::Warning, LogTag )
+				&& Logging::MarkLogged( Crypto::Md5(Ƒ("openProtocol MID {} revision {} past its layout", _head.Mid, _head.Revision)) );
+			LOG( first ? ELogLevel::Warning : ELogLevel::Debug, LogTag, "MID {:04} revision {}:  ignored {}, after byte {}, the revision's last.", _head.Mid, _head.Revision, Quote(past), HeaderSize+_i );
+		}
 		return move( _refusal );
 	}
 
@@ -151,16 +180,23 @@ namespace OpenProtocol{
 			return Refuse( id, Ƒ("{} times 100 does not fit {} digits", *v, width) );
 		Number( id, (uint64_t)std::llround(*v*100), width );
 	}
+	α Writer::Latin1( uint8_t id, sv v )ι->optional<string>{
+		auto y = toLatin1( v );
+		if( !y )
+			Refuse( id, Ƒ("{} is not UTF-8 of U+0020 to U+00FF, a text's characters", Quote(v)) );
+		return y;
+	}
 	α Writer::Text( uint8_t id, sv v, uint16_t width )ι->void{
 		if( Refused )
 			return;
-		if( v.size()>width )
-			return Refuse( id, Ƒ("{} is {} characters and the field {}", Quote(v), v.size(), width) );
-		if( !isText(v) )
-			return Refuse( id, Ƒ("{} has a byte outside a text's 0x20 to 0x7F", Quote(v)) );
+		let bytes = Latin1( id, v );
+		if( !bytes )
+			return;
+		if( bytes->size()>width )
+			return Refuse( id, Ƒ("{} is {} characters and the field {}", Quote(v), bytes->size(), width) );
 		Id( id );
-		Data += v;
-		Data.append( width-v.size(), ' ' );
+		Data += *bytes;
+		Data.append( width-bytes->size(), ' ' );
 	}
 	α Writer::Time( uint8_t id, const optional<LocalTime>& v )ι->void{
 		if( Refused )
@@ -180,11 +216,12 @@ namespace OpenProtocol{
 	α Writer::Rest( sv v, uint16_t max )ι->void{
 		if( Refused )
 			return;
-		if( v.size()>max )
-			return Refuse( 0, Ƒ("{} is {} characters and the field {} at most", Quote(v), v.size(), max) );
-		if( !isText(v) )
-			return Refuse( 0, Ƒ("{} has a byte outside a text's 0x20 to 0x7F", Quote(v)) );
-		Data += v;
+		let bytes = Latin1( 0, v );
+		if( !bytes )
+			return;
+		if( bytes->size()>max )
+			return Refuse( 0, Ƒ("{} is {} characters and the field {} at most", Quote(v), bytes->size(), max) );
+		Data += *bytes;
 	}
 }
 	α OpenProtocol::Quote( sv bytes )ι->string{
