@@ -1,16 +1,12 @@
-#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/db/IDataSource.h>
-#include <jde/ql/ql.h>
 #include <jde/tests/HttpTest.h>
-#include <jde/opc/openProtocol/Controller.h>
 #include "../src/opcInternal.h"
 #include "../src/GatewayAppClient.h"
 #include "../src/types/OpenProtocolRow.h"
-#include "../src/ql/GatewayQL.h"
 #include "utils/ClientFixture.h"
+#include "utils/DriverRows.h"
 #include "utils/GatewayClientSocket.h"
-#include "utils/TestUaServer.h"
 
 #define let const auto
 
@@ -20,35 +16,10 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//docs/open-protocol/plan.md Phase 3 (#465):  a connection row of a kind with a driver - `kind` and `driver` through the insert
 	//proc, the QL and ServerCnnctn, the kind's save rules, the dial of the driver's server in place of the url, and testConnection
-	//on an Open Protocol row against the library's test controller.  No driver server yet (Phase 4):  the suite's own stands in.
+	//on an Open Protocol row against the library's test controller.  The row's server itself is DriverHostTests'.
 	struct DriverRowTests : ClientFixture{};
 
 	constexpr sv Driver{ R"({"timeZone":"Europe/Stockholm","revisions":{"0061":3}})" };
-	Ω controllerPort()ι->PortType{ return Settings::FindNumber<PortType>( "/testing/openProtocolPort" ).value_or( 4645 ); }
-	Ω controllerUrl()ι->string{ return Ƒ( "open-protocol://127.0.0.1:{}", controllerPort() ); }
-	//A row of the caller's shape through the QL:  its id, or what the save refused it with.
-	Ω create( str slug, sv args, jobject variables={} )ι->std::expected<ServerCnnctnPK,string>{
-		try{
-			return Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(Ƒ("mutation createServerConnection( slug:\"{0}\", name:\"{0}\", isDefault:false, {1} ){{id}}", slug, args), move(variables), {UserPK::System}), "id" );
-		}
-		catch( const std::exception& e ){
-			return std::unexpected{ string{e.what()} };
-		}
-	}
-	Ω update( ServerCnnctnPK id, sv args, jobject variables={} )ι->optional<string>{//what the save refused it with.
-		try{
-			QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, {} )", id, args), move(variables), {UserPK::System} );
-		}
-		catch( const std::exception& e ){
-			return e.what();
-		}
-		return nullopt;
-	}
-	Ω rowOf( ServerCnnctnPK id )ε->ServerCnnctn{//the row ctor's, what a client is built from.
-		auto rows = BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>( ServerCnnctnAwait{DB::Key{id}} );
-		THROW_IF( rows.size()!=1, "{} rows for connection {}.", rows.size(), id );
-		return move( rows.front() );
-	}
 	//Whether the row stores none of the four columns a kind with a driver fixes.
 	Ω storesNothingFixed( ServerCnnctnPK id )ε->bool{
 		return DS()->ScalerSync<uint>( {Ƒ("select count(*) from {} where server_connection_id={} and certificate_uri is null and default_browse_ns is null and security_mode is null and security_policy is null", GetViewPtr("server_connections")->DBName, id)} )==1;
@@ -57,21 +28,11 @@ namespace Jde::Opc::Gateway::Tests{
 		let& ssl = AppClient()->SslSettings; THROW_IF( !ssl, "the app client has no ssl settings." );
 		return ssl->Certificate.SanUri();
 	}
-	//The revisions the controller heard `mid` at, from frame `from` on.
-	Ω revisionsOf( const Controller& station, uint16_t mid, uint from=0 )ι->vector<uint16_t>{
-		vector<uint16_t> y;
-		let frames = station.Frames();
-		for( uint i=from; i<frames.size(); ++i ){
-			if( frames[i].Head.Mid==mid )
-				y.push_back( frames[i].Head.Revision );
-		}
-		return y;
-	}
 
 	TEST_F( DriverRowTests, ARowKeepsItsKindAndDriver ){
 		const string slug{ "driver-round-trip" };
 		PurgeServerCnnctn( slug );
-		let created = create( slug, "url:$url, kind:\"open-protocol\", driver:$driver", {{"url", controllerUrl()}, {"driver", Driver}} );
+		let created = CreateRow( slug, "url:$url, kind:\"open-protocol\", driver:$driver", {{"url", ControllerUrl()}, {"driver", Driver}} );
 		ASSERT_TRUE( created ) << created.error();
 		let id = *created;
 		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
@@ -95,15 +56,15 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( row.DefaultBrowseNs, ServerCnnctn::DriverBrowseNs ) << where;
 			EXPECT_EQ( row.EffectiveMode(), ServerCnnctn::ModeSignAndEncrypt ) << where;
 		};
-		let row = rowOf( id );
+		let row = RowOf( id );
 		check( row, "row" );
 		check( *SelectServerCnnctn(id), "ql" );
 		let portBase = Settings::FindNumber<uint>( "/gateway/drivers/portBase" ).value_or( 0 );
-		EXPECT_EQ( portBase, 4970u ) << "the suite's, clear of the shipped 4870";
+		EXPECT_EQ( portBase, 4980u ) << "the suite's, clear of the shipped 4870";
 		EXPECT_EQ( row.DriverUrl(), Ƒ("opc.tcp://127.0.0.1:{}", portBase+id) );
 		const OpenProtocolRow read{ row };
 		EXPECT_EQ( read.Host, "127.0.0.1" );
-		EXPECT_EQ( read.Port, controllerPort() );
+		EXPECT_EQ( read.Port, ControllerPort() );
 		ASSERT_TRUE( read.TimeZone );
 		EXPECT_EQ( read.TimeZone->name(), "Europe/Stockholm" );
 		EXPECT_EQ( read.Revisions.size(), 1u );
@@ -131,13 +92,13 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( DriverRowTests, ARowItsKindRefusesIsNotSaved ){
 		const string slug{ "driver-refused" };
 		PurgeServerCnnctn( slug );
-		let url = controllerUrl();
+		let url = ControllerUrl();
 		let openProtocol = [&]( sv more, string driver={} )->optional<string>{
-			let created = create( slug, Ƒ("url:$url, kind:\"open-protocol\", driver:$driver{}", more), {{"url", url}, {"driver", driver}} );
+			let created = CreateRow( slug, Ƒ("url:$url, kind:\"open-protocol\", driver:$driver{}", more), {{"url", url}, {"driver", driver}} );
 			return created ? nullopt : optional<string>{ created.error() };
 		};
 		let withUrl = [&]( string controller )->optional<string>{
-			let created = create( slug, "url:$url, kind:\"open-protocol\"", {{"url", controller}} );
+			let created = CreateRow( slug, "url:$url, kind:\"open-protocol\"", {{"url", controller}} );
 			return created ? nullopt : optional<string>{ created.error() };
 		};
 		let expect = [&]( optional<string> error, sv expected, sv what ){
@@ -146,7 +107,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_FALSE( SelectServerCnnctn(slug) ) << what;
 		};
 		{
-			let created = create( slug, "url:$url, kind:\"plc\"", {{"url", OpcUrl()}} );
+			let created = CreateRow( slug, "url:$url, kind:\"plc\"", {{"url", OpcUrl()}} );
 			expect( created ? nullopt : optional<string>{created.error()}, "is not one of ua or open-protocol", "kind plc" );
 		}
 		for( let& [more, expected] : vector<std::pair<string,string>>{
@@ -184,51 +145,39 @@ namespace Jde::Opc::Gateway::Tests{
 			{ R"({"revisions":{"0061":1000}})", "from 1 to 999" } } )
 			expect( openProtocol({}, driver), expected, driver );
 		for( sv kind : {""sv, ", kind:\"ua\""sv} ){//`driver` and an Open Protocol url are a driver kind's.
-			let created = create( slug, Ƒ("url:$url, driver:$driver{}", kind), {{"url", OpcUrl()}, {"driver", "{}"}} );
+			let created = CreateRow( slug, Ƒ("url:$url, driver:$driver{}", kind), {{"url", OpcUrl()}, {"driver", "{}"}} );
 			expect( created ? nullopt : optional<string>{created.error()}, "takes no driver settings", kind );
-			let controller = create( slug, Ƒ("url:$url{}", kind), {{"url", url}} );
+			let controller = CreateRow( slug, Ƒ("url:$url{}", kind), {{"url", url}} );
 			expect( controller ? nullopt : optional<string>{controller.error()}, "set the kind to open-protocol", kind );
 		}
 		//What it takes:  no driver, an empty one, and a kind of ua on a UA row.
 		for( let& [args, driver] : vector<std::pair<string,string>>{ {"kind:\"open-protocol\"", ""}, {"kind:\"open-protocol\"", "{}"}, {"kind:\"ua\"", ""} } ){
-			let created = create( slug, Ƒ("url:$url, driver:$driver, {}", args), {{"url", args.contains("ua") ? OpcUrl() : url}, {"driver", driver}} );
+			let created = CreateRow( slug, Ƒ("url:$url, driver:$driver, {}", args), {{"url", args.contains("ua") ? OpcUrl() : url}, {"driver", driver}} );
 			ASSERT_TRUE( created ) << args << " " << driver << " -> " << created.error();
-			EXPECT_EQ( rowOf(*created).HasDriver(), !args.contains("ua") );
+			EXPECT_EQ( RowOf(*created).HasDriver(), !args.contains("ua") );
 			PurgeServerCnnctn( *created );
 		}
 	}
 
 	//The url branch (UAClient::Connect):  a driver row's client dials loopback at portBase plus the row's id, never the url, with the
-	//gateway's own applicationUri as the server's - here a server of the suite's presenting the process's pair, as Phase 4's driver
-	//server will.  An update is judged over the merged row, and one that is accepted takes the row's clients off the registry.
+	//gateway's own applicationUri as the server's:  the row's own server, which presents the process's pair.  An update is judged
+	//over the merged row, and one that is accepted takes the row's clients off the registry.
 	TEST_F( DriverRowTests, AClientDialsTheDriverServerAndAnEditTakesItOff ){
 		const string slug{ "driver-dial" };
 		PurgeServerCnnctn( slug );
-		let created = create( slug, "url:$url, kind:\"open-protocol\", driver:$driver", {{"url", controllerUrl()}, {"driver", Driver}} );
+		let created = CreateRow( slug, "url:$url, kind:\"open-protocol\", driver:$driver", {{"url", ControllerUrl()}, {"driver", Driver}} );
 		ASSERT_TRUE( created ) << created.error();
 		let id = *created;
 		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
-		let dialed = rowOf( id ).DriverUrl();
-		let port = Settings::FindNumber<uint>( "/gateway/drivers/portBase" ).value_or( 0 )+id;
+		let dialed = RowOf( id ).DriverUrl();
+		ASSERT_TRUE( WaitHost(slug) ) << "the row's server never started";
 
-		let unreachable = Attempt( slug, Credential{} );//nothing listens there until a driver's server does.
-		EXPECT_FALSE( _client );
-		EXPECT_FALSE( unreachable.empty() );
-		TRACE( "nothing listening at {}: {}", dialed, unreachable );
-
-		let& ssl = *AppClient()->SslSettings;
-		TestUaServer standIn{ (EThrowawayPort)port, ssl, [&]( UA_ServerConfig& config, const UA_ByteString* certificate, const UA_ByteString* privateKey ){
-			UAε( UA_ServerConfig_addSecurityPolicyNone(&config, certificate) );//the discovery channel only:  no None endpoint.
-			UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(&config, certificate, privateKey) );
-			UAε( UA_AccessControl_default(&config, true, nullptr, 0, nullptr) );
-			UAε( UA_ServerConfig_addEndpoint(&config, UA_STRING((char*)"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"), UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) );
-		}};
-		let cred = Credential{};
+		let cred = SessionCredential();//the server takes no anonymous session.
 		let what = Attempt( slug, cred );
 		ASSERT_TRUE( what.empty() ) << what;
 		ASSERT_TRUE( _client );
 		EXPECT_EQ( _client->ConnectUrl(), dialed );
-		EXPECT_EQ( _client->Url(), controllerUrl() ) << "the row keeps its controller's url";
+		EXPECT_EQ( _client->Url(), ControllerUrl() ) << "the row keeps its controller's url";
 		EXPECT_EQ( _client->DefaultBrowseNs(), ServerCnnctn::DriverBrowseNs );
 		let negotiated = Negotiated( _client );
 		EXPECT_TRUE( negotiated.ends_with("/SignAndEncrypt)") ) << negotiated;
@@ -239,19 +188,19 @@ namespace Jde::Opc::Gateway::Tests{
 			{ "url:$url", {{"url", OpcUrl()}}, "does not start with the scheme" },//a UA server's url under the saved kind.
 			{ "certificateUri:\"urn:x\"", {}, "takes no certificateUri" },
 			{ "kind:\"ua\"", {}, "takes no driver settings" } } ){//the saved driver under a UA kind.
-			let error = update( id, args, variables );
+			let error = UpdateRow( id, args, variables );
 			ASSERT_TRUE( error ) << args;
 			EXPECT_NE( string::npos, error->find(expected) ) << args << " -> " << *error;
 		}
-		EXPECT_EQ( rowOf(id).Driver, Driver );
+		EXPECT_EQ( RowOf(id).Driver, Driver );
 		EXPECT_EQ( UAClient::Find(slug, cred), _client ) << "a refused update took the client off";
-		ASSERT_FALSE( update(id, "description:\"no rule's column named\"") );
+		ASSERT_FALSE( UpdateRow(id, "description:\"no rule's column named\"") );
 		EXPECT_EQ( UAClient::Find(slug, cred), _client );
 
 		let edited = R"({"timeZone":"America/Chicago"})"sv;
-		let error = update( id, "driver:$driver", {{"driver", edited}} );
+		let error = UpdateRow( id, "driver:$driver", {{"driver", edited}} );
 		ASSERT_FALSE( error ) << *error;
-		EXPECT_EQ( rowOf(id).Driver, edited );
+		EXPECT_EQ( RowOf(id).Driver, edited );
 		EXPECT_FALSE( UAClient::Find(slug, cred) ) << "the pre-edit client is still registered";
 		_client = nullptr;
 	}
@@ -261,43 +210,43 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( DriverRowTests, AKindChangedToADriversClearsWhatTheKindFixes ){
 		const string slug{ "driver-kind-change" };
 		PurgeServerCnnctn( slug );
-		let created = create( slug, "url:$url, certificateUri:\"urn:x\", defaultBrowseNs:3, securityMode:\"Sign\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\"", {{"url", OpcUrl()}} );
+		let created = CreateRow( slug, "url:$url, certificateUri:\"urn:x\", defaultBrowseNs:3, securityMode:\"Sign\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\"", {{"url", OpcUrl()}} );
 		ASSERT_TRUE( created ) << created.error();
 		let id = *created;
 		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
 		EXPECT_FALSE( storesNothingFixed(id) );
 
-		auto error = update( id, "kind:\"open-protocol\"" );//the url is still the UA server's.
+		auto error = UpdateRow( id, "kind:\"open-protocol\"" );//the url is still the UA server's.
 		ASSERT_TRUE( error );
 		EXPECT_NE( string::npos, error->find("does not start with the scheme") ) << *error;
 		EXPECT_FALSE( storesNothingFixed(id) );
-		error = update( id, "kind:\"open-protocol\", url:$url, certificateUri:\"urn:y\"", {{"url", controllerUrl()}} );
+		error = UpdateRow( id, "kind:\"open-protocol\", url:$url, certificateUri:\"urn:y\"", {{"url", ControllerUrl()}} );
 		ASSERT_TRUE( error );
 		EXPECT_NE( string::npos, error->find("takes no certificateUri") ) << *error;
 
-		error = update( id, "kind:\"open-protocol\", url:$url", {{"url", controllerUrl()}} );
+		error = UpdateRow( id, "kind:\"open-protocol\", url:$url", {{"url", ControllerUrl()}} );
 		ASSERT_FALSE( error ) << *error;
 		EXPECT_TRUE( storesNothingFixed(id) );
-		let row = rowOf( id );
+		let row = RowOf( id );
 		EXPECT_TRUE( row.HasDriver() );
 		EXPECT_EQ( row.CertificateUri, ownUri() );
 		EXPECT_EQ( row.DefaultBrowseNs, ServerCnnctn::DriverBrowseNs );
 		EXPECT_TRUE( row.SecurityMode.empty() );
 
 		//A secured mode on the way back needs the row's own certificate URI, not the one ServerCnnctn supplied the driver row.
-		error = update( id, "kind:\"ua\", url:$url, securityMode:\"Sign\"", {{"url", OpcUrl()}} );
+		error = UpdateRow( id, "kind:\"ua\", url:$url, securityMode:\"Sign\"", {{"url", OpcUrl()}} );
 		ASSERT_TRUE( error );
 		EXPECT_NE( string::npos, error->find("certificate URI") ) << *error;
-		error = update( id, "kind:null, url:$url", {{"url", OpcUrl()}} );
+		error = UpdateRow( id, "kind:null, url:$url", {{"url", OpcUrl()}} );
 		ASSERT_FALSE( error ) << *error;
-		let ua = rowOf( id );
+		let ua = RowOf( id );
 		EXPECT_FALSE( ua.HasDriver() );
 		EXPECT_TRUE( ua.CertificateUri.empty() );
 		EXPECT_EQ( ua.DefaultBrowseNs, 1 );
 
 		//A form clearing a field the kind hides:  the UA row's own Sign is no rule's once the kind has a driver.
-		ASSERT_FALSE( update(id, "certificateUri:\"urn:x\", securityMode:\"Sign\"") );
-		error = update( id, "kind:\"open-protocol\", url:$url, certificateUri:null", {{"url", controllerUrl()}} );
+		ASSERT_FALSE( UpdateRow(id, "certificateUri:\"urn:x\", securityMode:\"Sign\"") );
+		error = UpdateRow( id, "kind:\"open-protocol\", url:$url, certificateUri:null", {{"url", ControllerUrl()}} );
 		ASSERT_FALSE( error ) << *error;
 		EXPECT_TRUE( storesNothingFixed(id) );
 	}
@@ -309,14 +258,14 @@ namespace Jde::Opc::Gateway::Tests{
 		const string slug{ "driverTestConnection" };//no such row:  the settings are not saved.
 		ASSERT_FALSE( SelectServerCnnctn({slug}) );
 		const string q{ "testConnection( opc: $opc, url: $url, kind: $kind, driver: $driver ){ controllerName supplierCode openProtocolVersion controllerSoftwareVersion toolSoftwareVersion controllerSerialNumber systemType systemSubtype stationId stationName }" };
-		let variables = [&]( jvalue driver ){ return jobject{ {"opc", slug}, {"url", controllerUrl()}, {"kind", ServerCnnctn::KindOpenProtocol}, {"driver", move(driver)} }; };
+		let variables = [&]( jvalue driver ){ return jobject{ {"opc", slug}, {"url", ControllerUrl()}, {"kind", ServerCnnctn::KindOpenProtocol}, {"driver", move(driver)} }; };
 		let test = [&]( jvalue driver={} ){ return Socket().QuerySync( string{q}, variables(move(driver)) ).as_object(); };
 		let null = []( const jobject& o, sv field ){ let value = o.if_contains( field ); return value && value->is_null(); };
 		{
 			Controller::Script script{ .Identity={ .CellId=1, .ChannelId=2, .ControllerName="Line 3 station 7", .SupplierCode="ACT", .OpenProtocolVersion="2.20.1", .ControllerSoftwareVersion="3.11.5", .ToolSoftwareVersion="1.4.2",
 				.RbuType="Gold", .ControllerSerialNumber="C00123456", .SystemType=3, .SystemSubtype=1, .SequenceNumberSupport=1, .LinkingSupport=0, .StationId=7, .StationName="Station 7", .ClientId=1 } };
 			script.Revisions[1] = 3;//MID 0001 at 3 and no higher:  MID 0004 code 97 above it.
-			Controller station{ *Executor(), controllerPort(), move(script) };
+			Controller station{ *Executor(), ControllerPort(), move(script) };
 
 			let at3 = test();
 			TRACE( "testConnection at 3: {}.", serialize(at3) );
@@ -327,29 +276,29 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::FindDefaultSV(at3, "toolSoftwareVersion"), "1.4.2" );
 			for( sv later : {"controllerSerialNumber"sv, "systemType"sv, "systemSubtype"sv, "stationId"sv, "stationName"sv} )
 				EXPECT_TRUE( null(at3, later) ) << later << " is revision 4's or later: " << serialize( at3 );
-			EXPECT_EQ( revisionsOf(station, 1), (vector<uint16_t>{6, 5, 4, 3}) ) << "the step-down";
-			EXPECT_EQ( revisionsOf(station, 3).size(), 1u ) << "MID 0003 before the close";
+			EXPECT_EQ( RevisionsOf(station, 1), (vector<uint16_t>{6, 5, 4, 3}) ) << "the step-down";
+			EXPECT_EQ( RevisionsOf(station, 3).size(), 1u ) << "MID 0003 before the close";
 			EXPECT_TRUE( WaitUntil([&]{ return station.Clients()==0; }) ) << "the session is closed";
 			EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) ) << "a test connect leaves no client registered";
 			EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) );
 
 			auto heard = station.Frames().size();
 			let capped = test( R"({"revisions":{"0001":2}})" );//the row's ceiling:  MID 0001 starts under it.
-			EXPECT_EQ( revisionsOf(station, 1, heard), (vector<uint16_t>{2}) );
+			EXPECT_EQ( RevisionsOf(station, 1, heard), (vector<uint16_t>{2}) );
 			EXPECT_EQ( Json::FindDefaultSV(capped, "supplierCode"), "ACT" ) << serialize( capped );
 			EXPECT_TRUE( null(capped, "openProtocolVersion") ) << "revision 3's: " << serialize( capped );
 
 			station.Edit( []( Controller::Script& edit ){ edit.Revisions.clear(); } );//every revision the codec has:  MID 0002 at 6.
 			heard = station.Frames().size();
 			let at6 = test();
-			EXPECT_EQ( revisionsOf(station, 1, heard), (vector<uint16_t>{6}) );
+			EXPECT_EQ( RevisionsOf(station, 1, heard), (vector<uint16_t>{6}) );
 			EXPECT_EQ( Json::FindDefaultSV(at6, "controllerSerialNumber"), "C00123456" ) << serialize( at6 );
 			EXPECT_EQ( Json::FindNumber<uint>(at6, "systemType"), optional<uint>{3} );
 			EXPECT_EQ( Json::FindNumber<uint>(at6, "systemSubtype"), optional<uint>{1} );
 			EXPECT_EQ( Json::FindNumber<uint>(at6, "stationId"), optional<uint>{7} );
 			EXPECT_EQ( Json::FindDefaultSV(at6, "stationName"), "Station 7" );
 			{//only what is selected.
-				let narrow = Socket().QuerySync( "testConnection( opc: $opc, url: $url, kind: $kind ){ controllerName }", {{"opc", slug}, {"url", controllerUrl()}, {"kind", ServerCnnctn::KindOpenProtocol}} ).as_object();
+				let narrow = Socket().QuerySync( "testConnection( opc: $opc, url: $url, kind: $kind ){ controllerName }", {{"opc", slug}, {"url", ControllerUrl()}, {"kind", ServerCnnctn::KindOpenProtocol}} ).as_object();
 				EXPECT_EQ( narrow.size(), 1u ) << serialize( narrow );
 			}
 			//The save's rules:  a row Save would refuse is refused here, with nothing dialed.
@@ -380,7 +329,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		catch( const GatewayErrorResponse& e ){
 			TRACE( "testConnection refused: {}.", e.what() );
-			EXPECT_NE( string::npos, string{e.what()}.find(Ƒ("The controller at 127.0.0.1:{} did not start communication", controllerPort())) ) << e.what();
+			EXPECT_NE( string::npos, string{e.what()}.find(Ƒ("The controller at 127.0.0.1:{} did not start communication", ControllerPort())) ) << e.what();
 			EXPECT_NE( string::npos, string{e.what()}.find("refused") ) << "the socket's error: " << e.what();
 		}
 		try{//over http, as the page sends it:  the reason is the body's.

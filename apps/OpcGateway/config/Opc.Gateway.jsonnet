@@ -128,7 +128,19 @@ function( sync=false )
 		//controller's, is served by a UA server of the gateway's own on loopback, which the row's clients dial in place of its url.
 		//A `::` key is its default, shown hidden.
 		drivers:{
-			portBase:: 4870 //a driver row's server listens on 127.0.0.1 at portBase + its row id, every kind;  the tests take 4970
+			portBase:: 4870, //a driver row's server listens on 127.0.0.1 at portBase + its row id, every kind;  the tests take 4980, the hub's 5170
+			//An Open Protocol row's link to its controller (src/drivers/openProtocol/OpenProtocolDriver.h).  The durations are ISO 8601.
+			openProtocol:{
+				keepAlive:: "PT10S", //MID 9999 after this long without a message either way;  a controller drops a link silent for 15 s
+				replyTimeout:: "PT10S", //a connection, a request or an ack unanswered this long is a lost link
+				callTimeout:: "PT30S", //how long a method call holds, the server's asyncOperationTimeout
+				maxAsyncOperations:: 0, //the server's async queue, maxAsyncOperationQueueSize:  0 unlimited, as open62541's own
+				reconnectMin:: "PT1S", //the wait between connection attempts, doubling to reconnectMax
+				reconnectMax:: "PT1M",
+				maxBackfill:: 2000, //MID 0064 requests one recovery may send
+				maxSkew:: "PT5M", //the controller's clock against the gateway's, past which each connect warns
+				log:: false //every frame in and out at Trace under the openProtocol tag
+			}
 		}
 	},
 	calendars:: { retryWait: "PT30S" }, //Calendars.cpp:  how soon a subscribe or read of the shift calendars that failed is tried again.

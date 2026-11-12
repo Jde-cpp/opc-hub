@@ -29,12 +29,15 @@ namespace Jde::Opc::Gateway{
 		Ω KindError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
 		static constexpr sv KindUa{ "ua" }, KindOpenProtocol{ "open-protocol" };//what `kind` holds.
 		static constexpr NsIndex DriverBrowseNs{ 2 };//a driver server's one namespace, after UA's and the server's own.
-		//A kind the gateway serves through a driver's own UA server, which the row's clients dial in place of the url (DriverUrl).
-		//The row stores no certificate URI or default browse namespace for it:  the constructors supply the server's, the gateway's
-		//own applicationUri - the uri in the SAN of the process's pair, /http/ssl, which that server presents - and DriverBrowseNs.
-		α HasDriver()Ι->bool{ return Kind==KindOpenProtocol; }
+		//A kind the gateway serves through a driver's own UA server (drivers/DriverHost.h), one that registers an IDriver, which the
+		//row's clients dial in place of the url (DriverUrl).  The row stores no certificate URI or default browse namespace for it:
+		//the constructors supply the server's, the gateway's own applicationUri - the uri in the SAN of the process's pair,
+		///http/ssl, which that server presents - and DriverBrowseNs.
+		α HasDriver()Ι->bool;
 		//Where a driver row's server listens:  loopback, at /gateway/drivers/portBase plus the row's id.  Throws past port 65535.
-		α DriverUrl( SRCE )Ε->string;
+		α DriverPort( SRCE )Ε->PortType;
+		α DriverUrl( SRCE )Ε->string{ return Ƒ( "opc.tcp://127.0.0.1:{}", DriverPort(sl) ); }
+		Ω DriverPortBase()ι->uint;///gateway/drivers/portBase, 4870 where the block names none.
 		static constexpr uint32 MaxDurationMs{ 2147483647 };//SQL Server's int, the proc's parameter type:  about 24 days.  MergeSettings refuses more.
 		static constexpr sv ModeNone{ "None" }, ModeSign{ "Sign" }, ModeSignAndEncrypt{ "SignAndEncrypt" };//UA_MessageSecurityMode's names (SecurityModeName), what security_mode holds.
 		static constexpr sv PolicyNoneUri{ "http://opcfoundation.org/UA/SecurityPolicy#None" };

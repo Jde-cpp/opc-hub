@@ -1,8 +1,9 @@
 // Jde.Opc.Hub.Tests: the hub - both roles behind ONE listener (/http, 1973) and its OPC UA endpoint (opc.tcp 4976) - plus an
-// embedded OpcServer (1975, opc.tcp 4975), in one process.  Nothing else in the repo binds those ports, so this suite never hangs
-// on a live hub/service (1967/1968/1970/4841), the PLC emulator (4842) or the other suites (1972, 2067-2070, 4940/4941), and can
-// run beside a live hub.  /http/app and /http/gateway alias the one port for the two apps' test helpers (App::Server::Tests::Port,
-// Gateway::Tests::GatewayPort).
+// embedded OpcServer (1975, opc.tcp 4975), in one process, a driver row's server at 5170 plus its row's id and a test Open
+// Protocol controller on 4745.  Nothing else in the repo binds those ports, so this suite never hangs on a live hub/service
+// (1967/1968/1970/4841, a driver row's 4870 on), the PLC emulator (4842) or the other suites (1972, 2067-2070, 4940/4941, 4645,
+// 4980 on), and can run beside a live hub.  /http/app and /http/gateway alias the one port for the two apps' test helpers
+// (App::Server::Tests::Port, Gateway::Tests::GatewayPort).
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 {
@@ -11,7 +12,8 @@ local logsDir = args.logsDir;
 	testing:{
 		tests:: "*",
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
-		embeddedOpcServer:: true
+		embeddedOpcServer:: true,
+		openProtocolPort: 4745 //the test controller's (DriverTests):  not the 4645 the gateway's suite takes.
 	},
 	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://" + instance.opcServer.address + ":" + instance.opcServer.port, users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - HubRoutingTests.LoginDefaultConnection's credential; without a list the server offers no username policy.
 	ql:{
@@ -74,7 +76,8 @@ local logsDir = args.logsDir;
 			address: instance.http.address,
 			trustedCertDirs: instance.access.trustedCertDirs,
 			rejectedCertDir: logsDir + "/rejected/opc-hub-tests"
-		}
+		},
+		drivers:{ portBase: 5170, openProtocol:{ reconnectMin: "PT0.1S", reconnectMax: "PT0.5S" } } //a driver row's server (DriverTests), and its link's waits shortened.
 	},
 	opcServer:{
 		slug: "TestServer",

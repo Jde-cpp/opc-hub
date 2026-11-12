@@ -6,6 +6,7 @@
 #include "../async/OpenProtocolTestAwait.h"
 #include "../async/TestConnectAwait.h"
 #include "../async/UAStrandAwait.h"
+#include "../drivers/openProtocol/OpenProtocolDriver.h"
 #include "../UAClient.h"
 #include "GatewayQL.h"
 #include "GatewayQLAwait.h"
@@ -16,24 +17,10 @@ namespace Jde::Opc::Gateway{
 	//What MID 0002 answered, of the fields `q` selects (Open Protocol Tables 13 to 18):  null where its revision carries none.
 	Ω identity( const QL::TableQL& q, const OpenProtocol::Mid0002& id )ι->jobject{
 		jobject y;
-		let text = [&]( sv name, str value ){
-			if( q.FindColumn(name) )
-				y[name] = value.empty() ? jvalue{} : jvalue{ value };
-		};
-		let number = [&]( sv name, optional<uint32_t> value ){
-			if( q.FindColumn(name) )
-				y[name] = value ? jvalue{ *value } : jvalue{};
-		};
-		text( "controllerName", id.ControllerName );
-		text( "supplierCode", id.SupplierCode );
-		text( "openProtocolVersion", id.OpenProtocolVersion );
-		text( "controllerSoftwareVersion", id.ControllerSoftwareVersion );
-		text( "toolSoftwareVersion", id.ToolSoftwareVersion );
-		text( "controllerSerialNumber", id.ControllerSerialNumber );
-		number( "systemType", id.SystemType );
-		number( "systemSubtype", id.SystemSubtype );
-		number( "stationId", id.StationId );
-		text( "stationName", id.StationName );
+		for( let& field : OpenProtocolDriver::Identity(id) ){
+			if( q.FindColumn(field.key()) )
+				y.emplace( field.key(), field.value() );
+		}
 		return y;
 	}
 

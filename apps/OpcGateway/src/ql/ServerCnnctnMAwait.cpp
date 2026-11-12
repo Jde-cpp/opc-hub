@@ -7,6 +7,7 @@
 #include "../GatewayAppClient.h"
 #include "../types/ServerCnnctn.h"
 #include "../UAClient.h"
+#include "../drivers/DriverHost.h"
 #include "../server/GatewayServer.h"
 
 #define let const auto
@@ -86,7 +87,8 @@ namespace Jde::Opc::Gateway{
 		return row;
 	}
 	//The endpoint's folder for the row just written (spec *Address space*):  the row's slug and url are the insert's own args, so
-	//no select;  the id is the insert's.  Nothing to await - the server posts the add to the executor.
+	//no select;  the id is the insert's.  Nothing to await - the server posts the add to the executor.  And, for a kind with a
+	//driver, the row's own server (drivers/DriverHost.h), which reads the row on its hosts' thread.
 	Ω connectionCreated( const QL::MutationQL& m, const jvalue& result )ι->void{
 		let row0 = result.is_array() && result.get_array().size() ? result.get_array()[0].if_object() : nullptr;
 		//The object overload:  the jvalue one takes a json pointer path, which "id" is not (#223).
@@ -99,6 +101,8 @@ namespace Jde::Opc::Gateway{
 			row.Slug = string{ *slug };
 			server->ConnectionCreated( move(row) );
 		}
+		if( let kind = m.FindPtr<jstring>("kind"); id && kind && FindDriver(sv{*kind}) )
+			DriverHost::RowChanged( DB::Key{id}, false );
 	}
 
 	//A duration an update names:  its value, or an empty optional where it clears it;  nullopt where the update leaves it.  The save
@@ -118,15 +122,18 @@ namespace Jde::Opc::Gateway{
 	//interval and TTL it reads live, so an edit to them alone is written over its copy instead.  Name and description it only
 	//reports (search), and a rename is not worth dropping every session's subscriptions for.  A restore has no clients to act on:
 	//a deleted row cannot connect.  The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a
-	//delete leaves it, and a url edit is the one column its `_Connection` shows.
+	//delete leaves it, and a url edit is the one column its `_Connection` shows.  A driver row's own server follows its row
+	//(drivers/DriverHost.h), after its clients have gone:  an edit of the url, the kind or `driver` stops it and starts one on the
+	//row as it now is, which the clients reconnect to, a delete or a purge stops it, and a restore starts it.
 	Ω connectionEdited( const QL::MutationQL& m )ι->void{
 		using enum EMutationQL;
 		constexpr array<sv,10> builtColumns{ "url", "kind", "driver", "defaultBrowseNs", "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "locale" };
 		constexpr array<sv,2> liveColumns{ "pingInterval", "ttl" };
+		constexpr array<sv,3> hostColumns{ "url", "kind", "driver" };
 		let removed = m.Type==Delete || m.Type==Purge;
 		let edited = m.Type==Update && namesAny( m, builtColumns );
 		let live = m.Type==Update && !edited && namesAny( m, liveColumns );//with a reconnect, the new client reads them from the row.
-		if( !removed && !edited && !live )
+		if( !removed && !edited && !live && m.Type!=Restore )
 			return;
 		let key = m.FindKey();
 		if( !key )
@@ -135,13 +142,16 @@ namespace Jde::Opc::Gateway{
 			UAClient::KeepAliveEdited( *key, namedDuration(m, "pingInterval"), namedDuration(m, "ttl") );
 			return;
 		}
-		UAClient::ConnectionEdited( *key, removed );
+		if( m.Type!=Restore )
+			UAClient::ConnectionEdited( *key, removed );
 		if( auto server = GatewayServer::Instance(); server ){
 			if( m.Type==Purge )
 				server->ConnectionPurged( *key );
 			else if( let url = m.FindPtr<jstring>("url"); url && m.Type==Update )
 				server->ConnectionUrlChanged( *key, string{*url} );
 		}
+		if( m.Type!=Update || namesAny(m, hostColumns) )
+			DriverHost::RowChanged( *key, removed );
 	}
 
 	α ServerCnnctnMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{

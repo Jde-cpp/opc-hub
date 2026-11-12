@@ -24,12 +24,14 @@ namespace Jde::Opc{
 			string ExpectedUri;//the chosen endpoint's applicationUri (the connection's certificateUri), for the SAN-URI warning;  empty skips it.
 			fs::path RejectedDir;//where a rejected certificate is written, <thumbprint>.der.
 			uint Anchors{};
+			uint Given{};//those of Anchors the caller gave by file, in no directory.
 			string Skipped;//TrustDirs::SkippedNote() when files in the directories carried no certificate extension - named in the rejection when nothing loaded (install-issues #33).
 			string Rejection;//the last failure;  written by verifyCertificate and read by StateCallback, both on the client's strand.
 			string RejectedThumbprint;//the SHA-1 of the last rejected certificate, the <thumbprint>.der it wrote;  read by StateCallback with Rejection.
 		};
 		α context( const UA_CertificateGroup& g )ι->Context*{ return (Context*)g.context; }
-		α anchorsNote( const Context& c )ι->string{ return Ƒ( "{} trusted certificate{}", c.Anchors, c.Anchors==1 ? "" : "s" ); }
+		α anchorsNote( const Context& c )ι->string{ let n = c.Anchors-c.Given; return Ƒ( "{} trusted certificate{}", n, n==1 ? "" : "s" ); }//the directories'.
+		α givenNote( const Context& c )ι->string{ return c.Given ? Ƒ( " and {} given by file", c.Given ) : string{}; }
 
 		//The url's host, opc.tcp://<host>:<port>/<path>, for the SAN host/address warning - empty when it will not parse.
 		Ω urlHost( str url )ι->string{
@@ -122,7 +124,7 @@ namespace Jde::Opc{
 				//"0 trusted certificates loaded" alone reads as "the directory is empty" - the operator who *did* copy the
 				//certificate in is then told to do the thing they just did (install-issues #33), so say what was passed over.
 				let skipped = c.Anchors || c.Skipped.empty() ? string{} : ", "+c.Skipped;
-				c.Rejection = Ƒ( "server certificate for '{}' rejected: {} ({} loaded from {}/trustedCertDirs{}) - add the server's certificate to one of those directories, or set {}/verifyServerCertificate=false", c.Url, e.what(), anchorsNote(c), c.SettingsRoot, skipped, c.SettingsRoot );
+				c.Rejection = Ƒ( "server certificate for '{}' rejected: {} ({} loaded from {}/trustedCertDirs{}{}) - add the server's certificate to one of those directories, or set {}/verifyServerCertificate=false", c.Url, e.what(), anchorsNote(c), c.SettingsRoot, givenNote(c), skipped, c.SettingsRoot );
 				ERRT( _tags, "[{}]{}", hex(c.Handle), c.Rejection );
 				recordRejected( c, certificate );//the <thumbprint>.der the admin trusts, and the thumbprint the client keeps per slug.
 				return UA_STATUSCODE_BADCERTIFICATEUNTRUSTED;
@@ -135,7 +137,7 @@ namespace Jde::Opc{
 			g->verifyCertificate = nullptr;
 			g->clear = nullptr;
 		}
-		Ω loadAnchors( Context& c, const vector<fs::path>& dirs, SL sl )ι->void{
+		Ω loadAnchors( Context& c, const vector<fs::path>& dirs, std::span<const fs::path> files, SL sl )ι->void{
 			Crypto::TrustDirs scan{ "trusted server certificate", _tags, ELogLevel::Warning };//a new one per connect, so every file is read again.
 			scan.Scan( dirs, [&]( const fs::path&, vector<byte>&& der ){
 				if( der.empty() )
@@ -145,6 +147,16 @@ namespace Jde::Opc{
 			}, sl );
 			if( scan.Skipped() )
 				c.Skipped = scan.SkippedNote();
+			for( let& file : files ){//the caller's own, beside the directories':  read per connect as they are.
+				try{
+					c.Store.AddCertificate( Crypto::ReadCertificate(file, sl), sl );
+					++c.Anchors;
+					++c.Given;
+				}
+				catch( const std::exception& e ){
+					WARNT( _tags, "[{}]The certificate '{}', trusted for '{}' beside the directories, does not read:  {}", hex(c.Handle), file.string(), c.Url, e.what() );
+				}
+			}
 		}
 		std::mutex _overrideMutex;
 		optional<vector<fs::path>> _override;//the test seam - see the header.
@@ -196,10 +208,10 @@ namespace Jde::Opc{
 		}
 		return Settings::FindPathArray( Ƒ("{}/trustedCertDirs", settingsRoot) );
 	}
-	α ServerTrust::Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri, SL sl )ε->void{
-		Install( config, Enabled(settingsRoot), TrustedDirs(settingsRoot), h, url, settingsRoot, expectedUri, sl );
+	α ServerTrust::Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri, std::span<const fs::path> anchors, SL sl )ε->void{
+		Install( config, Enabled(settingsRoot), TrustedDirs(settingsRoot), h, url, settingsRoot, expectedUri, anchors, sl );
 	}
-	α ServerTrust::Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& dirs, Jde::Handle h, str url, sv settingsRoot, sv expectedUri, SL sl )ε->void{
+	α ServerTrust::Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& dirs, Jde::Handle h, str url, sv settingsRoot, sv expectedUri, std::span<const fs::path> anchors, SL sl )ε->void{
 		auto& g = config.certificateVerification;
 		if( !verify ){
 			UA_CertificateGroup_AcceptAll( &g );//clears whatever was there first.
@@ -207,7 +219,7 @@ namespace Jde::Opc{
 			return;
 		}
 		auto c = mu<Context>( h, url, settingsRoot, string{expectedUri}, RejectedDir(settingsRoot) );
-		loadAnchors( *c, dirs, sl );
+		loadAnchors( *c, dirs, anchors, sl );
 		if( g.clear )
 			g.clear( &g );//AcceptAll, or an earlier Install.
 		g.certificateGroupId = UA_NS0ID( SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP );
@@ -216,7 +228,7 @@ namespace Jde::Opc{
 		g.clear = &clear;
 		g.getTrustList = nullptr; g.setTrustList = nullptr; g.addToTrustList = nullptr; g.removeFromTrustList = nullptr; g.getRejectedList = nullptr; g.getCertificateCrls = nullptr;//as UA_CertificateGroup_AcceptAll leaves them - the client only ever calls verifyCertificate and clear.
 		if( c->Anchors )
-			INFOT( _tags, "[{}]Verifying '{}'s certificate against {} from {}/trustedCertDirs.", hex(h), url, anchorsNote(*c), settingsRoot );
+			INFOT( _tags, "[{}]Verifying '{}'s certificate against {} from {}/trustedCertDirs{}.", hex(h), url, anchorsNote(*c), settingsRoot, givenNote(*c) );
 		//A config from before the split (security-matrix #3) names its servers under /access/trustedCertDirs alone:  say where they belong now.
 		let moved = dirs.empty() && !Settings::FindStringArray( "/access/trustedCertDirs" ).empty();
 		let skipped = c->Skipped.size() ? "  "+c->Skipped+"." : string{};

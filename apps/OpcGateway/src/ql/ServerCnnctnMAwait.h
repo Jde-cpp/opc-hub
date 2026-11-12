@@ -26,8 +26,9 @@ namespace Jde::Opc::Gateway{
 	//(ServerCnnctn::SlugError) on a create, the kind's and the connection settings' (RowError) on a create over a blank row and on
 	//an update over the saved one, where a kind changed to a driver's also clears the four columns that kind fixes - the provider
 	//row's step, once the schema's sync is done and the AppServer is reachable (#520 review #4), the stock op, and its live side:
-	//the endpoint's folder for a new row (server/GatewayServer.h), and the clients an edit, a delete or a purge leaves stale
-	//(connectionEdited).  A failed insert or purge takes its provider step back before the engine's error is reported.
+	//the endpoint's folder for a new row (server/GatewayServer.h), the clients an edit, a delete or a purge leaves stale
+	//(connectionEdited), and a driver row's own server (drivers/DriverHost.h), started, restarted or stopped with its row.  A
+	//failed insert or purge takes its provider step back before the engine's error is reported.
 	struct ServerCnnctnMAwait final : QL::IQLTableMutationExe{
 		using base = QL::IQLTableMutationExe;
 		ServerCnnctnMAwait( QL::MutationQL&& m, QL::Creds creds, SRCE )ι:base{ move(m), move(creds), sl }{}
