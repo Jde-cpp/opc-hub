@@ -51,6 +51,29 @@ export class OeeAdminService{
 	async purgeSignal( poster:HistPoster, id:number ):Promise<void>{
 		await poster.postQL<any>( 'mutation purgeOeeMachineSignal( id: $id )', {id} );
 	}
+	//oeeLineStatus( line ) (oee.jsonnet), as far as a line's pages ask:  whether the gateway runs OEE and the line's own calendar
+	//as its client finds it.  Needs Read on the group of every machine the line reaches.
+	async lineStatus( reader:HistReader, lineId:number ):Promise<{enabled:boolean; calendar:string}|undefined>{
+		const status = ( await reader.query<any>( OeeAdminService.lineStatusQuery, {line: lineId} ) )?.oeeLineStatus;
+		return status ? { enabled: status.enabled===true, calendar: String( status.calendar ?? 'none' ) } : undefined;
+	}
+	static readonly lineStatusQuery = 'oeeLineStatus( line: $line ){ enabled calendar }';
+	//A machine or a line made a member of a line (#409), at `sort` in its order.  A throw is the refusal:  a member already in
+	//it, a line that would reach itself or a machine by two paths, a member line above its level.
+	async addLineMember( poster:HistPoster, lineId:number, member:{machine:number}|{line:number}, sort:number ):Promise<void>{
+		const machine = 'machine' in member;
+		await poster.postQL<any>( machine ? OeeAdminService.addMachineMutation : OeeAdminService.addLineMutation, {line: lineId, member: machine ? member.machine : member.line, sort} );
+	}
+	static readonly addMachineMutation = 'mutation createOeeLineMember( oeeLineId: $line, oeeMachineId: $member, sort: $sort ){ id }';
+	static readonly addLineMutation = 'mutation createOeeLineMember( oeeLineId: $line, memberLineId: $member, sort: $sort ){ id }';
+	//a member's place in its line's order:  the one column of it an update takes
+	async sortLineMember( poster:HistPoster, id:number, sort:number ):Promise<void>{
+		await poster.postQL<any>( 'mutation updateOeeLineMember( id: $id, sort: $sort )', {id, sort} );
+	}
+	//a member has no soft delete:  it leaves its line by purge
+	async purgeLineMember( poster:HistPoster, id:number ):Promise<void>{
+		await poster.postQL<any>( 'mutation purgeOeeLineMember( id: $id )', {id} );
+	}
 	//recomputeOee( machine, start, end ){ machine start end } (oee.jsonnet):  the machine's rows over the span made again from its
 	//group's history.  Answers the span once it is queued, not done.  Needs Update on the machines and Read on the group.
 	async recompute( poster:HistPoster, machineId:number, start:Date, end:Date ):Promise<{start:Date; end:Date}>{

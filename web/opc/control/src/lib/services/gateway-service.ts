@@ -598,10 +598,15 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	//every /gateway/oee/live at most while anything else of it changes.  After `dropped` the ack's status follows the subscribe
 	//again.  An exception under the id ends it:  the machine deleted or purged, OEE stopping, or a refusal of the subscribe itself.
 	oeeSubscribe( machine:number ):Observable<OeeLiveEvent>{
-		return new Observable<OeeLiveEvent>( subscriber=>this.#oee.open( {machine, subscriber, requestId: 0, down: false} ) );
+		return new Observable<OeeLiveEvent>( subscriber=>this.#oee.open( {machine, line: 0, subscriber, requestId: 0, down: false} ) );
+	}
+	//A line's (#409):  its machines' counts in the state's place, its shift by its own calendar and its machines' figures over
+	//it, pushed when a machine it reaches changes state or closes an interval.  It ends when the line is deleted or purged.
+	oeeSubscribeLine( line:number ):Observable<OeeLiveEvent>{
+		return new Observable<OeeLiveEvent>( subscriber=>this.#oee.open( {machine: 0, line, subscriber, requestId: 0, down: false} ) );
 	}
 	#oee = new LiveSubscriptions<OeeLive,OeeLiveEvent>( ()=>this.getRequestId(),
-		( live, requestId )=>this.sendWithId( {oeeSubscribe: <FromClient.OeeSubscribe>{machine: live.machine, line: 0}}, requestId, `oeeSubscribe machine: ${live.machine}` ),
+		( live, requestId )=>this.sendWithId( {oeeSubscribe: <FromClient.OeeSubscribe>{machine: live.machine, line: live.line}}, requestId, live.line ? `oeeSubscribe line: ${live.line}` : `oeeSubscribe machine: ${live.machine}` ),
 		subscription=>this.sendPromise<void>( {oeeUnsubscribe: <FromClient.OeeUnsubscribe>{subscription}}, `oeeUnsubscribe ${subscription}` ).catch( e=>console.warn( `oeeUnsubscribe ${subscription} - ${errorText(e)}` ) ) );
 	//the ack's and each pushed:  one for an ended subscription, already on the wire, finds none
 	#oeeStatus( requestId:number, status:FromServer.OeeStatus|undefined ){
@@ -879,7 +884,7 @@ export type HistEvent =
 //down:  dropped and not acked since
 type SocketLive<TEvent> = { subscriber:Subscriber<TEvent>; requestId:number; down:boolean; retry?:ReturnType<typeof setTimeout> };
 type HistLive = SocketLive<HistEvent> & { args:HistSubscribeArgs; latest:Map<number,Date> };//latest:  by slot
-type OeeLive = SocketLive<OeeLiveEvent> & { machine:number };
+type OeeLive = SocketLive<OeeLiveEvent> & { machine:number; line:number };//one of the two, the other 0
 //A live subscription's lifecycle on the gateway's socket, the historian's and OEE's.  Its request id names it on the wire.  The
 //teardown forgets it as it unsubscribes, so what is still on the wire for it finds no subscription and is dropped:  the ids
 //aren't reused, so one unknown is an ended subscription's.  The socket's drop says `dropped` once an outage, from its first drop

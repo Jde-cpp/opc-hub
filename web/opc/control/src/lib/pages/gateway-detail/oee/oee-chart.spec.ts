@@ -72,6 +72,16 @@ describe( 'OeeChart', ()=>{
 		expect( chart!.series[1].points ).toHaveLength( 9 );
 		fixture.destroy();
 	} );
+	//#409:  a row that names a line stands over its machines' rows
+	it( "names a line's row in bold, and escapes every row's name", async ()=>{
+		const spec:OeeChartSpec = { kind: 'gantt', title: 'The current shift', description: 'd', range, ...toGanttRows( [{name: 'Pump <1>', segments: timeline.segments, group: 'Area A&B'}, {name: 'Pump 2', segments: timeline.segments}] ) };
+		const { fixture, chart, plot } = await draw( spec );
+		expect( chart!.yAxis[0].options.categories ).toEqual( ['Area A&B', 'Pump <1>', 'Pump 2'] );
+		const label = <( this:object )=>string>chart!.yAxis[0].options.labels!.formatter;
+		expect( [0, 1, 2].map( pos=>label.call( {pos, value: chart!.yAxis[0].options.categories![pos]} ) ) ).toEqual( ['<b>Area A&amp;B</b>', 'Pump &lt;1&gt;', 'Pump 2'] );
+		expect( [plot.style.height, [...new Set( chart!.series[1].points.map( p=>p.y ) )]] ).toEqual( ['152px', [1, 2]] );
+		fixture.destroy();
+	} );
 	it( "keeps a zoom as the dashboard's data changes, and waits on an open tooltip", async ()=>{
 		const rows = ( segments:OeeSegment[] ):OeeChartSpec=>({ kind: 'gantt', title: 'The current shift', description: 'd', range, ...toGanttRows( [{name: 'Pump 1', segments}] ) });
 		const { fixture, chart } = await draw( rows( timeline.segments.slice( 0, 2 ) ) );

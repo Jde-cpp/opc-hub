@@ -133,7 +133,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( ServerCnnctnDBTests, SlugRefused ){
 		EXPECT_FALSE( ServerCnnctn::SlugError("Watch", SRCE_CUR) );//the router matches the segment case and all
 		EXPECT_FALSE( ServerCnnctn::SlugError("watch1", SRCE_CUR) );
-		for( let slug : {"templates", "groups", "calendars", "machines", "reasons"} )
+		for( let slug : {"templates", "groups", "calendars", "machines", "lines", "reasons"} )
 			EXPECT_TRUE( ServerCnnctn::SlugError(slug, SRCE_CUR) ) << "slug '" << slug << "'";
 		for( let slug : {" eng-test", "eng-test ", "eng test", "eng\\\\test", "-eng", "watch", "machines", "oee", ""} ){
 			let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"Slug test\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false ){{id}}", slug );

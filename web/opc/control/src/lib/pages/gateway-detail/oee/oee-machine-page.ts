@@ -13,15 +13,16 @@ import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ComponentPageTitle, RouteItem } from 'jde-spa';
 import { DateUtils, errorMessage } from 'jde-framework';
-import { isOeeRangeRefusal, narrowOeeRange, OeeBucket, oeeCount, oeeDuration, OeeLoss, oeeLossSplit, oeePercent, OeePeriod, oeePeriodRange, oeePeriods, OeeSegment, OeeShift, OeeSpan, OeeStop, OeeTimeline } from '../../../model/oee';
-import { OeeMachine, OeeMachineStatus } from '../../../model/oee-admin';
+import { isOeeRangeRefusal, narrowOeeRange, OeeBucket, oeeCount, oeeDuration, OeeLoss, oeeLossSplit, OeeMachineTimeline, oeePercent, OeePeriod, oeePeriodRange, oeePeriods, OeeSegment, OeeShift, OeeSpan, OeeStop, OeeTimeline } from '../../../model/oee';
+import { OeeMachine } from '../../../model/oee-admin';
+import { OeeLine, oeeLineTitle, OeePlant } from '../../../model/oee-lines';
 import { Gateway } from '../../../services/gateway-service';
 import { OeeAdminService } from '../../../services/oee-admin-service';
-import { OeeService } from '../../../services/oee-service';
+import { OeeOf, OeeService } from '../../../services/oee-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { OeeChart, OeeChartSpec } from './oee-chart';
-import { lossName, oeeDayName, OeeTrendBy, toGantt, toOeeTrend, toPareto } from './oee-chart-data';
+import { codable, GanttPoint, lossName, oeeDayName, OeeTrendBy, toGantt, toGanttPairs, toOeeTrend, toPareto } from './oee-chart-data';
 import { OeeCodingDialog, OeeReasonsRead } from './oee-coding-dialog';
 
 const stopsPage = 50;
@@ -37,25 +38,34 @@ type OeePart = typeof oeeParts[number];
 //charts draw through the History trend's add-on;  without it the page is its figures and its tables.  A day and a week are
 //the browser's, midnight and Monday;  a shift is the calendar's.  The machine and its gateway are the row's, from
 //HistAdminResolver, and the router reuses the page from one machine to the next.
+//A line's OEE page (#409), `lines/<slug>/oee`, is this page with the line in the machine's place, its route's kind `lines`:
+//headed by its level and its name, each read the line's - its machines' combined - with a tile per direct member above the
+//figures, each the member's own over the period, the Gantt chart a pair of rows per machine the line reaches, the Pareto
+//across them, and the stops every machine's, each naming its machine and coded on it.  In the counts' place it says how many
+//machines each factor is over.
 @Component({
 	templateUrl: './oee-machine-page.html',
-	styleUrls: ['./oee-machine-page.scss'],
+	styleUrls: ['./oee-machine-page.scss', './oee-tiles.scss'],
 	host: {class: 'main-content my-content oee-machine-page'},
 	imports: [DatePipe, RouterLink, MatButtonModule, MatButtonToggleModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSlideToggleModule, MatTableModule, MatTooltipModule, OeeChart]
 })
 export class OeeMachinePage implements OnInit{
 	ngOnInit(){
-		this.#route.data.subscribe( data=>this.#open( <GatewayDetailData<OeeMachine>>data['pageData'] ) );
+		this.#route.data.subscribe( data=>this.#open( <GatewayDetailData<any>>data['pageData'], data['kind']=='lines' ) );
 		this.#loader.load().catch( ()=>{} );//how it settled is the loader's state, for the page's one notice
 	}
-	async #open( pageData:GatewayDetailData<OeeMachine> ):Promise<void>{
+	async #open( pageData:GatewayDetailData<any>, isLine:boolean ):Promise<void>{
 		if( !pageData )//the resolver found no row, and is on its way elsewhere
 			return;
-		const machine = new OeeMachine( pageData.row ), gateway = pageData.gateway;
+		const machine = isLine ? new OeeLine( pageData.row ) : new OeeMachine( pageData.row ), gateway = pageData.gateway;
 		this.gateway = gateway;
 		this.machine.set( machine );
+		this.line.set( isLine ? <OeeLine>machine : undefined );
 		this.sideNav.set( pageData.routing );
-		this.#title.title = `${machine.name} - OEE`;
+		this.#title.title = `${isLine ? oeeLineTitle( <OeeLine>machine ) : machine.name} - OEE`;
+		this.plant.set( undefined );
+		if( isLine )//its members' pages are by their slugs
+			this.#service.plant( gateway ).then( plant=>{ if( this.#isOpen( machine ) ) this.plant.set( plant ); }, e=>console.warn( "Could not read the line's members' pages.", e ) );
 		this.#clear();
 		this.#shift = undefined;
 		this.reasons.set( {list: [], reading: true} );
@@ -65,9 +75,9 @@ export class OeeMachinePage implements OnInit{
 		this.statusProblem.set( undefined );
 		this.#service.reasons( gateway ).then( list=>{ if( this.#isOpen( machine ) ) this.reasons.set( {list} ); }, e=>{ if( this.#isOpen( machine ) ) this.reasons.set( {list: [], error: errorMessage(e)} ); } );
 		//a calendar the gateway's client finds gives the machine shifts:  the page opens on the one it is in, and the trend is by shift
-		let status:OeeMachineStatus|undefined, failed:string|undefined;
+		let status:{calendar:string}|undefined, failed:string|undefined;
 		try{
-			status = await this.#admin.status( gateway, machine.id );
+			status = await ( isLine ? this.#admin.lineStatus( gateway, machine.id ) : this.#admin.status( gateway, machine.id ) );
 		}
 		catch( e ){
 			failed = errorMessage( e );
@@ -77,12 +87,14 @@ export class OeeMachinePage implements OnInit{
 		const shifts = status?.calendar=='found';
 		this.hasShifts.set( shifts );
 		this.utcDays.set( !!status && !shifts );//with no calendar the gateway finds, its days are UTC's
-		this.statusProblem.set( failed ? `Could not read the machine's calendar, so This shift isn't offered:  ${failed}` : undefined );
+		this.statusProblem.set( failed ? `Could not read the ${isLine ? 'line' : 'machine'}'s calendar, so This shift isn't offered:  ${failed}` : undefined );
 		this.period.set( shifts ? 'shift' : 'today' );
 		this.trendBy.set( shifts ? 'shift' : 'day' );
 		await this.refresh();
 	}
-	#isOpen( machine:OeeMachine ):boolean{ return this.machine()===machine; }
+	#isOpen( machine:OeeMachine|OeeLine ):boolean{ return this.machine()===machine; }
+	//what the reads are of:  the machine, or the line in its place
+	#of():OeeOf{ const id = this.machine().id; return this.line() ? {line: id} : id; }
 	#clear():void{
 		++this.#epoch;//what is on its way is another period's, or another machine's
 		for( const part of oeeParts )
@@ -92,6 +104,7 @@ export class OeeMachinePage implements OnInit{
 		this.rangeProblem.set( undefined );
 		this.bucket.set( undefined );
 		this.timeline.set( undefined );
+		this.lineTimelines.set( undefined );
 		this.narrowed.set( undefined );
 		this.losses.set( [] );
 		this.trend.set( [] );
@@ -119,7 +132,7 @@ export class OeeMachinePage implements OnInit{
 	//each part's answer replaces it;  `keepStops`, a coding's refresh, reads as many stops as the table shows, so it stays where
 	//it is read.
 	async refresh( keepStops=false ):Promise<void>{
-		const machine = this.machine(), gateway = this.gateway, period = this.period(), now = new Date();
+		const machine = this.machine(), of = this.#of(), isLine = !!this.line(), gateway = this.gateway, period = this.period(), now = new Date();
 		const read = ++this.#epoch, current = ()=>read==this.#epoch;
 		this.errors.set( {} );
 		this.rangeProblem.set( undefined );
@@ -128,12 +141,12 @@ export class OeeMachinePage implements OnInit{
 			let shift:OeeShift|undefined;
 			if( period=='shift' ){
 				try{
-					shift = await this.#findShift( gateway, machine, now );
+					shift = await this.#findShift( gateway, machine, of, now );
 				}
 				catch( e ){
 					if( current() ){
 						this.#clear();
-						this.rangeProblem.set( `Could not find the machine's shift:  ${errorMessage(e)}` );
+						this.rangeProblem.set( `Could not find the ${isLine ? 'line' : 'machine'}'s shift:  ${errorMessage(e)}` );
 					}
 					return;
 				}
@@ -143,7 +156,7 @@ export class OeeMachinePage implements OnInit{
 			const range = oeePeriodRange( period, now, {shift, from: DateUtils.fromLocalInput( this.customFrom() ), to: DateUtils.fromLocalInput( this.customTo() )} );
 			if( !range ){
 				this.#clear();
-				return this.rangeProblem.set( period=='shift' ? "The machine's calendar has no shift in the last day and a half.  Pick another period." : period=='custom' ? 'Enter a From before now, and a To after it or none.' : 'The period is empty.' );
+				return this.rangeProblem.set( period=='shift' ? `The ${isLine ? 'line' : 'machine'}'s calendar has no shift in the last day and a half.  Pick another period.` : period=='custom' ? 'Enter a From before now, and a To after it or none.' : 'The period is empty.' );
 			}
 			this.range.set( range );
 			this.#rangeShift = shift;
@@ -163,13 +176,15 @@ export class OeeMachinePage implements OnInit{
 					}
 				}
 			};
-			const figures = this.#service.figures( gateway, machine.id, range );
+			const figures = isLine ? this.#service.figures( gateway, of, range, undefined, true ) : this.#service.figures( gateway, of, range );
 			await Promise.all( [
 				part( 'figures', ()=>figures, buckets=>this.bucket.set( buckets?.[0] ) ),
-				part( 'timeline', live=>this.#readTimeline( gateway, machine.id, range, live ), y=>{ this.timeline.set( y?.timeline ); this.narrowed.set( y?.narrowed ? y.range : undefined ); } ),
-				part( 'losses', ()=>this.#service.losses( gateway, machine.id, range ), losses=>this.losses.set( losses ?? [] ) ),
-				part( 'trend', ()=>this.#readTrend( gateway, machine.id, range, this.trendBy(), shift, ()=>figures ), buckets=>this.trend.set( buckets ?? [] ) ),
-				part( 'stops', ()=>this.#service.stops( gateway, machine.id, range, {uncoded: this.uncodedOnly(), limit} ), page=>this.#setStops( page?.stops ?? [], page?.continuation ) )
+				isLine
+					? part( 'timeline', live=>this.#readTimeline( r=>this.#service.timelines( gateway, machine.id, r ), range, live ), y=>{ this.lineTimelines.set( y?.timeline ); this.narrowed.set( y?.narrowed ? y.range : undefined ); } )
+					: part( 'timeline', live=>this.#readTimeline( r=>this.#service.timeline( gateway, machine.id, r ), range, live ), y=>{ this.timeline.set( y?.timeline ); this.narrowed.set( y?.narrowed ? y.range : undefined ); } ),
+				part( 'losses', ()=>this.#service.losses( gateway, of, range ), losses=>this.losses.set( losses ?? [] ) ),
+				part( 'trend', ()=>this.#readTrend( gateway, of, range, this.trendBy(), shift, ()=>figures ), buckets=>this.trend.set( buckets ?? [] ) ),
+				part( 'stops', ()=>this.#service.stops( gateway, of, range, {uncoded: this.uncodedOnly(), limit} ), page=>this.#setStops( page?.stops ?? [], page?.continuation ) )
 			] );
 		}
 		finally{
@@ -177,10 +192,10 @@ export class OeeMachinePage implements OnInit{
 		}
 	}
 	//This shift's bounds, kept while it runs and read again once now is past its end, when another may have begun.
-	async #findShift( gateway:Gateway, machine:OeeMachine, now:Date ):Promise<OeeShift|undefined>{
+	async #findShift( gateway:Gateway, machine:OeeMachine|OeeLine, of:OeeOf, now:Date ):Promise<OeeShift|undefined>{
 		if( this.#shift && this.#shift.end>now )
 			return this.#shift;
-		const shift = await this.#service.shift( gateway, machine.id, now );
+		const shift = await this.#service.shift( gateway, of, now );
 		if( this.#isOpen( machine ) )
 			this.#shift = shift;
 		return shift;
@@ -188,13 +203,14 @@ export class OeeMachinePage implements OnInit{
 	#shift:OeeShift|undefined;
 	#rangeShift:OeeShift|undefined;//the shift the range is, where the period is This shift
 	//The Gantt chart's read, which only the chart uses:  none without the add-on.  A range refused as above the gateway's readLimit
-	//is halved, its newest half kept, until one is taken, or the page has moved on.
-	async #readTimeline( gateway:Gateway, machine:number, asked:OeeSpan, live:()=>boolean ):Promise<{timeline:OeeTimeline; range:OeeSpan; narrowed:boolean}|undefined>{
+	//is halved, its newest half kept, until one is taken, or the page has moved on.  `read` is the machine's, or the line's, one
+	//per machine it reaches.
+	async #readTimeline<T>( read:( range:OeeSpan )=>Promise<T>, asked:OeeSpan, live:()=>boolean ):Promise<{timeline:T; range:OeeSpan; narrowed:boolean}|undefined>{
 		if( !await this.#loader.load().catch( ()=>undefined ) )
 			return undefined;
 		for( let range = asked;; ){
 			try{
-				return { timeline: await this.#service.timeline( gateway, machine, range ), range, narrowed: range!=asked };
+				return { timeline: await read( range ), range, narrowed: range!=asked };
 			}
 			catch( e ){
 				const next = live() && isOeeRangeRefusal( errorMessage(e) ) ? narrowOeeRange( range ) : undefined;
@@ -226,19 +242,39 @@ export class OeeMachinePage implements OnInit{
 	} );
 	readonly split = computed( ()=>{ const b = this.bucket(); return b ? oeeLossSplit( b ) : undefined; } );
 	readonly counts = computed( ()=>{
-		const b = this.bucket(), unit = this.machine()?.countUnit;
+		const b = this.bucket(), unit = (<OeeMachine>this.machine())?.countUnit;
+		if( b && this.line() ){//counts in bottles and counts in cases don't add:  a line says what its factors are over
+			const of = ( n:number|undefined )=>n==undefined ? '' : `${n} of ${b.machines ?? 0}`;
+			return [ {label: 'Machines', text: String( b.machines ?? '' )}, {label: 'Performance over', text: of( b.coverage?.performance )}, {label: 'Quality over', text: of( b.coverage?.quality )} ];
+		}
 		return !b ? [] : [ {label: 'Total', value: b.total}, {label: 'Good', value: b.good}, {label: 'Reject', value: b.reject}, {label: 'Outside planned time', value: b.outside} ]
 			.map( c=>({ label: c.label, text: `${oeeCount( c.value )}${unit ? ` ${unit}` : ''}` }) );
 	} );
 	duration = oeeDuration;
 	percent = oeePercent;
+	//A line's direct members (#409), each with its own figures over the period, from the line's one read, and its OEE page where
+	//the gateway's lists have it.
+	plant = signal<OeePlant|undefined>( undefined );
+	readonly members = computed( ()=>{
+		const plant = this.plant();
+		return ( this.bucket()?.members ?? [] ).map( m=>{
+			const figures = [['Availability', m.availability], ['Performance', m.performance], ['Quality', m.quality], ['OEE', m.oee]].map( ( [label, v] )=>({ label: <string>label, value: oeePercent( <number|undefined>v ) }) );
+			const machine = m.machine && plant?.machines.find( x=>x.id==m.machine!.id ), line = m.line && plant?.lines.find( x=>x.id==m.line!.id );
+			return { key: m.machine ? `m${m.machine.id}` : `l${m.line?.id}`, name: m.machine?.name ?? m.line?.name ?? '', kind: m.machine ? 'Machine' : m.line?.level || 'Line', figures, partial: m.partial,
+				link: machine ? ['../../../machines', machine.slug, 'oee'] : line ? ['../..', line.slug, 'oee'] : undefined };
+		} );
+	} );
 
 	//The charts
 	chartState = inject( HighchartsLoader ).state;
 	timeline = signal<OeeTimeline|undefined>( undefined );
 	narrowed = signal<OeeSpan|undefined>( undefined );//what the Gantt chart shows, where the period was refused whole
+	lineTimelines = signal<OeeMachineTimeline[]|undefined>( undefined );//a line's:  one per machine it reaches
 	readonly ganttSpec = computed<OeeChartSpec|undefined>( ()=>{
-		const timeline = this.timeline(), range = this.narrowed() ?? this.range();
+		const timeline = this.timeline(), timelines = this.lineTimelines(), range = this.narrowed() ?? this.range();
+		if( timelines?.length && range )
+			return { kind: 'gantt', title: `Timeline of ${this.machine().name}`, range, ...toGanttPairs( timelines, range ),
+				description: "A pair of rows for each machine of the line, its planned time and under it its state:  running, each stop in its reason's category, uncoded and small stops, and unknown time.  A stop's band opens its coding." };
 		if( !timeline || !range )
 			return undefined;
 		return { kind: 'gantt', title: `Timeline of ${this.machine().name}`, range, ...toGantt( timeline, range ),
@@ -264,10 +300,10 @@ export class OeeMachinePage implements OnInit{
 		this.trendBy.set( by );
 		if( !range )
 			return;
-		await this.#reread( 'trend', ()=>this.#readTrend( gateway, this.machine().id, range, by, this.#rangeShift, bucket && (()=>Promise.resolve( [bucket] )) ), buckets=>this.trend.set( buckets ), ()=>this.trend.set( [] ) );
+		await this.#reread( 'trend', ()=>this.#readTrend( gateway, this.#of(), range, by, this.#rangeShift, bucket && (()=>Promise.resolve( [bucket] )) ), buckets=>this.trend.set( buckets ), ()=>this.trend.set( [] ) );
 	}
 	//The trend's buckets.  Over This shift, by shift is the figures' one bucket named for its shift, not a second read of it.
-	#readTrend( gateway:Gateway, machine:number, range:OeeSpan, by:OeeTrendBy, shift:OeeShift|undefined, figures:(()=>Promise<OeeBucket[]>)|undefined ):Promise<OeeBucket[]>{
+	#readTrend( gateway:Gateway, machine:OeeOf, range:OeeSpan, by:OeeTrendBy, shift:OeeShift|undefined, figures:(()=>Promise<OeeBucket[]>)|undefined ):Promise<OeeBucket[]>{
 		return by=='shift' && shift && figures
 			? figures().then( buckets=>buckets.map( b=>({...b, shift: shift.name}) ) )
 			: this.#service.figures( gateway, machine, range, by );
@@ -278,7 +314,7 @@ export class OeeMachinePage implements OnInit{
 	hasMore = signal( false );
 	uncodedOnly = signal( false );
 	reasons = signal<OeeReasonsRead>( {list: []} );
-	readonly stopColumns = ['start', 'end', 'length', 'reason', 'code', 'comment', 'actions'];
+	readonly stopColumns = computed( ()=>[...(this.line() ? ['machine'] : []), 'start', 'end', 'length', 'reason', 'code', 'comment', 'actions'] );
 	#continuation:string|undefined;
 	#setStops( stops:OeeStop[], continuation:string|undefined ):void{
 		this.stops.set( stops );
@@ -290,14 +326,14 @@ export class OeeMachinePage implements OnInit{
 		this.uncodedOnly.set( uncoded );
 		if( !range )
 			return;
-		await this.#reread( 'stops', ()=>this.#service.stops( gateway, this.machine().id, range, {uncoded, limit: stopsPage} ), page=>this.#setStops( page.stops, page.continuation ), ()=>this.#setStops( [], undefined ) );
+		await this.#reread( 'stops', ()=>this.#service.stops( gateway, this.#of(), range, {uncoded, limit: stopsPage} ), page=>this.#setStops( page.stops, page.continuation ), ()=>this.#setStops( [], undefined ) );
 	}
 	//the page after the oldest stop shown
 	async loadMore():Promise<void>{
 		const range = this.range(), gateway = this.gateway, continuation = this.#continuation;
 		if( !range || !continuation )
 			return;
-		await this.#reread( 'stops', ()=>this.#service.stops( gateway, this.machine().id, range, {uncoded: this.uncodedOnly(), limit: stopsPage, continuation} ),
+		await this.#reread( 'stops', ()=>this.#service.stops( gateway, this.#of(), range, {uncoded: this.uncodedOnly(), limit: stopsPage, continuation} ),
 			page=>this.#setStops( [...this.stops(), ...page.stops], page.continuation ), ()=>{} );
 	}
 	//one part read again within the period shown:  dropped where the page, or the part, has been read again since
@@ -332,26 +368,26 @@ export class OeeMachinePage implements OnInit{
 	codeText( s:OeeStop ):string{ return s.code==undefined ? '' : typeof s.code=='object' ? JSON.stringify( s.code ) : String( s.code ); }
 
 	//The coding dialog on a stop, and the page read again where a coding landed:  a reason moves the figures and the losses too.
-	//The dialog reads an open stop again before it codes it.
+	//The dialog reads an open stop again before it codes it.  A line's stop is coded on the machine it names.
 	async code( stop:OeeStop ):Promise<void>{
-		const gateway = this.gateway, machine = this.machine();
+		const gateway = this.gateway, machine = this.machine(), on = stop.machine?.id ?? machine.id;
 		const changed = await OeeCodingDialog.open( this.#dialog, { stop, reasons: this.reasons,
-			code: call=>this.#service.code( gateway, machine.id, call ), uncode: id=>this.#service.uncode( gateway, id ),
-			reread: ()=>this.#service.stop( gateway, machine.id, stop.id, stop.start ) } );
+			code: call=>this.#service.code( gateway, on, call ), uncode: id=>this.#service.uncode( gateway, id ),
+			reread: ()=>this.#service.stop( gateway, on, stop.id, stop.start ).then( s=>s && stop.machine ? {...s, machine: stop.machine} : s ) } );
 		if( changed && this.#isOpen( machine ) )
 			await this.refresh( true );
 	}
 	//A band of the Gantt chart:  its stop as the table has it, whole, with its codings.  One the table lacks - filtered out by
 	//Uncoded, not paged to, or begun before the period, which cuts its band - is read from the gateway at its first piece.
-	async codeSegment( segment:OeeSegment ):Promise<void>{
+	async codeSegment( segment:OeeSegment, of?:OeeMachineTimeline ):Promise<void>{
 		const row = this.stops().find( s=>s.id==segment.stop );
 		if( row )
 			return this.code( row );
-		const gateway = this.gateway, machine = this.machine(), first = this.timeline()?.segments.find( s=>s.stop==segment.stop ) ?? segment;
+		const gateway = this.gateway, machine = this.machine(), first = ( of ?? this.timeline() )?.segments.find( s=>s.stop==segment.stop ) ?? segment;
 		const said = ( e:string )=>this.errors.update( errors=>({...errors, timeline: e}) );
 		let stop:OeeStop|undefined;
 		try{
-			stop = await this.#service.stop( gateway, machine.id, segment.stop!, first.start );
+			stop = await this.#service.stop( gateway, of?.machine.id ?? machine.id, segment.stop!, first.start );
 		}
 		catch( e ){
 			if( this.#isOpen( machine ) )
@@ -362,11 +398,17 @@ export class OeeMachinePage implements OnInit{
 			return;
 		if( !stop )
 			return said( 'The stop is gone:  the engine has made its stops again.  Refresh to read them.' );
-		return this.code( stop );
+		return this.code( of ? {...stop, machine: of.machine} : stop );
+	}
+	//a band of a line's chart:  a stop's opens its coding, on the machine whose pair of rows it is in
+	codeBand( point:GanttPoint ):Promise<void>|undefined{
+		const of = this.lineTimelines()?.[Math.floor( point.y/2 )], segment = point.custom?.segment;
+		return of && segment && codable( segment ) ? this.codeSegment( segment, of ) : undefined;
 	}
 
 	sideNav = model.required<RouteItem>();
-	machine = signal<OeeMachine>( null as any );
+	machine = signal<OeeMachine|OeeLine>( null as any );//the page's subject:  the machine, or the line in its place
+	line = signal<OeeLine|undefined>( undefined );
 	gateway!:Gateway;
 	#route = inject( ActivatedRoute );
 	#title = inject( ComponentPageTitle );

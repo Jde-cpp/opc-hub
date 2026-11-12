@@ -15,6 +15,7 @@ import { HistAdminService } from '../../../services/hist-admin-service';
 import { OeeAdminService, OeeGroup } from '../../../services/oee-admin-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { HistMembers } from '../hist-admin/hist-members';
+import { readOeeCalendars } from './oee-calendars';
 
 //The fields the form leaves out:  the group, the ideal, the interval and the calendar have controls of their own below it, and
 //`processed` is the engine's.  A constant, as the binding is read each check and a new array has Properties rebuild its fields.
@@ -107,14 +108,11 @@ export class OeeMachineDetail extends DetailPage<OeeMachine>{
 		const gateway = this.gateway;
 		this.#admin.groups( gateway ).then( groups=>{ if( gateway==this.gateway ) this.groups.set( groups ); }, e=>this.snackbar.exception( 'Could not list the groups.', e ) );
 		try{
-			const [calendars, registrations] = await Promise.all( [this.#calendarService.calendars( this.#app ), this.#app.registrations()] );
+			const { calendars, url } = await readOeeCalendars( this.#app, this.#calendarService, gateway.slug );
 			if( gateway!=this.gateway )
 				return;
 			this.calendars.set( calendars );
-			const registered = ( program:string, instanceName?:string )=>registrations.find( r=>r.programName==program && (instanceName===undefined || r.instanceName==instanceName) );
-			const hub = !registered( 'OpcGateway', gateway.slug ) && !!registered( 'OpcHub', gateway.slug );//as GatewayDetail.isHub
-			const appServer = registered( 'AppServer' )?.instanceName;
-			this.calendarsUrl.set( hub ? ['/apps/gateways', gateway.slug, 'calendars'] : appServer ? ['/apps/appServers', appServer, 'calendars'] : undefined );
+			this.calendarsUrl.set( url );
 		}
 		catch( e ){//the calendar shows by its id then
 			console.warn( 'Could not list the calendars.', e );

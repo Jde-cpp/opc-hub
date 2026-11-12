@@ -77,6 +77,7 @@ export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tre
 	return {
 		slug, name: slug, values, histEvents, events, oeeEvents,
 		oeeSubscribe: vi.fn( ( machine:number )=>oeeEvents.open( machine ) ),
+		oeeSubscribeLine: vi.fn( ( line:number )=>oeeEvents.open( -line ) ),//a line's feed is under its id negated
 		subscribeEvents: vi.fn( ( _opc:string, node:NodeId, select:string[], _owner?:string )=>events.open( {node, select} ) ),
 		historyEvents: vi.fn( async ( _opc:string, _node:NodeId, _args:HistEventsArgs ):Promise<HistEventsPage>=>({ status: 0, events: [] }) ),
 		refreshConditions: vi.fn( async ( _opc:string, _node:NodeId ):Promise<StatusCode>=>0 ),

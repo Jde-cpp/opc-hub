@@ -4,7 +4,7 @@ import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
 import { provideRouter } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
-import { OeeCodingCall, OeeSpan, toOeeBucket, toOeeStop, toOeeTimeline } from '../../../model/oee';
+import { OeeCodingCall, OeeSpan, toOeeBucket, toOeeStop, toOeeTimeline, toOeeTimelines } from '../../../model/oee';
 import { OeeAdminService } from '../../../services/oee-admin-service';
 import { OeeService } from '../../../services/oee-service';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
@@ -18,15 +18,18 @@ import { flush, pageTitleStub, provideRoute, stable } from 'jde-spa/testing';
 class ChartStub{
 	spec = input.required<OeeChartSpec>();
 	pick = output<any>();
+	band = output<any>();
 }
 const row = { id: 4, name: 'Pump 1', slug: 'pump1', histGroup: {id: 5, name: 'Pumps'}, countUnit: 'bottles' };
 const Jam = {id: 3, name: 'Jam', category: 'Unplanned'};
+const lineRow = { id: 10, name: 'Packaging', slug: 'packaging', level: 'Area', calendarId: 2 };//a line's page is the same page, its route's kind `lines`
 const iso = ( h:number, m=0 )=>new Date( Date.UTC( 2026, 10, 11, h, m ) ).toISOString();
 const stopJson = ( id:number, extra:object={} )=>({ id, start: iso( 8, 12 ), end: iso( 8, 40 ), ms: 1680000, small: false, open: false, uncoded: true, codings: [], ...extra });
 //The page over stubs:  `service` records each read and answers what the test set on `answers`;  `status` is the machine's, a
 //calendar found by default;  `addOn` is how the add-on settled;  `dialog` is what the coding dialog was opened with, and
-//`closeWith` what it answers.  `open` moves the page to another machine, as the router does.
-const create = async ( {calendar='found', addOn='loaded', status}:{calendar?:string; addOn?:'loaded'|'absent'; status?:Error}={} )=>{
+//`closeWith` what it answers.  `open` moves the page to another machine, as the router does.  `line` opens it on a line, whose
+//figures carry two members and whose timeline is a machine each.
+const create = async ( {calendar='found', addOn='loaded', status, line=false}:{calendar?:string; addOn?:'loaded'|'absent'; status?:Error; line?:boolean}={} )=>{
 	const answers = {
 		timelineRefusals: 0,
 		stops: [stopJson( 7 )], continuation: <string|undefined>undefined,
@@ -38,11 +41,17 @@ const create = async ( {calendar='found', addOn='loaded', status}:{calendar?:str
 	const service = {
 		reasons: vi.fn( async ()=>[Jam] ),
 		shift: vi.fn( async ( _g:unknown, _id:number, now:Date )=>( {start: new Date( now.getTime()-3600000 ), end: new Date( now.getTime()+3600000 ), name: 'First'} ) ),
-		figures: vi.fn( async ( _g:unknown, _id:number, _range:OeeSpan, by?:string )=>{
+		figures: vi.fn( async ( _g:unknown, of:unknown, _range:OeeSpan, by?:string, members?:boolean )=>{
 			if( answers.figures && !by )
 				throw answers.figures;
-			return [toOeeBucket( {...bucket, shift: by=='shift' ? 'First' : undefined} )];
+			const ofLine = typeof of=='object' ? {machines: 2, coverage: {performance: 2, quality: 1}} : {};
+			return [toOeeBucket( {...bucket, ...ofLine, shift: by=='shift' ? 'First' : undefined, ...(members ? {members: [{...bucket, oee: 0.5, machine: {id: 5, name: 'Pump 2'}}, {...bucket, oee: undefined, partial: false, line: {id: 11, name: 'Line A', level: 'Line'}}]} : {})} )];
 		} ),
+		plant: vi.fn( async ()=>({ machines: [{id: 4, name: 'Pump 1', slug: 'pump1'}, {id: 5, name: 'Pump 2', slug: 'pump2'}], lines: [{id: 11, name: 'Line A', slug: 'line-a', level: 'Line'}], members: [] }) ),
+		timelines: vi.fn( async ( _g:unknown, _line:number, _range:OeeSpan )=>toOeeTimelines( [
+			{machine: {id: 4, name: 'Pump 1'}, planned: [], segments: [{start: iso( 6 ), end: iso( 8 ), state: 'running', small: false, uncoded: false}]},
+			{machine: {id: 5, name: 'Pump 2'}, planned: [], segments: [{start: iso( 9 ), end: iso( 9, 5 ), state: 'stopped', stop: 99, small: false, uncoded: true}]}
+		] ) ),
 		stops: vi.fn( async ( _g:unknown, _id:number, _range:OeeSpan, _args:{uncoded:boolean; limit:number; continuation?:string} )=>({ stops: answers.stops.map( toOeeStop ), continuation: answers.continuation }) ),
 		losses: vi.fn( async ( _g:unknown, _id:number, _range:OeeSpan )=>[{kind: <const>'reason', reason: Jam, ms: 1680000, stops: 1}, {kind: <const>'small', ms: 240000, stops: 2}] ),
 		timeline: vi.fn( async ( _g:unknown, _id:number, _range:OeeSpan )=>{
@@ -54,11 +63,11 @@ const create = async ( {calendar='found', addOn='loaded', status}:{calendar?:str
 		code: vi.fn( async ( _g:unknown, _id:number, _call:OeeCodingCall )=>undefined ),
 		uncode: vi.fn( async ( _g:unknown, _id:number )=>{} )
 	};
-	const admin = { status: vi.fn( async ()=>{ if( status ) throw status; return {enabled: true, calendar, engine: 'live'}; } ) };
+	const admin = { status: vi.fn( async ()=>{ if( status ) throw status; return {enabled: true, calendar, engine: 'live'}; } ), lineStatus: vi.fn( async ()=>({enabled: true, calendar}) ) };
 	const loader = { state: signal( addOn ), load: vi.fn( async ()=>addOn=='loaded' ? {} : undefined ) };
 	const dialog = vi.spyOn( OeeCodingDialog, 'open' ).mockImplementation( async ()=>answers.closeWith );
 	const gateway = { slug: 'g' };
-	const data = new BehaviorSubject<object>( {pageData: {row, routing: {}, schema: {}, gateway}} );
+	const data = new BehaviorSubject<object>( line ? {kind: 'lines', pageData: {row: lineRow, routing: {}, schema: {}, gateway}} : {pageData: {row, routing: {}, schema: {}, gateway}} );
 	const title = { title: '' };
 	TestBed.configureTestingModule({ providers: [
 		provideRouter( [] ), provideRoute( {data} ), { ...pageTitleStub, useValue: title },
@@ -319,5 +328,51 @@ describe( 'OeeMachinePage', ()=>{
 		expect( p.page.range() ).toBeUndefined();
 		expect( p.page.bucket() ).toBeUndefined();
 		expect( p.service.figures.mock.calls.length ).toBe( reads );
+	} );
+	//#409:  a line's OEE page is this page, the line in the machine's place
+	it( "opens a line headed by its level and name, every read the line's, with its members' tiles and what its factors are over", async ()=>{
+		const p = await create( {line: true} );
+		expect( p.title.title ).toBe( 'Area Packaging - OEE' );
+		expect( p.text( '.line-heading' ) ).toEqual( ['Area Packaging'] );
+		expect( [p.admin.lineStatus.mock.calls.length, p.admin.status.mock.calls.length, p.page.period()] ).toEqual( [1, 0, 'shift'] );
+		const range = p.page.range()!;
+		expect( p.service.shift.mock.calls[0][1] ).toEqual( {line: 10} );
+		expect( p.service.figures.mock.calls[0].slice( 1 ) ).toEqual( [{line: 10}, range, undefined, true] );
+		for( const read of [p.service.stops, p.service.losses] )
+			expect( read.mock.calls[0].slice( 1, 3 ) ).toEqual( [{line: 10}, range] );
+		expect( [p.service.timelines.mock.calls[0].slice( 1 ), p.service.timeline.mock.calls.length] ).toEqual( [[10, range], 0] );
+		expect( p.text( '#oee-members + .tiles .tile' ) ).toEqual( ['Pump 2MachineAvailability80.0%Performance104.0%Quality95.0%OEE50.0%Partial', 'Line ALineAvailability80.0%Performance104.0%Quality95.0%OEE–'] );
+		expect( p.page.members().map( m=>m.link ) ).toEqual( [['../../../machines', 'pump2', 'oee'], ['../..', 'line-a', 'oee']] );
+		expect( p.page.counts() ).toEqual( [{label: 'Machines', text: '2'}, {label: 'Performance over', text: '2 of 2'}, {label: 'Quality over', text: '1 of 2'}] );
+		expect( p.text( '.period-bar a' ) ).toEqual( ['monitoringDashboard', 'settingsLine'] );//each with its icon's name
+	} );
+	it( "draws a line's chart a pair of rows per machine, lists its stops with their machines, and codes each on its machine", async ()=>{
+		const p = await create( {line: true} );
+		p.answers.stops = [stopJson( 7, {machine: {id: 4, name: 'Pump 1'}} )];
+		await p.page.refresh();
+		await stable( p.fixture );
+		const spec = p.charts()[0].spec();
+		expect( spec.kind=='gantt' && [spec.rows, spec.state.map( b=>b.y )] ).toEqual( [['Pump 1, planned', 'Pump 1', 'Pump 2, planned', 'Pump 2'], [1, 3]] );
+		expect( p.page.stopColumns()[0] ).toBe( 'machine' );
+		expect( p.rows( 'mat-row' )[0] ).toMatch( /^Pump 1 \| / );
+		await p.page.code( p.page.stops()[0] );
+		await p.dialogData().code( {start: 'a', end: 'b', reason: 3} );
+		expect( p.service.code.mock.calls.at( -1 )!.slice( 1 ) ).toEqual( [4, {start: 'a', end: 'b', reason: 3}] );//on the stop's machine, not the line
+		p.charts()[0].band.emit( spec.kind=='gantt' && spec.state[0] );//running time opens nothing
+		await flush( 2 );
+		expect( p.service.stop ).not.toHaveBeenCalled();
+		p.charts()[0].band.emit( spec.kind=='gantt' && spec.state[1] );//Pump 2's stop, which the table lacks:  read on its machine
+		await flush( 4 );
+		expect( p.service.stop.mock.calls.at( -1 )!.slice( 1, 3 ) ).toEqual( [5, 99] );
+		expect( p.dialogData().stop ).toMatchObject( {id: 99, machine: {id: 5, name: 'Pump 2'}} );
+		await p.dialogData().code( {start: 'a', end: 'b', reason: 3} );
+		expect( p.service.code.mock.calls.at( -1 )![1] ).toBe( 5 );
+	} );
+	it( 'goes from a line to a machine as the router moves it, with no line left of it', async ()=>{
+		const p = await create( {line: true} );
+		await p.open( row );
+		expect( [p.page.line(), p.title.title, p.page.members(), p.page.stopColumns()[0]] ).toEqual( [undefined, 'Pump 1 - OEE', [], 'start'] );
+		expect( p.service.figures.mock.calls.at( -1 )!.slice( 1 ) ).toHaveLength( 2 );
+		expect( p.text( '.line-heading' ) ).toEqual( [] );
 	} );
 } );

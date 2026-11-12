@@ -1,4 +1,4 @@
-import { OeeBucket, oeeCount, oeeDuration, OeeLoss, OeeOccurrence, oeePercent, OeeSegment, OeeSpan, OeeTimeline } from '../../../model/oee';
+import { OeeBucket, oeeCount, oeeDuration, OeeLoss, OeeMachineTimeline, OeeOccurrence, oeePercent, OeeSegment, OeeSpan, OeeTimeline } from '../../../model/oee';
 
 //What the machine page's three charts draw (#405, docs/oee/spec.md *The Gantt chart*), as plain data a spec reads:  the Gantt
 //chart's bands, the Pareto's columns and the trend's.  The colours are fixed to what a band is, never to its order, checked as
@@ -54,11 +54,15 @@ export function plannedPieces( o:OeeOccurrence, range:OeeSpan ):OeeSpan[]{
 		pieces.push( {start: new Date( from ), end: new Date( hi )} );
 	return pieces;
 }
-export function toGantt( timeline:OeeTimeline, range:OeeSpan ):GanttData{
-	const planned = timeline.planned.flatMap( o=>plannedPieces( o, range ).map( ( p ):GanttPoint=>{
+//a timeline's planned time on row `y`, `row` whose it is where the chart has a pair of rows per machine
+function plannedPoints( timeline:OeeTimeline, range:OeeSpan, y:number, row?:string ):GanttPoint[]{
+	return timeline.planned.flatMap( o=>plannedPieces( o, range ).map( ( p ):GanttPoint=>{
 		const name = o.name ?? ( o.shift==undefined ? 'Planned' : `Shift ${o.shift}` );
-		return { x: p.start.getTime(), x2: p.end.getTime(), y: 0, color: plannedColor, name, custom: tip( [name, spanText( p )] ) };
+		return { x: p.start.getTime(), x2: p.end.getTime(), y, color: plannedColor, name, custom: tip( [row ? `${row}:  ${name}` : name, spanText( p )] ) };
 	} ) );
+}
+export function toGantt( timeline:OeeTimeline, range:OeeSpan ):GanttData{
+	const planned = plannedPoints( timeline, range, 0 );
 	const state = timeline.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, 1, codable( s ) ? 'Click to code the stop' : undefined ) );
 	return { planned, state, legend: [...( planned.length ? [{color: plannedColor, label: 'Planned time'}] : [] ), ...kindLegend( state )] };
 }
@@ -75,11 +79,32 @@ function kindLegend( state:GanttPoint[] ):OeeLegendItem[]{
 	return oeeKinds.filter( k=>used.has( k ) ).map( k=>({color: oeeKindColors[k], label: oeeKindLabels[k]}) );
 }
 //The dashboard's Gantt chart (#406):  a row per machine, each its state over its own shift, with no planned row.  `range` is
-//what the axis covers, every machine's shift.
-export type GanttRow = { name:string; segments:OeeSegment[] };
-export function toGanttRows( rows:GanttRow[] ):GanttData & {rows:string[]}{
-	const state = rows.flatMap( ( r, y )=>r.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, y, "Click to open the machine's OEE page", r.name ) ) );
-	return { rows: rows.map( r=>r.name ), planned: [], state, legend: kindLegend( state ) };
+//what the axis covers, every machine's shift.  A row that names a `group`, its line (#409), stands under a row of that name
+//with no bands, one for each run of rows of a group:  `groups` are those rows, and `at` each row's place in what was given,
+//none for a group's.
+export type GanttRow = { name:string; segments:OeeSegment[]; group?:string };
+export type GanttRows = GanttData & { rows:string[]; groups:number[]; at:(number|undefined)[] };
+export function toGanttRows( given:GanttRow[] ):GanttRows{
+	const rows:string[] = [], groups:number[] = [], at:(number|undefined)[] = [], state:GanttPoint[] = [];
+	given.forEach( ( r, i )=>{
+		if( r.group!=undefined && r.group!=given[i-1]?.group ){
+			groups.push( rows.length );
+			at.push( undefined );
+			rows.push( r.group );
+		}
+		const y = rows.length;
+		at.push( i );
+		rows.push( r.name );
+		state.push( ...r.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, y, "Click to open the machine's OEE page", r.name ) ) );
+	} );
+	return { rows, groups, at, planned: [], state, legend: kindLegend( state ) };
+}
+//A line's Gantt chart (#409, spec *The Gantt chart*):  the pair of rows per machine it reaches, its planned time and under it
+//its state, in member order.  A band's machine is `timelines[ Math.floor( y/2 ) ]`'s.
+export function toGanttPairs( timelines:OeeMachineTimeline[], range:OeeSpan ):GanttData & {rows:string[]}{
+	const planned = timelines.flatMap( ( t, i )=>plannedPoints( t, range, 2*i, t.machine.name ) );
+	const state = timelines.flatMap( ( t, i )=>t.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, 2*i+1, codable( s ) ? 'Click to code the stop' : undefined, t.machine.name ) ) );
+	return { rows: timelines.flatMap( t=>[`${t.machine.name}, planned`, t.machine.name] ), planned, state, legend: [...( planned.length ? [{color: plannedColor, label: 'Planned time'}] : [] ), ...kindLegend( state )] };
 }
 
 //A column:  `label` its direct label, where the chart has room for them.

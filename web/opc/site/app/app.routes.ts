@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
@@ -167,6 +167,26 @@ export const routes: Routes = [
 				providers: [ HistAdminResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "OEE", kind: "machines", suffix: "oee" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			//OEE's lines (#409):  a line's page, and under it its OEE page, which is the machine's over the line's machines
+			{ path: 'lines', pathMatch: 'full', redirectTo: '' },
+			{
+				path: 'lines/:slug',
+				loadComponent: loadOeeLineDetail,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE line", kind: "lines" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			{
+				path: 'lines/:slug/oee',
+				loadComponent: loadOeeMachinePage,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE", kind: "lines", suffix: "oee" },
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},

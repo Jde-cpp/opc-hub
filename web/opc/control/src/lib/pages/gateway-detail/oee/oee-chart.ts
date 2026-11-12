@@ -5,9 +5,10 @@ import { HC, HighchartsLoader } from '../../node-detail/node-history/highcharts-
 import { codable, ColumnPoint, GanttPoint, OeeLegendItem } from './oee-chart-data';
 
 //What a chart of the machine's page draws:  the Gantt chart's two rows over the period, or a row of columns - the Pareto's
-//minutes, the trend's percent.  The dashboard's Gantt chart (#406) names its `rows`, one per machine, and a band's `y` is its row's.
+//minutes, the trend's percent.  The dashboard's Gantt chart (#406) names its `rows`, one per machine, and a band's `y` is its
+//row's;  `groups` are the rows that name a line (#409), over its machines' and with no bands.
 export type OeeChartSpec = { title:string; description:string; legend:OeeLegendItem[] } & (
-	{ kind:'gantt'; range:OeeSpan; planned:GanttPoint[]; state:GanttPoint[]; rows?:string[] }
+	{ kind:'gantt'; range:OeeSpan; planned:GanttPoint[]; state:GanttPoint[]; rows?:string[]; groups?:number[] }
 	| { kind:'columns'; categories:string[]; points:ColumnPoint[]; name:string; axis:string; percent:boolean } );
 
 //A chart of the machine's OEE page (#405), through the add-on the History trend loads (HighchartsLoader, #302):  the Gantt
@@ -115,10 +116,11 @@ export class OeeChart implements OnInit, OnDestroy{
 		if( spec.kind=='gantt' ){
 			const row = { type: <const>'xrange', borderWidth: 0, borderRadius: 2, pointWidth: 24, minPointLength: 3, turboThreshold: 0, dataLabels: {enabled: false} };
 			const left = { mouseOut(){ self.#left(); } };
+			const groups = spec.groups ?? [], escape = ( v:unknown )=>String( v ).replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' );
 			return { ...shared,
 				chart: { type: 'xrange', backgroundColor: 'transparent', style: {fontFamily: 'inherit'}, animation: false, zooming: {type: 'x'}, spacing: [8, 8, 8, 8] },
 				xAxis: { ...axis, type: 'datetime', min: spec.range.start.getTime(), max: spec.range.end.getTime(), gridLineWidth: 1, tickPixelInterval: 140 },
-				yAxis: { ...axis, categories: spec.rows ?? ['Planned', 'State'], min: 0, max: ( spec.rows?.length ?? 2 )-1, reversed: true, title: {text: null}, gridLineWidth: 0 },
+				yAxis: { ...axis, labels: {...axis.labels, formatter(){ return groups.includes( this.pos ) ? `<b>${escape( this.value )}</b>` : escape( this.value ); }}, categories: spec.rows ?? ['Planned', 'State'], min: 0, max: ( spec.rows?.length ?? 2 )-1, reversed: true, title: {text: null}, gridLineWidth: 0 },
 				plotOptions: { series: {animation: false, states: {inactive: {opacity: 1}}} },
 				series: [
 					{ ...row, id: 'planned', name: 'Planned time', data: spec.planned, point: {events: left} },

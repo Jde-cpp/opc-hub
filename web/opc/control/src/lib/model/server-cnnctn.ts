@@ -40,7 +40,7 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	static slugPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 	//the url segments of the lists under a gateway's page, ahead of ':connection' in app.routes.ts, which would shadow a connection's
 	//page:  the watch list (419-watch #12), the historian's (#337), the calendars (#391), OEE's (#404) and its dashboard (#406).  As ServerCnnctn::SlugError.
-	static readonly reservedSlugs = ['watch', 'templates', 'groups', 'calendars', 'machines', 'reasons', 'oee'];
+	static readonly reservedSlugs = ['watch', 'templates', 'groups', 'calendars', 'machines', 'lines', 'reasons', 'oee'];
 	//The gateway's save rules on the settings (ServerCnnctn::SettingsError), said under the field before Save tries them:  Sign or
 	//Sign & Encrypt, by the mode or by a secured policy, needs the certificate URI that puts the gateway's certificate on the channel;
 	//a policy of None and a secured channel, or a secured policy and a mode of None, contradict;  0 is the default only for the ping

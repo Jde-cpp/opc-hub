@@ -16,7 +16,12 @@ export type OeeBucket = {
 	total:number; good:number; reject:number; outside:number; ideal:number;
 	availability?:number; performance?:number; quality?:number; oee?:number; teep?:number;
 	measured:string[]; partial:boolean;
+	machines?:number; coverage?:{performance:number; quality:number}; members?:OeeMemberBucket[];//a line's:  the machines it is over, how many each factor is, and with `members` a bucket per direct member
 };
+export type OeeNamed = { id:number; name:string };
+//a direct member's bucket over the line's bounds:  the machine or the line it is
+export type OeeMemberBucket = OeeBucket & { machine?:OeeNamed; line?:OeeNamed & {level:string} };
+const toNamed = ( json:any ):OeeNamed|undefined=>json && json.id!=null ? { id: Number( json.id ), name: String( json.name ?? json.id ) } : undefined;
 export function toOeeBucket( json:any ):OeeBucket{
 	const n = ( name:string )=>Number( json[name] ?? 0 );
 	return {
@@ -24,7 +29,13 @@ export function toOeeBucket( json:any ):OeeBucket{
 		planned: n( 'planned' ), run: n( 'run' ), unplanned: n( 'unplanned' ), plannedStop: n( 'plannedStop' ), small: n( 'small' ), excluded: n( 'excluded' ), unknown: n( 'unknown' ),
 		total: n( 'total' ), good: n( 'good' ), reject: n( 'reject' ), outside: n( 'outside' ), ideal: n( 'ideal' ),
 		availability: optional( json.availability ), performance: optional( json.performance ), quality: optional( json.quality ), oee: optional( json.oee ), teep: optional( json.teep ),
-		measured: Array.isArray( json.measured ) ? json.measured.map( String ) : [], partial: json.partial===true
+		measured: Array.isArray( json.measured ) ? json.measured.map( String ) : [], partial: json.partial===true,
+		...(json.machines==null ? {} : {machines: Number( json.machines )}),
+		...(json.coverage ? {coverage: {performance: Number( json.coverage.performance ?? 0 ), quality: Number( json.coverage.quality ?? 0 )}} : {}),
+		...(Array.isArray( json.members ) ? {members: json.members.map( ( m:any ):OeeMemberBucket=>{
+			const machine = toNamed( m.machine ), line = toNamed( m.line );
+			return { ...toOeeBucket( m ), ...(machine ? {machine} : {}), ...(line ? {line: {...line, level: String( m.line.level ?? '' )}} : {}) };
+		} )} : {})
 	};
 }
 
@@ -32,13 +43,14 @@ export type OeeCoding = { id:number; start:Date; end:Date; reason?:OeeReasonRef;
 export function toOeeCoding( json:any ):OeeCoding{
 	return { id: Number( json.id ), start: new Date( json.start ), end: new Date( json.end ), reason: toReasonRef( json.reason ), comment: json.comment || undefined, userName: String( json.userName ?? '' ), time: json.time ? new Date( json.time ) : undefined };
 }
-//A stop of `oeeStops`:  `ms` an open one's so far, `reason` the coding's that covers it whole, else its code's.
-export type OeeStop = { id:number; start:Date; startText:string; end?:Date; endText?:string; ms:number; small:boolean; open:boolean; code?:unknown; uncoded:boolean; reason?:OeeReasonRef; codings:OeeCoding[] };
+//A stop of `oeeStops`:  `ms` an open one's so far, `reason` the coding's that covers it whole, else its code's, `machine` whose
+//it is, in a line's read.
+export type OeeStop = { machine?:OeeNamed; id:number; start:Date; startText:string; end?:Date; endText?:string; ms:number; small:boolean; open:boolean; code?:unknown; uncoded:boolean; reason?:OeeReasonRef; codings:OeeCoding[] };
 export function toOeeStop( json:any ):OeeStop{
 	return {
 		id: Number( json.id ), start: new Date( json.start ), startText: String( json.start ), end: json.end ? new Date( json.end ) : undefined, endText: json.end || undefined,
 		ms: Number( json.ms ?? 0 ), small: json.small===true, open: json.open===true, code: json.code ?? undefined, uncoded: json.uncoded===true,
-		reason: toReasonRef( json.reason ), codings: ( <any[]>(json.codings ?? []) ).map( toOeeCoding )
+		reason: toReasonRef( json.reason ), codings: ( <any[]>(json.codings ?? []) ).map( toOeeCoding ), ...(toNamed( json.machine ) ? {machine: toNamed( json.machine )} : {})
 	};
 }
 export type OeeStopsPage = { stops:OeeStop[]; continuation?:string };
@@ -71,6 +83,11 @@ export function toOeeTimeline( json:any ):OeeTimeline{
 			coding: s.coding && s.coding.id!=null ? { id: Number( s.coding.id ), comment: s.coding.comment || undefined, userName: s.coding.userName || undefined } : undefined
 		}) )
 	};
+}
+//a line's `oeeTimeline`:  one per machine it reaches, in member order
+export type OeeMachineTimeline = OeeTimeline & { machine:OeeNamed };
+export function toOeeTimelines( json:any ):OeeMachineTimeline[]{
+	return ( <any[]>(Array.isArray( json ) ? json : []) ).map( row=>({ ...toOeeTimeline( row ), machine: toNamed( row.machine ) ?? {id: 0, name: ''} }) );
 }
 
 //The picker's periods (spec *Web*).  A day begins at the browser's midnight and a week on its Monday;  the shift is the

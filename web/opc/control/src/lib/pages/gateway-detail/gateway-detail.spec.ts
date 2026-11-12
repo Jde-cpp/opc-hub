@@ -76,22 +76,22 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		return { fixture, go, hold, logTabs, created: ()=>created.mock.calls.map( ([c])=>c ), fail: ( lookup:string )=>down.add( lookup ) };
 	};
 
-	//the tabs:  Connections, Templates, Groups, Machines, Reasons, Endpoint, Watch, Logs, Log Settings (#337 put the two historian tabs beside Connections, #404 OEE's two after them, #388 the endpoint, #419 the watch list's)
+	//the tabs:  Connections, Templates, Groups, Machines, Lines, Reasons, Endpoint, Watch, Logs, Log Settings (#337 put the two historian tabs beside Connections, #404 OEE's two after them and #409 Lines between those, #388 the endpoint, #419 the watch list's)
 	it( 'builds Log Settings again for the gateway it switched to', async ()=>{
-		const { go, logTabs } = await open( 8 );
+		const { go, logTabs } = await open( 9 );
 		await go( 'B' );
 		expect( logTabs.settings.mock.calls ).toEqual( [[1], [2]] );
 	} );
 
 	it( 'and Logs', async ()=>{
-		const { go, logTabs } = await open( 7 );
+		const { go, logTabs } = await open( 8 );
 		await go( 'B' );
 		expect( logTabs.logs.mock.calls ).toEqual( [[gateways['A']], [gateways['B']]] );
 	} );
 
 	//#388:  the Endpoint tab reads the gateway's own endpoint, so a switch builds it again on the other gateway
 	it( 'and the Endpoint tab', async ()=>{
-		const { fixture, go } = await open( 5 );
+		const { fixture, go } = await open( 6 );
 		const endpoint = ()=>fixture.debugElement.queryAll( By.directive(EndpointStub) ).map( e=>e.componentInstance.gateway() );
 		expect( endpoint() ).toEqual( [gateways['A']] );
 		await go( 'B' );
@@ -111,13 +111,16 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		await go( 'B' );
 		expect( created().map( c=>c.kind ) ).toEqual( ['groups', 'groups'] );
 	} );
-	//#404:  OEE's Machines and Reasons lists, the gateway's own tables as the historian's are
-	it( 'and the Machines and Reasons lists', async ()=>{
+	//#404, #409:  OEE's Machines, Lines and Reasons lists, the gateway's own tables as the historian's are
+	it( 'and the Machines, Lines and Reasons lists', async ()=>{
 		const machines = await open( 3 );
 		await machines.go( 'B' );
 		expect( machines.created() ).toEqual( [{gateway: gateways['A'], kind: 'machines', url: 'apps/gateways/A'}, {gateway: gateways['B'], kind: 'machines', url: 'apps/gateways/B'}] );
 		TestBed.resetTestingModule();//the page built a second time, on the other tab
-		const reasons = await open( 4 );
+		const lines = await open( 4 );
+		expect( lines.created().map( c=>c.kind ) ).toEqual( ['lines'] );
+		TestBed.resetTestingModule();
+		const reasons = await open( 5 );
 		expect( reasons.created().map( c=>c.kind ) ).toEqual( ['reasons'] );
 	} );
 	//the key is the one the resolvers read the rows back under:  the route's segments, decoded, not router.url's percent-encoding
@@ -131,13 +134,13 @@ describe( 'GatewayDetail switching gateway', ()=>{
 	//others keep a gateway's indexes, keyed under its url as the application server's is;  a stand-alone gateway's has none.
 	const labels = ( fixture:{ nativeElement:HTMLElement } )=>[...fixture.nativeElement.querySelectorAll( '.mdc-tab__text-label' )].map( l=>l.textContent!.trim() );
 	it( "has the Calendars tab on a hub's page, and not on a gateway's", async ()=>{
-		const { fixture, go } = await open( 7 );
-		expect( labels(fixture) ).toEqual( ['Connections', 'Templates', 'Groups', 'Machines', 'Reasons', 'Endpoint', 'Watch', 'Logs', 'Log Settings', 'Web Sessions'] );
+		const { fixture, go } = await open( 8 );
+		expect( labels(fixture) ).toEqual( ['Connections', 'Templates', 'Groups', 'Machines', 'Lines', 'Reasons', 'Endpoint', 'Watch', 'Logs', 'Log Settings', 'Web Sessions'] );
 		await go( 'Hub' );
-		expect( labels(fixture) ).toEqual( ['Connections', 'Templates', 'Groups', 'Machines', 'Reasons', 'Endpoint', 'Watch', 'Logs', 'Log Settings', 'Web Sessions', 'Calendars'] );
+		expect( labels(fixture) ).toEqual( ['Connections', 'Templates', 'Groups', 'Machines', 'Lines', 'Reasons', 'Endpoint', 'Watch', 'Logs', 'Log Settings', 'Web Sessions', 'Calendars'] );
 		expect( fixture.componentInstance.instanceId() ).toBe( 4 );
-		expect( fixture.componentInstance.tabIndex() ).toBe( 7 );//still on Logs
-		fixture.componentInstance.tabIndex.set( 10 );
+		expect( fixture.componentInstance.tabIndex() ).toBe( 8 );//still on Logs
+		fixture.componentInstance.tabIndex.set( 11 );
 		await stable( fixture );
 		expect( fixture.debugElement.queryAll( By.directive(CalendarListStub) ).map( e=>e.componentInstance.url() ) ).toEqual( ['apps/gateways/Hub'] );
 		await go( 'A' );
