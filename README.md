@@ -91,8 +91,8 @@ The Linux presets set no build directory, so `-B` picks it.  By convention it is
 The Windows presets set it themselves under `$JDE_BUILD_DIR`, and also read `VCPKG_ROOT`.
 
 ```bash
-# the third-party tree, once - fmt, spdlog, gtest, absl, protobuf, jsonnet, ryml, open62541 + its nodeset loader;
-# the build dir is your choice, the install lands under $REPO_DIR/install
+# the third-party tree, once - fmt, spdlog, gtest, absl, protobuf, jsonnet, ryml, open62541 + its nodeset loader,
+# quickjs-ng; the build dir is your choice, the install lands under $REPO_DIR/install
 cmake -B $REPO_DIR/build/debug -S . --preset linux-clang-debug-repos && cmake --build $REPO_DIR/build/debug -j 8
 # Boost and the sqlite amalgamation are built by build/boost-sqlite.sh
 
