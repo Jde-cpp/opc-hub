@@ -21,6 +21,12 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		ADD_FAILURE() << "no case for MID " << T::Id << " revision " << revision;
 		return {};
 	}
+	//A result under a tightening id of the test's own.
+	Ξ Rundown( uint32_t id )ι->Mid0061{
+		auto result = CaseOf<Mid0061>();
+		result.TighteningId = id;
+		return result;
+	}
 	//A station that answers every revision the codec has, and at MID 0002's revision 6 says it numbers its messages;
 	//Unnumbered's says it does not.
 	Ξ Scripted()ι->Controller::Script{ return { .Identity=CaseOf<Mid0002>() }; }

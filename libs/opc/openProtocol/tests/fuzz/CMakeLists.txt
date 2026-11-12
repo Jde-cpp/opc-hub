@@ -10,7 +10,7 @@ include( ${CMAKE_CURRENT_LIST_DIR}/../../../../../build/functions.cmake )
 #The first run writes what it finds to finds/ and a crash to ./crash-<sha1>;  the merge adds to the corpus the finds that
 #reach code the corpus did not.  A crash's file goes into the corpus by hand, with its fix.
 #It compiles the codec's sources itself, so they carry libFuzzer's coverage instrumentation, which the library's do not;
-#the session and the controller, the library's other sources, read no bytes the codec has not.
+#the framer, the one other reader of a socket's bytes, is a header (../../src/Framer.h) the harness streams each input through.
 set( targetName Jde.Opc.OpenProtocol.Fuzz )
 project( ${targetName} VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )

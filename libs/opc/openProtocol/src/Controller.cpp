@@ -13,11 +13,9 @@ namespace Jde::Opc::OpenProtocol{
 
 	//Table 23's code for a revision past the controller's, by the MID's kind.
 	Ω unsupported( uint16_t mid )ι->uint16_t{
-		switch( mid ){
-			case Mid0014::Id: case Mid0034::Id: case Mid0051::Id: case Mid0060::Id: case Mid0070::Id: return 74;
-			case Mid0064::Id: case Mid0080::Id: return 76;
-			default: return 97;
-		}
+		if( find_if(Topics, [=]( const Topic& t ){ return t.Subscribe==mid; })!=Topics.end() )
+			return 74;
+		return mid==Mid0064::Id || mid==Mid0080::Id ? 76 : 97;
 	}
 	//A result as MID 0065 has it:  no limits, no parameter set name and no time of its last change, and at revision 7 its station.
 	Ω old( const Mid0061& r, uint32_t stationId, const string& stationName )ι->Mid0065{
@@ -59,7 +57,7 @@ namespace Jde::Opc::OpenProtocol{
 		α AcknowledgeAlarm()ι->void;
 		α Drop()ι->void;
 		α Silence( bool silent )ι->void{ _silent = silent; }
-		α Delay( Duration by )ι->void{ _delay = by; }
+		α Delay( Duration by, uint replies )ι->void{ _delay = replies ? optional<Held>{ Held{by, replies} } : nullopt; }
 		α SendRaw( const string& bytes )ι->void;
 		α Retransmit()ι->void;
 		α SkipSequence()ι->void;
@@ -141,7 +139,8 @@ namespace Jde::Opc::OpenProtocol{
 		std::map<uint32_t,Stored> _results;
 		uint32_t _nextId{ 1 };
 		bool _silent{};
-		optional<Duration> _delay;
+		struct Held{ Duration By; uint Replies; };
+		optional<Held> _delay;
 		vector<sp<boost::asio::steady_timer>> _held;//the delayed replies' timers.
 		mutable absl::Mutex _mutex;
 		vector<Received> _frames ABSL_GUARDED_BY(_mutex);
@@ -262,6 +261,8 @@ namespace Jde::Opc::OpenProtocol{
 			}
 			return;
 		}
+		if( !c.Started && h.Mid!=Mid0001::Id )
+			return;//it answers nothing before MID 0001 (§5.2.1), a frame it cannot read among it.
 		let message = Decode( frame );
 		if( !message ){
 			//MID 0001 revision 8's parameter 02, the tool lock at disconnection (Table 12), which no revision the codec reads carries.
@@ -271,8 +272,6 @@ namespace Jde::Opc::OpenProtocol{
 			Refuse( c, h.Mid, refusal==ERefusal::UnknownMid ? 99 : refusal==ERefusal::UnknownRevision ? unsupported(h.Mid) : 1 );
 			return;
 		}
-		if( !c.Started && h.Mid!=Mid0001::Id )
-			return;//it answers nothing before MID 0001 (§5.2.1).
 		if( let refused = _script.Refuses.find(h.Mid); refused!=_script.Refuses.end() ){
 			Refuse( c, h.Mid, refused->second );
 			return;
@@ -430,12 +429,14 @@ namespace Jde::Opc::OpenProtocol{
 	}
 
 	α Controller::Impl::Reply( Client& c, Body data, uint16_t revision )ι->void{
-		let delay = exchange( _delay, nullopt );
-		if( !delay ){
+		if( !_delay ){
 			Send( c, move(data), revision, 0 );
 			return;
 		}
-		auto timer = _held.emplace_back( ms<boost::asio::steady_timer>(_strand, duration_cast<steady_clock::duration>(*delay)) );
+		let delay = _delay->By;
+		if( !--_delay->Replies )
+			_delay.reset();
+		auto timer = _held.emplace_back( ms<boost::asio::steady_timer>(_strand, duration_cast<steady_clock::duration>(delay)) );
 		timer->async_wait( [self=shared_from_this(), timer, id=c.Id, data=move(data), revision]( const error_code& ec )mutable{
 			std::erase( self->_held, timer );
 			if( let client = self->Find(id); client && !ec )
@@ -529,8 +530,8 @@ namespace Jde::Opc::OpenProtocol{
 	α Controller::Silence( bool silent )ι->void{
 		boost::asio::post( _impl->Executor(), [impl=_impl, silent]{ impl->Silence( silent ); } );
 	}
-	α Controller::Delay( Duration by )ι->void{
-		boost::asio::post( _impl->Executor(), [impl=_impl, by]{ impl->Delay( by ); } );
+	α Controller::Delay( Duration by, uint replies )ι->void{
+		boost::asio::post( _impl->Executor(), [impl=_impl, by, replies]{ impl->Delay( by, replies ); } );
 	}
 	α Controller::SendRaw( string bytes )ι->void{
 		boost::asio::post( _impl->Executor(), [impl=_impl, bytes=move(bytes)]{ impl->SendRaw( bytes ); } );

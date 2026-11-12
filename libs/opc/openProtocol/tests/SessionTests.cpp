@@ -1,4 +1,3 @@
-#include <thread>
 #include <jde/tests/Capture.h>
 #include <jde/opc/openProtocol/logTags.h>
 #include "Rig.h"
@@ -7,12 +6,6 @@
 //revisions it settles, both ways of acknowledging, the sequence numbers, the keep-alive, the lost link and its backoff.
 namespace Jde::Opc::OpenProtocol::Tests{
 	Ω millis( steady_clock::duration d )ι->_int{ return duration_cast<milliseconds>( d ).count(); }
-	//A result under a tightening id of the test's own.
-	Ω rundown( uint32_t id )ι->Mid0061{
-		auto result = CaseOf<Mid0061>();
-		result.TighteningId = id;
-		return result;
-	}
 
 	//What each request starts at with no ceiling:  the codec's last revision of what it asks for (plan review #11).
 	TEST( SessionTests, FirstRevisions ){
@@ -199,6 +192,8 @@ namespace Jde::Opc::OpenProtocol::Tests{
 			ASSERT_TRUE( rig.Ask(Mid0060{}) );
 			rig.Station.Push( CaseOf<Mid0061>() );
 			ASSERT_TRUE( WaitUntil([&]{ return rig.Told.Pushes().size()==1 && rig.Got(Mid0062::Id).size()==1; }) );
+			rig.Station.SendRaw( Encode({.Mid=Mid0061::Id, .Revision=Mid0061::MaxRevision, .Sequence=5}, CaseOf<Mid0061>()).value() );
+			ASSERT_TRUE( WaitUntil([&]{ return rig.Told.Pushes().size()==2 && rig.Got(Mid0062::Id).size()==2; }) ) << "a number in the header is no link level where the link is not";
 			EXPECT_TRUE( rig.Got(Mid9997::Id).empty() );
 			for( let& frame : rig.Station.Frames() )
 				EXPECT_EQ( frame.Head.Sequence, 0 ) << "MID " << frame.Head.Mid;
@@ -261,13 +256,13 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		Rig rig;
 		ASSERT_TRUE( rig.Start() );
 		ASSERT_TRUE( rig.Ask(Mid0060{}) );
-		rig.Station.Push( rundown(10) );
+		rig.Station.Push( Rundown(10) );
 		ASSERT_TRUE( WaitUntil([&]{ return rig.Got(Mid9997::Id).size()==2; }) );
 		rig.Station.Retransmit();
 		ASSERT_TRUE( WaitUntil([&]{ return rig.Got(Mid9997::Id).size()==3; }) );
 		let acks = rig.Got( Mid9997::Id );
 		EXPECT_EQ( acks[2].Frame, acks[1].Frame ) << "the acknowledgement it had the first time";
-		rig.Station.Push( rundown(11) );
+		rig.Station.Push( Rundown(11) );
 		ASSERT_TRUE( WaitUntil([&]{ return rig.Told.Pushes().size()==2; }) ) << "the next number is still the one expected";
 		let pushes = rig.Told.Pushes();
 		EXPECT_EQ( As<Mid0061>(pushes[0]).TighteningId, 10u );
@@ -478,11 +473,11 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_TRUE( rig.Told.Losses().empty() );
 	}
 
-	//§3.2.1:  one request out at a time, the next behind its answer.
+	//§3.2.1:  one request out at a time, each behind the answer before it.
 	TEST( SessionTests, RequestsGoOneAtATime ){
 		Rig rig{ Unnumbered() };
 		ASSERT_TRUE( rig.Start() );
-		rig.Station.Delay( 300ms );
+		rig.Station.Delay( 300ms, 2 );
 		atomic<uint> answered{};
 		for( let& request : {Body{Mid0014{}}, Body{Mid0034{}}, Body{Mid0051{}}} )
 			rig.Client.Request( request, [&]( Session::Reply&& reply ){ answered += reply ? 1 : 100; } );
@@ -492,7 +487,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		let first = Of( frames, Mid0014::Id ), second = Of( frames, Mid0034::Id ), third = Of( frames, Mid0051::Id );
 		ASSERT_TRUE( first.size()==1 && second.size()==1 && third.size()==1 );
 		EXPECT_GE( millis(second[0].At-first[0].At), 295 ) << "behind the first's answer, which the station held";
-		EXPECT_GE( millis(third[0].At-second[0].At), 0 );
+		EXPECT_GE( millis(third[0].At-second[0].At), 295 ) << "behind the second's, held too";
 	}
 
 	TEST( SessionTests, RequestTheCodecRefuses ){
@@ -508,31 +503,54 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_EQ( Sequences(rig.Got(Mid0018::Id)), (vector<uint16_t>{1}) ) << "and takes no sequence number";
 	}
 
-	//MID 0003 on a clean close, at either level, then the socket's close;  what was asked and not answered is told so.
+	//MID 0003 on a clean close, at either level, behind the request out, which keeps its answer (§3.2.1), then the
+	//socket's close;  what was asked and not sent is told so.
 	TEST( SessionTests, StopSendsCommunicationStop ){
 		for( let numbered : {false, true} ){
 			Rig rig{ numbered ? Scripted() : Unnumbered() };
 			ASSERT_TRUE( rig.Start() );
-			rig.Station.Delay( 2s );
-			optional<Failure> pending;
-			atomic<bool> told{};
-			rig.Client.Request( Mid0060{}, [&]( Session::Reply&& reply ){
-				if( !reply )
-					pending = reply.error();
-				told = true;
-			} );
+			rig.Station.Delay( 500ms );
+			optional<Session::Reply> out, queued;
+			atomic<uint> told{};
+			rig.Client.Request( Mid0060{}, [&]( Session::Reply&& reply ){ out = move( reply ); ++told; } );
+			rig.Client.Request( Mid0014{}, [&]( Session::Reply&& reply ){ queued = move( reply ); ++told; } );
 			ASSERT_TRUE( WaitUntil([&]{ return rig.Got(Mid0060::Id).size()==1; }) );
 			EXPECT_TRUE( rig.Stop() );
-			EXPECT_TRUE( told );
-			ASSERT_TRUE( pending ) << numbered;
-			EXPECT_EQ( pending->Kind, EFailure::Stopped );
+			EXPECT_EQ( told, 2u );
+			ASSERT_TRUE( out && queued ) << numbered;
+			EXPECT_TRUE( *out ) << Why( *out );
+			ASSERT_FALSE( *queued );
+			EXPECT_EQ( queued->error().Kind, EFailure::Stopped );
+			EXPECT_TRUE( rig.Got(Mid0014::Id).empty() ) << "what was queued is not sent";
+			let stops = rig.Got( Mid0003::Id );
+			ASSERT_EQ( stops.size(), 1u ) << numbered;
+			EXPECT_GE( millis(stops[0].At-rig.Got(Mid0060::Id)[0].At), 495 ) << "behind the answer the station held";
 			EXPECT_TRUE( WaitUntil([&]{ return rig.Station.Clients()==0; }) ) << "the socket closed";
-			EXPECT_EQ( rig.Got(Mid0003::Id).size(), 1u ) << numbered;
 			EXPECT_TRUE( rig.Told.Losses().empty() ) << "a stop is no loss";
 			let after = rig.Ask( Mid0060{} );
 			ASSERT_FALSE( after );
 			EXPECT_EQ( after.error().Kind, EFailure::Stopped );
 		}
+	}
+	//A request out with no answer within replyTimeout of the stop is told Stopped, and the socket closes with no MID 0003.
+	TEST( SessionTests, StopWaitsTheReplyTimeoutAtMost ){
+		auto settings = Quick();
+		settings.ReplyTimeout = 1s;
+		Rig rig{ Unnumbered(), move(settings) };
+		ASSERT_TRUE( rig.Start() );
+		rig.Station.Delay( 4s );
+		optional<Session::Reply> out;
+		rig.Client.Request( Mid0060{}, [&]( Session::Reply&& reply ){ out = move( reply ); } );
+		ASSERT_TRUE( WaitUntil([&]{ return rig.Got(Mid0060::Id).size()==1; }) );
+		let stopping = steady_clock::now();
+		EXPECT_TRUE( rig.Stop() );
+		EXPECT_LT( millis(steady_clock::now()-stopping), 2500 ) << "not the held reply's 4 s";
+		ASSERT_TRUE( out );
+		ASSERT_FALSE( *out );
+		EXPECT_EQ( out->error().Kind, EFailure::Stopped );
+		EXPECT_TRUE( rig.Got(Mid0003::Id).empty() );
+		EXPECT_TRUE( WaitUntil([&]{ return rig.Station.Clients()==0; }) ) << "the socket closed";
+		EXPECT_TRUE( rig.Told.Losses().empty() );
 	}
 
 	//A session let go without a stop closes its socket, with no MID 0003 and no word to its caller.

@@ -2,7 +2,7 @@
 #include <deque>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <jde/opc/openProtocol/Codec.h>
+#include "Framer.h"
 
 //What the session and the controller's side of one share:  a subscription's MIDs, link level's sequence numbers, a byte
 //stream's frames and a socket that reads and writes them.  None of it is safe off its strand.
@@ -51,18 +51,6 @@ namespace Jde::Opc::OpenProtocol{
 	};
 	α Acknowledge( Link& link, uint16_t mid )ι->string;//MID 9997 for the message Receive just took, kept as LastAck.
 	α Reject( const Link& link, uint16_t mid, uint16_t code )ι->string;//MID 9998 with Table 9's code, carrying the number expected.
-
-	//A byte stream cut into frames by their lengths, never by the NUL (§3.8).  Bytes whose length does not read have lost
-	//their place:  they are reported once and dropped through the next NUL, where a frame can start again.
-	struct Framer final{
-		struct Noise{ string Start; };//the first bytes of what begins no frame.
-		using Read = variant<std::monostate,string,Noise>;//nothing whole yet, a frame with its NUL, or noise.
-		α Add( sv bytes )ι->void{ _buffer += bytes; }
-		α Next()ι->Read;
-	private:
-		string _buffer;
-		bool _lost{};
-	};
 
 	//A timer armed again and again:  what an earlier Arm was to run never does, whether its wait was cancelled in time or
 	//had already ended, nor does anything once this is gone.

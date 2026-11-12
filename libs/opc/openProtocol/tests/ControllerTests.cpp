@@ -3,11 +3,6 @@
 //The controller's side of the codec, as the later phases' suites and the emulator script it:  the result store behind
 //MID 0064, what it pushes on a subscription and on a change, its clock, session control and the tool lock it refuses.
 namespace Jde::Opc::OpenProtocol::Tests{
-	Ω rundown( uint32_t id )ι->Mid0061{
-		auto result = CaseOf<Mid0061>();
-		result.TighteningId = id;
-		return result;
-	}
 	Ω refusedWith( const Session::Reply& reply )ι->uint16_t{ return reply || reply.error().Kind!=EFailure::Refused ? 0 : reply.error().Code; }
 
 	//§5.8.5 and Table 121:  a result by its tightening id, 0 the latest.  The ids are one run across the controller's
@@ -17,8 +12,8 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		Rig rig{ Unnumbered() };
 		ASSERT_TRUE( rig.Start() );
 		EXPECT_EQ( refusedWith(rig.Ask(Mid0064{.TighteningId=0})), 15 ) << "Tightening ID requested not found";
-		rig.Station.Push( rundown(10) );
-		rig.Station.Keep( rundown(11), 2, "Station 2" );
+		rig.Station.Push( Rundown(10) );
+		rig.Station.Keep( Rundown(11), 2, "Station 2" );
 		auto latest = CaseOf<Mid0061>();
 		latest.TighteningId.reset();
 		latest.Vin = "LATEST";
@@ -39,7 +34,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_EQ( old(4000).TighteningId, 12u ) << "the result before an id none has";
 		EXPECT_EQ( refusedWith(rig.Ask(Mid0064{.TighteningId=9})), 15 ) << "nothing at or before it";
 		let whole = old( 10 );
-		let pushed = rundown( 10 );
+		let pushed = Rundown( 10 );
 		EXPECT_EQ( whole.Torque, pushed.Torque );
 		EXPECT_EQ( whole.Time, pushed.Time );
 		EXPECT_EQ( whole.TighteningErrorStatus2, pushed.TighteningErrorStatus2 ) << "revision 6's";
@@ -48,7 +43,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	//A result made while no client subscribes is kept, which is what a walk recovers after a lost link.
 	TEST( ControllerTests, ResultsKeptWhileNoOneSubscribes ){
 		Rig rig{ Unnumbered() };
-		rig.Station.Push( rundown(7) );
+		rig.Station.Push( Rundown(7) );
 		ASSERT_TRUE( rig.Start() );
 		ASSERT_TRUE( rig.Ask(Mid0060{}) );
 		let old = rig.Ask( Mid0064{.TighteningId=0} );
@@ -199,6 +194,8 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		RawClient client{ station.Port() };
 		client.Send( Frame({.Mid=60, .Revision=7}, {}) );
 		EXPECT_FALSE( client.Read(200ms) ) << "nothing is answered before MID 0001 (§5.2.1)";
+		client.Send( Frame({.Mid=60, .Revision=9}, {}) );
+		EXPECT_FALSE( client.Read(200ms) ) << "nor a frame it cannot read";
 		client.Send( Frame({.Mid=1, .Revision=8}, "0100200030000") );
 		auto reply = client.Read();
 		ASSERT_TRUE( reply );

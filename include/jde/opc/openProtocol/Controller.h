@@ -56,7 +56,7 @@ namespace Jde::Opc::OpenProtocol{
 		//The faults.
 		α Drop()ι->void;//closes every client's socket.
 		α Silence( bool silent=true )ι->void;//reads on and answers nothing:  no acknowledgement, reply or push.
-		α Delay( Duration by )ι->void;//holds the next reply this long.
+		α Delay( Duration by, uint replies=1 )ι->void;//holds each of the next `replies` replies this long.
 		α SendRaw( string bytes )ι->void;//to each client as they are:  a malformed frame.
 		α Retransmit()ι->void;//each client's last message again, under the number it went with.
 		α SkipSequence()ι->void;//each client's next message a sequence number late.

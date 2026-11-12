@@ -22,6 +22,7 @@ namespace Jde::Opc::OpenProtocol{
 			case Mid0060::Id: return { Mid0061::Id };
 			case Mid0064::Id: return { Mid0065::Id };
 			case Mid0070::Id: return { Mid0071::Id, Mid0076::Id };
+			case Mid0080::Id: return { Mid0081::Id };
 			default: return {};
 		}
 	}
@@ -76,6 +77,7 @@ namespace Jde::Opc::OpenProtocol{
 		α LoseAfter( string&& frame, Failure&& why )ι->void;//once `frame` is written.
 		α Close()ι->void;
 		α Fail( EFailure kind, sv why )ι->void;//every request the caller made.
+		α FailQueued( EFailure kind, sv why )ι->void;//those not sent.
 		α Answer( Pending& asked, Session::Reply&& reply )Ι->void;
 		α Ceiling( uint16_t mid )Ι->uint16_t;
 
@@ -193,7 +195,7 @@ namespace Jde::Opc::OpenProtocol{
 			return;
 		}
 		WARN( "({}) refused a frame:  {}", _name, message.error().What );
-		if( let topic = TopicOf(h.Mid); topic && !h.Sequence )//received, as its header says:  the controller sends no more until it is.
+		if( let topic = TopicOf(h.Mid); topic && (!_link.Numbered || !h.Sequence) )//received, as its header says:  the controller sends no more until it is.
 			_wire->Send( Frame({}, Empty(topic->Ack)) );
 	}
 	α Session::Impl::OnLinkAnswer( const Header& head, const Expected<Message>& message )ι->void{
@@ -221,7 +223,7 @@ namespace Jde::Opc::OpenProtocol{
 			WARN( "({}) MID {:04} answers nothing asked and is no subscription's:  dropped.", _name, mid );
 			return;
 		}
-		if( !m.Head.Sequence )
+		if( !_link.Numbered || !m.Head.Sequence )//what MID 9997 has not acknowledged:  a number on an unnumbered link is no link level.
 			_wire->Send( Frame({}, Empty(topic->Ack)) );
 		if( mid!=Mid0074::Id )//whose revisions are its own, not the subscription's.
 			_revisions[topic->Subscribe] = m.Head.Revision;
@@ -372,6 +374,9 @@ namespace Jde::Opc::OpenProtocol{
 	α Session::Impl::Fail( EFailure kind, sv why )ι->void{
 		if( auto outstanding = exchange(_outstanding, nullopt) )
 			Answer( *outstanding, std::unexpected{Failure{kind, outstanding->Mid, 0, string{why}}} );
+		FailQueued( kind, why );
+	}
+	α Session::Impl::FailQueued( EFailure kind, sv why )ι->void{
 		for( auto& queued : exchange(_queue, {}) )
 			Answer( queued, std::unexpected{Failure{kind, queued.Mid, 0, string{why}}} );
 	}
@@ -391,8 +396,9 @@ namespace Jde::Opc::OpenProtocol{
 		}
 		_state = EState::Stopping;
 		_idle.Disarm();
-		Fail( EFailure::Stopped, "The session is stopped." );
-		//What the last request left unacknowledged, and MID 0003 behind it, have until then.
+		//The request out keeps its answer, which the controller owes before it takes MID 0003 (§3.2.1);  the rest is not sent.
+		FailQueued( EFailure::Stopped, "The session is stopped." );
+		//Finish at replyTimeout without the request out's answer;  MID 0003's send arms it again for its own.
 		_reply.Arm( _settings.ReplyTimeout, [self=shared_from_this()]{ self->Finish(); } );
 		_queue.push_back( {Mid0003{}, Mid0003::Id, 0, {}} );
 		Pump();
