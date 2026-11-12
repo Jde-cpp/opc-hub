@@ -70,6 +70,11 @@ namespace OpenProtocol{
 			return refuse( ERefusal::UnknownMid, "MID {:04} is not one the codec reads.", head.Mid );
 		return move( *y );
 	}
+	template<class... T> Ω maxRevisionOf( std::type_identity<variant<T...>>, uint16_t mid )ι->uint16_t{
+		uint16_t y{};
+		(void)( (mid==T::Id && (y = T::MaxRevision, true)) || ... );
+		return y;
+	}
 }
 	α OpenProtocol::FrameSize( sv buffer )ι->Expected<optional<uint>>{
 		if( buffer.size()<4 )
@@ -154,5 +159,8 @@ namespace OpenProtocol{
 
 	α OpenProtocol::MidOf( const Body& body )ι->uint16_t{
 		return std::visit( []<class T>( const T& )ι{ return T::Id; }, body );
+	}
+	α OpenProtocol::MaxRevision( uint16_t mid )ι->uint16_t{
+		return maxRevisionOf( std::type_identity<Body>{}, mid );
 	}
 }

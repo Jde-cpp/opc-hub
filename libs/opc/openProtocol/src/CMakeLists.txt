@@ -4,9 +4,9 @@ message( Jde.Opc.OpenProtocol )
 project( Jde.Opc.OpenProtocol VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 
-#The Open Protocol codec (docs/open-protocol/spec.md *The codec*):  the header and field codec and a type per MID the
-#driver speaks, with no I/O and no open62541, so the fuzz target (../tests/fuzz) compiles these sources as they are.
-#Static, so no exports header.
+#Open Protocol (docs/open-protocol/spec.md *The codec*), with no open62541:  the codec, a header and field codec and a
+#type per MID the driver speaks, with no I/O, which the fuzz target (../tests/fuzz) compiles as it is;  and over it, on
+#asio, the session and the controller's side of one for the suites and the emulator.  Static, so no exports header.
 set( targetName Jde.Opc.OpenProtocol )
 add_library( ${targetName} )
 compileOptions( ${targetName} )

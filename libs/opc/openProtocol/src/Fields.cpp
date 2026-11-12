@@ -225,12 +225,18 @@ namespace OpenProtocol{
 	}
 }
 	α OpenProtocol::Quote( sv bytes )ι->string{
+		constexpr sv hex{ "0123456789abcdef" };
 		string y{ '\'' };
+		y.reserve( bytes.size()*4+2 );
 		for( let c : bytes ){
-			if( (uint8_t)c>=0x20 && (uint8_t)c<0x7F )
+			const uint8_t b = c;
+			if( b>=0x20 && b<0x7F )
 				y += c;
-			else
-				fmt::format_to( std::back_inserter(y), "\\x{:02x}", (uint8_t)c );
+			else{//by hand:  fmt here was half the fuzz target's time, a refused length's every byte through it.
+				y += "\\x";
+				y += hex[b>>4];
+				y += hex[b&0xF];
+			}
 		}
 		return y+'\'';
 	}

@@ -9,7 +9,8 @@ include( ${CMAKE_CURRENT_LIST_DIR}/../../../../../build/functions.cmake )
 #	$B/libs/opc/openProtocol/tests/fuzz/Jde.Opc.OpenProtocol.Fuzz -merge=1 <source>/libs/opc/openProtocol/tests/corpus finds
 #The first run writes what it finds to finds/ and a crash to ./crash-<sha1>;  the merge adds to the corpus the finds that
 #reach code the corpus did not.  A crash's file goes into the corpus by hand, with its fix.
-#It compiles the codec's sources itself, so they carry libFuzzer's coverage instrumentation, which the library's do not.
+#It compiles the codec's sources itself, so they carry libFuzzer's coverage instrumentation, which the library's do not;
+#the framer, the one other reader of a socket's bytes, is a header (../../src/Framer.h) the harness streams each input through.
 set( targetName Jde.Opc.OpenProtocol.Fuzz )
 project( ${targetName} VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
@@ -21,8 +22,7 @@ endif()
 
 add_executable( ${targetName} )
 compileOptions( ${targetName} )
-file( GLOB codec CONFIGURE_DEPENDS ../../src/*.cpp )
-target_sources( ${targetName} PRIVATE Fuzz.cpp ${codec} )
+target_sources( ${targetName} PRIVATE Fuzz.cpp ../../src/Codec.cpp ../../src/ErrorNames.cpp ../../src/Fields.cpp )
 target_compile_options( ${targetName} PRIVATE -fsanitize=fuzzer,address )
 target_link_options( ${targetName} PRIVATE -fsanitize=fuzzer,address )
 target_link_libraries( ${targetName} Jde )

@@ -1,4 +1,5 @@
-//Jde.Opc.OpenProtocol.Tests:  the codec over byte buffers.  No dbServers block and no args/ dir, so addJdeTest's
+//Jde.Opc.OpenProtocol.Tests:  the codec over byte buffers, and the session against the controller's side of it on
+//the executor's threads and loopback ports the system picks.  No dbServers block and no args/ dir, so addJdeTest's
 //`-include=args/sqlite -arg path=:memory:` is inert;  `-tests`/`-ctest` binds logsDir.  The openProtocol tag's name resolves
 //through OpenProtocol::TagNames, which main.cpp registers before Process::Startup.
 //REPO_SOURCE_DIR is in ctest's environment (addJdeTest) and in the shell for direct runs (see the cpp-tests skill).
