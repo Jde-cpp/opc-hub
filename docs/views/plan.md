@@ -303,8 +303,15 @@ Built 2026-11-11, where it differs from the text above.
 - **The view tabs were a `tablist` already**, Material's tab bar, with the chevron a stop after the active tab (Phase 1b); nothing was added.
 - **The logs' rows lose their `tabindex`**, each a stop of its own before.
   - Chrome says a focused cell is losing the focus before it takes the cell out, with nowhere named, as it does for a click on the page. Which it was is read a microtask later, once the cell is out or is not. A row CdkTable moves is out and back in by then, so the observer's records of its removal say which.
-- **Checked in the browser** on the users list, the logs and the watch list: `Ctrl+\`, the arrows, Enter on a header, its menu's `Move left` and Escape leaving the focus on the cell, F2 and Enter sorting, Shift+Space, Enter opening a user, PageDown and PageUp in the logs with the focus kept, the tabs' arrows, and Enter, Tab and Escape in the watch list's cell of two buttons. A node's Children were not walked, having no server to browse.
-- **Not checked:** a screen reader, and AXE.
+- **Checked in the browser** on the users list, the logs and the watch list: `Ctrl+\`, the arrows, Enter on a header, its menu's `Move left` and Escape leaving the focus on the cell, F2 and Enter sorting, Shift+Space, Enter opening a user, PageDown and PageUp in the logs with the focus kept, the tabs' arrows, and Enter, Tab and Escape in the watch list's cell of two buttons. A row moved as CdkTable moves one kept the focus on the users list.
+- **A node's Children were walked on 2026-11-12**, with an OpcServer for the hub to browse:
+  - Enter on a value's cell opened its Write dialog, which `Ctrl+\` left the focus in, and Escape returned the focus to the cell.
+  - Enter on an Object's disabled checkbox did nothing, and from its ID cell opened the row.
+  - Enter on a read-only value's cell, which holds a lock and no Write, opened the row, and F2 reached the lock with its tooltip.
+  - F2, Escape and Space in a variable's cells, and PageDown and PageUp moving ten rows.
+
+  In the logs, PageDown events marked as repeats turned no page. On the watch list, Space does nothing on a Trend cell, and Enter ticks it.
+- **Not checked:** a screen reader, AXE, and an empty log's last page, which needs a read to reach the log's end.
 
 ## Help
 
