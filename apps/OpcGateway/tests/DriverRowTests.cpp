@@ -183,9 +183,11 @@ namespace Jde::Opc::Gateway::Tests{
 			{ R"({"revisions":{"0061":"3"}})", "from 1 to 999" },
 			{ R"({"revisions":{"0061":1000}})", "from 1 to 999" } } )
 			expect( openProtocol({}, driver), expected, driver );
-		for( sv kind : {""sv, ", kind:\"ua\""sv} ){//`driver` is a driver kind's.
+		for( sv kind : {""sv, ", kind:\"ua\""sv} ){//`driver` and an Open Protocol url are a driver kind's.
 			let created = create( slug, Ƒ("url:$url, driver:$driver{}", kind), {{"url", OpcUrl()}, {"driver", "{}"}} );
 			expect( created ? nullopt : optional<string>{created.error()}, "takes no driver settings", kind );
+			let controller = create( slug, Ƒ("url:$url{}", kind), {{"url", url}} );
+			expect( controller ? nullopt : optional<string>{controller.error()}, "set the kind to open-protocol", kind );
 		}
 		//What it takes:  no driver, an empty one, and a kind of ua on a UA row.
 		for( let& [args, driver] : vector<std::pair<string,string>>{ {"kind:\"open-protocol\"", ""}, {"kind:\"open-protocol\"", "{}"}, {"kind:\"ua\"", ""} } ){
@@ -292,6 +294,12 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( ua.HasDriver() );
 		EXPECT_TRUE( ua.CertificateUri.empty() );
 		EXPECT_EQ( ua.DefaultBrowseNs, 1 );
+
+		//A form clearing a field the kind hides:  the UA row's own Sign is no rule's once the kind has a driver.
+		ASSERT_FALSE( update(id, "certificateUri:\"urn:x\", securityMode:\"Sign\"") );
+		error = update( id, "kind:\"open-protocol\", url:$url, certificateUri:null", {{"url", controllerUrl()}} );
+		ASSERT_FALSE( error ) << *error;
+		EXPECT_TRUE( storesNothingFixed(id) );
 	}
 
 	//testConnection on an Open Protocol row (TestConnectionQLAwait.h):  a session that starts communication under the row's
@@ -349,7 +357,8 @@ namespace Jde::Opc::Gateway::Tests{
 			for( let& [more, expected] : vector<std::pair<jobject,string>>{
 				{ {{"driver", R"({"timeZone":"Mars/Olympus_Mons"})"}}, "is not a time zone the gateway knows" },
 				{ {{"url", OpcUrl()}}, "does not start with the scheme" },
-				{ {{"kind", "plc"}}, "is not one of ua or open-protocol" } } ){
+				{ {{"kind", "plc"}}, "is not one of ua or open-protocol" },
+				{ {{"kind", "ua"}}, "set the kind to open-protocol" } } ){
 				auto refused = variables( nullptr );
 				for( let& member : more )
 					refused[member.key()] = member.value();

@@ -111,8 +111,11 @@ namespace Jde::Opc::Gateway{
 	α ServerCnnctn::KindError( const ServerCnnctn& row, SL sl )ι->up<Exception>{
 		let refuse = [sl]( string what ){ return mu<Exception>( move(what), ExceptionArgs{EHttpStatus::BadRequest}, sl ); };
 		let& kind = row.Kind;
-		if( kind.empty() || kind==KindUa )
-			return row.Driver.empty() ? nullptr : refuse( Ƒ("A {} connection takes no driver settings:  they are a driver kind's, {}'s.", KindUa, KindOpenProtocol) );
+		if( kind.empty() || kind==KindUa ){
+			if( row.Driver.size() )
+				return refuse( Ƒ("A {} connection takes no driver settings:  they are a driver kind's, {}'s.", KindUa, KindOpenProtocol) );
+			return row.Url.starts_with( OpenProtocolRow::Scheme ) ? refuse( Ƒ("Url '{}' is an Open Protocol controller's, which a {} connection does not dial:  set the kind to {}.", row.Url, KindUa, KindOpenProtocol) ) : nullptr;
+		}
 		if( kind!=KindOpenProtocol )
 			return refuse( Ƒ("Kind '{}' is not one of {} or {}.", kind, KindUa, KindOpenProtocol) );
 		try{

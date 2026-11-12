@@ -75,6 +75,12 @@ namespace Jde::Opc::Gateway{
 			base.DefaultBrowseNs = 1;
 		}
 		auto row = MergeSettings( m, move(base), sl );
+		if( row.HasDriver() ){//a UA row's own four, which a kind changed to a driver's writes null to (Query):  judged as stored.  A value sent is RowError's to refuse.
+			row.CertificateUri.clear();
+			row.DefaultBrowseNs = 1;
+			row.SecurityMode.clear();
+			row.SecurityPolicy.clear();
+		}
 		if( auto e = RowError(m, row, sl); e )
 			e->Throw();
 		return row;

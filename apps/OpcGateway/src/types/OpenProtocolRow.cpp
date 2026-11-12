@@ -1,5 +1,4 @@
 #include "OpenProtocolRow.h"
-#include <charconv>
 #include <jde/fwk/exceptions/refuse.h>
 #include "ServerCnnctn.h"
 
@@ -12,7 +11,7 @@ namespace Jde::Opc::Gateway{
 	Ω digits( sv text, uint min, uint max )ι->optional<uint>{
 		uint y{};
 		let [end, ec] = std::from_chars( text.data(), text.data()+text.size(), y );
-		let read = ec==std::errc{} && end==text.data()+text.size() && std::ranges::all_of( text, []( char c ){ return c>='0' && c<='9'; } );
+		let read = ec==std::errc{} && end==text.data()+text.size();//into an unsigned type, from_chars takes no sign, space or prefix.
 		return read && y>=min && y<=max ? optional<uint>{ y } : nullopt;
 	}
 	Ω readUrl( str url, OpenProtocolRow& y, SL sl )ε->void{

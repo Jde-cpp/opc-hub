@@ -24,7 +24,7 @@ namespace Jde::Opc::Gateway{
 		//policy that contradict - is a trigger per dialect as well (#520, config/sql/<dialect>).
 		Ω SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
 		//docs/open-protocol/spec.md *The row*:  what the row's kind asks of it, checked where SettingsError is.  A kind the gateway
-		//does not know;  `driver` on a UA row;  on an Open Protocol row, a url or a `driver` OpenProtocolRow refuses.  Null for a row
+		//does not know;  `driver` or an Open Protocol url on a UA row;  on an Open Protocol row, a url or a `driver` OpenProtocolRow refuses.  Null for a row
 		//its kind takes.
 		Ω KindError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
 		static constexpr sv KindUa{ "ua" }, KindOpenProtocol{ "open-protocol" };//what `kind` holds.
