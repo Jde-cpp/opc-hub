@@ -1,0 +1,46 @@
+@use '../../status';
+
+mat-form-field{
+	display: block;
+	width: 100%;
+}
+.hint{
+	margin: 0 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+/* the codings already over the stop, each with its removal */
+.codings{
+	list-style: none;
+	margin: 0 0 1rem;
+	padding: 0;
+	font: var(--mat-sys-body-medium);
+	font-variant-numeric: tabular-nums;
+	li{
+		display: flex;
+		align-items: center;
+		gap: .5rem;
+	}
+	.what{
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.by{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+.after-check{
+	margin-top: .5rem;
+}
+.refused{
+	@include status.refused( .75rem 0 0 );
+}
+mat-dialog-actions{
+	gap: 12px;
+	justify-content: flex-end;
+}
+.problem{
+	flex: 1 1 auto;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}

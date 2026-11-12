@@ -74,6 +74,77 @@ A code names one reason, deleted reasons included.
 
 A deleted reason keeps resolving the stops it coded and leaves the pickers. One that a coding names can't be purged.
 
+## The machine's OEE page
+
+A saved machine's Properties tab links to its OEE page, `machines/<slug>/oee` under the gateway's page.
+
+Pick a **period** at the top:
+
+- **This shift** - the shift the machine's calendar is in, or its last one. Offered when the machine has a calendar.
+- **Today**, **Yesterday**, **This week** and **Last week** - by this browser's clock, a week from Monday
+- **Custom** - a From and a To. A blank To is now.
+
+A period that is still running ends now. **Refresh** reads it again.
+
+### Figures
+
+The five figures are OEE, its three factors and **TEEP**, which is OEE times planned time over the whole period. A factor the machine doesn't measure shows a dash, and OEE is the product of the rest.
+
+A performance above 100% is marked: the machine beats its ideal cycle, so the ideal is too slow.
+
+Under them, the **planned time** is split into:
+
+- **Run** - planned time less the stops below. Small stops are part of it.
+- **Unplanned stops** - stops coded Unplanned, or not coded
+- **Planned stops** - stops coded Planned
+
+Beside the split:
+
+- **Small stops** - stops shorter than the machine's small-stop threshold. They lower performance, not availability.
+- **Excluded** - stops coded Excluded, taken out of planned time
+- **Unknown** - time the feed was down, taken out of planned time
+
+The **counts** are those made in planned time. **Outside planned time** is what the machine made in a break or outside its shifts, which is in no factor.
+
+*Partial* means the period has unknown time, or rows the gateway has yet to write.
+
+### Timeline
+
+The timeline is a Gantt chart of the period, in two rows:
+
+- **Planned** - each shift, with its breaks cut out
+- **State** - running, each stop in its reason's category, uncoded stops, small stops, and unknown time
+
+The legend under it names each colour. Hover a band for its times, its length, its reason and a coding's comment. Drag to zoom.
+
+Click a stop's band to code it.
+
+A period with more stops than the gateway reads at once is shown from a later start, and a notice says from when.
+
+### Losses and trend
+
+**Losses** is a Pareto: the time lost to each reason, to uncoded stops and to small stops, longest first. The table under it has the same rows with each one's share and stop count.
+
+**Trend** is OEE for each shift or each day of the period.
+
+The timeline and the two charts need the add-on the install does not include - see [Trend chart](/help/gateways#trend-chart). Without it the page is its figures and its tables.
+
+### Stops and coding
+
+**Stops** lists the period's stops, newest first. **Uncoded** keeps only the stops with time no reason covers.
+
+**Code** on a row, or a click on a stop's band, opens the coding dialog:
+
+- **Reason** - one of the gateway's reasons
+- **Comment** - optional
+- **Split the stop** - for a stop that had two causes: a time inside the stop, and a reason and comment for the part after it
+
+A reason over the same time replaces the one there. The dialog lists the codings already over the stop, each with a remove button. To go back from a split to one reason, remove the second coding first.
+
+A stop still open is coded to now.
+
+Coding needs Update on the codings table, removing one needs Delete, and both need Read on the machine's group. On a gateway whose codings resource is not enforced, anyone who can read the group can code.
+
 ## Access
 
 The machines and reasons are tables of the gateway, switched on the [Resources](/access/resources) page as its other tables are.

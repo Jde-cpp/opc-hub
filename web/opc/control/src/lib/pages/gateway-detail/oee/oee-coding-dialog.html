@@ -1,0 +1,59 @@
+<h2 mat-dialog-title>Code the stop</h2>
+<mat-dialog-content>
+	<p class="hint">{{ stop.start | date:'yyyy-MM-dd HH:mm:ss' }} to @if( stop.end ){{{ stop.end | date:'yyyy-MM-dd HH:mm:ss' }}}@else{now, still open}, {{ length }}.  A reason over the same time replaces the one there.</p>
+	@if( codings().length ){
+		<ul class="codings" aria-label="The codings over the stop">
+			@for( c of codings(); track c.id ){
+				<li>
+					<span class="what"><strong>{{ c.reason?.name ?? 'No reason' }}</strong> {{ c.start | date:'HH:mm:ss' }} to {{ c.end | date:'HH:mm:ss' }}@if( c.comment ){ - {{ c.comment }}}@if( c.userName ){{{ ' ' }}<span class="by">({{ c.userName }})</span>}</span>
+					<button matIconButton type="button" [attr.aria-label]="'Remove the coding ' + (c.reason?.name ?? '')" (click)="remove(c)" [disabled]="busy()"><mat-icon>delete</mat-icon></button>
+				</li>
+			}
+		</ul>
+	}
+	<mat-form-field>
+		<mat-label>{{ split() ? 'Reason before the split' : 'Reason' }}</mat-label>
+		<mat-select [value]="reason()" (selectionChange)="reason.set($event.value)" [disabled]="busy()">
+			@for( r of data.reasons; track r.id ){
+				<mat-option [value]="r.id">{{ r.name }} - {{ r.category }}</mat-option>
+			}
+		</mat-select>
+		@if( !data.reasons.length ){ <mat-hint>The gateway has no reasons:  add them on its Reasons tab.</mat-hint> }
+	</mat-form-field>
+	<mat-form-field>
+		<mat-label>Comment</mat-label>
+		<input matInput type="text" maxlength="2048" [value]="comment()" (input)="comment.set($any($event.target).value)" [disabled]="busy()">
+	</mat-form-field>
+	<mat-checkbox [checked]="split()" (change)="split.set($event.checked)" [disabled]="busy()">Split the stop:  it had two causes</mat-checkbox>
+	@if( split() ){
+		<mat-form-field class="after-check">
+			<mat-label>Split time</mat-label>
+			<input matInput type="datetime-local" step="0.001" [value]="splitAt()" (input)="splitAt.set($any($event.target).value)" [disabled]="busy()">
+		</mat-form-field>
+		<mat-form-field>
+			<mat-label>Reason after the split</mat-label>
+			<mat-select [value]="reason2()" (selectionChange)="reason2.set($event.value)" [disabled]="busy()">
+				@for( r of data.reasons; track r.id ){
+					<mat-option [value]="r.id">{{ r.name }} - {{ r.category }}</mat-option>
+				}
+			</mat-select>
+		</mat-form-field>
+		<mat-form-field>
+			<mat-label>Comment after the split</mat-label>
+			<input matInput type="text" maxlength="2048" [value]="comment2()" (input)="comment2.set($any($event.target).value)" [disabled]="busy()">
+		</mat-form-field>
+	}
+	@if( busy() ){
+		<mat-progress-bar mode="indeterminate" aria-label="Sending the coding"></mat-progress-bar>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	@if( problem(); as p ){
+		<span class="problem">{{ p }}</span>
+	}
+	<button matButton="outlined" type="button" (click)="dialogRef.close()" [disabled]="busy()">Close</button>
+	<button matButton="tonal" type="button" [disabled]="busy() || !!problem()" (click)="apply()">Code</button>
+</mat-dialog-actions>

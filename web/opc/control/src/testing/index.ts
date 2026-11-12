@@ -26,7 +26,7 @@ export class BundledHighcharts extends HighchartsLoader{
 		const svg = <any>SVGElement.prototype;
 		svg.getBBox ??= function( this:SVGElement ){ return { x: 0, y: 0, width: 7*(this.textContent?.length ?? 0), height: 12 }; };
 	}
-	protected override importFile( file:string ){ return file=='highstock.js' ? import('highcharts/esm/highstock') : import('highcharts/esm/modules/accessibility'); }
+	protected override importFile( file:string ):Promise<any>{ return file=='highstock.js' ? import('highcharts/esm/highstock') : file=='modules/xrange.js' ? import('highcharts/esm/modules/xrange') : import('highcharts/esm/modules/accessibility'); }
 }
 //A Variable as a browse answers it:  ns 2, browsed by `name`, with `json` on top.
 export const variable = ( i:number, name:string, json:object={} )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}, ...json} );
