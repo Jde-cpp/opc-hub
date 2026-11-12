@@ -2,8 +2,8 @@ cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
 include( ${CMAKE_CURRENT_LIST_DIR}/../../../../build/functions.cmake )
 
 #Jde.Opc.OpenProtocol's unit suite:  frames written from the specification's tables, each MID at each revision both ways,
-#the specification's example frames, the refusals, and the fuzz target's corpus replayed.  No server, no socket and no
-#data source.
+#the specification's example frames, the refusals, and the fuzz target's corpus replayed;  and the session against the
+#controller's side of the codec, in-process on loopback ports the system picks.  No server and no data source.
 set( targetName Jde.Opc.OpenProtocol.Tests )
 project( ${targetName} VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )

@@ -1,5 +1,6 @@
-//Jde.Opc.OpenProtocol's own unit suite.  No server, no socket and no data source:  each test decodes a byte buffer or
-//encodes a message, the buffers written from the specification's tables (Atlas Copco 9836 4415 01, Release 2.20.1).
+//Jde.Opc.OpenProtocol's own unit suite.  No server and no data source:  the codec's tests decode a byte buffer or
+//encode a message, the buffers written from the specification's tables (Atlas Copco 9836 4415 01, Release 2.20.1), and
+//the session's run it against the controller's side of the codec on the executor, over loopback.
 #include "gtest/gtest.h"
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>

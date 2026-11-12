@@ -64,6 +64,7 @@ namespace Jde::Opc::OpenProtocol{
 	Ξ Encode( const Message& m )ι->Expected<string>{ return Encode( m.Head, m.Data ); }
 
 	α MidOf( const Body& body )ι->uint16_t;
+	α MaxRevision( uint16_t mid )ι->uint16_t;//the last revision of a MID's type, 0 for a MID with none.
 	α ErrorName( uint16_t code )ι->sv;//Table 23's description of a MID 0004 code, empty for one it does not list.
 	α LinkErrorName( uint16_t code )ι->sv;//Table 9's, of a MID 9998 code.
 }
