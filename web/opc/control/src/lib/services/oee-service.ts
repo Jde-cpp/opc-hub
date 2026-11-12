@@ -1,5 +1,6 @@
 import { Service } from '@angular/core';
 import { OeeBucket, OeeCoding, OeeCodingCall, OeeLoss, OeeReasonRef, OeeShift, OeeSpan, OeeStop, OeeStopsPage, OeeTimeline, toOeeBucket, toOeeCoding, toOeeLoss, toOeeStopsPage, toOeeTimeline, toReasonRef } from '../model/oee';
+import { OeeMachineRef } from '../model/oee-live-view';
 import { HistPoster, HistReader } from './history-service';
 
 const bucket = 'start end shift planned run unplanned plannedStop small excluded unknown total good reject outside ideal availability performance quality oee teep measured partial';
@@ -44,6 +45,27 @@ export class OeeService{
 		return last ? { start: new Date( last.start ), end: new Date( last.end ), name: last.shift || undefined } : undefined;
 	}
 	static readonly shiftQuery = 'oee( machine: $machine, start: $start, end: $end, by: $by ){ start end shift }';
+	//The dashboard's machines (#406), by name:  the live ones, each with whether a line holds it - its tile is then its line's.
+	//A caller who may not read the lines or their members has every machine as one in no line.
+	async machines( reader:HistReader ):Promise<(OeeMachineRef & {inLine:boolean})[]>{
+		const [data, held] = await Promise.all( [reader.query<any>( OeeService.machinesQuery ), this.#held( reader )] );
+		return ( <any[]>(data?.oeeMachines ?? []) ).map( m=>({ id: Number( m.id ), name: String( m.name ?? m.slug ), slug: String( m.slug ), inLine: held.has( Number( m.id ) ) }) ).sort( ( a, b )=>a.name.localeCompare( b.name ) );
+	}
+	//the machines a live line holds:  a deleted line keeps its members until it is purged
+	async #held( reader:HistReader ):Promise<Set<number>>{
+		try{
+			const [lines, members] = await Promise.all( [reader.query<any>( OeeService.linesQuery ), reader.query<any>( OeeService.lineMembersQuery )] );
+			const live = new Set( ( <any[]>(lines?.oeeLines ?? []) ).map( l=>Number( l.id ) ) );
+			return new Set( ( <any[]>(members?.oeeLineMembers ?? []) ).filter( m=>m.oeeMachineId!=null && live.has( Number( m.oeeLineId ) ) ).map( m=>Number( m.oeeMachineId ) ) );
+		}
+		catch( e ){
+			console.warn( "Could not read the lines' members.", e );
+			return new Set();
+		}
+	}
+	static readonly machinesQuery = 'oeeMachines( deleted: null ){ id name slug }';
+	static readonly linesQuery = 'oeeLines( deleted: null ){ id }';
+	static readonly lineMembersQuery = 'oeeLineMembers{ oeeLineId oeeMachineId }';
 	//the reasons a stop is coded with:  the live ones
 	async reasons( reader:HistReader ):Promise<OeeReasonRef[]>{
 		const data = await reader.query<any>( OeeService.reasonsQuery );

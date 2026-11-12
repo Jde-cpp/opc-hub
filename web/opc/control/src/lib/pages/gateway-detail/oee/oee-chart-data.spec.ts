@@ -1,5 +1,5 @@
 import { OeeSegment, toOeeBucket, toOeeLoss, toOeeTimeline } from '../../../model/oee';
-import { codable, oeeDayName, oeeKindColors, plannedColor, plannedPieces, segmentKind, toGantt, toOeeTrend, toPareto, trendColor } from './oee-chart-data';
+import { codable, oeeDayName, oeeKindColors, plannedColor, plannedPieces, segmentKind, toGantt, toGanttRows, toOeeTrend, toPareto, trendColor } from './oee-chart-data';
 
 const t = ( h:number, m=0 )=>new Date( Date.UTC( 2026, 10, 11, h, m ) );
 const iso = ( h:number, m=0 )=>t( h, m ).toISOString();
@@ -66,6 +66,16 @@ describe( 'oee chart data', ()=>{
 		expect( toGantt( shift, range ).legend.map( l=>l.label ) ).toEqual( ['Planned time', 'Running', 'Unplanned stop', 'Planned stop', 'Excluded', 'Uncoded stop', 'Small stop', 'Unknown'] );
 		const running = toOeeTimeline( [{planned: [], segments: [segment( [6, 0], [7, 0], {state: 'running'} )]}] );
 		expect( toGantt( running, range ).legend ).toEqual( [{color: oeeKindColors.running, label: 'Running'}] );
+	} );
+	it( "gives the dashboard a row per machine, each band on its machine's row and named for it, with no planned row", ()=>{
+		const rows = toGanttRows( [{name: 'Pump 1', segments: shift.segments.slice( 0, 2 )}, {name: 'Pump <2>', segments: shift.segments.slice( 3, 6 )}] );
+		expect( rows.rows ).toEqual( ['Pump 1', 'Pump <2>'] );
+		expect( rows.planned ).toEqual( [] );
+		expect( rows.state.map( p=>[p.y, p.name] ) ).toEqual( [[0, 'Running'], [0, 'Changeover'], [1, 'Jam'], [1, 'Running'], [1, 'Small stop']] );
+		expect( rows.state[1].custom.text ).toMatch( /^Pump 1:  Changeover, Planned, .*, size change, Coded by op, Click to open the machine's OEE page$/ );
+		expect( rows.state[2].custom.tip ).toContain( '<b>Pump &lt;2&gt;:  Jam</b>' );
+		expect( rows.legend.map( l=>l.label ) ).toEqual( ['Running', 'Unplanned stop', 'Planned stop', 'Small stop'] );
+		expect( toGanttRows( [{name: 'Idle', segments: []}] ) ).toEqual( {rows: ['Idle'], planned: [], state: [], legend: []} );
 	} );
 	it( 'escapes a reason and a comment in the hover', ()=>{
 		const g = toGantt( toOeeTimeline( [{planned: [], segments: [segment( [8, 0], [9, 0], {stop: 1, reason: {id: 1, name: '<Jam & co>', category: 'Unplanned'}, coding: {id: 1, comment: '<img src=x>'}} )]}] ), range );

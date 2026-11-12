@@ -1,10 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import type Highcharts from 'highcharts/esm/highstock';
-import { toOeeLoss, toOeeTimeline } from '../../../model/oee';
+import { OeeSegment, toOeeLoss, toOeeTimeline } from '../../../model/oee';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { OeeChart, OeeChartSpec } from './oee-chart';
-import { oeeKindColors, toGantt, toPareto } from './oee-chart-data';
-import { silence, stable } from 'jde-spa/testing';
+import { oeeKindColors, toGantt, toGanttRows, toPareto } from './oee-chart-data';
+import { flush, silence, stable } from 'jde-spa/testing';
 import { BundledHighcharts } from 'jde-opc/testing';
 
 const t = ( h:number, m=0 )=>new Date( Date.UTC( 2026, 10, 11, h, m ) );
@@ -28,9 +28,10 @@ const draw = async ( spec:OeeChartSpec, loader:HighchartsLoader = new BundledHig
 	await stable( fixture );
 	const plot:HTMLElement = fixture.nativeElement.querySelector( '.plot' );
 	const chart = H.charts.find( c=>c && c.container.parentElement==plot );
-	const picked:unknown[] = [];
+	const picked:unknown[] = [], bands:{y:number}[] = [];
 	fixture.componentInstance.pick.subscribe( s=>picked.push( s ) );
-	return { fixture, plot, chart, picked };
+	fixture.componentInstance.band.subscribe( p=>bands.push( p ) );
+	return { fixture, plot, chart, picked, bands };
 };
 
 describe( 'OeeChart', ()=>{
@@ -52,6 +53,41 @@ describe( 'OeeChart', ()=>{
 		expect( picked ).toEqual( [] );
 		(<any>stop).firePointEvent( 'click' );
 		expect( picked ).toEqual( [timeline.segments[1]] );
+		fixture.destroy();
+	} );
+	//the dashboard's (#406):  a row per machine, as tall as its rows, and any band says which row it is on
+	it( "draws a row per machine named on the axis, grows with its rows, and emits a band's point whatever it is", async ()=>{
+		const rows = ( names:string[] ):OeeChartSpec=>({ kind: 'gantt', title: 'The current shift', description: 'd', range, ...toGanttRows( names.map( name=>({name, segments: timeline.segments}) ) ) });
+		const { fixture, chart, plot, picked, bands } = await draw( rows( ['Pump 1', 'Pump 2'] ) );
+		expect( chart!.yAxis[0].options.categories ).toEqual( ['Pump 1', 'Pump 2'] );
+		expect( chart!.series.map( s=>s.points.length ) ).toEqual( [0, 6] );
+		expect( plot.style.height ).toBe( '120px' );
+		(<any>chart!.series[1].points[3]).firePointEvent( 'click' );//Pump 2's running time
+		expect( bands.map( p=>p.y ) ).toEqual( [1] );
+		expect( picked ).toEqual( [] );
+		fixture.componentRef.setInput( 'spec', rows( ['Pump 1', 'Pump 2', 'Pump 3'] ) );
+		await stable( fixture );
+		expect( plot.style.height ).toBe( '152px' );
+		expect( chart!.yAxis[0].options.max ).toBe( 2 );
+		expect( chart!.series[1].points ).toHaveLength( 9 );
+		fixture.destroy();
+	} );
+	it( "keeps a zoom as the dashboard's data changes, and waits on an open tooltip", async ()=>{
+		const rows = ( segments:OeeSegment[] ):OeeChartSpec=>({ kind: 'gantt', title: 'The current shift', description: 'd', range, ...toGanttRows( [{name: 'Pump 1', segments}] ) });
+		const { fixture, chart } = await draw( rows( timeline.segments.slice( 0, 2 ) ) );
+		chart!.xAxis[0].setExtremes( t( 7 ).getTime(), t( 9 ).getTime() );//the user's zoom
+		fixture.componentRef.setInput( 'spec', rows( timeline.segments ) );
+		await stable( fixture );
+		expect( chart!.series[1].points ).toHaveLength( 3 );
+		expect( [chart!.xAxis[0].min, chart!.xAxis[0].max] ).toEqual( [t( 7 ).getTime(), t( 9 ).getTime()] );
+		(<any>chart).hoverPoint = chart!.series[1].points[0];//a band's tooltip open
+		fixture.componentRef.setInput( 'spec', rows( timeline.segments.slice( 0, 1 ) ) );
+		await stable( fixture );
+		expect( chart!.series[1].points ).toHaveLength( 3 );
+		(<any>chart).hoverPoint = undefined;
+		(<any>chart!.series[1].points[0]).firePointEvent( 'mouseOut' );
+		await flush( 2 );
+		expect( chart!.series[1].points ).toHaveLength( 1 );
 		fixture.destroy();
 	} );
 	it( 'redraws in place when the data changes, and anew when the kind does', async ()=>{

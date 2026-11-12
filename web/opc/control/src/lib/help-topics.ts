@@ -7,5 +7,5 @@ import { HelpTopic } from 'jde-spa';
 export const opcHelpTopics:HelpTopic[] = [
 	{ id: 'gateways', title: 'Gateways', summary: 'Gateways, server connections and node browsing', icon: 'hub', url: 'assets/jde-opc/help/gateways.md', routes: ['gateways', 'apps/gateways/:instance', 'apps/gateways/:instance/watch', 'apps/opcServers/:instance'] },
 	{ id: 'gateways/groups', title: 'Historian groups', summary: 'Templates and groups - what the gateway historian keeps', icon: 'history', url: 'assets/jde-opc/help/groups.md', routes: ['apps/gateways/:instance/templates', 'apps/gateways/:instance/groups'] },
-	{ id: 'gateways/oee', title: 'OEE', summary: 'Machines and reasons - overall equipment effectiveness on the historian', icon: 'precision_manufacturing', url: 'assets/jde-opc/help/oee.md', routes: ['apps/gateways/:instance/machines', 'apps/gateways/:instance/reasons'] }
+	{ id: 'gateways/oee', title: 'OEE', summary: 'Machines, reasons and the dashboard - overall equipment effectiveness on the historian', icon: 'precision_manufacturing', url: 'assets/jde-opc/help/oee.md', routes: ['apps/gateways/:instance/machines', 'apps/gateways/:instance/reasons', 'apps/gateways/:instance/oee'] }
 ];

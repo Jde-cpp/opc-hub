@@ -8,7 +8,7 @@ Overall equipment effectiveness is the share of its planned time a machine spent
 
 The gateway works it out from what its historian already keeps. A **machine** is a [historian group](/help/gateways/groups) whose members are given roles: its run state, its counts, its stop reason. The gateway turns the group's records into stops and per-interval rows, and computes the figures when they are read.
 
-Machines and reasons are edited from the gateway's page under [Applications](/apps), on its **Machines** and **Reasons** tabs.
+Machines and reasons are edited from the gateway's page under [Applications](/apps), on its **Machines** and **Reasons** tabs. The Machines tab opens the [dashboard](#the-dashboard), every machine live.
 
 OEE runs on a gateway whose settings have an `oee` block and a historian.
 
@@ -74,9 +74,29 @@ A code names one reason, deleted reasons included.
 
 A deleted reason keeps resolving the stops it coded and leaves the pickers. One that a coding names can't be purged.
 
+## The dashboard
+
+**OEE dashboard** on the gateway's Machines tab opens `oee` under the gateway's page. It is live: nothing on it needs a refresh.
+
+Each machine that is in no line has a **tile**:
+
+- its state - Running, Stopped or Unknown - since when, and for how long
+- a stop's reason, or **Uncoded** when it has none. A stop still shorter than the machine's threshold says **Small stop**.
+- the availability, performance, quality and OEE of its shift so far. A machine with no calendar has its UTC day's.
+
+A tile says when the machine is outside planned time or between shifts, and when the connection to the gateway is lost. It then shows the last the gateway said until the connection is back.
+
+When the gateway stops sending a machine - it was deleted, or OEE stopped - its tile says why, and its row stays as it was. When the gateway no longer knows your session, the tile says to sign in again.
+
+Under the tiles, **Current shift** is a Gantt chart with a row for each machine, a line's machines after the others. Each row covers that machine's own shift. Its last band grows as the machine reports, and a new band starts when its state changes. A machine between shifts has no row, and is named under the chart.
+
+A tile and a band open the machine's OEE page, on its shift.
+
+The dashboard shows the machines whose group you may read.
+
 ## The machine's OEE page
 
-A saved machine's Properties tab links to its OEE page, `machines/<slug>/oee` under the gateway's page.
+A saved machine's Properties tab links to its OEE page, `machines/<slug>/oee` under the gateway's page. **Dashboard** at its top goes back to the dashboard.
 
 Pick a **period** at the top:
 

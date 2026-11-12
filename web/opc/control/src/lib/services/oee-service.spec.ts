@@ -27,6 +27,17 @@ describe( 'OeeService', ()=>{
 		await service.stops( g, 4, range, {uncoded: false, limit: 50, continuation: 'next'} );
 		expect( g.query ).toHaveBeenLastCalledWith( `oeeStops( machine: $machine, start: $start, end: $end, uncoded: $uncoded, limit: $limit, continuation: $continuation ){ ${OeeService.stopsSelection} }`, {machine: 4, ...span, uncoded: false, limit: 50, continuation: 'next'} );
 	} );
+	it( "reads the dashboard's machines by name, each with whether a live line holds it", async ()=>{
+		const g = { query: vi.fn( async ( ql:string )=><any>( ql==OeeService.machinesQuery ? {oeeMachines: [{id: 5, name: 'Pump 2', slug: 'pump2'}, {id: 4, name: 'Pump 1', slug: 'pump1'}]}
+			: ql==OeeService.linesQuery ? {oeeLines: [{id: 1}]} : {oeeLineMembers: [{oeeLineId: 1, oeeMachineId: 5}, {oeeLineId: 1, oeeMachineId: null}, {oeeLineId: 2, oeeMachineId: 4}]} ) ) };
+		expect( await service.machines( g ) ).toEqual( [{id: 4, name: 'Pump 1', slug: 'pump1', inLine: false}, {id: 5, name: 'Pump 2', slug: 'pump2', inLine: true}] );//line 2 deleted, its members not yet purged
+		expect( g.query.mock.calls.map( ([ql])=>ql ) ).toEqual( ['oeeMachines( deleted: null ){ id name slug }', 'oeeLines( deleted: null ){ id }', 'oeeLineMembers{ oeeLineId oeeMachineId }'] );
+		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+		const refused = { query: vi.fn( async ( ql:string )=>{ if( ql==OeeService.lineMembersQuery ) throw new Error( '(403)No Read on oeeLineMembers.' ); return <any>{oeeMachines: [{id: 4, name: 'Pump 1', slug: 'pump1'}]}; } ) };
+		expect( await service.machines( refused ) ).toEqual( [{id: 4, name: 'Pump 1', slug: 'pump1', inLine: false}] );//the members withheld:  every machine has its tile
+		expect( warn ).toHaveBeenCalledTimes( 1 );
+		warn.mockRestore();
+	} );
 	it( 'reads the losses and the timeline', async ()=>{
 		const l = stub( {oeeLosses: [{kind: 'uncoded', reason: null, ms: 1200000, stops: 1}]} );
 		expect( await service.losses( l, 4, range ) ).toEqual( [{kind: 'uncoded', reason: undefined, ms: 1200000, stops: 1}] );

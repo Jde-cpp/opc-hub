@@ -18,6 +18,7 @@
 				}
 			</ng-template>
 			<ng-template instanceTab="Machines" instanceTabHelp="oee-machines-and-reasons"><!--OEE's machines and reasons (#404), lists as the historian's two are-->
+				<div><a matButton [routerLink]="['./oee']"><mat-icon>monitoring</mat-icon>OEE dashboard</a></div><!--the machines live (#406), a page of its own under this one-->
 				@for( g of [gateway()]; track g ){
 					<gateway-hist-list [gateway]=g! kind="machines" [url]=url()></gateway-hist-list>
 				}
