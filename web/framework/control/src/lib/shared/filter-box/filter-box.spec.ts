@@ -183,6 +183,23 @@ describe( 'FilterBox', ()=>{
 		expect( press( {key: "/", ctrlKey: true} ) ).toEqual( [false, false] );
 	} );
 
+	//reviews-issue/597-views-keyboard.md #6:  CDK's modal dialog hides the page behind it with aria-hidden
+	it( 'passes Ctrl+\\ over a box hidden behind a dialog, to one that is not', ()=>{
+		const { element, input } = create();
+		const second = TestBed.createComponent( FilterBox );//which takes the first's root out of the page
+		second.componentRef.setInput( 'filter', "" );
+		second.componentRef.setInput( 'host', host );
+		second.detectChanges();
+		const shown = ( second.nativeElement as HTMLElement ).querySelector( 'input' )!;
+		const behind = document.createElement( "div" );
+		behind.setAttribute( "aria-hidden", "true" );
+		behind.appendChild( element );
+		document.body.prepend( behind );
+		const taken = !document.body.dispatchEvent( new KeyboardEvent('keydown', {key: "\\", ctrlKey: true, bubbles: true, cancelable: true}) );
+		behind.remove();
+		expect( [taken, document.activeElement===input, document.activeElement===shown] ).toEqual( [true, false, true] );
+	} );
+
 	it( 'closes its suggestions on Escape, and with none open clears the box and asks', async ()=>{
 		const { fixture, input, sent, type } = create( "pump" );
 		const escape = async ()=>{

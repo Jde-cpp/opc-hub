@@ -14,7 +14,7 @@ import { flush, stable } from 'jde-spa/testing';
 	template: `<mat-table [dataSource]="rows()" keyGrid [pager]="pager()" (rowSelect)="selected($event)">
 		<ng-container matColumnDef="select">
 			<mat-header-cell *matHeaderCellDef><mat-checkbox aria-label="all" (change)="all($event.checked)"/></mat-header-cell>
-			<mat-cell *matCellDef="let r"><mat-checkbox [aria-label]="r.name" (click)="$event.stopPropagation()" (change)="ticked(r.name, $event.checked)"/></mat-cell>
+			<mat-cell *matCellDef="let r"><mat-checkbox [aria-label]="r.name" [disabled]="r.name==frozen()" (click)="$event.stopPropagation()" (change)="ticked(r.name, $event.checked)"/></mat-cell>
 		</ng-container>
 		<ng-container matColumnDef="name">
 			<mat-header-cell *matHeaderCellDef> Name </mat-header-cell>
@@ -44,12 +44,14 @@ class Host{
 	rows = signal( named(12) );
 	columns = signal( ["select", "name", "value", "actions", "menu"] );
 	locked = signal( false );
+	frozen = signal( "" );//the row whose checkbox is disabled
 	pager = signal<Paginator|undefined>( undefined );
 	selected = vi.fn(); all = vi.fn(); ticked = vi.fn(); opened = vi.fn(); edited = vi.fn(); clicked = vi.fn();
 }
 const named = ( count:number, from=0 )=>Array.from( {length: count}, (_, i)=>({name: `n${from+i}`, value: from+i}) );
 
 describe( 'KeyGrid', ()=>{
+	afterEach( ()=>vi.restoreAllMocks() );
 	//cell( row, col ):  the header row is 0.  key:  a keydown on what has the focus, true where the grid took it
 	const open = async ( columns?:string[] )=>{
 		TestBed.configureTestingModule( {} );
@@ -98,20 +100,23 @@ describe( 'KeyGrid', ()=>{
 		expect( key( "a" ) ).toBe( false );
 	} );
 
-	it( 'moves ten rows on PageDown and PageUp where the table has no pager, and turns the page of one it has', async ()=>{
-		const { host, cell, key, at } = await open();
+	//reviews-issue/597-views-keyboard.md #5:  a held key turns one page
+	it( 'moves ten rows on PageDown and PageUp where the table has no pager, and turns the page of one it has, once for a held key', async ()=>{
+		const { fixture, host, cell, key, at } = await open();
 		cell( 1, 2 ).focus();
 		key( "PageDown" );
 		expect( at() ).toEqual( [11, 2] );
-		key( "PageDown" );
+		key( "PageDown", {repeat: true} );
 		expect( at() ).toEqual( [12, 2] );
 		key( "PageUp" );
 		expect( at() ).toEqual( [2, 2] );
 		const turn = vi.fn();
 		host.pager.set( <Paginator><unknown>{turn} );
-		TestBed.tick();
+		await stable( fixture, 1 );
 		key( "PageDown" );
+		key( "PageDown", {repeat: true} );
 		key( "PageUp" );
+		key( "PageUp", {repeat: true} );
 		expect( [turn.mock.calls, at()] ).toEqual( [[[1], [-1]], [2, 2]] );
 	} );
 
@@ -137,6 +142,22 @@ describe( 'KeyGrid', ()=>{
 		expect( at() ).toEqual( [3, 3, "edit"] );
 		key( "ArrowDown" );//an arrow is no key of a button's
 		expect( at() ).toEqual( [4, 3] );
+	} );
+
+	//reviews-issue/597-views-keyboard.md #2 and #3
+	it( "presses nothing on Enter where the cell's control is disabled, and takes an icon that holds a tooltip for no control", async ()=>{
+		const { fixture, host, cell, key, at } = await open();
+		host.frozen.set( "n2" );
+		host.locked.set( true );
+		await stable( fixture, 1 );
+		cell( 3, 0 ).focus();
+		expect( key( "Enter" ) ).toBe( true );
+		expect( [host.ticked.mock.calls, host.opened.mock.calls, host.clicked.mock.calls] ).toEqual( [[], [], []] );
+		cell( 3, 2 ).focus();
+		key( "Enter" );
+		expect( host.opened.mock.calls ).toEqual( [["n2"]] );
+		key( "F2" );
+		expect( at() ).toEqual( [3, 2, "lock"] );
 	} );
 
 	it( 'clicks the row on Enter where it has no link', async ()=>{
@@ -206,6 +227,24 @@ describe( 'KeyGrid', ()=>{
 		host.rows.set( named(12, 24) );
 		await stable( fixture, 1 );
 		expect( at() ).toEqual( [5, 2] );
+	} );
+
+	//reviews-issue/597-views-keyboard.md #1:  Chrome takes the focus off a cell as it takes its row out, and says so first, with
+	//nowhere named, though CdkTable puts the row back in the same task
+	it( 'keeps the focus on a cell whose row a push moves', async ()=>{
+		const { fixture, host, cell, at } = await open();
+		const remove = Element.prototype.remove, removeChild = Node.prototype.removeChild;
+		const blur = ( node:Node )=>{
+			if( node.contains(document.activeElement) )
+				( document.activeElement as HTMLElement ).blur();
+		};
+		vi.spyOn( Element.prototype, 'remove' ).mockImplementation( function( this:Element ){ blur( this ); remove.call( this ); } );
+		vi.spyOn( Node.prototype, 'removeChild' ).mockImplementation( function<T extends Node>( this:Node, child:T ){ blur( child ); return <T>removeChild.call( this, child ); } );
+		cell( 5, 2 ).focus();
+		host.rows.update( rows=>[rows[4], ...rows.filter( (_, i)=>i!=4 )] );
+		await stable( fixture, 1 );
+		await flush();
+		expect( [at(), cell( 1, 2 ).textContent] ).toEqual( [[1, 2], "4"] );
 	} );
 
 	it( 'leaves the focus where it went when the rows are drawn again', async ()=>{

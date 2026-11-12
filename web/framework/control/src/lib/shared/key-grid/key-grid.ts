@@ -3,6 +3,8 @@ import { Paginator } from '../paginator/paginator';
 
 //What a cell holds that takes the focus or a click:  out of the tab order while the grid has them, and reached through their cell.
 const widgets = 'a[href], button, input, select, textarea, [tabindex]';
+//What Enter presses:  a control, never what is focusable for its tooltip alone, a lock or a quality icon
+const controls = 'a[href], button, input, select, textarea, [role=button], [role=checkbox], [role=switch], [role=link]';
 const typed = 'input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable]';
 const moves = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"];
 
@@ -11,8 +13,8 @@ const moves = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End",
 //  - the arrows, Home and End, Ctrl+Home and Ctrl+End move between cells;  PageDown and PageUp turn `pager`'s pages, the focus
 //    kept at its place, and move `pageRows` rows where the table has no pager;
 //  - Enter is a click:  on the one control a cell holds, a header's menu button before its sort, else on the row's link, else on
-//    the row.  A cell with several takes the focus to its first, as F2 does on any;  Tab then goes between them, and Escape or F2
-//    returns to the cell;
+//    the row, and on nothing where the cell's controls are disabled.  A cell with several takes the focus to its first, as F2
+//    does on any;  Tab then goes between them, and Escape or F2 returns to the cell;
 //  - Space ticks the row's checkbox, its `select` column's, and Shift+Up and Shift+Down tick as they go;  with no such column
 //    Shift+Space is `rowSelect`, the row's place among the rows.
 //The controls in the cells leave the tab order - Material's sort header among them, which gives its container `tabindex=0` -
@@ -27,8 +29,8 @@ export class KeyGrid implements AfterViewInit, OnDestroy{
 		this.#el.setAttribute( "role", "grid" );//after CdkTable's own `table`, and before its first cell asks for its role
 	}
 	ngAfterViewInit(){
-		this.#sweep();
-		this.#observer = new MutationObserver( ()=>this.#sweep() );
+		this.#sweep( [] );
+		this.#observer = new MutationObserver( records=>this.#sweep(records) );
 		this.#observer.observe( this.#el, {childList: true, subtree: true, attributes: true, attributeFilter: ["tabindex"]} );
 	}
 	ngOnDestroy(){ this.#observer?.disconnect(); }
@@ -61,8 +63,10 @@ export class KeyGrid implements AfterViewInit, OnDestroy{
 		case "End": this.#go( rows, ctrl ? rows.length-1 : row, Infinity, true ); break;
 		case "PageDown": case "PageUp":{
 			const by = event.key=="PageDown" ? 1 : -1, pager = this.pager();
-			if( pager )
-				pager.turn( by );
+			if( pager ){
+				if( !event.repeat )//a held key turns one page:  repeats outrun the reads, and a list of no known length ran on past its end
+					pager.turn( by );
+			}
 			else
 				this.#go( rows, row+by*KeyGrid.pageRows, this.#col );
 			break;
@@ -119,25 +123,37 @@ export class KeyGrid implements AfterViewInit, OnDestroy{
 		//To nowhere:  a click on the page, or the cell taken out of it, which #sweep puts the focus back for.  Chrome says so before
 		//the cell is out, so which it was is read once the removal is done.
 		this.#left = <Node>event.target;
-		queueMicrotask( ()=>this.#settle() );
+		queueMicrotask( ()=>{
+			if( !this.#left )
+				return;//a sweep read it
+			const records = this.#observer?.takeRecords() ?? [];//the removal's, ahead of the observer's own callback
+			this.#settle( records );
+			if( records.length )
+				this.#sweep( records );
+		} );
 	}
-	#settle(){
-		if( this.#left?.isConnected )
-			this.#within = false;
+	//A node in the page is a click on the page, unless the records took it out:  a row CdkTable moved, taken out and put back in one
+	//task (reviews-issue/597-views-keyboard.md #1)
+	#settle( records:readonly MutationRecord[] ){
+		const left = this.#left;
 		this.#left = undefined;
+		if( left?.isConnected && !records.some(r=>[...r.removedNodes].some(n=>n.contains(left))) )
+			this.#within = false;
 	}
 
 	#enter( cell:HTMLElement ){
-		const row = cell.parentElement!, inside = this.#widgets( cell );
-		const menu = this.#isDataRow( row ) ? undefined : inside.find( w=>w.hasAttribute("aria-haspopup") );
-		const one = menu ?? ( inside.length==1 ? inside[0] : undefined );
+		const row = cell.parentElement!, inside = this.#widgets( cell ), pressed = inside.filter( w=>w.matches(controls) );
+		const menu = this.#isDataRow( row ) ? undefined : pressed.find( w=>w.hasAttribute("aria-haspopup") );
+		const one = menu ?? ( pressed.length==1 ? pressed[0] : undefined );
 		if( one ){
 			if( one.hasAttribute("aria-haspopup") )
 				this.#returnTo = cell;
 			one.click();
 		}
-		else if( inside.length )
+		else if( pressed.length )
 			inside[0].focus();
+		else if( this.#widgets(cell, true).some(w=>w.matches(controls)) )
+			return;//every control disabled, which a click on would leave be
 		else if( this.#isDataRow(row) )
 			( row.querySelector<HTMLElement>( "a[href]" ) ?? row ).click();
 	}
@@ -175,8 +191,8 @@ export class KeyGrid implements AfterViewInit, OnDestroy{
 	}
 	//One tab stop:  the active cell, or the one at its place where the table drew it again, which takes the focus the grid had.
 	//A place past the last row is kept, for rows a page turn has yet to bring.
-	#sweep(){
-		this.#settle();
+	#sweep( records:readonly MutationRecord[] ){
+		this.#settle( records );
 		const rows = this.#rows();
 		const was = this.#active, had = !!was && document.activeElement===was;
 		let active = was;
@@ -214,8 +230,8 @@ export class KeyGrid implements AfterViewInit, OnDestroy{
 			e = e===this.#el ? null : e.parentElement;
 		return e ?? undefined;
 	}
-	#widgets( cell:HTMLElement ):HTMLElement[]{
-		return [...cell.querySelectorAll<HTMLElement>( widgets )].filter( w=>!( <HTMLButtonElement>w ).disabled && w.getAttribute("aria-disabled")!="true" && !w.closest("[aria-hidden=true]") );
+	#widgets( cell:HTMLElement, disabled=false ):HTMLElement[]{
+		return [...cell.querySelectorAll<HTMLElement>( widgets )].filter( w=>!w.closest("[aria-hidden=true]") && ( disabled || !( <HTMLButtonElement>w ).disabled && w.getAttribute("aria-disabled")!="true" ) );
 	}
 	#observer:MutationObserver|undefined;
 	#active:HTMLElement|undefined;

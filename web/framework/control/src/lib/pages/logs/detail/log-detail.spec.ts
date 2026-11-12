@@ -175,6 +175,7 @@ describe( 'LogDetail message actions', ()=>{
 		fixture.detectChanges();
 		return { fixture, page: fixture.componentInstance, ql, snackbar };
 	};
+	afterEach( ()=>vi.restoreAllMocks() );
 	const shown = ( page:LogDetail )=>( (page.data as any).subject.value as Entry[] ).map( e=>e.line );
 	const selected = ( page:LogDetail )=>page.data.allEntries.filter( e=>e.selected ).map( e=>e.line );
 	const button = ( fixture:ComponentFixture<LogDetail>, label:string )=>{
@@ -220,6 +221,18 @@ describe( 'LogDetail message actions', ()=>{
 		key( 4, "PageUp" );
 		key( 4, "PageUp" );
 		expect( page.data.startIndex() ).toBe( 0 );
+	} );
+
+	//reviews-issue/597-views-keyboard.md #4:  a turn onto a page not read yet keeps the rows on screen, and Shift+Space takes one of them
+	it( 'selects the row on screen on Shift+Space while the page after it is read', async ()=>{
+		const { fixture, page, ql } = await create( Array.from( {length: 100}, (_, i)=>logEntry(i) ) );
+		vi.spyOn( Paginator, 'showFirstRow' ).mockImplementation( ()=>{} );
+		const key = ( index:number, name:string, shiftKey=false )=>row( fixture, index ).firstElementChild!.dispatchEvent( new KeyboardEvent('keydown', {key: name, shiftKey, bubbles: true, cancelable: true}) );
+		ql.ql.mockImplementation( ()=>new Promise( ()=>{} ) );//the read stays out
+		[0, 1, 2].forEach( ()=>{ key( 0, "PageDown" ); fixture.detectChanges(); } );
+		expect( [page.data.startIndex(), shown( page )[2]] ).toEqual( [63, 44] );
+		key( 2, " ", true );
+		expect( selected(page) ).toEqual( [44] );
 	} );
 
 	it( 'steps to the next row of the message, reading on past what is loaded', async ()=>{

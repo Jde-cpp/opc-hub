@@ -104,9 +104,9 @@ export class LogDetail implements OnInit, OnDestroy{
 		if( this.data.turnTo(event.startIndex) )
 			this.load( this.data.allEntries.length );
 	}
-	//Shift+Space (KeyGrid):  the row's entry selected, as its click
+	//Shift+Space (KeyGrid):  the row's entry selected, as its click - the row on screen, though the pager is on a page being read
 	onRowSelect( index:number ){
-		const entry = this.data.getVisibleEntries( this.data.startIndex() )[index];
+		const entry = this.data.shown[index];
 		if( entry )
 			this.cellClick( entry );
 	}

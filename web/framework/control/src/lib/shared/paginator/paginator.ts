@@ -56,7 +56,7 @@ export class Paginator{
 			by>0 ? this.onNextPage() : this.onPreviousPage();
 	}
 	firstItemShowing = computed( () => this.startIndex()==0 );
-	isLastPage = computed( () => this.length() && this.startIndex()+this.pageSize()>=this.length()! );
+	isLastPage = computed( () => this.length()!==undefined && this.startIndex()+this.pageSize()>=this.length()! );//a length of 0 a last page too
 	onChangePageSize(value:number){
 		this.pageSize.set( value );
 		this.onPageEvent.emit( new PageEvent(this) );

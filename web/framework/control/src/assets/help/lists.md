@@ -158,15 +158,17 @@ A list's table is one stop for the Tab key: Tab reaches the cell you were last o
 | Arrow keys | move to the next cell that way |
 | Home, End | the first and the last cell of the row |
 | Ctrl+Home, Ctrl+End | the first cell of the header row, and the last cell of the last row; Cmd on a Mac |
-| PageDown, PageUp | the next and the previous page, the cell staying where it is; on a list that is not read a page at a time, ten rows down or up |
-| Enter | on a row, opens its record, as a click does; on a cell with a button, a link or a checkbox, presses that instead; on a column header, opens its menu; on a group's header, collapses or expands the group |
-| F2 | goes inside a cell that holds controls, a header's sort and menu button among them. Tab then moves between them, and Escape or F2 returns to the cell |
-| Space | ticks or unticks the row, where the list has checkboxes; on the header row, every row |
-| Shift+Space | on a list with no checkboxes, selects the row without opening it; the same again lets it go |
+| PageDown, PageUp | the next and the previous page, the cell staying where it is, and one page however long the key is held; on a list that is not read a page at a time, ten rows down or up |
+| Enter | on a row, opens its record, as a click does; on a cell with a button, a link or a checkbox, presses that instead, or nothing where it is greyed out; on a column header, opens its menu; on a group's header, collapses or expands the group |
+| F2 | goes inside a cell that holds controls or an icon with a tip, a header's sort and menu button among them. Tab then moves between them, and Escape or F2 returns to the cell |
+| Space | ticks or unticks the row, where the list has a column of boxes to pick rows by, as a node's **Children** has; on the header row, every row |
+| Shift+Space | on a list of records with no such column, and on the **Logs**, selects the row without opening it; the same again lets it go |
 | Shift+Down, Shift+Up | tick the rows as they go |
 | Ctrl+\\ | from anywhere on the page, moves to the [filter](#filtering) box; Cmd+\\ on a Mac |
 | Escape | in the filter box, closes the suggestions; pressed again, clears the box |
 | / | moves to the search box at the top of the page |
+
+The **Watch list** has neither a column to pick rows by nor rows to select: Enter on a row's **Trend** box ticks it.
 
 The tabs of a list's [views](#views) are one stop too: the arrow keys move between them, and Tab from the tab you are on reaches its chevron, where Enter opens the view's menu.
 

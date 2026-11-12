@@ -231,6 +231,7 @@ export class LogDataSource extends DataSource<Entry>{
 	get length(){ return this.#length.asReadonly(); }//visible entries, once the end has been read - until then Next stays on
 	#length = signal<number|undefined>( undefined );
 	get sort(){ return this.view().sort; }
+	get shown():readonly Entry[]{ return this.subject.value; }//the rows the table has, which a turn waiting on a read has yet to replace
   private subject = new BehaviorSubject<Entry[]>([]);
 
 	allEntries:Entry[] = [];

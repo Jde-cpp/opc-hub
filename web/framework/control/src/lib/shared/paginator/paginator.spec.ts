@@ -26,6 +26,16 @@ describe( 'Paginator buttons', ()=>{
 		expect( emitted.map( e=>e.startIndex ) ).toEqual( [50, 75, 50, 25, 0] );
 	} );
 
+	//reviews-issue/597-views-keyboard.md #9:  an empty list is its own last page
+	it( 'turns no page past a list of none', ()=>{
+		const { fixture, emitted } = create();
+		fixture.componentRef.setInput( 'startIndex', 0 );
+		fixture.componentRef.setInput( 'length', 0 );
+		fixture.detectChanges();
+		fixture.componentInstance.turn( 1 );
+		expect( [emitted, button( fixture, 'Next page' ).disabled] ).toEqual( [[], true] );
+	} );
+
 	it.each( [
 		['First page', 0],
 		['Previous page', 0],
