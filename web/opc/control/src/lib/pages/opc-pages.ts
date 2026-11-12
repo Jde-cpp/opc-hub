@@ -6,3 +6,5 @@ export const loadOpcServerDetail = ()=>import( './opc-server-detail/opc-server-d
 export const loadHistTemplateDetail = ()=>import( './gateway-detail/hist-admin/hist-template-detail' ).then( m=>m.HistTemplateDetail );
 export const loadHistGroupDetail = ()=>import( './gateway-detail/hist-admin/hist-group-detail' ).then( m=>m.HistGroupDetail );
 export const loadGatewayWatch = ()=>import( './gateway-detail/watch/gateway-watch' ).then( m=>m.GatewayWatch );
+export const loadOeeMachineDetail = ()=>import( './gateway-detail/oee-admin/oee-machine-detail' ).then( m=>m.OeeMachineDetail );
+export const loadOeeReasonDetail = ()=>import( './gateway-detail/oee-admin/oee-reason-detail' ).then( m=>m.OeeReasonDetail );

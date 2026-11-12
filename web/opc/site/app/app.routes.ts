@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeMachineDetail, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
@@ -128,6 +128,7 @@ export const routes: Routes = [
 			},
 			//The historian's templates and groups (#337):  their lists are tabs of the gateway's page, so the bare list urls - Back and
 			//Cancel from a detail land on them - redirect to it, ahead of ':connection', which would take the segment for a connection.
+			//A segment added ahead of ':connection' joins ServerCnnctn.reservedSlugs and ServerCnnctn::SlugError, which refuse it as a slug.
 			{ path: 'templates', pathMatch: 'full', redirectTo: '' },
 			{ path: 'groups', pathMatch: 'full', redirectTo: '' },
 			{
@@ -145,6 +146,27 @@ export const routes: Routes = [
 				providers: [ HistAdminResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "History group", kind: "groups" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			//OEE's machines and reasons (#404), tabs of the page as the historian's lists are, with the same resolver by their kind.
+			{ path: 'machines', pathMatch: 'full', redirectTo: '' },
+			{ path: 'reasons', pathMatch: 'full', redirectTo: '' },
+			{
+				path: 'machines/:slug',
+				loadComponent: loadOeeMachineDetail,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE machine", kind: "machines" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			{
+				path: 'reasons/:slug',
+				loadComponent: loadOeeReasonDetail,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "OEE stop reason", kind: "reasons" },
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},

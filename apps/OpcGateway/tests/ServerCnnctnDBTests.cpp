@@ -129,11 +129,13 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//install-issues #48:  " eng-test" was accepted - provider " eng-test", certificate `OpcHub. eng-test.pem`, a login that had to carry
 	//the space.  The slug is refused before the insert, so neither the row nor its provider is made.  `watch` is the web's url segment
-	//for the gateway's watch list, which shadowed a connection of that slug (419-watch #12).
+	//for the gateway's watch list, which shadowed a connection of that slug (419-watch #12), as are the lists' beside it (404 #1).
 	TEST_F( ServerCnnctnDBTests, SlugRefused ){
 		EXPECT_FALSE( ServerCnnctn::SlugError("Watch", SRCE_CUR) );//the router matches the segment case and all
 		EXPECT_FALSE( ServerCnnctn::SlugError("watch1", SRCE_CUR) );
-		for( let slug : {" eng-test", "eng-test ", "eng test", "eng\\\\test", "-eng", "watch", ""} ){
+		for( let slug : {"templates", "groups", "calendars", "machines", "reasons"} )
+			EXPECT_TRUE( ServerCnnctn::SlugError(slug, SRCE_CUR) ) << "slug '" << slug << "'";
+		for( let slug : {" eng-test", "eng-test ", "eng test", "eng\\\\test", "-eng", "watch", "machines", ""} ){
 			let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"Slug test\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false ){{id}}", slug );
 			bool refused{};
 			try{ QL().QuerySync<jvalue>( create, {}, {UserPK::System} ); }

@@ -52,8 +52,8 @@ export class GatewayDetail implements OnInit{
 
 	pageData!:QLListData;
 	//the page's url, apps/gateways/<instance>, by its route's segments as the resolvers read it - decoded, where router.url is
-	//percent-encoded:  the RouteStore key of the Connections tab's rows (GatewayResolver), and with `/templates` or `/groups` of the
-	//two historian tabs', where their detail pages find their siblings (HistAdminResolver).  A signal, as the gateway is.
+	//percent-encoded:  the RouteStore key of the Connections tab's rows (GatewayResolver), and with `/templates`, `/groups`, `/machines`
+	//or `/reasons` of the historian's and OEE's tabs', where their detail pages find their siblings (HistAdminResolver).  A signal, as the gateway is.
 	url = signal( '' );
 	tabIndex = persistedTabIndex( 'gateway-detail' );
 	sideNav = model.required<RouteItem>();

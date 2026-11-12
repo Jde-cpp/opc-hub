@@ -1,0 +1,57 @@
+@use '../../status';
+
+.form-section .fields .wide{
+	grid-column: 1 / -1;
+}
+.status{
+	color: var(--mat-sys-on-surface);
+}
+/* a role:  what it is, its member, and what only that role sets, each column the same width down the roles and wrapping where
+   the tab is narrow, with the gateway's warnings under them */
+.signal{
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: .25rem .75rem;
+	padding: .75rem 0;
+	border-bottom: 1px solid var(--mat-sys-outline-variant);
+	.role{
+		display: flex;
+		flex: 0 1 320px;
+		flex-direction: column;
+		gap: .125rem;
+		.name{
+			font: var(--mat-sys-title-small);
+		}
+		.hint{
+			margin: 0;
+			font: var(--mat-sys-body-small);
+		}
+	}
+	mat-form-field{
+		flex: 0 1 280px;
+	}
+	.warning{
+		flex: 1 0 100%;
+	}
+}
+.warning{
+	@include status.refused( 0 );
+	mat-icon{
+		color: var(--mat-sys-tertiary);
+	}
+}
+.recompute{
+	margin-top: 1.5rem;
+	h3{
+		margin: 0 0 .25rem;
+		font: var(--mat-sys-title-small);
+	}
+	.tab-toolbar{
+		flex-wrap: wrap;
+		align-items: flex-start;
+		button{
+			margin-top: .5rem;
+		}
+	}
+}
