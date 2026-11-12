@@ -175,6 +175,7 @@ describe( 'LogDetail message actions', ()=>{
 		fixture.detectChanges();
 		return { fixture, page: fixture.componentInstance, ql, snackbar };
 	};
+	afterEach( ()=>vi.restoreAllMocks() );
 	const shown = ( page:LogDetail )=>( (page.data as any).subject.value as Entry[] ).map( e=>e.line );
 	const selected = ( page:LogDetail )=>page.data.allEntries.filter( e=>e.selected ).map( e=>e.line );
 	const button = ( fixture:ComponentFixture<LogDetail>, label:string )=>{
@@ -204,10 +205,40 @@ describe( 'LogDetail message actions', ()=>{
 		expect( button(fixture, 'Show hidden messages').disabled ).toBe( false );
 	} );
 
+	//#597:  the table is a keyboard grid - Shift+Space selects the row's entry as Enter and a click do, and PageDown turns the pager
+	it( 'selects a row from the keyboard, and turns the page on PageDown', async ()=>{
+		const { fixture, page } = await create( Array.from( {length: 100}, (_, i)=>logEntry(i) ) );
+		const cell = ( index:number )=>row( fixture, index ).firstElementChild as HTMLElement;
+		const key = ( index:number, name:string, shiftKey=false )=>cell( index ).dispatchEvent( new KeyboardEvent('keydown', {key: name, shiftKey, bubbles: true, cancelable: true}) );
+		expect( [fixture.nativeElement.querySelector( 'mat-table' ).getAttribute( "role" ), row( fixture, 2 ).hasAttribute( "tabindex" )] ).toEqual( ["grid", false] );
+		key( 2, " ", true );
+		expect( selected(page) ).toEqual( [2] );
+		key( 4, "Enter" );
+		expect( selected(page) ).toEqual( [4] );
+		vi.spyOn( Paginator, 'showFirstRow' ).mockImplementation( ()=>{} );
+		key( 4, "PageDown" );
+		expect( page.data.startIndex() ).toBe( 21 );
+		key( 4, "PageUp" );
+		key( 4, "PageUp" );
+		expect( page.data.startIndex() ).toBe( 0 );
+	} );
+
+	//reviews-issue/597-views-keyboard.md #4:  a turn onto a page not read yet keeps the rows on screen, and Shift+Space takes one of them
+	it( 'selects the row on screen on Shift+Space while the page after it is read', async ()=>{
+		const { fixture, page, ql } = await create( Array.from( {length: 100}, (_, i)=>logEntry(i) ) );
+		vi.spyOn( Paginator, 'showFirstRow' ).mockImplementation( ()=>{} );
+		const key = ( index:number, name:string, shiftKey=false )=>row( fixture, index ).firstElementChild!.dispatchEvent( new KeyboardEvent('keydown', {key: name, shiftKey, bubbles: true, cancelable: true}) );
+		ql.ql.mockImplementation( ()=>new Promise( ()=>{} ) );//the read stays out
+		[0, 1, 2].forEach( ()=>{ key( 0, "PageDown" ); fixture.detectChanges(); } );
+		expect( [page.data.startIndex(), shown( page )[2]] ).toEqual( [63, 44] );
+		key( 2, " ", true );
+		expect( selected(page) ).toEqual( [44] );
+	} );
+
 	it( 'steps to the next row of the message, reading on past what is loaded', async ()=>{
 		const { fixture, page, ql, snackbar } = await create( Array.from( {length: 100}, (_, i)=>logEntry(i, i==1 || i==80 ? {templateId: other} : {}) ) );
 		expect( page.data.allEntries ).toHaveLength( 63 );
-		row( fixture, 1 ).dispatchEvent( new KeyboardEvent('keydown', {key: 'Enter'}) );
+		row( fixture, 1 ).firstElementChild!.dispatchEvent( new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}) );
 		expect( selected(page) ).toEqual( [1] );
 		await page.navigateNext();
 		expect( ql.ql.mock.calls[1][0].vars.skip ).toBe( 63 );

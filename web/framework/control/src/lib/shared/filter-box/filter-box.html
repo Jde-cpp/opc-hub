@@ -4,7 +4,7 @@
 		<span class="marks" aria-hidden="true"><span class="run" [style.transform]="'translateX(' + -scroll() + 'px)'">@for( mark of marks(); track $index ){<span [class.bad]="mark.bad">{{ mark.text }}</span>}</span></span>
 		<input #box matInput type="text" autocomplete="off" spellcheck="false" aria-label="Filter" placeholder="Filter by keyword or by field"
 			[value]="text()" [matAutocomplete]="options" [matAutocompleteConnectedTo]="field"
-			(input)="onInput()" (keydown.enter)="onEnter($event)" (keyup)="onCaret()" (click)="onCaret()" (scroll)="onCaret()">
+			(input)="onInput()" (keydown.enter)="onEnter($event)" (keydown.escape)="onEscape()" (keyup)="onCaret()" (click)="onCaret()" (scroll)="onCaret()">
 	</span>
 	<mat-autocomplete #options="matAutocomplete" class="jde-filter-panel" panelWidth="auto" [displayWith]="display" (optionSelected)="onTaken($event.option.value)">
 		@for( suggestion of suggestions(); track suggestion.label ){

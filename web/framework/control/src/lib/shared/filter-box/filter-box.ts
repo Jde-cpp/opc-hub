@@ -9,12 +9,14 @@ import { FilterHost, FilterSuggestion, parseFilter, suggestFilter } from '../../
 //The filter box (views spec *The filter box*):  plain text in the grammar of filter-query.ts, read on every keystroke.  A term
 //it cannot read is underlined, named under the box and left out;  the list is asked for again - `filterChange`, the text - on
 //Enter, on a suggestion taken and 400 ms after the last keystroke.  The underline is drawn by a copy of the text behind the
-//input, since an input cannot mark a part of its own.
+//input, since an input cannot mark a part of its own.  `Ctrl+\`, `Cmd+\` on a Mac, brings the focus to the box from anywhere on
+//the page, as on a Projects view (*Keyboard*);  Escape in it closes the suggestions, and with none open clears it.
 @Component({
 	selector: 'filter-box',
 	templateUrl: './filter-box.html',
 	styleUrl: './filter-box.scss',
-	imports: [MatAutocomplete, MatAutocompleteOrigin, MatAutocompleteTrigger, MatError, MatFormField, MatIcon, MatInput, MatOption, MatPrefix]
+	imports: [MatAutocomplete, MatAutocompleteOrigin, MatAutocompleteTrigger, MatError, MatFormField, MatIcon, MatInput, MatOption, MatPrefix],
+	host: { '(document:keydown)': 'onShortcut($event)' }
 })
 export class FilterBox implements OnDestroy{
 	#injector = inject( Injector );
@@ -90,6 +92,27 @@ export class FilterBox implements OnDestroy{
 			return;
 		this.trigger().closePanel();
 		this.#commit();
+	}
+	//The suggestions are the autocomplete's to close, which it does after this:  Escape with none open clears the box and asks
+	onEscape(){
+		if( this.trigger().panelOpen || !this.text() )
+			return;
+		this.box().nativeElement.value = "";
+		this.text.set( "" );
+		this.onCaret();
+		this.#commit();
+	}
+	//One box takes it:  the first on the page that is drawn, a pick list's on a tab not shown being passed over, and a box behind a
+	//modal dialog, which CDK hides from a screen reader, never takes the focus out of it (reviews-issue/597-views-keyboard.md #6)
+	onShortcut( event:KeyboardEvent ){
+		if( !( event.ctrlKey || event.metaKey ) || event.altKey || ( event.key!="\\" && event.code!="Backslash" ) || event.defaultPrevented )
+			return;
+		const box = this.box().nativeElement;
+		if( box.checkVisibility?.({visibilityProperty: true})===false || box.closest("[aria-hidden=true], [inert]") )
+			return;
+		event.preventDefault();
+		box.focus();
+		box.select();
 	}
 	//the box holds the suggestion's text already (display)
 	onTaken( taken:FilterSuggestion ){

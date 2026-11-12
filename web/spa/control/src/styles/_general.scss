@@ -257,6 +257,14 @@ mat-table.jde-view-columns {
 		contain: inline-size;
 	}
 }
+// A keyboard grid's cells (jde-framework's KeyGrid, views spec *Keyboard*):  the one with the focus is ringed, inside its edges so
+// that a pinned or a sticky neighbour does not cover the ring.  Global because the tables are in two libraries.
+mat-table.jde-key-grid {
+	mat-header-cell:focus-visible, mat-cell:focus-visible {
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: -2px;
+	}
+}
 // A grouped view's table (views spec *Group by*):  a header row per group (jde-framework's GroupHeaderCell), on the colour above the
 // toolbar's, stuck under the column headers where those stick - the table says how far down, `--jde-group-top` - over a pinned
 // cell's z-index 1 and under the header row's 100.  The table is as wide as its columns, so that a group's row, which has one

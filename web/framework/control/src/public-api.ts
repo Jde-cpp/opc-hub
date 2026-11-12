@@ -53,6 +53,7 @@ export * from './lib/shared/failure-state/failure-state';
 export * from './lib/shared/snackbar/snackbar';
 export * from './lib/shared/slice-panel/slice-panel';
 export * from './lib/shared/group-header/group-header';
+export * from './lib/shared/key-grid/key-grid';
 export * from './lib/shared/view-columns/view-columns';
 export * from './lib/shared/view-toolbar/view-toolbar';
 export * from './lib/utils/date-utils';

@@ -1,4 +1,5 @@
 <mat-table style="flex-basis: 100%;" class="mat-elevation-z8 jde-dense"
+	keyGrid [pager]="pager()" (rowSelect)="onRowSelect($event)"
 	[viewColumns]="views()" [filterValues]="filterValues()" (columnsChange)="columnsChange.emit()"
 	[dataSource]="rows()" [trackBy]="trackRow"
 	matSort
@@ -84,6 +85,6 @@
 	<ng-container matColumnDef="jde-group">
 		<mat-cell *matCellDef="let group" [groupHeader]="group" (groupToggle)="views()?.toggleGroup(group.key)"></mat-cell>
 	</ng-container>
-	<mat-row mat-row *matRowDef="let row; columns: displayedColumnNames();" (click)="cellClick(row)" [class.highlight]="isSelected(row)"></mat-row>
+	<mat-row mat-row *matRowDef="let row; columns: displayedColumnNames();" (click)="cellClick(row)" [class.highlight]="isSelected(row)" [attr.aria-selected]="isSelected(row)"></mat-row>
 	<mat-row *matRowDef="let row; columns: groupColumns; when: isGroup" class="jde-group-row"></mat-row>
 </mat-table>
