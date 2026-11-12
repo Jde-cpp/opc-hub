@@ -29,9 +29,12 @@ export type OeeTileView = {
 	reason?:OeeReasonRef; badge?:'Uncoded'|'Small stop';
 	period?:string; figures:{label:string; value:string}[]; partial:boolean; notes:string[];
 };
+//a tile's four figures, each a dash where it isn't measured:  the dashboard's tiles' and a line's page's members'
+export function oeeTileFigures( f:{availability?:number; performance?:number; quality?:number; oee?:number}|undefined ):{label:string; value:string}[]{
+	return [['Availability', f?.availability], ['Performance', f?.performance], ['Quality', f?.quality], ['OEE', f?.oee]].map( ( [label, v] )=>({ label: <string>label, value: oeePercent( <number|undefined>v ) }) );
+}
 export function oeeTileView( tile:OeeTile ):OeeTileView{
-	const s = tile.status, f = s?.figures;
-	const figures = [['Availability', f?.availability], ['Performance', f?.performance], ['Quality', f?.quality], ['OEE', f?.oee]].map( ( [label, v] )=>({ label: <string>label, value: oeePercent( <number|undefined>v ) }) );
+	const s = tile.status, f = s?.figures, figures = oeeTileFigures( f );
 	if( !s )
 		return { state: 'none', stateLabel: tile.link=='ended' ? 'Ended' : tile.link=='dropped' ? 'Disconnected' : 'Connecting', figures, partial: false, notes: tile.ended ? [tile.ended] : [] };
 	const stopped = s.state=='stopped', at = f?.end, between = oeeBetweenShifts( s );

@@ -1,4 +1,4 @@
-import { OeeBucket, oeeCount, oeeDuration, OeeLoss, OeeMachineTimeline, OeeOccurrence, oeePercent, OeeSegment, OeeSpan, OeeTimeline } from '../../../model/oee';
+import { OeeBucket, oeeCount, oeeDuration, OeeLoss, OeeMachineTimeline, OeeNamed, OeeOccurrence, oeePercent, OeeSegment, OeeSpan, OeeTimeline } from '../../../model/oee';
 
 //What the machine page's three charts draw (#405, docs/oee/spec.md *The Gantt chart*), as plain data a spec reads:  the Gantt
 //chart's bands, the Pareto's columns and the trend's.  The colours are fixed to what a band is, never to its order, checked as
@@ -14,10 +14,11 @@ export const plannedColor = '#7d8594', trendColor = '#2a78d6';
 export type OeeLegendItem = { color:string; label:string };
 //a mark's hover, as Highcharts' tooltip takes it, and the same in a line for a screen reader
 export type OeeTip = { tip:string; text:string };
+//text as Highcharts' HTML takes it:  a name is the user's
+export const escapeHtml = ( s:unknown )=>String( s ).replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' );
 function tip( lines:(string|undefined)[] ):OeeTip{
 	const said = lines.filter( ( l ):l is string=>!!l );
-	const escape = ( s:string )=>s.replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' );
-	return { tip: said.map( ( l, i )=>i ? escape( l ) : `<b>${escape( l )}</b>` ).join( '<br/>' ), text: said.join( ', ' ) };
+	return { tip: said.map( ( l, i )=>i ? escapeHtml( l ) : `<b>${escapeHtml( l )}</b>` ).join( '<br/>' ), text: said.join( ', ' ) };
 }
 const clock = ( d:Date )=>d.toLocaleString( undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'} );
 const spanText = ( s:OeeSpan )=>`${clock( s.start )} to ${clock( s.end )}, ${oeeDuration( s.end.getTime()-s.start.getTime() )}`;
@@ -34,8 +35,9 @@ export function segmentKind( s:Pick<OeeSegment,'state'|'reason'|'small'> ):OeeKi
 export function codable( s:OeeSegment ):boolean{ return s.state=='stopped' && s.stop!=undefined; }
 
 //A band of the Gantt chart:  `y` 0 on the planned row, 1 on the state row.  A state band carries its segment, which a click
-//on a stop's opens the coding dialog with.
-export type GanttPoint = { x:number; x2:number; y:number; color:string; name:string; custom:OeeTip & {kind?:OeeKind; segment?:OeeSegment} };
+//on a stop's opens the coding dialog with, and where the chart has a row per machine its `machine`:  a click is read by what it
+//carries, never by its `y` in data the chart may not have drawn yet - it holds its redraw while a band is hovered.
+export type GanttPoint = { x:number; x2:number; y:number; color:string; name:string; custom:OeeTip & {kind?:OeeKind; segment?:OeeSegment; machine?:OeeNamed} };
 export type GanttData = { planned:GanttPoint[]; state:GanttPoint[]; legend:OeeLegendItem[] };
 //an occurrence less its breaks, within the range:  the pieces of planned time
 export function plannedPieces( o:OeeOccurrence, range:OeeSpan ):OeeSpan[]{
@@ -66,13 +68,13 @@ export function toGantt( timeline:OeeTimeline, range:OeeSpan ):GanttData{
 	const state = timeline.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, 1, codable( s ) ? 'Click to code the stop' : undefined ) );
 	return { planned, state, legend: [...( planned.length ? [{color: plannedColor, label: 'Planned time'}] : [] ), ...kindLegend( state )] };
 }
-//a segment's band on row `y`:  `hint` what a click on it does, `row` whose it is where the chart has a row per machine
-function statePoint( s:OeeSegment, y:number, hint:string|undefined, row?:string ):GanttPoint{
+//a segment's band on row `y`:  `hint` what a click on it does, `row` and `machine` whose it is where the chart has a row per machine
+function statePoint( s:OeeSegment, y:number, hint:string|undefined, row?:string, machine?:OeeNamed ):GanttPoint{
 	const kind = segmentKind( s );
 	const name = s.state=='stopped' ? s.reason?.name ?? oeeKindLabels[kind] : oeeKindLabels[kind];
 	const what = s.state=='stopped' && s.reason ? `${s.reason.category}${s.small ? ', a small stop' : ''}` : s.state=='stopped' && s.small && kind!='small' ? 'A small stop' : undefined;
 	const coded = s.coding ? [s.coding.comment, s.coding.userName ? `Coded by ${s.coding.userName}` : undefined] : [];
-	return { x: s.start.getTime(), x2: s.end.getTime(), y, color: oeeKindColors[kind], name, custom: { ...tip( [row ? `${row}:  ${name}` : name, what, spanText( s ), ...coded, hint] ), kind, segment: s } };
+	return { x: s.start.getTime(), x2: s.end.getTime(), y, color: oeeKindColors[kind], name, custom: { ...tip( [row ? `${row}:  ${name}` : name, what, spanText( s ), ...coded, hint] ), kind, segment: s, ...(machine ? {machine} : {}) } };
 }
 function kindLegend( state:GanttPoint[] ):OeeLegendItem[]{
 	const used = new Set( state.map( p=>p.custom.kind ) );
@@ -80,30 +82,27 @@ function kindLegend( state:GanttPoint[] ):OeeLegendItem[]{
 }
 //The dashboard's Gantt chart (#406):  a row per machine, each its state over its own shift, with no planned row.  `range` is
 //what the axis covers, every machine's shift.  A row that names a `group`, its line (#409), stands under a row of that name
-//with no bands, one for each run of rows of a group:  `groups` are those rows, and `at` each row's place in what was given,
-//none for a group's.
-export type GanttRow = { name:string; segments:OeeSegment[]; group?:string };
-export type GanttRows = GanttData & { rows:string[]; groups:number[]; at:(number|undefined)[] };
+//with no bands, one for each run of rows of a group:  `groups` are those rows.  A row's bands carry its `machine`.
+export type GanttRow = { name:string; segments:OeeSegment[]; group?:string; machine?:OeeNamed };
+export type GanttRows = GanttData & { rows:string[]; groups:number[] };
 export function toGanttRows( given:GanttRow[] ):GanttRows{
-	const rows:string[] = [], groups:number[] = [], at:(number|undefined)[] = [], state:GanttPoint[] = [];
+	const rows:string[] = [], groups:number[] = [], state:GanttPoint[] = [];
 	given.forEach( ( r, i )=>{
 		if( r.group!=undefined && r.group!=given[i-1]?.group ){
 			groups.push( rows.length );
-			at.push( undefined );
 			rows.push( r.group );
 		}
 		const y = rows.length;
-		at.push( i );
 		rows.push( r.name );
-		state.push( ...r.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, y, "Click to open the machine's OEE page", r.name ) ) );
+		state.push( ...r.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, y, "Click to open the machine's OEE page", r.name, r.machine ) ) );
 	} );
-	return { rows, groups, at, planned: [], state, legend: kindLegend( state ) };
+	return { rows, groups, planned: [], state, legend: kindLegend( state ) };
 }
 //A line's Gantt chart (#409, spec *The Gantt chart*):  the pair of rows per machine it reaches, its planned time and under it
-//its state, in member order.  A band's machine is `timelines[ Math.floor( y/2 ) ]`'s.
+//its state, in member order, each state band carrying its machine.
 export function toGanttPairs( timelines:OeeMachineTimeline[], range:OeeSpan ):GanttData & {rows:string[]}{
 	const planned = timelines.flatMap( ( t, i )=>plannedPoints( t, range, 2*i, t.machine.name ) );
-	const state = timelines.flatMap( ( t, i )=>t.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, 2*i+1, codable( s ) ? 'Click to code the stop' : undefined, t.machine.name ) ) );
+	const state = timelines.flatMap( ( t, i )=>t.segments.filter( s=>s.end>s.start ).map( s=>statePoint( s, 2*i+1, codable( s ) ? 'Click to code the stop' : undefined, t.machine.name, t.machine ) ) );
 	return { rows: timelines.flatMap( t=>[`${t.machine.name}, planned`, t.machine.name] ), planned, state, legend: [...( planned.length ? [{color: plannedColor, label: 'Planned time'}] : [] ), ...kindLegend( state )] };
 }
 
@@ -130,16 +129,17 @@ export function toPareto( losses:OeeLoss[] ):ColumnData{
 export function lossName( l:OeeLoss ):string{ return l.kind=='small' ? 'Small stops' : l.kind=='uncoded' ? 'Uncoded' : l.reason?.name ?? 'Reason'; }
 
 //The trend:  a column of OEE, in percent, per bucket of `oee` by shift or day, none where the bucket has no planned time.
-//`day` names a bucket's day on the axis.
+//`day` names a bucket's day on the axis.  `counts`:  the hover says good of total - not a line's, whose machines' counts are
+//in units of their own (#409).
 export type OeeTrendBy = 'shift'|'day';
 //A bucket's day by its start:  the browser's date, or UTC's for a machine with no calendar, whose days the gateway takes as UTC's.
 export const oeeDayName = ( utc=false )=>( d:Date )=>d.toLocaleDateString( undefined, {month: 'short', day: 'numeric', ...(utc ? {timeZone: 'UTC'} : {})} );
-export function toOeeTrend( buckets:OeeBucket[], by:OeeTrendBy, day=oeeDayName() ):ColumnData{
+export function toOeeTrend( buckets:OeeBucket[], by:OeeTrendBy, day=oeeDayName(), counts=true ):ColumnData{
 	const categories = buckets.map( b=>by=='shift' && b.shift ? `${b.shift} ${day( b.start )}` : day( b.start ) );
 	const points = buckets.map( ( b, i ):ColumnPoint=>({
 		y: b.oee==undefined ? null : Number( ( b.oee*100 ).toFixed( 1 ) ), color: trendColor,
 		custom: { ...tip( [categories[i], `OEE ${oeePercent( b.oee )}`, `Availability ${oeePercent( b.availability )}, performance ${oeePercent( b.performance )}, quality ${oeePercent( b.quality )}`,
-			`${oeeCount( b.good )} good of ${oeeCount( b.total )}`, b.partial ? 'Partial:  unknown time, or rows still to come' : undefined] ), label: oeePercent( b.oee ) }
+			counts ? `${oeeCount( b.good )} good of ${oeeCount( b.total )}` : undefined, b.partial ? 'Partial:  unknown time, or rows still to come' : undefined] ), label: oeePercent( b.oee ) }
 	}) );
 	return { categories, points, legend: [] };
 }

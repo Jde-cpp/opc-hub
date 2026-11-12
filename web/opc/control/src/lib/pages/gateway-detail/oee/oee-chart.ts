@@ -1,8 +1,8 @@
 import { afterRenderEffect, Component, computed, ElementRef, inject, input, OnDestroy, OnInit, output, signal, untracked, viewChild } from '@angular/core';
 import type Highcharts from 'highcharts/esm/highstock';
-import { OeeSegment, OeeSpan } from '../../../model/oee';
+import { OeeSpan } from '../../../model/oee';
 import { HC, HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
-import { codable, ColumnPoint, GanttPoint, OeeLegendItem } from './oee-chart-data';
+import { ColumnPoint, escapeHtml, GanttPoint, OeeLegendItem } from './oee-chart-data';
 
 //What a chart of the machine's page draws:  the Gantt chart's two rows over the period, or a row of columns - the Pareto's
 //minutes, the trend's percent.  The dashboard's Gantt chart (#406) names its `rows`, one per machine, and a band's `y` is its
@@ -88,8 +88,7 @@ export class OeeChart implements OnInit, OnDestroy{
 		this.#chart = undefined;
 	}
 	spec = input.required<OeeChartSpec>();
-	pick = output<OeeSegment>();//a stop's band clicked, or entered from the keyboard
-	band = output<GanttPoint>();//any band of the state rows, clicked or entered:  the dashboard opens its row's machine
+	band = output<GanttPoint>();//any band of the state rows, clicked or entered, with its segment and its machine:  a stop's opens its coding, a dashboard's its machine
 	//a row per machine is as tall as its rows;  the others' heights are the sheet's
 	readonly height = computed( ()=>{ const spec = this.spec(); return spec.kind=='gantt' && spec.rows ? 56+32*Math.max( 1, spec.rows.length ) : null; } );
 	plot = viewChild<ElementRef<HTMLDivElement>>( 'plot' );
@@ -116,16 +115,16 @@ export class OeeChart implements OnInit, OnDestroy{
 		if( spec.kind=='gantt' ){
 			const row = { type: <const>'xrange', borderWidth: 0, borderRadius: 2, pointWidth: 24, minPointLength: 3, turboThreshold: 0, dataLabels: {enabled: false} };
 			const left = { mouseOut(){ self.#left(); } };
-			const groups = spec.groups ?? [], escape = ( v:unknown )=>String( v ).replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' );
+			const groups = spec.groups ?? [];
 			return { ...shared,
 				chart: { type: 'xrange', backgroundColor: 'transparent', style: {fontFamily: 'inherit'}, animation: false, zooming: {type: 'x'}, spacing: [8, 8, 8, 8] },
 				xAxis: { ...axis, type: 'datetime', min: spec.range.start.getTime(), max: spec.range.end.getTime(), gridLineWidth: 1, tickPixelInterval: 140 },
-				yAxis: { ...axis, labels: {...axis.labels, formatter(){ return groups.includes( this.pos ) ? `<b>${escape( this.value )}</b>` : escape( this.value ); }}, categories: spec.rows ?? ['Planned', 'State'], min: 0, max: ( spec.rows?.length ?? 2 )-1, reversed: true, title: {text: null}, gridLineWidth: 0 },
+				yAxis: { ...axis, labels: {...axis.labels, formatter(){ return groups.includes( this.pos ) ? `<b>${escapeHtml( this.value )}</b>` : escapeHtml( this.value ); }}, categories: spec.rows ?? ['Planned', 'State'], min: 0, max: ( spec.rows?.length ?? 2 )-1, reversed: true, title: {text: null}, gridLineWidth: 0 },
 				plotOptions: { series: {animation: false, states: {inactive: {opacity: 1}}} },
 				series: [
 					{ ...row, id: 'planned', name: 'Planned time', data: spec.planned, point: {events: left} },
-					//the smallest band is three pixels, so a small stop is seen at all;  a stop's band opens its coding
-					{ ...row, id: 'state', name: 'State', data: spec.state, cursor: 'pointer', point: {events: {...left, click(){ const s = <OeeSegment|undefined>(<any>this.options).custom?.segment; self.band.emit( <GanttPoint><unknown>this.options ); if( s && codable( s ) ) self.pick.emit( s ); }}} }
+					//the smallest band is three pixels, so a small stop is seen at all
+					{ ...row, id: 'state', name: 'State', data: spec.state, cursor: 'pointer', point: {events: {...left, click(){ self.band.emit( <GanttPoint><unknown>this.options ); }}} }
 				]
 			};
 		}

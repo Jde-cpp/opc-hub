@@ -78,9 +78,10 @@ describe( 'OeeLineDetail', ()=>{
 	} );
 	it( "links the line's calendar, and shows one the application server's list lacks by its id", async ()=>{
 		const d = await create( row );
-		expect( [d.page.calendarLink(), d.page.missingCalendar()] ).toEqual( [['/apps/gateways', 'g', 'calendars', 'plant'], undefined] );
+		const calendar = ()=>[d.page.calendars.link( d.page.line.calendarId ), d.page.calendars.missing( d.page.line.calendarId )];
+		expect( calendar() ).toEqual( [['/apps/gateways', 'g', 'calendars', 'plant'], undefined] );
 		await d.open( {...row, calendarId: 7} );
-		expect( [d.page.calendarLink(), d.page.missingCalendar()] ).toEqual( [undefined, 7] );
+		expect( calendar() ).toEqual( [undefined, 7] );
 	} );
 	it( 'lists the members in their order, each with its page, and one whose machine is deleted by its id', async ()=>{
 		const d = await create( row );
@@ -110,6 +111,17 @@ describe( 'OeeLineDetail', ()=>{
 		expect( d.admin.sortLineMember ).toHaveBeenCalledTimes( 2 );
 		await d.page.remove( d.page.rows()[1] );
 		expect( d.admin.purgeLineMember ).toHaveBeenCalledWith( d.gateway, 3 );
+	} );
+	it( "sends a move's sorts together", async ()=>{
+		const d = await create( row );
+		const answer:(()=>void)[] = [];
+		d.admin.sortLineMember.mockImplementation( ()=>new Promise<void>( r=>answer.push( r ) ) );
+		const moved = d.page.move( d.page.rows()[2], -1 );
+		await flush( 1 );
+		expect( d.admin.sortLineMember ).toHaveBeenCalledTimes( 2 );//both under way before either is answered
+		answer.forEach( r=>r() );
+		await moved;
+		expect( d.page.members.busy() ).toBe( false );
 	} );
 	it( "says the gateway's refusal of an edit on the tab, after the read that follows it", async ()=>{
 		const d = await create( row );

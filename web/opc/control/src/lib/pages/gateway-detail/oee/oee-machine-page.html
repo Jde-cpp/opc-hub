@@ -1,5 +1,5 @@
-@if( machine(); as m ){
-	@if( line(); as l ){
+@if( subject(); as subject ){
+	@if( subject.line; as l ){
 		<h2 class="line-heading"><span class="level">{{ l.level }}</span> {{ l.name }}</h2>
 	}
 	<div class="period-bar">
@@ -25,7 +25,7 @@
 			<span class="range">{{ r.start | date:'yyyy-MM-dd HH:mm' }} to {{ r.end | date:'yyyy-MM-dd HH:mm' }}</span>
 		}
 		<a matButton [routerLink]="['../../../oee']" matTooltip="Every line and machine of the gateway, live"><mat-icon>monitoring</mat-icon>Dashboard</a>
-		<a matButton [routerLink]="['..']" [matTooltip]="line() ? 'The line\'s properties and members' : 'The machine\'s properties and signals'"><mat-icon>settings</mat-icon>{{ line() ? 'Line' : 'Machine' }}</a>
+		<a matButton [routerLink]="['..']" [matTooltip]="subject.settings.tip"><mat-icon>settings</mat-icon>{{ subject.settings.label }}</a>
 	</div>
 	<mat-progress-bar class="refresh-bar" [mode]="loading()>0 ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading the period"></mat-progress-bar>
 	@if( statusProblem(); as p ){
@@ -74,7 +74,7 @@
 				@for( f of factors(); track f.label ){
 					<div class="factor" [class.lead]="f.lead">
 						<dt>{{ f.label }}<mat-icon class="hint-icon" role="img" tabindex="0" fontIcon="info_outline" [attr.aria-label]="f.hint" [matTooltip]="f.hint"></mat-icon></dt>
-						<dd>{{ f.value }}@if( f.over ){ <mat-icon class="over" role="img" tabindex="0" fontIcon="warning" aria-label="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow." matTooltip="Above 100%:  the machine beats its ideal cycle, so the ideal is too slow."></mat-icon>}</dd>
+						<dd>{{ f.value }}@if( f.over ){ <mat-icon class="over" role="img" tabindex="0" fontIcon="warning" [attr.aria-label]="subject.hints.over" [matTooltip]="subject.hints.over"></mat-icon>}</dd>
 					</div>
 				}
 			</dl>
@@ -99,8 +99,8 @@
 							}
 						</tbody>
 					</table>
-					<table [attr.aria-label]="line() ? 'Coverage' : 'Counts'">
-						<thead><tr><th scope="col">{{ line() ? 'Coverage' : 'Counts' }}</th><th scope="col" class="num">{{ line() ? 'Machines' : 'In planned time' }}</th></tr></thead>
+					<table [attr.aria-label]="subject.counts.title">
+						<thead><tr><th scope="col">{{ subject.counts.title }}</th><th scope="col" class="num">{{ subject.counts.column }}</th></tr></thead>
 						<tbody>
 							@for( c of counts(); track c.label ){
 								<tr><th scope="row">{{ c.label }}</th><td class="num">{{ c.text }}</td></tr>
@@ -122,12 +122,7 @@
 				<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
 			}
 			@if( ganttSpec(); as spec ){
-				@if( line() ){
-					<oee-chart [spec]="spec" (band)="codeBand($event)"></oee-chart>
-				}
-				@else{
-					<oee-chart [spec]="spec" (pick)="codeSegment($event)"></oee-chart>
-				}
+				<oee-chart [spec]="spec" (band)="codeBand($event)"></oee-chart>
 			}
 		</section>
 	}
@@ -228,7 +223,7 @@
 				</ng-container>
 				<ng-container matColumnDef="actions">
 					<mat-header-cell *matHeaderCellDef></mat-header-cell>
-					<mat-cell *matCellDef="let s"><button matButton type="button" (click)="code(s)" [attr.aria-label]="'Code the stop of ' + (s.machine ? s.machine.name + ', ' : '') + (s.start | date:'yyyy-MM-dd HH:mm:ss')">Code</button></mat-cell>
+					<mat-cell *matCellDef="let s">@if( codedOn(s) ){<button matButton type="button" (click)="code(s)" [attr.aria-label]="'Code the stop of ' + (s.machine ? s.machine.name + ', ' : '') + (s.start | date:'yyyy-MM-dd HH:mm:ss')">Code</button>}</mat-cell>
 				</ng-container>
 				<mat-header-row *matHeaderRowDef="stopColumns()"></mat-header-row>
 				<mat-row *matRowDef="let row; columns: stopColumns()"></mat-row>

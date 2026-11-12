@@ -18,13 +18,13 @@ const idOf = ( of:OeeOf ):Record<string,number>=>typeof of=='number' ? {machine:
 @Service()
 export class OeeService{
 	//One bucket over the range, or one per `by`:  shift, day, week, month or an ISO 8601 duration.  A line's bucket says the
-	//machines it is over and how many each factor is, and with `members` carries a bucket per direct member.
+	//machines it is over and how many each factor is, and with `members` carries a bucket per direct member, named with its page's slug.
 	async figures( reader:HistReader, of:OeeOf, range:OeeSpan, by?:string, members=false ):Promise<OeeBucket[]>{
 		const data = await reader.query<any>( OeeService.figuresQL( argOf( of ), !!by, members ), {...idOf( of ), ...span( range ), ...(by ? {by} : {}), ...(members ? {members: true} : {})} );
 		return ( <any[]>(data?.oee ?? []) ).map( toOeeBucket );
 	}
 	static figuresQL( arg:Arg='machine', by=false, members=false ):string{
-		const line = arg=='line' ? ` machines coverage{ performance quality }${members ? ` members{ ${bucket} machines machine{ id name } line{ id name level } }` : ''}` : '';
+		const line = arg=='line' ? ` machines coverage{ performance quality }${members ? ` members{ ${bucket} machines machine{ id name slug } line{ id name slug level } }` : ''}` : '';
 		return `oee( ${arg}: $${arg}, start: $start, end: $end${by ? ', by: $by' : ''}${members ? ', members: $members' : ''} ){ ${bucket}${line} }`;
 	}
 	static readonly figuresQuery = OeeService.figuresQL();

@@ -8,19 +8,7 @@
 				@if( !isNew ){ <p class="hint">Its members' figures combined, with their Gantt chart, losses and stops:  <a [routerLink]="['oee']">the line's OEE page</a>.</p> }
 				@if( isNew ){ <p class="hint">Its machines and lines are picked once it is saved.</p> }
 				<div class="fields">
-					<mat-form-field subscriptSizing="dynamic">
-						<mat-label>Calendar</mat-label>
-						<mat-select [value]="line.calendarId ?? 0" (selectionChange)="setCalendar($event.value)">
-							<mat-option [value]="0">None - its days begin at midnight UTC</mat-option>
-							@for( c of calendars() ?? []; track c.id ){
-								<mat-option [value]="c.id">{{ c.name }}</mat-option>
-							}
-							@if( missingCalendar(); as id ){
-								<mat-option [value]="id">Calendar {{ id }}{{ calendars() ? ' - not found' : '' }}</mat-option>
-							}
-						</mat-select>
-						<mat-hint>The line's shifts and days.  Each machine is planned by its own.@if( calendarLink(); as link ){  <a [routerLink]="link">Open the calendar</a>}</mat-hint>
-					</mat-form-field>
+					<oee-calendar-field [calendars]="calendars.calendars()" [url]="calendars.url()" [calendarId]="line.calendarId" none="None - its days begin at midnight UTC" hint="The line's shifts and days.  Each machine is planned by its own." (picked)="setCalendar($event)"/>
 				</div>
 				@if( saveError(); as e ){
 					<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>

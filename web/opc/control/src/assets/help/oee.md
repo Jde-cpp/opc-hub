@@ -74,14 +74,14 @@ Press **Add** on the Lines tab. A line's **Properties** tab holds, under its nam
 
 A saved line has a **Members** tab. **Add a member** lists what the line may hold:
 
-- the machines it doesn't reach yet. A machine is once within a line, through its member lines too.
-- the lines of a level no higher than its own: an area holds areas, lines and cells, and a line holds lines and cells. A line that holds this one isn't offered.
+- the machines neither it nor a line above it reaches yet. A machine is once within a line, through its member lines too, so one the area above this line already reaches isn't offered.
+- the lines of a level no higher than its own: an area holds areas, lines and cells, and a line holds lines and cells. A line that holds this one isn't offered, nor one that reaches a machine this line or a line above it reaches.
 
 The arrows move a member up or down, which is the order the pages list the members in. The bin removes it. Each change applies as it is made.
 
 A machine may be in several lines, and so may a line. A line of every machine of one kind, across areas, is a line too.
 
-The gateway refuses a pick that a line above this one already reaches by another path, and says so on the tab.
+When someone else changed the lines since the tab was read, the gateway may refuse a pick that would put a machine in a line twice. It says so on the tab.
 
 ### Deleted lines
 
@@ -109,7 +109,7 @@ Each line that is in no line has a **tile**, the site or the areas first:
 - how many of its machines are running and stopped, and how many are unknown when any is
 - the availability, performance, quality and OEE of its shift so far, by the line's own calendar
 
-A line's tile opens the [line's OEE page](#the-lines-oee-page). A line with a machine whose group you may not read has no tile.
+A line's tile opens the [line's OEE page](#the-lines-oee-page). A line with a machine whose group you may not read has no tile. Its machines you may read are then shown as machines in no line, each with a tile of its own.
 
 Each machine that is in no line has a **tile**:
 
@@ -121,7 +121,7 @@ A tile says when the machine is outside planned time or between shifts, and when
 
 When the gateway stops sending a machine - it was deleted, or OEE stopped - its tile says why, and its row stays as it was. When the gateway no longer knows your session, the tile says to sign in again.
 
-Under the tiles, **Current shift** is a Gantt chart with a row for each machine, in the tiles' order. A line's machines are under a row that names the line, in bold, and the machines in no line come last. Each row covers that machine's own shift. Its last band grows as the machine reports, and a new band starts when its state changes. A machine between shifts has no row, and is named under the chart.
+Under the tiles, **Current shift** is a Gantt chart with a row for each machine, in the tiles' order. A line's machines are under a row that names the line, in bold, and the machines in no line come last, under **No line**. Each row covers that machine's own shift. Its last band grows as the machine reports, and a new band starts when its state changes. A machine between shifts has no row, and is named under the chart.
 
 A tile and a band open the machine's OEE page, on its shift.
 
@@ -209,6 +209,7 @@ A saved line's Properties tab links to its OEE page, `lines/<slug>/oee` under th
 - **Timeline** - a pair of rows for each machine, its planned time over its state
 - **Losses** - summed across the machines
 - **Stops** - every machine's, with a **Machine** column. A stop is coded there, on its machine, as on the machine's page.
+- **Trend** - the line's OEE by shift or day. Its hover leaves out the counts, which are in each machine's own unit.
 
 **This shift** is the line's own calendar's. Reading a line needs Read on the group of every machine it reaches.
 

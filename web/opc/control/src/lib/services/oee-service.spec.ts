@@ -45,11 +45,11 @@ describe( 'OeeService', ()=>{
 	} );
 	it( "reads a line in a machine's place:  its figures with its members', its stops naming their machines, a timeline per machine", async ()=>{
 		const member = { start: span.start, end: span.end, planned: 100, oee: 0.5, measured: [], partial: false };
-		const f = stub( {oee: [{...member, planned: 200, machines: 2, coverage: {performance: 1, quality: 0}, members: [{...member, machine: {id: 4, name: 'Pump 1'}}, {...member, machines: 1, line: {id: 3, name: 'Cell A', level: 'Cell'}}]}]} );
+		const f = stub( {oee: [{...member, planned: 200, machines: 2, coverage: {performance: 1, quality: 0}, members: [{...member, machine: {id: 4, name: 'Pump 1', slug: 'pump1'}}, {...member, machines: 1, line: {id: 3, name: 'Cell A', slug: 'cell-a', level: 'Cell'}}]}]} );
 		const [bucket] = await service.figures( f, {line: 2}, range, undefined, true );
-		expect( [bucket.machines, bucket.coverage, bucket.members!.map( m=>[m.machine?.name, m.line, m.planned] )] ).toEqual( [2, {performance: 1, quality: 0}, [['Pump 1', undefined, 100], [undefined, {id: 3, name: 'Cell A', level: 'Cell'}, 100]]] );
+		expect( [bucket.machines, bucket.coverage, bucket.members!.map( m=>[m.machine, m.line, m.planned] )] ).toEqual( [2, {performance: 1, quality: 0}, [[{id: 4, name: 'Pump 1', slug: 'pump1'}, undefined, 100], [undefined, {id: 3, name: 'Cell A', slug: 'cell-a', level: 'Cell'}, 100]]] );
 		expect( f.query ).toHaveBeenLastCalledWith( OeeService.figuresQL( 'line', false, true ), {line: 2, ...span, members: true} );
-		expect( OeeService.figuresQL( 'line', false, true ) ).toMatch( /^oee\( line: \$line, start: \$start, end: \$end, members: \$members \)\{ start .* partial machines coverage\{ performance quality \} members\{ start .* partial machines machine\{ id name \} line\{ id name level \} \} \}$/ );
+		expect( OeeService.figuresQL( 'line', false, true ) ).toMatch( /^oee\( line: \$line, start: \$start, end: \$end, members: \$members \)\{ start .* partial machines coverage\{ performance quality \} members\{ start .* partial machines machine\{ id name slug \} line\{ id name slug level \} \} \}$/ );
 		const s = stub( {oeeStops: {stops: [{id: 7, start: span.start, end: span.end, ms: 1, small: false, open: false, uncoded: true, codings: [], machine: {id: 5, name: 'Pump 2'}}]}} );
 		expect( ( await service.stops( s, {line: 2}, range, {uncoded: false, limit: 50} ) ).stops[0].machine ).toEqual( {id: 5, name: 'Pump 2'} );
 		expect( s.query.mock.calls[0] ).toEqual( [`oeeStops( line: $line, start: $start, end: $end, uncoded: $uncoded, limit: $limit ){ ${OeeService.lineStopsSelection} }`, {line: 2, ...span, uncoded: false, limit: 50}] );

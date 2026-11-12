@@ -20,6 +20,7 @@ namespace Jde::Opc::Gateway{
 		Duration Width;
 		optional<TimePoint> Processed;//none until its create's live side has seeded it.
 		string Name;
+		string Slug;
 		bool Deleted;
 	};
 	//Role is none for text ToRole doesn't know, and Running empty for json ParseRunning refuses:  a row the QL never wrote,

@@ -1,4 +1,4 @@
-import { isOeeRangeRefusal, narrowOeeRange, oeeCodingCalls, oeeCount, oeeDuration, oeeLossSplit, oeePercent, oeePeriodRange, oeeSplitProblem, toOeeBucket, toOeeLoss, toOeeStop, toOeeStopsPage, toOeeTimeline } from './oee';
+import { isOeeRangeRefusal, narrowOeeRange, oeeCodingCalls, oeeCount, oeeDuration, oeeLossSplit, oeePercent, oeePeriodRange, oeeSplitProblem, toOeeBucket, toOeeLoss, toOeeStop, toOeeStopsPage, toOeeTimeline, toOeeTimelines } from './oee';
 
 const at = ( h:number, m=0, day=11 )=>new Date( 2026, 10, day, h, m );//local, as the picker's days are
 
@@ -50,6 +50,8 @@ describe( 'oee model', ()=>{
 		expect( t.segments.map( s=>[s.state, s.stop, s.coding?.id] ) ).toEqual( [['running', undefined, undefined], ['stopped', 4, 9]] );
 		expect( t.segments[1].startText ).toBe( '2026-11-11T07:00:00.0000000Z' );
 		expect( toOeeTimeline( [] ) ).toEqual( {planned: [], segments: []} );
+		const lines = toOeeTimelines( [{machine: {id: 4, name: 'Pump 1', slug: 'pump1'}, planned: [], segments: []}, {machine: null, planned: [], segments: []}] );
+		expect( lines.map( l=>l.machine ) ).toEqual( [{id: 4, name: 'Pump 1', slug: 'pump1'}] );//a row that names no machine is no machine's
 	} );
 
 	//2026-11-11 is a Wednesday

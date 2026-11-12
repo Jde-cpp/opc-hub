@@ -28,21 +28,23 @@ describe( "a line's members", ()=>{
 	} );
 } );
 describe( "the Members picker", ()=>{
-	it( "offers the machines the line doesn't reach, through its member lines too", ()=>{
+	it( "offers the machines neither the line nor a line above it reaches, through their member lines too", ()=>{
 		expect( names( oeeMemberCandidates( plant, 10 ).machines ) ).toEqual( ['Pump 4', 'Pump 5'] );
-		expect( names( oeeMemberCandidates( plant, 13 ).machines ) ).toEqual( ['Pump 1', 'Pump 3', 'Pump 4', 'Pump 5'] );
+		expect( names( oeeMemberCandidates( plant, 13 ).machines ) ).toEqual( ['Pump 4', 'Pump 5'] );//Line A has Pump 1, and the area Pump 3 through Line B
+		expect( names( oeeMemberCandidates( plant, 15 ).machines ) ).toEqual( ['Pump 1', 'Pump 2', 'Pump 3', 'Pump 4', 'Pump 5'] );//a line in no line
 	} );
 	it( 'offers the lines of a level no higher than its own', ()=>{
 		expect( names( oeeMemberCandidates( plant, 14 ).lines ) ).toEqual( ['Packaging', 'Line A', 'Line B', 'Cell', 'Empty'] );//a site holds any
 		expect( names( oeeMemberCandidates( plant, 15 ).lines ) ).toEqual( ['Line A', 'Line B', 'Cell'] );//a line holds lines and cells, no area or site
 		expect( names( oeeMemberCandidates( { ...plant, lines: [...plant.lines, line( 16, 'Cell 2', 'Cell' )] }, 16 ).lines ) ).toEqual( ['Cell'] );//a cell holds cells
 	} );
-	it( 'leaves out itself, its members, a line that reaches it, and one that reaches a machine it reaches', ()=>{
+	it( 'leaves out itself, its members, a line that holds it, and one that reaches a machine it or a line above it reaches', ()=>{
 		expect( names( oeeMemberCandidates( plant, 10 ).lines ) ).toEqual( ['Empty'] );//Line A, Line B are its members, the cell's pump it reaches, the site is above it
-		expect( names( oeeMemberCandidates( plant, 12 ).lines ) ).toEqual( ['Line A', 'Cell', 'Empty'] );
+		expect( names( oeeMemberCandidates( plant, 12 ).lines ) ).toEqual( ['Empty'] );//the area above it reaches Line A's pumps and the cell's
 		expect( names( oeeMemberCandidates( plant, 13 ).lines ) ).toEqual( [] );//Line A reaches it, and it is a cell
 		const held = { ...plant, members: [...plant.members, member( 21, 15, {line: 11} )] };//Empty now holds Line A
-		expect( names( oeeMemberCandidates( held, 11 ).lines ) ).toEqual( ['Line B'] );//not Empty, which reaches it, nor its own cell
+		expect( names( oeeMemberCandidates( held, 11 ).lines ) ).toEqual( [] );//not Empty, which holds it, nor its own cell, nor Line B, whose pump the area reaches
+		expect( names( oeeMemberCandidates( held, 15 ).lines ) ).toEqual( ['Line B'] );//Line A is its member, and the cell Line A's
 		expect( oeeMemberCandidates( plant, 99 ) ).toEqual( {machines: [], lines: []} );
 	} );
 } );

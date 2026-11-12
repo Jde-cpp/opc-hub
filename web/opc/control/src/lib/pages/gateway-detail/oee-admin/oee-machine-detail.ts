@@ -7,7 +7,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelect, MatSelectModule } from '@angular/material/select';
 import { MatTabsModule } from '@angular/material/tabs';
-import { AppService, CalendarRef, CalendarService, DetailActions, DetailPage, errorMessage, Properties } from 'jde-framework';
+import { AppService, CalendarService, DetailActions, DetailPage, errorMessage, Properties } from 'jde-framework';
 import { HistGroupMember, histNodeText } from '../../../model/hist-admin';
 import { msPerMinute, OeeIdealMode, oeeIdealText, OeeMachine, OeeMachineProps, OeeMachineStatus, OeeMutationResult, OeeRole, oeeRunningText, OeeSignal, oeeStatusText, oeeWidthMinutes, parseOeeIdeal, parseOeeRunning, toOeeMutationResult } from '../../../model/oee-admin';
 import { Gateway } from '../../../services/gateway-service';
@@ -15,7 +15,7 @@ import { HistAdminService } from '../../../services/hist-admin-service';
 import { OeeAdminService, OeeGroup } from '../../../services/oee-admin-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { HistMembers } from '../hist-admin/hist-members';
-import { readOeeCalendars } from './oee-calendars';
+import { OeeCalendarField, OeeCalendarList } from './oee-calendars';
 
 //The fields the form leaves out:  the group, the ideal, the interval and the calendar have controls of their own below it, and
 //`processed` is the engine's.  A constant, as the binding is read each check and a new array has Properties rebuild its fields.
@@ -46,7 +46,7 @@ const ratePeriods = [ {ms: 1000, label: 'A second'}, {ms: msPerMinute, label: 'A
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content my-content oee-machine-detail'},
-	imports: [DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTabsModule, Properties, RouterLink]
+	imports: [DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTabsModule, OeeCalendarField, Properties, RouterLink]
 })
 export class OeeMachineDetail extends DetailPage<OeeMachine>{
 	constructor(){ super( 'oee-machine-detail' ); }
@@ -54,11 +54,8 @@ export class OeeMachineDetail extends DetailPage<OeeMachine>{
 	protected override get ctor(){ return OeeMachine; }
 	protected override onRow(){
 		const gateway = (<GatewayDetailData<OeeMachine>>this.pageData).gateway;
-		if( gateway.slug!=this.gateway?.slug ){//another gateway's lists, which #loadLists leaves where its reads fail
+		if( gateway.slug!=this.gateway?.slug )//another gateway's groups, which #loadGroups leaves where its read fails
 			this.groups.set( [] );
-			this.calendars.set( undefined );
-			this.calendarsUrl.set( undefined );
-		}
 		this.gateway = gateway;
 		this.signals.rows.set( [] );
 		this.signals.error.set( undefined );
@@ -69,7 +66,8 @@ export class OeeMachineDetail extends DetailPage<OeeMachine>{
 		this.idealTyped.set( undefined );
 		this.recomputeFrom.set( '' );
 		this.recomputeTo.set( '' );
-		this.#loadLists();
+		this.#loadGroups();
+		this.calendars.load( gateway.slug );
 		if( this.row.id )
 			this.#read( true );
 	}
@@ -98,25 +96,14 @@ export class OeeMachineDetail extends DetailPage<OeeMachine>{
 	#refusal = signal<{of:unknown; text:string}|undefined>( undefined );
 	saveError = computed( ()=>this.#refusal()?.of===this.properties() ? this.#refusal()!.text : undefined );
 	groups = signal<OeeGroup[]>( [] );
-	calendars = signal<CalendarRef[]|undefined>( undefined );//the application server's;  undefined until it has answered, or when it can't
-	calendarsUrl = signal<string[]|undefined>( undefined );//the page the calendars are a tab of:  a hub's own, else the application server's
+	calendars = new OeeCalendarList( inject( AppService ), inject( CalendarService ) );
 	idealMode = signal<OeeIdealMode>( 'cycle' );
 	idealTyped = signal<string|undefined>( undefined );//the ideal as typed, until the row or the mode changes:  the cycle read back would rewrite it mid-number
 
-	//the selects' lists:  the gateway's groups, and the application server's calendars with where their pages are
-	async #loadLists():Promise<void>{
+	//the Group select's list
+	#loadGroups():void{
 		const gateway = this.gateway;
 		this.#admin.groups( gateway ).then( groups=>{ if( gateway==this.gateway ) this.groups.set( groups ); }, e=>this.snackbar.exception( 'Could not list the groups.', e ) );
-		try{
-			const { calendars, url } = await readOeeCalendars( this.#app, this.#calendarService, gateway.slug );
-			if( gateway!=this.gateway )
-				return;
-			this.calendars.set( calendars );
-			this.calendarsUrl.set( url );
-		}
-		catch( e ){//the calendar shows by its id then
-			console.warn( 'Could not list the calendars.', e );
-		}
 	}
 	//the signals and how the engine stands, and with `withMembers` the group's members they pick from, read as the group's page
 	//reads them:  a signal's edit leaves the members as they were
@@ -133,16 +120,6 @@ export class OeeMachineDetail extends DetailPage<OeeMachine>{
 	groupLink():string[]|undefined{
 		const slug = this.groups().find( g=>g.id==this.machine?.histGroupId )?.slug;
 		return slug ? ['/apps/gateways', this.gateway.slug, 'groups', slug] : undefined;
-	}
-	//the calendar's page, once the calendars are read and the row's is among them
-	calendarLink():string[]|undefined{
-		const slug = this.calendars()?.find( c=>c.id==this.machine?.calendarId )?.slug, url = this.calendarsUrl();
-		return slug && url ? [...url, slug] : undefined;
-	}
-	//the row's calendar where the application server's list lacks it - deleted there, or the list unread
-	missingCalendar():number|undefined{
-		const id = this.machine?.calendarId;
-		return id && !this.calendars()?.some( c=>c.id==id ) ? id : undefined;
 	}
 	//the widths offered, in minutes, with the row's own where it is another the engine takes
 	widths = computed( ()=>{
@@ -173,7 +150,7 @@ export class OeeMachineDetail extends DetailPage<OeeMachine>{
 		this.#edit( m=>{ m.idealInvalid = invalid; if( !invalid ) m.idealCycle = cycle; } );
 	}
 	setGroup( id:number ):void{ this.#edit( m=>{ m.histGroupId = id; m.group = this.groups().find( g=>g.id==id ); } ); }
-	setCalendar( id:number ):void{ this.#edit( m=>{ m.calendarId = id || undefined; } ); }
+	setCalendar( id:number|undefined ):void{ this.#edit( m=>{ m.calendarId = id || undefined; } ); }
 	setWidth( minutes:number ):void{ this.#edit( m=>{ m.width = minutes*msPerMinute; } ); }
 	//a new row each change, so the page's dirty check sees it
 	#edit( change:( m:OeeMachine )=>void ):void{
@@ -271,7 +248,5 @@ export class OeeMachineDetail extends DetailPage<OeeMachine>{
 	}
 	#admin = inject( OeeAdminService );
 	#hist = inject( HistAdminService );
-	#calendarService = inject( CalendarService );
-	#app = inject( AppService );
 	gateway!:Gateway;
 }

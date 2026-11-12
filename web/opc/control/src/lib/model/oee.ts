@@ -18,10 +18,11 @@ export type OeeBucket = {
 	measured:string[]; partial:boolean;
 	machines?:number; coverage?:{performance:number; quality:number}; members?:OeeMemberBucket[];//a line's:  the machines it is over, how many each factor is, and with `members` a bucket per direct member
 };
-export type OeeNamed = { id:number; name:string };
+//a machine or a line as a read names it:  `slug`, its page's, where the read asks for it
+export type OeeNamed = { id:number; name:string; slug?:string };
 //a direct member's bucket over the line's bounds:  the machine or the line it is
 export type OeeMemberBucket = OeeBucket & { machine?:OeeNamed; line?:OeeNamed & {level:string} };
-const toNamed = ( json:any ):OeeNamed|undefined=>json && json.id!=null ? { id: Number( json.id ), name: String( json.name ?? json.id ) } : undefined;
+const toNamed = ( json:any ):OeeNamed|undefined=>json && json.id!=null ? { id: Number( json.id ), name: String( json.name ?? json.id ), ...(json.slug ? {slug: String( json.slug )} : {}) } : undefined;
 export function toOeeBucket( json:any ):OeeBucket{
 	const n = ( name:string )=>Number( json[name] ?? 0 );
 	return {
@@ -84,10 +85,13 @@ export function toOeeTimeline( json:any ):OeeTimeline{
 		}) )
 	};
 }
-//a line's `oeeTimeline`:  one per machine it reaches, in member order
+//a line's `oeeTimeline`:  one per machine it reaches, in member order;  a row that names no machine is no machine's, and is passed over
 export type OeeMachineTimeline = OeeTimeline & { machine:OeeNamed };
 export function toOeeTimelines( json:any ):OeeMachineTimeline[]{
-	return ( <any[]>(Array.isArray( json ) ? json : []) ).map( row=>({ ...toOeeTimeline( row ), machine: toNamed( row.machine ) ?? {id: 0, name: ''} }) );
+	return ( <any[]>(Array.isArray( json ) ? json : []) ).flatMap( row=>{
+		const machine = toNamed( row.machine );
+		return machine ? [{ ...toOeeTimeline( row ), machine }] : [];
+	} );
 }
 
 //The picker's periods (spec *Web*).  A day begins at the browser's midnight and a week on its Monday;  the shift is the

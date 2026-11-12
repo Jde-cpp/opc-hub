@@ -59,63 +59,85 @@ export function toOeeLineMember( json:any ):OeeLineMember{
 export type OeePlant = { machines:OeeMachineRef[]; lines:OeeLineRef[]; members:OeeLineMember[] };
 
 //a line's direct members in their order:  by `sort`, then as they were added
+const memberOrder = ( a:OeeLineMember, b:OeeLineMember )=>a.sort-b.sort || a.id-b.id;
 export function oeeMembersOf( plant:OeePlant, lineId:number ):OeeLineMember[]{
-	return plant.members.filter( m=>m.lineId==lineId ).sort( ( a, b )=>a.sort-b.sort || a.id-b.id );
+	return plant.members.filter( m=>m.lineId==lineId ).sort( memberOrder );
 }
-//`visit` each live line from `lineId` down, depth first in member order, each once, with its direct machines
-function walk( plant:OeePlant, lineId:number, visit:( line:number, machines:number[] )=>void ):void{
-	const live = new Set( plant.lines.map( l=>l.id ) ), seen = new Set<number>();
-	const step = ( id:number )=>{
-		if( seen.has( id ) || !live.has( id ) )
-			return;
-		seen.add( id );
-		const members = oeeMembersOf( plant, id );
-		visit( id, members.filter( m=>m.machineId!=undefined ).map( m=>m.machineId! ) );
-		for( const m of members ){
-			if( m.memberLineId!=undefined )
-				step( m.memberLineId );
+//The plant's graph, built once for the reads of it:  each line's members in their order, what each live line reaches - each
+//machine once, in member order with a member line's where it stands, the order of `oeeTimeline` - and the live lines above
+//one, through any path.  A loop, which the gateway refuses, ends the walk;  a reach cut short by one isn't kept.
+type OeeGraph = { members:( lineId:number )=>OeeLineMember[]; reach:( lineId:number )=>OeeMachineRef[]; above:( lineId:number )=>Set<number> };
+function oeeGraph( plant:OeePlant ):OeeGraph{
+	const live = new Set( plant.lines.map( l=>l.id ) ), machines = new Map( plant.machines.map( m=>[m.id, m] ) );
+	const byLine = new Map<number,OeeLineMember[]>(), parents = new Map<number,number[]>();
+	for( const m of plant.members ){
+		( byLine.get( m.lineId ) ?? byLine.set( m.lineId, [] ).get( m.lineId )! ).push( m );
+		if( m.memberLineId!=undefined && live.has( m.lineId ) )
+			( parents.get( m.memberLineId ) ?? parents.set( m.memberLineId, [] ).get( m.memberLineId )! ).push( m.lineId );
+	}
+	for( const list of byLine.values() )
+		list.sort( memberOrder );
+	const members = ( lineId:number )=>byLine.get( lineId ) ?? [];
+	const reached = new Map<number,OeeMachineRef[]>(), walking = new Set<number>();
+	let cut = false;
+	const reach = ( lineId:number ):OeeMachineRef[]=>{
+		const known = reached.get( lineId );
+		if( known )
+			return known;
+		if( !live.has( lineId ) )
+			return [];
+		if( walking.has( lineId ) ){
+			cut = true;
+			return [];
 		}
+		const outer = cut, seen = new Set<number>(), y:OeeMachineRef[] = [];
+		cut = false;
+		walking.add( lineId );
+		for( const m of members( lineId ) ){
+			const machine = m.machineId==undefined ? undefined : machines.get( m.machineId );
+			for( const x of machine ? [machine] : m.memberLineId!=undefined ? reach( m.memberLineId ) : [] ){
+				if( !seen.has( x.id ) ){
+					seen.add( x.id );
+					y.push( x );
+				}
+			}
+		}
+		walking.delete( lineId );
+		if( !cut )
+			reached.set( lineId, y );
+		cut ||= outer;
+		return y;
 	};
-	step( lineId );
+	const above = ( lineId:number ):Set<number>=>{
+		const y = new Set<number>(), next = [lineId];
+		for( let id = next.pop(); id!=undefined; id = next.pop() ){
+			for( const parent of parents.get( id ) ?? [] ){
+				if( parent!=lineId && !y.has( parent ) ){
+					y.add( parent );
+					next.push( parent );
+				}
+			}
+		}
+		return y;
+	};
+	return { members, reach, above };
 }
 //The machines a line reaches, each once, in member order with a member line's where it stands:  the order of `oeeTimeline`.
-export function oeeLineReach( plant:OeePlant, lineId:number ):OeeMachineRef[]{
-	const byId = new Map( plant.machines.map( m=>[m.id, m] ) ), live = new Set( plant.lines.map( l=>l.id ) ), reached:OeeMachineRef[] = [], seen = new Set<number>();
-	const step = ( id:number, path:Set<number> )=>{
-		if( path.has( id ) || !live.has( id ) )
-			return;
-		for( const m of oeeMembersOf( plant, id ) ){
-			const machine = m.machineId==undefined ? undefined : byId.get( m.machineId );
-			if( machine && !seen.has( machine.id ) ){
-				seen.add( machine.id );
-				reached.push( machine );
-			}
-			else if( m.memberLineId!=undefined )
-				step( m.memberLineId, new Set( [...path, id] ) );
-		}
-	};
-	step( lineId, new Set() );
-	return reached;
-}
-//the lines a line reaches, itself among them
-function linesUnder( plant:OeePlant, lineId:number ):Set<number>{
-	const lines = new Set<number>();
-	walk( plant, lineId, id=>lines.add( id ) );
-	return lines;
-}
+export function oeeLineReach( plant:OeePlant, lineId:number ):OeeMachineRef[]{ return oeeGraph( plant ).reach( lineId ); }
 
-//What a line's Members picker offers (spec *Web*, *Lines*):  the machines it doesn't reach yet, and the lines of a level no
-//higher than its own that aren't its members, don't reach it, and reach no machine it reaches - each machine is once within a
-//line.  A line above this one may still reach a pick by another path:  that is the gateway's refusal.
+//What a line's Members picker offers (spec *Web*, *Lines*):  each machine is once within a line, this one and every line above
+//it, so it offers the machines none of those reaches yet, and the lines of a level no higher than its own that aren't its
+//members, don't hold it, and reach no machine any of those reaches.
 export function oeeMemberCandidates( plant:OeePlant, lineId:number ):{machines:OeeMachineRef[]; lines:OeeLineRef[]}{
 	const line = plant.lines.find( l=>l.id==lineId );
 	if( !line )
 		return { machines: [], lines: [] };
-	const reached = new Set( oeeLineReach( plant, lineId ).map( m=>m.id ) ), rank = oeeLevelRank( line.level );
-	const direct = new Set( plant.members.filter( m=>m.lineId==lineId && m.memberLineId!=undefined ).map( m=>m.memberLineId! ) );
+	const graph = oeeGraph( plant ), above = graph.above( lineId ), rank = oeeLevelRank( line.level );
+	const taken = new Set( [lineId, ...above].flatMap( id=>graph.reach( id ).map( m=>m.id ) ) );
+	const direct = new Set( graph.members( lineId ).filter( m=>m.memberLineId!=undefined ).map( m=>m.memberLineId! ) );
 	return {
-		machines: plant.machines.filter( m=>!reached.has( m.id ) ),
-		lines: plant.lines.filter( l=>l.id!=lineId && !direct.has( l.id ) && oeeLevelRank( l.level )>=rank && !linesUnder( plant, l.id ).has( lineId ) && !oeeLineReach( plant, l.id ).some( m=>reached.has( m.id ) ) )
+		machines: plant.machines.filter( m=>!taken.has( m.id ) ),
+		lines: plant.lines.filter( l=>l.id!=lineId && !direct.has( l.id ) && !above.has( l.id ) && oeeLevelRank( l.level )>=rank && !graph.reach( l.id ).some( m=>taken.has( m.id ) ) )
 	};
 }
 
@@ -124,10 +146,10 @@ export function oeeMemberCandidates( plant:OeePlant, lineId:number ):{machines:O
 //tile of its own:  it is in its line's.
 export type OeeLineGroup = { line:OeeLineRef; machines:OeeMachineRef[] };
 export function oeeDashboardGroups( plant:OeePlant ):{groups:OeeLineGroup[]; loose:OeeMachineRef[]}{
-	const live = new Set( plant.lines.map( l=>l.id ) ), held = plant.members.filter( m=>live.has( m.lineId ) );
+	const live = new Set( plant.lines.map( l=>l.id ) ), held = plant.members.filter( m=>live.has( m.lineId ) ), graph = oeeGraph( plant );
 	const memberLines = new Set( held.filter( m=>m.memberLineId!=undefined ).map( m=>m.memberLineId! ) ), inLine = new Set( held.filter( m=>m.machineId!=undefined ).map( m=>m.machineId! ) );
 	const top = plant.lines.filter( l=>!memberLines.has( l.id ) ).sort( ( a, b )=>oeeLevelRank( a.level )-oeeLevelRank( b.level ) || a.name.localeCompare( b.name ) );
-	return { groups: top.map( line=>({ line, machines: oeeLineReach( plant, line.id ) }) ), loose: plant.machines.filter( m=>!inLine.has( m.id ) ) };
+	return { groups: top.map( line=>({ line, machines: graph.reach( line.id ) }) ), loose: plant.machines.filter( m=>!inLine.has( m.id ) ) };
 }
 //a line as its pages head it:  its level and its name
 export function oeeLineTitle( line:{name:string; level?:string} ):string{ return line.level ? `${line.level} ${line.name}` : line.name; }

@@ -50,32 +50,27 @@
 			</ul>
 		</section>
 	}
-	@if( tileViews().length || !lineTiles().length ){
+	@if( tileViews().length ){<!--none where every machine is in a line with a tile-->
 		<section aria-labelledby="oee-tiles">
 			<h3 id="oee-tiles">Machines</h3>
-			@if( tileViews().length ){
-				<ul class="tiles">
-					@for( t of tileViews(); track t.machine.id ){
-						@let v = t.view();
-						<li>
-							<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../machines', t.machine.slug, 'oee']">
-								<span class="name">{{ t.machine.name }}</span>
-								<span class="state"><span class="dot" aria-hidden="true" [style.background]="v.color"></span><span>{{ v.stateLabel }}@if( v.since ){ since {{ v.since | date:'MMM d, HH:mm' }}}@if( v.length ){, {{ v.length }}}</span></span>
-								@if( v.reason; as r ){
-									<span class="reason"><span>{{ r.name }}</span> <span class="category">{{ r.category }}</span></span>
-								}
-								@else if( v.badge ){
-									<span class="reason"><span class="badge" [class.uncoded]="v.badge=='Uncoded'">{{ v.badge }}</span></span>
-								}
-								<ng-container [ngTemplateOutlet]="figures" [ngTemplateOutletContext]="{$implicit: v}"></ng-container>
-							</a>
-						</li>
-					}
-				</ul>
-			}
-			@else{
-				<p class="empty">Every machine is in a line.</p>
-			}
+			<ul class="tiles">
+				@for( t of tileViews(); track t.machine.id ){
+					@let v = t.view();
+					<li>
+						<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../machines', t.machine.slug, 'oee']">
+							<span class="name">{{ t.machine.name }}</span>
+							<span class="state"><span class="dot" aria-hidden="true" [style.background]="v.color"></span><span>{{ v.stateLabel }}@if( v.since ){ since {{ v.since | date:'MMM d, HH:mm' }}}@if( v.length ){, {{ v.length }}}</span></span>
+							@if( v.reason; as r ){
+								<span class="reason"><span>{{ r.name }}</span> <span class="category">{{ r.category }}</span></span>
+							}
+							@else if( v.badge ){
+								<span class="reason"><span class="badge" [class.uncoded]="v.badge=='Uncoded'">{{ v.badge }}</span></span>
+							}
+							<ng-container [ngTemplateOutlet]="figures" [ngTemplateOutletContext]="{$implicit: v}"></ng-container>
+						</a>
+					</li>
+				}
+			</ul>
 		</section>
 	}
 	@if( chartState()=='loaded' ){

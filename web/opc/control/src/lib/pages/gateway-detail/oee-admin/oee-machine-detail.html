@@ -40,19 +40,7 @@
 						</mat-select>
 						<mat-hint>The width of the rows the engine writes</mat-hint>
 					</mat-form-field>
-					<mat-form-field subscriptSizing="dynamic">
-						<mat-label>Calendar</mat-label>
-						<mat-select [value]="machine.calendarId ?? 0" (selectionChange)="setCalendar($event.value)">
-							<mat-option [value]="0">None - planned around the clock</mat-option>
-							@for( c of calendars() ?? []; track c.id ){
-								<mat-option [value]="c.id">{{ c.name }}</mat-option>
-							}
-							@if( missingCalendar(); as id ){
-								<mat-option [value]="id">Calendar {{ id }}{{ calendars() ? ' - not found' : '' }}</mat-option>
-							}
-						</mat-select>
-						@if( calendarLink(); as link ){ <mat-hint><a [routerLink]="link">Open the calendar</a></mat-hint> }
-					</mat-form-field>
+					<oee-calendar-field [calendars]="calendars.calendars()" [url]="calendars.url()" [calendarId]="machine.calendarId" none="None - planned around the clock" (picked)="setCalendar($event)"/>
 				</div>
 				@if( saveError(); as e ){
 					<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>

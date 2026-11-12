@@ -8,14 +8,14 @@ import { MatSelect, MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { AppService, CalendarRef, CalendarService, DetailActions, DetailPage, errorMessage, PickOption, Properties } from 'jde-framework';
+import { AppService, CalendarService, DetailActions, DetailPage, errorMessage, PickOption, Properties } from 'jde-framework';
 import { oeeLevels, OeeLine, OeeLineMember, OeeLineProps, oeeMemberCandidates, oeeMembersOf, OeePlant } from '../../../model/oee-lines';
 import { Gateway } from '../../../services/gateway-service';
 import { OeeAdminService } from '../../../services/oee-admin-service';
 import { OeeService } from '../../../services/oee-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { HistMembers } from '../hist-admin/hist-members';
-import { readOeeCalendars } from './oee-calendars';
+import { OeeCalendarField, OeeCalendarList } from './oee-calendars';
 
 const excluded = ['calendarId'];//its control is below the form
 const picks:Record<string,PickOption[]> = { level: oeeLevels.map( l=>({value: l, label: l}) ) };
@@ -25,17 +25,17 @@ type MemberRow = { member:OeeLineMember; name:string; kind:string; link?:string[
 
 //A line's page (#409, docs/oee/spec.md *Lines*, *Web*):  on Properties its row - the name, slug and description, its level and
 //its calendar, the application server's - saved as a machine's is, a refusal said under the form.  Members lists its machines
-//and lines in their order, each added, moved and removed by its own mutation, applied as it is made:  the picker offers the
-//machines the line doesn't reach and the lines of a level no higher than its own that it may hold (oeeMemberCandidates), and
-//what else the gateway refuses - a pick a line above this one reaches by another path - is said on the tab.  The gateway is
-//the row's, from HistAdminResolver.
+//and lines in their order, each added, moved and removed by its own mutation, applied as it is made:  the picker offers what
+//neither the line nor a line above it reaches, and the lines of a level no higher than its own that it may hold
+//(oeeMemberCandidates), and what else the gateway refuses - a right withheld, an edit by another hand - is said on the tab.
+//The gateway is the row's, from HistAdminResolver.
 @Component({
 	templateUrl: './oee-line-detail.html',
 	styleUrls: ['../hist-admin/hist-admin-shared.scss', './oee-machine-detail.scss'],
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content my-content oee-line-detail'},
-	imports: [DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, RouterLink]
+	imports: [DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, OeeCalendarField, Properties, RouterLink]
 })
 export class OeeLineDetail extends DetailPage<OeeLine>{
 	constructor(){ super( 'oee-line-detail' ); }
@@ -43,15 +43,11 @@ export class OeeLineDetail extends DetailPage<OeeLine>{
 	protected override get ctor(){ return OeeLine; }
 	protected override onRow(){
 		const gateway = (<GatewayDetailData<OeeLine>>this.pageData).gateway;
-		if( gateway.slug!=this.gateway?.slug ){//another gateway's calendars, which #loadCalendars leaves where its read fails
-			this.calendars.set( undefined );
-			this.calendarsUrl.set( undefined );
-		}
 		this.gateway = gateway;
 		this.#lineId.set( this.row.id ?? 0 );
 		this.plant.set( undefined );
 		this.members.error.set( undefined );
-		this.#loadCalendars();
+		this.calendars.load( gateway.slug );
 		if( this.row.id )
 			this.#read();
 	}
@@ -73,31 +69,8 @@ export class OeeLineDetail extends DetailPage<OeeLine>{
 	//the server's refusal of the last Save, said while the form is as it was sent:  an edit answers it
 	#refusal = signal<{of:unknown; text:string}|undefined>( undefined );
 	saveError = computed( ()=>this.#refusal()?.of===this.properties() ? this.#refusal()!.text : undefined );
-	calendars = signal<CalendarRef[]|undefined>( undefined );//the application server's;  undefined until it has answered, or when it can't
-	calendarsUrl = signal<string[]|undefined>( undefined );
-	async #loadCalendars():Promise<void>{
-		const gateway = this.gateway;
-		try{
-			const { calendars, url } = await readOeeCalendars( this.#app, this.#calendarService, gateway.slug );
-			if( gateway!=this.gateway )
-				return;
-			this.calendars.set( calendars );
-			this.calendarsUrl.set( url );
-		}
-		catch( e ){//the calendar shows by its id then
-			console.warn( 'Could not list the calendars.', e );
-		}
-	}
-	calendarLink():string[]|undefined{
-		const slug = this.calendars()?.find( c=>c.id==this.line?.calendarId )?.slug, url = this.calendarsUrl();
-		return slug && url ? [...url, slug] : undefined;
-	}
-	//the row's calendar where the application server's list lacks it - deleted there, or the list unread
-	missingCalendar():number|undefined{
-		const id = this.line?.calendarId;
-		return id && !this.calendars()?.some( c=>c.id==id ) ? id : undefined;
-	}
-	setCalendar( id:number ):void{
+	calendars = new OeeCalendarList( inject( AppService ), inject( CalendarService ) );
+	setCalendar( id:number|undefined ):void{
 		const line = new OeeLine( <OeeLineProps>this.properties() );//a new row, so the page's dirty check sees it
 		line.calendarId = id || undefined;
 		this.properties.set( line );
@@ -136,18 +109,13 @@ export class OeeLineDetail extends DetailPage<OeeLine>{
 		await this.#edit( 'Add', ()=>this.#admin.addLineMember( this.gateway, this.row.id, pick, sort ) );
 	}
 	//A member moved one place up or down:  the members' `sort` made their places, each that isn't already its own update, since
-	//rows added by another hand may share one.
+	//rows added by another hand may share one and a removal leaves a gap.  Each sets its own row's, so they go together.
 	async move( row:MemberRow, by:-1|1 ):Promise<void>{
-		const order = this.rows().map( r=>r.member ), from = order.indexOf( row.member ), to = from+by;
+		const order = this.rows().map( r=>r.member ), from = order.indexOf( row.member ), to = from+by, gateway = this.gateway;
 		if( from<0 || to<0 || to>=order.length )
 			return;
 		order.splice( to, 0, ...order.splice( from, 1 ) );
-		await this.#edit( 'Move', async ()=>{
-			for( const [i, m] of order.entries() ){
-				if( m.sort!=i )
-					await this.#admin.sortLineMember( this.gateway, m.id, i );
-			}
-		} );
+		await this.#edit( 'Move', ()=>Promise.all( [...order.entries()].filter( ( [i, m] )=>m.sort!=i ).map( ( [i, m] )=>this.#admin.sortLineMember( gateway, m.id, i ) ) ) );
 	}
 	async remove( row:MemberRow ):Promise<void>{ await this.#edit( 'Remove', ()=>this.#admin.purgeLineMember( this.gateway, row.member.id ) ); }
 	//An edit of the members and the read after it, with `busy` held across both.  A refusal is said on the tab, after the read,
@@ -170,7 +138,5 @@ export class OeeLineDetail extends DetailPage<OeeLine>{
 	}
 	#admin = inject( OeeAdminService );
 	#service = inject( OeeService );
-	#calendarService = inject( CalendarService );
-	#app = inject( AppService );
 	gateway!:Gateway;
 }

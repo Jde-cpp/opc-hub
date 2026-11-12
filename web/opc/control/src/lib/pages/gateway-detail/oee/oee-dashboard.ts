@@ -9,7 +9,7 @@ import { ComponentPageTitle, RouteItem } from 'jde-spa';
 import { errorMessage } from 'jde-framework';
 import { OeeSegment, OeeSpan } from '../../../model/oee';
 import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
-import { oeeDashboardGroups, OeeLineRef, oeeLineTitle } from '../../../model/oee-lines';
+import { oeeDashboardGroups, OeeLineGroup, OeeLineRef, oeeLineTitle } from '../../../model/oee-lines';
 import { growOeeBands, oeeBetweenShifts, oeeLiveMark, oeeLiveRange, OeeMachineRef, OeeTile, oeeTile, oeeTileNext, OeeTileView, oeeTileView } from '../../../model/oee-live-view';
 import { Gateway, gatewayAnswer } from '../../../services/gateway-service';
 import { OeeService } from '../../../services/oee-service';
@@ -36,8 +36,9 @@ export type OeeDashboardBand = { machine:Machine; range:OeeSpan; segments:OeeSeg
 //no line (#409), in level order, live over Gateway.oeeSubscribeLine - its machines running and stopped and its shift's four
 //figures - then a tile per machine in no line, live over Gateway.oeeSubscribe - its state and since when, the stop's reason
 //or why it has none, and the shift's four figures - and under them the Gantt chart of the current shift, a row per machine
-//the user may read, in the tiles' order, a line's machines under a row that names it, each over its own calendar's shift, or
-//without one the UTC day.  A line one of whose machines the user may not read has no tile;  its other machines keep their rows.  A row's bands are `oeeTimeline`'s to now, read once;  from then its last band
+//the user may read, in the tiles' order, a line's machines under a row that names it and the machines in no line under *No
+//line*, each over its own calendar's shift, or without one the UTC day.  A line one of whose machines the user may not read has
+//no tile, and its machines no other line with a tile reaches are in no line:  a tile each.  A row's bands are `oeeTimeline`'s to now, read once;  from then its last band
 //grows with each status and a new one opens on a state change, with no further read.  A state change is drawn at once, growth
 //every `growEvery` at most.  A machine whose group the user may not read has neither tile nor row;  one whose subscription the
 //gateway ends keeps its tile, saying why, and its bands as they stood, drawn while they share the live rows' time.  A tile and a
@@ -69,18 +70,16 @@ export class OeeDashboard implements OnInit, OnDestroy{
 			const plant = await this.#service.plant( gateway );
 			if( opened!=this.#epoch )
 				return;
-			const { groups, loose } = oeeDashboardGroups( plant );
-			//the chart's rows:  each line's machines under it, then the machines in no line, then any neither holds
-			const placed = [...groups.flatMap( g=>g.machines.map( machine=>({machine, line: g.line}) ) ), ...loose.map( machine=>({machine, line: <OeeLineRef|undefined>undefined}) )];
-			this.#order = [...placed, ...plant.machines.filter( m=>!placed.some( p=>p.machine.id==m.id ) ).map( machine=>({machine, line: undefined}) )];
-			this.#loose = new Set( loose.map( m=>m.id ) );
-			const rows = [...new Map( this.#order.map( o=>[o.machine.id, o.machine] ) ).values()].map( machine=>this.#row( machine ) );
-			this.#live.set( rows );
-			const lines = groups.map( ( {line} ):LineTile=>{
+			this.#groups = oeeDashboardGroups( plant ).groups;
+			this.#machines = plant.machines;
+			const lines = this.#groups.map( ( {line} ):LineTile=>{
 				const tile = signal( oeeTile( line ) );
 				return { line, tile, view: computed( ()=>oeeTileView( tile() ) ) };
 			} );
 			this.lineTiles.set( lines );
+			this.#arrange();
+			const rows = [...new Map( this.#order.map( o=>[o.machine.id, o.machine] ) ).values()].map( machine=>this.#row( machine ) );
+			this.#live.set( rows );
 			for( const line of lines )
 				line.subscription = gateway.oeeSubscribeLine( line.line.id ).subscribe( {next: e=>line.tile.update( tile=>oeeTileNext( tile, e ) ), error: e=>this.#lineEnded( line, e )} );
 			for( const row of rows ){
@@ -115,7 +114,10 @@ export class OeeDashboard implements OnInit, OnDestroy{
 		for( const line of this.lineTiles() )
 			line.subscription?.unsubscribe();
 		this.lineTiles.set( [] );
+		this.#groups = [];
+		this.#machines = [];
 		this.#order = [];
+		this.#loose.set( new Set() );
 		clearTimeout( this.#timer );
 		this.#timer = undefined;
 		this.#live.set( [] );
@@ -126,9 +128,22 @@ export class OeeDashboard implements OnInit, OnDestroy{
 	//The tiles
 	lineTiles = signal<LineTile[]>( [] );//the lines in no line, in level order
 	#live = signal<LiveRow[]>( [] );//every machine's:  a line's machines have a row and no tile
-	#loose = new Set<number>();//the machines in no line
+	#loose = signal( new Set<number>() );//the machines no line with a tile reaches
 	readonly machines = computed( ()=>this.#live().map( r=>r.machine ) );//those the user may read
-	readonly tileViews = computed( ()=>this.#live().filter( r=>this.#loose.has( r.machine.id ) ).map( r=>({ machine: r.machine, view: r.view }) ) );
+	//the machines in no line, by name
+	readonly tileViews = computed( ()=>{
+		const live = new Map( this.#live().map( r=>[r.machine.id, r] ) );
+		return [...this.#loose()].flatMap( id=>{ const r = live.get( id ); return r ? [{ machine: r.machine, view: r.view }] : []; } );
+	} );
+	//The chart's rows and the machines in no line:  each line with a tile has its machines' rows under it, and a machine none of
+	//them reaches is in no line, its row after theirs and a tile of its own.
+	#arrange():void{
+		const tiled = new Set( this.lineTiles().map( t=>t.line.id ) );
+		const placed = this.#groups.filter( g=>tiled.has( g.line.id ) ).flatMap( g=>g.machines.map( machine=>({machine, line: g.line}) ) ), held = new Set( placed.map( p=>p.machine.id ) );
+		const loose = this.#machines.filter( m=>!held.has( m.id ) );
+		this.#order = [...placed, ...loose.map( machine=>({machine}) )];
+		this.#loose.set( new Set( loose.map( m=>m.id ) ) );
+	}
 	//the machines between shifts, which the chart has no row for
 	readonly between = computed( ()=>this.#live().filter( r=>r.between() ).map( r=>r.machine.name ) );
 	#on( row:LiveRow, event:OeeLiveEvent ):void{
@@ -154,11 +169,14 @@ export class OeeDashboard implements OnInit, OnDestroy{
 		this.#publish( true );
 	}
 	//A line's subscription ended, or refused:  with 403 one of its machines isn't the user's to read, so the line is no tile of
-	//the page's;  any other end keeps the tile, saying why, as a machine's does.
+	//the page's, and its machines no other line holds are in no line;  any other end keeps the tile, saying why, as a machine's does.
 	#lineEnded( line:LineTile, e:unknown ):void{
 		const answer = gatewayAnswer( e );
-		if( answer?.httpStatus==403 )
-			return this.lineTiles.update( lines=>lines.filter( l=>l!=line ) );
+		if( answer?.httpStatus==403 ){
+			this.lineTiles.update( lines=>lines.filter( l=>l!=line ) );
+			this.#arrange();
+			return this.#publish( true );
+		}
 		const message = answer?.httpStatus==401 ? "The gateway doesn't know your session any more:  sign in again to see this line." : answer?.message || errorMessage( e );
 		line.tile.update( tile=>oeeTileNext( tile, {kind: 'ended', message} ) );
 	}
@@ -166,14 +184,18 @@ export class OeeDashboard implements OnInit, OnDestroy{
 	//The Gantt chart
 	chartState = inject( HighchartsLoader ).state;
 	bands = signal<OeeDashboardBand[]>( [] );//each machine's in a shift, as the chart last drew them
-	readonly #gantt = computed( ()=>toGanttRows( this.bands().map( r=>({name: r.machine.name, segments: r.segments, group: r.line && oeeLineTitle( r.line )}) ) ) );
+	//a line's machines under its title, and where any line has rows, the machines in no line under *No line*
+	readonly #gantt = computed( ()=>{
+		const bands = this.bands(), grouped = bands.some( r=>r.line );
+		return toGanttRows( bands.map( r=>({name: r.machine.name, segments: r.segments, machine: r.machine, group: r.line ? oeeLineTitle( r.line ) : grouped ? 'No line' : undefined}) ) );
+	} );
 	readonly ganttSpec = computed<OeeChartSpec|undefined>( ()=>{
 		const rows = this.bands();
 		if( !rows.length )
 			return undefined;
-		const { at: _, ...gantt } = this.#gantt();
+		const gantt = this.#gantt();
 		return { kind: 'gantt', title: `The current shift on ${this.gateway.name}`, range: axisOf( rows )!, ...gantt,
-			description: "A row per machine over its current shift, a line's machines under the row that names it:  running, each stop in its reason's category, uncoded and small stops, and unknown time.  The last band of a row grows as the machine reports.  A band opens its machine's OEE page." };
+			description: "A row per machine over its current shift, a line's machines under the row that names it and the machines in no line under No line:  running, each stop in its reason's category, uncoded and small stops, and unknown time.  The last band of a row grows as the machine reports.  A band opens its machine's OEE page." };
 	} );
 	//A status's place in its machine's row:  another shift's has the row read again from nothing, and the first after a drop has
 	//it read again while it stands and grows;  else the bands grow.
@@ -243,11 +265,11 @@ export class OeeDashboard implements OnInit, OnDestroy{
 		const axis = axisOf( drawn );
 		this.bands.set( drawn.filter( r=>!r.ended || (r.range.start<axis!.end && r.range.end>axis!.start) ) );
 	}
-	//a band of the chart, clicked or entered:  its machine's OEE page
+	//a band of the chart, clicked or entered:  the OEE page of the machine it carries, since the chart may not have drawn the rows yet
 	open( point:GanttPoint ):void{
-		const at = this.#gantt().at[point.y], row = at==undefined ? undefined : this.bands()[at];
-		if( row )
-			this.#router.navigate( ['../machines', row.machine.slug, 'oee'], {relativeTo: this.#route} );
+		const slug = point.custom?.machine?.slug;
+		if( slug )
+			this.#router.navigate( ['../machines', slug, 'oee'], {relativeTo: this.#route} );
 	}
 
 	loading = signal( true );
@@ -255,7 +277,9 @@ export class OeeDashboard implements OnInit, OnDestroy{
 	sideNav = model.required<RouteItem>();
 	gateway!:Gateway;
 	#rows = new Map<number,LiveRow>();
-	#order:{machine:Machine; line?:OeeLineRef}[] = [];//the chart's rows:  a machine under each line in no line that reaches it
+	#order:{machine:Machine; line?:OeeLineRef}[] = [];//the chart's rows:  a machine under each line with a tile that reaches it
+	#groups:OeeLineGroup[] = [];//the lines in no line, with the machines each reaches
+	#machines:Machine[] = [];//the gateway's, by name
 	#epoch = 0;//moved as the page closes on a gateway
 	#timer:ReturnType<typeof setTimeout>|undefined;
 	#route = inject( ActivatedRoute );
