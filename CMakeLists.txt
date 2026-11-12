@@ -9,6 +9,7 @@ option( jde_Superbuild "Add the library/app subdirectories to this configure." O
 option( jde_REPOS "Generate the 3rd party targets." OFF )
 option( jde_TESTS "Generate the test targets." ON )
 option( jde_APPS "Generate the App Server target." ON )
+option( JDE_FUZZ "Generate the libFuzzer targets, run by hand:  clang on Linux, with the test targets." OFF )
 message( jde_Superbuild=${jde_Superbuild}, jde_REPOS=${jde_REPOS}, jde_TESTS=${jde_TESTS}, jde_APPS=${jde_APPS} )
 
 get_property( isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG )
@@ -44,6 +45,7 @@ if( jde_APPS )
 	add_subdirectory( ${libDir}/app/client libs/app/client )
 	add_subdirectory( ${libDir}/calendar/src libs/calendar/lib ) #links Jde.App.Shared, so after it.
 	add_subdirectory( ${libDir}/opc/shared/src libs/opc/shared/lib )
+	add_subdirectory( ${libDir}/opc/openProtocol/src libs/opc/openProtocol/lib ) #links Jde alone.
 	add_subdirectory( ${libDir}/historian/src libs/historian/lib )
 	add_subdirectory( ${libDir}/oee/src libs/oee/lib ) #links Jde.Opc.HistorianLib and Jde.CalendarLib, so after both.
 	add_subdirectory( ${libDir}/opc/server/src libs/opc/server/lib )
@@ -69,6 +71,10 @@ if( jde_APPS )
 		add_subdirectory( libs/app/tests libs/app/tests )
 		add_subdirectory( libs/calendar/tests libs/calendar/tests )
 		add_subdirectory( libs/opc/shared/tests libs/opc/shared/tests )
+		add_subdirectory( libs/opc/openProtocol/tests libs/opc/openProtocol/tests )
+		if( JDE_FUZZ )
+			add_subdirectory( libs/opc/openProtocol/tests/fuzz libs/opc/openProtocol/tests/fuzz )
+		endif()
 		add_subdirectory( libs/historian/tests libs/historian/tests )
 		add_subdirectory( libs/oee/tests libs/oee/tests )
 		add_subdirectory( apps/AppServer/tests apps/AppServer/tests )
