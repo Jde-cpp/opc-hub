@@ -13,7 +13,7 @@ import {MatTooltipModule} from '@angular/material/tooltip';
 import {RouterModule, ActivatedRoute} from '@angular/router';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
-import { cellValues, groupColumns, GroupHeader, GroupHeaderCell, groupRows, isGroupHeader, isGroupRow, SliceCount, trackGroupRow, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
+import { cellValues, groupColumns, GroupHeader, GroupHeaderCell, groupRows, isGroupHeader, isGroupRow, KeyGrid, SliceCount, trackGroupRow, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework'
 import { EAccess } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
@@ -35,7 +35,7 @@ import { StructureTable } from '../../structure-table/structure-table';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,GroupHeaderCell,SlicePanel,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
+	imports: [RouterModule,MatButtonModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatMenuModule,MatSlideToggleModule,MatSortModule,MatTableModule,MatTabsModule,MatTooltipModule,GroupHeaderCell,KeyGrid,SlicePanel,StructureTable,ViewColumnCell,ViewColumnHeader,ViewColumns,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );

@@ -7,6 +7,7 @@ import { MatSortHeader, SortDirection } from '@angular/material/sort';
 import { heldValues, takesFilterTerm } from '../../model/ql/filter-query';
 import { Flex, View, ViewField } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
+import { KeyGrid } from '../key-grid/key-grid';
 
 //A table's columns as its view has them (views spec *Fields*), the same over ql-table and the hand-built tables of the logs, a
 //node's children and the watch list:  on the mat-table, with `viewColumn` on each header cell and cell of a column the view holds.
@@ -84,7 +85,7 @@ export class ViewColumns{
 	preview( name:string, width?:number ){ this.#preview.set( width==null ? undefined : {name, width} ); }
 
 	//`focus`:  from a header's menu, whose button the header row drawn again destroys - the column moved takes the focus, or after
-	//a hide its neighbour
+	//a hide its neighbour:  on its cell in a keyboard grid, else on its menu button
 	hide( name:string, focus=false ){
 		const shown = this.shown(), at = this.place( name );
 		if( focus )
@@ -136,7 +137,8 @@ export class ViewColumnCell{
 //The menu button shows on hover and focus;  the handle is the cell's right edge, dragged for a width, double-clicked for the
 //route's.  Material draws the arrow of the one column MatSort holds, the view's first sort:  a later one's arrow and its place
 //are drawn here.  A press on either is kept from the header's drag, and a touch drags the header only after a press and hold, so a
-//swipe that starts on the header row scrolls.
+//swipe that starts on the header row scrolls.  In a keyboard grid (KeyGrid) the cell is the stop:  Enter on it opens the menu, and
+//the sort and the menu button are out of the tab order.
 @Component({
 	selector: 'mat-header-cell[viewColumn]',
 	templateUrl: './view-column-header.html',
@@ -151,6 +153,7 @@ export class ViewColumnHeader implements AfterViewInit, OnDestroy{
 	#drag = inject( CdkDrag, {self: true} );
 	#el = inject<ElementRef<HTMLElement>>( ElementRef );
 	#injector = inject( Injector );
+	#grid = inject( KeyGrid, {optional: true} );
 	constructor(){
 		this.#drag.data = this.name;
 		this.#drag.lockAxis = "x";
@@ -161,7 +164,7 @@ export class ViewColumnHeader implements AfterViewInit, OnDestroy{
 	//MatSort has it - the arrow's state, whatever the view's sort
 	ngAfterViewInit(){
 		if( this.columns.takesFocus(this.name) )
-			afterNextRender( ()=>this.menuButton()?.nativeElement.focus(), {injector: this.#injector} );
+			afterNextRender( ()=>this.#grid ? this.#grid.focusCell( this.#el.nativeElement ) : this.menuButton()?.nativeElement.focus(), {injector: this.#injector} );//a grid's stop is the cell
 		const label = this.label()?.nativeElement;
 		if( !label )
 			return;

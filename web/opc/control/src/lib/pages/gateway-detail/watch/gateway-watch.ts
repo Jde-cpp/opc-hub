@@ -10,7 +10,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle, LocalPrefs, ProfileStore, RouteItem } from 'jde-spa';
-import { cellValues, errorMessage, groupColumns, GroupHeader, GroupHeaderCell, groupRows, isGroupRow, SliceCount, trackGroupRow, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
+import { cellValues, errorMessage, groupColumns, GroupHeader, GroupHeaderCell, groupRows, isGroupRow, KeyGrid, SliceCount, trackGroupRow, SlicePanel, SnackbarService, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar } from 'jde-framework';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { OpcStore } from '../../../services/opc-store';
@@ -45,7 +45,7 @@ import { WatchTrend } from './watch-trend';
 	templateUrl: './gateway-watch.html',
 	styleUrls: ['./gateway-watch.scss'],
 	host: {class: 'main-content my-content gateway-watch'},
-	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, GroupHeaderCell, SlicePanel, StructureTable, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar, WatchTrend]
+	imports: [RouterModule, MatButtonModule, MatCheckboxModule, MatIconModule, MatSortModule, MatTableModule, MatTabsModule, MatTooltipModule, GroupHeaderCell, KeyGrid, SlicePanel, StructureTable, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar, WatchTrend]
 })
 export class GatewayWatch implements OnInit, OnDestroy{
 	static readonly prefsOwner = 'gatewayWatch';

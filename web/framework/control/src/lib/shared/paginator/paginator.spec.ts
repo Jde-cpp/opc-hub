@@ -18,6 +18,14 @@ describe( 'Paginator buttons', ()=>{
 	const button = ( fixture:ReturnType<typeof create>['fixture'], label:string )=>
 		fixture.nativeElement.querySelector( `button[aria-label="${label}"]` ) as HTMLButtonElement;
 
+	//#597:  PageDown's and PageUp's, which stop where the buttons are greyed out
+	it( 'turns a page either way, and not past the first or the last', ()=>{
+		const { fixture, emitted } = create();
+		const pager = fixture.componentInstance;
+		[1, 1, 1, -1, -1, -1, -1].forEach( by=>pager.turn( <1|-1>by ) );
+		expect( emitted.map( e=>e.startIndex ) ).toEqual( [50, 75, 50, 25, 0] );
+	} );
+
 	it.each( [
 		['First page', 0],
 		['Previous page', 0],

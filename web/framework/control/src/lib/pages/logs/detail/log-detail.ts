@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnDestroy, OnInit, input, signal, inject, computed } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, input, signal, inject, computed, viewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { MatTableModule } from '@angular/material/table';
 import {MatSortModule, Sort} from '@angular/material/sort';
@@ -13,6 +13,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatChip } from '@angular/material/chips';
 import {MatSelectModule} from '@angular/material/select';
 import { PageEvent, Paginator } from '../../../shared/paginator/paginator';
+import { KeyGrid } from '../../../shared/key-grid/key-grid';
 import { ViewColumnCell, ViewColumnHeader, ViewColumns } from '../../../shared/view-columns/view-columns';
 import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
@@ -28,7 +29,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 	selector: 'log-detail',
 	templateUrl: './log-detail.html',
 	styleUrls: ['./log-detail.scss'],
-	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, Paginator, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar]
+	imports: [DatePipe, MatButtonModule, MatChip, MatFormFieldModule, MatIconModule, MatTableModule, MatSelectModule, MatSortModule, MatTabNavPanel, MatTooltipModule, KeyGrid, Paginator, ViewColumnCell, ViewColumnHeader, ViewColumns, ViewToolbar]
 })
 export class LogDetail implements OnInit, OnDestroy{
 	#snackBar = inject( SnackbarService );
@@ -102,6 +103,12 @@ export class LogDetail implements OnInit, OnDestroy{
 		Paginator.showFirstRow( this.#el.nativeElement, this.data.startIndex(), event.startIndex );
 		if( this.data.turnTo(event.startIndex) )
 			this.load( this.data.allEntries.length );
+	}
+	//Shift+Space (KeyGrid):  the row's entry selected, as its click
+	onRowSelect( index:number ){
+		const entry = this.data.getVisibleEntries( this.data.startIndex() )[index];
+		if( entry )
+			this.cellClick( entry );
 	}
 	cellClick( entry:Entry ){
 		let current =	this.selectedEntry;
@@ -195,6 +202,7 @@ export class LogDetail implements OnInit, OnDestroy{
 	//push() hides arriving rows below data.filter.level, so the setter writes both.  otherwise widening the combo
 	//re-reads the lower levels and they are hidden on arrival against the level that was in force before.
 	get level():ELogLevel{ return this.profile.level; } set level( value:ELogLevel ){ this.profile.level=value; this.data.filter.level=value; }
+	pager = viewChild( Paginator );
 	get selectedEntry(){ return this.data.allEntries.find( (e)=>e.selected ); }
 	profileStore = inject(ProfileStore);
 	viewSet = new ViewSet( {type: LogView, key: "logs", profileStore: this.profileStore, prefs: inject(LocalPrefs)} );

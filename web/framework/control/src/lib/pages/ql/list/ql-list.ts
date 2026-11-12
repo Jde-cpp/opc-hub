@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, input, signal, model, computed, inject } from '@angular/core';
+import { Component, ElementRef, OnInit, input, signal, model, computed, inject, viewChild } from '@angular/core';
 import {ActivatedRoute, Router, RouterLink} from '@angular/router';
 import {Sort} from '@angular/material/sort';
 import {SnackbarService} from '../../../shared/snackbar/snackbar-service'
@@ -280,6 +280,7 @@ export class QLList implements OnInit{
 	//the whole truth, and six disabled buttons under a three-row list would say nothing.
 	skip = signal<number>( 0 );
 	more = signal<boolean>( false );
+	pager = viewChild( Paginator );//none on a one-page list
 	paged = computed<boolean>( ()=>this.more() || this.skip()>0 );
 	length = computed<number|undefined>( ()=>this.more() ? undefined : this.skip()+this.data().length );
 	enums = computed<Map<string, EnumValue[]>>( ()=>this.schema().enums );

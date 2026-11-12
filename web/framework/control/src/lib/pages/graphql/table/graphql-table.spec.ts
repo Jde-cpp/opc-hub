@@ -467,3 +467,143 @@ describe( 'GraphQLTable groups', ()=>{
 		expect( drawn() ).toEqual( ["a, x", "b, x", "c"] );
 	} );
 } );
+
+//#597:  the table is a keyboard grid (KeyGrid) - each key, on the list's own table
+describe( 'GraphQLTable keyboard', ()=>{
+	const things = schemaOf( "Thing", required("name"), scalar("slug"), {name: "kind", type: {kind: "ENUM", name: "Kind"}} );
+	const rowsOf = ( from=0 )=>[1, 2, 3].map( i=>({id: from+i, name: `n${from+i}`, slug: `s${from+i}`, kind: i<3 ? "x" : "y"}) );
+	const open = async ( {multiple=false, groupBy}:{multiple?:boolean, groupBy?:string}={} )=>{
+		TestBed.configureTestingModule({ providers: [{ provide: SnackbarService, useValue: snackbarStub() }] });
+		const set = new ViewSet( {type: View, key: "things", profileStore: TestBed.inject( ProfileStore ), prefs: new LocalPrefs()} );
+		set.reset( [View.fromTable({columns: ["name", "slug", "kind"], sort: "name", groupBy}, things)], things );
+		const fixture = TestBed.createComponent( GraphQLTable );
+		const table = fixture.componentInstance, activated = vi.fn(), turn = vi.fn();
+		const follow = ()=>fixture.componentRef.setInput( 'displayedFields', set.current().fields.filter( f=>f.displayed ) );
+		fixture.componentRef.setInput( 'dataSource', rowsOf() );
+		fixture.componentRef.setInput( 'selections', new SelectionModel<any>(multiple, []) );
+		fixture.componentRef.setInput( 'views', set );
+		fixture.componentRef.setInput( 'sort', {active: "name", direction: "asc"} );
+		fixture.componentRef.setInput( 'pager', {turn} );
+		if( groupBy )
+			fixture.componentRef.setInput( 'grouping', set.current().grouping( {} ) );
+		follow();
+		table.columnsChange.subscribe( follow );
+		table.onRowActivate.subscribe( activated );
+		await stable( fixture, 1 );
+		const element = fixture.nativeElement as HTMLElement;
+		const lines = ()=>[...element.querySelectorAll( 'mat-header-row, mat-row' )];
+		const cell = ( row:number, col:number )=>lines()[row].children[col] as HTMLElement;
+		const key = ( name:string, init:KeyboardEventInit={} )=>{
+			const taken = !document.activeElement!.dispatchEvent( new KeyboardEvent('keydown', {key: name, bubbles: true, cancelable: true, ...init}) );
+			fixture.detectChanges();
+			return taken;
+		};
+		const at = ()=>{
+			const active = document.activeElement as HTMLElement, held = active.closest<HTMLElement>( 'mat-header-cell, mat-cell' );
+			return held && element.contains( held ) ? [lines().indexOf( held.parentElement! ), [...held.parentElement!.children].indexOf( held ), active===held] : undefined;
+		};
+		const selected = ()=>table.selections().selected.map( r=>r.name );
+		return { fixture, table, element, cell, key, at, activated, turn, selected };
+	};
+	beforeEach( ()=>localStorage.clear() );
+
+	it( 'is a grid of one tab stop, the sort and the menu button of a header out of the tab order', async ()=>{
+		const { element, cell } = await open( {multiple: true} );
+		await flush();
+		expect( [element.querySelector( 'mat-table' )!.getAttribute( "role" ), cell( 1, 1 ).getAttribute( "role" )] ).toEqual( ["grid", "gridcell"] );
+		expect( [...element.querySelectorAll<HTMLElement>( '*' )].filter( e=>e.tabIndex>=0 ) ).toEqual( [cell( 0, 0 )] );
+		expect( [...cell( 0, 1 ).querySelectorAll( '.mat-sort-header-container, button.column-menu' )].map( e=>e.getAttribute( "tabindex" ) ) ).toEqual( ["-1", "-1"] );
+	} );
+
+	it( 'moves between its cells, the header its first row, and turns the pager on PageDown and PageUp', async ()=>{
+		const { cell, key, at, turn } = await open();
+		cell( 0, 0 ).focus();
+		const went = ( ...keys:[string, KeyboardEventInit?][] )=>{ keys.forEach( k=>key(...k) ); return at(); };
+		expect( went( ["ArrowDown"], ["ArrowRight"] ) ).toEqual( [1, 1, true] );
+		expect( went( ["End"], ["ArrowDown"] ) ).toEqual( [2, 2, true] );
+		expect( went( ["Home"], ["ArrowUp"], ["ArrowUp"], ["ArrowUp"] ) ).toEqual( [0, 0, true] );
+		expect( went( ["End", {ctrlKey: true}] ) ).toEqual( [3, 2, true] );
+		expect( went( ["ArrowLeft"], ["Home", {ctrlKey: true}] ) ).toEqual( [0, 0, true] );
+		key( "PageDown" );
+		key( "PageUp" );
+		expect( turn.mock.calls ).toEqual( [[1], [-1]] );
+	} );
+
+	it( 'keeps the column through a group\'s header, whose Enter is its chevron', async ()=>{
+		const { cell, key, at } = await open( {groupBy: "kind"} );
+		cell( 0, 2 ).focus();
+		expect( [key( "ArrowDown" ), at()] ).toEqual( [true, [1, 0, true]] );
+		key( "ArrowDown" );
+		expect( at() ).toEqual( [2, 2, true] );
+		key( "ArrowUp" );
+		key( "Enter" );
+		expect( cell( 1, 0 ).querySelector( 'button.group-toggle' )!.getAttribute( "aria-expanded" ) ).toBe( "false" );
+	} );
+
+	it( 'opens a row on Enter, as a click does, and selects it on Shift+Space without opening it', async ()=>{
+		const { cell, key, activated, selected, element } = await open();
+		cell( 2, 1 ).focus();
+		key( "Enter" );
+		expect( [activated.mock.calls.map( c=>c[0].name ), selected()] ).toEqual( [["n2"], ["n2"]] );
+		cell( 3, 0 ).focus();
+		key( " " );
+		expect( selected() ).toEqual( ["n2"] );
+		key( " ", {shiftKey: true} );
+		expect( [activated.mock.calls.length, selected(), element.querySelectorAll( 'mat-row' )[2].getAttribute( "aria-selected" )] ).toEqual( [1, ["n3"], "true"] );
+		key( " ", {shiftKey: true} );
+		expect( selected() ).toEqual( [] );
+	} );
+
+	it( 'ticks a row on Space where the list has checkboxes, every row from the header, and as Shift+Down goes', async ()=>{
+		const { cell, key, activated, selected } = await open( {multiple: true} );
+		cell( 1, 2 ).focus();
+		key( " " );
+		expect( selected() ).toEqual( ["n1"] );
+		key( "ArrowDown", {shiftKey: true} );
+		key( "ArrowDown", {shiftKey: true} );
+		expect( selected() ).toEqual( ["n1", "n2", "n3"] );
+		key( " " );
+		expect( selected() ).toEqual( ["n1", "n2"] );
+		cell( 0, 0 ).focus();
+		key( "Enter" );
+		expect( [selected(), activated.mock.calls] ).toEqual( [["n1", "n2", "n3"], []] );
+	} );
+
+	it( "opens a header's menu on Enter, the focus back on its cell when the menu closes, and on the column's cell after a move", async ()=>{
+		const { fixture, cell, key, at } = await open();
+		cell( 0, 1 ).focus();
+		key( "Enter" );
+		await stable( fixture, 1 );
+		const entries = ()=>[...document.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )];
+		expect( [entries().length>0, at()] ).toEqual( [true, undefined] );
+		document.querySelector<HTMLElement>( '.cdk-overlay-backdrop' )!.click();
+		await stable( fixture, 1 );
+		expect( at() ).toEqual( [0, 1, true] );
+		key( "Enter" );
+		await stable( fixture, 1 );
+		const menu = document.getElementById( cell( 0, 1 ).querySelector( 'button.column-menu' )!.getAttribute( "aria-controls" )! )!;
+		[...menu.querySelectorAll<HTMLButtonElement>( '.mat-mdc-menu-item' )].find( i=>i.textContent!.includes( "Move right" ) )!.click();
+		await stable( fixture, 2 );
+		expect( [at(), cell( 0, 2 ).textContent!.includes( "Slug" )] ).toEqual( [[0, 2, true], true] );
+	} );
+
+	it( 'sorts on Enter from the sort inside a header, which F2 reaches', async ()=>{
+		const { fixture, table, cell, key } = await open();
+		const sorts = vi.fn();
+		table.onSortChange.subscribe( sorts );
+		cell( 0, 1 ).focus();
+		key( "F2" );
+		expect( document.activeElement!.classList.contains( "mat-sort-header-container" ) ).toBe( true );
+		( <HTMLElement>document.activeElement ).click();//Material's own Enter
+		await stable( fixture, 1 );
+		expect( sorts.mock.calls.map( c=>c[0].active ) ).toEqual( ["slug"] );
+	} );
+
+	it( 'keeps the focus at its place on the page that comes', async ()=>{
+		const { fixture, cell, at } = await open();
+		cell( 2, 1 ).focus();
+		fixture.componentRef.setInput( 'dataSource', rowsOf(3) );
+		await stable( fixture, 1 );
+		expect( [at(), cell( 2, 1 ).textContent!.trim()] ).toEqual( [[2, 1, true], "s5"] );
+	} );
+} );

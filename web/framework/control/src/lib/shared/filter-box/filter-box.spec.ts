@@ -165,4 +165,39 @@ describe( 'FilterBox', ()=>{
 		await take( "pump station" );
 		expect( input.value ).toBe( 'name:"pump station"' );
 	} );
+
+	//#597
+	it( 'takes the focus on Ctrl+\\ and Cmd+\\ from anywhere on the page, its text selected, and on no other key', ()=>{
+		const { input } = create( "pump" );
+		const press = ( init:KeyboardEventInit )=>{
+			input.blur();
+			const taken = !document.body.dispatchEvent( new KeyboardEvent('keydown', {bubbles: true, cancelable: true, ...init}) );
+			return [taken, document.activeElement===input];
+		};
+		expect( press( {key: "\\", ctrlKey: true} ) ).toEqual( [true, true] );
+		expect( [input.selectionStart, input.selectionEnd] ).toEqual( [0, 4] );
+		expect( press( {key: "\\", metaKey: true} ) ).toEqual( [true, true] );
+		expect( press( {key: "#", code: "Backslash", ctrlKey: true} ) ).toEqual( [true, true] );//a layout with another character on the key
+		expect( press( {key: "\\"} ) ).toEqual( [false, false] );
+		expect( press( {key: "\\", ctrlKey: true, altKey: true} ) ).toEqual( [false, false] );
+		expect( press( {key: "/", ctrlKey: true} ) ).toEqual( [false, false] );
+	} );
+
+	it( 'closes its suggestions on Escape, and with none open clears the box and asks', async ()=>{
+		const { fixture, input, sent, type } = create( "pump" );
+		const escape = async ()=>{
+			input.dispatchEvent( new KeyboardEvent('keydown', {key: 'Escape', keyCode: 27, bubbles: true}) );
+			await flush();
+			fixture.detectChanges();
+		};
+		type( "pump s" );
+		await flush();
+		expect( options().length ).toBeGreaterThan( 0 );
+		await escape();
+		expect( [fixture.componentInstance.trigger().panelOpen, input.value, sent.mock.calls] ).toEqual( [false, "pump s", []] );
+		await escape();
+		expect( [input.value, sent.mock.calls] ).toEqual( ["", [[""]]] );
+		await escape();
+		expect( sent ).toHaveBeenCalledTimes( 1 );
+	} );
 } );

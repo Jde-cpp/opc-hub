@@ -573,7 +573,7 @@ describe( 'NodeChildren a value of the server\'s own type', ()=>{
 		expect( rows(table.querySelector('structure-table > table')!) ).toEqual( [['Low', '0'], ['High', '3000']] );//nested
 		expect( snapshot('legacy').querySelector('structure-table table') ).toBeNull();
 		expect( snapshot('legacy').querySelector('.undecoded')!.textContent!.trim() ).toBe( 'undecoded ns=2;i=3010' );
-		expect( snapshot('legacy').querySelector('.undecoded')!.getAttribute('tabindex') ).toBe( '0' );//the reason a keyboard's too
+		expect( snapshot('legacy').querySelector('.undecoded')!.getAttribute('tabindex') ).toBe( '-1' );//the reason a keyboard's too:  the table is a grid (#597), whose cell's Enter reaches it
 		expect( rows(snapshot('any').querySelector('structure-table > table')!) ).toEqual( [['Rpm', '7']] );
 		const elements = [...snapshot('args').querySelectorAll( 'structure-table > structure-table > table' )];
 		expect( elements.map( t=>rows(t) ) ).toEqual( [[['Name', 'a']], [['Name', 'b']]] );

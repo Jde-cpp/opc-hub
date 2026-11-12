@@ -50,6 +50,11 @@ export class Paginator{
 		this.startIndex.set( (Math.ceil(this.length()!/this.pageSize())-1)*this.pageSize() );
 		this.onPageEvent.emit( new PageEvent(this) );
 	}
+	//PageDown's and PageUp's (KeyGrid):  the page after or before, where there is one
+	turn( by:1|-1 ){
+		if( by>0 ? !this.isLastPage() : !this.firstItemShowing() )
+			by>0 ? this.onNextPage() : this.onPreviousPage();
+	}
 	firstItemShowing = computed( () => this.startIndex()==0 );
 	isLastPage = computed( () => this.length() && this.startIndex()+this.pageSize()>=this.length()! );
 	onChangePageSize(value:number){

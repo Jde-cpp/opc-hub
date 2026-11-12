@@ -16,6 +16,8 @@ import { ViewColumnCell, ViewColumnHeader, ViewColumns } from '../../../shared/v
 import { QLRow } from '../../../model/ql/slug-row';
 import { groupColumns, GroupHeader, Grouping, groupRows, isGroupHeader, isGroupRow, trackGroupRow } from '../../../model/ql/group';
 import { GroupHeaderCell } from '../../../shared/group-header/group-header';
+import { KeyGrid } from '../../../shared/key-grid/key-grid';
+import { Paginator } from '../../../shared/paginator/paginator';
 import { capitalize } from 'jde-spa';
 
 //A host's text for a text or a number cell in place of the row's value, or undefined to show the value:  a group's root by its browse
@@ -26,7 +28,7 @@ export type CellText = ( column:string, row:QLRow )=>string|undefined;
 	selector: 'ql-table',
 	styleUrls: ['./graphql-table.scss'],
 	templateUrl: './graphql-table.html',
-	imports: [DatePipe, GroupHeaderCell, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip, ViewColumnCell, ViewColumnHeader, ViewColumns]
+	imports: [DatePipe, GroupHeaderCell, KeyGrid, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip, ViewColumnCell, ViewColumnHeader, ViewColumns]
 })
 export class GraphQLTable{
 
@@ -59,6 +61,14 @@ export class GraphQLTable{
 			selections = isSelected ? [] : [row];
 		this.selections.set( new SelectionModel<QLRow>(multi, selections) );
 		this.onRowActivate.emit( row );
+	}
+
+	//Shift+Space on a table with no checkboxes (KeyGrid):  the row selected or let go, and not opened as a click's is
+	onRowSelect( index:number ){
+		const row = this.rows()[index];
+		if( !row || isGroupHeader(row) )
+			return;
+		this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), this.selections().isSelected(row) ? [] : [row]) );
 	}
 
 	isAllSelected(){ return this.shownRows().every( r=>this.selections().isSelected(r) ); }
@@ -124,6 +134,7 @@ export class GraphQLTable{
 	sort = model<Sort>();
 	pendingLive = input<unknown[]>( [] );//row ids whose live-toggle mutation is in flight - the switch is disabled until the server answers
 	cellText = input<CellText>();
+	pager = input<Paginator>();//the list's, whose pages PageDown and PageUp turn
 	onSortChange = output<Sort>();
 	onRowActivate = output<QLRow>();
 	onToggleLive = output<QLRow>();
