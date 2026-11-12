@@ -1,0 +1,136 @@
+#include "Nodes.h"
+#include "Operand.h"
+#include "Props.h"
+
+#define let const auto
+
+namespace Jde::Opc::Flows{
+	namespace{
+		constexpr ELogTags _tags{ ELogTags::App };
+		constexpr std::array<sv,2> _outputs{ "text", "json" };
+
+		//`template` rendered into `property`, `payload` by default, as text or with `output` "json" as the json it reads as.
+		//The mustache is its variables alone:  `{{name}}` a property of the message by its path, `{{flow.key}}` and
+		//`{{global.key}}` a context's, escaped for HTML as mustache does, `{{{name}}}` and `{{&name}}` as they are, and
+		//`{{!…}}` a comment.  A value that is absent renders as nothing, an object or an array as its json.  Sections,
+		//partials and delimiters are refused.
+		struct Template final : INode{
+			Template( const jobject& props )ε:
+				_property{ Prop::Text(props, "property", "payload") },
+				_json{ Prop::Choice(props, "output", _outputs, 0)==1 }{
+				let v = Prop::Find( props, "template" );
+				THROW_IF( !v || !v->is_string(), "`template` must be text." );
+				sv text{ v->get_string() };
+				while( !text.empty() ){
+					let open = text.find( "{{" );
+					if( open!=0 )
+						_parts.emplace_back( string{text.substr(0, open)} );
+					if( open==sv::npos )
+						break;
+					let raw = text.substr( open ).starts_with( "{{{" );
+					let close = text.find( raw ? "}}}" : "}}", open );
+					THROW_IF( close==sv::npos, "the template has a tag that does not close." );
+					auto name = Trim( text.substr(open+(raw ? 3 : 2), close-open-(raw ? 3 : 2)) );
+					text.remove_prefix( close+(raw ? 3 : 2) );
+					if( name.starts_with('!') )
+						continue;
+					THROW_IF( !name.empty() && sv{"#^/>="}.contains(name.front()), "'{}':  the template's mustache is its variables alone, with no sections, partials or delimiters.", name );
+					let ampersand = name.starts_with( '&' );
+					if( ampersand )
+						name = Trim( name.substr(1) );
+					auto& part = _parts.emplace_back();
+					part.Escape = !raw && !ampersand;
+					let dot = name.find( '.' );
+					let scope = name.substr( 0, dot );
+					if( dot!=sv::npos && (scope=="flow" || scope=="global") ){
+						part.Scope = scope=="flow" ? EScope::Flow : EScope::Global;
+						part.Property.emplace( name.substr(dot+1) );
+					}
+					else
+						part.Property.emplace( name );
+				}
+			}
+			α Receive( Message& m )ε->void override{
+				string text;
+				for( let& part : _parts ){
+					if( !part.Property ){
+						text += part.Text;
+						continue;
+					}
+					jobject context;
+					if( part.Scope!=EScope::Msg ){//a context's key is the path's first name.
+						let& key = part.Property->Root();
+						if( part.Scope==EScope::Global )
+							context[key] = Global().Get( key );
+						else if( let v = FlowContext().Get(key) )
+							context[key] = *v;
+					}
+					let v = part.Property->Find( part.Scope==EScope::Msg ? m.Json : context );
+					if( !v || v->is_null() )
+						continue;
+					let rendered = v->is_string() ? string{ v->get_string() } : serialize( *v );
+					text += part.Escape ? Escape( rendered ) : rendered;
+				}
+				_property.Set( m.Json, _json ? parse(text) : jvalue{text} );
+				Send( move(m) );
+			}
+		private:
+			struct Part final{ string Text; optional<Path> Property; EScope Scope{ EScope::Msg }; bool Escape{}; };
+			Ω Trim( sv text )ι->sv{
+				let first = text.find_first_not_of( " \t\r\n" );
+				return first==sv::npos ? sv{} : text.substr( first, text.find_last_not_of(" \t\r\n")-first+1 );
+			}
+			Ω Escape( sv text )ι->string{//mustache.js's entities.
+				string y;
+				y.reserve( text.size() );
+				for( let ch : text ){
+					switch( ch ){
+					case '&': y += "&amp;"; break;
+					case '<': y += "&lt;"; break;
+					case '>': y += "&gt;"; break;
+					case '"': y += "&quot;"; break;
+					case '\'': y += "&#39;"; break;
+					case '/': y += "&#x2F;"; break;
+					case '`': y += "&#x60;"; break;
+					case '=': y += "&#x3D;"; break;
+					default: y += ch;
+					}
+				}
+				return y;
+			}
+			Path _property;
+			bool _json;
+			vector<Part> _parts;
+		};
+
+		constexpr std::array<sv,5> _levels{ "Trace", "Debug", "Information", "Warning", "Error" };
+		//A point whose messages the debug panel shows:  the trace has them, as it has every hop.  With `level` each goes to
+		//the log too, unless `active` is false.
+		struct Debug final : INode{
+			Debug( const jobject& props )ε:
+				_active{ Prop::Flag(props, "active", true) }{
+				if( Prop::Find(props, "level") )
+					_level = (ELogLevel)Prop::Choice( props, "level", _levels );
+			}
+			α Receive( Message& m )ε->void override{
+				if( _level && _active )
+					LOG( *_level, _tags, "[{}]{}", Def().Label(), serialize(m.Json) );
+			}
+		private:
+			bool _active;
+			optional<ELogLevel> _level;
+		};
+
+		struct Link final : INode{
+			α Receive( Message& m )ε->void override{ Send( move(m) ); }
+		};
+	}
+}
+namespace Jde::Opc{
+	α Flows::MakeTemplate( const jobject& props )ε->up<INode>{ return mu<Template>( props ); }
+	α Flows::MakeDebug( const jobject& props )ε->up<INode>{ return mu<Debug>( props ); }
+	α Flows::MakeLink( const jobject& props )ε->up<INode>{
+		Prop::Text( props, "name" );
+		return mu<Link>();
+	}
+}
