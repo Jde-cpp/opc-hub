@@ -2,9 +2,11 @@
 
 The Linux package - a `.deb` with systemd units, and a per-user tarball - is [`linux/`](linux/README.md) beside this.
 
-`OpcHubSetup.nsi` builds `OpcHubSetup-<version>.exe` (NSIS 3.11, Modern UI 2, `MultiUser.nsh`).  It installs the hub, optionally
-the OPC UA server and the Web UI files, as Windows services or as a per-user install without administrator rights, with
-sqlite as the database.
+`OpcHubSetup.nsi` builds `OpcHubSetup-<version>.exe` with NSIS 3.11, Modern UI 2 and `MultiUser.nsh`.
+
+It installs the hub, and optionally the OPC UA server and the Web UI files. The database is sqlite.
+
+It installs them as Windows services, or as a per-user install without administrator rights.
 
 The `reviews/…` files cited below are the project's review notes, kept outside this repo.
 
@@ -32,9 +34,12 @@ Without `-Version`, the version is `git describe --tags --match '20*'`: the tag 
 
 Every input is a `/D` define of the script, so `makensis /DBUILD_DIR=… OpcHubSetup.nsi` works without the wrapper.
 
-What the components install is `files.txt`, beside the script: a line per file, the list `linux/build-deb.sh` reads too.
-The nsi runs `files.ps1` over it as it compiles, and `build-setup.ps1` checks and, with `-Sign`, signs what its `build:`
-lines name. A file added there reaches both installers.
+Most of what the components install is `files.txt`, beside the script: a line per file, the list `linux/build-deb.sh`
+reads too. The nsi runs `files.ps1` over it as it compiles, and `build-setup.ps1` checks and, with `-Sign`, signs what
+its `build:` lines name. A file added there reaches both installers.
+
+Each installer keeps its own packaging files out of the list. On Windows those are the Web UI, `web.config`, the
+Visual C++ runtime, `Jde.CheckCpu.exe` and the licence files.
 
 CI: the Win2025 workflow (`.github/workflows/win2025-build.yml`) runs `build-setup.ps1` after its release build.
 
@@ -42,9 +47,8 @@ CI: the Win2025 workflow (`.github/workflows/win2025-build.yml`) runs `build-set
 - The Web UI comes from the workflow's `web` job, an `ubuntu-latest` run of `web/opc/scripts/setup.sh`.
 - An install smoke test then installs it silently, checks the services and the Web UI, and uninstalls it.
 
-A dispatched run uploads `OpcHubSetup-<version>.exe` as an artifact. A push of a release tag (`20*`) publishes it as that
-tag's GitHub release instead, and only when the smoke test passed. The installer is unsigned (Signing,
-below).
+A dispatched run uploads `OpcHubSetup-<version>.exe` as an artifact. A push of a release tag (`20*`) publishes it as
+that tag's GitHub release instead, and only when the smoke test passed. The installer is unsigned (Signing, below).
 
 ## Signing
 
@@ -57,7 +61,8 @@ no CI run can sign with it.
 
 For a tag:
 
-1. The Win2025 run builds and smoke-tests the installer and puts it on the tag's draft release.
+1. The Win2025 run builds and smoke-tests the installer and publishes it, unsigned, as the tag's GitHub release.
+   The workflows don't create the release as a draft yet, so the unsigned file is public until step 2 replaces it.
 2. On a Windows box with SimplySign Desktop connected, which puts the certificate in the user's certificate store:
 
    ```powershell
@@ -66,12 +71,10 @@ For a tag:
    gh release upload <tag> OpcHubSetup-<tag>.exe --repo Jde-cpp/opc-hub --clobber
    ```
 
-3. Publish the release.
-
-The workflows don't create the release as a draft yet.  Only the installer is signed:  SmartScreen and UAC look at the
-file that was downloaded and run, and the exes, dlls and uninstaller inside it carry no signature.  A site whose AppLocker
-or WDAC rules allow software by publisher would need those signed too:  `build-setup.ps1 -Sign` below, run on CI's build
-tree, with `sign.ps1` taught to sign from the certificate store.
+Only the installer is signed:  SmartScreen and UAC look at the file that was downloaded and run, and the exes, dlls and
+uninstaller inside it carry no signature.  A site whose AppLocker or WDAC rules allow software by publisher would need
+those signed too:  `build-setup.ps1 -Sign` below, run on CI's build tree, with `sign.ps1` taught to sign from the
+certificate store.
 
 ### The local pipeline
 
@@ -90,9 +93,9 @@ process gets nothing else.
 | a `.pfx` | `JDE_SIGN_PFX` (`-PfxPath`), `JDE_SIGN_PFX_PASSWORD` | signtool from the Windows SDK (`JDE_SIGN_TOOL` overrides the path); a self-signed certificate (`New-SelfSignedCertificate -Type CodeSigningCert`) proves the pipeline end to end and earns no trust anywhere |
 
 `build-setup.ps1 -UninstallerOnly` and `-Uninstaller <the signed Uninstall.exe>` are for a signer that can't sit in the
-`!uninstfinalize` hook, such as a remote service that approves each request:  the first writes `<OutDir>\Uninstall.exe` and no installer,
-and the second packs the signed copy in place of the one its makensis run generated.  Both runs take the same inputs and
-version.  Certum signs on the spot, so the current route doesn't need them.
+`!uninstfinalize` hook, such as a remote service that approves each request:  the first writes `<OutDir>\Uninstall.exe`
+and no installer, and the second packs the signed copy in place of the one its makensis run generated.  Both runs take
+the same inputs and version.  Certum signs on the spot, so the current route doesn't need them.
 
 Until the certificate arrives, `-Sign -PfxPath` with a self-signed certificate (`New-SelfSignedCertificate -Type
 CodeSigningCert`, then `Export-PfxCertificate`) exercises the whole pipeline on your own machines.
@@ -105,8 +108,8 @@ CodeSigningCert`, then `Export-PfxCertificate`) exercises the whole pipeline on 
   on 2026-09-12 and refused outright on 2026-10-22 with the billing details corrected, and the organization route sends
   its representative through the same step.
 
-SmartScreen: a public-trust certificate takes "Unknown publisher" off the UAC prompt at once; the "Windows protected your PC"
-interstitial fades as the certificate accrues download reputation, which a new one starts without.
+SmartScreen: a public-trust certificate takes "Unknown publisher" off the UAC prompt at once; the "Windows protected
+your PC" interstitial fades as the certificate accrues download reputation, which a new one starts without.
 
 ## Install modes
 
@@ -115,16 +118,15 @@ interstitial fades as the certificate accrues download reputation, which a new o
 | rights | administrator (UAC prompt) | none - a standard user never sees a prompt, nor the mode page: Setup picks this mode for them and says so at the top of *Choose Components* (for services, run Setup as administrator - right-click); an administrator sees the mode page and may still pick this mode |
 | program dir | `C:\Program Files\Jde-Cpp` | `%LOCALAPPDATA%\Programs\Jde-Cpp` |
 | how the products run | Windows services `Jde.OpcHub`, `Jde.OpcServer` (auto start; `net start`/`net stop`), both running as **Local Service** - an unprivileged account, as the `.deb`'s `jde-cpp` is, not LocalSystem - the finish page's "Start now" box starts them at once, and its link is the Web UI's url | Start Menu folder `Jde-Cpp`: a shortcut per product, each a console window (`-c`) - the finish page's "Start now" box opens them at once, and its link is the Web UI's url; optional "Start at logon" component (HKCU Run).  An administrator's Setup runs elevated in this mode too, so its "Start now" opens the two shortcuts through Explorer, and the products run with your normal rights, as they do from the Start Menu; it also gives your account Modify on `OpcHub\` and `OpcServer\` under the data root, so what an elevated run of a product wrote (Run as administrator, or an earlier release's "Start now") stays writable to the next normal start (`reviews/install-issues.md` #44) |
-| firewall | inbound TCP 1967 and 4841 (the hub's OPC UA endpoint) allowed, and 4840 with the OPC UA Server component, on every profile (`netsh advfirewall`, rules named `Jde OpcHub (TCP 1967)` / `Jde OpcHub (TCP 4841)` / `Jde OpcServer (TCP 4840)`; removed on uninstall) - a browser or an OPC client on another machine reaches the products.  Every profile because a new network lands in Public unless someone says otherwise, and 1967 is plain http with a login on it, by ruling | none needed: this mode's `-include=args/install-user` binds the listeners to loopback (`listenAddress: "127.0.0.1"`), so Windows raises no firewall prompt - one a standard user could only answer with an administrator's credentials - and the products answer this machine only.  For another machine: install for all users, or `listenAddress: null` there and an administrator's inbound rule |
+| firewall | inbound TCP 1967 and 4841 (the hub's OPC UA endpoint) allowed, and 4840 with the OPC UA Server component, on every profile (`netsh advfirewall`, rules named `Jde OpcHub (TCP 1967)` / `Jde OpcHub (TCP 4841)` / `Jde OpcServer (TCP 4840)`; removed on uninstall) - a browser or an OPC client on another machine reaches the products.  Every profile because a new network lands in Public unless someone says otherwise, and 1967 is plain http with a login on it, by ruling | none needed: this mode's `-include=args/install-user` binds the listeners to loopback (`listenAddress: "127.0.0.1"`), so Windows raises no firewall prompt (one a standard user could only answer with an administrator's credentials) and the products answer this machine only.  For another machine: install for all users, or `listenAddress: null` there and an administrator's inbound rule |
 | VC++ v14 x64 runtime, 14.50 or later | installed, or upgraded when older; when its installer wants a restart (its files were in use) the finish page says so and offers it - the services start with Windows after it, and "Start now" is not offered | when missing or older, Setup offers to run the bundled redistributable - it is machine-wide, so Windows asks for an administrator - and installs the products either way; while the runtime is still old, the finish page says they may fail to start and where the redistributable is.  (They ran on 14.40 through a whole walk; the gate is Microsoft's rule, not a measured floor.) |
 | Add/Remove Programs | HKLM | HKCU (`Jde OpcHub (current user)`) |
 | data | `C:\ProgramData\Jde-Cpp\<Product>` in both modes - the apps hardcode it (`Process::ProgramDataFolder()`, `libs/db/config/paths-common.libsonnet`).  Setup makes the tree SYSTEM's, the Administrators' and the services' alone: owner Administrators, nothing inherited from `%ProgramData%`, no entry for Users; Local Service reads it and may change `OpcHub\` and `OpcServer\` (the `.db`, `ssl\`, the logs).  The services' settings, keys and databases are no other account's to read or change, so read the logs or edit the settings from an elevated editor.  When another account already has files there - a current-user install of theirs, found by an owner or by its `.current-user` mark - Setup names the first one and asks before taking them over (a silent install stops instead), and it refuses a link another account made. | The tree must be this install's to write:  Setup opens a file it is about to overwrite - the hub's config, else its `.db` - for writing, and refuses the current-user mode when it cannot, since the tree then belongs to another account's install.  An all-users install leaves a mark, `C:\ProgramData\Jde-Cpp\.all-users`, and Setup refuses this mode on it whoever runs Setup, an administrator included: the two modes do not share a data root.  After uninstalling the all-users install, delete the folder (as an administrator) before a current-user install.  A current-user install leaves one too, `.current-user`, holding the installing account's SID, and Setup refuses another account's current-user install on it - an administrator's included, whose elevated Setup would pass the write test; a tree with no mark (from an earlier release) is refused when anything in it is owned by another account, SYSTEM or Local Service.  The uninstaller keeps the mark while the `.db`, `ssl\` and logs stay; delete the folder to hand the machine to another account's current-user install (`reviews/install-issues.md` #43). |
 
-Silent: `OpcHubSetup-<v>.exe /S /AllUsers` or `/CurrentUser`, `/Start` to start the products at the end (the finish page's box,
-which `/S` never shows), `/OpcServer` to add the OPC UA Server component (there is no
-components page to pick it on), `/D=<dir>` for the program dir.  Exit code 3010 (msiexec's) means the runtime's installer
-needs a restart: the products were not started and the services come up with Windows after it; nothing restarts the
-machine by itself.
+Silent: `OpcHubSetup-<v>.exe /S /AllUsers` or `/CurrentUser`, `/Start` to start the products at the end (the finish
+page's box, which `/S` never shows), `/OpcServer` to add the OPC UA Server component (there is no components page to
+pick it on), `/D=<dir>` for the program dir.  Exit code 3010 (msiexec's) means the runtime's installer needs a restart:
+the products were not started and the services come up with Windows after it; nothing restarts the machine by itself.
 
 ## Components
 
@@ -137,7 +139,8 @@ machine by itself.
 
 ## Installed layout
 
-Each file the components install is a line of `files.txt`; this is the tree they make, with what the services create:
+Most files the components install are lines of `files.txt`. This is the tree the installer makes, with what the
+services create:
 
 ```
 <program dir>                                            C:\Program Files\Jde-Cpp  |  %LOCALAPPDATA%\Programs\Jde-Cpp
@@ -191,36 +194,36 @@ views, upsert the mutations); drop it later with `sc config Jde.OpcHub binPath= 
 
 There are two ways in, and which you get depends on the **OPC UA Server** component.
 
-**With the component, the login is Google** and it needs nothing set up
-(`reviews/install-issues.md` #1 - by ruling no username or password is seeded, and
-Google is seeded only with this component): the component seeds the Google provider (`access_google.mutation`)
-and `Jde.OpcServer` as the hub's default server connection (`gateway_opcServer.mutation`: slug `OpcServer`,
-`opc.tcp://127.0.0.1:4840`; `access_opcServer.mutation`: its provider row).  The button works only from an origin registered
-under the OAuth client id the hub serves (`GET /GoogleAuthClientId`).  The default is the project's own client id, so a
-browser on the hub machine at `http://localhost:1967` works once that origin is registered on it; any other host needs its
-own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web application, authorized JavaScript origin
-`http://<host>:1967`), put in `config\apps\OpcHub\config\args\install\args.libsonnet` (`googleAuthClientId`), then
-`Jde.OpcHub` restarted.  The first grant is manual by ruling (the seeded roles); every resource ships unenforced, so the first
-user can make it.
+**With the component, the login is Google** and it needs nothing set up (`reviews/install-issues.md` #1 - by ruling no
+username or password is seeded, and Google is seeded only with this component): the component seeds the Google provider
+(`access_google.mutation`) and `Jde.OpcServer` as the hub's default server connection (`gateway_opcServer.mutation`:
+slug `OpcServer`, `opc.tcp://127.0.0.1:4840`; `access_opcServer.mutation`: its provider row).  The button works only
+from an origin registered under the OAuth client id the hub serves (`GET /GoogleAuthClientId`).  The default is the
+project's own client id, so a browser on the hub machine at `http://localhost:1967` works once that origin is registered
+on it; any other host needs its own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web
+application, authorized JavaScript origin `http://<host>:1967`), put in
+`config\apps\OpcHub\config\args\install\args.libsonnet` (`googleAuthClientId`), then `Jde.OpcHub` restarted.  The first
+grant is manual by ruling (the seeded roles); every resource ships unenforced, so the first user can make it.
 
 **Without it, the login is a server connection's own, and adding the connection is what creates it.**  The page's
 username/password form signs in against *an OPC server the hub connects to* - any of them, not the bundled one - so it
-works on a hub that has no bundled server at all.  Add the connection first, signed out (every resource ships unenforced,
-so an anonymous write is permitted by design), exchange certificates with that server, then sign in.  The username is
-**`<connection slug>\<user on that server>`** - `plant1\operator1` - and **give the prefix**: the slug is what selects
-the connection.  [`login-page.ts`](../../../web/framework/control/src/lib/pages/authorization/login-page/login-page.ts)
-splits the username on the backslash, and
-[`gateway-service.ts`](../../../web/opc/control/src/lib/services/gateway-service.ts) puts the slug in the login
-request's `opc` field.  Without one the hub tries its *default* connection - the bundled server, when that component
-is installed - and otherwise refuses the sign-in with *"No default OPC server connection."*
-([`ConnectAwait::ResolveDefault`](../../OpcGateway/src/async/ConnectAwait.cpp#L59)).  The connection's
-insert is the whole mechanism - it creates an `OpcServer` provider row for the slug, and the first sign-in creates the
-user.  The Web UI writes this up as *First steps* in its own
-[Overview help](../../../web/opc/site/assets/help/overview.md), which is the copy an operator actually meets.
+works on a hub that has no bundled server at all.  Add the connection first, signed out (every resource ships
+unenforced, so an anonymous write is permitted by design), exchange certificates with that server, then sign in.  The
+username is **`<connection slug>\<user on that server>`** - `plant1\operator1` - and **give the prefix**: the slug is
+what selects the connection.
+[`login-page.ts`](../../../web/framework/control/src/lib/pages/authorization/login-page/login-page.ts) splits the
+username on the backslash, and [`gateway-service.ts`](../../../web/opc/control/src/lib/services/gateway-service.ts) puts
+the slug in the login request's `opc` field.  Without one the hub tries its *default* connection - the bundled server,
+when that component is installed - and otherwise refuses the sign-in with *"No default OPC server connection."*
+([`ConnectAwait::ResolveDefault`](../../OpcGateway/src/async/ConnectAwait.cpp#L59)).  The connection's insert is the
+whole mechanism - it creates an `OpcServer` provider row for the slug, and the first sign-in creates the user.  The Web
+UI writes this up as *First steps* in its own [Overview help](../../../web/opc/site/assets/help/overview.md), which is
+the copy an operator actually meets.
 
 The **bundled** server is one such connection, and it offers the username token only when its settings list users
 (`/opc/users: [{name, password}]` under `config\apps\OpcServer\config\` - an opt-in, nothing shipped sets it).  Its slug
-is `OpcServer`, so its form login is `OpcServer\<name>` like any other; it is also the seeded default connection, so a bare `<name>` reaches it too.
+is `OpcServer`, so its form login is `OpcServer\<name>` like any other; it is also the seeded default connection, so a
+bare `<name>` reaches it too.
 
 ## Uninstall
 
@@ -228,7 +231,8 @@ Add/Remove Programs, or the Start Menu shortcut in a current-user install, runs 
 
 - stops and deregisters the services and removes their firewall rules, or, in a current-user install, closes the
   console windows as a reinstall does and removes the shortcuts and Run entries;
-- removes the program dir and the `config\` mirror;
+- removes the program dir and the `config\` mirror.  That includes `Web\addons`, the site's own Highcharts:  copy it
+  out first to keep it.  Only Setup's *"Uninstall it first?"* keeps it for you;
 - removes the meta, sql and nodesets files the installer put in the product dirs.
 
 A console window gets its stop event and is ended after ten seconds. If one will not go, the uninstaller stops and
@@ -249,71 +253,90 @@ three together.
 ## Notes
 
 - Reinstalling over an existing install is fine: the services are deregistered and re-registered, the `.db` is kept, the
-  installer-owned `sql\` and `nodesets\` are recreated (the settings under `config\` are overwritten - keep a copy of edits).
-  There is no need to stop anything first.  In **all users** mode Setup stops and deregisters `Jde.OpcServer` and
-  `Jde.OpcHub` - the server first, since it depends on the hub - and waits for their processes to go **before it copies
-  a file**, because Windows will not replace a running image; if a service will not stop within twenty seconds Setup
-  says so and ends, rather than lay new settings and seeds over an exe it could not replace
-  (`reviews/m2-closing.md` #4).  A `Jde.OpcServer` an earlier install registered is
-  stopped with the hub even when the *OPC UA Server* component is left unticked; it stays registered on its old files -
-  `net start Jde.OpcServer`, or tick the component.  A reinstall into a different program folder (the directory page offers the previous one) deregisters the services through the previous folder's exes and registers the new ones - the old folder is left behind, delete it; a registration Setup cannot remove, or an `-install` that fails, stops Setup with the exe's exit code rather than carrying on over the old registration (`reviews/m4-closing.md` #7).
+  installer-owned `sql\` and `nodesets\` are recreated (the settings under `config\` are overwritten - keep a copy of
+  edits). There is no need to stop anything first.  In **all users** mode Setup stops and deregisters `Jde.OpcServer`
+  and `Jde.OpcHub` - the server first, since it depends on the hub - and waits for their processes to go **before it
+  copies a file**, because Windows will not replace a running image; if a service will not stop within twenty seconds
+  Setup says so and ends, rather than lay new settings and seeds over an exe it could not replace
+  (`reviews/m2-closing.md` #4).  A `Jde.OpcServer` an earlier install registered is stopped with the hub even when the
+  *OPC UA Server* component is left unticked; it stays registered on its old files - `net start Jde.OpcServer`, or tick
+  the component.  A reinstall into a different program folder (the directory page offers the previous one) deregisters
+  the services through the previous folder's exes and registers the new ones - the old folder is left behind, delete it;
+  a registration Setup cannot remove, or an `-install` that fails, stops Setup with the exe's exit code rather than
+  carrying on over the old registration (`reviews/m4-closing.md` #7).
 - **A reinstall - and adding a component to one - only takes effect once the products restart.**  The seeds a component
   brings (`<schema>*.mutation`, `*.roles`) are applied by a `-sync` start, so a hub that keeps running through the
   install shows none of them: no Google provider, no `OpcServer` connection, no *OPC Server Instance* role, and pages
-  that look exactly as they did before (`reviews/install-issues.md` #37).  In
-  **all users** mode Setup stops the services before it copies anything and `-Services` re-registers them, so the next start has them.  In **current user**
+  that look exactly as they did before (`reviews/install-issues.md` #37).  In **all users** mode Setup stops the
+  services before it copies anything and `-Services` re-registers them, so the next start has them.  In **current user**
   mode there is no service to stop, so Setup closes a running `Jde.OpcHub` / `Jde.OpcServer` of yours first - it asks
   before it does, since these are console windows you opened (a silent install closes them without asking) - and the
   finish page's *Start now* box, or the Start Menu shortcut, brings the product back on the new files and the new seeds.
-  Cancel the prompt to close them yourself and run Setup again.  Setup goes on only once it has *seen* the copy gone: it
-  signals the copy's own stop event - it shuts down as it would on Ctrl+C, whether a console window or Windows Terminal hosts
-  it (`reviews/install-issues.md` #42) - or, for a copy from an earlier release,
-  asks its window to close; it ends it after ten seconds, and if it is still there five seconds later - a copy you started
-  elevated, say - Setup stops and names what to close, rather than lay new settings over files it could not replace.
+  Cancel the prompt to close them yourself and run Setup again.
+
+  Setup goes on only once it has *seen* the copy gone. It signals the copy's own stop event, and the copy shuts down
+  as it would on Ctrl+C, whether a console window or Windows Terminal hosts it (`reviews/install-issues.md` #42). A
+  copy from an earlier release is asked to close its window instead. Setup ends the copy after ten seconds. If it is
+  still there five seconds later (a copy you started elevated, say), Setup stops and names what to close, rather than
+  lay new settings over files it could not replace.
 - Roles are seeded by a second pass: `<schema>.roles` files under `dataPaths` are upserted after the access server is
   configured (`createRole`/`addRole` run through its mutations, which the `.mutation` pass runs too early for).
-  `release.roles` ships Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician, and Gateway
-  Instance - a stand-alone gateway's own account, which the hub's built-in gateway does not need; `addRole` names
-  roles by `slug`.  Each file is recorded (`access_seeds`, by content) once it applies, and a later `-sync` start skips it
-  while it is unchanged, so an administrator's edits to a seeded role - a changed right, a deny, a removed permission or
-  child role - survive restarts.  A release whose seed changed applies it again and adds only what a role is missing: it
-  never rewrites an existing grant, but it does restore a permission or child role the administrator had removed.  Nor does it rewrite a seeded row's `create*` text - a role's name and description, the seeded connection's url: a changed seed reaches new rows only, so an install upgraded from 2026.09.02 keeps that release's Engineer, Operator and Maintenance Technician descriptions (edit them on Access > Roles; the current text is in `libs/access/config/release.roles`).
-  `apps/OpcGateway/config/access-opcGateway.mutation`
-  (the gateway's group/role) is still not seeded: its `createRole( permissionRights:[…] )` shape is not one the seed applies.
-- A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway` - not shipped by this installer) shares
-  port 1967 with the hub; the installer stops them and says so.  Deregister them with each exe's `-uninstall`.
+  `release.roles` ships these roles, and `addRole` names them by `slug`:
+  - Viewer
+  - System Administrator
+  - Owner
+  - Engineer
+  - Operator
+  - Maintenance Technician
+  - Gateway Instance, a stand-alone gateway's own account, which the hub's built-in gateway does not need
+
+  Each file is recorded (`access_seeds`, by content) once it applies, and a later `-sync` start skips it while it is
+  unchanged, so an administrator's edits to a seeded role - a changed right, a deny, a removed permission or child
+  role - survive restarts.  A release whose seed changed applies it again and adds only what a role is missing: it never
+  rewrites an existing grant, but it does restore a permission or child role the administrator had removed.  Nor does it
+  rewrite a seeded row's `create*` text - a role's name and description, the seeded connection's url: a changed seed
+  reaches new rows only, so an install upgraded from 2026.09.02 keeps that release's Engineer, Operator and Maintenance
+  Technician descriptions (edit them on Access > Roles; the current text is in `libs/access/config/release.roles`).
+  `apps/OpcGateway/config/access-opcGateway.mutation` (the gateway's group/role) is still not seeded: its `createRole(
+  permissionRights:[…] )` shape is not one the seed applies.
+- A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway` - not shipped by this installer)
+  shares port 1967 with the hub; the installer stops them and says so.  Deregister them with each exe's `-uninstall`.
 - Logs: `C:\ProgramData\Jde-Cpp\OpcHub\Opc.Hub.log` and `OpcServer\Opc.Server.log` are the text logs (a start rolls the
   previous run aside as `Opc.Hub.1.log` … `.3.log` rather than erasing it, and a file rolls at 10 MB - `logFile` in the
-  args; the tags' levels and `flushOn` under each config's `logging.spd` - the shipped `flushOn: "Trace"` writes every line
-  through at once), and `OpcHub\opc-hub\log.binpb` / `OpcServer\opc-server\log.binpb` the binary ones the Web UI's Logs
-  page reads.  A service has no console, so a failure before logging is up shows only in the Windows event log.  A
+  args; the tags' levels and `flushOn` under each config's `logging.spd` - the shipped `flushOn: "Trace"` writes every
+  line through at once), and `OpcHub\opc-hub\log.binpb` / `OpcServer\opc-server\log.binpb` the binary ones the Web UI's
+  Logs page reads.  A service has no console, so a failure before logging is up shows only in the Windows event log.  A
   running service's log lists as 0 bytes in `dir` and Explorer until it is opened - read it, do not trust the listing.
 - The OpcServer waits for the hub: started before the hub listens, or before a first start of the hub has written the
   certificate it anchors, it logs a warning and retries every 5 seconds (`/server/reconnectWait`) until the hub answers.
-- `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs) is unset for a service under Local Service, so
-  the keys are written in the clear - the documented behaviour of an empty passcode.  Set it as a system environment variable
-  and restart the services:  a key already written in the clear is encrypted with it at that start - the same key, so no certificate changes.  A key written under one passcode does not open under another.
-- The hub's web certificate (`OpcHub.pem`, self-signed, issued on the first start) names `localhost`, this machine's name and
-  `127.0.0.1`; `hostNames` in `config\apps\OpcHub\config\args\install\args.libsonnet` adds the others a browser or a split
-  OpcServer reaches the hub by (a fully qualified name, an alias), and a change re-issues the certificate on the same key at the
-  next start.  Trust is a separate matter: a self-signed certificate is untrusted until it is imported where it should be
-  trusted (`certutil -addstore Root C:\ProgramData\Jde-Cpp\OpcHub\ssl\certs\OpcHub.pem`, as an administrator), or replaced by
-  one a CA your browsers trust issued - `certificate:{ managed:false, path:… }` and `privateKey:{ path:…, passcode:… }` in the
-  same args file use that pair as found and never issue or replace it (both files must exist; the public key file the hub's
-  identity reads is derived from the private key).  The Web UI uses plain HTTP on 1967 by ruling and needs none of this.
-- Connecting the hub to another OPC UA server (`/apps` > the OpcHub card > Connections > Add): set the connection's Certificate URI to that server's
-  application URI and the gateway opens a Sign & Encrypt session - Aes256_Sha256_RsaPss, Aes128_Sha256_RsaOaep or
-  Basic256Sha256, the strongest the server shares - with a certificate it issues for the connection
-  (`C:\ProgramData\Jde-Cpp\OpcHub\ssl\certs\OpcHub.<slug>.pem` - labelled with the hub's own application URI, `urn:<machine>:Jde-Cpp:OpcHub`, which is how it introduces
-  itself to every server; the Certificate URI is the server's and only selects its endpoints); an empty URI is an unsecured session - the data in the
-  clear, the credential still encrypted to the server's certificate - for a server that publishes an unsecured endpoint at
-  that URL.  Trust is two-way and manual: copy the
-  server's certificate into `C:\ProgramData\Jde-Cpp\OpcHub\ssl\servers` (created on the first start; `gateway.trustedCertDirs`
-  in `config\apps\OpcGateway\config\Opc.Gateway.jsonnet` - the servers the gateway talks to, a list apart from the
-  certificates that may log in to the hub), and trust the hub's certificate above in the server's own trust list.  The Web UI's Gateways help topic (`?`) has the details.
-- `release.mutation` seeds the access schema without the Google provider rows `access.mutation` (the dev seed) carries; the
-  OPC UA Server component adds them (`access_google.mutation` - First login, above).  The roles grant on `opc.install`, the
-  schema the installed OpcServer registers its nodes under (`Opc.Server.Install.jsonnet`'s `resource: "install"`).
+- `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs) is unset for a service under Local
+  Service, so the keys are written in the clear - the documented behaviour of an empty passcode.  Set it as a system
+  environment variable and restart the services.  A key already written in the clear is encrypted with it at that
+  start.  It is the same key, so no certificate changes.  A key written under one passcode does not open under another.
+- The hub's web certificate (`OpcHub.pem`, self-signed, issued on the first start) names `localhost`, this machine's
+  name and `127.0.0.1`; `hostNames` in `config\apps\OpcHub\config\args\install\args.libsonnet` adds the others a browser
+  or a split OpcServer reaches the hub by (a fully qualified name, an alias), and a change re-issues the certificate on
+  the same key at the next start.  Trust is a separate matter: a self-signed certificate is untrusted until it is
+  imported where it should be trusted (`certutil -addstore Root C:\ProgramData\Jde-Cpp\OpcHub\ssl\certs\OpcHub.pem`, as
+  an administrator), or replaced by one a CA your browsers trust issued - `certificate:{ managed:false, path:… }` and
+  `privateKey:{ path:…, passcode:… }` in the same args file use that pair as found and never issue or replace it (both
+  files must exist; the public key file the hub's identity reads is derived from the private key).  The Web UI uses
+  plain HTTP on 1967 by ruling and needs none of this.
+- Connecting the hub to another OPC UA server (`/apps` > the OpcHub card > Connections > Add): set the connection's
+  Certificate URI to that server's application URI and the gateway opens a Sign & Encrypt session -
+  Aes256_Sha256_RsaPss, Aes128_Sha256_RsaOaep or Basic256Sha256, the strongest the server shares - with a certificate it
+  issues for the connection (`C:\ProgramData\Jde-Cpp\OpcHub\ssl\certs\OpcHub.<slug>.pem` - labelled with the hub's own
+  application URI, `urn:<machine>:Jde-Cpp:OpcHub`, which is how it introduces itself to every server; the Certificate
+  URI is the server's and only selects its endpoints); an empty URI is an unsecured session - the data in the clear, the
+  credential still encrypted to the server's certificate - for a server that publishes an unsecured endpoint at that
+  URL.  Trust is two-way and manual: copy the server's certificate into `C:\ProgramData\Jde-Cpp\OpcHub\ssl\servers`
+  (created on the first start; `gateway.trustedCertDirs` in `config\apps\OpcGateway\config\Opc.Gateway.jsonnet` - the
+  servers the gateway talks to, a list apart from the certificates that may log in to the hub), and trust the hub's
+  certificate above in the server's own trust list.  The Web UI's Gateways help topic (`?`) has the details.
+- `release.mutation` seeds the access schema without the Google provider rows `access.mutation` (the dev seed) carries;
+  the OPC UA Server component adds them (`access_google.mutation` - First login, above).  The roles grant on
+  `opc.install`, the schema the installed OpcServer registers its nodes under (`Opc.Server.Install.jsonnet`'s `resource:
+  "install"`).
 - SQL Server instead of sqlite, by hand: `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` is the equivalent
   profile. Its driver, `Jde.DB.Odbc.dll`, is installed beside the exe. The profile imports `args/install` and replaces
   only the database, so the Web UI, its Google client id and the host names are that file's.
@@ -326,8 +349,16 @@ three together.
   4. Copy the `config/sql/sqlServer/*.sql` scripts of `libs/access`, `apps/AppServer` and `apps/OpcGateway` into the
      product's `sql-sqlServer\`, the profile's `scriptPaths`. Not `sql\`: the installer recreates it with the sqlite
      scripts on every reinstall. The profile still reads the seeds there.
-  5. Re-register the service with `-include=args/install-sqlServer`, then `sc config Jde.OpcHub start= auto`. The
-     exe's `-install` registers it to start on demand; Setup's own `sc config` is what makes it automatic.
+  5. Re-register the service with `-include=args/install-sqlServer`, from an elevated prompt:
+
+     ~~~
+     net stop Jde.OpcHub /y
+     "C:\Program Files\Jde-Cpp\OpcHub\Jde.Opc.Hub.exe" -uninstall -settings=C:\ProgramData\Jde-Cpp\config\apps\OpcHub\config\Opc.Hub.jsonnet -include=args/install
+     "C:\Program Files\Jde-Cpp\OpcHub\Jde.Opc.Hub.exe" -install -settings=C:\ProgramData\Jde-Cpp\config\apps\OpcHub\config\Opc.Hub.jsonnet -include=args/install-sqlServer -sync
+     sc config Jde.OpcHub start= auto
+     ~~~
+
+     The exe's `-install` registers it to start on demand; Setup's own `sc config` is what makes it automatic.
   6. For a SQL Server on this machine, `sc config Jde.OpcHub depend= MSSQL$SQLEXPRESS` starts the hub after it
      (`MSSQLSERVER` for a default instance). Express installs as *Automatic (Delayed Start)*, two minutes after the
      hub, and a delayed service that an automatic one depends on is started with it.
@@ -343,15 +374,16 @@ three together.
   scripts below from the repository at the installed version's tag (*Installed apps* shows the version).  The profile
   imports `args/install` and replaces only the database, so the Web UI, its Google client id and the host names are that
   file's.
-  1. Copy the profile to `config\apps\OpcHub\config\args\install-mysql\`.  Its `host` and `port` name the server -
-     `localhost` and 3306 as shipped - and `ssl` the transport: `enable` (as shipped) uses TLS when the server offers
-     it and plaintext when it does not, `require` refuses a server without TLS, `disable` never negotiates it.
+  1. Copy the profile to `config\apps\OpcHub\config\args\install-mysql\`.  Its `host` and `port` name the server,
+     `localhost` and 3306 as shipped.  `ssl` is the transport: `enable` uses TLS when the server offers it and
+     plaintext when it does not, `require` refuses a server without TLS, `disable` never negotiates it.  It ships
+     hidden, `ssl:: "enable"`, the default.  Un-hide it to change it (`ssl: "require"`), since a hidden key is not read.
   2. Create a database `jde` on that server and a login with all privileges on it.  Set that login as the system
      environment variables `JDE_MYSQL_USER` and `JDE_MYSQL_PWD`, as for `JDE_PASSCODE` above.
   3. Let the login create the gateway's trigger.  MySQL 8 turns binary logging on, and with it on, creating a trigger
      needs `SET_ANY_DEFINER` (or SUPER); without it the hub's first start exits on error 1419.  As MySQL's root, either
-     `GRANT SET_ANY_DEFINER ON *.* TO <login>` (MySQL 8.2 and later) or `SET PERSIST log_bin_trust_function_creators = ON`
-     (every 8.x, but deprecated since 8.0.34 and it warns when set).
+     `GRANT SET_ANY_DEFINER ON *.* TO <login>` (MySQL 8.2 and later) or `SET PERSIST log_bin_trust_function_creators =
+     ON` (every 8.x, but deprecated since 8.0.34 and it warns when set).
   4. Copy the `config/sql/mysql/*.sql` scripts of `libs/access`, `apps/AppServer` and `apps/OpcGateway` into the
      product's `sql-mysql\` - not `sql\`, for the reason above.
   5. Re-register the service with `-include=args/install-mysql` and `sc config Jde.OpcHub start= auto`, as for SQL
