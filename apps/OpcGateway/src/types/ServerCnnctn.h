@@ -23,6 +23,18 @@ namespace Jde::Opc::Gateway{
 		//timeout or TTL of 0.  Null for a row that connects.  The cross-column half - a secured mode or policy without the URI, a mode and a
 		//policy that contradict - is a trigger per dialect as well (#520, config/sql/<dialect>).
 		Ω SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
+		//docs/open-protocol/spec.md *The row*:  what the row's kind asks of it, checked where SettingsError is.  A kind the gateway
+		//does not know;  `driver` or an Open Protocol url on a UA row;  on an Open Protocol row, a url or a `driver` OpenProtocolRow refuses.  Null for a row
+		//its kind takes.
+		Ω KindError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
+		static constexpr sv KindUa{ "ua" }, KindOpenProtocol{ "open-protocol" };//what `kind` holds.
+		static constexpr NsIndex DriverBrowseNs{ 2 };//a driver server's one namespace, after UA's and the server's own.
+		//A kind the gateway serves through a driver's own UA server, which the row's clients dial in place of the url (DriverUrl).
+		//The row stores no certificate URI or default browse namespace for it:  the constructors supply the server's, the gateway's
+		//own applicationUri - the uri in the SAN of the process's pair, /http/ssl, which that server presents - and DriverBrowseNs.
+		α HasDriver()Ι->bool{ return Kind==KindOpenProtocol; }
+		//Where a driver row's server listens:  loopback, at /gateway/drivers/portBase plus the row's id.  Throws past port 65535.
+		α DriverUrl( SRCE )Ε->string;
 		static constexpr uint32 MaxDurationMs{ 2147483647 };//SQL Server's int, the proc's parameter type:  about 24 days.  MergeSettings refuses more.
 		static constexpr sv ModeNone{ "None" }, ModeSign{ "Sign" }, ModeSignAndEncrypt{ "SignAndEncrypt" };//UA_MessageSecurityMode's names (SecurityModeName), what security_mode holds.
 		static constexpr sv PolicyNoneUri{ "http://opcfoundation.org/UA/SecurityPolicy#None" };
@@ -47,6 +59,10 @@ namespace Jde::Opc::Gateway{
 		optional<uint32> PingInterval;//milliseconds, over /gateway/pingInterval;  0 turns the keep-alive off.
 		optional<uint32> Ttl;//milliseconds, over /gateway/ttl.
 		string Locale;//comma-separated locale ids, "en-US,de".
+		string Kind;//KindUa or KindOpenProtocol;  empty, the column's null, is KindUa.
+		string Driver;//the kind's own settings, a json object's text (OpenProtocolRow);  empty for none.
+	private:
+		α SupplyDriver()ι->void;
 	};
 
 	struct ServerCnnctnAwait final: TAwaitEx<vector<ServerCnnctn>,DB::SelectAwait::Task>{

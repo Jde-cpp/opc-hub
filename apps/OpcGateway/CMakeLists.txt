@@ -24,6 +24,7 @@ if( NOT jde_Superbuild )
 	add_subdirectory( ${libDir}/calendar/src ../../libs/calendar/lib ) #links Jde.App.Shared, so after it.
 	add_subdirectory( ${libDir}/app/client ../../libs/app/client )
 	add_subdirectory( ${libDir}/opc/shared/src ../../libs/opc/shared/lib )
+	add_subdirectory( ${libDir}/opc/openProtocol/src ../../libs/opc/openProtocol/lib ) #Jde.Opc.GatewayLib links it;  it links Jde alone.
 	add_subdirectory( ${libDir}/historian/src ../../libs/historian/lib ) #Jde.Opc.GatewayLib links it.
 	add_subdirectory( ${libDir}/oee/src ../../libs/oee/lib ) #Jde.Opc.GatewayLib links it;  it links the historian and the calendar, so after both.
 	if( NOT TARGET Jde.Opc.UAServer ) #Jde.Opc.GatewayLib links it;  a tests block adds it too.

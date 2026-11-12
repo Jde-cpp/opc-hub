@@ -5,6 +5,7 @@
 #include <jde/app/client/IAppClient.h>
 #include <jde/app/client/appClient.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include "../src/UAClient.h"
 #include "SoakRunner.h"
 
@@ -43,6 +44,7 @@ namespace Jde::Opc::Gateway::Soak{
 	using namespace Jde;
 	using namespace Jde::Opc::Gateway;
 	Logging::AddTags( Opc::TagNames );
+	Logging::AddTags( Opc::OpenProtocol::TagNames );//the gateway library's Open Protocol sessions log under it.
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.Opc.Soak", "OpcGateway soak driver" );

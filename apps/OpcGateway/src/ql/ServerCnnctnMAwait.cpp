@@ -61,17 +61,29 @@ namespace Jde::Opc::Gateway{
 		let slug = m.FindPtr<jstring>( "slug" );
 		return slug ? ServerCnnctn::SlugError( sv{*slug}, sl ) : nullptr;//the column is NOT NULL - the insert says so
 	}
-	//The columns the connection settings' save rules read (spec *Connection settings*), by their QL names.
-	constexpr array<sv,8> _settingsColumns{ "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "pingInterval", "ttl", "locale" };
+	//The columns the save rules read (clients spec *Connection settings*, open-protocol spec *The row*), by their QL names.
+	constexpr array<sv,12> _ruleColumns{ "url", "kind", "driver", "defaultBrowseNs", "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "pingInterval", "ttl", "locale" };
+	//What a kind with a driver fixes (open-protocol spec *The row*):  the certificate URI and the default browse namespace, which
+	//ServerCnnctn supplies, and the channel's mode and policy.  The row stores none of them.
+	constexpr array<sv,4> _driverFixed{ "certificateUri", "defaultBrowseNs", "securityMode", "securityPolicy" };
 	Ω namesAny( const QL::MutationQL& m, std::span<const sv> columns )ι->bool{ return std::ranges::any_of( columns, [&m]( sv c ){ return m.Args.contains(c); } ); }
-	//ServerCnnctn::SettingsError over the mutation merged onto `base`:  a refusal, MergeSettings' own included, else null.
-	Ω settingsError( const QL::MutationQL& m, ServerCnnctn base, SL sl )ι->up<Exception>{
-		try{
-			return ServerCnnctn::SettingsError( MergeSettings(m, move(base), sl), sl );
+	//The mutation merged onto `base`, held to the save's rules (RowError):  the merged row, or the refusal thrown, MergeSettings'
+	//own included.
+	Ω mergedRow( const QL::MutationQL& m, ServerCnnctn base, SL sl )ε->ServerCnnctn{
+		if( base.HasDriver() ){//as stored:  what ServerCnnctn supplies a driver row is no column's.
+			base.CertificateUri.clear();
+			base.DefaultBrowseNs = 1;
 		}
-		catch( Exception& e ){
-			return e.Move();
+		auto row = MergeSettings( m, move(base), sl );
+		if( row.HasDriver() ){//a UA row's own four, which a kind changed to a driver's writes null to (Query):  judged as stored.  A value sent is RowError's to refuse.
+			row.CertificateUri.clear();
+			row.DefaultBrowseNs = 1;
+			row.SecurityMode.clear();
+			row.SecurityPolicy.clear();
 		}
+		if( auto e = RowError(m, row, sl); e )
+			e->Throw();
+		return row;
 	}
 	//The endpoint's folder for the row just written (spec *Address space*):  the row's slug and url are the insert's own args, so
 	//no select;  the id is the insert's.  Nothing to await - the server posts the add to the executor.
@@ -101,15 +113,15 @@ namespace Jde::Opc::Gateway{
 		return std::make_optional( y );
 	}
 	//reviews/m3-closing.md #4:  a live client holds the copy of its row it was built from.  What it reads from the copy that
-	//changes how it connects or translates a path - url, certificateUri, defaultBrowseNs, and the spec's connection settings - takes
-	//its clients off the registry, to reconnect on the new row;  a delete or purge closes them.  The ping interval and TTL it reads
-	//live, so an edit to them alone is written over its copy instead.  Name and description it only reports (search), and a rename
-	//is not worth dropping every session's subscriptions for.  A restore has no clients to act on:  a deleted row cannot connect.
-	//The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a delete leaves it, and a url
-	//edit is the one column its `_Connection` shows.
+	//changes how it connects or translates a path - url, kind, driver, certificateUri, defaultBrowseNs, and the spec's connection
+	//settings - takes its clients off the registry, to reconnect on the new row;  a delete or purge closes them.  The ping
+	//interval and TTL it reads live, so an edit to them alone is written over its copy instead.  Name and description it only
+	//reports (search), and a rename is not worth dropping every session's subscriptions for.  A restore has no clients to act on:
+	//a deleted row cannot connect.  The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a
+	//delete leaves it, and a url edit is the one column its `_Connection` shows.
 	Ω connectionEdited( const QL::MutationQL& m )ι->void{
 		using enum EMutationQL;
-		constexpr array<sv,8> builtColumns{ "url", "defaultBrowseNs", "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "locale" };
+		constexpr array<sv,10> builtColumns{ "url", "kind", "driver", "defaultBrowseNs", "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "locale" };
 		constexpr array<sv,2> liveColumns{ "pingInterval", "ttl" };
 		let removed = m.Type==Delete || m.Type==Purge;
 		let edited = m.Type==Update && namesAny( m, builtColumns );
@@ -161,8 +173,7 @@ namespace Jde::Opc::Gateway{
 				QL::CheckCreate( _query, UserPK(), _sl );//the engine's refusals before the provider step, which would reuse a provider and then purge it.
 				if( auto e = slugError(_query, _sl); e )
 					e->Throw();
-				if( auto e = settingsError(_query, ServerCnnctn{string{}}, _sl); e )//over a blank row:  an insert carries every column it sets.
-					e->Throw();
+				mergedRow( _query, ServerCnnctn{string{}}, _sl );//over a blank row:  an insert carries every column it sets.
 				if( provider )
 					steps = { InsertBefore, InsertFailure };
 			}
@@ -170,16 +181,19 @@ namespace Jde::Opc::Gateway{
 				if( provider )
 					steps = { PurgeBefore, PurgeFailure };
 			}
-			else if( type==Update && namesAny(_query, _settingsColumns) ){
+			else if( type==Update && namesAny(_query, _ruleColumns) ){
 				//The save rules on an update (spec *Connection settings*):  an update carries only its changed columns, and certificate_uri is
-				//updateable where slug is not, so a Sign row losing its uri, or a mode pinned on a row that has none, shows only with the saved
-				//row under the edit.  A delete or restore changes nothing the rules read.  Two updates can still cross, so the cross-column
-				//half is a trigger too (#520, config/sql/mysql/gateway_server_connection_insert.sql).
+				//updateable where slug is not, so a Sign row losing its uri, a mode pinned on a row that has none, or a url that is no longer
+				//its kind's shows only with the saved row under the edit.  A delete or restore changes nothing the rules read.  Two updates
+				//can still cross, so the cross-column half is a trigger too (#520, config/sql/mysql/gateway_server_connection_insert.sql).
 				ServerCnnctnAwait select{ _query.GetKey(_sl), true };
 				auto rows = co_await Any( select );
 				THROW_IFX( rows.empty(), Exception(_sl, {EHttpStatus::NotFound}, "The connection to update was not found:  {}.", _query.ToString()) );
-				if( auto e = settingsError(_query, move(rows.front()), _sl); e )
-					e->Throw();
+				let row = mergedRow( _query, move(rows.front()), _sl );
+				if( row.HasDriver() && _query.Args.contains("kind") ){//a kind changed to a driver's:  what the kind fixes leaves with the old one.
+					for( let column : _driverFixed )
+						_query.Args.insert_or_assign( column, nullptr );
+				}
 			}
 			if( steps ){
 				ProviderStepAwait before{ _query, steps->first, _sl };
@@ -240,6 +254,9 @@ namespace Jde::Opc{
 			THROW_IFX( *n>ServerCnnctn::MaxDurationMs, Exception(sl, {EHttpStatus::BadRequest}, "'{}' takes at most {} milliseconds, about 24 days, not {}.", name, ServerCnnctn::MaxDurationMs, *n) );
 			into = (uint32)*n;
 		};
+		text( "url", base.Url );
+		text( "kind", base.Kind );
+		text( "driver", base.Driver );
 		text( "certificateUri", base.CertificateUri );
 		text( "securityMode", base.SecurityMode );
 		text( "securityPolicy", base.SecurityPolicy );
@@ -249,5 +266,15 @@ namespace Jde::Opc{
 		number( "ttl", base.Ttl );
 		text( "locale", base.Locale );
 		return base;
+	}
+	α Gateway::RowError( const QL::Input& input, const ServerCnnctn& row, SL sl )ι->up<Exception>{
+		for( let name : row.HasDriver() ? std::span<const sv>{_driverFixed} : std::span<const sv>{} ){
+			let v = input.FindPtr<jvalue>( name );
+			if( v && !v->is_null() && !(v->is_string() && v->get_string().empty()) )
+				return mu<Exception>( Ƒ("A connection of kind '{}' takes no {}:  its clients connect to the gateway's own driver server, Sign & Encrypt, and the gateway supplies the certificate URI and the default browse namespace.", row.Kind, name), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+		}
+		if( auto e = ServerCnnctn::KindError(row, sl); e )
+			return e;
+		return ServerCnnctn::SettingsError( row, sl );
 	}
 }

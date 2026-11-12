@@ -207,7 +207,7 @@ namespace Jde::Opc::Gateway{
 		α Aggregates()ι->AggregateFunctions&{ return _aggregates; }//the server's AggregateFunctions folder for an aggregate `history`, read on first use;  dies with the client.
 		α Types()Ι->const sp<TypeRegistry>&{ return _types; }//the connection's structure types, which outlive the client (Types(row)):  what its reads decode by.
 		α Url()Ι->str{ return _opcServer.Url; }
-		α ConnectUrl()Ι->str{ return _connectUrl.empty() ? _opcServer.Url : _connectUrl; }//what Connect() handed open62541 - Url(), or ReachableUrl's substitute for it.
+		α ConnectUrl()Ι->str{ return _connectUrl.empty() ? _opcServer.Url : _connectUrl; }//what Connect() handed open62541 - Url(), ReachableUrl's substitute for it, or a driver row's server (ServerCnnctn::DriverUrl).
 		α ApplicationUri()Ι->string;//the endpoint filter open62541 matches against the server's ApplicationUri - not clientDescription's.
 		α AdvertisedUri()Ι->string;//clientDescription's:  what this client calls itself - the uri SAN of the certificate it presents (Configuration(), security-matrix #8).
 		α IsDefault()Ι->bool{ return _opcServer.IsDefault; }
