@@ -1,3 +1,4 @@
+#include <jde/fwk/str.h>
 #include "Nodes.h"
 #include "Operand.h"
 #include "Props.h"
@@ -30,14 +31,14 @@ namespace Jde::Opc::Flows{
 					let raw = text.substr( open ).starts_with( "{{{" );
 					let close = text.find( raw ? "}}}" : "}}", open );
 					THROW_IF( close==sv::npos, "the template has a tag that does not close." );
-					auto name = Trim( text.substr(open+(raw ? 3 : 2), close-open-(raw ? 3 : 2)) );
+					auto name = Str::Trim( text.substr(open+(raw ? 3 : 2), close-open-(raw ? 3 : 2)) );
 					text.remove_prefix( close+(raw ? 3 : 2) );
 					if( name.starts_with('!') )
 						continue;
 					THROW_IF( !name.empty() && sv{"#^/>="}.contains(name.front()), "'{}':  the template's mustache is its variables alone, with no sections, partials or delimiters.", name );
 					let ampersand = name.starts_with( '&' );
 					if( ampersand )
-						name = Trim( name.substr(1) );
+						name = Str::Trim( name.substr(1) );
 					auto& part = _parts.emplace_back();
 					part.Escape = !raw && !ampersand;
 					let dot = name.find( '.' );
@@ -68,7 +69,7 @@ namespace Jde::Opc::Flows{
 					let v = part.Property->Find( part.Scope==EScope::Msg ? m.Json : context );
 					if( !v || v->is_null() )
 						continue;
-					let rendered = v->is_string() ? string{ v->get_string() } : serialize( *v );
+					let rendered = ToText( *v );
 					text += part.Escape ? Escape( rendered ) : rendered;
 				}
 				_property.Set( m.Json, _json ? parse(text) : jvalue{text} );
@@ -76,10 +77,6 @@ namespace Jde::Opc::Flows{
 			}
 		private:
 			struct Part final{ string Text; optional<Path> Property; EScope Scope{ EScope::Msg }; bool Escape{}; };
-			Ω Trim( sv text )ι->sv{
-				let first = text.find_first_not_of( " \t\r\n" );
-				return first==sv::npos ? sv{} : text.substr( first, text.find_last_not_of(" \t\r\n")-first+1 );
-			}
 			Ω Escape( sv text )ι->string{//mustache.js's entities.
 				string y;
 				y.reserve( text.size() );

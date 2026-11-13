@@ -13,6 +13,7 @@ namespace Jde::Opc::Flows{
 	constexpr ELogTags _tags{ ELogTags::App };
 	constexpr uint _minutesKept{ 60 };
 	constexpr uint _loopGuard{ 9 };//Node-RED's:  the times one node's error with one message is caught before the message is dropped.
+	constexpr uint _turn{ 1000 };//what an entry of its own takes off the queues before the strand's other work has its turn.
 
 	//What waits at a node.  Born:  made at it, a source's, an inject's or what a catch, a status or a complete takes, and
 	//sent down its output when taken;  otherwise the node receives it.
@@ -50,7 +51,7 @@ namespace Jde::Opc::Flows{
 		NodeCounts Total, Minute;
 	};
 
-	enum class EState : uint8{ Idle, Running, Stopped };
+	enum class EState : uint8{ Idle, Starting, Running, Stopped };
 	struct Engine final : std::enable_shared_from_this<Engine>{
 		Engine( Graph&& graph, Flow::Config&& config )ι:
 			_graph{ move(graph) },
@@ -78,6 +79,7 @@ namespace Jde::Opc::Flows{
 				lg _{ _queueMutex };
 				if( _state!=EState::Idle )
 					return false;
+				_state = EState::Starting;
 			}
 			for( auto& slot : _slots ){
 				try{
@@ -96,22 +98,26 @@ namespace Jde::Opc::Flows{
 			}
 			{
 				lg _{ _queueMutex };
+				if( _state!=EState::Starting )//stopped while its nodes were made.
+					return false;
 				_state = EState::Running;
 			}
 			boost::asio::post( _strand, [self=shared_from_this()]{ self->Enter( [&]{ self->StartNodes(); } ); } );
 			return true;
 		}
 		α Stop( absl::AnyInvocable<void()> stopped )ι->void{
-			if( !End() ){
-				if( stopped )
-					stopped();
-				return;
+			let prior = End();
+			if( prior==EState::Running ){
+				boost::asio::post( _strand, [self=shared_from_this(), stopped=std::move(stopped)]()mutable{
+					self->Teardown();
+					if( stopped )
+						stopped();
+				} );
 			}
-			boost::asio::post( _strand, [self=shared_from_this(), stopped=std::move(stopped)]()mutable{
-				self->Teardown();
-				if( stopped )
-					stopped();
-			} );
+			else if( stopped && prior==EState::Stopped )//behind a teardown still on its way.
+				boost::asio::post( _strand, [stopped=std::move(stopped)]()mutable{ stopped(); } );
+			else if( stopped )
+				stopped();
 		}
 		α Running()Ι->bool{ lg _{ _queueMutex }; return _state==EState::Running; }
 		α Fault()Ι->optional<Flows::Fault>{ lg _{ _stateMutex }; return _fault; }
@@ -133,8 +139,8 @@ namespace Jde::Opc::Flows{
 			}
 			Enqueue( *index, move(m), true );
 		}
-		α Post( absl::AnyInvocable<void()> f )ι->void{
-			boost::asio::post( _strand, [self=shared_from_this(), f=std::move(f)]()mutable{ self->Enter( [&]{ self->Guard( nullptr, f ); } ); } );
+		α Post( Slot* slot, absl::AnyInvocable<void()> f )ι->void{//`slot`:  the node whose error what escapes is;  none for the flow's own.
+			boost::asio::post( _strand, [self=shared_from_this(), slot, f=std::move(f)]()mutable{ self->Enter( [&]{ self->Guard( slot, f ); } ); } );
 		}
 		α Status( sv nodeId )Ι->NodeStatus{
 			let index = _graph.IndexOf( nodeId );
@@ -195,7 +201,7 @@ namespace Jde::Opc::Flows{
 					_scheduled = true;
 			}
 			if( post )
-				boost::asio::post( _strand, [self=shared_from_this()]{ self->Enter( []{} ); } );
+				PostDrain();
 		}
 		α Send( Slot& slot, Message&& m, uint port )ι->void{
 			let id = m.Id();
@@ -385,9 +391,9 @@ namespace Jde::Opc::Flows{
 				}
 			}
 		}
-		α End()ι->bool{//whether it was running.
+		α End()ι->EState{//the state it had.
 			lg _{ _queueMutex };
-			return std::exchange( _state, EState::Stopped )==EState::Running;
+			return std::exchange( _state, EState::Stopped );
 		}
 		α Teardown()ι->void{
 			Check();
@@ -430,9 +436,10 @@ namespace Jde::Opc::Flows{
 			lg _{ _queueMutex };
 			return _state==EState::Running;
 		}
-		//`f`, then the queues to their end:  a timer's or a post's entry to the strand, and a drain's own.  One entry may come
-		//inside another, a timer a clock runs on the strand:  each drains, so what a timer sends is through the flow before the
-		//clock moves on, but one that comes inside a drain, which goes on after it.
+		//`f`, then the queues:  a timer's or a post's entry to the strand, and a drain's own.  One entry may come inside
+		//another, a timer a clock runs on the strand:  each drains to the end, so what a timer sends is through the flow before
+		//the clock moves on, but one that comes inside a drain, which goes on after it.  An entry of its own takes its turn,
+		//`_turn` messages, and posts a drain for the rest, so a timer or a post from off the strand waits behind no more.
 		α Enter( auto&& f )ι->void{
 			Check();
 			if( !Running() )
@@ -441,7 +448,7 @@ namespace Jde::Opc::Flows{
 			_tick = _clock->Now();
 			f();
 			if( !_draining )
-				Drain();
+				Drain( _entries==1 );
 			--_entries;
 		}
 		//A timer's callback or a post's:  what escapes it is its node's error, with no message.
@@ -454,16 +461,19 @@ namespace Jde::Opc::Flows{
 				if( !slot )
 					return;
 				Count( *slot, []( NodeCounts& c ){ ++c.Errors; } );
+				if( _trace )
+					_trace->Error( slot->Def, 0, e.what() );
 				++slot->Unhandled;
 				slot->LastError = e.what();
 				Stale( *slot );
 			}
 		}
-		α Drain()ι->void{
+		α Drain( bool turn )ι->void{
 			_draining = true;
+			uint taken{};
 			for( ;; ){
-				while( Take() )
-					;
+				while( (!turn || taken<_turn) && Take() )
+					++taken;
 				if( _stale.empty() )
 					break;
 				for( auto slot : std::exchange(_stale, {}) ){//once a drain, however many it dropped.
@@ -475,7 +485,15 @@ namespace Jde::Opc::Flows{
 				}
 			}
 			_draining = false;
+			if( turn && taken==_turn ){
+				{
+					lg _{ _queueMutex };
+					_scheduled = true;
+				}
+				PostDrain();
+			}
 		}
+		α PostDrain()ι->void{ boost::asio::post( _strand, [self=shared_from_this()]{ self->Enter( []{} ); } ); }
 		α Stale( Slot& slot )ι->void{
 			if( !std::exchange(slot.Dirty, true) )
 				_stale.push_back( &slot );
@@ -637,12 +655,20 @@ namespace Jde::Opc::Flows{
 		if( _engine )
 			_engine->Stop( {} );
 	}
+	α Flow::operator=( Flow&& rhs )ι->Flow&{
+		if( this!=&rhs ){
+			if( _engine )
+				_engine->Stop( {} );
+			_engine = move( rhs._engine );
+		}
+		return *this;
+	}
 	α Flow::Start()ι->bool{ return _engine->Start(); }
 	α Flow::Stop( absl::AnyInvocable<void()> stopped )ι->void{ _engine->Stop( std::move(stopped) ); }
 	α Flow::Running()Ι->bool{ return _engine->Running(); }
 	α Flow::Fault()Ι->optional<Flows::Fault>{ return _engine->Fault(); }
 	α Flow::Inject( sv nodeId, const jobject* message )ε->void{ _engine->Inject( nodeId, message ); }
-	α Flow::Post( absl::AnyInvocable<void()> f )ι->void{ _engine->Post( std::move(f) ); }
+	α Flow::Post( absl::AnyInvocable<void()> f )ι->void{ _engine->Post( nullptr, std::move(f) ); }
 	α Flow::Status( sv nodeId )Ι->NodeStatus{ return _engine->Status( nodeId ); }
 	α Flow::Counts()Ι->vector<NodeCounts>{ return _engine->Counts(); }
 	α Flow::TakeMinutes()ι->vector<MinuteCounts>{ return _engine->TakeMinutes(); }
@@ -664,7 +690,7 @@ namespace Jde::Opc::Flows{
 	α INode::Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, after, std::move(f) ); }
 	α INode::Schedule( TimePoint due, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, due, std::move(f) ); }
 	α INode::Cancel( TimerId id )ι->bool{ return _slot->Flow.Cancel( *_slot, id ); }
-	α INode::Post( absl::AnyInvocable<void()> f )ι->void{ _slot->Flow.Post( std::move(f) ); }
+	α INode::Post( absl::AnyInvocable<void()> f )ι->void{ _slot->Flow.Post( _slot, std::move(f) ); }
 	α INode::Context()ι->Store&{ return _slot->Context; }
 	α INode::FlowContext()ι->Store&{ return _slot->Flow.FlowContext(); }
 	α INode::Global()ι->GlobalStore&{ return _slot->Flow.Global(); }

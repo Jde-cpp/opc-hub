@@ -82,8 +82,7 @@ namespace Jde::Opc::Flows{
 				case EOp::Regex:{
 					if( !v || !v->is_primitive() || v->is_null() )
 						return false;
-					let text = v->is_string() ? string{ v->get_string() } : serialize( *v );
-					return std::regex_search( text, *rule.Pattern );
+					return std::regex_search( ToText(*v), *rule.Pattern );
 				}
 				case EOp::True: return v && v->is_bool() && v->get_bool();
 				case EOp::False: return v && v->is_bool() && !v->get_bool();

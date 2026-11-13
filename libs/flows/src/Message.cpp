@@ -1,5 +1,4 @@
 #include <jde/flows/Message.h>
-#include <charconv>
 
 #define let const auto
 
@@ -139,11 +138,9 @@ namespace Jde::Opc::Flows{
 }
 namespace Jde::Opc{
 	α Flows::ToPayload( const Value& value, const ITypes* types )ι->jvalue{
-		auto o = value.DataValueJson( types );
-		let v = o.if_contains( "v" );
-		if( !v )
+		if( UA_StatusCode_isBad(value.status) || value.IsEmpty() )
 			return {};
-		jvalue y{ move(*v) };
+		auto y = value.ValueJson( types );
 		integers( y );
 		return y;
 	}

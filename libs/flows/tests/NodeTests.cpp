@@ -281,6 +281,44 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( Host->Took->Of("errors").size(), 1u ) << Errors();
 	}
 
+	TEST_F( NodeTests, ANumberIsWrittenAsJavaScriptWritesIt ){
+		One( "template", R"({"template":"rpm {{payload}}"})" );
+		Inject( 1450.5 );
+		EXPECT_EQ( Last().at("payload"), "rpm 1450.5" );
+		Inject( 15.0 );
+		EXPECT_EQ( Last().at("payload"), "rpm 15" );
+		Inject( 1450 );
+		EXPECT_EQ( Last().at("payload"), "rpm 1450" );
+		Stop();
+		Host = ms<TestHost>();
+		Switch( R"({"rules":[{"t":"regex","v":"^\\d+\\.\\d$"}]})", 1 );
+		EXPECT_EQ( Ports(12.5), "0" ) << "matched against 12.5, not 1.25E1";
+		EXPECT_EQ( Ports(12.0), "" );
+	}
+
+	TEST_F( NodeTests, AJoinsRefusedPartLeavesNoSequence ){
+		Run( Nodes({
+			Node( "in", "inject", "{}", {{"whole"}} ), Node( "whole", "join", "{}", {{"out"}} ), Node( "out", "log" ),
+			Node( "caught", "catch", "{}", {{"errors"}} ), Node( "errors", "log" )
+		}), ETraceLevel::Hops, 2 );
+		let part = [&]( sv id, uint index, bool keyed, sv type="object" ){
+			jobject parts{ {"id", id}, {"index", index}, {"count", 2}, {"type", type} };
+			if( keyed )
+				parts["key"] = Ƒ( "k{}", index );
+			jobject message{ {"payload", index}, {"parts", move(parts)} };
+			Deployed->Inject( "in", &message );
+			Sync();
+		};
+		part( "x", 0, true );
+		part( "bad1", 0, false );
+		part( "bad2", 0, false );
+		part( "y", 0, true );
+		part( "x", 1, true );
+		EXPECT_EQ( Took(), R"({"k0":0,"k1":1})" ) << "the refused parts held no place among the two sequences a queue of 2 allows";
+		part( "z", 2, false, "array" );
+		EXPECT_EQ( Errors(), "the message has no text to join it under. | the message has no text to join it under. | part 2 is past what a join holds." );
+	}
+
 	TEST_F( NodeTests, DebugTakesAndSendsNothing ){
 		Run( Nodes({Node("in", "inject", "{}", {{"point"}}), Node("point", "debug", R"({"level":"Debug"})")}) );
 		Inject( 1 );

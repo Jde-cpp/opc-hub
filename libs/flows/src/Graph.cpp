@@ -27,8 +27,10 @@ namespace Jde::Opc::Flows{
 			let type = ToNodeType( Json::FindDefaultSV(o, "type") );
 			THROW_IF( !type, "`type` {} is not a node type.", o.contains("type") ? serialize(o.at("type")) : "is missing, and so" );
 			y.Def.Type = *type;
-			if( Prop::Find(o, "name") )
-				y.Def.Name = Prop::Text( o, "name" );
+			if( let name = Prop::Find(o, "name") ){//"" is no name, as an editor writes one.
+				THROW_IF( !name->is_string(), "`name` must be text." );
+				y.Def.Name = name->get_string();
+			}
 			if( let props = Prop::Find(o, "props") ){
 				THROW_IF( !props->is_object(), "`props` must be an object." );
 				y.Def.Props = props->get_object();

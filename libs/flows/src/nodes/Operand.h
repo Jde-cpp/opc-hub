@@ -6,6 +6,7 @@ namespace Jde::Opc::Flows{
 	//-1, 0 or 1 for two numbers, whatever their kinds and two integers exactly, two strings or two Booleans;  none for any other pair.
 	α Order( const jvalue& a, const jvalue& b )ι->optional<int>;
 	α Equal( const jvalue& a, const jvalue& b )ι->bool;//numbers by value;  the rest as json compares.
+	α ToText( const jvalue& v )ι->string;//text as it is, a double as JavaScript's String writes it, 1450.5 and not 1.4505E3, the rest as its json.
 
 	//Where a rule's value is (spec *Nodes*):  in the rule, a literal, in the message, or in the flow's or the global context.
 	enum class EScope : uint8{ Literal, Msg, Flow, Global };

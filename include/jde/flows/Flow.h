@@ -24,14 +24,15 @@ namespace Jde::Opc::Flows{
 		Flow( Graph graph, Config config )ι;
 		~Flow();//stops it.
 		Flow( Flow&& )ι=default;
-		α operator=( Flow&& )ι->Flow& =default;
+		α operator=( Flow&& rhs )ι->Flow&;//stops the flow it replaces.
 
 		//Makes the nodes, the host's among them, and posts their Start.  False when one could not be made, or the flow has
-		//run already:  it stays stopped, with Fault and the node's status saying why.  A node whose Start throws stops the
-		//flow the same way, after this has returned.
+		//run already:  it stays stopped, with Fault and the node's status saying why.  False too, with no fault, for a Stop
+		//while the nodes were made.  A node whose Start throws stops the flow the same way, after this has returned.
 		α Start()ι->bool;
 		//Nothing more is queued or taken.  On the strand the timers are cancelled, each node's Stop is called and what was
-		//queued or held is dropped and counted;  `stopped` runs after, there, but when the flow was not running, where it runs here.
+		//queued or held is dropped and counted;  `stopped` runs after, there.  For a flow that has stopped already it runs there
+		//too, behind the teardown, and for one that never started it runs here.
 		α Stop( absl::AnyInvocable<void()> stopped={} )ι->void;
 		α Running()Ι->bool;
 		α Fault()Ι->optional<Flows::Fault>;

@@ -1,4 +1,5 @@
 #include "Props.h"
+#include <jde/fwk/str.h>
 
 #define let const auto
 
@@ -56,12 +57,7 @@ namespace Jde::Opc::Flows{
 		if( !v && dflt )
 			return *dflt;
 		let p = v && v->is_string() ? std::ranges::find( names, sv{v->get_string()} ) : names.end();
-		if( p==names.end() ){
-			string list;
-			for( let name : names )
-				list += Ƒ( "{}{}", list.empty() ? "" : ", ", name );
-			THROW( "`{}` must be one of {}.", key, list );
-		}
+		THROW_IF( p==names.end(), "`{}` must be one of {}.", key, Str::Join(names, ", ") );
 		return p-names.begin();
 	}
 	α Prop::Rules( const jobject& props )ε->const jarray&{

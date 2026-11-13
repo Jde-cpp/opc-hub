@@ -264,6 +264,20 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_TRUE( Has(none.Fault()->Message, "Nothing here makes a 'log' node") );
 	}
 
+	TEST_F( EngineTests, AStopWhileTheNodesAreMadeWins ){
+		auto graph = Graph::Read( Nodes({Node("pump", "opc in", "{}", {{"out"}}), Node("out", "log")}) );
+		ASSERT_TRUE( graph.has_value() );
+		Flow flow{ move(*graph), {.Name="stopped", .Clock=Time, .Host=Host} };
+		bool stopped{};
+		Host->OnSource = [&]{ flow.Stop( [&]{ stopped = true; } ); };
+		EXPECT_FALSE( flow.Start() );
+		EXPECT_TRUE( stopped ) << "a flow that never started stops at once";
+		EXPECT_FALSE( flow.Running() );
+		EXPECT_FALSE( flow.Fault().has_value() );
+		Host->OnSource = {};
+		EXPECT_FALSE( flow.Start() ) << "a flow runs once";
+	}
+
 	TEST_F( EngineTests, ANodeWhoseStartThrowsStopsTheFlow ){
 		auto graph = Graph::Read( Nodes({Node("in", "inject", "{}", {{"v"}}), Node("v", "variable")}) );
 		ASSERT_TRUE( graph.has_value() );
@@ -305,5 +319,55 @@ namespace Jde::Opc::Flows::Tests{
 		Host->Takers["w"]->Answer();//an answer that comes after the stop goes nowhere.
 		Stop();
 		EXPECT_EQ( Took(), "" );
+	}
+
+	TEST_F( EngineTests, ASecondStopRunsBehindTheFirstsTeardown ){
+		Run( Nodes({Node("in", "inject", "{}", {{"w"}}), Node("w", "opc out")}) );
+		Inject( "hold" );
+		std::promise<uint> second;
+		Posted( [&]{//on the strand, so the first Stop's teardown waits behind this.
+			Deployed->Stop();
+			Deployed->Stop( [&]{ second.set_value(Counts("w").Drops); } );
+		} );
+		EXPECT_EQ( second.get_future().get(), 1u ) << "the held write was dropped first";
+	}
+
+	TEST_F( EngineTests, AFlowAssignedOverIsStopped ){
+		Run( Nodes({Node("in", "inject", "{}", {{"w"}}), Node("w", "opc out")}) );
+		Inject( "hold" );
+		auto next = Graph::Read( Nodes({Node("out", "log")}) );
+		ASSERT_TRUE( next.has_value() );
+		let trace = Trace;
+		*Deployed = Flow{ move(*next), {.Name="next", .Clock=Time, .Host=Host} };
+		for( uint i=0; std::ranges::count(trace->Lines(), "drop w")==0 && i<1000; ++i )
+			std::this_thread::sleep_for( 1ms );
+		EXPECT_EQ( std::ranges::count(trace->Lines(), "drop w"), 1 ) << "the flow replaced was torn down";
+	}
+
+	TEST_F( EngineTests, ADrainGivesTheStrandItsTurn ){
+		Run( Nodes({Node("pump", "opc in", "{}", {{"out"}}), Node("out", "log")}), ETraceLevel::Counts, 5000 );
+		constexpr uint count{ 2500 };
+		optional<uint> seen;
+		Posted( [&]{
+			for( uint i=0; i<count; ++i )
+				Host->Pumps["pump"]->Push( jvalue(i) );
+			Deployed->Post( [&]{ seen = Host->Took->Of("out").size(); } );
+		} );
+		for( uint i=0; Host->Took->Of("out").size()<count && i<2000; ++i )
+			std::this_thread::sleep_for( 1ms );
+		Sync();
+		ASSERT_TRUE( seen.has_value() );
+		EXPECT_LT( *seen, count ) << "the post ran between two turns of the drain";
+		EXPECT_EQ( Host->Took->Of("out").size(), count );
+	}
+
+	TEST_F( EngineTests, APostThatThrowsIsItsNodesError ){
+		Run( Nodes({Node("in", "inject", "{}", {{"w"}}), Node("w", "opc out")}) );
+		Inject( "hold" );
+		Host->Takers["w"]->Garble();
+		Sync();
+		EXPECT_EQ( Counts("w").Errors, 1u );
+		EXPECT_TRUE( Has(Deployed->Status("w").Text, "1 uncaught, the last:  The answer does not read.") ) << Deployed->Status("w").Text;
+		EXPECT_EQ( std::ranges::count(Trace->Lines(), "error w"), 1 ) << "the trace has the error that turned it red";
 	}
 }

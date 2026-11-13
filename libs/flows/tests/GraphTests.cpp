@@ -30,6 +30,16 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( Refused(Nodes({})), "" ) << "an empty graph is a graph";
 	}
 
+	TEST( Graph, AnEmptyNameIsNoName ){
+		auto unnamed = Node( "out", "log" );
+		unnamed["name"] = "";
+		let read = Graph::Read( Nodes({unnamed}) );
+		ASSERT_TRUE( read.has_value() ) << read.error().Message;
+		EXPECT_EQ( read->Nodes[0].Name, "" );
+		unnamed["name"] = 5;
+		EXPECT_EQ( Refused(Nodes({unnamed})), "out:  `name` must be text." );
+	}
+
 	TEST( Graph, TypeNames ){
 		for( uint8 i=0; i<=(uint8)ENodeType::HttpRequest; ++i )
 			EXPECT_EQ( ToNodeType(ToString((ENodeType)i)), (ENodeType)i ) << ToString( (ENodeType)i );

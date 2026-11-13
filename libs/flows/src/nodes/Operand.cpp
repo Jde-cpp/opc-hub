@@ -9,6 +9,13 @@ namespace Jde::Opc{
 		let y = v.is_number() ? v.to_number<double>( ec ) : 0;
 		return v.is_number() && !ec ? optional{ y } : nullopt;
 	}
+	α Flows::ToText( const jvalue& v )ι->string{
+		if( let text = v.if_string() )
+			return string{ *text };
+		if( let d = v.if_double() )
+			return Ƒ( "{}", *d );
+		return serialize( v );
+	}
 	α Flows::Order( const jvalue& a, const jvalue& b )ι->optional<int>{
 		let order = []( let& x, let& y ){ return x<y ? -1 : y<x ? 1 : 0; };
 		if( a.is_number() && b.is_number() ){

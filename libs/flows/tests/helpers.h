@@ -63,6 +63,7 @@ namespace Jde::Opc::Flows::Tests{
 	//  `opc out`:  a write.  A payload of "bad" is refused, the node's error;  one of "hold" is held until the test answers
 	//  it;  any other is kept and sent on with a status of 0, the node showing a green dot.
 	//  `variable`:  its Start throws, as a sink whose server is gone would.
+	//OnSource, when set, runs as each source is made.
 	struct TestHost final : IHost{
 		struct Pump final : ISource{
 			α Push( jvalue payload, sv topic={} )ι->void{
@@ -118,6 +119,7 @@ namespace Jde::Opc::Flows::Tests{
 					Done( id );
 				} );
 			}
+			α Garble()ι->void{ Post( []{ THROW( "The answer does not read." ); } ); }//an answer that throws as it is read, on the strand.
 		private:
 			sp<Taken> _taken;
 			vector<Message> _held;
@@ -125,6 +127,8 @@ namespace Jde::Opc::Flows::Tests{
 
 		α Source( const NodeDef& node )ε->up<ISource> override{
 			THROW_IF( node.Type==ENodeType::GroupIn, "The gateway has no historian." );
+			if( OnSource )
+				OnSource();
 			auto y = mu<Pump>();
 			Pumps[node.Id] = y.get();
 			return y;
@@ -137,6 +141,7 @@ namespace Jde::Opc::Flows::Tests{
 		sp<Taken> Took{ ms<Taken>() };
 		flat_map<string,Pump*> Pumps;//the flow's, while it lives.
 		flat_map<string,Taker*> Takers;
+		function<void()> OnSource;
 	};
 
 	struct MemoryTrace final : HopTrace{

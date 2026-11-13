@@ -31,8 +31,8 @@ namespace Jde::Opc{
 		//member refuses the whole.
 		Ω Settable( const UA_DataType& type )ι->bool;
 		Ŧ Get( uint index )Ι->const T&{ return ((T*)value.data)[index]; };
-	private:
 		α ValueJson( const ITypes* types )Ι->jvalue;//the reading's elements, which ToJson and DataValueJson wrap;  not for an empty value.
+	private:
 		Ŧ SetNumber( const jvalue& j, SRCE )ε->void;
 		α SetScalar( const void* p, SL sl )ε->void;
 		α SetArray( const jarray& a, SL sl )ε->void;

@@ -64,26 +64,37 @@ namespace Jde::Opc::Flows{
 					id = serialize( *partsId );
 					expected = Json::FindNumber<uint>( *parts, "count" ).value_or( 0 );
 				}
-				let [p, fresh] = _sequences.try_emplace( id );
-				auto& sequence = p->second;
-				if( fresh ){
-					sequence.Order = ++_order;
-					if( _timeout )
-						sequence.Timer = Schedule( *_timeout, [this, id]{ Flush( id ); } );
-					if( _mode==2 || (parts && Json::FindDefaultSV(*parts, "type")=="object") )
-						sequence.Value.emplace_object();
-				}
-				auto payload = m.Payload();
-				if( let members = sequence.Value.if_object() ){
-					let key = parts ? parts->if_contains( "key" ) : _key.Find( m.Json );
+				//The checks before the sequence, so a message refused leaves none behind.
+				auto p = _sequences.find( id );
+				let object = p==_sequences.end() ? _mode==2 || (parts && Json::FindDefaultSV(*parts, "type")=="object") : p->second.Value.is_object();
+				const jvalue* key{};
+				uint index{};
+				if( object ){
+					key = parts ? parts->if_contains( "key" ) : _key.Find( m.Json );
 					THROW_IF( !key || !key->is_string(), "the message has no text to join it under." );
-					(*members)[key->get_string()] = move( payload );
-					sequence.In = _mode==0 ? sequence.In+1 : members->size();
+				}
+				else{
+					let size = p==_sequences.end() ? 0 : p->second.Value.get_array().size();
+					index = parts ? Json::FindNumber<uint>( *parts, "index" ).value_or( size ) : size;
+					THROW_IF( index>=QueueLimit(), "part {} is past what a join holds.", index );
+				}
+				if( p==_sequences.end() ){
+					p = _sequences.try_emplace( id ).first;
+					p->second.Order = ++_order;
+					if( _timeout )
+						p->second.Timer = Schedule( *_timeout, [this, id]{ Flush( id ); } );
+					if( object )
+						p->second.Value.emplace_object();
+				}
+				auto& sequence = p->second;
+				auto payload = m.Payload();
+				if( object ){
+					auto& members = sequence.Value.get_object();
+					members[key->get_string()] = move( payload );
+					sequence.In = _mode==0 ? sequence.In+1 : members.size();
 				}
 				else{
 					auto& items = sequence.Value.get_array();
-					let index = parts ? Json::FindNumber<uint>( *parts, "index" ).value_or( items.size() ) : items.size();
-					THROW_IF( index>QueueLimit(), "part {} is past what a join holds.", index );
 					if( index>=items.size() )
 						items.resize( index+1 );
 					items[index] = move( payload );
