@@ -4,6 +4,16 @@
 //The engine (docs/flows/spec.md *Messages*, *Errors and status*):  one flow's graph run on a strand of its own, with no
 //gateway in it.
 namespace Jde::Opc::Flows{
+	//A flow's sandbox, the one runtime its Function nodes share (docs/flows/spec.md *The Function node*):  the heap, the
+	//stack a body may take below where it is entered, which must sit under the executor thread's own, and how long one
+	//entry may run, a body's call with the promise jobs it leaves, a timer's callback, On Start and On Stop.
+	struct FunctionLimits final{
+		uint Memory{ 16*1024*1024 };
+		uint Stack{ 256*1024 };
+		Duration Timeout{ std::chrono::milliseconds{100} };
+	};
+	α ToBytes( sv text )ι->optional<uint>;//a size as the settings write it:  "16MiB", "256KiB", "2GiB" or the bytes, "4096".
+
 	//Each node has an input queue bounded at `Queue`, past which its oldest message is dropped, counted and traced.  The
 	//strand drains the queues in arrival order, one message through one node at a time;  a node that waits holds its message
 	//and comes back to the strand, so no two nodes of a flow run at once.  Every timer is the clock's, so a flow under a
@@ -17,6 +27,8 @@ namespace Jde::Opc::Flows{
 			sp<MessageIds> Ids;//the gateway's;  null:  the flow's own, from its clock.
 			sp<GlobalStore> Global;//the gateway's;  null:  the flow's own.
 			uint Queue{ 1000 };
+			FunctionLimits Function;
+			jobject Env;//what a body's `env.get` answers by name, beside the node's and the flow's own.
 			jobject Context;//the flow scope's values, as loaded.
 			flat_map<string,jobject> NodeContext;//each node scope's, by node id.
 			function<void( sv nodeId, sv key, const jvalue* value )> ContextChanged;//a flow or node scope's change, on the strand:  no node id for the flow's, a null value for a key that went.

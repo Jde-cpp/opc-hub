@@ -1,5 +1,5 @@
 #pragma once
-#include <jde/flows/Node.h>
+#include <jde/flows/Flow.h>
 
 //The stock nodes (docs/flows/spec.md *Nodes*), each Node-RED's where it has one.  A constructor reads the node's props to
 //their types and throws for one that is not, which is how a graph is checked:  by making its nodes.
@@ -23,4 +23,11 @@ namespace Jde::Opc::Flows{
 	α MakeTemplate( const jobject& props )ε->up<INode>;
 	α MakeDebug( const jobject& props )ε->up<INode>;
 	α MakeLink( const jobject& props )ε->up<INode>;//either end of a link:  what it receives it sends on.
+
+	//The Function node (src/js):  a flow's sandbox, the one runtime its Function nodes share, and a node in it.  Making the
+	//node compiles its body, its On Start and its On Stop, and throws for one that does not parse.
+	namespace Js{ struct Runtime; }
+	α MakeSandbox( const FunctionLimits& limits, string flow, jobject env )ε->sp<Js::Runtime>;
+	α Halt( Js::Runtime& sandbox )ι->void;//any thread:  what runs in it ends, as past its timeout, and but an On Stop nothing more starts.
+	α MakeFunction( const NodeDef& def, sp<Js::Runtime> sandbox )ε->up<INode>;
 }

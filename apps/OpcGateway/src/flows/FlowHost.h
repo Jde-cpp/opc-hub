@@ -172,6 +172,8 @@ namespace Jde::Opc::Gateway{
 		sp<Flows::GlobalStore> _global;
 		fs::path _path;//the trace's, a directory per flow by its slug.
 		uint _queue{ 1000 };
+		Flows::FunctionLimits _function;//`/gateway/flows/function`, each flow's sandbox.
+		jobject _env;//`/gateway/flows/env`.
 		bool _configured{}, _stopped{};
 		optional<uint> _observer;//the access listener's.
 		bool _recheck{}, _rechecking{};

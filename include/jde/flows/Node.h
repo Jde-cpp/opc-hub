@@ -45,6 +45,7 @@ namespace Jde::Opc::Flows{
 		α Done( MessageId id )ι->void;//a held message is finished.
 		α Fail( Message&& m, string error )ι->void;//the node's error with a held message:  the catch nodes take it.
 		α Drop( MessageId id )ι->void;//a held message the node gives up, counted and traced as a queue's are.
+		α Error( string error )ι->void;//the node's error with no message, as what escapes a timer's callback is:  logged, counted, traced and in its status.
 		α SetStatus( NodeStatus status )ι->void;
 		//`f` on the strand, once, on the flow's clock:  never after Stop.  0 once the flow has stopped.
 		α Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId;

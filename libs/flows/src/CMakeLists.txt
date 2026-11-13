@@ -4,9 +4,10 @@ message( Jde.Opc.FlowLib )
 project( Jde.Opc.FlowLib VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 find_package( open62541 REQUIRED )
+find_package( qjs CONFIG REQUIRED GLOBAL ) #quickjs-ng, the Function node's engine (src/js).  GLOBAL:  the library is static, so what links it links qjs, from its own directory.
 
-#Flows (docs/flows/spec.md *Placement*):  the graph, the engine on a strand per flow and the stock nodes, with no gateway
-#and no database.  Jde.Opc.GatewayLib is to host it.  Static, as the historian is, so no exports header.
+#Flows (docs/flows/spec.md *Placement*):  the graph, the engine on a strand per flow, the stock nodes and the Function
+#node's sandbox, with no gateway and no database.  Jde.Opc.GatewayLib is to host it.  Static, as the historian is, so no exports header.
 set( targetName Jde.Opc.FlowLib )
 add_library( ${targetName} )
 compileOptions( ${targetName} )
@@ -17,6 +18,6 @@ if( WIN32 )
 	target_compile_definitions( ${targetName} PRIVATE NOMINMAX )
 endif()
 
-#Jde.Opc.HistorianLib for IClock;  Jde.Opc for Value.
-target_link_libraries( ${targetName} Jde.Opc.HistorianLib Jde.Opc )
+#Jde.Opc.HistorianLib for IClock;  Jde.Opc for Value;  qjs for the Function node's sandbox.
+target_link_libraries( ${targetName} Jde.Opc.HistorianLib Jde.Opc qjs )
 target_precompile_headers( ${targetName} PRIVATE pc.h )

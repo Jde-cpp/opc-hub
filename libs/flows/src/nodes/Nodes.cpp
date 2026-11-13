@@ -35,7 +35,7 @@ namespace Jde::Opc{
 			THROW_IF( Scope(def, graph).empty(), "`scope` must name the nodes a complete node takes from." );
 			return nullptr;
 		case ENodeType::Comment: return nullptr;
-		case ENodeType::Function: THROW( "The function node is not built yet." );
+		case ENodeType::Function: return MakeFunction( def, MakeSandbox({}, {}, {}) );//a sandbox of its own, to check the code in.
 		default: THROW( "A '{}' is its host's to make.", ToString(def.Type) );
 		}
 	}
@@ -45,7 +45,12 @@ namespace Jde::Opc{
 			let rules = def.Props.if_contains( "rules" );
 			return rules && rules->is_array() ? rules->get_array().size() : 0;
 		}
-		case ENodeType::Function:
+		case ENodeType::Function:{
+			let outputs = def.Props.if_contains( "outputs" );
+			boost::system::error_code ec;
+			let count = outputs ? outputs->to_number<uint>( ec ) : 1;
+			return ec ? 1 : count;
+		}
 		case ENodeType::Debug:
 		case ENodeType::LinkOut:
 		case ENodeType::Comment:

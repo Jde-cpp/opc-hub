@@ -1233,4 +1233,44 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Counts(from, "to").Errors, 0u );
 		UnscopeFlow( idle );
 	}
+
+	//Flows 4 (#450).
+	//A Function node's code is compiled at the deploy, and its body runs in the sandbox the block's `function` gives its
+	//flow, with what `env` names.
+	TEST_F( FlowTests, AFunctionBodyRunsInItsFlowsSandbox ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		let flow = CreateFlow( "function" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let body = [&]( sv code ){ return Graph( {N("in", "inject", "{}", {{"f"}}), N("f", "function", serialize(jobject{{"code", code}}), {{"line"}}), Line("{{payload}}")} ); };
+		let refused = Refused( [&]{ Deploy( flow, body("const limit = 5;\nreturn msg +;") ); } );
+		EXPECT_EQ( refused.Status, EHttpStatus::BadRequest );
+		EXPECT_TRUE( refused.What.starts_with("Node 'f':  `code`:  SyntaxError") && Has(refused.What, "code:2") ) << refused.What;
+		EXPECT_TRUE( Versions(flow).empty() ) << "a refusal writes nothing";
+
+		Settings::Set( "/gateway/flows/env", jobject{{"SITE", "plant 3"}} );
+		Settings::Set( "/gateway/flows/function", jobject{{"memory", "1MiB"}, {"timeout", "PT0.05S"}} );
+		absl::Cleanup settings = []{
+			Settings::Set( "/gateway/flows/env", jobject{} );
+			Settings::Set( "/gateway/flows/function", jobject{} );
+			Flows().Stop();
+			Flows().Start();
+		};
+		Flows().Stop();
+		Flows().Start();
+		let deployed = Deploy( flow, body(
+			"if( msg.payload === 'spin' )\n\tfor(;;){}\n"
+			"if( msg.payload === 'fill' )\n\tfor( let last = null;; ) last = { next: last };\n"
+			"msg.payload = `${msg.payload} at ${env.get( 'SITE' )} in ${env.get( 'NR_FLOW_NAME' )}`;\nreturn msg;") );
+		ASSERT_EQ( deployed.at("running"), true ) << serialize( deployed );
+		Inject( flow, "in", jobject{{"payload", "rpm"}} );
+		ASSERT_TRUE( WaitUntil([&]{ return !Lines( capture, "function" ).empty(); }) ) << Flows().Status( flow, "f" ).Text;
+		EXPECT_EQ( Lines(capture, "function"), vector<string>{"rpm at plant 3 in function"} );
+		let status = [&]( sv text ){ return WaitUntil( [&]{ return Flows().Status( flow, "f" ).Text==text; } ); };//set once its drain is done, after the count.
+		Inject( flow, "in", jobject{{"payload", "spin"}} );
+		ASSERT_TRUE( Errors(flow, "f", 1) );
+		EXPECT_TRUE( status("1 uncaught, the last:  It ran past the timeout of 50 ms.") ) << "the block's timeout:  " << Flows().Status( flow, "f" ).Text;
+		Inject( flow, "in", jobject{{"payload", "fill"}} );
+		ASSERT_TRUE( Errors(flow, "f", 2) );
+		EXPECT_TRUE( status("2 uncaught, the last:  InternalError: out of memory") ) << "and its memory:  " << Flows().Status( flow, "f" ).Text;
+	}
 }

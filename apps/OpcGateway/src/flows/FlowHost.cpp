@@ -17,6 +17,8 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	constexpr uint DefaultQueue{ 1000 };
 	constexpr uint MaxKey{ 256 };//flow_contexts' node_id and name.
+	constexpr uint MinMemory{ 256*1024 };//a sandbox's:  the runtime and a node, with room for a body.
+	constexpr uint MinStack{ 32*1024 };
 	using Flows::ENodeType;
 
 	struct FlowHost::HaltAwait final : AnyVoidAwait{
@@ -72,6 +74,30 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω unstarted( sv why )ι->Flows::Fault{ return { {}, Ƒ("It could not be started:  {}", why) }; }
 
+	//`/gateway/flows/function`:  a key that does not read, or is under what a sandbox needs, keeps its default.
+	Ω functionLimits()ι->Flows::FunctionLimits{
+		Flows::FunctionLimits y;
+		let function = Settings::FindObject( "/gateway/flows/function" );
+		let size = [&]( sv key, uint& value, uint least ){
+			let v = function ? function->if_contains( key ) : nullptr;
+			if( !v )
+				return;
+			boost::system::error_code ec;
+			let read = v->is_string() ? Flows::ToBytes( v->get_string() ) : optional<uint>{ v->to_number<uint>(ec) };
+			if( read && !ec && *read>=least )
+				value = *read;
+			else
+				WARNT( ELogTags::Settings, "'/gateway/flows/function/{}' of {} is not a size of {} bytes or more, as \"16MiB\" is.  Using {}.", key, serialize(*v), least, value );
+		};
+		size( "memory", y.Memory, MinMemory );
+		size( "stack", y.Stack, MinStack );
+		if( let timeout = Settings::FindDuration("/gateway/flows/function/timeout"); timeout && *timeout>Duration::zero() )
+			y.Timeout = *timeout;
+		else if( timeout )
+			WARNT( ELogTags::Settings, "'/gateway/flows/function/timeout' is not above zero.  Using {} ms.", duration_cast<milliseconds>(y.Timeout).count() );
+		return y;
+	}
+
 	α FlowHost::Instance()ι->FlowHost&{
 		static FlowHost instance;
 		return instance;
@@ -83,6 +109,8 @@ namespace Jde::Opc::Gateway{
 			WARNT( ELogTags::Settings, "'/gateway/flows/queue' of 0 is not allowed:  a node's input holds a message at least.  Using {}.", DefaultQueue );
 			queue = DefaultQueue;
 		}
+		let function = functionLimits();
+		let env = Settings::FindObject( "/gateway/flows/env" );
 		bool observe;
 		{
 			lg _{ _mutex };
@@ -92,6 +120,8 @@ namespace Jde::Opc::Gateway{
 			_ids = ms<Flows::MessageIds>( _clock->Now() );
 			_path = Settings::FindPath( "/gateway/flows/path" ).value_or( Process::AppDataFolder()/"logs"/"flows"/"opc-gateway" );
 			_queue = queue;
+			_function = function;
+			_env = env ? *env : jobject{};
 			_global = nullptr;
 			_flows.clear();
 			observe = _configured && !_observer;
@@ -415,6 +445,8 @@ namespace Jde::Opc::Gateway{
 			config.Ids = _ids;
 			config.Global = _global;
 			config.Queue = _queue;
+			config.Function = _function;
+			config.Env = _env;
 		}
 		for( auto&& [key, text] : values ){
 			let& [node, name] = key;
