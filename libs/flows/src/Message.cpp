@@ -144,4 +144,20 @@ namespace Jde::Opc{
 		integers( y );
 		return y;
 	}
+	α Flows::ToWire( jvalue& v )ι->void{
+		constexpr int64_t safe{ (1ll<<53)-1 };
+		if( let o = v.if_object() ){
+			for( auto& member : *o )
+				ToWire( member.value() );
+		}
+		else if( let a = v.if_array() ){
+			for( auto& element : *a )
+				ToWire( element );
+		}
+		else if( v.is_uint64() && v.get_uint64()>(uint64_t)safe )
+			v = ToJson( (UA_UInt64)v.get_uint64() );
+		else if( v.is_int64() && (v.get_int64()>safe || v.get_int64()<-safe) )
+			v = ToJson( (UA_Int64)v.get_int64() );
+	}
+	α Flows::ToLong( MessageId id )ι->jobject{ return ToJson( (UA_Int64)id ); }//signed, as a message's `_id` reads back from its json:  an id is a start's seconds in the high half, under 2^63 for eras.
 }

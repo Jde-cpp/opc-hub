@@ -4,13 +4,16 @@
 
 namespace Jde::Opc::Flows{
 	constexpr std::array<sv,4> _levels{ "off", "counts", "errors", "hops" };
+	constexpr std::array<sv,6> _kinds{ "hop", "birth", "clone", "error", "status", "drop" };
 
 	struct HopTrace::Impl final{
 		//A message at the `Errors` level:  its finished records, held while it is queued or a node has it, Refs counting both,
 		//and through Parent for as long as a message made from it is.
 		struct Flight final{ vector<TraceRecord> Records; sp<Flight> Parent; uint Refs{}; };
 		//A hop or a birth between its start and its Complete.  Before:  a hop's message as received, to tell a change by.
-		struct Open final{ TraceRecord Record; optional<jobject> Before; };
+		//Clones:  the records of the clones its Send made, written after it, so a message's record precedes each clone's
+		//first, which is what lets a read walk a lineage down in one pass (FileTrace.h).
+		struct Open final{ TraceRecord Record; optional<jobject> Before; vector<TraceRecord> Clones; };
 		using Key = std::pair<const NodeDef*,MessageId>;
 
 		α Writes()Ι->bool{ return Level>=ETraceLevel::Errors; }
@@ -44,8 +47,11 @@ namespace Jde::Opc::Flows{
 			if( p==Opened.end() )
 				return 0;
 			let parent = p->second.Record.Parent;
+			auto clones = move( p->second.Clones );
 			Keep( trace, move(p->second.Record) );
 			Opened.erase( p );
+			for( auto& clone : clones )
+				Keep( trace, move(clone) );
 			return parent;
 		}
 
@@ -78,7 +84,10 @@ namespace Jde::Opc::Flows{
 			++_impl->FlightOf( clone ).Refs;
 		auto record = _impl->Record( node, clone.Id(), clone.Parent(), ERecordKind::Clone );
 		record.Ports.push_back( port );
-		_impl->Keep( *this, move(record) );
+		if( let p = _impl->Opened.find(Impl::Key{&node, clone.Parent()}); p!=_impl->Opened.end() )
+			p->second.Clones.push_back( move(record) );
+		else
+			_impl->Keep( *this, move(record) );
 	}
 	α HopTrace::Receive( const NodeDef& node, const Message& m )ι->void{
 		if( !_impl->Writes() )
@@ -137,11 +146,20 @@ namespace Jde::Opc::Flows{
 		_impl->Release( id );
 		Write( _impl->Record(node, id, parent, ERecordKind::Drop) );
 	}
+	α HopTrace::Minute( const MinuteCounts& minute )ι->void{
+		if( _impl->Level>=ETraceLevel::Counts )
+			WriteMinute( minute );
+	}
 }
 namespace Jde::Opc{
 	α Flows::ToString( ETraceLevel level )ι->sv{ return (uint8)level<_levels.size() ? _levels[(uint8)level] : sv{ "?" }; }
 	α Flows::ToTraceLevel( sv name )ι->optional<ETraceLevel>{
 		let p = find( _levels, name );
 		return p==_levels.end() ? nullopt : optional{ (ETraceLevel)(p-_levels.begin()) };
+	}
+	α Flows::ToString( ERecordKind kind )ι->sv{ return (uint8)kind<_kinds.size() ? _kinds[(uint8)kind] : sv{ "?" }; }
+	α Flows::ToRecordKind( sv name )ι->optional<ERecordKind>{
+		let p = find( _kinds, name );
+		return p==_kinds.end() ? nullopt : optional{ (ERecordKind)(p-_kinds.begin()) };
 	}
 }

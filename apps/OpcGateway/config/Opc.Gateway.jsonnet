@@ -99,7 +99,11 @@ function( sync=false )
 		//Flows (docs/flows/spec.md, *Placement*):  graphs of nodes the gateway runs, each deployed under its deployer's rights.  No
 		//`flows` block, no flows.  A `::` key is its default, shown hidden.
 		flows:{
-			path: logsDir + "/flows/opc-gateway", //the trace's, a directory per flow by its slug, beside hist's:  a flow's purge removes its own.  Set here, under this layout's logsDir:  the code's own fallback is <AppDataFolder>/logs/flows/opc-gateway.
+			path: logsDir + "/flows/opc-gateway", //the trace's, a directory per flow by its slug, beside hist's, its days in hist's timeZone:  a flow's purge removes its own.  Set here, under this layout's logsDir:  the code's own fallback is <AppDataFolder>/logs/flows/opc-gateway.
+			delay:: "PT1M", //how long a trace record waits in its flow's buffer before its flush, the historian's rule:  a crash loses at most this much.
+			trace:: "hops", //the level a flow takes when its row names none:  off, counts, errors or hops (spec *Trace*).
+			retention:: "P30D", maxSize:: "10GiB", //trace days older than this, or past this size over every flow, oldest first, go at the daily roll, on the host's clock at midnight.
+			valueLimit:: 4096, readLimit:: 10000, //bytes of a message's json a hop record keeps, past it the record is cut and says so;  and the most records one trace read returns, a page, the historian's rule, here since the hist block may be absent.  0 lifts it.
 			queue:: 1000, //messages a node's input holds;  past it the oldest is dropped and counted.
 			function:{ memory:: "16MiB", stack:: "256KiB", timeout:: "PT0.1S" }, //a flow's sandbox, which its Function nodes share:  the heap, the first node taking some 120 KiB of it and each further one some 70 KiB before its body runs;  the stack a body may take, kept under the executor thread's own, 4 MiB at most, 512 KiB on Windows, whose threads have 1 MB;  and how long one call may run, with the promise jobs it leaves.  A size is bytes, or KiB, MiB or GiB.
 			env:: {}, //what a body's `env.get( name )` answers, by name, for every flow, beside NR_NODE_ID, NR_NODE_NAME and NR_FLOW_NAME:  never the process's environment, which holds what a deployer is not to read.

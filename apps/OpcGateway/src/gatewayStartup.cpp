@@ -30,6 +30,7 @@
 #include "ql/ServerCnnctnMAwait.h"
 #include "drivers/DriverHost.h"
 #include "flows/FlowHost.h"
+#include "flows/FlowQLAwait.h"
 #include "hist/HistHost.h"
 #include "oee/OeeHost.h"
 #include "ql/HistGroupQLAwait.h"
@@ -64,7 +65,7 @@ namespace Jde::Opc{
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
 		//logSetting, the app client's;  sessions, the AppServer's ask for this process's web sessions, answered only over its socket (GatewayAppClient::ClientQuery).
 		flat_set<string> tables{ "logSetting", "sessions", string{SearchQLAwait::Command}, string{EndpointQLAwait::Command} };//endpoint:  the gateway's own (OpcSessionsQLAwait.h);  its sub-tables inherit.
-		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}, std::span<const sv>{OeeQLAwait::Tables}} ){//OEE's reads:  oeeStops is a table's name too, and as a system table its `stops` and `continuation` resolve no view.
+		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}, std::span<const sv>{OeeQLAwait::Tables}, std::span<const sv>{FlowQLAwait::Tables}} ){//OEE's reads:  oeeStops is a table's name too, and as a system table its `stops` and `continuation` resolve no view.  The flows' trace reads the same.
 			for( let table : family )
 				tables.emplace( table );
 		}

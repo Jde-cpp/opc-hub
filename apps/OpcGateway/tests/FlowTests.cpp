@@ -4,7 +4,10 @@
 //Flows 3 (#449):  the sources and sinks (*Sources*, *Sinks*) - `opc in`, `group in`, `timer`, `calendar`, `connection` and a
 //link from another flow, and `opc out`, `log` and `http request` - each run in a deployed flow, what it sent read from the
 //counts and from the lines a `log` node wrote.
+//Flows 5 (#451):  the trace's reads (*History*) - flowTrace over a deployed flow's day files, flowMessage's lineage of a
+//cloned message, and flowCounts against counts the test keeps.
 #include <fstream>
+#include <future>
 #include <thread>
 #include <absl/cleanup/cleanup.h>
 #include <boost/beast/core.hpp>
@@ -244,6 +247,34 @@ namespace Jde::Opc::Gateway::Tests{
 			EnforceResource( "gateway", "flows", true, criteria );//a row is created unenforced.
 		}
 		Ω UnscopeFlow( uint32 flow )ε->void{ EnforceResource( "gateway", "flows", false, Flows().Find(flow)->Row.Guid ); }
+
+		//The trace (#451):  the flow's buffer written now, and the reads.
+		Ω FlushTrace( sv slug )->void{
+			std::promise<void> done;
+			auto wait = done.get_future();
+			Flows().Store()->Flush( slug, [&]{ done.set_value(); } );
+			ASSERT_EQ( wait.wait_for(10s), std::future_status::ready ) << "the trace's flush did not finish";
+		}
+		static constexpr sv RecordColumns{ "time msgId parentId runId node kind ports json cut error status{ fill shape text } blocks" };
+		Ω Trace( jobject args )ε->jobject{
+			string arguments;
+			for( let& [name, _] : args )
+				arguments += Ƒ( "{}{}:${}", arguments.empty() ? "" : ", ", name, name );
+			return QL().QuerySync<jobject>( Ƒ("flowTrace( {} ){{ continuation records{{ {} }} }}", arguments, RecordColumns), move(args), User() );
+		}
+		//Each record as `kind node`, in order.
+		Ω Lines( const jobject& result )ε->vector<string>{
+			vector<string> y;
+			for( let& record : Json::AsArray(result, "records") )
+				y.push_back( Ƒ("{} {}", Json::AsSV(record.as_object(), "kind"), Json::AsSV(record.as_object(), "node")) );
+			return y;
+		}
+		//The flow's records since an hour ago, flushed first:  until there are `count` of them.
+		Ω Traced( uint32 flow, sv slug, uint count )->jobject{
+			jobject y;
+			WaitUntil( [&]{ FlushTrace( slug ); y = Trace( {{"flow", flow}, {"start", ToIsoString(Clock::now()-1h)}} ); return Json::AsArray(y, "records").size()>=count; } );
+			return y;
+		}
 	};
 
 	TEST_F( FlowTests, ADeployIsAVersion ){
@@ -1313,5 +1344,106 @@ namespace Jde::Opc::Gateway::Tests{
 		Inject( flow );
 		ASSERT_TRUE( Errors(flow, "f", 1) );
 		EXPECT_TRUE( WaitUntil([&]{ return Flows().Status( flow, "f" ).Text.find( "RangeError: Maximum call stack size exceeded" )!=string::npos; }) ) << Flows().Status( flow, "f" ).Text;
+	}
+	//Flows 5 (#451):  the trace's reads.
+	TEST_F( FlowTests, AFlowTraceReadsADeployedFlowsRecords ){
+		let flow = CreateFlow( "traced" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"mark"}}), N("mark", "change", R"({"rules":[{"t":"set","p":"seen","to":true}]})", {{"d"}}), N("d", "debug")})).at("running"), true );
+		Inject( flow, "in", jobject{{"payload", 7}} );
+		Inject( flow, "in", jobject{{"payload", 8}} );
+		let all = Traced( flow, "traced", 6 );
+		EXPECT_EQ( Lines(all), (vector<string>{"birth in", "hop mark", "hop d", "birth in", "hop mark", "hop d"}) );
+		EXPECT_TRUE( all.at("continuation").is_null() );
+		let& records = Json::AsArray( all, "records" );
+		let& birth = records[0].as_object();
+		let& hop = records[1].as_object();
+		EXPECT_EQ( Json::AsNumber<int64_t>(hop, "msgId/high"), Json::AsNumber<int64_t>(birth, "msgId/high") ) << "an id is the web's Long";
+		EXPECT_EQ( hop.at("msgId"), birth.at("msgId") );
+		EXPECT_TRUE( hop.at("parentId").is_null() );
+		EXPECT_EQ( Json::AsNumber<uint>(hop, "runId"), 0u );
+		EXPECT_EQ( Json::AsObject(hop, "json").at("seen"), true ) << "the message where the node changed it";
+		EXPECT_EQ( Json::AsObject(hop, "json").at("_id"), birth.at("msgId") ) << "the json's ids are Longs too";
+		EXPECT_EQ( Json::AsNumber<uint>(Json::AsObject(birth, "json"), "payload"), 7u );
+		EXPECT_EQ( hop.at("cut"), false );
+		EXPECT_TRUE( records[2].as_object().at("json").is_null() ) << "a hop that passed the message as it came";
+		EXPECT_EQ( Json::AsArray(hop, "ports").size(), 1u );
+
+		let since = ToIsoString( Clock::now()-1h );//the same arguments page to page:  the continuation carries their crc.
+		auto page = Trace( {{"flow", flow}, {"start", since}, {"limit", 4}} );
+		EXPECT_EQ( Lines(page).size(), 4u );
+		ASSERT_FALSE( page.at("continuation").is_null() ) << "a page short of the records has a continuation";
+		page = Trace( {{"flow", flow}, {"start", since}, {"limit", 4}, {"continuation", page.at("continuation")}} );
+		EXPECT_EQ( Lines(page), (vector<string>{"hop mark", "hop d"}) );
+		EXPECT_TRUE( page.at("continuation").is_null() );
+		EXPECT_EQ( Lines(Trace({{"flow", flow}, {"start", ToIsoString(Clock::now()-1h)}, {"kind", "birth"}})).size(), 2u ) << "narrowed to a kind";
+		EXPECT_EQ( Lines(Trace({{"flow", flow}, {"start", ToIsoString(Clock::now()-1h)}, {"msg", birth.at("msgId")}})).size(), 3u ) << "and to a message, by its Long";
+		EXPECT_EQ( Lines(Trace({{"flow", flow}, {"end", ToIsoString(Clock::now()+1h)}, {"node", "d"}})).size(), 2u ) << "newest first from an end, and narrowed to a node";
+		let refused = Refused( [&]{ Trace( {{"flow", flow}, {"start", since}, {"continuation", "bm90IG9uZQ"}} ); } );
+		EXPECT_EQ( refused.Status, EHttpStatus::BadRequest ) << refused.What;
+		EXPECT_EQ( Refused([&]{ Trace( {{"flow", flow}} ); }).Status, EHttpStatus::BadRequest ) << "a start or an end";
+		EXPECT_EQ( Refused([&]{ Trace( {{"flow", flow+1000}, {"start", ToIsoString(Clock::now()-1h)}} ); }).Status, EHttpStatus::NotFound );
+		auto enforced = EnforcedFlows();
+		ScopeFlow( flow, ERights::Update );//no Read.
+		EXPECT_EQ( Refused([&]{ Trace( {{"flow", flow}, {"start", ToIsoString(Clock::now()-1h)}} ); }).Status, EHttpStatus::Forbidden ) << "Read on the flow";
+		UnscopeFlow( flow );
+	}
+
+	TEST_F( FlowTests, AFlowMessageWalksTheLineageOfAClonedMessage ){
+		let flow = CreateFlow( "lineage" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"a", "b"}}), N("a", "debug"), N("b", "debug")})).at("running"), true );
+		Inject( flow, "in", jobject{{"payload", 1}} );
+		let all = Traced( flow, "lineage", 4 );
+		EXPECT_EQ( Lines(all), (vector<string>{"birth in", "clone in", "hop a", "hop b"}) );
+		let& records = Json::AsArray( all, "records" );
+		let clone = records[1].as_object().at( "msgId" );
+		EXPECT_EQ( records[1].as_object().at("parentId"), records[0].as_object().at("msgId") );
+		let lineage = [&]( jvalue id ){
+			return QL().QuerySync<jobject>( "flowMessage( flow:$flow, id:$id ){ more records{ node kind msgId parentId } }", {{"flow", flow}, {"id", move(id)}}, User() );
+		};
+		auto y = lineage( clone );
+		EXPECT_EQ( Lines(y), (vector<string>{"birth in", "clone in", "hop a", "hop b"}) ) << "the original's path and the clone's own, in time order";
+		EXPECT_EQ( y.at("more"), false );
+		let text = std::to_string( (uint64_t)Json::AsNumber<int64_t>(clone.as_object(), "high")<<32 | (uint64_t)Json::AsNumber<int64_t>(clone.as_object(), "low") );
+		EXPECT_EQ( Lines(lineage(jvalue{text})), Lines(y) ) << "an id as decimal text too";
+		EXPECT_TRUE( Lines(lineage(jvalue{"1"})).empty() );
+		EXPECT_EQ( Refused([&]{ lineage( jvalue{"x"} ); }).Status, EHttpStatus::BadRequest );
+	}
+
+	TEST_F( FlowTests, FlowCountsAgreeWithTheCountsTheTestKeeps ){
+		using namespace std::chrono;
+		const TimePoint start{ sys_days{2026y/March/9}+6h };
+		auto [clock, back] = OnClock( start );
+		let flow = CreateFlow( "counted" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"sw"}}), N("sw", "switch", R"({"rules":[{"t":"eq","v":"odd"},{"t":"else"}]})", {{"a"}, {"b"}}), N("a", "debug"), N("b", "debug")})).at("running"), true );
+		uint odd{}, even{};
+		for( uint i=0; i<5; ++i ){
+			Inject( flow, "in", jobject{{"payload", i%2 ? "odd" : "even"}} );
+			++( i%2 ? odd : even );
+		}
+		ASSERT_TRUE( Received(flow, "a", odd) && Received(flow, "b", even) );
+		clock->Advance( 61s );//06:01:  the minute ends, on the flow's clock.
+		jobject y;
+		let query = [&]{
+			FlushTrace( "counted" );
+			y = QL().QuerySync<jobject>( "flowCounts( flow:$flow, start:$start, end:$end, by:\"PT1M\" ){ counts{ time node received sent drops errors } }", {{"flow", flow}, {"start", ToIsoString(start)}, {"end", ToIsoString(start+1h)}}, User() );
+			return Json::AsArray( y, "counts" ).size();
+		};
+		ASSERT_TRUE( WaitUntil([&]{ return query()>=4; }) ) << serialize( y );
+		std::map<string,jobject> rows;
+		for( let& row : Json::AsArray(y, "counts") ){
+			rows[Json::AsString(row.as_object(), "node")] = row.as_object();
+			EXPECT_EQ( Json::AsSV(row.as_object(), "time"), ToIsoString(start) );
+		}
+		ASSERT_EQ( rows.size(), 4u ) << serialize( y );
+		EXPECT_EQ( Json::AsArray(rows["in"], "sent"), (jarray{odd+even}) );
+		EXPECT_EQ( Json::AsNumber<uint>(rows["sw"], "received"), odd+even );
+		EXPECT_EQ( Json::AsArray(rows["sw"], "sent"), (jarray{odd, even}) ) << "per output port";
+		EXPECT_EQ( Json::AsNumber<uint>(rows["a"], "received"), odd );
+		EXPECT_EQ( Json::AsNumber<uint>(rows["b"], "received"), even );
+		EXPECT_EQ( Json::AsNumber<uint>(rows["b"], "errors"), 0u );
+		EXPECT_EQ( Refused([&]{ QL().QuerySync<jobject>( "flowCounts( flow:$flow, start:$start, end:$end, by:\"PT10S\" ){ counts{ node } }", {{"flow", flow}, {"start", ToIsoString(start)}, {"end", ToIsoString(start+1h)}}, User() ); }).Status, EHttpStatus::BadRequest ) << "a bucket is a minute at least";
 	}
 }

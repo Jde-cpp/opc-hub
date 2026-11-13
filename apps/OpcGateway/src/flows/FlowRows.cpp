@@ -12,7 +12,10 @@ namespace Jde::Opc::Gateway{
 	constexpr uint _systemIdentity{ std::numeric_limits<uint32_t>::max() };//what UserPK::System, wider on Linux, is stored as.
 
 	Ω flowRow( DB::Row&& r )->FlowRow{
-		return { .Id=r.Get<uint32>(0), .Guid=Jde::ToString(r.GetGuid(1)), .Enabled=r.GetBit(2), .Version=r.GetOpt<uint32>(3), .Name=r.TakeString(4), .Slug=r.TakeString(5), .Deleted=!r.IsNull(6) };
+		FlowRow y{ .Id=r.Get<uint32>(0), .Guid=Jde::ToString(r.GetGuid(1)), .Enabled=r.GetBit(2), .Version=r.GetOpt<uint32>(3), .Name=r.TakeString(4), .Slug=r.TakeString(5), .Deleted=!r.IsNull(6) };
+		if( !r.IsNull(7) )
+			y.Trace = Flows::ToTraceLevel( r.TakeString(7) );//a level that is not one, which the create and update refuse, takes the block's.
+		return y;
 	}
 	Ω versionRow( DB::Row&& r )->FlowVersionRow{
 		let identity = r.Get<uint>( 3 );
@@ -36,7 +39,7 @@ namespace Jde::Opc{
 			where.Add( view->GetColumnPtr("deleted"), nullptr );
 		if( filter.Key )
 			where.Add( view->GetColumnPtr(filter.Key->IsPK() ? "flow_id" : "slug"), filter.Key->IsPK() ? DB::Value{filter.Key->PK()} : DB::Value{filter.Key->NK()} );
-		return { select(FlowTable::Flows, {"flow_id", "guid", "enabled", "version", "name", "slug", "deleted"}, move(where), sl), flowRow, sl };
+		return { select(FlowTable::Flows, {"flow_id", "guid", "enabled", "version", "name", "slug", "deleted", "trace"}, move(where), sl), flowRow, sl };
 	}
 	α Gateway::SelectFlowVersion( FlowPK flow, uint32 version, SL sl )ι->HistRowsAwait<FlowVersionRow>{
 		let view = GetViewPtr( FlowTable::Versions );

@@ -1,0 +1,59 @@
+syntax = "proto3";
+package Jde.Opc.Flows.Proto;
+import "Jde.IO.Records.proto";
+
+//A flow's trace file is the framework record layer's (include/jde/fwk/io/records), as the historian's (docs/flows/spec.md
+//*Trace*):  each record its oneof member's field, tag, length and body, so the file parses as one FlowRecord with every
+//field repeated.  Times are ns since the epoch, the flow's clock.  Only the FileStart's is absolute:  every other record's
+//time is a delta from the previous record's, and the Checkpoint has none, so the chain passes over it.  FlowRecord never
+//gains a field outside the oneof:  a build before it would read that as damage.
+message FlowRecord{
+	oneof record{
+		Jde.IO.Proto.FileStart file_start=1;//first in every file:  the start of its day in the host's zone, which the first record's delta counts from.
+		Hop hop=2;
+		Counts counts=3;
+		Jde.IO.Proto.Checkpoint checkpoint=4;//the end of every append.
+	}
+}
+
+//What a Hop records:  one node's record of one message, or a status change with none.
+enum Kind{
+	KIND_HOP=0;//the node received the message, sent it on ports and finished it.
+	KIND_BIRTH=1;//the node made the message:  a source's, a split's part, what a catch takes.
+	KIND_CLONE=2;//the clone the port's second wire and each after it took, parent_id the message it was cloned from.
+	KIND_ERROR=3;//the node's error with the message, which ends at it.
+	KIND_STATUS=4;//the node's status changed;  msg_id 0.
+	KIND_DROP=5;//off the node's queue, or held by it when the flow stopped.
+}
+
+message Status{
+	string fill=1;
+	string shape=2;
+	bytes text=3;//a Function body's, so bytes:  protobuf writes a string that isn't UTF-8 and won't read it back.
+}
+
+//One record per node per message, folded from the engine's hooks (spec *Trace*).  Primary time `time`.
+message Hop{
+	sint64 time=1;//the flow's clock:  a hop's, when the node received the message.
+	uint64 msg_id=2;
+	uint64 parent_id=3;//the message this one was cloned or made from;  0 at a source.
+	uint32 run_id=4;//0 live, and a replay's otherwise.
+	string node_id=5;
+	Kind kind=6;
+	repeated uint32 ports=7;//the output ports the message was sent on:  a clone's, the one it left by.
+	optional bytes json=8;//the message's json:  a birth's, and a hop's as sent where the node changed it.  Cut at valueLimit, with cut set, and bytes as Status.text is.
+	bool cut=9;
+	bytes error=10;
+	Status status=11;
+	repeated string blocks=12;//the ids of the blocks a block-built Function body passed with the message, in order;  none for a typed body.
+}
+
+//One node's figures of one minute, the engine's, at every level but `off`.  Primary time `time`.
+message Counts{
+	sint64 time=1;//the minute's start, the flow's clock.
+	string node_id=2;
+	uint32 received=3;
+	repeated uint32 sent=4;//per output port.
+	uint32 drops=5;
+	uint32 errors=6;
+}

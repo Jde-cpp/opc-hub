@@ -158,29 +158,32 @@ namespace Jde::Opc::Flows::Tests{
 		function<void()> OnSource;
 	};
 
+	//Each record as `kind node [ports]`, with `*` where it carries json:  `birth in [0]*`, `hop sw [1]`, `error w`.
+	Ξ Lines( const vector<TraceRecord>& records )ι->vector<string>{
+		vector<string> y;
+		for( let& record : records ){
+			auto line = Ƒ( "{} {}", ToString(record.Kind), record.Node );
+			if( record.Kind<=ERecordKind::Clone ){
+				string ports;
+				for( let port : record.Ports )
+					ports += Ƒ( "{}{}", ports.empty() ? "" : ",", port );
+				line += Ƒ( " [{}]{}", ports, record.Json ? "*" : "" );
+			}
+			y.push_back( move(line) );
+		}
+		return y;
+	}
 	struct MemoryTrace final : HopTrace{
 		using HopTrace::HopTrace;
 		α Write( TraceRecord&& record )ι->void override{ lg _{ _mutex }; _records.push_back( move(record) ); }
+		α WriteMinute( const MinuteCounts& minute )ι->void override{ lg _{ _mutex }; _minutes.push_back( minute ); }
 		α Records()Ι->vector<TraceRecord>{ lg _{ _mutex }; return _records; }
-		//Each record as `kind node [ports]`, with `*` where it carries json:  `birth in [0]*`, `hop sw [1]`, `error w`.
-		α Lines()Ι->vector<string>{
-			constexpr std::array<sv,6> kinds{ "hop", "birth", "clone", "error", "status", "drop" };
-			vector<string> y;
-			for( let& record : Records() ){
-				auto line = Ƒ( "{} {}", kinds[(uint8)record.Kind], record.Node );
-				if( record.Kind<=ERecordKind::Clone ){
-					string ports;
-					for( let port : record.Ports )
-						ports += Ƒ( "{}{}", ports.empty() ? "" : ",", port );
-					line += Ƒ( " [{}]{}", ports, record.Json ? "*" : "" );
-				}
-				y.push_back( move(line) );
-			}
-			return y;
-		}
+		α Minutes()Ι->vector<MinuteCounts>{ lg _{ _mutex }; return _minutes; }
+		α Lines()Ι->vector<string>{ return Tests::Lines( Records() ); }
 	private:
 		mutable mutex _mutex;
 		vector<TraceRecord> _records;
+		vector<MinuteCounts> _minutes;
 	};
 
 	struct FlowTest : ::testing::Test{
@@ -197,7 +200,7 @@ namespace Jde::Opc::Flows::Tests{
 			}
 			Trace = ms<MemoryTrace>( level, Time );
 			Deployed.emplace( move(*read), Flow::Config{
-				.Name="test", .Clock=Time, .Host=Host, .Trace=Trace, .Ids=ms<MessageIds>(At(0)), .Global=Global, .Queue=queue,
+				.Name="test", .Clock=Time, .Host=Host, .Trace=Tracer ? Tracer : sp<ITrace>{Trace}, .Ids=ms<MessageIds>(At(0)), .Global=Global, .Queue=queue,
 				.Function=Limits, .Env=Env, .Context=move(Context), .NodeContext=move(NodeContext),
 				.ContextChanged=[this]( sv node, sv key, const jvalue* value ){
 					lg _{ ChangesMutex };
@@ -259,6 +262,7 @@ namespace Jde::Opc::Flows::Tests{
 		sp<TestHost> Host{ ms<TestHost>() };
 		sp<GlobalStore> Global{ ms<GlobalStore>() };
 		sp<MemoryTrace> Trace;
+		sp<ITrace> Tracer;//in Trace's place when set:  the file trace's cases.
 		FunctionLimits Limits;//the sandbox a Run's Function nodes take.
 		jobject Env;//what their `env.get` answers.
 		jobject Context;//the flow scope's values a Run loads.

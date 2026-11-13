@@ -191,10 +191,15 @@ namespace Jde::Opc::Flows{
 		}
 		α TakeMinutes()ι->vector<MinuteCounts>{
 			let now = floor<minutes>( _clock->Now() );
-			lg _{ _stateMutex };
-			Roll( now );
-			vector<MinuteCounts> y{ std::make_move_iterator(_minutes.begin()), std::make_move_iterator(_minutes.end()) };
-			_minutes.clear();
+			optional<MinuteCounts> ended;
+			vector<MinuteCounts> y;
+			{
+				lg _{ _stateMutex };
+				ended = Roll( now );
+				y.assign( std::make_move_iterator(_minutes.begin()), std::make_move_iterator(_minutes.end()) );
+				_minutes.clear();
+			}
+			Traced( ended );
 			return y;
 		}
 
@@ -512,6 +517,14 @@ namespace Jde::Opc::Flows{
 				Dropped( *_slots[index], id );
 			_stale.clear();
 			_idle.clear();
+			optional<MinuteCounts> ended;//the minute under way, the run's part of it.
+			{
+				lg _{ _stateMutex };
+				if( auto timer = std::exchange(_minuteTimer, 0); timer )
+					_clock->Cancel( timer );
+				ended = Roll( floor<minutes>(_tick)+1min );
+			}
+			Traced( ended );
 		}
 
 		α Check()Ι->void{
@@ -693,27 +706,68 @@ namespace Jde::Opc::Flows{
 			for( auto& [wire, clone] : clones )
 				Enqueue( wire, move(clone), false );
 		}
-		//A figure, in the node's total and in its minute, which ends when the flow's clock passes it.
+		//A figure, in the node's total and in its minute, which ends when the flow's clock passes it:  at the first figure
+		//of a minute a timer is set for its end, so the trace has the minute as it ends and not at the next figure.
 		α Count( Slot& slot, auto&& add )ι->void{
-			lg _{ _stateMutex };
-			Roll( floor<minutes>(_tick) );
-			add( slot.Total );
-			add( slot.Minute );
+			optional<MinuteCounts> ended;
+			optional<TimePoint> arm;
+			{
+				lg _{ _stateMutex };
+				ended = Roll( floor<minutes>(_tick) );
+				add( slot.Total );
+				add( slot.Minute );
+				if( !std::exchange(_minuteArmed, true) )
+					arm = _minute+1min;
+			}
+			Traced( ended );
+			if( arm )
+				ArmMinute( *arm );
 		}
-		α Roll( TimePoint minute )ι->void{
+		α ArmMinute( TimePoint due )ι->void{
+			let timer = _clock->Schedule( due, [weak=weak_from_this()]{
+				if( auto self = weak.lock() )
+					boost::asio::dispatch( self->_strand, [self]{ self->Enter( [&]{ self->EndMinute(); } ); } );
+			} );
+			lg _{ _stateMutex };
+			_minuteTimer = timer;
+		}
+		α EndMinute()ι->void{
+			optional<MinuteCounts> ended;
+			optional<TimePoint> arm;
+			{
+				lg _{ _stateMutex };
+				_minuteTimer = 0;
+				_minuteArmed = false;
+				ended = Roll( floor<minutes>(_tick) );
+				if( std::ranges::any_of(_slots, []( let& slot ){ return slot->Minute.Any(); }) ){
+					_minuteArmed = true;
+					arm = _minute+1min;
+				}
+			}
+			Traced( ended );
+			if( arm )
+				ArmMinute( *arm );
+		}
+		//A minute that ended, under _stateMutex:  into what TakeMinutes answers, and back for the trace.
+		α Roll( TimePoint minute )ι->optional<MinuteCounts>{
 			if( minute<=_minute )
-				return;
+				return nullopt;
 			MinuteCounts ended{ _minute, {} };
 			for( auto& slot : _slots ){
 				if( slot->Minute.Any() )
 					ended.Nodes.push_back( std::exchange(slot->Minute, NodeCounts{slot->Def.Id}) );
 			}
-			if( !ended.Nodes.empty() ){
-				_minutes.push_back( move(ended) );
-				if( _minutes.size()>_minutesKept )
-					_minutes.pop_front();
-			}
 			_minute = minute;
+			if( ended.Nodes.empty() )
+				return nullopt;
+			_minutes.push_back( ended );
+			if( _minutes.size()>_minutesKept )
+				_minutes.pop_front();
+			return ended;
+		}
+		α Traced( const optional<MinuteCounts>& ended )ι->void{
+			if( ended && _trace )
+				_trace->Minute( *ended );
 		}
 
 		const Graph _graph;
@@ -747,6 +801,8 @@ namespace Jde::Opc::Flows{
 		optional<Flows::Fault> _fault;
 		TimePoint _minute;
 		std::deque<MinuteCounts> _minutes;
+		bool _minuteArmed{};//a timer for the end of the minute with a figure is set, or being set.
+		Hist::IClock::TimerId _minuteTimer{};
 	};
 
 	Flow::Flow( Graph graph, Config config )ι:
