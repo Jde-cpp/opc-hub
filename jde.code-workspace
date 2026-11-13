@@ -1,6 +1,6 @@
 {
 	"settings": {
-		"window.title": "Jde",
+		"window.title": "${activeRepositoryBranchName}",
 		"releaseRoot": "${env:JDE_BASH}/Release",
 		"sourceDir": "${workspaceFolder:src}",
 		"workspace": "${config:sourceDir}",
