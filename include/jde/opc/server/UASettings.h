@@ -54,6 +54,9 @@ namespace Jde::Opc::Server{
 			optional<Duration> SessionTimeout;//maxSessionTimeout.
 			optional<Duration> MinSamplingInterval;//the floor of samplingIntervalLimits.
 			optional<uint> MaxAsyncOperations;//maxAsyncOperationQueueSize.
+			//The deepest queue a monitored item is given, the ceiling of queueSizeLimits:  raised to this where it is past
+			//open62541's own, and never lowered.  The host's to set, for a burst it writes inside one publishing interval;  no key reads it.
+			optional<uint> MaxQueueSize;
 		};
 		Limits Limit;
 		α ReadLimits( sv root )ε->void;//Limit from `root`/limits - maxSessions, maxSecureChannels, maxMonitoredItems, sessionTimeout, minSamplingInterval, maxAsyncOperations.

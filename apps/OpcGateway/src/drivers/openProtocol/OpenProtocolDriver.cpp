@@ -26,8 +26,8 @@ namespace Jde::Opc::Gateway{
 		WARNT( ELogTags::Settings, "'{}' of {} is not allowed:  it must be positive.  Using {}.", path, Chrono::ToString(value), Chrono::ToString(dflt) );
 		return dflt;
 	}
-	//The block as a session's settings, with the row's ceilings.  callTimeout and maxBackfill are the commands' and the
-	//recovery's (plan Phases 8 and 6).
+	//The block as a session's settings, with the row's ceilings.  callTimeout is the commands' (plan Phase 8), and maxBackfill
+	//the driver's own.
 	Ω sessionSettings( const OpenProtocolRow& row )ι->Session::Settings{
 		return {
 			.KeepAlive = blockDuration( "keepAlive", 10s ),
@@ -54,11 +54,26 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
+	//How long the posts held the server's thread, counted there alone and said when the last has run, the driver gone:  a fill is
+	//a post a result, a burst of them (plan *Risks*).
+	struct OpenProtocolDriver::Posts final{
+		~Posts(){
+			if( Count )
+				INFO( "({}) {} posts held its server's thread {} µs in all, the longest {} µs.", Slug, Count, duration_cast<microseconds>(Total).count(), duration_cast<microseconds>(Longest).count() );
+		}
+		const ServerCnnctnNK Slug;
+		uint Count{};
+		steady_clock::duration Total{}, Longest{};
+	};
+
 	OpenProtocolDriver::OpenProtocolDriver( const ServerCnnctn& row, SL sl )ε:
 		_slug{ row.Slug },
 		_url{ row.Url },
 		_maxSkew{ blockDuration("maxSkew", 5min) },
-		_maxAsyncOperations{ Settings::FindNumber<uint>(Ƒ("{}/maxAsyncOperations", _block)) }
+		_maxAsyncOperations{ Settings::FindNumber<uint>(Ƒ("{}/maxAsyncOperations", _block)) },
+		_maxBackfill{ Settings::FindNumber<uint>(Ƒ("{}/maxBackfill", _block)).value_or(2000) },
+		_posts{ ms<Posts>(_slug) },
+		_lacked( TighteningResult::Variables().size() )
 	{
 		const OpenProtocolRow controller{ row, sl };
 		_zone = controller.TimeZone ? controller.TimeZone : std::chrono::current_zone();
@@ -73,6 +88,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α OpenProtocolDriver::Configure( Opc::Server::UASettings& settings )ε->void{
 		settings.Limit.MaxAsyncOperations = _maxAsyncOperations;
+		settings.Limit.MaxQueueSize = 2*_maxBackfill;//the held count is not known here:  as many as the walk may find (spec *Backfill*).
 	}
 
 	//Each node's id is the string of its path, `_Op.Connected` (spec *Address space*).
@@ -153,9 +169,14 @@ namespace Jde::Opc::Gateway{
 	α OpenProtocolDriver::Post( Writes&& writes )ι->void{
 		if( writes.empty() )
 			return;
-		Opc::Server::UAServer::Post( *_server, [ns=_ns, slug=_slug, writes=move(writes)]( UA_Server& server ){
+		Opc::Server::UAServer::Post( *_server, [ns=_ns, posts=_posts, writes=move(writes)]( UA_Server& server ){
+			let start = steady_clock::now();
 			for( let& [path, value] : writes )
-				write( server, ns, slug, path, value );
+				write( server, ns, posts->Slug, path, value );
+			let held = steady_clock::now()-start;
+			++posts->Count;
+			posts->Total += held;
+			posts->Longest = std::max( posts->Longest, held );
 		} );
 	}
 	α OpenProtocolDriver::Write( sv name, const void* scalar, const UA_DataType& type, UA_StatusCode status )ι->void{
@@ -208,12 +229,17 @@ namespace Jde::Opc::Gateway{
 		if( _wasConnected )
 			++_reconnects;
 		_wasConnected = true;
+		_stationId = connection.Identity.StationId;
 		INFO( "({}) connected to '{}':  MID 0002 at revision {}, acknowledged at {} level.", _slug, _url, connection.Revision, connection.LinkLevel ? "link" : "application" );
 		const UA_Boolean linkLevel{ connection.LinkLevel };
 		Write( "LinkLevel", &linkLevel, UA_TYPES[UA_TYPES_BOOLEAN] );
 		Write( "Reconnects", &_reconnects, UA_TYPES[UA_TYPES_UINT32] );
 		WriteRevisions();
 		WriteConnected( true );
+		//A result written before the link went:  what its loss cost is fetched, and what the subscription pushes meanwhile is held
+		//(spec *Backfill*).  A row's first results have nothing before them to be fetched from.
+		if( _lastId )
+			_recovery.emplace();
 		_session->Request( Mid0060{}, [this]( Session::Reply&& reply ){ OnSubscribed( move(reply) ); } );//first:  a result made before it is accepted is never pushed.
 		_session->Request( Mid0080{}, [this]( Session::Reply&& reply ){ OnTime( move(reply) ); } );
 	}
@@ -224,25 +250,37 @@ namespace Jde::Opc::Gateway{
 			WriteConnected( false );
 		}
 		WriteText( "LastError", why.What );
+		//What a recovery had found and held is the controller's still:  the next connection's walk finds it again, from the latest.
+		if( let dropped = std::exchange(_recovery, nullopt); dropped && dropped->Found.size()+dropped->Held.size() )
+			DBG( "({}) the link went during a recovery:  {} result(s) found and {} held are left to the next.", _slug, dropped->Found.size(), dropped->Held.size() );
 	}
 	//The controller's clock is the plant's to set:  read, shown and warned of, never corrected (spec *Open questions* #5).  Its
 	//time is whole seconds local to the row's zone, read as a result's is (TighteningResult::ToSys).  A reply the link's loss
-	//answered is OnLost's.
+	//answered is OnLost's.  A recovery's walk starts here, once the subscription has had this long to push:  from the oldest
+	//result held, the PF6000 appendix's start for a known id (§2.4), or from the latest.
 	α OpenProtocolDriver::OnTime( Session::Reply&& reply )ι->void{
+		if( !reply && reply.error().Kind!=EFailure::Refused )
+			return;
 		let time = reply ? get_if<Mid0081>( &reply->Data ) : nullptr;
+		let now = Clock::now();
+		TimePoint controller{ now };
 		if( time && time->Time ){
-			let now = Clock::now();
-			let controller = TighteningResult::ToSys( *time->Time, *_zone, now );
+			controller = TighteningResult::ToSys( *time->Time, *_zone, now );
 			const UA_Double skew{ std::chrono::duration<double>(controller-now).count() };
 			Write( "Skew", &skew, UA_TYPES[UA_TYPES_DOUBLE] );
 			if( std::chrono::duration<double>{std::abs(skew)}>_maxSkew )
 				WARN( "({}) the controller's clock is {:.0f} s {} the gateway's, past {}/maxSkew, {}:  each result carries the controller's time.", _slug, std::abs(skew), skew>0 ? "ahead of" : "behind", _block, Chrono::ToString(_maxSkew) );
 			WriteRevisions();
 		}
-		else if( reply || reply.error().Kind==EFailure::Refused ){
+		else{
 			if( !reply )
 				WriteText( "LastError", reply.error().What );
 			WriteNoSkew( UA_STATUSCODE_BADNOTSUPPORTED );
+		}
+		if( _recovery ){
+			_recovery->By = controller+1s;//its clock's second has this long to run:  no result it holds is later.
+			let& held = _recovery->Held;
+			Walk( held.empty() ? 0 : held.front().Result.TighteningId.value_or(0) );
 		}
 	}
 
@@ -269,18 +307,23 @@ namespace Jde::Opc::Gateway{
 		WriteRevisions();
 	}
 	α OpenProtocolDriver::SetRevision( uint16_t revision, UA_DateTime at, Writes& writes )ι->void{
-		for( let& variable : TighteningResult::Variables() ){
-			if( variable.Since>revision && (!_resultRevision || variable.Since<=_resultRevision) )
-				writes.emplace_back( Ƒ("Result.{}", variable.Name), stamped(TighteningResult::Unset(*variable.Type, UA_STATUSCODE_BADNOTSUPPORTED), at) );
+		let& variables = TighteningResult::Variables();
+		for( uint i=0; i<variables.size(); ++i ){
+			if( variables[i].Since>revision && !_lacked[i] ){
+				writes.emplace_back( Ƒ("Result.{}", variables[i].Name), stamped(TighteningResult::Unset(*variables[i].Type, UA_STATUSCODE_BADNOTSUPPORTED), at) );
+				_lacked[i] = true;
+			}
 		}
 		_resultRevision = revision;
 	}
-	//MID 0061, which the session has acknowledged (spec *Results*).  Its time is whole seconds local to the row's zone, so two
-	//rundowns in a second, or a clock set back, would share a time or reverse:  a result not after the last takes the last's time
-	//and a millisecond, with a warning where the clock went back past maxSkew.
-	α OpenProtocolDriver::OnResult( uint16_t revision, const Mid0061& result )ι->void{
-		let received = Clock::now();
-		TimePoint at{ result.Time ? TighteningResult::ToSys(*result.Time, *_zone, received) : received };
+	//MID 0061, which the session has acknowledged (spec *Results*), or MID 0065, which a recovery found.  Its time is whole
+	//seconds local to the row's zone, so two rundowns in a second, or a clock set back, would share a time or reverse:  a result
+	//not after the last takes the last's time and a millisecond, with a warning where the clock went back past maxSkew.  One
+	//with no time takes `seen`.  A variable its message does not carry turns Bad_NotSupported at its time, where it is not
+	//so already.
+	template<class T> α OpenProtocolDriver::Record( const T& result, uint16_t revision, TimePoint seen )ι->void{
+		constexpr bool stored{ std::same_as<T,Mid0065> };
+		TimePoint at{ result.Time ? TighteningResult::ToSys(*result.Time, *_zone, seen, stored) : seen };
 		if( _lastResult && at<=*_lastResult ){
 			if( *_lastResult-at>_maxSkew && !std::exchange(_clockBack, true) )
 				WARN( "({}) result {} is timed {}, {} before the last result's {}:  the controller's clock went back, so each result takes the last's time and a millisecond until the clock passes it.", _slug, result.TighteningId.value_or(0), ToIsoString(at), Chrono::ToString(*_lastResult-at), ToIsoString(*_lastResult) );
@@ -290,13 +333,22 @@ namespace Jde::Opc::Gateway{
 			_clockBack = false;
 		_lastResult = at;
 		let source = UADateTime{ at }.UA();
+		if( !stored ){
+			_resultRevision = revision;
+			if( revision!=_shownRevision )
+				WriteRevisions();
+		}
 		Writes writes;
-		if( revision!=_resultRevision )
-			SetRevision( revision, source, writes );
-		if( revision!=_shownRevision )
-			WriteRevisions();
-		for( auto& [name, value] : TighteningResult::Values(result, revision, *_zone, received) )
-			writes.emplace_back( Ƒ("Result.{}", name), stamped(move(value), source) );
+		auto values = TighteningResult::Values( result, revision, *_zone, seen );
+		let& variables = TighteningResult::Variables();
+		for( uint i=0; i<variables.size(); ++i ){
+			let lacked = !values[i];
+			if( !lacked )
+				writes.emplace_back( Ƒ("Result.{}", variables[i].Name), stamped(move(*values[i]), source) );
+			else if( !_lacked[i] )
+				writes.emplace_back( Ƒ("Result.{}", variables[i].Name), stamped(TighteningResult::Unset(*variables[i].Type, UA_STATUSCODE_BADNOTSUPPORTED), source) );
+			_lacked[i] = lacked;
+		}
 		let count = [&]( sv name, UA_UInt64& counter ){
 			++counter;
 			writes.emplace_back( Ƒ("Counters.{}", name), stamped(opValue(&counter, UA_TYPES[UA_TYPES_UINT64]), source) );
@@ -308,7 +360,92 @@ namespace Jde::Opc::Gateway{
 		}
 		++_results;
 		writes.emplace_back( "_Op.Results", opValue(&_results, UA_TYPES[UA_TYPES_UINT64]) );
-		TRACE( "({}) result {} at revision {}, sourced {}.", _slug, result.TighteningId.value_or(0), revision, ToIsoString(at) );
+		if( result.TighteningId.value_or(0) )//0 is no id, as MID 0064 has it:  a walk could never reach it.
+			_lastId = result.TighteningId;
+		TRACE( "({}) result {} at revision {} of MID {:04}, sourced {}.", _slug, result.TighteningId.value_or(0), revision, T::Id, ToIsoString(at) );
 		Post( move(writes) );
+	}
+	α OpenProtocolDriver::OnResult( uint16_t revision, const Mid0061& result )ι->void{
+		if( _recovery )
+			_recovery->Held.push_back( {result, revision, Clock::now()} );
+		else
+			Record( result, revision, Clock::now() );
+	}
+
+	//MID 0064 for the result before `below`, each reply asking for the next:  one request out at a time.  A controller answers
+	//an id no result has with the result before it, which is how the walk passes the ids of its other stations and the gaps
+	//between them.  0 asks for the latest (Table 121).  Nothing is asked where the id before `below` is the last written:  the
+	//walk is whole, though its last request has gone.
+	α OpenProtocolDriver::Walk( uint32_t below )ι->void{
+		if( below==1 )
+			EndWalk( "The controller's results begin at id 1." );
+		else if( below && below-1==*_lastId )
+			EndWalk();
+		else if( _recovery->Requests>=_maxBackfill )
+			EndWalk( Ƒ("{}/maxBackfill, {} request(s), was reached.", _block, _maxBackfill) );
+		else{
+			++_recovery->Requests;
+			_session->Request( Mid0064{.TighteningId=below ? below-1 : 0}, [this]( Session::Reply&& reply ){ OnOld( move(reply) ); } );
+		}
+	}
+	//A link that went first is OnLost's.
+	α OpenProtocolDriver::OnOld( Session::Reply&& reply )ι->void{
+		if( !reply ){
+			if( let& why = reply.error(); why.Kind==EFailure::Refused || why.Kind==EFailure::Value ){
+				WriteText( "LastError", why.What );
+				EndWalk( why.What );
+			}
+			return;
+		}
+		let found = get_if<Mid0065>( &reply->Data );
+		let id = found ? found->TighteningId.value_or( 0 ) : 0;
+		if( !id ){
+			EndWalk( "A result came with no tightening id." );
+			return;
+		}
+		auto& walk = *_recovery;
+		walk.Oldest = id;
+		let time = found->Time ? optional<TimePoint>{ TighteningResult::ToSys(*found->Time, *_zone, walk.By, true) } : nullopt;
+		//The last result written, or one made before it, whichever station's:  the ids run up, a controller's stations sharing
+		//them, so a higher one is later whatever its time, a second rundown in the last's second or a clock set back.  A lower
+		//one timed after the last write is of a run of ids that began again.
+		if( id==*_lastId || (id<*_lastId && (!time || *time<=*_lastResult)) ){
+			EndWalk();
+			return;
+		}
+		if( !found->StationId || !_stationId || *found->StationId==*_stationId )
+			walk.Found.push_back( {move(*found), reply->Head.Revision, walk.By} );
+		if( time )
+			walk.By = *time;
+		Walk( id );
+	}
+	//Oldest first, then what was pushed meanwhile, each id once:  a result that came both ways is written as it was pushed,
+	//which carries more of it.
+	α OpenProtocolDriver::EndWalk( sv shortBy )ι->void{
+		let walk = move( *_recovery );
+		_recovery.reset();
+		if( shortBy.size() ){
+			++_lost;
+			Write( "LostResults", &_lost, UA_TYPES[UA_TYPES_UINT64] );
+			let reached = walk.Oldest ? Ƒ( "the walk reached result {}, and what was made between the two is lost", *walk.Oldest ) : "the walk reached no result, and what was made since is lost"s;
+			WARN( "({}) the recovery of results ended short of result {}, the last written:  {}.  _Op.LostResults is {}.  {}", _slug, *_lastId, reached, _lost, shortBy );
+		}
+		WriteRevisions();//MID 0064's.
+		flat_set<uint32_t> written;
+		for( let& pushed : walk.Held ){
+			if( pushed.Result.TighteningId )
+				written.emplace( *pushed.Result.TighteningId );
+		}
+		uint filled{};
+		for( let& found : walk.Found | std::views::reverse ){
+			if( !written.emplace(*found.Result.TighteningId).second )
+				continue;
+			Record( found.Result, found.Revision, found.Seen );
+			++filled;
+		}
+		for( let& pushed : walk.Held )
+			Record( pushed.Result, pushed.Revision, pushed.Seen );
+		if( filled )
+			INFO( "({}) wrote {} result(s) made while the link was down, found by {} MID 0064(s), ahead of {} pushed since.", _slug, filled, walk.Requests, walk.Held.size() );
 	}
 }

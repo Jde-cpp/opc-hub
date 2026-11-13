@@ -94,8 +94,9 @@ local logsDir = args.logsDir;
 			limits: { maxSecureChannels: 120 } //UASettings::ReadLimits, the emulator's reader too (GatewayServerTests.TheBlockIsReadAndTheEndpointRuns)
 		},
 		//a driver row's server, at 4980 plus its row's id (DriverRowTests, DriverHostTests):  past the shipped 4870 range and the hub
-		//suite's 4975 and 4976.  The link's waits are not the shipped ones, which a case that stops its controller would wait out.
-		drivers:{ portBase: 4980, openProtocol:{ reconnectMin: "PT0.1S", reconnectMax: "PT0.5S" } }
+		//suite's 4975 and 4976.  The link's waits are not the shipped ones, which a case that stops its controller would wait out,
+		//and a recovery's walk is six requests, which DriverBackfillTests' short one runs out of.
+		drivers:{ portBase: 4980, openProtocol:{ reconnectMin: "PT0.1S", reconnectMax: "PT0.5S", maxBackfill: 6 } }
 	},
 	opcServer:{
 		slug: "TestServer",

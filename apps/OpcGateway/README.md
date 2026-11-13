@@ -41,8 +41,12 @@ installed.
   the controller's time read in the row's zone and kept distinct and increasing, and a field the controller's revision
   lacks reads `Bad_NotSupported`.  `Counters` are `Total`, `Ok` and `Nok`, the tightenings since the driver started.
   `_Op` is the link's diagnostics: `Connected`, `Since`, `Url`, `LastError`, `Reconnects`, `Identity`, `Revisions`,
-  `LinkLevel`, `Results` and `Skew`, the controller's clock against the gateway's.  A group's member over a `Result`
-  variable records every result when it has no `MinTimeInterval`, and the last of each interval when it has one.
+  `LinkLevel`, `Results`, `LostResults` and `Skew`, the controller's clock against the gateway's.  A group's member
+  over a `Result` variable records every result when it has no `MinTimeInterval`, and the last of each interval when
+  it has one.  A link that returns is filled: the results the controller made while it was down are fetched by MID
+  0064, `maxBackfill` requests at most, and written in order ahead of the ones pushed since, each with what MID 0065
+  carries of it, so its limits read `Bad_NotSupported` until the next pushed result; a walk that ends short of the
+  last result written adds one to `LostResults` and warns.  Nothing is fetched before a row's first result of a run.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.
@@ -157,6 +161,10 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
   result of each revision of MID 0061 in `Result`, two in a second kept distinct, the counters, a group recording a
   burst whole and the last result of each `MinTimeInterval`, and the endpoint's processed read of a served result
   against the QL's `history`.
+- `DriverBackfillTests`: the results a lost link kept back (the plan's *Phase 6*), against the same controller - an
+  outage's results of two stations filled in order ahead of the one held, what a MID 0065 gives `Result`, a result
+  that came both ways written once, a walk that runs out of `maxBackfill`, a refused MID 0064, a link lost during the
+  walk, ids that began again, a first connection that fetches nothing, and a stored result's hour that comes twice.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.
