@@ -1,4 +1,4 @@
-"""Smoke client for an Open Protocol controller or the simulator (run-services skill, *Open Protocol simulator*):
+"""Smoke client for the Open Protocol simulator on loopback (run-services skill, *Open Protocol simulator*):
 MID 0001 from revision 6 stepping down on MID 0004 code 97 to a MID 0002, MID 0060 from 7 to a 0005, one tightening
 posted at the simulator's HTTP API arriving as MID 0061, acked by 0062, then MID 0003.  `open-protocol-smoke.py [tcp] [http]`."""
 import json, socket, sys, urllib.request
@@ -40,7 +40,7 @@ print( "POST /simulate/tightening ->", urllib.request.urlopen( req, timeout=5 ).
 mid, rev61, data = recv( s )
 if mid!=61: raise SystemExit( f"wanted MID 0061, got {mid:04d}" )
 print( f"MID 0061 at revision {rev61}, {len( data )} data bytes" )
-s.sendall( frame( 62, 1 ) )
+s.sendall( frame( 62, rev61 ) )#MIDs 0060 to 0063 are one family to the simulator:  it refuses a 0062 at a revision its 0060 would not take.
 ask( s, 3, 1, 5 )
 s.close()
 print( "SMOKE PASS" )
