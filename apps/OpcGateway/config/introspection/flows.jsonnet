@@ -11,7 +11,7 @@
 //The trace's reads (flows/FlowQLAwait.cpp, spec *History*), each Read on the flow, paged at /gateway/flows/readLimit:
 //flowTrace( flow, start, end, node, msg, kind, run, limit, continuation ){ continuation records{…} }:  the records in a range.
 //flowMessage( flow, id, start, end, limit ){ more records{…} }:  a message's lineage.
-//flowCounts( flow, start, end, by ){ counts{…} }:  the minute figures summed into buckets.
+//flowCounts( flow, start, end, by, limit, continuation ){ continuation counts{…} }:  the minute figures summed into buckets, a page of whole buckets.
 local types = import 'scalars.libsonnet';
 local String = types.String, UInt = types.UInt, Boolean = types.Boolean, DateTime = types.DateTime, Json = types.Json, Object = types.Object, NonNull = types.NonNull, List = types.List;
 local flowTraceRecord = {
@@ -44,6 +44,7 @@ local flowMessage = {
 };
 local flowCounts = {
 	fields: [
+		{ name: "continuation", type: String }, //for the next page;  null on the last.
 		{ name: "counts", type: List(Object("FlowCount")) }
 	]
 };

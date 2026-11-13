@@ -3,6 +3,8 @@
 //written through a TraceStore over a scratch directory and read back, their cut, the minute record, the roll at midnight,
 //retention and the size cap, and the reads' paging and lineage.
 #include <future>
+#include <thread>
+#include <unistd.h>
 #include <jde/flows/FileTrace.h>
 #include "helpers.h"
 #include "../../fwk/tests/testsDir.h"
@@ -67,6 +69,23 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( records[2].Parent, records[0].Id );
 		EXPECT_EQ( records[4].Id, records[2].Id );
 		EXPECT_EQ( records[4].Parent, records[0].Id );
+	}
+
+	//#451 review #8:  a clone that fails while the node that sent it still has its parent writes its own record with the error.
+	TEST_F( TraceTests, ErrorsKeepsACloneThatFailsBeforeItsParentIsDone ){
+		Run( Nodes({
+			Node( "in", "inject", "{}", {{"f"}} ),
+			Node( "f", "function", R"({"code":"node.send( msg, false );\nawait new Promise( wake => setTimeout( wake, 1000 ) );\nreturn null;"})", {{"out", "w"}} ),
+			Node( "w", "opc out" ), Node( "out", "log" )
+		}), ETraceLevel::Errors );
+		Inject( "bad" );
+		EXPECT_EQ( Trace->Lines(), (vector<string>{"birth in [0]*", "hop out []", "clone f [0]", "hop w []", "error w", "status w"}) ) << "f still holds the message it cloned";
+		let records = Trace->Records();
+		ASSERT_EQ( records.size(), 6u );
+		EXPECT_EQ( records[2].Parent, records[0].Id );
+		EXPECT_EQ( records[3].Id, records[2].Id );
+		Advance( 1s );
+		EXPECT_EQ( Trace->Lines().size(), 6u ) << "f's own hop, once done, is a quiet message's";
 	}
 
 	TEST_F( TraceTests, ErrorsKeepsDrops ){
@@ -304,7 +323,7 @@ namespace Jde::Opc::Flows::Tests{
 		Advance( 30s );//06:01:  the minute ends.
 		Flush( "counted" );
 		EXPECT_TRUE( Read("counted").empty() ) << "`counts` writes no hop";
-		auto rows = Store->Counts( "counted", At(6), At(7), 1min );
+		auto rows = Store->Counts( "counted", At(6), At(7), 1min ).Rows;
 		ASSERT_EQ( rows.size(), 5u ) << "one row per node of the minute";
 		string figures;
 		for( let& row : rows ){
@@ -332,12 +351,12 @@ namespace Jde::Opc::Flows::Tests{
 		}
 		Stop();
 		Flush();
-		auto rows = Store->Counts( "flow", At(6), At(6, 6), 5min );
+		auto rows = Store->Counts( "flow", At(6), At(6, 6), 5min ).Rows;
 		vector<string> y;
 		for( let& row : rows )
 			y.push_back( Ƒ("{} {} {}", ToIsoString(row.Time).substr(11, 5), row.Counts.Node, row.Counts.Received) );
 		EXPECT_EQ( y, (vector<string>{"06:00 in 0", "06:00 mark 5", "06:00 sw 5", "06:00 out 5", "06:05 in 0", "06:05 mark 1", "06:05 sw 1", "06:05 out 1"}) ) << "by bucket, then by the node's first appearance";
-		EXPECT_EQ( Store->Counts("flow", At(6, 2), At(6, 4), 1min).size(), 8u ) << "from the start, to before the end";
+		EXPECT_EQ( Store->Counts("flow", At(6, 2), At(6, 4), 1min).Rows.size(), 8u ) << "from the start, to before the end";
 	}
 
 	TEST_F( FileTraceTests, AReadPagesWithItsContinuation ){
@@ -394,7 +413,7 @@ namespace Jde::Opc::Flows::Tests{
 		auto lineage = Store->Lineage( "flow", clone, nullopt, nullopt, 100 );
 		EXPECT_FALSE( lineage.More );
 		const vector<string> expected{ "birth in source", "birth split part", "clone split clone", "hop split source", "hop outA part", "hop outB clone" };
-		EXPECT_EQ( named(lineage), expected ) << "the source's path, the part's whole path, and the clone's own, in time order;  not the first part's.  A part is born as the split sends it, before the split's own hop completes.";
+		EXPECT_EQ( named(lineage), expected ) << "the source's path, the part's, and the clone's own, in time order, every record at one time, so none after the clone's first;  not the first part's.  A part is born as the split sends it, before the split's own hop completes.";
 		EXPECT_EQ( named(Store->Lineage("flow", part, nullopt, nullopt, 100)), expected ) << "the part's descendants come with it";
 		EXPECT_EQ( named(Store->Lineage("flow", source, nullopt, nullopt, 100)).size(), 10u ) << "the source's lineage is every record";
 		EXPECT_TRUE( Store->Lineage("flow", part, nullopt, nullopt, 2).More ) << "the limit cuts it short";
@@ -454,5 +473,173 @@ namespace Jde::Opc::Flows::Tests{
 		fs::remove( Dir/"flow" );
 		Flush();
 		EXPECT_EQ( Read().size(), 4u ) << "the records waited in the buffer";
+	}
+
+	//#451 review #1:  a status a Function body gave, whose text quickjs-ng wrote with an unmatched surrogate, reads back.
+	TEST_F( FileTraceTests, AStatusThatIsNotUtf8ReadsBack ){
+		auto trace = Store->Trace( "flow", ETraceLevel::Hops, Time );
+		const NodeDef f{ .Id="f", .Type=ENodeType::Function };
+		const string lone{ "\xED\xA0\x80" };//U+D800 as JS_ToCStringLen writes it:  not UTF-8.
+		const NodeStatus status{ lone, "ring"+lone, "x"+lone };
+		trace->Status( f, status );
+		Flush();
+		let records = Read();
+		ASSERT_EQ( records.size(), 1u );
+		EXPECT_EQ( *records[0].Status, status );
+	}
+
+	//#451 review #3:  a healthy flow's buffer past its cap is flushed then, with nothing dropped.
+	TEST_F( FileTraceTests, ABufferPastItsCapIsFlushedNotDropped ){
+		Open( []( TraceSettings& s ){ s.ValueLimit = 1<<14; } );
+		auto trace = Store->Trace( "flow", ETraceLevel::Hops, Time );
+		const NodeDef in{ .Id="in", .Type=ENodeType::Inject };
+		const string payload( 8192, 'x' );
+		constexpr uint count{ 2200 };//some 18 MB:  past the 16 MiB a buffer holds.
+		for( MessageId id=1; id<=count; ++id ){
+			Message m{ jobject{{"_id", id}, {"payload", payload}} };
+			trace->Birth( in, m );
+			trace->Complete( in, id );
+		}
+		Time->AdvanceTo( Time->Now() );//the flush the cap brought forward, due now rather than a minute on.
+		for( uint i=0; Store->Days("flow").empty() && i<1000; ++i )
+			std::this_thread::sleep_for( 10ms );
+		EXPECT_EQ( Store->Days("flow"), vector<Day>{March9} ) << "written before its delay";
+		Flush();
+		EXPECT_EQ( Read().size(), count ) << "nothing dropped";
+	}
+
+	//#451 review #5:  a day the roll can't measure stays, and so does every day before it.
+	TEST_F( FileTraceTests, ADayTheRollCannotMeasureStaysWithTheDaysBeforeIt ){
+		if( ::geteuid()==0 )
+			GTEST_SKIP() << "root measures any file.";
+		Time->Step( -days{3} );//6 March.
+		Birth( "b", 1 );
+		Time->Advance( 24h );
+		Birth( "a", 2 );
+		Time->Advance( 24h );
+		Birth( "a", 3 );
+		Time->Advance( 24h );
+		Birth( "a", 4 );
+		Birth( "b", 5 );
+		const Day March6{ 2026y/March/6 }, March7{ 2026y/March/7 }, March8{ 2026y/March/8 };
+		let shut = Dir/"a"/"2026"/"3"/"8";
+		fs::permissions( shut, fs::perms::none );
+		Store->Roll();
+		fs::permissions( shut, fs::perms::owner_all );
+		EXPECT_EQ( Store->Days("a"), (vector<Day>{March7, March8, March9}) ) << "the day it couldn't measure, and the one before";
+		EXPECT_EQ( Store->Days("b"), (vector<Day>{March6, March9}) ) << "and the other flow's";
+	}
+
+	//#451 review #6:  an ancestor's pass ends at the first record of the message made from it.
+	TEST_F( FileTraceTests, AnAncestorsRecordsEndWhereItsDescendantBegins ){
+		Tracer = Store->Trace( "flow", ETraceLevel::Hops, Time );
+		Run( Nodes({
+			Node( "in", "inject", "{}", {{"wait", "now"}} ),
+			Node( "wait", "delay", R"({"duration":"PT1M"})", {{"late"}} ),
+			Node( "now", "log" ), Node( "late", "log" )
+		}) );
+		Inject( 1 );
+		Advance( 1min );
+		Flush();
+		ASSERT_EQ( Host->Took->Of("late").size(), 1u );
+		let clone = Host->Took->Of( "now" )[0].at( "_id" ).to_number<MessageId>();
+		let original = Host->Took->Of( "late" )[0].at( "_id" ).to_number<MessageId>();
+		let lineage = Store->Lineage( "flow", clone, nullopt, nullopt, 100 );
+		vector<string> lines;
+		for( let& r : lineage.Records )
+			lines.push_back( Ƒ("{} {} {}", ToString(r.Kind), r.Node, r.Id==clone ? "clone" : r.Id==original ? "original" : "?") );
+		EXPECT_EQ( lines, (vector<string>{"birth in original", "clone in clone", "hop now clone", "hop wait original"}) ) << "not the original's hop at `late`, a minute after the clone";
+		EXPECT_EQ( Store->Lineage("flow", original, nullopt, nullopt, 100).Records.size(), 5u ) << "the original's own lineage has it";
+	}
+
+	//#451 review #7:  the counts a page of whole buckets at a time.
+	TEST_F( FileTraceTests, CountsPageByWholeBuckets ){
+		RunTraced( ETraceLevel::Hops );
+		for( uint minute=0; minute<3; ++minute ){
+			Inject( minute );
+			Advance( 1min );
+		}
+		Stop();
+		Flush();
+		let all = Store->Counts( "flow", At(6), At(7), 1min ).Rows;
+		ASSERT_EQ( all.size(), 12u ) << "three minutes of four nodes";
+		vector<CountRow> paged;
+		optional<TimePoint> from;
+		uint pages{};
+		do{
+			auto page = Store->Counts( "flow", At(6), At(7), 1min, 6, from );
+			EXPECT_EQ( page.Rows.size(), 4u ) << "a second bucket would pass 6 rows";
+			paged.insert( paged.end(), page.Rows.begin(), page.Rows.end() );
+			from = page.Next;
+			++pages;
+		}while( from && pages<10 );
+		EXPECT_EQ( pages, 3u );
+		ASSERT_EQ( paged.size(), all.size() );
+		for( uint i=0; i<all.size(); ++i ){
+			EXPECT_EQ( paged[i].Time, all[i].Time );
+			EXPECT_EQ( paged[i].Counts.Node, all[i].Counts.Node );
+			EXPECT_EQ( paged[i].Counts.Received, all[i].Counts.Received );
+		}
+		EXPECT_EQ( Store->Counts("flow", At(6), At(7), 1min, 2).Rows.size(), 4u ) << "a bucket is never split";
+	}
+
+	//#451 review #9:  a day whose write fails holds back no other day.
+	TEST_F( FileTraceTests, ADayThatFailsHoldsBackNoOtherDay ){
+		fs::create_directories( Dir/"flow"/"2026"/"3" );
+		{ std::ofstream block{ Dir/"flow"/"2026"/"3"/"8" }; }//a file where 8 March's directory goes.
+		auto trace = Store->Trace( "flow", ETraceLevel::Hops, Time );
+		const NodeDef in{ .Id="in", .Type=ENodeType::Inject };
+		let birth = [&]( MessageId id ){
+			Message m{ jobject{{"_id", id}, {"payload", 1}} };
+			trace->Birth( in, m );
+			trace->Complete( in, id );
+		};
+		Time->Step( -24h );
+		birth( 1 );//8 March, late.
+		Time->Step( 24h );
+		birth( 2 );
+		Flush();
+		EXPECT_EQ( Ids(Read("flow", {.Start=At(0)})), vector<MessageId>{2} ) << "9 March's written";
+		fs::remove( Dir/"flow"/"2026"/"3"/"8" );
+		Flush();
+		EXPECT_EQ( Ids(Read("flow", {.Start=At(0)-24h})), (vector<MessageId>{1, 2}) ) << "8 March's waited in the buffer";
+	}
+
+	//#451 review #11:  a roll asked for leaves the midnight roll as the only one.
+	TEST_F( FileTraceTests, ARollAskedForSetsNoTimer ){
+		Store->Start();
+		Time->AdvanceTo( Time->Now() );//the start's roll.
+		ASSERT_EQ( Time->Pending(), 1u ) << "the next midnight's";
+		Store->Roll();
+		Store->Roll();
+		EXPECT_EQ( Time->Pending(), 1u );
+		Time->AdvanceTo( At(0)+days{1} );
+		EXPECT_EQ( Time->Pending(), 1u ) << "the midnight roll sets the next";
+	}
+
+	//#451 review #13:  a purge after the store stopped still takes a flow's directory, one an earlier process wrote.
+	TEST_F( FileTraceTests, APurgeAfterTheStopTakesTheDirectory ){
+		Birth( "flow", 1 );
+		Open( {} );
+		Store->Stop();
+		Store->Purge( "flow" );
+		EXPECT_FALSE( fs::exists(Dir/"flow") );
+		fs::create_directories( Dir/"kept" );
+		TraceStore::Remove( Dir/"kept", ".." );
+		EXPECT_TRUE( fs::exists(Dir/"kept") ) << "a slug that is no directory name is refused";
+		TraceStore::Remove( Dir, "kept" );
+		EXPECT_FALSE( fs::exists(Dir/"kept") );
+	}
+
+	//#451 review #14:  a valueLimit of 0 keeps a message's json whole.
+	TEST_F( FileTraceTests, AValueLimitOf0KeepsTheWholeJson ){
+		Open( []( TraceSettings& s ){ s.ValueLimit = 0; } );
+		RunTraced( ETraceLevel::Hops );
+		Inject( jvalue{string(5000, 'x')} );
+		Flush();
+		let records = Read();
+		ASSERT_FALSE( records.empty() );
+		EXPECT_FALSE( records[0].Cut );
+		EXPECT_EQ( parse(*records[0].Json).at("payload").as_string().size(), 5000u );
 	}
 }

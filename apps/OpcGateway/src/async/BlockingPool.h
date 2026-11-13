@@ -29,9 +29,18 @@ namespace Jde::Opc::Gateway{
 		α Run( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL sl )ι->void;
 		α Stop()ι->void;
 	}
+	//The flows' trace reads (docs/flows/spec.md *History*):  flowTrace, flowMessage and flowCounts decode a range of a flow's day
+	//files, which an executor thread is not to wait on, nor a connect behind them.  /workers/flowReads/threads of them, two by
+	//default, started on the first job.  Run and Stop as BlockingPool's;  Stop runs after FlowHost::Stop, whose store's stop ends
+	//a read under way at its next record.
+	namespace FlowReadPool{
+		α Run( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL sl )ι->void;
+		α Stop()ι->void;
+	}
 
 	//`work` on the blocking pool, and the awaiter resumed on the executor with what it returned, or threw - as after any other
 	//await, so nothing downstream runs on a pool thread.
 	template<class T=void> using BlockingAwait = RunAwait<T, BlockingPool::Run>;
 	template<class T=void> using DiscoveryAwait = RunAwait<T, DiscoveryPool::Run>;//BlockingAwait's twin on the discovery pool.
+	template<class T=void> using FlowReadAwait = RunAwait<T, FlowReadPool::Run>;//and on the trace reads' pool.
 }

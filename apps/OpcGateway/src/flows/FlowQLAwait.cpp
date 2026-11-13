@@ -3,6 +3,7 @@
 #include <jde/fwk/io/crc.h>
 #include <jde/access/Authorize.h>
 #include <jde/opc/uatypes/DateTime.h>
+#include "../async/BlockingPool.h"
 #include "../GatewayAppClient.h"
 #include "FlowHost.h"
 
@@ -58,16 +59,16 @@ namespace Jde::Opc::Gateway{
 		put( cursor.Skip, 4 );
 		return Str::Encode64( bytes, true );
 	}
-	Ω decode( sv text, uint32_t crc, SL sl )ε->Flows::TraceCursor{
+	Ω decode( sv command, sv text, uint32_t crc, SL sl )ε->Flows::TraceCursor{
 		string bytes;
 		try{
 			bytes = Str::Decode64( text, true, sl );
 		}
 		catch( const Exception& ){
-			throw invalid( FlowQLAwait::TraceCommand, "the continuation isn't one of the gateway's", sl );
+			throw invalid( command, "the continuation isn't one of the gateway's", sl );
 		}
 		if( bytes.size()!=16 )
-			throw invalid( FlowQLAwait::TraceCommand, "the continuation isn't one of the gateway's", sl );
+			throw invalid( command, "the continuation isn't one of the gateway's", sl );
 		let get = [&]( uint offset, uint size ){
 			uint64_t y{};
 			for( uint i=0; i<size; ++i )
@@ -75,7 +76,7 @@ namespace Jde::Opc::Gateway{
 			return y;
 		};
 		if( get(0, 4)!=crc )
-			throw invalid( FlowQLAwait::TraceCommand, "the continuation is for a read with other arguments", sl );
+			throw invalid( command, "the continuation is for a read with other arguments", sl );
 		return { TimePoint{ std::chrono::duration_cast<Duration>(std::chrono::nanoseconds{(int64_t)get(4, 8)}) }, (uint32)get(12, 4) };
 	}
 	Ω idJson( Flows::MessageId id )ι->jvalue{ return id ? jvalue{ Flows::ToLong(id) } : jvalue{}; }
@@ -118,13 +119,14 @@ namespace Jde::Opc::Gateway{
 	α FlowQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			let [flow, store] = Gate( _sl );
-			jobject y;
-			if( _query.JsonName==TraceCommand )
-				y = Trace( flow, *store, _sl );
-			else if( _query.JsonName==MessageCommand )
-				y = Message( flow, *store, _sl );
-			else
-				y = Counts( flow, *store, _sl );
+			//On the trace reads' pool:  a range of day files decoded, which an executor thread is not to wait on.
+			auto y = co_await FlowReadAwait<jobject>{ [this, flow, store]{
+				if( _query.JsonName==TraceCommand )
+					return Trace( flow, *store, _sl );
+				if( _query.JsonName==MessageCommand )
+					return Message( flow, *store, _sl );
+				return Counts( flow, *store, _sl );
+			}, _sl };
 			Resume( _query.TrimColumns(y) );
 		}
 		catch( runtime_error& e ){
@@ -164,7 +166,7 @@ namespace Jde::Opc::Gateway{
 		let iso = []( optional<TimePoint> t ){ return t ? ToIsoString( *t ) : string{}; };
 		let crc = IO::Crc::Calc32c( Ƒ("{}|{}|{}|{}|{}|{}|{}", flow.Id, iso(query.Start), iso(query.End), query.Node.value_or(""), query.Msg.value_or(0), query.Kind ? ToString(*query.Kind) : sv{}, query.Run.value_or(0)) );
 		if( let c = _query.FindPtr<jstring>("continuation"); c && c->size() )
-			query.From = decode( *c, crc, sl );
+			query.From = decode( TraceCommand, *c, crc, sl );
 		auto page = store.Read( flow.Slug, query, sl );
 		return { {"records", recordsJson(page.Records)}, {"continuation", page.Next ? jvalue{ encode(crc, *page.Next) } : jvalue{}} };
 	}
@@ -185,13 +187,18 @@ namespace Jde::Opc::Gateway{
 		let width = Chrono::TryToDuration( *by );
 		if( !width || *width<std::chrono::minutes{1} )
 			throw invalid( CountsCommand, Ƒ("'by' is a duration of a minute or more, not '{}'", sv{*by}), sl );
+		let crc = IO::Crc::Calc32c( Ƒ("{}|{}|{}|{}", flow.Id, ToIsoString(*start), ToIsoString(*end), sv{*by}) );
+		optional<TimePoint> from;
+		if( let c = _query.FindPtr<jstring>("continuation"); c && c->size() )
+			from = decode( CountsCommand, *c, crc, sl ).Time;
+		let page = store.Counts( flow.Slug, *start, *end, *width, limit(_query, FlowHost::Instance().ReadLimit()), from, sl );
 		jarray counts;
-		for( let& row : store.Counts(flow.Slug, *start, *end, *width, sl) ){
+		for( let& row : page.Rows ){
 			jarray sent;
 			for( let port : row.Counts.Sent )
 				sent.push_back( port );
 			counts.push_back( jobject{ {"time", ToIsoString(row.Time)}, {"node", row.Counts.Node}, {"received", row.Counts.Received}, {"sent", move(sent)}, {"drops", row.Counts.Drops}, {"errors", row.Counts.Errors} } );
 		}
-		return { {"counts", move(counts)} };
+		return { {"counts", move(counts)}, {"continuation", page.Next ? jvalue{ encode(crc, {*page.Next, 0}) } : jvalue{}} };
 	}
 }

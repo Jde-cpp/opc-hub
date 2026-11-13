@@ -26,10 +26,12 @@ enum Kind{
 	KIND_DROP=5;//off the node's queue, or held by it when the flow stopped.
 }
 
+//Each a Function body's, so bytes:  quickjs-ng writes an unmatched surrogate as its own three bytes, which aren't UTF-8,
+//and protobuf writes a string that isn't UTF-8 and won't read it back.
 message Status{
-	string fill=1;
-	string shape=2;
-	bytes text=3;//a Function body's, so bytes:  protobuf writes a string that isn't UTF-8 and won't read it back.
+	bytes fill=1;
+	bytes shape=2;
+	bytes text=3;
 }
 
 //One record per node per message, folded from the engine's hooks (spec *Trace*).  Primary time `time`.
@@ -45,7 +47,7 @@ message Hop{
 	bool cut=9;
 	bytes error=10;
 	Status status=11;
-	repeated string blocks=12;//the ids of the blocks a block-built Function body passed with the message, in order;  none for a typed body.
+	repeated bytes blocks=12;//the ids of the blocks a block-built Function body passed with the message, in order;  none for a typed body.  Bytes as Status's are.
 }
 
 //One node's figures of one minute, the engine's, at every level but `off`.  Primary time `time`.

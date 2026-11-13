@@ -1403,8 +1403,9 @@ namespace Jde::Opc::Gateway::Tests{
 			return QL().QuerySync<jobject>( "flowMessage( flow:$flow, id:$id ){ more records{ node kind msgId parentId } }", {{"flow", flow}, {"id", move(id)}}, User() );
 		};
 		auto y = lineage( clone );
-		EXPECT_EQ( Lines(y), (vector<string>{"birth in", "clone in", "hop a", "hop b"}) ) << "the original's path and the clone's own, in time order";
+		EXPECT_EQ( Lines(y), (vector<string>{"birth in", "clone in", "hop b"}) ) << "the original's path up to the clone, and the clone's own:  not the original's hop at a, after it (#451 review #6)";
 		EXPECT_EQ( y.at("more"), false );
+		EXPECT_EQ( Lines(lineage(records[0].as_object().at("msgId"))), Lines(all) ) << "the original's lineage is every record";
 		let text = std::to_string( (uint64_t)Json::AsNumber<int64_t>(clone.as_object(), "high")<<32 | (uint64_t)Json::AsNumber<int64_t>(clone.as_object(), "low") );
 		EXPECT_EQ( Lines(lineage(jvalue{text})), Lines(y) ) << "an id as decimal text too";
 		EXPECT_TRUE( Lines(lineage(jvalue{"1"})).empty() );
@@ -1445,5 +1446,41 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsNumber<uint>(rows["b"], "received"), even );
 		EXPECT_EQ( Json::AsNumber<uint>(rows["b"], "errors"), 0u );
 		EXPECT_EQ( Refused([&]{ QL().QuerySync<jobject>( "flowCounts( flow:$flow, start:$start, end:$end, by:\"PT10S\" ){ counts{ node } }", {{"flow", flow}, {"start", ToIsoString(start)}, {"end", ToIsoString(start+1h)}}, User() ); }).Status, EHttpStatus::BadRequest ) << "a bucket is a minute at least";
+
+		//#451 review #7:  a page of whole buckets, at most `limit` rows.
+		Inject( flow, "in", jobject{{"payload", "odd"}} );
+		ASSERT_TRUE( Received(flow, "a", odd+1) );
+		clock->Advance( 60s );//06:02:  the second minute ends.
+		let paged = [&]( jobject args ){
+			args["flow"] = flow;
+			args["start"] = ToIsoString( start );
+			args["end"] = ToIsoString( start+1h );
+			args["limit"] = 4;
+			return QL().QuerySync<jobject>( Ƒ("flowCounts( flow:$flow, start:$start, end:$end, by:\"PT1M\", limit:$limit{} ){{ continuation counts{{ time node }} }}", args.contains("continuation") ? ", continuation:$continuation" : ""), move(args), User() );
+		};
+		ASSERT_TRUE( WaitUntil([&]{ FlushTrace( "counted" ); return !paged( {} ).at("continuation").is_null(); }) ) << "the second minute's rows past the first page";
+		let first = paged( {} );
+		EXPECT_EQ( Json::AsArray(first, "counts").size(), 4u ) << "the first minute's four nodes";
+		let second = paged( {{"continuation", first.at("continuation")}} );
+		EXPECT_TRUE( second.at("continuation").is_null() );
+		ASSERT_EQ( Json::AsArray(second, "counts").size(), 3u ) << "in, sw and a:  " << serialize( second );
+		EXPECT_EQ( Json::AsSV(Json::AsArray(second, "counts")[0].as_object(), "time"), ToIsoString(start+1min) );
+		EXPECT_EQ( Refused([&]{ paged( {{"continuation", jvalue{"bm90IG9uZQ"}}} ); }).Status, EHttpStatus::BadRequest );
+	}
+
+	//#451 review #4:  a running flow whose row's trace level changes restarts at it.
+	TEST_F( FlowTests, ATraceLevelChangedRestartsTheFlowAtIt ){
+		let flow = CreateFlow( "retraced" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"d"}}), N("d", "debug")})).at("running"), true );
+		Inject( flow, "in", jobject{{"payload", 1}} );
+		ASSERT_EQ( Lines(Traced(flow, "retraced", 2)), (vector<string>{"birth in", "hop d"}) );
+		Mutate( "updateFlow( id:$id, trace:\"counts\" )", {{"id", flow}} );
+		ASSERT_TRUE( Flows().Find(flow)->Running );
+		EXPECT_EQ( Counts(flow, "d").Received, 0u ) << "a new run, restarted";
+		Inject( flow, "in", jobject{{"payload", 2}} );
+		ASSERT_TRUE( Received(flow, "d", 1) ) << "the new run's first";
+		FlushTrace( "retraced" );
+		EXPECT_EQ( Lines(Trace({{"flow", flow}, {"start", ToIsoString(Clock::now()-1h)}})).size(), 2u ) << "`counts` writes no hop";
 	}
 }

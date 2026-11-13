@@ -11,6 +11,16 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_GT( second.Next(), first.Next()+0xFFFFFFF0 ) << "a second later starts past four billion of the first's";
 	}
 
+	//#451 review #12:  an id goes out as its json's `_id` reads back and is rendered, before 2038 and after, when ids pass 2^63.
+	TEST( Message, AnIdGoesOutAsItsJsonReadsBack ){
+		for( let id : {MessageIds{At(6)}.Next(), MessageIds{sys_days{2040y/January/1}}.Next()} ){
+			auto json = parse( serialize(jobject{{"_id", id}}) );
+			ToWire( json );
+			EXPECT_EQ( json.at("_id"), jvalue{ToLong(id)} ) << id;
+			EXPECT_EQ( FromLong(ToLong(id)).to_number<MessageId>(), id ) << id;
+		}
+	}
+
 	TEST( Message, Fields ){
 		Message m{ jobject{{"_id", 7}, {"_parent", 3}, {"topic", "pump1"}, {"payload", 4.5}} };
 		EXPECT_EQ( m.Id(), 7u );

@@ -81,6 +81,7 @@ function( sync=false )
 	workers:{
 		blocking:: { threads: 2 },//the gateway's connect pool (apps/OpcGateway/src/async/BlockingPool.h) - the build and the connect, never on the executor.
 		discovery:: { threads: 2 },//the gateway's discovery pool (apps/OpcGateway/src/async/BlockingPool.h DiscoveryPool) - the discover mutation, never on the connect pool.
+		flowReads:: { threads: 2 },//the gateway's trace reads' pool (apps/OpcGateway/src/async/BlockingPool.h FlowReadPool) - flowTrace, flowMessage and flowCounts, never on the executor.
 		drive:{ threads: 2 },
 		executor:{ threads: 4 }
 	}

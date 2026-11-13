@@ -113,6 +113,7 @@ namespace Jde::Opc{
 		//the groups' last flushes run while the executor still does;  then the driver rows' servers, which the clients read.
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ FlowHost::Instance().Stop(); } );//ahead of the historian's too:  a flow's sources end on groups and clients that still stand.
+		Process::AddShutdownFunction( [](bool, SL){ FlowReadPool::Stop(); } );//after the flows':  their store's stop ends a trace read under way, so the join is short.
 		Process::AddShutdownFunction( [](bool, SL){ OeeHost::Instance().Stop(); } );//ahead of the historian's:  each machine's subscription ends on a group that still stands.
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.

@@ -12,7 +12,8 @@ namespace Jde::Opc::Flows{
 		struct Flight final{ vector<TraceRecord> Records; sp<Flight> Parent; uint Refs{}; };
 		//A hop or a birth between its start and its Complete.  Before:  a hop's message as received, to tell a change by.
 		//Clones:  the records of the clones its Send made, written after it, so a message's record precedes each clone's
-		//first, which is what lets a read walk a lineage down in one pass (FileTrace.h).
+		//first, which is what lets a read walk a lineage down in one pass (FileTrace.h).  Not at `Errors`, whose clone
+		//records wait in their flights, which an error writes after the flights they were made from.
 		struct Open final{ TraceRecord Record; optional<jobject> Before; vector<TraceRecord> Clones; };
 		using Key = std::pair<const NodeDef*,MessageId>;
 
@@ -84,7 +85,7 @@ namespace Jde::Opc::Flows{
 			++_impl->FlightOf( clone ).Refs;
 		auto record = _impl->Record( node, clone.Id(), clone.Parent(), ERecordKind::Clone );
 		record.Ports.push_back( port );
-		if( let p = _impl->Opened.find(Impl::Key{&node, clone.Parent()}); p!=_impl->Opened.end() )
+		if( let p = _impl->Tracks() ? _impl->Opened.end() : _impl->Opened.find(Impl::Key{&node, clone.Parent()}); p!=_impl->Opened.end() )
 			p->second.Clones.push_back( move(record) );
 		else
 			_impl->Keep( *this, move(record) );

@@ -110,9 +110,10 @@ namespace Jde::Opc::Gateway{
 
 	//The trace's block (spec *Trace*):  a key that does not read, or reads as nothing, keeps its default with a Warning.  The
 	//days' zone is the historian's, /gateway/hist/timeZone, UTC without one, so a flow's files sit beside its groups' days.
+	Ω tracePath()ι->fs::path{ return Settings::FindPath( "/gateway/flows/path" ).value_or( Process::AppDataFolder()/"logs"/"flows"/"opc-gateway" ); }
 	Ω traceSettings()ι->Flows::TraceSettings{
 		Flows::TraceSettings y;
-		y.Root = Settings::FindPath( "/gateway/flows/path" ).value_or( Process::AppDataFolder()/"logs"/"flows"/"opc-gateway" );
+		y.Root = tracePath();
 		let duration = [&]( sv key, Duration& value ){
 			let path = Ƒ( "/gateway/flows/{}", key );
 			let read = Settings::FindDuration( path );
@@ -167,6 +168,7 @@ namespace Jde::Opc::Gateway{
 			_configured = flows!=nullptr;
 			_clock = clock ? move( clock ) : Hist::SystemClock();
 			_ids = ms<Flows::MessageIds>( _clock->Now() );
+			_tracePath = tracePath();
 			if( _configured )
 				store = _store = ms<Flows::TraceStore>( traceSettings(), _clock );
 			_readLimit = Settings::FindNumber<uint>( "/gateway/flows/readLimit" ).value_or( Hist::Settings::DefaultReadLimit );
@@ -527,6 +529,7 @@ namespace Jde::Opc::Gateway{
 		config.ContextChanged = [this, id]( sv node, sv key, const jvalue* value ){ ContextChanged( id, node, key, value ); };
 		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups} );
 		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
+		run->Trace = row.Trace;
 		co_await StartAwait{ run };
 		let started = run->Flow.Running();
 		let fault = started ? nullopt : run->Flow.Fault();
@@ -846,18 +849,25 @@ namespace Jde::Opc::Gateway{
 		auto& row = rows.front();
 		let wanted = row.Enabled && !row.Deleted && row.Version;
 		sp<Run> live;
+		bool retrace{};//a running flow whose row's trace level changed, which its run's trace was made at.
 		{
 			lg _{ _mutex };
 			auto& entry = _flows[row.Id];
 			entry.Row = row;
 			live = entry.Live;
-			if( !wanted ){
+			retrace = wanted && live && live->Flow.Running() && live->Trace!=row.Trace;
+			if( !wanted || retrace ){
 				entry.Live = nullptr;
 				if( auto timer = std::exchange(entry.Retry, 0); timer )
 					_clock->Cancel( timer );
 			}
 		}
-		if( wanted && !live )
+		if( retrace ){
+			co_await HaltAwait{ live };
+			INFO( "[{}]Flow '{}' restarts at trace level {}.", row.Slug, row.Name, row.Trace ? ToString(*row.Trace) : "the gateway's" );
+			co_await Launch( move(row) );
+		}
+		else if( wanted && !live )
 			co_await Launch( move(row) );
 		else if( !wanted && live && live->Flow.Running() ){
 			co_await HaltAwait{ live };
@@ -886,12 +896,14 @@ namespace Jde::Opc::Gateway{
 	}
 	α FlowHost::Purged( FlowRow row )ι->AnyVoidTask{
 		sp<Flows::TraceStore> store;
+		fs::path root;
 		{
 			auto lock = co_await _edits.Lock();
 			sp<Run> live;
 			{
 				lg _{ _mutex };
 				store = _store;
+				root = _tracePath;
 				if( auto p = _flows.find(row.Id); p!=_flows.end() ){//Changed's, for an edit of the row while the statement ran.
 					live = move( p->second.Live );
 					if( auto timer = std::exchange(p->second.Retry, 0); timer )
@@ -903,8 +915,11 @@ namespace Jde::Opc::Gateway{
 				co_await HaltAwait{ live };
 			Forget( row.Id );
 		}
-		if( store )//its trace directory;  the slug is held to a file name's characters at its create (FlowMAwait), and the store follows no other out of the directory.
+		//Its trace directory;  the slug is held to a file name's characters at its create (FlowMAwait), and the store follows no other out of the directory.
+		if( store )
 			store->Purge( row.Slug );
+		else if( !root.empty() )//the store stopped, or there was none:  a flow made later with the slug is not to read this one's trace.
+			Flows::TraceStore::Remove( root, row.Slug );
 		//Its own access row and the grants on it, through the AppServer, best effort, as a group's are purged (HistHost::GroupPurged).
 		try{
 			co_await Any( *AppClient()->Query<jvalue>("purgeResource( schemaName:\"gateway\", slug:\"flows\", criteria:$criteria )", {{"criteria", row.Guid}}) );

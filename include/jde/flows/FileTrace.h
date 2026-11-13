@@ -13,7 +13,7 @@ namespace Jde::Opc::Flows{
 		Duration Delay{ std::chrono::minutes{1} };//how long a record waits in a flow's buffer before its flush.
 		Duration Retention{ std::chrono::days{30} };//days older than this go at the daily roll.
 		uint MaxSize{ 10ull<<30 };//bytes over every flow's days, past which the oldest go at the roll, 10 GiB.
-		uint ValueLimit{ 4096 };//bytes of a message's json a hop record keeps;  past it the json is cut, and the record says so.
+		uint ValueLimit{ 4096 };//bytes of a message's json a hop record keeps;  past it the json is cut, and the record says so.  0 keeps it whole.
 		ETraceLevel Level{ ETraceLevel::Hops };//what a flow takes when its row names none.
 		const std::chrono::time_zone* Zone{};//the days' zone;  none for the host's own.
 	};
@@ -42,6 +42,8 @@ namespace Jde::Opc::Flows{
 	struct TraceLineage final{ vector<TraceRecord> Records; bool More{}; };
 	//flowCounts's:  one node's figures in one bucket.
 	struct CountRow final{ TimePoint Time; NodeCounts Counts; };
+	//A page of them, whole buckets:  Next, the start of the bucket the next page begins with, none on the last.
+	struct CountPage final{ vector<CountRow> Rows; optional<TimePoint> Next; };
 
 	struct FileTrace;
 	//The flows' trace files under Root, one TraceStore a host:  each flow's buffer, flushed Delay after its first record
@@ -49,7 +51,8 @@ namespace Jde::Opc::Flows{
 	//the daily roll, on the host's clock, never a run's, which walks every flow's days newest first and removes the oldest
 	//past Retention or MaxSize over them all;  and a flow's purge, which takes its directory.  A flow's records are written
 	//by one flush at a time, so what is known of its files is the process's own appends and each file's first-open scan.
-	//Reads are synchronous, positioned reads of the files, so a caller on an executor thread never waits on the executor.
+	//Reads are synchronous, positioned reads of the files, so a caller on an executor thread never waits on the executor;  a
+	//range of days is a long read, which a host runs off its executor.  A read under way when the store stops throws.
 	struct TraceStore final : std::enable_shared_from_this<TraceStore>, noncopyable{
 		//clock:  the host's, which the flushes and the roll are scheduled on.
 		TraceStore( TraceSettings settings, sp<Hist::IClock> clock )ι;
@@ -64,22 +67,28 @@ namespace Jde::Opc::Flows{
 		//The flow's buffer written now, rather than at Delay:  `done` once it is, or at once when there is nothing to write;
 		//for a write that fails, once the records are back in the buffer.
 		α Flush( sv slug, absl::AnyInvocable<void()> done={} )ι->void;
-		α Roll()ι->void;//the daily roll, now.
+		α Roll()ι->void;//the daily roll, now:  the midnight roll Start set is left as it is.
 		α Purge( sv slug )ι->void;//the flow's directory and what is known of its files;  its buffer dropped.
+		//A flow's directory under `root` with no store, a purge's after the store stopped:  a slug that is no directory name
+		//is refused, so none is followed out of root.
+		Ω Remove( const fs::path& root, sv slug )ι->void;
 		α Days( sv slug, SRCE )ε->vector<Day>;//the days that hold a file of the flow, oldest first.
 		α Read( sv slug, const TraceQuery& query, SRCE )ε->TracePage;
 		//The message's lineage over the days from `start`, or the day of the gateway's start the id carries, to `end`, or the
 		//present:  at most `limit` records, oldest first.  A message's descendants come out of one pass over the days, each
-		//born after its parent's record of it;  each ancestor costs a pass of its own, over what came before the last.
+		//born after its parent's record of it;  each ancestor costs a pass of its own, which ends at the first record of the
+		//message made from it:  what the ancestor did after is a sibling's path.
 		α Lineage( sv slug, MessageId id, optional<TimePoint> start, optional<TimePoint> end, uint limit, SRCE )ε->TraceLineage;
-		//The minute records from `start` to before `end`, summed per node into buckets `by` wide from `start`, a minute at
-		//least:  rows by bucket, then by the node's first appearance.
-		α Counts( sv slug, TimePoint start, TimePoint end, Duration by, SRCE )ε->vector<CountRow>;
+		//The minute records from `start`, or a page's `from`, to before `end`, summed per node into buckets `by` wide from
+		//`start`, a minute at least:  rows by bucket, then by the node's first appearance in it.  A page holds whole buckets,
+		//at most `limit` rows unless its one bucket has more;  0 for no limit.
+		α Counts( sv slug, TimePoint start, TimePoint end, Duration by, uint limit=0, optional<TimePoint> from={}, SRCE )ε->CountPage;
 		α Settings()Ι->const TraceSettings&;
 		α Zone()Ι->const std::chrono::time_zone&;
 		struct Files;//one flow's, the implementation's:  its buffer and what is known of its files.
 		struct Impl;
 	private:
+		α Rolling()ι->void;//the roll's timer:  the roll, and the next midnight's set.
 		up<Impl> _impl;
 		friend struct FileTrace;
 	};

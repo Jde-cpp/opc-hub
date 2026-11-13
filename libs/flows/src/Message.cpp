@@ -159,5 +159,7 @@ namespace Jde::Opc{
 		else if( v.is_int64() && (v.get_int64()>safe || v.get_int64()<-safe) )
 			v = ToJson( (UA_Int64)v.get_int64() );
 	}
-	α Flows::ToLong( MessageId id )ι->jobject{ return ToJson( (UA_Int64)id ); }//signed, as a message's `_id` reads back from its json:  an id is a start's seconds in the high half, under 2^63 for eras.
+	//As a message's `_id` reads back from its json and ToWire renders it:  signed while it fits, and unsigned from 2^63, which
+	//an id passes once the start's seconds in its high half pass 2^31, on 2038-01-19.
+	α Flows::ToLong( MessageId id )ι->jobject{ return id>(MessageId)std::numeric_limits<int64_t>::max() ? ToJson( (UA_UInt64)id ) : ToJson( (UA_Int64)id ); }
 }

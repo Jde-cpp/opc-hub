@@ -12,7 +12,7 @@ namespace Jde::Opc::Flows{
 	using namespace std::chrono;
 	using IO::Records::DayDirectory;
 	constexpr ELogTags _tags{ ELogTags::IO };
-	constexpr uint _maxBuffer{ 16u<<20 };//bytes a flow's buffer holds while its file is unwritable, past which the oldest go.
+	constexpr uint _maxBuffer{ 16u<<20 };//bytes a flow's buffer holds:  past it a healthy file's flush comes now, and while the file is unwritable or behind the oldest go.
 	constexpr uint _maxAncestors{ 16 };//how far up a lineage walks:  each ancestor is a pass over the days.
 
 	//A day's file as the process knows it:  the record layer's state, from its first-open scan and the appends since.
@@ -45,6 +45,7 @@ namespace Jde::Opc::Flows{
 		bool Failing{};//the last write failed, said once until one succeeds.
 		bool Dropping{};//the buffer passed its cap while failing, said once.
 		bool Purged{};
+		bool Early{};//Timer is set for now:  the buffer passed its cap.
 		Hist::IClock::TimerId Timer{};//the flush's.
 		vector<absl::AnyInvocable<void()>> Done;//each Flush's, run once the next flush has written.
 		std::map<Day,DayFile> Known;
@@ -63,12 +64,14 @@ namespace Jde::Opc::Flows{
 				return p->second;
 			if( !make || Stopped )
 				return nullptr;
-			if( slug.empty() || slug=="." || slug==".." || slug.find_first_of("/\\")!=sv::npos ){//the host holds a slug to a file name's characters:  one written another way is not followed out of the directory.
+			if( !DirectoryName(slug) ){
 				ERR( "[{}]The flow's slug is no directory name:  nothing of it is traced.", slug );
 				return nullptr;
 			}
 			return Flows.emplace( string{slug}, ms<Files>(string{slug}, Settings.Root/slug) ).first->second;
 		}
+		//The host holds a slug to a file name's characters:  one written another way is not followed out of the directory.
+		Ω DirectoryName( sv slug )ι->bool{ return !slug.empty() && slug!="." && slug!=".." && slug.find_first_of( "/\\" )==sv::npos; }
 
 		const TraceSettings Settings;
 		const time_zone& Zone;
@@ -76,11 +79,12 @@ namespace Jde::Opc::Flows{
 		std::mutex Mutex;
 		flat_map<string,sp<Files>,std::less<>> Flows;
 		Hist::IClock::TimerId RollTimer{};
-		bool Started{}, Stopped{};
+		bool Started{};
+		std::atomic<bool> Stopped{};//written under Mutex, and read under a flow's too.
 	};
 
-	Ω cut( sv json, uint limit )ι->sv{//at a UTF-8 boundary, so what is kept is text.
-		if( json.size()<=limit )
+	Ω cut( sv json, uint limit )ι->sv{//at a UTF-8 boundary, so what is kept is text;  a limit of 0 keeps it whole.
+		if( !limit || json.size()<=limit )
 			return json;
 		auto end = limit;
 		while( end && ((unsigned char)json[end] & 0xC0)==0x80 )
@@ -257,11 +261,14 @@ namespace Jde::Opc::Flows{
 		y.File = move( file );
 		return y;
 	}
-	//Each record of the day's file in time order, until visit answers false.  Throws when a run can't be read through.
-	Ω each( Served&& served, SL sl, const std::function<bool( Proto::FlowRecord& )>& visit )ε->void{
+	//Each record of the day's file in time order, until visit answers false.  Throws when a run can't be read through, and
+	//when the store stops, so a read off the executor ends with it.
+	Ω each( Served&& served, const TraceStore::Impl& impl, SL sl, const std::function<bool( Proto::FlowRecord& )>& visit )ε->void{
 		Merge merge{ move(served.File), move(served.Runs), {}, sl };
 		Proto::FlowRecord r;
 		while( IO::Records::NextNow(merge, r, sl) ){
+			if( impl.Stopped )
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::ServiceUnavailable}, "The trace's store has stopped." };
 			if( !visit(r) )
 				return;
 		}
@@ -297,7 +304,7 @@ namespace Jde::Opc::Flows{
 		_impl->Started = true;
 		_impl->RollTimer = _impl->Clock->Schedule( Duration::zero(), [weak=weak_from_this()]{
 			if( auto self = weak.lock() )
-				self->Roll();
+				self->Rolling();
 		} );
 	}
 	α TraceStore::Stop( Duration wait )ι->void{
@@ -333,26 +340,36 @@ namespace Jde::Opc::Flows{
 		return ms<FileTrace>( shared_from_this(), move(files), level.value_or(_impl->Settings.Level), move(clock) );
 	}
 
-	//The flush:  the buffer taken and written a day at a time, each day's records a run on its file.  A write that fails
-	//puts the records back at the front of the buffer, says so once, and the flush is tried again Delay on.  What arrived
-	//meanwhile waits for the next, Delay on, unless a Flush asked for it.
+	//The flow's flush, `after` from now, under f.Mutex.
+	Ω scheduleFlush( wp<TraceStore> store, TraceStore::Impl& impl, TraceStore::Files& f, Duration after )ι->void{
+		f.Timer = impl.Clock->Schedule( after, [store=move(store), slug=f.Slug]{ if( auto self = store.lock() ) self->Flush( slug ); } );
+	}
+	//The buffer, for a flush to write, under f.Mutex.
+	Ω take( TraceStore::Impl& impl, TraceStore::Files& f )ι->vector<Proto::FlowRecord>{
+		if( auto timer = std::exchange(f.Timer, 0); timer )
+			impl.Clock->Cancel( timer );
+		f.Early = false;
+		auto y = move( f.Buffer );
+		f.Buffer = {};
+		f.BufferBytes = 0;
+		f.Again = false;
+		return y;
+	}
+	//The flush:  the buffer taken and written a day at a time, each day's records a run on its file.  A day whose write
+	//fails puts its records back at the front of the buffer, says so once, and is tried again Delay on, while the other
+	//days are written.  What arrived meanwhile waits for the next, Delay on, unless a Flush asked for it.  Whether to go on
+	//and the end are one lock's, so a Flush is either taken by this flush or starts the next.
 	Ω flushing( sp<TraceStore> self, TraceStore::Impl& impl, sp<TraceStore::Files> files )ι->VoidTask{
 		auto& f = *files;
-		bool failed{};
+		vector<Proto::FlowRecord> batch;
+		{
+			lg _{ f.Mutex };
+			batch = take( impl, f );
+		}
 		for( ;; ){
-			vector<Proto::FlowRecord> batch;
-			{
-				lg _{ f.Mutex };
-				if( auto timer = std::exchange(f.Timer, 0); timer )
-					impl.Clock->Cancel( timer );
-				batch = move( f.Buffer );
-				f.Buffer = {};
-				f.BufferBytes = 0;
-				f.Again = false;
-			}
-			if( batch.empty() )
-				break;
 			std::ranges::stable_sort( batch, {}, []( const Proto::FlowRecord& r ){ return Time( r ).value_or( 0 ); } );
+			vector<Proto::FlowRecord> kept;//the days whose write failed.
+			string error;
 			for( uint i=0; i<batch.size(); ){
 				let day = dayOf( FromNs(Time(batch[i]).value_or(0)), impl.Zone );
 				uint j = i+1;
@@ -362,51 +379,52 @@ namespace Jde::Opc::Flows{
 					auto run = prepare( impl, f, day, std::span<const Proto::FlowRecord>{batch}.subspan(i, j-i), SRCE_CUR );
 					co_await run.Write();
 					commit( impl, f, move(run), SRCE_CUR );
-					i = j;
 				}
 				catch( const std::exception& e ){
-					failed = true;
-					bool first;
-					{
-						lg _{ f.Mutex };
-						uint bytes{};
-						for( auto p = batch.begin()+i; p!=batch.end(); ++p )
-							bytes += (uint)p->ByteSizeLong();
-						f.Buffer.insert( f.Buffer.begin(), std::make_move_iterator(batch.begin()+i), std::make_move_iterator(batch.end()) );
-						f.BufferBytes += bytes;
-						first = !std::exchange( f.Failing, true );
-					}
-					if( first )
-						ERR( "[{}]The trace could not be written, and is buffered and tried again every {}:  {}", f.Slug, Chrono::ToString(impl.Settings.Delay), e.what() );
-					break;
+					if( error.empty() )
+						error = e.what();
+					kept.insert( kept.end(), std::make_move_iterator(batch.begin()+i), std::make_move_iterator(batch.begin()+j) );
 				}
+				i = j;
 			}
-			if( failed )
-				break;
-			bool recovered;
+			bool first{}, recovered{}, end;
+			vector<absl::AnyInvocable<void()>> done;
 			{
 				lg _{ f.Mutex };
-				recovered = std::exchange( f.Failing, false );
-				f.Dropping = false;
-				if( !f.Again )
-					break;
+				if( kept.size() ){
+					uint bytes{};
+					for( let& r : kept )
+						bytes += (uint)r.ByteSizeLong();
+					f.Buffer.insert( f.Buffer.begin(), std::make_move_iterator(kept.begin()), std::make_move_iterator(kept.end()) );
+					f.BufferBytes += bytes;
+					first = !std::exchange( f.Failing, true );
+				}
+				else if( batch.size() ){
+					recovered = std::exchange( f.Failing, false );
+					f.Dropping = false;
+				}
+				end = kept.size() || !f.Again;
+				if( end ){
+					f.Flushing = false;
+					done = std::move( f.Done );
+					f.Done.clear();
+					if( !f.Buffer.empty() && !f.Timer && !f.Purged && !impl.Stopped )
+						scheduleFlush( self, impl, f, impl.Settings.Delay );
+				}
+				else
+					batch = take( impl, f );
 			}
+			if( first )
+				ERR( "[{}]The trace could not be written, and is buffered and tried again every {}:  {}", f.Slug, Chrono::ToString(impl.Settings.Delay), error );
 			if( recovered )
 				INFO( "[{}]The trace is written again.", f.Slug );
+			if( end ){
+				f.Idle.notify_all();
+				for( auto& d : done )
+					d();
+				co_return;
+			}
 		}
-		vector<absl::AnyInvocable<void()>> done;
-		{
-			lg _{ f.Mutex };
-			f.Flushing = false;
-			done = std::move( f.Done );
-			f.Done.clear();
-			if( !f.Buffer.empty() && !f.Timer && !f.Purged && !impl.Stopped )
-				f.Timer = impl.Clock->Schedule( impl.Settings.Delay, [weak=wp<TraceStore>{self}, files]{ if( auto store = weak.lock() ) store->Flush( files->Slug ); } );
-		}
-		f.Idle.notify_all();
-		for( auto& d : done )
-			d();
-		co_return;
 	}
 	α TraceStore::Flush( sv slug, absl::AnyInvocable<void()> done )ι->void{
 		auto files = _impl->Find( slug, false );
@@ -426,6 +444,7 @@ namespace Jde::Opc::Flows{
 			if( files->Buffer.empty() || files->Purged ){
 				if( auto timer = std::exchange(files->Timer, 0); timer )
 					_impl->Clock->Cancel( timer );
+				files->Early = false;
 				files->Buffer.clear();
 				files->BufferBytes = 0;
 			}
@@ -450,7 +469,6 @@ namespace Jde::Opc::Flows{
 				_impl->Flows.erase( p );
 			}
 		}
-		fs::path dir;
 		if( files ){
 			std::unique_lock l{ files->Mutex };
 			files->Purged = true;
@@ -461,18 +479,16 @@ namespace Jde::Opc::Flows{
 			if( !files->Idle.wait_for(l, 10s, [&]{ return !files->Flushing; }) )
 				WARN( "[{}]The trace's flush had not finished after 10 s:  its directory is removed under it.", slug );
 			files->Known.clear();
-			dir = files->Dir;
 		}
-		else if( auto made = _impl->Find(slug, true); made ){//traced by an earlier process:  its directory alone.
-			lg _{ _impl->Mutex };
-			if( let p = _impl->Flows.find(slug); p!=_impl->Flows.end() )
-				_impl->Flows.erase( p );
-			dir = made->Dir;
-		}
-		if( dir.empty() )
+		Remove( _impl->Settings.Root, slug );//one traced by an earlier process too, and after Stop.
+	}
+	α TraceStore::Remove( const fs::path& root, sv slug )ι->void{
+		if( !Impl::DirectoryName(slug) ){
+			ERR( "[{}]The flow's slug is no directory name:  no trace directory is removed for it.", slug );
 			return;
+		}
 		std::error_code ec;
-		if( fs::remove_all(dir, ec); ec )
+		if( fs::remove_all(root/slug, ec); ec )
 			WARN( "[{}]The flow's trace directory wasn't removed with it:  {}", slug, ec.message() );
 	}
 	α TraceStore::Days( sv slug, SL sl )ε->vector<Day>{
@@ -480,8 +496,9 @@ namespace Jde::Opc::Flows{
 	}
 
 	//The daily roll:  every flow's days newest first, each kept while it is within Retention and, with the days before it,
-	//within MaxSize;  the first past either and every day older go, across the flows, with the directories they empty.  What
-	//the process knew of a removed file goes with it, so a flush to that day makes the file again.
+	//within MaxSize;  the first past either and every day older go, across the flows, with the directories they empty.  A
+	//day whose file can't be measured is kept and not counted.  What the process knew of a removed file goes with it, so a
+	//flush to that day makes the file again.
 	α TraceStore::Roll()ι->void{
 		let& settings = _impl->Settings;
 		let now = _impl->Clock->Now();
@@ -511,8 +528,13 @@ namespace Jde::Opc::Flows{
 				if( day<cutoff )
 					over = true;
 				else{
-					let size = fs::exists( path, ec ) && !ec ? fs::file_size( path, ec ) : 0;
-					if( ec || total+size>settings.MaxSize )
+					let size = fs::file_size( path, ec );
+					if( ec ){//gone since the walk, or not to be measured:  a day the roll can't see is kept, not taken for one past the cap.
+						if( ec!=std::errc::no_such_file_or_directory )
+							WARN( "[{}]{} could not be measured at the roll, so it stays:  {}", slug, path.string(), ec.message() );
+						continue;
+					}
+					if( total+size>settings.MaxSize )
 						over = true;
 					else
 						total += size;
@@ -533,12 +555,15 @@ namespace Jde::Opc::Flows{
 		}
 		if( removed )
 			INFO( "The roll removed {} trace days:  {} bytes stay over the days kept.", removed, total );
+	}
+	α TraceStore::Rolling()ι->void{
+		Roll();
 		lg _{ _impl->Mutex };
 		if( _impl->Stopped )
 			return;
-		_impl->RollTimer = _impl->Clock->Schedule( Hist::NextDayStart(now, _impl->Zone), [weak=weak_from_this()]{
+		_impl->RollTimer = _impl->Clock->Schedule( Hist::NextDayStart(_impl->Clock->Now(), _impl->Zone), [weak=weak_from_this()]{
 			if( auto self = weak.lock() )
-				self->Roll();
+				self->Rolling();
 		} );
 	}
 
@@ -569,7 +594,7 @@ namespace Jde::Opc::Flows{
 			let cursorDay = from && dayOf( from->Time, _impl->Zone )==all[d];
 			if( !reverse ){
 				uint skipped{};
-				each( move(*served), sl, [&]( Proto::FlowRecord& r ){
+				each( move(*served), *_impl, sl, [&]( Proto::FlowRecord& r ){
 					if( !r.has_hop() || !matches(query, r.hop()) )
 						return true;
 					let t = FromNs( r.hop().time() );
@@ -590,7 +615,7 @@ namespace Jde::Opc::Flows{
 				let cap = need+( cursorDay ? from->Skip : 0 );
 				std::deque<TraceRecord> ring;
 				bool overflow{};
-				each( move(*served), sl, [&]( Proto::FlowRecord& r ){
+				each( move(*served), *_impl, sl, [&]( Proto::FlowRecord& r ){
 					if( !r.has_hop() || !matches(query, r.hop()) )
 						return true;
 					let t = FromNs( r.hop().time() );
@@ -644,19 +669,26 @@ namespace Jde::Opc::Flows{
 		vector<Found> found;
 		limit = std::max<uint>( limit, 1 );
 		//One pass over the days:  the records of the messages in `set`, and with `grow` of each message made from one, from
-		//its first record on.  Whether the limit cut it short.
-		let pass = [&]( flat_set<MessageId>& set, bool grow )ε->bool{
-			for( uint d=0; d<all.size(); ++d ){
+		//its first record on;  none after `until`.  Whether the limit cut it short.
+		let pass = [&]( flat_set<MessageId>& set, bool grow, optional<TimePoint> until )ε->bool{
+			bool past{};
+			for( uint d=0; d<all.size() && !past; ++d ){
+				if( until && all[d]>dayOf(*until, _impl->Zone) )
+					break;
 				auto served = serve( *files, all[d], sl );
 				if( !served )
 					continue;
 				uint ordinal{};
 				bool cut{};
-				each( move(*served), sl, [&]( Proto::FlowRecord& r ){
+				each( move(*served), *_impl, sl, [&]( Proto::FlowRecord& r ){
 					if( !r.has_hop() )
 						return true;
 					++ordinal;
 					let& hop = r.hop();
+					if( until && FromNs(hop.time())>*until ){
+						past = true;
+						return false;
+					}
 					let own = set.contains( hop.msg_id() );
 					if( !own && !(grow && hop.parent_id() && set.contains(hop.parent_id())) )
 						return true;
@@ -675,22 +707,26 @@ namespace Jde::Opc::Flows{
 			return false;
 		};
 		flat_set<MessageId> own{ id };
-		y.More = pass( own, true );
+		y.More = pass( own, true, nullopt );
+		//The message a pass found first:  its parent, and the time of its first record, past which the parent's pass ends.
 		optional<MessageId> parent;
+		optional<TimePoint> born;
 		for( let& f : found ){
 			if( f.Record.Id==id ){
 				parent = f.Record.Parent;
+				born = f.Record.Time;
 				break;
 			}
 		}
 		for( uint up=0; !y.More && parent && *parent && up<_maxAncestors; ++up ){
 			flat_set<MessageId> ancestor{ *parent };
 			let before = found.size();
-			y.More = pass( ancestor, false );
+			y.More = pass( ancestor, false, born );
 			parent.reset();
 			for( uint i=before; i<found.size(); ++i ){
 				if( found[i].Record.Id==*ancestor.begin() ){
 					parent = found[i].Record.Parent;
+					born = found[i].Record.Time;
 					break;
 				}
 			}
@@ -702,32 +738,57 @@ namespace Jde::Opc::Flows{
 		return y;
 	}
 
-	α TraceStore::Counts( sv slug, TimePoint start, TimePoint end, Duration by, SL sl )ε->vector<CountRow>{
-		vector<CountRow> y;
+	α TraceStore::Counts( sv slug, TimePoint start, TimePoint end, Duration by, uint limit, optional<TimePoint> from, SL sl )ε->CountPage{
+		CountPage y;
 		auto files = _impl->Find( slug, true );
 		if( !files || end<=start )
 			return y;
 		by = std::max<Duration>( by, minutes{1} );
+		let lower = from ? std::max( *from, start ) : start;
 		auto all = days( files->Dir, sl );
-		let lo = dayOf( start, _impl->Zone ), hi = dayOf( end, _impl->Zone );
+		let lo = dayOf( lower, _impl->Zone ), hi = dayOf( end, _impl->Zone );
 		std::erase_if( all, [&]( Day day ){ return day<lo || day>hi; } );
-		std::map<std::pair<uint,uint>,NodeCounts> buckets;//by bucket and the node's first appearance.
-		flat_map<string,uint> order;
-		for( let day : all ){
-			auto served = serve( *files, day, sl );
+		//A bucket at a time, since the records come in time order:  its rows by the node's first appearance, into the page
+		//once a later bucket's record shows it whole, unless the page has no room for it.
+		optional<uint> bucket;
+		vector<NodeCounts> rows;
+		flat_map<string,uint> index;
+		let close = [&]()ι->bool{
+			if( limit && y.Rows.size() && y.Rows.size()+rows.size()>limit ){
+				y.Next = start+by*(int64_t)*bucket;
+				return false;
+			}
+			for( auto& row : rows )
+				y.Rows.push_back( {start+by*(int64_t)*bucket, move(row)} );
+			rows.clear();
+			index.clear();
+			return true;
+		};
+		bool done{};
+		for( uint d=0; d<all.size() && !done; ++d ){
+			auto served = serve( *files, all[d], sl );
 			if( !served )
 				continue;
-			each( move(*served), sl, [&]( Proto::FlowRecord& r ){
+			each( move(*served), *_impl, sl, [&]( Proto::FlowRecord& r ){
 				if( !r.has_counts() )
 					return true;
 				let t = FromNs( r.counts().time() );
-				if( t<start )
+				if( t<lower )
 					return true;
-				if( t>=end )
+				if( t>=end ){
+					done = true;
 					return false;
-				let bucket = (uint)( (t-start)/by );
-				let node = order.try_emplace( r.counts().node_id(), order.size() ).first->second;
-				auto& counts = buckets.try_emplace( std::pair{bucket, node}, NodeCounts{r.counts().node_id()} ).first->second;
+				}
+				let b = (uint)( (t-start)/by );
+				if( bucket && b!=*bucket && !close() ){
+					done = true;
+					return false;
+				}
+				bucket = b;
+				let p = index.try_emplace( r.counts().node_id(), rows.size() ).first->second;
+				if( p==rows.size() )
+					rows.push_back( NodeCounts{r.counts().node_id()} );
+				auto& counts = rows[p];
 				let row = FromProto( r.counts() );
 				counts.Received += row.Counts.Received;
 				counts.Drops += row.Counts.Drops;
@@ -739,14 +800,13 @@ namespace Jde::Opc::Flows{
 				return true;
 			} );
 		}
-		y.reserve( buckets.size() );
-		for( auto& [key, counts] : buckets )
-			y.push_back( {start+by*(int64_t)key.first, move(counts)} );
+		if( !y.Next && rows.size() )
+			close();
 		return y;
 	}
 
-	//A record into the flow's buffer, which its flush takes Delay after the first.  While the file is unwritable the buffer
-	//is capped, the oldest dropped, said once per outage.
+	//A record into the flow's buffer, which its flush takes Delay after the first.  Past the buffer's cap a healthy file's
+	//flush comes now;  while the file is unwritable, or a flush is behind by the cap, the oldest go, said once per outage.
 	Ω add( TraceStore& store, TraceStore::Impl& impl, TraceStore::Files& files, Proto::FlowRecord&& r )ι->void{
 		bool dropping{};
 		{
@@ -756,19 +816,27 @@ namespace Jde::Opc::Flows{
 			files.BufferBytes += (uint)r.ByteSizeLong();
 			files.Buffer.push_back( move(r) );
 			if( files.BufferBytes>_maxBuffer ){
-				uint dropped{};
-				auto p = files.Buffer.begin();
-				for( ; p!=files.Buffer.end() && files.BufferBytes-dropped>_maxBuffer/2; ++p )
-					dropped += (uint)p->ByteSizeLong();
-				files.Buffer.erase( files.Buffer.begin(), p );
-				files.BufferBytes -= dropped;
-				dropping = !std::exchange( files.Dropping, true );
+				if( files.Failing || files.Flushing || impl.Stopped ){
+					uint dropped{};
+					auto p = files.Buffer.begin();
+					for( ; p!=files.Buffer.end() && files.BufferBytes-dropped>_maxBuffer/2; ++p )
+						dropped += (uint)p->ByteSizeLong();
+					files.Buffer.erase( files.Buffer.begin(), p );
+					files.BufferBytes -= dropped;
+					dropping = !std::exchange( files.Dropping, true );
+				}
+				else if( !files.Early ){
+					if( auto timer = std::exchange(files.Timer, 0); timer )
+						impl.Clock->Cancel( timer );
+					files.Early = true;
+					scheduleFlush( store.weak_from_this(), impl, files, Duration::zero() );
+				}
 			}
 			if( !files.Timer && !files.Flushing && !impl.Stopped )
-				files.Timer = impl.Clock->Schedule( impl.Settings.Delay, [weak=store.weak_from_this(), slug=files.Slug]{ if( auto self = weak.lock() ) self->Flush( slug ); } );
+				scheduleFlush( store.weak_from_this(), impl, files, impl.Settings.Delay );
 		}
 		if( dropping )
-			WARN( "[{}]The trace's buffer passed its {} byte cap while its file was unwritable:  the oldest records are dropped.", files.Slug, _maxBuffer );
+			WARN( "[{}]The trace's buffer passed its {} byte cap while its file was unwritable or behind:  the oldest records are dropped.", files.Slug, _maxBuffer );
 	}
 
 	FileTrace::FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock )ι:
@@ -788,13 +856,6 @@ namespace Jde::Opc::Flows{
 			add( *_store, *_store->_impl, *_files, ToProto(minute.Minute, node) );
 	}
 
-	α Time( const Proto::FlowRecord& r )ι->optional<int64_t>{
-		switch( r.record_case() ){
-		case Proto::FlowRecord::kHop: return r.hop().time();
-		case Proto::FlowRecord::kCounts: return r.counts().time();
-		default: return nullopt;
-		}
-	}
 	Ω convert( Proto::FlowRecord& r, int64_t& last, bool toDisk )ι->void{
 		let primary = [&]( int64_t stored )ι->int64_t{
 			if( !toDisk )
@@ -817,10 +878,19 @@ namespace Jde::Opc::Flows{
 			break;
 		}
 	}
-	α ToDisk( Proto::FlowRecord& r, int64_t& last )ι->void{ convert( r, last, true ); }
-	α ToMemory( Proto::FlowRecord& r, int64_t& last )ι->void{ convert( r, last, false ); }
+}
+namespace Jde::Opc{
+	α Flows::Time( const Proto::FlowRecord& r )ι->optional<int64_t>{
+		switch( r.record_case() ){
+		case Proto::FlowRecord::kHop: return r.hop().time();
+		case Proto::FlowRecord::kCounts: return r.counts().time();
+		default: return nullopt;
+		}
+	}
+	α Flows::ToDisk( Proto::FlowRecord& r, int64_t& last )ι->void{ convert( r, last, true ); }
+	α Flows::ToMemory( Proto::FlowRecord& r, int64_t& last )ι->void{ convert( r, last, false ); }
 
-	α ToProto( const TraceRecord& r, uint valueLimit )ι->Proto::FlowRecord{
+	α Flows::ToProto( const TraceRecord& r, uint valueLimit )ι->Proto::FlowRecord{
 		Proto::FlowRecord y;
 		auto& hop = *y.mutable_hop();
 		hop.set_time( Ns(r.Time) );
@@ -844,7 +914,7 @@ namespace Jde::Opc::Flows{
 			hop.add_blocks( block );
 		return y;
 	}
-	α ToProto( TimePoint minute, const NodeCounts& node )ι->Proto::FlowRecord{
+	α Flows::ToProto( TimePoint minute, const NodeCounts& node )ι->Proto::FlowRecord{
 		Proto::FlowRecord y;
 		auto& counts = *y.mutable_counts();
 		counts.set_time( Ns(minute) );
@@ -856,7 +926,7 @@ namespace Jde::Opc::Flows{
 		counts.set_errors( (uint32_t)node.Errors );
 		return y;
 	}
-	α FromProto( const Proto::Hop& hop )ι->TraceRecord{
+	α Flows::FromProto( const Proto::Hop& hop )ι->TraceRecord{
 		TraceRecord y{ .Time=FromNs(hop.time()), .Id=hop.msg_id(), .Parent=hop.parent_id(), .Node=hop.node_id(), .Kind=(ERecordKind)hop.kind(), .Run=hop.run_id(), .Cut=hop.cut() };
 		for( let port : hop.ports() )
 			y.Ports.push_back( port );
@@ -869,7 +939,7 @@ namespace Jde::Opc::Flows{
 			y.Blocks.push_back( block );
 		return y;
 	}
-	α FromProto( const Proto::Counts& counts )ι->CountRow{
+	α Flows::FromProto( const Proto::Counts& counts )ι->CountRow{
 		CountRow y{ FromNs(counts.time()), NodeCounts{counts.node_id(), counts.received(), {}, counts.drops(), counts.errors()} };
 		for( let sent : counts.sent() )
 			y.Counts.Sent.push_back( sent );

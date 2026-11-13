@@ -17,8 +17,10 @@ namespace Jde::Opc::Gateway{
 	//flowMessage( flow, id, start, end, limit ){ more records{ … } }:  the message's lineage, its ancestors' records up to the
 	//source, its own and its descendants', oldest first, over the days from `start`, or the day of the gateway's start the id
 	//carries, to `end`, or today.  `more`:  the limit cut it short.
-	//flowCounts( flow, start, end, by ){ counts{ time node received sent drops errors } }:  the minute records from `start` to
-	//before `end`, summed per node into buckets `by` wide, an ISO 8601 duration of a minute or more;  `sent` per output port.
+	//flowCounts( flow, start, end, by, limit, continuation ){ continuation counts{ time node received sent drops errors } }:  the
+	//minute records from `start` to before `end`, summed per node into buckets `by` wide, an ISO 8601 duration of a minute or
+	//more;  `sent` per output port.  A page holds whole buckets, at most `limit` rows unless its one bucket has more.
+	//Each read runs on FlowReadPool, never an executor thread.
 	struct FlowQLAwait final : QL::IQLTableAwaitExe{
 		using base = QL::IQLTableAwaitExe;
 		FlowQLAwait( QL::TableQL&& q, QL::Creds creds, SRCE )ι:base{ move(q), move(creds), sl }{}
