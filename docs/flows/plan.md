@@ -46,6 +46,49 @@ Issue [#447].
 
 `libs/flows`, target `Jde.Opc.FlowLib`, on the historian's CMake shape ([`libs/historian/src/CMakeLists.txt:9`](../../libs/historian/src/CMakeLists.txt#L9)): `src/`, `include/jde/flows/`, `tests/`, linking `Jde.Opc.HistorianLib` for `IClock` ([`Clock.h:9`](../../include/jde/historian/Clock.h#L9)) and `Jde.Opc` for `Value`, nothing of the gateway. `Graph` from the spec's json: nodes, types, `props` typed per node type, `wires` per output port, and a validation that answers the first fault with its node, every wire's target a node, every property of its type, a `link` name with its pair. `Message`, a Boost.JSON object the engine owns, with `_id` from the run's start time and a counter, `_parent`, `_time`, `topic`, `payload` and the data-change fields, a 64-bit integer an integer (review #4), and the clone rule, the original down the first wire and a clone with a new `_id` down each other. The node interfaces: `INode` with an input queue bounded at `queue`, `Receive` on the flow's strand and `Send` to the port's wires; `ISource` and `ISink` the host implements in phase 3, the library carrying `inject`, `link in`, `link out` and the stock nodes itself. `Flow`: one strand per flow on the process executor, as `DurationTimer` resumes on one ([`Timer.h:24`](../../include/jde/fwk/co/Timer.h#L24)), the queues drained in arrival order, one message through one node at a time, a parked message resumed on the strand, and every entry asserting the strand in debug; the flow's `IClock`, every timer through its `Schedule` ([`Clock.h:16`](../../include/jde/historian/Clock.h#L16)), `SystemClock` live and a stream clock in phase 7. Every node of the spec's *Nodes*: `switch`, `change`, `filter`, `range`, `delay`, `trigger`, `window`, `split`, `join`, `template` as a mustache subset, `debug`, `catch` with the count and the loop guard at nine, `status`, `complete`, `link in` and `link out` within a flow, `comment`. Context: the `node` and `flow` stores as json maps, the `global` store under a mutex with `get` a copy and `set` an exchange (review #7), persistence a callback the host implements with the debounce. `ITrace`: `Receive`, `Send`, `Complete`, `Error`, `Status`, `Drop`, `Birth` and `Clone`, folded by the engine into one hop record per node per message (review #13), an in-memory implementation in the suite and the `counts` minute figures kept by the engine for whoever asks. Tests, `Jde.Opc.Flow.Tests` beside the historian's ([`libs/historian/tests/CMakeLists.txt:47`](../../libs/historian/tests/CMakeLists.txt#L47)), including [`ManualClock.h`](../../libs/historian/tests/ManualClock.h) from its directory ([`ManualClock.h:10`](../../libs/historian/tests/ManualClock.h#L10)): each node over scripted messages, the clone rule, the queue bound and its drop, the catch count and the loop guard, the status and complete nodes, `window`, `trigger` and `delay` under the manual clock, the global store from two threads, the in-memory trace's records per level and the hop fold, a graph refused with the right node, and a flow whose source the suite's host refuses to make, as a gateway without its historian refuses a `group in`, staying stopped with its status. Size L.
 
+Built 2026-11-12, where it differs from the text above:
+
+- **The headers** are [`Message.h`](../../include/jde/flows/Message.h), [`Graph.h`](../../include/jde/flows/Graph.h), [`Node.h`](../../include/jde/flows/Node.h), [`Context.h`](../../include/jde/flows/Context.h), [`Trace.h`](../../include/jde/flows/Trace.h) and [`Flow.h`](../../include/jde/flows/Flow.h), in `Jde::Opc::Flows`. `Flow` is a handle over the engine, and runs once: a restart is another `Flow`.
+- **`Start` makes the nodes and returns.** The host's `Source` and `Sink` are called on the caller's thread, and a refusal there leaves the flow stopped with `Fault`, the node and the message, and the node's status. The nodes' own `Start` runs on the strand after it returns, and one that throws stops the flow the same way. A `Stop` while the nodes are made wins, and `Start` answers false. `Stop` posts the teardown and takes a callback for its end, which a second `Stop` also gets behind that teardown. A `Flow` assigned over is stopped.
+- **The queues are under a mutex**, so a source's `Emit` from any thread is bounded as a send is. What a source emits waits at the source's own queue, and is born when the strand takes it. A drop is counted and traced as it happens, and the node's status says `n dropped` once a drain, as it says `n uncaught` for what no catch took. A drain takes 1,000 messages a turn and posts the rest behind the strand's other work, so a timer or a `Post` from off the strand waits no longer than that.
+- **A node holds a message by saying so.** `Receive` finishes the message when it returns unless the node called `Hold`, which `Done`, `Fail` or `Drop` ends later, on the strand, where `Post` brings a node back from any thread. What escapes a node's `Post` or timer is that node's error, counted, traced and in its status.
+- **A timer is dispatched to the strand**, so one a clock runs on the strand runs there and then, and what it sends is through the flow before the clock moves on, its drain whole. That is how the suite advances its clock, and what phase 7's stream clock needs. The waits are intervals, never times compared, but a tumbling window's end.
+- **`_id` is the run's start in seconds in its high half and a counter in its low**, from a `MessageIds` the host shares among its flows. `_time`, `sourceTime` and `serverTime` are ISO 8601 text.
+- **A data change's payload** is `ToPayload`'s: `Value::ToJson`'s value with each `Long` object, at any depth, put back to its integer.
+- **A graph is checked by making its nodes.** `Graph::Read` answers the graph or a `Fault`. A `name` of `""` is no name, as an editor writes one. A hosted node's props are its host's to check, in phase 3. A `function` node is refused until phase 4. A wire to a node that takes no input and a wire from a port the node lacks are faults too. A `link out` needs its `link in` in the same graph, until phase 3 has the other flows.
+- **The props** each node reads:
+
+  | Node | Props |
+  | --- | --- |
+  | `inject` | `message`, the message it sends |
+  | `switch` | `property`, `checkall`, `rules` of `{ t, v, vt }` with Node-RED's `eq neq lt lte gt gte btwn cont regex true false null nnull empty nempty istype else`, `v2` and `v2t` for `btwn`, `case` for `regex` |
+  | `change` | `rules` of `{ t: set, p, pt, to, tot }`, `{ t: delete, p, pt }` and `{ t: move, p, pt, to, tot }` |
+  | `filter` | `property`, `band`, `percent`, `perTopic` |
+  | `range` | `property`, `minIn`, `maxIn`, `minOut`, `maxOut`, `action` of `scale`, `clamp` or `wrap`, `round` |
+  | `delay` | `mode` of `delay` with `duration`, or `rate` with `count`, `per` and `drop` |
+  | `trigger` | `first`, `second`, `wait`, `extend`, `reset`, `perTopic` |
+  | `window` | `property`, `kind` of `tumbling` or `sliding`, `duration` or `count`, `perTopic` |
+  | `join` | `mode` of `auto`, `array` or `object`, `count`, `timeout`, `key` |
+  | `template` | `template`, `property`, `output` of `text` or `json` |
+  | `debug` | `level`, `active` |
+  | `catch` | `scope`, `uncaught` |
+  | `status`, `complete` | `scope` |
+  | `link in`, `link out` | `name` |
+
+  A `vt`, `pt` or `tot` is `msg`, `flow` or `global`, and without one the value is the json itself. A duration is ISO 8601.
+- **No rule coerces and none computes.** A `switch` compares numbers by value and never text with a number, and neither it nor `change` has an expression.
+- **`template` is mustache's variables alone**: `{{name}}` escaped as mustache.js escapes, `{{{name}}}` and `{{&name}}` as they are, `{{flow.key}}` and `{{global.key}}`, and a comment. A section, a partial or a delimiter is a fault. A double is written as JavaScript's `String` writes it, `1450.5` and not `1.4505E3`, and a switch's `regex` reads a number the same way.
+- **`delay` keeps the order the messages came in** and bounds what it holds at `queue`, in either mode.
+- **A tumbling window by duration is the clock's**, each a multiple of the duration from its epoch, sent at its end when it holds a value. A sliding window is sent at each value. A message with a `reset` property empties every window.
+- **A message a node makes has the last message that went into it as its `_parent`**: a window's, a join's and a trigger's second.
+- **What a catch takes is a clone**, under a new `_id` with the failed message as its `_parent`, and an `error` the message came with is kept as `_error`. A catch for the uncaught is asked last. What escapes a timer's callback is its node's error with no message.
+- **A status node hears no status node**, and a complete node takes a clone of the message as its node sent it.
+- **The fold is the library's `HopTrace`**, an `ITrace` that writes `TraceRecord`s through one virtual. The suite's trace keeps them in memory, and phase 5's `FileTrace` is to derive from it too. A record's json is text. At `errors` a drop and a status change are written as they happen, and a failed clone's path starts with what it was cloned from. `valueLimit` and `run_id` are phase 5's and phase 7's.
+- **The figures are asked for.** `Flow::Counts` answers each node's since the start, and `TakeMinutes` the minutes that have ended on the flow's clock, an hour of them kept.
+- **A context's change is told as it is made**, to `ContextChanged` for a node's and the flow's and to the `GlobalStore`'s own callback under its lock. A null value takes a key away.
+- **The suite is 76 tests in under half a second.** Its host makes a source the test pushes through, a sink that keeps what it takes, a write that refuses, holds or answers, and a `group in` it refuses.
+- **Windows is unbuilt.**
+
 ## Phase 2 - the host (piece 2)
 
 Issue [#448].
