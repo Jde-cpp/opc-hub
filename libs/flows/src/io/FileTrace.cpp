@@ -83,14 +83,6 @@ namespace Jde::Opc::Flows{
 		std::atomic<bool> Stopped{};//written under Mutex, and read under a flow's too.
 	};
 
-	Ω cut( sv json, uint limit )ι->sv{//at a UTF-8 boundary, so what is kept is text;  a limit of 0 keeps it whole.
-		if( !limit || json.size()<=limit )
-			return json;
-		auto end = limit;
-		while( end && ((unsigned char)json[end] & 0xC0)==0x80 )
-			--end;
-		return json.substr( 0, end );
-	}
 	Ω toProtoStatus( const NodeStatus& status )ι->Proto::Status{
 		Proto::Status y;
 		y.set_fill( status.Fill );
@@ -335,9 +327,9 @@ namespace Jde::Opc::Flows{
 		if( !left->Done.wait_for(l, wait, [&]{ return !left->Left; }) )
 			WARN( "{} flows' traces had not been written after {}.", left->Left, Chrono::ToString(wait) );
 	}
-	α TraceStore::Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock )ι->sp<FileTrace>{
+	α TraceStore::Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock, Tap tap )ι->sp<FileTrace>{
 		auto files = _impl->Find( slug, true );
-		return ms<FileTrace>( shared_from_this(), move(files), level.value_or(_impl->Settings.Level), move(clock) );
+		return ms<FileTrace>( shared_from_this(), move(files), level.value_or(_impl->Settings.Level), move(clock), move(tap) );
 	}
 
 	//The flow's flush, `after` from now, under f.Mutex.
@@ -839,13 +831,16 @@ namespace Jde::Opc::Flows{
 			WARN( "[{}]The trace's buffer passed its {} byte cap while its file was unwritable or behind:  the oldest records are dropped.", files.Slug, _maxBuffer );
 	}
 
-	FileTrace::FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock )ι:
+	FileTrace::FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock, TraceStore::Tap tap )ι:
 		HopTrace{ level, move(clock) },
 		_store{ move(store) },
-		_files{ move(files) }
+		_files{ move(files) },
+		_tap{ move(tap) }
 	{}
 	FileTrace::~FileTrace()=default;
 	α FileTrace::Write( TraceRecord&& record )ι->void{
+		if( _tap )
+			_tap( record );
 		if( _files )
 			add( *_store, *_store->_impl, *_files, ToProto(record, _store->_impl->Settings.ValueLimit) );
 	}
@@ -887,6 +882,14 @@ namespace Jde::Opc{
 		default: return nullopt;
 		}
 	}
+	α Flows::CutJson( sv json, uint limit )ι->sv{
+		if( !limit || json.size()<=limit )
+			return json;
+		auto end = limit;
+		while( end && ((unsigned char)json[end] & 0xC0)==0x80 )
+			--end;
+		return json.substr( 0, end );
+	}
 	α Flows::ToDisk( Proto::FlowRecord& r, int64_t& last )ι->void{ convert( r, last, true ); }
 	α Flows::ToMemory( Proto::FlowRecord& r, int64_t& last )ι->void{ convert( r, last, false ); }
 
@@ -902,7 +905,7 @@ namespace Jde::Opc{
 		for( let port : r.Ports )
 			hop.add_ports( (uint32_t)port );
 		if( r.Json ){
-			let kept = cut( *r.Json, valueLimit );
+			let kept = CutJson( *r.Json, valueLimit );
 			hop.set_json( string{kept} );
 			hop.set_cut( r.Cut || kept.size()<r.Json->size() );
 		}

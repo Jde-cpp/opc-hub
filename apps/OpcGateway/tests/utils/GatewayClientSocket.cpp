@@ -104,6 +104,33 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		return await<vector<StatusCode>>{ FromClientUtils::HistSubscription(group, nodes, nullopt, requestId), requestId, shared_from_this(), sl };
 	}
+	α GatewayClientSocket::FlowSubscribe( uint32 flow, bool hops, sp<IFlowListener> listener, SL sl )ι->await<FromServer::FlowSubscribeAck>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]FlowSubscribe: flow {}, hops {}.", hex(requestId), flow, hops );
+		{
+			lg _{ _histMutex };
+			_flowListeners.emplace( requestId, move(listener) );
+			_lastFlowSubscription = requestId;
+		}
+		return await<FromServer::FlowSubscribeAck>{ FromClientUtils::FlowSubscription(flow, hops, requestId), requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::FlowUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]FlowUnsubscribe: {}.", hex(requestId), hex(subscription) );
+		{
+			lg _{ _histMutex };
+			_flowUnsubscribes.emplace( requestId, subscription );
+		}
+		return await<bool>{ FromClientUtils::FlowUnsubscription(subscription, requestId), requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::FlowSubscribeAs( RequestId requestId, uint32 flow, SL sl )ι->await<FromServer::FlowSubscribeAck>{
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]FlowSubscribe as a live subscription's id: flow {}.", hex(requestId), flow );
+		{
+			lg _{ _histMutex };
+			_probes.emplace( requestId );
+		}
+		return await<FromServer::FlowSubscribeAck>{ FromClientUtils::FlowSubscription(flow, false, requestId), requestId, shared_from_this(), sl };
+	}
 	α GatewayClientSocket::OnRead( FromServer::Transmission&& transmission )ι->void{
 		auto histListener = [this]( RequestId requestId )->sp<IHistListener> {
 			lg _{ _histMutex };
@@ -131,6 +158,36 @@ namespace Jde::Opc::Gateway::Tests{
 					_oeeEnded.emplace( p->second );
 				_oeeUnsubscribes.erase( p );
 			}
+			if( auto p = _flowUnsubscribes.find(requestId); p!=_flowUnsubscribes.end() ){
+				_flowListeners.erase( p->second );
+				if( ended )
+					_flowEnded.emplace( p->second );
+				_flowUnsubscribes.erase( p );
+			}
+		};
+		auto flowListener = [this]( RequestId requestId )->sp<IFlowListener>{//a subscription's, or none, counted a stray past its end.
+			lg _{ _histMutex };
+			if( auto p = _flowListeners.find(requestId); p!=_flowListeners.end() )
+				return p->second;
+			if( _flowEnded.contains(requestId) ){
+				++_flowStrays;
+				WARNT( ELogTags::SocketClientRead, "[{}]A flow subscription's message after its end.", hex(requestId) );
+			}
+			return nullptr;
+		};
+		auto flowEnded = [this]( RequestId requestId, string what )->bool{//a live subscription's exception:  the gateway ended it.
+			sp<IFlowListener> listener;
+			{
+				lg _{ _histMutex };
+				if( auto p = _flowListeners.find(requestId); p!=_flowListeners.end() ){
+					listener = move( p->second );
+					_flowListeners.erase( p );
+					_flowEnded.emplace( requestId );
+				}
+			}
+			if( listener )
+				listener->OnError( move(what) );
+			return listener!=nullptr;
 		};
 		auto oeeEnded = [this]( RequestId requestId, string what )->bool{//a live subscription's exception:  the gateway ended it.
 			sp<IOeeListener> listener;
@@ -206,9 +263,9 @@ namespace Jde::Opc::Gateway::Tests{
 				auto task = requestId==0 ? Web::Client::PendingTask{} : PopTask( requestId );
 				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.  An unsubscribe's listeners stay: the server still pushes.
 				let& e = m->exception();
-				if( !task.Fail && (histEnded(requestId, e.what()) || oeeEnded(requestId, e.what())) )
+				if( !task.Fail && (histEnded(requestId, e.what()) || oeeEnded(requestId, e.what()) || flowEnded(requestId, e.what())) )
 					break;
-				{ lg _{ _histMutex }; _histListeners.erase( requestId ); _oeeListeners.erase( requestId ); }
+				{ lg _{ _histMutex }; _histListeners.erase( requestId ); _oeeListeners.erase( requestId ); _flowListeners.erase( requestId ); }
 				unsubscribed( requestId, false );
 				if( task.Fail )
 					task.Fail( GatewayErrorResponse{e.what(), ExceptionArgs{DefaultExceptionLevel, ELogTags::Exception, e.code(), (EHttpStatus)e.status_code()}} );//the one place the gateway answered - see GatewayErrorResponse.  SetExp stores e.Move(), so the type survives, and the status with it.
@@ -277,7 +334,18 @@ namespace Jde::Opc::Gateway::Tests{
 				if( listener )
 					listener->OnStatus( m->oee_status() );
 				break;}
-			case VALUE_NOT_SET:{//a connect's completion, or a HistUnsubscribe's or an OeeUnsubscribe's.
+			case kFlowSubscribeAck:{
+				auto task = IClientSocketSession::PopTask( requestId );
+				if( auto h = std::any_cast<await<FromServer::FlowSubscribeAck>::Handle>(&task.Handle); h )
+					(*h).promise().Resume( move(*m->mutable_flow_subscribe_ack()), *h );
+				else if( auto listener = flowListener(requestId); listener )
+					listener->OnAck( m->flow_subscribe_ack() );
+				break;}
+			case kFlowActivity:
+				if( auto listener = flowListener(requestId); listener )
+					listener->OnActivity( m->flow_activity() );
+				break;
+			case VALUE_NOT_SET:{//a connect's completion, or a HistUnsubscribe's, an OeeUnsubscribe's or a FlowUnsubscribe's.
 				unsubscribed( requestId, true );
 				auto task = IClientSocketSession::PopTask( requestId );
 				if( auto h = std::any_cast<await<uint32>::Handle>(&task.Handle); h )
