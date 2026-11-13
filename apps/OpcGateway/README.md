@@ -36,9 +36,13 @@ installed.
   the gateway's own clients and no other: a web session by its issued token, a group's collector as the gateway's own
   user.  Every node is readable by any session and none is writable.  Behind it sits the kind's `IDriver`.  The Open
   Protocol one (`src/drivers/openProtocol/`) keeps a session with the controller under the
-  `/gateway/drivers/openProtocol` settings and serves `_Op`, the link's diagnostics: `Connected`, `Since`, `Url`,
-  `LastError`, `Reconnects`, `Identity`, `Revisions`, `LinkLevel` and `Skew`, the controller's clock against the
-  gateway's.  Results are the plan's Phase 5.
+  `/gateway/drivers/openProtocol` settings and serves three objects.  `Result` has a variable per field of the
+  controller's last tightening result, MID 0061 at revisions 1 to 7: each result's fields carry one source timestamp,
+  the controller's time read in the row's zone and kept distinct and increasing, and a field the controller's revision
+  lacks reads `Bad_NotSupported`.  `Counters` are `Total`, `Ok` and `Nok`, the tightenings since the driver started.
+  `_Op` is the link's diagnostics: `Connected`, `Since`, `Url`, `LastError`, `Reconnects`, `Identity`, `Revisions`,
+  `LinkLevel`, `Results` and `Skew`, the controller's clock against the gateway's.  A group's member over a `Result`
+  variable records every result when it has no `MinTimeInterval`, and the last of each interval when it has one.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.
@@ -149,6 +153,10 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
   controller's clock, a group collecting as the gateway's own user, a web session after its certificate is issued
   again, the server's certificate refused by a client with no anchor, a held port, and a controller the driver
   refuses.
+- `DriverResultTests`: the Open Protocol driver's results (the plan's *Phase 5*), against the same controller - a
+  result of each revision of MID 0061 in `Result`, two in a second kept distinct, the counters, a group recording a
+  burst whole and the last result of each `MinTimeInterval`, and the endpoint's processed read of a served result
+  against the QL's `history`.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.

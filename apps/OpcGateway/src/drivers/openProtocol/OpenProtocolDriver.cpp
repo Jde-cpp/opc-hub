@@ -10,6 +10,7 @@
 #include <jde/opc/openProtocol/logTags.h>
 #include "../../types/OpenProtocolRow.h"
 #include "../../types/ServerCnnctn.h"
+#include "TighteningResult.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -65,7 +66,10 @@ namespace Jde::Opc::Gateway{
 		_session.emplace( boost::asio::make_strand(*Executor()), controller.Host, controller.Port, sessionSettings(controller), Session::Events{
 			[this]( Session::Connection&& connection ){ OnConnected( move(connection) ); },
 			[this]( const Failure& why ){ OnLost( why ); },
-			{}
+			[this]( Message&& pushed ){
+				if( let result = get_if<Mid0061>(&pushed.Data) )
+					OnResult( pushed.Head.Revision, *result );
+			}
 		} );
 	}
 	α OpenProtocolDriver::Configure( Opc::Server::UASettings& settings )ε->void{
@@ -74,37 +78,64 @@ namespace Jde::Opc::Gateway{
 
 	//Each node's id is the string of its path, `_Op.Connected` (spec *Address space*).
 	Ω nodeId( UA_UInt16 ns, sv path )ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(ns, string{path}.c_str()) }; }
+	//With its source timestamp, and the gateway's receipt as the server's where it has one.  A read and an item's sample answer
+	//the server's with open62541's own clock, which for an item at 0 is the write's.
+	Ω stamped( Value&& value, UA_DateTime source, optional<UA_DateTime> received={} )ι->Value{
+		value.sourceTimestamp = source;
+		value.hasSourceTimestamp = true;
+		if( received ){
+			value.serverTimestamp = *received;
+			value.hasServerTimestamp = true;
+		}
+		return move( value );
+	}
 	//The scalar as `_Op`'s value, with `status` and the time now, owned:  a posted write runs after the caller's scalar is gone.
-	Ω opValue( const void* scalar, const UA_DataType& type, UA_StatusCode status )ι->Value{
+	Ω opValue( const void* scalar, const UA_DataType& type, UA_StatusCode status=UA_STATUSCODE_GOOD )ι->Value{
 		UA_DataValue view; UA_DataValue_init( &view );
 		UA_Variant_setScalar( &view.value, const_cast<void*>(scalar), &type );
 		view.hasValue = true;
 		view.status = status;
 		view.hasStatus = status!=UA_STATUSCODE_GOOD;
-		view.sourceTimestamp = UA_DateTime_now();
-		view.hasSourceTimestamp = true;
-		return Value{ view };
+		return stamped( Value{view}, UA_DateTime_now() );
 	}
-	Ω writeOp( UA_Server& server, UA_UInt16 ns, sv slug, sv name, const UA_DataValue& value )ι->void{
-		if( let sc = UA_Server_writeDataValue(&server, nodeId(ns, Ƒ("_Op.{}", name)), value); sc )
-			WARN( "({}) could not write _Op.{}:  {}", slug, name, UAException::Message(sc) );
+	Ω write( UA_Server& server, UA_UInt16 ns, sv slug, sv path, const UA_DataValue& value )ι->void{
+		if( let sc = UA_Server_writeDataValue(&server, nodeId(ns, path), value); sc )
+			WARN( "({}) could not write {}:  {}", slug, path, UAException::Message(sc) );
 	}
 	α OpenProtocolDriver::Build( UA_Server& server, UA_UInt16 ns )ε->void{
 		_server = &server;
 		_ns = ns;
-		UA_ObjectAttributes object = UA_ObjectAttributes_default;
-		object.displayName = UA_LocalizedText{ {}, "_Op"_uv };
-		UAε( UA_Server_addObjectNode(&server, nodeId(ns, "_Op"), NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QualifiedName{ns, "_Op"_uv}, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), object, nullptr, nullptr) );
+		let addObject = [&]( sv name ){
+			UA_ObjectAttributes object = UA_ObjectAttributes_default;
+			object.displayName = UA_LocalizedText{ {}, ToUV(name) };
+			UAε( UA_Server_addObjectNode(&server, nodeId(ns, name), NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QualifiedName{ns, ToUV(name)}, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), object, nullptr, nullptr) );
+		};
 		//AccessLevel CurrentRead, and the defaults:  WriteMask 0, MinimumSamplingInterval 0, so an item at 0 hears each write.
-		let add = [&]( sv name, const UA_DataType& type, const void* initial ){
+		let addVariable = [&]( sv object, sv name, const UA_DataType& type, const void* initial ){
 			UA_VariableAttributes attributes = UA_VariableAttributes_default;
 			attributes.displayName = UA_LocalizedText{ {}, ToUV(name) };
 			attributes.dataType = type.typeId;
 			attributes.valueRank = UA_VALUERANK_SCALAR;
 			attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
 			UA_Variant_setScalar( &attributes.value, const_cast<void*>(initial), &type );
-			UAε( UA_Server_addVariableNode(&server, nodeId(ns, Ƒ("_Op.{}", name)), nodeId(ns, "_Op"), UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QualifiedName{ns, ToUV(name)}, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
+			UAε( UA_Server_addVariableNode(&server, nodeId(ns, Ƒ("{}.{}", object, name)), nodeId(ns, object), UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QualifiedName{ns, ToUV(name)}, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
 		};
+		//These written here, before Run, with no lock to wait for:  a post would wait for a loop that may never run.
+		let started = UA_DateTime_now();
+		addObject( "Result" );
+		for( let& variable : TighteningResult::Variables() ){
+			let waiting = stamped( TighteningResult::Unset(*variable.Type, UA_STATUSCODE_BADWAITINGFORINITIALDATA), started );
+			addVariable( "Result", variable.Name, *variable.Type, waiting.value.data );
+			write( server, ns, _slug, Ƒ("Result.{}", variable.Name), waiting );
+		}
+		addObject( "Counters" );
+		for( let name : {"Total"sv, "Ok"sv, "Nok"sv} ){
+			const UA_UInt64 none{};
+			addVariable( "Counters", name, UA_TYPES[UA_TYPES_UINT64], &none );
+			write( server, ns, _slug, Ƒ("Counters.{}", name), stamped(opValue(&none, UA_TYPES[UA_TYPES_UINT64]), started) );
+		}
+		addObject( "_Op" );
+		let add = [&]( sv name, const UA_DataType& type, const void* initial ){ addVariable( "_Op", name, type, initial ); };
 		const UA_Boolean no{};
 		const UA_String none{};
 		const UA_UInt32 reconnects{};
@@ -123,17 +154,22 @@ namespace Jde::Opc::Gateway{
 		add( "Results", UA_TYPES[UA_TYPES_UINT64], &count );
 		add( "LostResults", UA_TYPES[UA_TYPES_UINT64], &count );
 		add( "Skew", UA_TYPES[UA_TYPES_DOUBLE], &skew );
-		//No clock read yet.  Written here, before Run, with no lock to wait for:  a post would wait for a loop that may never run.
-		writeOp( server, ns, _slug, "Skew", opValue(&skew, UA_TYPES[UA_TYPES_DOUBLE], UA_STATUSCODE_BADWAITINGFORINITIALDATA) );
+		write( server, ns, _slug, "_Op.Skew", opValue(&skew, UA_TYPES[UA_TYPES_DOUBLE], UA_STATUSCODE_BADWAITINGFORINITIALDATA) );//no clock read yet.
 	}
 	α OpenProtocolDriver::Start()ι->void{ _session->Start(); }
 	α OpenProtocolDriver::Stop( absl::AnyInvocable<void()> stopped )ι->void{ _session->Stop( std::move(stopped) ); }
 
 	//On the server's own thread, not the strand's executor thread, which the service lock's wait would hold (UAServer::Post).
-	α OpenProtocolDriver::Write( sv name, const void* scalar, const UA_DataType& type, UA_StatusCode status )ι->void{
-		Opc::Server::UAServer::Post( *_server, [ns=_ns, slug=_slug, name=string{name}, value=opValue(scalar, type, status)]( UA_Server& server ){
-			writeOp( server, ns, slug, name, value );
+	α OpenProtocolDriver::Post( Writes&& writes )ι->void{
+		Opc::Server::UAServer::Post( *_server, [ns=_ns, slug=_slug, writes=move(writes)]( UA_Server& server ){
+			for( let& [path, value] : writes )
+				write( server, ns, slug, path, value );
 		} );
+	}
+	α OpenProtocolDriver::Write( sv name, const void* scalar, const UA_DataType& type, UA_StatusCode status )ι->void{
+		Writes writes;
+		writes.emplace_back( Ƒ("_Op.{}", name), opValue(scalar, type, status) );
+		Post( move(writes) );
 	}
 	α OpenProtocolDriver::WriteText( sv name, sv text )ι->void{
 		let value = ToUV( text );
@@ -184,6 +220,7 @@ namespace Jde::Opc::Gateway{
 		Write( "Reconnects", &_reconnects, UA_TYPES[UA_TYPES_UINT32] );
 		WriteRevisions();
 		WriteConnected( true );
+		_session->Request( Mid0060{}, [this]( Session::Reply&& reply ){ OnSubscribed( move(reply) ); } );//first:  a result made before it is accepted is never pushed.
 		_session->Request( Mid0080{}, [this]( Session::Reply&& reply ){ OnTime( move(reply) ); } );
 	}
 	α OpenProtocolDriver::OnLost( const Failure& why )ι->void{
@@ -212,5 +249,63 @@ namespace Jde::Opc::Gateway{
 				WriteText( "LastError", reply.error().What );
 			WriteNoSkew( UA_STATUSCODE_BADNOTSUPPORTED );
 		}
+	}
+
+	//Accepted at the revision the results come at, until one's own header says another (spec *The protocol*):  what it lacks is
+	//known before a result comes.  One above the last results' says nothing new, since a controller may take a revision and push
+	//at its own (§1.4);  the first result does.  A link that went first is OnLost's, and the next connection subscribes again.
+	α OpenProtocolDriver::OnSubscribed( Session::Reply&& reply )ι->void{
+		if( !reply ){
+			if( reply.error().Kind==EFailure::Refused ){
+				WARN( "({}) the controller refused the results' subscription, so none come:  {}", _slug, reply.error().What );
+				WriteText( "LastError", reply.error().What );
+			}
+			return;
+		}
+		if( let revision = _session->Revision(Mid0060::Id); !_resultRevision || revision<_resultRevision ){
+			Writes writes;
+			SetRevision( revision, UA_DateTime_now(), writes );
+			Post( move(writes) );
+		}
+		WriteRevisions();
+	}
+	α OpenProtocolDriver::SetRevision( uint16_t revision, UA_DateTime at, Writes& writes )ι->void{
+		for( let& variable : TighteningResult::Variables() ){
+			if( variable.Since>revision && (!_resultRevision || variable.Since<=_resultRevision) )
+				writes.emplace_back( Ƒ("Result.{}", variable.Name), stamped(TighteningResult::Unset(*variable.Type, UA_STATUSCODE_BADNOTSUPPORTED), at) );
+		}
+		_resultRevision = revision;
+	}
+	//MID 0061, which the session has acknowledged (spec *Results*).  Its time is whole seconds local to the row's zone, so two
+	//rundowns in a second, or a clock set back, would share a time or reverse:  a result not after the last takes the last's time
+	//and a millisecond.
+	α OpenProtocolDriver::OnResult( uint16_t revision, const Mid0061& result )ι->void{
+		let received = Clock::now();
+		TimePoint at{ result.Time ? TimePoint{_zone->to_sys(*result.Time, std::chrono::choose::earliest)} : received };
+		if( _lastResult && at<=*_lastResult )
+			at = *_lastResult+1ms;
+		_lastResult = at;
+		let source = UADateTime{ at }.UA();
+		let server = UADateTime{ received }.UA();
+		Writes writes;
+		if( revision!=_resultRevision ){
+			SetRevision( revision, source, writes );
+			WriteRevisions();
+		}
+		for( auto& [name, value] : TighteningResult::Values(result, revision, *_zone) )
+			writes.emplace_back( Ƒ("Result.{}", name), stamped(move(value), source, server) );
+		let count = [&]( sv name, UA_UInt64& counter ){
+			++counter;
+			writes.emplace_back( Ƒ("Counters.{}", name), stamped(opValue(&counter, UA_TYPES[UA_TYPES_UINT64]), source, server) );
+		};
+		if( revision<3 || result.ResultType.value_or(1)==1 ){//a tightening:  below revision 3 a result names no type.
+			count( "Total", _total );
+			if( result.Status )
+				count( *result.Status==1 ? "Ok"sv : "Nok"sv, *result.Status==1 ? _ok : _nok );
+		}
+		++_results;
+		writes.emplace_back( "_Op.Results", opValue(&_results, UA_TYPES[UA_TYPES_UINT64]) );
+		TRACE( "({}) result {} at revision {}, sourced {}.", _slug, result.TighteningId.value_or(0), revision, ToIsoString(at) );
+		Post( move(writes) );
 	}
 }

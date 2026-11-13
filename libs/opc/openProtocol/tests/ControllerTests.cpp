@@ -244,4 +244,20 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		Controller station{ *Executor(), 0, Scripted() };
 		EXPECT_THROW( (Controller{*Executor(), station.Port(), Scripted()}), Exception );
 	}
+
+	//A controller's port is free once the controller has gone, though its strand was busy then:  the next takes it at once, as
+	//a suite's cases do, each with a controller of its own on one port.
+	TEST( ControllerTests, ThePortIsFreeOnceItsControllerHasGone ){
+		boost::asio::io_context context{ 1 };
+		auto work = boost::asio::make_work_guard( context );
+		std::jthread thread{ [&]{ context.run(); } };
+		uint16_t port{};
+		{
+			Controller first{ context, 0, Scripted() };
+			port = first.Port();
+			boost::asio::post( context, []{ std::this_thread::sleep_for( 200ms ); } );//ahead of its close.
+		}
+		EXPECT_NO_THROW( (Controller{context, port, Scripted()}) );
+		work.reset();
+	}
 }

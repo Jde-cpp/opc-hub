@@ -62,7 +62,8 @@ namespace Jde::Opc::Gateway::Tests{
 		return host;
 	}
 	Ξ WaitNoHost( str slug, Duration timeout=std::chrono::seconds{15} )ι->bool{ return WaitUntil( [&]{ return !DriverHost::Find( slug ); }, timeout ); }
-	Ξ OpNode( sv name )ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(ServerCnnctn::DriverBrowseNs, Ƒ("_Op.{}", name).c_str()) }; }
+	Ξ DriverNode( sv path )ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(ServerCnnctn::DriverBrowseNs, string{path}.c_str()) }; }//a node of a row's server by its path, `Result.Torque`.
+	Ξ OpNode( sv name )ι->NodeId{ return DriverNode( Ƒ("_Op.{}", name) ); }
 	//`_Op`'s `name` as a client of the slug's reads it from the row's server, `cred`'s registered client or one connected for it.
 	Ξ ReadOp( str slug, sv name, Credential cred )ε->Value{
 		return ReadValue( BlockAwait(UAClient::GetClient(slug, move(cred))), OpNode(name) );
@@ -74,4 +75,43 @@ namespace Jde::Opc::Gateway::Tests{
 			return value.Get<UA_UInt32>( 0 );
 		return value.hasValue && UA_Variant_hasScalarType( &value.value, &UA_TYPES[UA_TYPES_UINT64] ) ? optional<uint>{ value.Get<UA_UInt64>(0) } : nullopt;
 	}
+
+	//A row for the suite's controller, made while the gateway runs, with its server listening:  purged as it goes.
+	struct DriverRow final{
+		DriverRow( string slug, sv driver={} )ε:Slug{ move(slug) }{
+			PurgeServerCnnctn( Slug );
+			let created = CreateDriverRow( Slug, driver );
+			THROW_IF( !created, "{}", created.error() );
+			Id = *created;
+			if( !WaitHost(Slug) ){
+				PurgeServerCnnctn( Id );
+				THROW( "the server of '{}' never started.", Slug );
+			}
+		}
+		DriverRow( const DriverRow& )=delete;
+		~DriverRow(){
+			PurgeServerCnnctn( Id );
+			WaitNoHost( Slug );
+		}
+		string Slug;
+		ServerCnnctnPK Id;
+	};
+	//A PF6000 station that answers every revision the codec has, and numbers its messages.
+	Ξ Station()ι->OpenProtocol::Controller::Script{
+		return { .Identity={ .CellId=1, .ChannelId=2, .ControllerName="Line 3 station 7", .SupplierCode="ACT", .OpenProtocolVersion="2.20.1", .ControllerSoftwareVersion="3.11.5", .ToolSoftwareVersion="1.4.2",
+			.RbuType="Gold", .ControllerSerialNumber="C00123456", .SystemType=3, .SystemSubtype=1, .SequenceNumberSupport=1, .LinkingSupport=0, .StationId=7, .StationName="Station 7", .ClientId=1 } };
+	}
+	Ξ Op( const DriverRow& row, sv name )ε->Value{ return ReadOp( row.Slug, name, SessionCredential() ); }//as a web session's client reads it.
+	//Until `_Op`'s `name` is as `is` has it;  a read the row's server is not there for is one that is not yet.
+	Ξ WaitOp( const DriverRow& row, sv name, function<bool(const Value&)> is, Duration timeout=std::chrono::seconds{15} )ι->bool{
+		return WaitUntil( [&]{
+			try{
+				return is( Op(row, name) );
+			}
+			catch( const std::exception& ){
+				return false;
+			}
+		}, timeout );
+	}
+	Ξ WaitConnected( const DriverRow& row, bool connected=true )ι->bool{ return WaitOp( row, "Connected", [=]( let& v ){ return OpFlag( v )==connected; } ); }
 }
