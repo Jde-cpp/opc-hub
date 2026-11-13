@@ -441,8 +441,13 @@ namespace Jde::Opc::Gateway{
 			lg _{ _mutex };
 			auto p = _flows.find( id );
 			kept = p!=_flows.end() && !_stopped;
-			if( kept )
+			if( kept ){
 				p->second.Live = run;
+				//A node that could not be made or started:  the deploy read its props, so it failed on what is around it, a
+				//calendar not yet held, a member not yet resolved, which may come back.
+				if( !started && !p->second.Retry )
+					p->second.Retry = _clock->Schedule( RetryInterval, [this, id]{ Retry( id ); } );
+			}
 		}
 		if( !kept )
 			run->Flow.Stop();
@@ -512,7 +517,9 @@ namespace Jde::Opc::Gateway{
 					else if( node.Type==ENodeType::GroupIn ){
 						let named = node.Props.if_contains( "group" );
 						optional<DB::Key> key;
-						if( named && named->is_string() && !named->get_string().empty() )
+						if( let p = await.Spelled.Groups.find(node.Id); p!=await.Spelled.Groups.end() )//a re-check:  the group the run reads, whatever its slug names now.
+							key = DB::Key{ (uint)p->second };
+						else if( named && named->is_string() && !named->get_string().empty() )
 							key = DB::Key{ string{named->get_string()} };
 						else if( let id = Json::FindNumber<uint32>(node.Props, "group"); id )
 							key = DB::Key{ (uint)*id };
@@ -709,22 +716,24 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α FlowHost::Link( FlowPK from, UserPK deployer, sv name, const Flows::Message& m, SL sl )ε->uint{
-		vector<std::pair<FlowRow,sp<Run>>> to;
+		struct Receiver final{ string Guid; string Name; sp<Run> Live; };
+		vector<Receiver> to;//those running, which a flow that is not would take nothing from, nor be asked about.
 		{
+			const string key{ name };
 			lg _{ _mutex };
 			for( let& [id,entry] : _flows ){
-				if( id!=from && !entry.Row.Deleted && entry.Links.contains(string{name}) )
-					to.emplace_back( entry.Row, entry.Live );
+				if( id!=from && !entry.Row.Deleted && entry.Live && entry.Live->Flow.Running() && entry.Links.contains(key) )
+					to.emplace_back( entry.Row.Guid, entry.Row.Name, entry.Live );
 			}
 		}
 		let acl = AppClient()->Acl();
-		for( let& [row, _] : to ){
-			if( let allowed = acl->Check("gateway", "flows", row.Guid, Access::ERights::Update, deployer, sl); !allowed )
-				throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "A link to flow '{}' needs Update on it, as an inject into it does:  {}", row.Name, allowed.error().what() };
+		for( let& receiver : to ){
+			if( let allowed = acl->Check("gateway", "flows", receiver.Guid, Access::ERights::Update, deployer, sl); !allowed )
+				throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "A link to flow '{}' needs Update on it, as an inject into it does:  {}", receiver.Name, allowed.error().what() };
 		}
 		uint taken{};
-		for( let& [_, run] : to ){
-			if( run && run->Flow.Link(name, m) )
+		for( let& receiver : to ){
+			if( receiver.Live->Flow.Link(name, m) )
 				++taken;
 		}
 		return taken;

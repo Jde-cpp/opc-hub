@@ -294,6 +294,21 @@ namespace Jde::Opc::Flows::Tests{
 			EXPECT_EQ( Counts(node).Drops, 0u ) << node;
 	}
 
+	//reviews-issue/449-flows-sources-sinks.md #1, #4:  a held message is not through the flow, so a source that waits on Idle
+	//for its next page waits for each one it sent to be answered.
+	TEST_F( EngineTests, AReadingSourceWaitsForWhatIsHeld ){
+		Run( Nodes({Node("pump", "opc in", "{}", {{"w"}}), Node("w", "opc out")}) );
+		Host->Pumps["pump"]->Read( 4, 2, "hold" );
+		Sync();
+		EXPECT_EQ( Counts("pump").Sent, vector<uint>{2} ) << "the first page, held";
+		Host->Takers["w"]->Answer();
+		Sync();
+		EXPECT_EQ( Counts("pump").Sent, vector<uint>{2} ) << "one is held still";
+		Host->Takers["w"]->Answer();
+		Sync();
+		EXPECT_EQ( Counts("pump").Sent, vector<uint>{4} ) << "the second, once neither is";
+	}
+
 	TEST_F( EngineTests, StartTellsWhenItsNodesHaveStarted ){
 		auto graph = Graph::Read( Nodes({Node("in", "inject", "{}", {{"v"}}), Node("v", "variable")}) );
 		ASSERT_TRUE( graph.has_value() );

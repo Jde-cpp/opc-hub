@@ -1,6 +1,6 @@
+#include <jde/flows/Props.h>
 #include "Nodes.h"
 #include "Operand.h"
-#include "Props.h"
 
 #define let const auto
 

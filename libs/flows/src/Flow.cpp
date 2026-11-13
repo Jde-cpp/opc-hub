@@ -547,7 +547,7 @@ namespace Jde::Opc::Flows{
 					}
 					continue;
 				}
-				if( !empty || _idle.empty() || !Running() )
+				if( !empty || _idle.empty() || !Running() || std::ranges::any_of(_slots, [](let& slot){ return !slot->Open.empty(); }) )
 					break;
 				for( auto& [slot, f] : std::exchange(_idle, {}) ){//each counts toward the turn, as a message does:  one that sends nothing and asks again takes no more than its turn.
 					Guard( slot, f );

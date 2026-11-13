@@ -1,6 +1,5 @@
 #include "FlowNodes.h"
 #include <deque>
-#include <boost/beast/http/verb.hpp>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
@@ -8,6 +7,7 @@
 #include <jde/calendar/client/Calendars.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/flows/Allow.h>
+#include <jde/flows/Props.h>
 #include <jde/flows/Template.h>
 #include "../async/ValueTypesAwait.h"
 #include "../async/WriteAwait.h"
@@ -43,53 +43,23 @@ namespace Jde::Opc::Gateway{
 		TNode* _node;
 	};
 
-	//A node's props, read to their types:  what each throws is the node's fault, so it names the key.
-	Ω find( const jobject& props, sv key )ι->const jvalue*{
-		let v = props.if_contains( key );
-		return v && !v->is_null() ? v : nullptr;
-	}
-	Ω findText( const jobject& props, sv key )ε->optional<sv>{
-		let v = find( props, key );
-		THROW_IF( v && !v->is_string(), "`{}` must be text.", key );
-		return v ? optional<sv>{ v->get_string() } : nullopt;
-	}
-	Ω flag( const jobject& props, sv key, bool dflt )ε->bool{
-		let v = find( props, key );
-		THROW_IF( v && !v->is_bool(), "`{}` must be true or false.", key );
-		return v ? v->get_bool() : dflt;
-	}
-	Ω findNumber( const jobject& props, sv key )ε->optional<double>{
-		let v = find( props, key );
-		THROW_IF( v && !v->is_number(), "`{}` must be a number.", key );
-		return v ? optional<double>{ v->to_number<double>() } : nullopt;
-	}
-	Ω findWait( const jobject& props, sv key )ε->optional<Duration>{
-		let text = findText( props, key );
-		if( !text )
-			return nullopt;
-		let y = Chrono::TryToDuration( *text );
-		THROW_IF( !y || *y<Duration::zero(), "`{}` must be an ISO 8601 duration, as PT30S.", key );
-		return *y;
-	}
-	Ω choice( const jobject& props, sv key, std::span<const sv> names, uint dflt )ε->uint{
-		let text = findText( props, key );
-		if( !text )
-			return dflt;
-		let p = std::ranges::find( names, *text );
-		THROW_IF( p==names.end(), "`{}` must be one of {}, not '{}'.", key, Str::Join(names, ", "), *text );
-		return p-names.begin();
-	}
+	namespace Prop = Flows::Prop;
 
+	//The connection an `opc in`, an `opc out` and a `connection` node name, by its slug.
+	Ω connection( const jobject& props )ε->ServerCnnctnNK{
+		auto slug = Prop::FindText( props, "connection" );
+		THROW_IF( !slug, "`connection` is required, a connection's slug." );
+		return ServerCnnctnNK{ move(*slug) };
+	}
 	//A node of a connection, as an `opc in` and an `opc out` name it.
 	struct OpcTarget final{ ServerCnnctnNK Slug; ExNodeId Node; string Text; };
 	Ω target( const jobject& props, SL sl )ε->OpcTarget{
-		let slug = findText( props, "connection" );
-		THROW_IF( !slug || slug->empty(), "`connection` is required, a connection's slug." );
-		let named = find( props, "node" );
+		auto slug = connection( props );
+		let named = Prop::Find( props, "node" );
 		THROW_IF( !named, "`node` is required, the node's id." );
 		auto ex = ParseHistNode( *named, sl );
 		auto text = ex.ToString();
-		return { ServerCnnctnNK{*slug}, move(ex), move(text) };
+		return { move(slug), move(ex), move(text) };
 	}
 	//The node by the index the connection's server has for it:  through the server's namespaces for one named by its URI.
 	struct ResolveAwait final : AnyAwait<NodeId>{
@@ -123,20 +93,20 @@ namespace Jde::Opc::Gateway{
 	constexpr std::array<sv,3> _deadbands{ "none", "absolute", "percent" };
 	Ω parameters( const jobject& props )ε->MonitoringParameters{
 		MonitoringParameters y;
-		if( let sampling = findNumber(props, "samplingInterval") )//ms:  0 the server's fastest, negative the publishing interval.
+		if( let sampling = Prop::FindNumber(props, "samplingInterval") )//ms:  0 the server's fastest, negative the publishing interval.
 			y.SamplingInterval = *sampling;
-		if( let queue = findNumber(props, "queueSize") ){
+		if( let queue = Prop::FindNumber(props, "queueSize") ){
 			THROW_IF( *queue<0 || *queue>std::numeric_limits<uint32_t>::max() || *queue!=std::floor(*queue), "`queueSize` must be a whole number." );
 			y.QueueSize = (uint32)*queue;
 		}
-		y.DiscardOldest = flag( props, "discardOldest", true );
-		if( let filter = find(props, "filter") ){
+		y.DiscardOldest = Prop::Flag( props, "discardOldest", true );
+		if( let filter = Prop::Find(props, "filter") ){
 			THROW_IF( !filter->is_object(), "`filter` must be an object of trigger, deadbandType and deadbandValue." );
 			let& o = filter->get_object();
 			DataChangeFilter f;
-			f.Trigger = (UA_DataChangeTrigger)choice( o, "trigger", _triggers, UA_DATACHANGETRIGGER_STATUSVALUE );
-			f.DeadbandType = (UA_DeadbandType)choice( o, "deadbandType", _deadbands, UA_DEADBANDTYPE_NONE );
-			f.DeadbandValue = findNumber( o, "deadbandValue" ).value_or( 0 );
+			f.Trigger = (UA_DataChangeTrigger)Prop::Choice( o, "trigger", _triggers, UA_DATACHANGETRIGGER_STATUSVALUE );
+			f.DeadbandType = (UA_DeadbandType)Prop::Choice( o, "deadbandType", _deadbands, UA_DEADBANDTYPE_NONE );
+			f.DeadbandValue = Prop::FindNumber( o, "deadbandValue" ).value_or( 0 );
 			THROW_IF( f.DeadbandValue<0, "`deadbandValue` must not be negative." );
 			y.Filter = f;
 		}
@@ -206,6 +176,7 @@ namespace Jde::Opc::Gateway{
 				_abandon = Schedule( HistGroupHost::AbandonAfter, [this]{
 					_abandon = 0;
 					UAClient::Unsubscribe( _listener );
+					_listener->Fed = false;//the item it joins again sends no first value either.
 					Subscribing( _listener );
 				} );
 		}
@@ -222,7 +193,7 @@ namespace Jde::Opc::Gateway{
 		}
 		//The item, on the connection's collector client, as a group's collector asks for its own (HistGroupHost::Subscribing):
 		//one that fails is asked for again RetryInterval on.  An item the client had already sends no first value, so the
-		//node's value is read once in its place.
+		//node's value is read once in its place:  a read that fails leaves the node subscribed, its next change its first.
 		Ω Subscribing( sp<OpcListener> listener )ι->VoidTask{
 			string failure;
 			try{
@@ -241,9 +212,14 @@ namespace Jde::Opc::Gateway{
 				if( let status = ack.results_size() ? ack.results(0).status_code() : (StatusCode)UA_STATUSCODE_BADUNEXPECTEDERROR; status )
 					THROW( "'{}' refused an item for '{}':  {}.", to.Slug, to.Text, UAException::Message(status) );
 				if( existing ){
-					auto values = co_await Any( ReadValueAwait{{id}, client, UA_TIMESTAMPSTORETURN_BOTH} );
-					if( let p = values.find(id); p!=values.end() && !listener->Fed.exchange(true) )
-						listener->Node.With( [&]( OpcIn& node ){ node.Deliver( p->second, client->Types().get() ); } );
+					try{
+						auto values = co_await Any( ReadValueAwait{{id}, client, UA_TIMESTAMPSTORETURN_BOTH} );
+						if( let p = values.find(id); p!=values.end() && !listener->Fed.exchange(true) )
+							listener->Node.With( [&]( OpcIn& node ){ node.Deliver( p->second, client->Types().get() ); } );
+					}
+					catch( const std::exception& e ){
+						WARN( "[{}]'{}' on '{}' has no first value, its read having failed:  its next change is its first.  {}", listener->Label, to.Text, to.Slug, e.what() );
+					}
 				}
 			}
 			catch( const std::exception& e ){
@@ -272,8 +248,8 @@ namespace Jde::Opc::Gateway{
 	//`group in`.
 	struct GroupIn;
 	//What the group delivers to (Hist::ISubscriber), on the thread that stored the record:  the records wait here until the
-	//strand takes them.  More than `limit` of them, and they go:  the node subscribes again from its mark, and reads them
-	//from the group.
+	//strand takes them, heartbeats, which repeat a value, left out.  More than `limit` of them, and they go:  the node
+	//subscribes again from its mark, and reads them from the group.
 	struct GroupFeed final : Hist::ISubscriber{
 		GroupFeed( sp<Tether<GroupIn>> node, uint limit )ι:_node{ move(node) }, _limit{ limit }{}
 		α OnRecords( vector<Hist::Proto::HistoryRecord>&& records )ι->void override;
@@ -302,36 +278,50 @@ namespace Jde::Opc::Gateway{
 	static std::mutex _groupInsMutex;
 	static vector<std::pair<HistGroupPK,wp<Tether<GroupIn>>>> _groupIns;//each running `group in`, for GroupChanged.
 
-	constexpr std::array<sv,5> _updateTypes{ "unspecified", "insert", "replace", "update", "delete" };
-	struct GroupIn final : Flows::ISource{
-		GroupIn( const NodeDef& def, HistGroupPK group, SL sl )ε:
-			_group{ group },
-			_modifications{ flag(def.Props, "modifications", false) },
-			_lateness{ findWait(def.Props, "lateness") },
-			_self{ ms<Tether<GroupIn>>(*this) }{
-			let from = findText( def.Props, "from" ).value_or( "resume" );
+	//`group in`'s props, as the node and a deploy's check read them.
+	struct GroupInProps final{
+		GroupInProps( const jobject& props, SL sl )ε:
+			Modifications{ Prop::Flag(props, "modifications") },
+			Lateness{ Prop::FindWait(props, "lateness", true) }{
+			let from = Prop::Text( props, "from", "resume" );
 			if( from=="now" )
-				_now = true;
+				Now = true;
 			else if( from!="resume" ){
 				try{
-					_start = Chrono::ToTimePoint( string{from}, sl );
+					Start = Chrono::ToTimePoint( from, sl );
 				}
 				catch( const std::exception& ){
 					THROW( "`from` must be resume, now or a time, as 2026-03-09T06:00:00Z, not '{}'.", from );
 				}
 			}
-			if( let members = find(def.Props, "members") ){
+			if( let members = Prop::Find(props, "members") ){
 				THROW_IF( !members->is_array(), "`members` must be a list of the group's nodes." );
 				for( let& member : members->get_array() )
-					_wanted.push_back( ParseHistNode(member, sl) );
+					Wanted.push_back( ParseHistNode(member, sl) );
 			}
+		}
+		const bool Modifications;
+		const optional<Duration> Lateness;//none, the group's heartbeat gap.
+		optional<TimePoint> Start;//`from`, a time.
+		bool Now{};//`from`:  now, whatever the mark.
+		vector<ExNodeId> Wanted;//`members`:  none, every member.
+	};
+
+	constexpr std::array<sv,5> _updateTypes{ "unspecified", "insert", "replace", "update", "delete" };
+	struct GroupIn final : Flows::ISource{
+		GroupIn( const NodeDef& def, HistGroupPK group, SL sl )ε:
+			_group{ group },
+			_props{ def.Props, sl },
+			_self{ ms<Tether<GroupIn>>(*this) }{
 			THROW_IF( !HistHost::Instance().Find(group), "Its group isn't one this gateway historizes." );
 		}
 		~GroupIn(){ _self->Cut(); }
+		//A subscribe that fails, a member that does not resolve yet, leaves the node's status saying so, and it is asked for
+		//again RetryInterval on, and at the group's next change.
 		α Start()ε->void override{
 			let host = HistHost::Instance().Find( _group );
 			THROW_IF( !host, "Its group isn't one this gateway historizes." );
-			if( let marks = _now ? nullptr : Context().Get("marks"); marks && marks->is_object() ){
+			if( let marks = _props.Now ? nullptr : Context().Get("marks"); marks && marks->is_object() ){
 				for( let& mark : marks->get_object() ){
 					if( let index = Str::TryTo<Hist::NodeIndex>(sv{mark.key()}); index && mark.value().is_int64() ){
 						let ticks = (UA_DateTime)mark.value().get_int64();
@@ -340,14 +330,19 @@ namespace Jde::Opc::Gateway{
 					}
 				}
 			}
-			if( !_lateness )
-				_lateness = host->Columns().Thresholds().MaxTimeInterval;
-			_floor = _start ? UADateTime{ *_start }.UA() : _now || !_mark ? UADateTime{ Now() }.UA() : std::numeric_limits<UA_DateTime>::min();
+			_lateness = _props.Lateness.value_or( host->Columns().Thresholds().MaxTimeInterval );
+			_floor = _props.Start ? UADateTime{ *_props.Start }.UA() : _props.Now || !_mark ? UADateTime{ Now() }.UA() : std::numeric_limits<UA_DateTime>::min();
 			_page = std::clamp<uint>( QueueLimit()/4, 1, 1000 );
-			Subscribe( *host );
 			{
 				lg _{ _groupInsMutex };
 				_groupIns.emplace_back( _group, _self );
+			}
+			try{
+				Subscribe( *host );
+			}
+			catch( const std::exception& e ){
+				Retry( e.what() );
+				return;
 			}
 			try{
 				Pump();
@@ -367,7 +362,8 @@ namespace Jde::Opc::Gateway{
 		α OnStrand( absl::AnyInvocable<void()> f )ι->void{ Post( std::move(f) ); }
 		//Each the strand's.
 		//What waits, a page of it:  the snapshot's, then the records stored since, and then nothing until the feed wakes this
-		//again.  The page after goes once this one is through the flow (Idle), so a replay stays within the queues.
+		//again.  The page after goes once this one is through the flow (Idle), so a replay stays within the queues, and the
+		//mark is saved then, when the flow has finished every message it sent.
 		α Pump()ε->void{
 			if( !_subscription )
 				return;
@@ -375,8 +371,9 @@ namespace Jde::Opc::Gateway{
 			try{
 				if( _paging ){
 					let page = _subscription->Next( _page );
+					let types = UAClient::FindTypes( _slug );
 					for( let& value : page.Values )
-						Deliver( value.Value, value.Bound );
+						Deliver( value.Value, types.get(), value.Bound );
 					_paging = !page.Continuation.empty();
 				}
 				else{
@@ -389,23 +386,22 @@ namespace Jde::Opc::Gateway{
 					}
 					else if( records.empty() )
 						return;
+					let types = UAClient::FindTypes( _slug );
 					for( let& record : records ){
 						if( record.has_value() )
-							Deliver( record.value() );
-						else if( record.has_modification() && _modifications )
-							Modified( record.modification() );
+							Deliver( record.value(), types.get() );
+						else if( record.has_modification() && _props.Modifications )
+							Modified( record.modification(), types.get() );
 					}
 				}
 			}
 			catch( const std::exception& e ){
 				failure = e.what();
 			}
-			Save();
 			if( failure.empty() )
-				Idle( [this]{ Pump(); } );
+				Idle( [this]{ Save(); Pump(); } );
 			else{//its files could not be read, or the group has gone:  from the mark again, RetryInterval on.
-				SetStatus( {"red", "ring", failure} );
-				Schedule( FlowNodes::RetryInterval, [this]{ Resubscribe( true ); } );
+				Retry( failure );
 				THROW( "{}", failure );
 			}
 		}
@@ -414,13 +410,13 @@ namespace Jde::Opc::Gateway{
 			SetStatus( {"red", "ring", why==Hist::ESubscriptionEnd::Removed ? "Its group was removed." : "The historian stopped."} );
 		}
 		//The group's members changed, or a read failed:  subscribed again from the mark, when it is every member this takes
-		//and they are not those it has, or `always`.
+		//and they are not those it has, when it has no subscription, or `always`.
 		α Resubscribe( bool always )ε->void{
 			let host = HistHost::Instance().Find( _group );
 			if( !host )
 				return;
-			if( !always ){
-				if( _wanted.size() )
+			if( !always && _subscription ){
+				if( _props.Wanted.size() )
 					return;
 				let members = host->Members();
 				if( members.size()==_members.size() && std::ranges::all_of(members, [this]( let& m ){ return _members.contains( m.first ); }) )
@@ -430,14 +426,20 @@ namespace Jde::Opc::Gateway{
 				Subscribe( *host );
 			}
 			catch( const std::exception& e ){
-				SetStatus( {"red", "ring", e.what()} );
-				Schedule( FlowNodes::RetryInterval, [this]{ Resubscribe( true ); } );
+				Retry( e.what() );
 				return;
 			}
+			if( auto timer = std::exchange(_retry, 0); timer )
+				Cancel( timer );
 			Pump();
 		}
 	private:
 		struct Member final{ string Node; string Path; };
+		α Retry( string why )ι->void{
+			SetStatus( {"red", "ring", move(why)} );
+			if( !_retry )
+				_retry = Schedule( FlowNodes::RetryInterval, [this]{ _retry = 0; Resubscribe( true ); } );
+		}
 		//Registered with the group from the mark less the lateness, or from where the node starts, its snapshot to page first.
 		α Subscribe( HistGroupHost& host )ε->void{
 			if( _subscription )
@@ -452,9 +454,9 @@ namespace Jde::Opc::Gateway{
 				_members.emplace( member.Index, Member{text, member.Attributes.Path ? HistPathText(*member.Attributes.Path) : text} );
 			};
 			let members = host.HistMembers();
-			if( _wanted.empty() )
+			if( _props.Wanted.empty() )
 				std::ranges::for_each( members, add );
-			for( let& node : _wanted ){
+			for( let& node : _props.Wanted ){
 				let index = host.Index( node );
 				let member = index ? std::ranges::find( members, *index, &HistMember::Index ) : members.end();
 				THROW_IF( member==members.end(), "'{}' is no member of its group.", node.ToString() );
@@ -464,7 +466,7 @@ namespace Jde::Opc::Gateway{
 				SetStatus( {"grey", "ring", "Its group has no members."} );
 				return;
 			}
-			let lateness = (UA_DateTime)( duration_cast<std::chrono::nanoseconds>(*_lateness).count()/100 );
+			let lateness = (UA_DateTime)( duration_cast<std::chrono::nanoseconds>(_lateness).count()/100 );
 			_from = _mark ? std::max( _floor, *_mark-lateness ) : _floor;
 			_feed = ms<GroupFeed>( _self, QueueLimit() );
 			_subscription = host.Group()->Subscribe( _feed, move(nodes), _from );
@@ -473,7 +475,7 @@ namespace Jde::Opc::Gateway{
 		}
 		//A record as a message, but a heartbeat, which repeats a value, a snapshot's bound from before its time, the value
 		//the node had then, and one at or before the last of its node the flow finished, which a restart's lookback reads again.
-		α Deliver( const Hist::Proto::DataValue& value, bool bound=false )ι->void{
+		α Deliver( const Hist::Proto::DataValue& value, const ITypes* types, bool bound=false )ι->void{
 			if( value.has_heartbeat() )
 				return;
 			let member = _members.find( value.node_index() );
@@ -487,8 +489,7 @@ namespace Jde::Opc::Gateway{
 				return;
 			auto m = Make();
 			try{
-				let types = UAClient::FindTypes( _slug );
-				m.SetDataChange( _slug, member->second.Node, Hist::ToUA(value), types.get() );
+				m.SetDataChange( _slug, member->second.Node, Hist::ToUA(value), types );
 			}
 			catch( const std::exception& e ){
 				WARN( "A record of '{}' does not read, and is left out:  {}", member->second.Node, e.what() );
@@ -503,20 +504,19 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		//An edit of the group's history, a message of its own:  the value it left, none for a delete, and what it was.
-		α Modified( const Hist::Proto::Modification& edit )ι->void{
+		α Modified( const Hist::Proto::Modification& edit, const ITypes* types )ι->void{
 			let member = _members.find( edit.node_index() );
 			if( member==_members.end() )
 				return;
 			auto m = Make();
 			try{
-				let types = UAClient::FindTypes( _slug );
 				if( edit.has_new_value() )
-					m.SetDataChange( _slug, member->second.Node, Hist::ToUA(edit.new_value()), types.get() );
+					m.SetDataChange( _slug, member->second.Node, Hist::ToUA(edit.new_value()), types );
 				else
 					m.Json["node"] = jobject{ {"connection", _slug}, {"id", member->second.Node} };
 				jobject modification{ {"type", _updateTypes[std::min<uint>((uint)edit.update_type(), _updateTypes.size()-1)]}, {"time", ToIsoString(UADateTime{(UA_DateTime)edit.ts()}.Time())}, {"userName", edit.user_name()} };
 				if( edit.has_original() )
-					modification["original"] = Flows::ToPayload( Hist::ToUA(edit.original()), types.get() );
+					modification["original"] = Flows::ToPayload( Hist::ToUA(edit.original()), types );
 				m.Json["modification"] = move( modification );
 			}
 			catch( const std::exception& e ){
@@ -527,7 +527,8 @@ namespace Jde::Opc::Gateway{
 			m.Json["topic"] = member->second.Path;
 			Send( move(m) );
 		}
-		//The mark, as the context keeps it:  written a second after the first change not yet written, the host's rule.
+		//The mark, as the context keeps it, once the flow has finished what was sent up to it (Idle):  written a second after
+		//the first change not yet written, the host's rule.
 		α Save()ι->void{
 			if( !std::exchange(_dirty, false) )
 				return;
@@ -539,13 +540,10 @@ namespace Jde::Opc::Gateway{
 		}
 
 		const HistGroupPK _group;
-		const bool _modifications;
-		optional<Duration> _lateness;//the props', else the group's heartbeat gap.
-		optional<TimePoint> _start;//`from`, a time.
-		bool _now{};//`from`:  now, whatever the mark.
-		vector<ExNodeId> _wanted;//`members`:  none, every member.
+		const GroupInProps _props;
 		sp<Tether<GroupIn>> _self;
 		//The strand's.
+		Duration _lateness{};//the props', else the group's heartbeat gap.
 		ServerCnnctnNK _slug;
 		flat_map<Hist::NodeIndex,Member> _members;
 		sp<GroupFeed> _feed;
@@ -554,11 +552,15 @@ namespace Jde::Opc::Gateway{
 		uint _page{ 1 };
 		UA_DateTime _floor{};//no subscription starts before it.
 		UA_DateTime _from{};//where the subscription it has starts.
-		optional<UA_DateTime> _mark;//the latest time of a record the flow finished.
+		optional<UA_DateTime> _mark;//the latest time of a record the node has sent.
 		flat_map<Hist::NodeIndex,UA_DateTime> _high;//each node's.
 		bool _dirty{};
+		TimerId _retry{};
 	};
 	α GroupFeed::OnRecords( vector<Hist::Proto::HistoryRecord>&& records )ι->void{
+		std::erase_if( records, []( let& r ){ return r.has_value() && r.value().has_heartbeat(); } );
+		if( records.empty() )
+			return;
 		{
 			lg _{ _mutex };
 			if( _behind )
@@ -582,8 +584,8 @@ namespace Jde::Opc::Gateway{
 	constexpr std::array<sv,7> _weekdays{ "sun", "mon", "tue", "wed", "thu", "fri", "sat" };
 	struct Timer final : Flows::ISource{
 		Timer( const NodeDef& def )ε:
-			_every{ findWait(def.Props, "every") }{
-			let at = find( def.Props, "at" );
+			_every{ Prop::FindWait(def.Props, "every") }{
+			let at = Prop::Find( def.Props, "at" );
 			THROW_IF( _every && at, "A timer takes `every` or `at`, not both." );
 			THROW_IF( !_every && !at, "A timer takes `every`, an ISO 8601 duration, or `at`, local times." );
 			THROW_IF( _every && *_every<1ms, "`every` must be a millisecond at least." );
@@ -591,7 +593,7 @@ namespace Jde::Opc::Gateway{
 				return;
 			THROW_IF( !at->is_object(), "`at` must be an object of times, days and zone." );
 			let& o = at->get_object();
-			let times = find( o, "times" );
+			let times = Prop::Find( o, "times" );
 			THROW_IF( !times || !times->is_array() || times->get_array().empty(), "`at.times` must be a list of local times, as 06:00." );
 			for( let& time : times->get_array() ){
 				let parts = time.is_string() ? Str::Split( sv{time.get_string()}, ':' ) : vector<sv>{};
@@ -602,7 +604,7 @@ namespace Jde::Opc::Gateway{
 				_times.push_back( std::chrono::hours{*h}+std::chrono::minutes{*m}+std::chrono::seconds{*s} );
 			}
 			std::ranges::sort( _times );
-			if( let days = find(o, "days") ){
+			if( let days = Prop::Find(o, "days") ){
 				THROW_IF( !days->is_array(), "`at.days` must be a list of weekdays, as mon." );
 				_days.fill( false );
 				for( let& day : days->get_array() ){
@@ -612,7 +614,7 @@ namespace Jde::Opc::Gateway{
 				}
 				THROW_IF( std::ranges::none_of(_days, std::identity{}), "`at.days` names no day." );
 			}
-			if( let zone = findText(o, "zone") ){
+			if( let zone = Prop::FindText(o, "zone") ){
 				try{
 					_zone = std::chrono::locate_zone( *zone );
 				}
@@ -662,7 +664,7 @@ namespace Jde::Opc::Gateway{
 	//`calendar`.
 	constexpr std::array<sv,4> _boundaries{ "shiftStart", "shiftEnd", "breakStart", "breakEnd" };
 	Ω schedule( const jobject& props )ε->sp<const Calendar::Schedule>{
-		let named = find( props, "calendar" );
+		let named = Prop::Find( props, "calendar" );
 		THROW_IF( !named || (!named->is_string() && !named->is_number()), "`calendar` is required, a calendar's slug or id." );
 		auto y = named->is_string() ? Calendar::Client::Calendars::Find( sv{named->get_string()} ) : Calendar::Client::Calendars::Find( named->to_number<uint32>() );
 		THROW_IF( !y, "Calendar {} is no calendar the gateway holds:  the AppServer has none by that name, it is deleted, or the gateway may not read the calendars.", serialize(*named) );
@@ -670,7 +672,7 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω boundaries( const jobject& props )ε->std::array<bool,4>{
 		std::array<bool,4> y{ true, true, true, true };
-		if( let named = find(props, "boundaries") ){
+		if( let named = Prop::Find(props, "boundaries") ){
 			THROW_IF( !named->is_array(), "`boundaries` must be a list of {}.", Str::Join(_boundaries, ", ") );
 			y.fill( false );
 			for( let& name : named->get_array() ){
@@ -762,11 +764,9 @@ namespace Jde::Opc::Gateway{
 	//`connection`.
 	struct ConnectionIn final : Flows::ISource{
 		ConnectionIn( const NodeDef& def )ε:
-			_self{ ms<Tether<ConnectionIn>>(*this) }{
-			let slug = findText( def.Props, "connection" );
-			THROW_IF( !slug || slug->empty(), "`connection` is required, a connection's slug." );
-			_slug = *slug;
-		}
+			_slug{ connection(def.Props) },
+			_self{ ms<Tether<ConnectionIn>>(*this) }
+		{}
 		~ConnectionIn(){ Close(); }
 		α Start()ε->void override{
 			//Heard on the thread that made the change, which only posts:  a loss when the slug's last session went, and the return
@@ -800,7 +800,7 @@ namespace Jde::Opc::Gateway{
 			if( let handle = std::exchange(_observer, nullopt) )
 				UAClient::UnobserveConnections( *handle );
 		}
-		ServerCnnctnNK _slug;
+		const ServerCnnctnNK _slug;
 		sp<Tether<ConnectionIn>> _self;
 		optional<uint> _observer;
 		bool _connected{};
@@ -810,7 +810,7 @@ namespace Jde::Opc::Gateway{
 	struct OpcOut final : Flows::ISink{
 		OpcOut( const NodeDef& def, str flow, SL sl )ε:
 			_target{ target(def.Props, sl) },
-			_property{ findText(def.Props, "property").value_or("payload") },
+			_property{ Prop::Text(def.Props, "property", "payload") },
 			_collector{ HistHost::Instance().Collector(_target.Slug) },
 			_label{ Ƒ("{}.{}", flow, def.Id) },
 			_self{ ms<Tether<OpcOut>>(*this) }
@@ -883,24 +883,20 @@ namespace Jde::Opc::Gateway{
 	};
 
 	//`log`.
+	constexpr std::array<sv,5> _levels{ "Trace", "Debug", "Information", "Warning", "Error" };//the `debug` node's.
 	struct LogOut final : Flows::ISink{
 		LogOut( const NodeDef& def, str flow )ε:
-			_template{ findText(def.Props, "template").value_or("{{payload}}") },
-			_flow{ flow }{
-			if( let level = findText(def.Props, "level") ){
-				let names = LogLevelStrings();
-				let p = std::ranges::find_if( names, [&]( sv name ){ return Str::ToLower( string{name} )==Str::ToLower( string{*level} ); } );
-				THROW_IF( p==names.end(), "`level` must be one of {}, not '{}'.", Str::Join(names, ", "), *level );
-				_level = (ELogLevel)( p-names.begin() );
-			}
-		}
+			_template{ Prop::Text(def.Props, "template", "{{payload}}") },
+			_flow{ flow },
+			_level{ (ELogLevel)Prop::Choice(def.Props, "level", _levels, (uint)ELogLevel::Information) }
+		{}
 		α Receive( Message& m )ε->void override{
 			LOG( _level, _tags, "[{}.{}]{}", _flow, Def().Label(), _template.Render(m, FlowContext(), Global(), false) );
 		}
 	private:
 		Flows::Mustache _template;
 		const string _flow;
-		ELogLevel _level{ ELogLevel::Information };
+		const ELogLevel _level;
 	};
 
 	//`http request`.
@@ -932,21 +928,21 @@ namespace Jde::Opc::Gateway{
 	}
 	struct HttpOut final : Flows::ISink{
 		HttpOut( const NodeDef& def )ε:
-			_json{ choice(def.Props, "output", _outputs, 0)==1 },
+			_contentType{ Prop::FindText(def.Props, "contentType") },
+			_json{ Prop::Choice(def.Props, "output", _outputs, 0)==1 },
 			_self{ ms<Tether<HttpOut>>(*this) }{
-			if( let url = findText(def.Props, "url") )
+			if( let url = Prop::FindText(def.Props, "url") )
 				_url = parseUrl( *url );
-			if( let method = findText(def.Props, "method") )
+			if( let method = Prop::FindText(def.Props, "method") )
 				_verb = verb( *method );
-			if( let type = findText(def.Props, "contentType") )
-				_contentType = *type;
 		}
 		~HttpOut(){ _self->Cut(); }
 		α Stop()ι->void override{ _self->Cut(); }
 		α OnStrand( absl::AnyInvocable<void()> f )ι->void{ Post( std::move(f) ); }
-		Ω Url( const NodeDef& def )ε->optional<HttpSend>{ let url = findText( def.Props, "url" ); return url ? optional<HttpSend>{ parseUrl(*url) } : nullopt; }
+		α Url()Ι->const optional<HttpSend>&{ return _url; }
 		//The props' url, method and content type, else the message's `url` and `method`, with its payload the body of a
-		//method that has one.  The host is checked here, at the send, whatever a deploy saw.
+		//method that has one.  The host is checked here, at the send, whatever a deploy saw.  MaxRequests are out at once:
+		//the rest wait here, the oldest dropped past the flow's queue.
 		α Receive( Message& m )ε->void override{
 			let named = Json::FindSV( m.Json, "url" );
 			THROW_IF( !_url && !named, "The node has no `url`, and the message none." );
@@ -960,20 +956,37 @@ namespace Jde::Opc::Gateway{
 				send.ContentType = _contentType ? *_contentType : payload.is_string() ? "text/plain" : "application/json";
 			}
 			Hold();
-			Requesting( _self, move(m), move(send), _json );
+			_waiting.emplace_back( move(m), move(send) );
+			if( _waiting.size()>QueueLimit() ){
+				let dropped = _waiting.front().first.Id();
+				_waiting.pop_front();
+				Drop( dropped );
+			}
+			Next();
 		}
 		α Answered( Message&& m, string error )ι->void{
+			--_out;
 			let id = m.Id();
 			if( error.size() ){
 				SetStatus( {"red", "ring", error} );
 				Fail( move(m), move(error) );
-				return;
 			}
-			SetStatus( {"green", "dot", Ƒ("{}", Json::FindNumber<uint>(m.Json, "statusCode").value_or(0))} );
-			Send( move(m) );
-			Done( id );
+			else{
+				SetStatus( {"green", "dot", Ƒ("{}", Json::FindNumber<uint>(m.Json, "statusCode").value_or(0))} );
+				Send( move(m) );
+				Done( id );
+			}
+			Next();
 		}
 	private:
+		α Next()ι->void{
+			while( _out<FlowNodes::MaxRequests && !_waiting.empty() ){
+				auto [m, send] = move( _waiting.front() );
+				_waiting.pop_front();
+				++_out;
+				Requesting( _self, move(m), move(send), _json );
+			}
+		}
 		//The request, and each redirect it is answered with, to a host the list allows:  the await follows none itself, so
 		//every hop is checked as the first was.  One to a host outside the list ends the request with the redirect as its answer.
 		Ω Requesting( sp<Tether<HttpOut>> node, Message m, HttpSend send, bool json )ι->VoidTask{
@@ -1025,9 +1038,11 @@ namespace Jde::Opc::Gateway{
 		}
 		optional<HttpSend> _url;
 		optional<http::verb> _verb;
-		optional<string> _contentType;
+		const optional<string> _contentType;
 		const bool _json;
 		sp<Tether<HttpOut>> _self;
+		std::deque<std::pair<Message,HttpSend>> _waiting;
+		uint _out{};//requests out.
 	};
 
 	//A `link out` whose `link in` another flow holds.
@@ -1082,42 +1097,21 @@ namespace Jde::Opc::Gateway{
 			target( node.Props, sl );
 			parameters( node.Props );
 			break;
-		case ENodeType::GroupIn:{
-			flag( node.Props, "modifications", false );
-			findWait( node.Props, "lateness" );
-			if( let from = findText(node.Props, "from"); from && *from!="resume" && *from!="now" ){
-				try{
-					Chrono::ToTimePoint( string{*from}, sl );
-				}
-				catch( const std::exception& ){
-					THROW( "`from` must be resume, now or a time, as 2026-03-09T06:00:00Z, not '{}'.", *from );
-				}
-			}
-			if( let members = find(node.Props, "members") ){
-				THROW_IF( !members->is_array(), "`members` must be a list of the group's nodes." );
-				for( let& member : members->get_array() )
-					ParseHistNode( member, sl );
-			}
-			break;
-		}
+		case ENodeType::GroupIn: GroupInProps{ node.Props, sl }; break;
 		case ENodeType::Timer: Timer{ node }; break;
 		case ENodeType::Calendar:
 			schedule( node.Props );
 			boundaries( node.Props );
 			break;
-		case ENodeType::Connection:{
-			let slug = findText( node.Props, "connection" );
-			THROW_IF( !slug || slug->empty(), "`connection` is required, a connection's slug." );
-			break;
-		}
+		case ENodeType::Connection: connection( node.Props ); break;
 		case ENodeType::OpcOut:
 			target( node.Props, sl );
-			Flows::Path{ findText(node.Props, "property").value_or("payload") };
+			Flows::Path{ Prop::Text(node.Props, "property", "payload") };
 			break;
 		case ENodeType::Log: LogOut{ node, {} }; break;
 		case ENodeType::HttpRequest:{
-			HttpOut{ node };
-			if( let url = HttpOut::Url(node); url )
+			HttpOut out{ node };
+			if( let& url = out.Url(); url )
 				THROW_IF( !allowed(url->Host), "`url`'s host '{}' is not one /gateway/flows/http/allow lets a flow reach.", url->Host );
 			break;
 		}

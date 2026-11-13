@@ -75,8 +75,9 @@ namespace Jde::Opc::Gateway{
 		α SetContext( optional<FlowPK> flow, string node, string key, jvalue value, SRCE )ι->AnyVoidTask;
 		//A `link out`'s message to the other flows whose current version holds a `link in` of the name (spec *Nodes*,
 		//*Rights*), from the sender's strand:  a clone onto each one's strand that is running.  The sender's deployer needs
-		//Update on each of them, as an inject into it does, asked at every message, so one who loses it stops delivering:
-		//thrown, the sender's node's error, and none takes the message.  The flows that took it.
+		//Update on each running one, as an inject into it does, asked at every message, so one who loses it stops delivering:
+		//thrown, the sender's node's error, and none takes the message.  A flow that is not running is neither asked about
+		//nor sent to.  The flows that took it.
 		α Link( FlowPK from, UserPK deployer, sv name, const Flows::Message& m, SRCE )ε->uint;
 		//FlowMAwait's:  the live side of each table edit, lazy as HistHost's are.
 		α Changed( DB::Key key )ι->AnyVoidTask;//created, updated, deleted or restored:  the row read again, and the flow started or stopped as it now says.

@@ -836,6 +836,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( variable.Status, EHttpStatus::BadRequest );
 		EXPECT_TRUE( variable.What.starts_with("Node 'n':  ") && Has(variable.What, "waits for the flow server") ) << variable.What;
 		EXPECT_TRUE( Has(refused("log", R"({"level":"loud"})").What, "`level` must be one of") );
+		EXPECT_TRUE( Has(refused("log", R"({"level":"None"})").What, "`level` must be one of") ) << "reviews-issue/449-flows-sources-sinks.md #8:  no ELogLevel";
 		EXPECT_TRUE( Has(refused("log", R"({"template":"{{#each}}"})").What, "its variables alone") );
 		EXPECT_TRUE( Has(refused("http request", R"({"url":"ftp://example.org/"})").What, "is not an http or https url") );
 		EXPECT_TRUE( Has(refused("http request", R"({"url":"http://hooks.example.org@example.com/"})").What, "carries a user") );
@@ -953,20 +954,6 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitUntil([&]{ return values().size()>=7; }) );
 		EXPECT_EQ( values().size(), 7u ) << "once";
 		EXPECT_EQ( values().back(), text(base+600) );
-	}
-
-	//reviews-issue/448-flows-host.md #10:  a deploy answers once the nodes' Start has run, so one that throws is its fault.
-	TEST_F( FlowTests, ADeployAnswersOnceItsNodesHaveStarted ){
-		const OneNodeGroup made{ "flow-members", RpmManual };
-		let flow = CreateFlow( "node-start" );
-		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
-		let deployed = Deploy( flow, Graph({N("src", "group in", serialize(jobject{{"group", made.Id}, {"members", jarray{HistGroupFixture::Ex(Status2)}}}), {{"d"}}), N("d", "debug")}) );
-		EXPECT_EQ( deployed.at("version"), 1 ) << serialize( deployed );
-		EXPECT_EQ( deployed.at("running"), false );
-		ASSERT_TRUE( deployed.at("fault").is_object() ) << serialize( deployed );
-		EXPECT_EQ( deployed.at("fault").as_object().at("node"), "src" );
-		EXPECT_TRUE( Has(Json::AsString(deployed.at("fault").as_object(), "message"), "is no member of its group") );
-		EXPECT_FALSE( Running(flow) );
 	}
 
 	TEST_F( FlowTests, ATimerTicks ){
@@ -1136,5 +1123,114 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==2; }) ) << "and the return";
 		EXPECT_EQ( lines()[1], "flowsConnection true" );
 		EXPECT_EQ( Flows().Status(flow, "c").Text, "connected" );
+	}
+
+	//reviews-issue/449-flows-sources-sinks.md #1:  a `group in`'s mark is saved once the flow has finished what it sent, here
+	//held by a `delay` on the flow's clock, not as it sends it:  a restart before then would read the record again.
+	TEST_F( FlowTests, AGroupInsMarkWaitsForTheFlowToFinish ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		const OneNodeGroup made{ "flow-mark", RpmManual };
+		let t0 = Since();
+		WriteRpm( std::floor(BaseRpm())+100, t0 );
+		WaitStored( made.Host, made.Index, t0, 1 );
+		auto [clock, restart] = OnClock( Clock::now() );
+		let flow = CreateFlow( "mark-waits" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({
+			N( "src", "group in", serialize(jobject{{"group", made.Id}, {"from", ToIsoString(t0)}}), {{"wait"}} ),
+			N( "wait", "delay", R"({"duration":"PT10S"})", {{"line"}} ),
+			Line( "{{payload}}" )
+		})).at("running"), true );
+		ASSERT_TRUE( Received(flow, "wait", 1) ) << Flows().Status( flow, "src" ).Text;
+		let mark = serialize( jvalue{ToIsoString(t0)} );
+		clock->Advance( 2*FlowHost::ContextDelay );//past the context's debounce, short of the delay.
+		EXPECT_FALSE( WaitUntil([&]{ return !Held( flow, "src", "mark" ).empty(); }, 1s) ) << "the delay holds the record:  " << Held( flow, "src", "mark" );
+		clock->Advance( 10s );
+		ASSERT_TRUE( WaitUntil([&]{ return Lines( capture, "mark-waits" ).size()==1; }) );
+		EXPECT_TRUE( WaitUntil([&]{ clock->Advance( FlowHost::ContextDelay ); return Held( flow, "src", "mark" )==mark; }) ) << Held( flow, "src", "mark" );
+	}
+
+	//#2:  a `group in` member that does not resolve leaves the node's status saying so, not the flow stopped, and it is
+	//subscribed once the group holds it:  at a start, a member by its index waits for the collector's namespaces.
+	TEST_F( FlowTests, AMemberNotYetInItsGroupIsReadOnceItIs ){
+		const OneNodeGroup made{ "flow-members", RpmManual };
+		let flow = CreateFlow( "member-later" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let deployed = Deploy( flow, Graph({N("src", "group in", serialize(jobject{{"group", made.Id}, {"members", jarray{HistGroupFixture::Ex(Status2)}}}), {{"d"}}), N("d", "debug")}) );
+		EXPECT_EQ( deployed.at("running"), true ) << serialize( deployed );
+		let status = [&]{ return Flows().Status( flow, "src" ); };
+		EXPECT_EQ( status().Fill, "red" );
+		EXPECT_TRUE( Has(status().Text, "is no member of its group") );
+		AddNode( made.Id, Status2 );
+		EXPECT_TRUE( WaitUntil([&]{ return status().Fill=="green"; }) ) << "the group's change asks for it again:  " << status().Text;
+	}
+
+	//#3:  a node that cannot be made at a start, a calendar the gateway does not hold, leaves the flow with its fault, and the
+	//start is tried again RetryInterval on:  the deploy read the node's props, so what it lacked may come back.
+	TEST_F( FlowTests, AStartWhoseNodeCannotBeMadeIsTriedAgain ){
+		namespace Calendars = Calendar::Client::Calendars;
+		let app = AppClient();
+		let purgeCalendars = [=]{
+			for( let& v : app->QuerySync<jarray>("calendars( slug:\"flow-later\" ){ id }", {}) )
+				app->QuerySync<jvalue>( Ƒ("purgeCalendar( id:{} )", QL::AsId<uint32>(v)), {} );
+		};
+		let create = [&]{
+			let id = QL::AsId<uint32>( app->QuerySync<jobject>("createCalendar( name:\"flow-later\", slug:\"flow-later\", timeZone:\"America/New_York\", dayStart:360 ){ id }", {}) );
+			EXPECT_TRUE( WaitUntil([&]{ return Calendars::Find( id )!=nullptr; }) ) << "the gateway's cache holds the calendar";
+		};
+		purgeCalendars();
+		absl::Cleanup purgeCalendar = [=]{ try{ purgeCalendars(); }catch( const std::exception& ){} };
+		create();
+		auto [clock, restart] = OnClock( Clock::now() );
+		let flow = CreateFlow( "calendar-later" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("cal", "calendar", R"({"calendar":"flow-later"})", {{"d"}}), N("d", "debug")})).at("running"), true );
+		Mutate( "updateFlow( id:$id, enabled:false )", {{"id", flow}} );
+		purgeCalendars();
+		ASSERT_TRUE( WaitUntil([&]{ return !Calendars::Find( sv{"flow-later"} ); }) );
+		Mutate( "updateFlow( id:$id, enabled:true )", {{"id", flow}} );
+		EXPECT_FALSE( Running(flow) );
+		EXPECT_EQ( Fault(flow).NodeId, "cal" );
+		EXPECT_TRUE( Has(Fault(flow).Message, "is no calendar the gateway holds") );
+
+		create();
+		clock->Advance( FlowHost::RetryInterval );
+		EXPECT_TRUE( WaitUntil([&]{ return Running( flow ); }, 15s) ) << Fault( flow ).Message;
+	}
+
+	//#5:  a re-check asks about the group its run reads, by its id, whatever its slug names now:  the slug given to another
+	//group neither stops the flow nor lends it that group's rights.
+	TEST_F( FlowTests, ARecheckAsksAboutTheGroupItsRunReads ){
+		let itemsBefore = Items();
+		let first = CreateGroup( "flow-renamed" );
+		absl::Cleanup purgeFirst = [=]{ Purge( first, itemsBefore ); };
+		let flow = CreateFlow( "renamed-group" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("g", "group in", R"({"group":"flow-renamed"})", {{"d"}}), N("d", "debug")})).at("running"), true );
+		Mutate( "updateHistGroup( id:$id, slug:\"flow-renamed-before\" )", {{"id", first}} );
+		let second = Id( Mutate("createHistGroup( name:\"Collector flow-renamed after\", slug:\"flow-renamed\", serverConnectionId:$connection ){ id }", {{"connection", _connection}}) );
+		absl::Cleanup purgeSecond = [=]{ Purge( second, itemsBefore ); };
+		auto reopen = EnforcedHistGroups();
+		ScopeHistGroup( first, ERights::None );
+		ASSERT_TRUE( WaitUntil([&]{ return !Running( flow ); }, 15s) ) << "the run's own group's Read is withdrawn";
+		EXPECT_TRUE( Has(Fault(flow).Message, "Group 'Collector flow-renamed' needs Read") ) << Fault( flow ).Message;
+	}
+
+	//#10:  a link asks for Update on the running flows that take its message alone:  a disabled one that holds the `link in`,
+	//on which the deployer lacks it, neither refuses the message nor keeps it from the others.
+	TEST_F( FlowTests, ALinkAsksOnlyAboutTheFlowsThatTakeIt ){
+		let taker = CreateFlow( "link-runs" ), idle = CreateFlow( "link-idle" ), from = CreateFlow( "link-asks" );
+		absl::Cleanup purge = [=]{ PurgeFlow( from ); PurgeFlow( idle ); PurgeFlow( taker ); };
+		let in = Graph( {N("from", "link in", R"({"name":"to-some"})", {{"d"}}), N("d", "debug")} );
+		Deploy( taker, in );
+		Deploy( idle, in );
+		Deploy( from, Graph({N("in", "inject", "{}", {{"to"}}), N("to", "link out", R"({"name":"to-some"})")}) );
+		Mutate( "updateFlow( id:$id, enabled:false )", {{"id", idle}} );
+		auto reopen = EnforcedFlows();
+		ScopeFlow( idle, ERights::Read );
+		Inject( from );
+		EXPECT_TRUE( Received(taker, "d", 1) ) << "the running flow takes it:  " << Flows().Status( from, "to" ).Text;
+		EXPECT_EQ( Counts(from, "to").Errors, 0u );
+		UnscopeFlow( idle );
 	}
 }
