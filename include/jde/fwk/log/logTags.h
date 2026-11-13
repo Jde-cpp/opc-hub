@@ -34,6 +34,7 @@ namespace Jde{
 		Test					= 1ul << 24,
 		Threads				= 1ul << 25,
 		Write		 			= 1ul << 26,
+		Flow					= 1ul << 27,
 		All						= ~0ull,
 
 		HttpClientRead	  = Http | Client | Read,
@@ -59,8 +60,8 @@ namespace Jde{
 		}
 		return true;
 	}
-	//A new tag takes the bit after Write, and its name goes last here.
-	constexpr array<TagName,27> FwkTags{{
+	//A new tag takes the bit after Flow, and its name goes last here.
+	constexpr array<TagName,28> FwkTags{{
 		{"access", ELogTags::Access}, {"app", ELogTags::App}, {"cache", ELogTags::Cache}, {"client", ELogTags::Client},
 		{"crypto", ELogTags::Crypto}, {"dbDriver", ELogTags::DBDriver}, {"exception", ELogTags::Exception},
 		{"externalLogger", ELogTags::ExternalLogger}, {"http", ELogTags::Http}, {"io", ELogTags::IO}, {"locks", ELogTags::Locks},
@@ -68,9 +69,9 @@ namespace Jde{
 		{"scheduler", ELogTags::Scheduler}, {"server", ELogTags::Server}, {"sessions", ELogTags::Sessions},
 		{"settings", ELogTags::Settings}, {"shutdown", ELogTags::Shutdown}, {"socket", ELogTags::Socket}, {"sql", ELogTags::Sql},
 		{"startup", ELogTags::Startup}, {"subscription", ELogTags::Subscription}, {"test", ELogTags::Test},
-		{"threads", ELogTags::Threads}, {"write", ELogTags::Write}
+		{"threads", ELogTags::Threads}, {"write", ELogTags::Write}, {"flow", ELogTags::Flow}
 	}};
-	static_assert( NamesBitsFrom(FwkTags, 0), "FwkTags names Access to Write, one bit each, in bit order" );
+	static_assert( NamesBitsFrom(FwkTags, 0), "FwkTags names Access to Flow, one bit each, in bit order" );
 	//The combined tags the ui offers as rows of their own, beside the single ones:  Logging::Tags( true ).
 	constexpr array<ELogTags,11> CompositeTags{
 		ELogTags::HttpClientRead, ELogTags::HttpClientWrite, ELogTags::HttpClientSessions,

@@ -26,8 +26,8 @@ namespace Jde::Opc::Gateway{
 	//check that could not be made, or a start whose statement failed, is tried again RetryInterval on, and a check that
 	//could not be made leaves a running flow running.  A node in index form is spelled through its server at its run's
 	//admission, and the run's re-checks stand on that spelling.
-	//The sources and sinks are a later phase's:  until then a hosted node is made as a stand-in, a source that emits
-	//nothing and a sink whose message is its error, each with a status that says so.
+	//The sources and sinks are FlowNodes', one per run, made from the run's flow, its deployer and what its admission
+	//resolved;  a link to another flow is delivered here (Link).
 	struct FlowHost final : noncopyable{
 		Ω Instance()ι->FlowHost&;
 		//The settings, the rows and the global context, then every enabled flow from its current version, behind it on the
@@ -73,6 +73,12 @@ namespace Jde::Opc::Gateway{
 		//it is there at the flow's next get, and its row written before this ends, where a flow's own change waits
 		//ContextDelay;  for a flow that is not running the row alone, which its next start loads.  Lazy, as the edits' sides are.
 		α SetContext( optional<FlowPK> flow, string node, string key, jvalue value, SRCE )ι->AnyVoidTask;
+		//A `link out`'s message to the other flows whose current version holds a `link in` of the name (spec *Nodes*,
+		//*Rights*), from the sender's strand:  a clone onto each one's strand that is running.  The sender's deployer needs
+		//Update on each running one, as an inject into it does, asked at every message, so one who loses it stops delivering:
+		//thrown, the sender's node's error, and none takes the message.  A flow that is not running is neither asked about
+		//nor sent to.  The flows that took it.
+		α Link( FlowPK from, UserPK deployer, sv name, const Flows::Message& m, SRCE )ε->uint;
 		//FlowMAwait's:  the live side of each table edit, lazy as HistHost's are.
 		α Changed( DB::Key key )ι->AnyVoidTask;//created, updated, deleted or restored:  the row read again, and the flow started or stopped as it now says.
 		//Before its statement, flow_purge, which takes the versions, runs and context rows with the row:  the flow stops and
@@ -90,23 +96,24 @@ namespace Jde::Opc::Gateway{
 		static constexpr Duration RetryInterval{ 30s };//how soon a start that could not be checked or made, or a context write that failed, is tried again.
 		static constexpr uint ContextTries{ 3 };//the writes a context value may fail while others are written, before it is dropped with an Error.
 	private:
-		//An index-form node's spelling (HistNodeText), by its id in the graph:  its server asked once a run.
-		using Spellings = flat_map<string,string>;
+		//What a run's admission resolved, by a node's id in the graph.  Nodes:  an index-form node's spelling (HistNodeText),
+		//its server asked once a run.  Groups:  a `group in`'s group, as the last admission found it.
+		struct Resolved final{ flat_map<string,string> Nodes; flat_map<string,HistGroupPK> Groups; };
 		//A flow's run:  one Flows::Flow, which runs once, with what it was made from.
 		struct Run final{
-			Run( Flows::Graph graph, Flows::Flow::Config&& config, uint32 version, UserPK deployer, Spellings spelled )ι:
+			Run( Flows::Graph graph, Flows::Flow::Config&& config, uint32 version, UserPK deployer, Resolved spelled )ι:
 				Graph{ graph }, Flow{ move(graph), move(config) }, Version{ version }, Deployer{ deployer }, Spelled{ move(spelled) }
 			{}
 			const Flows::Graph Graph;
 			Flows::Flow Flow;
 			const uint32 Version;
 			const UserPK Deployer;
-			Spellings Spelled;//under _edits.
+			Resolved Spelled;//under _edits.
 		};
 		//Links:  the names of the current version's `link in` nodes.  Retry:  the timer of a start to try again.
 		struct Entry final{ FlowRow Row; flat_set<string> Links; sp<Run> Live; Hist::IClock::TimerId Retry{}; };
 		struct AdmitAwait final : AnyAwait<optional<FlowRefusal>>{
-			AdmitAwait( FlowHost& host, FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, Spellings& spelled, SL sl )ι:
+			AdmitAwait( FlowHost& host, FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, Resolved& spelled, SL sl )ι:
 				AnyAwait<optional<FlowRefusal>>{ sl }, Flow{ flow }, Graph{ graph }, Deployer{ deployer }, Session{ move(session) }, Deploying{ deploying }, Spelled{ spelled }, _host{ host }
 			{}
 			const FlowPK Flow;
@@ -114,14 +121,14 @@ namespace Jde::Opc::Gateway{
 			const UserPK Deployer;
 			const sp<Web::Server::SessionInfo> Session;//the deployer's, at a deploy that has one.
 			const bool Deploying;
-			Spellings& Spelled;//the run's:  read, and added to for a node it lacks.
+			Resolved& Spelled;//the run's:  read, and added to for a node it lacks.
 		protected:
 			α Suspend()ι->void override{ _host.Admitting( *this ); }
 		private:
 			FlowHost& _host;
 		};
 		//The graph's first refusal for its deployer, in node order, or none.  `deploying`:  the checks a deploy alone makes.
-		α Admit( FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, Spellings& spelled, SRCE )ι->AdmitAwait{ return { *this, flow, graph, deployer, move(session), deploying, spelled, sl }; }
+		α Admit( FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, Resolved& spelled, SRCE )ι->AdmitAwait{ return { *this, flow, graph, deployer, move(session), deploying, spelled, sl }; }
 		α Admitting( AdmitAwait& await )ι->VoidTask;
 		α Deploying( DeployAwait& await )ι->VoidTask;
 		α Loading( AnyVoidAwait& await )ι->VoidTask;
@@ -130,12 +137,14 @@ namespace Jde::Opc::Gateway{
 		//stopped with its fault.  A check that could not be made, or a statement that failed, schedules another Launch.
 		α Launch( FlowRow row )ι->AnyVoidTask;
 		//The run made over the flow's context rows, and what of its context is still to write, and started, the entry's from
-		//here.  A select that fails leaves the entry a refused run, to try again.
-		α Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer, Spellings spelled )ι->AnyVoidTask;
+		//here, once its nodes' Start has run:  one that threw has stopped it, with its fault.  A select that fails leaves the
+		//entry a refused run, to try again.
+		α Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer, Resolved spelled )ι->AnyVoidTask;
 		//A start that was refused:  the entry's run is one that never started, stopped with the fault.  `retry`:  Launch again,
 		//RetryInterval on.
 		α Refused( const FlowRow& row, Flows::Graph graph, uint32 version, UserPK deployer, Flows::Fault fault, bool retry=false )ι->void;
 		struct HaltAwait;//a run stopped, its teardown done.
+		struct StartAwait;//a run started, its nodes' Start run.
 		struct SetAwait;//a context value set on a run's strand.
 		α Retry( FlowPK id )ι->VoidTask;//the retry timer's.
 		α Time()Ι->sp<Hist::IClock>{ lg _{ _mutex }; return _clock; }
@@ -161,7 +170,6 @@ namespace Jde::Opc::Gateway{
 		sp<Hist::IClock> _clock;
 		sp<Flows::MessageIds> _ids;
 		sp<Flows::GlobalStore> _global;
-		sp<Flows::IHost> _nodes;//what makes the hosted nodes.
 		fs::path _path;//the trace's, a directory per flow by its slug.
 		uint _queue{ 1000 };
 		bool _configured{}, _stopped{};

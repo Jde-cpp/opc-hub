@@ -1,5 +1,5 @@
+#include <jde/flows/Props.h>
 #include "Nodes.h"
-#include "Props.h"
 
 #define let const auto
 

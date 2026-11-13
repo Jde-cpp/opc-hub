@@ -1,4 +1,4 @@
-#include "Props.h"
+#include <jde/flows/Props.h>
 #include <jde/fwk/str.h>
 
 #define let const auto
@@ -16,6 +16,9 @@ namespace Jde::Opc::Flows{
 	α Prop::Text( const jobject& props, sv key, sv dflt )ε->string{
 		return Find( props, key ) ? Text( props, key ) : string{ dflt };
 	}
+	α Prop::FindText( const jobject& props, sv key )ε->optional<string>{
+		return Find( props, key ) ? optional<string>{ Text(props, key) } : nullopt;
+	}
 	α Prop::Flag( const jobject& props, sv key, bool dflt )ε->bool{
 		let v = Find( props, key );
 		THROW_IF( v && !v->is_bool(), "`{}` must be true or false.", key );
@@ -26,6 +29,9 @@ namespace Jde::Opc::Flows{
 		THROW_IF( !v || !v->is_number(), "`{}` must be a number.", key );
 		return v->to_number<double>();
 	}
+	α Prop::FindNumber( const jobject& props, sv key )ε->optional<double>{
+		return Find( props, key ) ? optional<double>{ Number(props, key) } : nullopt;
+	}
 	α Prop::FindCount( const jobject& props, sv key )ε->optional<uint>{
 		let v = Find( props, key );
 		if( !v )
@@ -35,7 +41,7 @@ namespace Jde::Opc::Flows{
 		THROW_IF( ec || !y, "`{}` must be a whole number above zero.", key );
 		return y;
 	}
-	α Prop::FindWait( const jobject& props, sv key )ε->optional<Duration>{
+	α Prop::FindWait( const jobject& props, sv key, bool zero )ε->optional<Duration>{
 		let v = Find( props, key );
 		if( !v )
 			return nullopt;
@@ -44,7 +50,7 @@ namespace Jde::Opc::Flows{
 			if( let duration = Chrono::TryToDuration(sv{*text}) )
 				y = *duration;
 		}
-		THROW_IF( !y || *y<=Duration::zero(), "`{}` must be an ISO 8601 duration above zero, as PT30S is.", key );
+		THROW_IF( !y || *y<Duration::zero() || (!zero && *y==Duration::zero()), "`{}` must be an ISO 8601 duration {}, as PT30S is.", key, zero ? "of zero or more" : "above zero" );
 		return y;
 	}
 	α Prop::Wait( const jobject& props, sv key )ε->Duration{

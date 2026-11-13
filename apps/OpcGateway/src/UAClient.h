@@ -61,7 +61,10 @@ namespace Jde::Opc::Gateway{
 		//Shutdown's:  every client still waiting for its session - in no registry yet, so Shutdown's snapshot would miss it and its
 		//activation register it after - stopped, and its waiters failed BadShutdown;  a test connect answered so.  The count.
 		Ω AbandonConnects()ι->uint;
-		Ω SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void;//one at a time;  null clears it.
+		//Each observer hears every ConnectionChange, as its comment says, until its handle is unobserved:  the endpoint's
+		//`_Connection` objects, and a flow's `connection` nodes.  A change in flight may still reach one just unobserved.
+		Ω ObserveConnections( function<void(const ConnectionChange&)> observer )ι->uint;
+		Ω UnobserveConnections( uint handle )ι->void;
 		Ω ShutdownIdle( sp<UAClient> client )ι->VoidAwait::Task;//TTL expiry - tears down only this client (per-client _lastRequest).
 		Ω GetClient( string id, Credential cred, SRCE )ι{ return ConnectAwait{move(id), move(cred), sl}; }
 		Ω Find( str id, const Gateway::Credential& cred )ι->sp<UAClient>;

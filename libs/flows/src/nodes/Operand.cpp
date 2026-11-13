@@ -1,5 +1,5 @@
 #include "Operand.h"
-#include "Props.h"
+#include <jde/flows/Props.h>
 
 #define let const auto
 

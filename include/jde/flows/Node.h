@@ -52,6 +52,10 @@ namespace Jde::Opc::Flows{
 		α Cancel( TimerId id )ι->bool;//true when `f` had not run and now never will.
 		//`f` on the strand, from any thread:  how what a node waited for off the strand comes back.  Dropped once the flow has stopped.
 		α Post( absl::AnyInvocable<void()> f )ι->void;
+		//`f` on the strand, once, when no message waits at any node's input and none is held (Hold):  every message sent
+		//before it is finished.  How a source that reads what it sends, a page at a time, keeps within the queues and knows
+		//what the flow has done with.  Never after Stop.
+		α Idle( absl::AnyInvocable<void()> f )ι->void;
 		α Context()ι->Store&;//the node's scope.
 		α FlowContext()ι->Store&;
 		α Global()ι->GlobalStore&;//any thread.
