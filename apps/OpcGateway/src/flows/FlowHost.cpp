@@ -17,6 +17,13 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	constexpr uint DefaultQueue{ 1000 };
 	constexpr uint MaxKey{ 256 };//flow_contexts' node_id and name.
+	constexpr uint MinMemory{ 256*1024 };//a sandbox's:  the runtime and a node, with room for a body.
+	constexpr uint MinStack{ 32*1024 };
+#ifdef _WIN32
+	constexpr uint MaxStack{ 512*1024 };//under the executor's threads' 1 MB.
+#else
+	constexpr uint MaxStack{ 4*1024*1024 };//under the executor's threads' 8 MiB.
+#endif
 	using Flows::ENodeType;
 
 	struct FlowHost::HaltAwait final : AnyVoidAwait{
@@ -72,6 +79,35 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω unstarted( sv why )ι->Flows::Fault{ return { {}, Ƒ("It could not be started:  {}", why) }; }
 
+	//`/gateway/flows/function`:  a key that does not read, or is under what a sandbox needs, keeps its default;  a stack over
+	//what the executor's threads have is the most they leave a body.
+	Ω functionLimits()ι->Flows::FunctionLimits{
+		Flows::FunctionLimits y;
+		let function = Settings::FindObject( "/gateway/flows/function" );
+		let size = [&]( sv key, uint& value, uint least, uint most ){
+			let v = function ? function->if_contains( key ) : nullptr;
+			if( !v )
+				return;
+			boost::system::error_code ec;
+			let read = v->is_string() ? Flows::ToBytes( v->get_string() ) : optional<uint>{ v->to_number<uint>(ec) };
+			if( read && !ec && *read>=least && *read<=most )
+				value = *read;
+			else if( read && !ec && *read>most ){
+				value = most;
+				WARNT( ELogTags::Settings, "'/gateway/flows/function/{}' of {} is over the {} bytes the executor's threads leave it.  Using {}.", key, serialize(*v), most, most );
+			}
+			else
+				WARNT( ELogTags::Settings, "'/gateway/flows/function/{}' of {} is not a size of {} bytes or more, as \"16MiB\" is.  Using {}.", key, serialize(*v), least, value );
+		};
+		size( "memory", y.Memory, MinMemory, std::numeric_limits<uint>::max() );
+		size( "stack", y.Stack, MinStack, MaxStack );
+		if( let timeout = Settings::FindDuration("/gateway/flows/function/timeout"); timeout && *timeout>Duration::zero() )
+			y.Timeout = *timeout;
+		else if( timeout )
+			WARNT( ELogTags::Settings, "'/gateway/flows/function/timeout' is not above zero.  Using {} ms.", duration_cast<milliseconds>(y.Timeout).count() );
+		return y;
+	}
+
 	α FlowHost::Instance()ι->FlowHost&{
 		static FlowHost instance;
 		return instance;
@@ -83,6 +119,8 @@ namespace Jde::Opc::Gateway{
 			WARNT( ELogTags::Settings, "'/gateway/flows/queue' of 0 is not allowed:  a node's input holds a message at least.  Using {}.", DefaultQueue );
 			queue = DefaultQueue;
 		}
+		let function = functionLimits();
+		let env = Settings::FindObject( "/gateway/flows/env" );
 		bool observe;
 		{
 			lg _{ _mutex };
@@ -92,6 +130,8 @@ namespace Jde::Opc::Gateway{
 			_ids = ms<Flows::MessageIds>( _clock->Now() );
 			_path = Settings::FindPath( "/gateway/flows/path" ).value_or( Process::AppDataFolder()/"logs"/"flows"/"opc-gateway" );
 			_queue = queue;
+			_function = function;
+			_env = env ? *env : jobject{};
 			_global = nullptr;
 			_flows.clear();
 			observe = _configured && !_observer;
@@ -265,7 +305,7 @@ namespace Jde::Opc::Gateway{
 				if( launching.contains(id) )
 					continue;
 				try{
-					if( let read = Flows::Graph::Read(Json::ParseValue(graph.TakeString(1)), true); read )
+					if( let read = Flows::Graph::Read(Json::ParseValue(graph.TakeString(1)), true, nullopt); read )
 						links.emplace( id, Links(*read) );
 				}
 				catch( const std::exception& )
@@ -342,7 +382,7 @@ namespace Jde::Opc::Gateway{
 		auto& version = versions.front();
 		std::expected<Flows::Graph,Flows::Fault> graph{ std::unexpect };
 		try{
-			graph = Flows::Graph::Read( Json::ParseValue(version.Graph), true );
+			graph = Flows::Graph::Read( Json::ParseValue(version.Graph), true, Function() );
 		}
 		catch( const std::exception& e ){
 			graph = std::unexpected{ Flows::Fault{{}, Ƒ("Version {}'s graph does not read:  {}", number, e.what())} };
@@ -415,6 +455,8 @@ namespace Jde::Opc::Gateway{
 			config.Ids = _ids;
 			config.Global = _global;
 			config.Queue = _queue;
+			config.Function = _function;
+			config.Env = _env;
 		}
 		for( auto&& [key, text] : values ){
 			let& [node, name] = key;
@@ -436,6 +478,9 @@ namespace Jde::Opc::Gateway{
 		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
 		co_await StartAwait{ run };
 		let started = run->Flow.Running();
+		let fault = started ? nullopt : run->Flow.Fault();
+		let faulted = fault ? run->Graph.IndexOf( fault->NodeId ) : nullopt;
+		let retry = !started && ( !faulted || run->Graph.Nodes[*faulted].Type!=ENodeType::Function );
 		bool kept;
 		{
 			lg _{ _mutex };
@@ -444,8 +489,9 @@ namespace Jde::Opc::Gateway{
 			if( kept ){
 				p->second.Live = run;
 				//A node that could not be made or started:  the deploy read its props, so it failed on what is around it, a
-				//calendar not yet held, a member not yet resolved, which may come back.
-				if( !started && !p->second.Retry )
+				//calendar not yet held, a member not yet resolved, which may come back.  Not a Function node, whose code or
+				//On Start failed, which only a deploy changes, as Node-RED's runs once.
+				if( retry && !p->second.Retry )
 					p->second.Retry = _clock->Schedule( RetryInterval, [this, id]{ Retry( id ); } );
 			}
 		}
@@ -588,7 +634,7 @@ namespace Jde::Opc::Gateway{
 			catch( const std::exception& e ){
 				REFUSE( "graph is a flow's graph, as json or its text:  {}", e.what() );
 			}
-			auto graph = Flows::Graph::Read( json, true );
+			auto graph = Flows::Graph::Read( json, true, Function() );
 			if( !graph )
 				throw refused( {move(graph.error())}, sl );
 			for( let& node : graph->Nodes ){
@@ -699,7 +745,7 @@ namespace Jde::Opc::Gateway{
 				else if( row.Version ){
 					auto versions = co_await Any( SelectFlowVersion(*flow, *row.Version) );
 					try{
-						if( let graph = versions.empty() ? std::unexpected{ Flows::Fault{} } : Flows::Graph::Read( Json::ParseValue(versions.front().Graph), true ); graph )
+						if( let graph = versions.empty() ? std::unexpected{ Flows::Fault{} } : Flows::Graph::Read( Json::ParseValue(versions.front().Graph), true, nullopt ); graph )
 							known = graph->IndexOf( node ).has_value();
 					}
 					catch( const std::exception& )

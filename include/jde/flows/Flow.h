@@ -4,6 +4,8 @@
 //The engine (docs/flows/spec.md *Messages*, *Errors and status*):  one flow's graph run on a strand of its own, with no
 //gateway in it.
 namespace Jde::Opc::Flows{
+	α ToBytes( sv text )ι->optional<uint>;//a size as the settings write it:  "16MiB", "256KiB", "2GiB" or the bytes, "4096".
+
 	//Each node has an input queue bounded at `Queue`, past which its oldest message is dropped, counted and traced.  The
 	//strand drains the queues in arrival order, one message through one node at a time;  a node that waits holds its message
 	//and comes back to the strand, so no two nodes of a flow run at once.  Every timer is the clock's, so a flow under a
@@ -17,6 +19,8 @@ namespace Jde::Opc::Flows{
 			sp<MessageIds> Ids;//the gateway's;  null:  the flow's own, from its clock.
 			sp<GlobalStore> Global;//the gateway's;  null:  the flow's own.
 			uint Queue{ 1000 };
+			FunctionLimits Function;
+			jobject Env;//what a body's `env.get` answers by name, beside the node's and the flow's own.
 			jobject Context;//the flow scope's values, as loaded.
 			flat_map<string,jobject> NodeContext;//each node scope's, by node id.
 			function<void( sv nodeId, sv key, const jvalue* value )> ContextChanged;//a flow or node scope's change, on the strand:  no node id for the flow's, a null value for a key that went.

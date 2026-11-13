@@ -190,7 +190,7 @@ namespace Jde::Opc::Flows::Tests{
 		}
 		//The graph started on the clock, its nodes' Start run.
 		α Run( const jvalue& graph, ETraceLevel level=ETraceLevel::Hops, uint queue=1000 )->Flow&{
-			auto read = Graph::Read( graph );
+			auto read = Graph::Read( graph, false, Limits );
 			if( !read ){
 				ADD_FAILURE() << read.error().NodeId << ":  " << read.error().Message;
 				read = Graph{};
@@ -198,7 +198,7 @@ namespace Jde::Opc::Flows::Tests{
 			Trace = ms<MemoryTrace>( level, Time );
 			Deployed.emplace( move(*read), Flow::Config{
 				.Name="test", .Clock=Time, .Host=Host, .Trace=Trace, .Ids=ms<MessageIds>(At(0)), .Global=Global, .Queue=queue,
-				.Context=move(Context), .NodeContext=move(NodeContext),
+				.Function=Limits, .Env=Env, .Context=move(Context), .NodeContext=move(NodeContext),
 				.ContextChanged=[this]( sv node, sv key, const jvalue* value ){
 					lg _{ ChangesMutex };
 					Changes.push_back( Ƒ("{}/{}={}", node, key, value ? serialize(*value) : "-") );
@@ -259,6 +259,8 @@ namespace Jde::Opc::Flows::Tests{
 		sp<TestHost> Host{ ms<TestHost>() };
 		sp<GlobalStore> Global{ ms<GlobalStore>() };
 		sp<MemoryTrace> Trace;
+		FunctionLimits Limits;//the sandbox a Run's Function nodes take.
+		jobject Env;//what their `env.get` answers.
 		jobject Context;//the flow scope's values a Run loads.
 		flat_map<string,jobject> NodeContext;
 		mutex ChangesMutex;

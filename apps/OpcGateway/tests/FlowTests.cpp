@@ -1233,4 +1233,85 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Counts(from, "to").Errors, 0u );
 		UnscopeFlow( idle );
 	}
+
+	//Flows 4 (#450).
+	//A Function node's code is compiled at the deploy, and its body runs in the sandbox the block's `function` gives its
+	//flow, with what `env` names.
+	TEST_F( FlowTests, AFunctionBodyRunsInItsFlowsSandbox ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		let flow = CreateFlow( "function" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let body = [&]( sv code ){ return Graph( {N("in", "inject", "{}", {{"f"}}), N("f", "function", serialize(jobject{{"code", code}}), {{"line"}}), Line("{{payload}}")} ); };
+		let refused = Refused( [&]{ Deploy( flow, body("const limit = 5;\nreturn msg +;") ); } );
+		EXPECT_EQ( refused.Status, EHttpStatus::BadRequest );
+		EXPECT_TRUE( refused.What.starts_with("Node 'f':  `code`:  SyntaxError") && Has(refused.What, "code:2") ) << refused.What;
+		EXPECT_TRUE( Versions(flow).empty() ) << "a refusal writes nothing";
+
+		Settings::Set( "/gateway/flows/env", jobject{{"SITE", "plant 3"}} );
+		Settings::Set( "/gateway/flows/function", jobject{{"memory", "1MiB"}, {"timeout", "PT0.05S"}} );
+		absl::Cleanup settings = []{
+			Settings::Set( "/gateway/flows/env", jobject{} );
+			Settings::Set( "/gateway/flows/function", jobject{} );
+			Flows().Stop();
+			Flows().Start();
+		};
+		Flows().Stop();
+		Flows().Start();
+		let deployed = Deploy( flow, body(
+			"if( msg.payload === 'spin' )\n\tfor(;;){}\n"
+			"if( msg.payload === 'fill' )\n\tfor( let last = null;; ) last = { next: last };\n"
+			"msg.payload = `${msg.payload} at ${env.get( 'SITE' )} in ${env.get( 'NR_FLOW_NAME' )}`;\nreturn msg;") );
+		ASSERT_EQ( deployed.at("running"), true ) << serialize( deployed );
+		Inject( flow, "in", jobject{{"payload", "rpm"}} );
+		ASSERT_TRUE( WaitUntil([&]{ return !Lines( capture, "function" ).empty(); }) ) << Flows().Status( flow, "f" ).Text;
+		EXPECT_EQ( Lines(capture, "function"), vector<string>{"rpm at plant 3 in function"} );
+		let status = [&]( sv text ){ return WaitUntil( [&]{ return Flows().Status( flow, "f" ).Text==text; } ); };//set once its drain is done, after the count.
+		Inject( flow, "in", jobject{{"payload", "spin"}} );
+		ASSERT_TRUE( Errors(flow, "f", 1) );
+		EXPECT_TRUE( status("1 uncaught, the last:  It ran past the timeout of 50 ms.") ) << "the block's timeout:  " << Flows().Status( flow, "f" ).Text;
+		Inject( flow, "in", jobject{{"payload", "fill"}} );
+		ASSERT_TRUE( Errors(flow, "f", 2) );
+		EXPECT_TRUE( status("2 uncaught, the last:  InternalError: out of memory") ) << "and its memory:  " << Flows().Status( flow, "f" ).Text;
+	}
+
+	//reviews-issue/450-flows-function-node.md #2:  a deploy checks the graph's Function nodes together, in one sandbox under
+	//the block's limits, as the flow makes them;  and a Function node's own refusal, an On Start that throws, is not tried
+	//again:  only a deploy changes it.
+	TEST_F( FlowTests, AFunctionNodesRefusalIsTheDeploysAlone ){
+		let flow = CreateFlow( "function-refused" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		Settings::Set( "/gateway/flows/function", jobject{{"memory", "256KiB"}} );
+		auto [clock, restart] = OnClock( Clock::now() );
+		absl::Cleanup settings = []{ Settings::Set( "/gateway/flows/function", jobject{} ); };//before the restart.
+		let f = []( uint i ){ return N( Ƒ("f{}", i), "function", R"({"code":"return msg;"})" ); };
+		let refused = Refused( [&]{ Deploy( flow, Graph({f(0), f(1), f(2), f(3), f(4)}) ); } );
+		EXPECT_EQ( refused.Status, EHttpStatus::BadRequest ) << "five do not fit `function.memory` together:  " << refused.What;
+		EXPECT_TRUE( Has(refused.What, "Node 'f") );
+		EXPECT_EQ( Deploy(flow, Graph({f(0)})).at("running"), true ) << "one does";
+
+		Flows().Global()->Set( "starts", nullptr );
+		let deployed = Deploy( flow, Graph({N("f", "function", R"({"code":"return msg;","onStart":"global.set( 'starts', ( global.get( 'starts' ) ?? 0 ) + 1 );\nthrow new Error( 'no licence' );"})")}) );
+		EXPECT_EQ( deployed.at("running"), false ) << serialize( deployed );
+		EXPECT_TRUE( Has(Fault(flow).Message, "On Start:  Error: no licence") );
+		EXPECT_EQ( Flows().Global()->Get("starts"), 1 );
+		clock->Advance( FlowHost::RetryInterval );
+		EXPECT_FALSE( WaitUntil([&]{ return Flows().Global()->Get( "starts" )!=1; }, 3s) ) << "not tried again";
+		EXPECT_FALSE( Running(flow) );
+	}
+
+	//#4:  a `function.stack` over what the executor's threads leave a body is that much, and said:  a body that recurses
+	//ends on its RangeError, not past its thread's stack.
+	TEST_F( FlowTests, AFunctionStackIsKeptUnderTheThreads ){
+		Logging::Capture capture{ ELogTags::Settings, ELogLevel::Warning };
+		let flow = CreateFlow( "function-deep" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		Settings::Set( "/gateway/flows/function", jobject{{"stack", "64MiB"}} );
+		auto [clock, restart] = OnClock( Clock::now() );
+		absl::Cleanup settings = []{ Settings::Set( "/gateway/flows/function", jobject{} ); };
+		EXPECT_EQ( capture.Find([]( const Logging::Entry& e ){ return e.Message().find( "'/gateway/flows/function/stack' of \"64MiB\" is over the" )!=string::npos; }).size(), 1u );
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"f"}}), N("f", "function", R"({"code":"( function down(){ down(); } )();\nreturn msg;"})")})).at("running"), true );
+		Inject( flow );
+		ASSERT_TRUE( Errors(flow, "f", 1) );
+		EXPECT_TRUE( WaitUntil([&]{ return Flows().Status( flow, "f" ).Text.find( "RangeError: Maximum call stack size exceeded" )!=string::npos; }) ) << Flows().Status( flow, "f" ).Text;
+	}
 }

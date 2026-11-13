@@ -102,7 +102,16 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_FAULT( RefusedProps("template", "{}"), "n", "`template` must be text" );
 		EXPECT_FAULT( RefusedProps("template", R"({"template":"{{#rows}}x{{/rows}}"})"), "n", "no sections, partials or delimiters" );
 		EXPECT_FAULT( RefusedProps("template", R"({"template":"{{payload"})"), "n", "a tag that does not close" );
-		EXPECT_FAULT( RefusedProps("function", R"({"code":"return msg;"})"), "n", "not built yet" );
+		EXPECT_EQ( RefusedProps("function", R"({"code":"return msg;","onStart":"context.set( 'n', 0 );","onStop":""})"), "" );
+		EXPECT_FAULT( RefusedProps("function", "{}"), "n", "`code` must be text, the body" );
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"return msg;","onStart":5})"), "n", "`onStart` must be text" );
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"const a = 1;\nreturn msg +;"})"), "n", "`code`:  SyntaxError" );
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"const a = 1;\nreturn msg +;"})"), "n", "code:2" );
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"return msg;","onStop":"await;"})"), "n", "`onStop`:  SyntaxError" );
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"import fs from 'fs';\nreturn msg;"})"), "n", "`code`:  SyntaxError" );
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"return msg;","outputs":2.5})"), "n", "`outputs` must be a whole number" );
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"return msg;","outputs":0})"), "n", "Output 1 is wired, and a 'function' node has 0" );
+		EXPECT_EQ( RefusedProps("function", R"({"code":"context.set( 'checked', true ); for(;;){}"})"), "" ) << "a check compiles the code, and runs none of it";
 		EXPECT_FAULT( Refused(Nodes({Node("in", "inject", R"({"message":5})")})), "in", "`message` must be an object" );
 		EXPECT_FAULT( Refused(Nodes({Node("d", "debug", R"({"level":"Loud"})")})), "d", "`level` must be one of Trace, Debug" );
 		EXPECT_EQ( RefusedProps("opc out", R"({"anything":[1,2]})"), "" ) << "a hosted node's props are its host's";

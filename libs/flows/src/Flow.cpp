@@ -51,6 +51,20 @@ namespace Jde::Opc::Flows{
 		NodeCounts Total, Minute;
 	};
 
+	//The runtime a graph's Function nodes share:  none for a graph without one, and for one that could not be made, whose
+	//nodes then refuse.
+	Ω sandbox( const Graph& graph, const Flow::Config& config )ι->sp<Js::Runtime>{
+		if( std::ranges::none_of(graph.Nodes, []( let& node ){ return node.Type==ENodeType::Function; }) )
+			return nullptr;
+		try{
+			return MakeSandbox( config.Function, config.Name, config.Env );
+		}
+		catch( const std::exception& e ){
+			ERR( "[{}]{}", config.Name, e.what() );
+			return nullptr;
+		}
+	}
+
 	enum class EState : uint8{ Idle, Starting, Running, Stopped };
 	struct Engine final : std::enable_shared_from_this<Engine>{
 		Engine( Graph&& graph, Flow::Config&& config )ι:
@@ -252,6 +266,12 @@ namespace Jde::Opc::Flows{
 			if( Entered() )
 				Dropped( slot, id );
 		}
+		α Error( Slot& slot, string&& error )ι->void{
+			if( !Entered() )
+				return;
+			ERR( "[{}.{}]{}", _config.Name, slot.Def.Label(), error );
+			Errored( slot, move(error) );
+		}
 		α Fail( Slot& slot, MessageId id, Message&& m, string&& error )ι->void{
 			if( !Entered() )
 				return;
@@ -363,6 +383,7 @@ namespace Jde::Opc::Flows{
 				if( _state!=EState::Idle )
 					return false;
 				_state = EState::Starting;
+				_js = sandbox( _graph, _config );
 			}
 			for( auto& slot : _slots ){
 				try{
@@ -405,6 +426,10 @@ namespace Jde::Opc::Flows{
 				else
 					slot.Node = _config.Host->Sink( def );
 				THROW_IF( !slot.Node, "The host made no '{}' node.", ToString(def.Type) );
+			}
+			else if( def.Type==ENodeType::Function ){
+				THROW_IF( !_js, "The flow's sandbox could not be made." );
+				slot.Node = MakeFunction( def, _js );
 			}
 			else
 				slot.Node = MakeNode( def, _graph );
@@ -454,6 +479,8 @@ namespace Jde::Opc::Flows{
 		}
 		α End()ι->EState{//the state it had.
 			lg _{ _queueMutex };
+			if( _js )
+				Halt( *_js );
 			return std::exchange( _state, EState::Stopped );
 		}
 		α Teardown()ι->void{
@@ -520,15 +547,17 @@ namespace Jde::Opc::Flows{
 			}
 			catch( const std::exception& e ){
 				ERR( "[{}.{}]{}", _config.Name, slot ? slot->Def.Label() : string{}, e.what() );
-				if( !slot )
-					return;
-				Count( *slot, []( NodeCounts& c ){ ++c.Errors; } );
-				if( _trace )
-					_trace->Error( slot->Def, 0, e.what() );
-				++slot->Unhandled;
-				slot->LastError = e.what();
-				Stale( *slot );
+				if( slot )
+					Errored( *slot, e.what() );
 			}
+		}
+		α Errored( Slot& slot, string&& error )ι->void{//the node's error with no message.
+			Count( slot, []( NodeCounts& c ){ ++c.Errors; } );
+			if( _trace )
+				_trace->Error( slot.Def, 0, error );
+			++slot.Unhandled;
+			slot.LastError = move( error );
+			Stale( slot );
 		}
 		α Drain( bool turn )ι->void{
 			_draining = true;
@@ -710,6 +739,7 @@ namespace Jde::Opc::Flows{
 		vector<std::pair<Slot*,absl::AnyInvocable<void()>>> _idle;//what waits for the queues to empty.
 		mutable mutex _queueMutex;
 		EState _state{ EState::Idle };
+		sp<Js::Runtime> _js;//the Function nodes' runtime, when the graph has one, made as they are:  set under _queueMutex.
 		std::deque<uint32> _arrival;//a node's index for each message queued, in the order they came.
 		vector<std::pair<uint32,MessageId>> _dropped;//off a queue, for the strand to count.
 		bool _scheduled{};//a drain is posted or running.
@@ -760,6 +790,7 @@ namespace Jde::Opc::Flows{
 		_slot->Flow.Fail( *_slot, id, move(m), move(error) );
 	}
 	α INode::Drop( MessageId id )ι->void{ _slot->Flow.Drop( *_slot, id ); }
+	α INode::Error( string error )ι->void{ _slot->Flow.Error( *_slot, move(error) ); }
 	α INode::SetStatus( NodeStatus status )ι->void{ _slot->Flow.SetStatus( *_slot, move(status) ); }
 	α INode::Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, after, std::move(f) ); }
 	α INode::Schedule( TimePoint due, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, due, std::move(f) ); }
@@ -771,4 +802,16 @@ namespace Jde::Opc::Flows{
 	α INode::Global()ι->GlobalStore&{ return _slot->Flow.Global(); }
 	α INode::QueueLimit()Ι->uint{ return _slot->Flow.Limit(); }
 	α ISource::Emit( Message&& m )ι->void{ _slot->Flow.Enqueue( _slot->Index, move(m), true ); }
+}
+namespace Jde::Opc{
+	α Flows::ToBytes( sv text )ι->optional<uint>{
+		constexpr std::array<std::pair<sv,uint>,4> units{{ {"", 1}, {"KiB", 1ull<<10}, {"MiB", 1ull<<20}, {"GiB", 1ull<<30} }};
+		uint count{};
+		let end = text.data()+text.size();
+		let [p, ec] = std::from_chars( text.data(), end, count );
+		let unit = find( units, sv{p, end}, &std::pair<sv,uint>::first );
+		if( ec!=std::errc{} || unit==units.end() || count>std::numeric_limits<uint>::max()/unit->second )
+			return nullopt;
+		return count*unit->second;
+	}
 }
