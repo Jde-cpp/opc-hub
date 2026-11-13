@@ -321,6 +321,20 @@ namespace Jde::Access::Tests{
 		listener.OnChange( jvalue{jobject{{"roleRemoved", jobject{{"id", rolePK.Value}, {"permissionRight", jobject{{"id", fakePK.Value}}}}}}}, (QL::SubscriptionId)underlying(ESubscription::Role | ESubscription::Removed) );
 		EXPECT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::None );
 	}
+	//#448:  an observer hears each change a listener applied to its cache, and none the cache refused.
+	TEST_F( AclTests, AnObserverHearsEachAppliedChange ){
+		std::atomic<uint> heard{};
+		let handle = AccessListener::Observe( [&]{ ++heard; } );
+		AccessListener listener{ QLPtr() };
+		let updated = [&]{ listener.OnChange( jvalue{jobject{{"userUpdated", jobject{{"id", GetRoot().Value}}}}}, (QL::SubscriptionId)underlying(ESubscription::User | ESubscription::Updated) ); };
+		updated();
+		EXPECT_EQ( heard, 1u );
+		EXPECT_THROW( listener.OnChange(jvalue{jobject{{"aclCreated", jobject{}}}}, (QL::SubscriptionId)underlying(ESubscription::Acl | ESubscription::Created)), Exception );
+		EXPECT_EQ( heard, 1u ) << "a change the cache refused is none";
+		AccessListener::Unobserve( handle );
+		updated();
+		EXPECT_EQ( heard, 1u );
+	}
 	//access-review3 #11:  purgeAcl gated on which key the client sent - role:{id} meant Administer of `roles`, whatever the pk was -
 	//so a roles admin could revoke any identity's direct grant on any resource by spelling its pk as a role.  The gate now comes
 	//from access_permissions.is_role, either spelling is accepted, and the notification carries the key the pk is, so the cache's

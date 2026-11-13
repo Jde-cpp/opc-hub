@@ -33,8 +33,9 @@ namespace Jde::Opc::Flows{
 		//The first fault, in node order:  an id missing or used twice, a type that is not one, a wire to no node of the graph,
 		//to one that takes no input or from a port the node lacks, a property of a library node that is not of its type, a
 		//catch, status or complete naming no node, and a `link out` whose name no `link in` of the graph holds.  A hosted
-		//node's props are its host's to check.
-		Ω Read( const jvalue& json )ι->std::expected<Graph,Fault>;
+		//node's props are its host's to check.  `hostedLinks`:  such a `link out` is no fault but its host's, which knows the
+		//other flows:  IHost::Sink makes it.
+		Ω Read( const jvalue& json, bool hostedLinks=false )ι->std::expected<Graph,Fault>;
 		α IndexOf( sv id )Ι->optional<uint32>;
 		vector<NodeDef> Nodes;
 	};

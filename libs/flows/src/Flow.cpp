@@ -105,11 +105,27 @@ namespace Jde::Opc::Flows{
 			boost::asio::post( _strand, [self=shared_from_this()]{ self->Enter( [&]{ self->StartNodes(); } ); } );
 			return true;
 		}
-		α Stop( absl::AnyInvocable<void()> stopped )ι->void{
+		α Stop( optional<Flows::Fault> why, absl::AnyInvocable<void()> stopped )ι->void{
 			let prior = End();
+			Slot* refused{};
+			if( why && prior!=EState::Stopped ){
+				if( let index = _graph.IndexOf(why->NodeId) ){
+					refused = _slots[*index].get();
+					Refuse( *refused, move(why->Message) );
+				}
+				else{
+					ERR( "[{}]The flow is stopped:  {}", _config.Name, why->Message );
+					lg _{ _stateMutex };
+					_fault = move( *why );
+				}
+			}
 			if( prior==EState::Running ){
-				boost::asio::post( _strand, [self=shared_from_this(), stopped=std::move(stopped)]()mutable{
+				boost::asio::post( _strand, [self=shared_from_this(), refused, stopped=std::move(stopped)]()mutable{
 					self->Teardown();
+					if( refused ){//over a status the node set as the flow ended.
+						lg _{ self->_stateMutex };
+						refused->Status = { "red", "ring", self->_fault->Message };
+					}
 					if( stopped )
 						stopped();
 				} );
@@ -138,6 +154,23 @@ namespace Jde::Opc::Flows{
 				m.Json["payload"] = move( time );
 			}
 			Enqueue( *index, move(m), true );
+		}
+		α SetContext( sv nodeId, sv key, jvalue&& value, absl::AnyInvocable<void( bool )> set )ι->void{
+			optional<uint32> index;
+			if( nodeId.size() )
+				index = _graph.IndexOf( nodeId );
+			if( !Running() || (nodeId.size() && !index) ){
+				if( set )
+					set( false );
+				return;
+			}
+			boost::asio::post( _strand, [self=shared_from_this(), index, key=string{key}, value=move(value), set=std::move(set)]()mutable{
+				let running = self->Running();//a stop since leaves it to the host, as a flow that is not running does.
+				if( running )
+					( index ? self->_slots[*index]->Context : self->_flowContext ).Set( key, move(value) );
+				if( set )
+					set( running );
+			} );
 		}
 		α Post( Slot* slot, absl::AnyInvocable<void()> f )ι->void{//`slot`:  the node whose error what escapes is;  none for the flow's own.
 			boost::asio::post( _strand, [self=shared_from_this(), slot, f=std::move(f)]()mutable{ self->Enter( [&]{ self->Guard( slot, f ); } ); } );
@@ -337,7 +370,13 @@ namespace Jde::Opc::Flows{
 		}
 		α Make( Slot& slot )ε->void{
 			let& def = slot.Def;
-			if( IsHosted(def.Type) ){
+			let linked = def.Type==ENodeType::LinkOut ? LinkIn( Json::FindDefaultSV(def.Props, "name") ) : nullopt;
+			if( def.Type==ENodeType::LinkOut && !linked ){//another flow's:  its host's.
+				THROW_IF( !_config.Host, "No `link in` of the flow is named '{}'.", Json::FindDefaultSV(def.Props, "name") );
+				slot.Node = _config.Host->Sink( def );
+				THROW_IF( !slot.Node, "The host made no '{}' node.", ToString(def.Type) );
+			}
+			else if( IsHosted(def.Type) ){
 				THROW_IF( !_config.Host, "Nothing here makes a '{}' node.", ToString(def.Type) );
 				if( IsSource(def.Type) )
 					slot.Node = _config.Host->Source( def );
@@ -361,12 +400,12 @@ namespace Jde::Opc::Flows{
 				for( let index : slot.Scope )
 					_slots[index]->Completes.push_back( slot.Index );
 			}
-			else if( def.Type==ENodeType::LinkOut ){
-				let name = Json::FindDefaultSV( def.Props, "name" );
-				let in = find_if( _graph.Nodes, [name]( const NodeDef& n ){ return n.Type==ENodeType::LinkIn && Json::FindDefaultSV(n.Props, "name")==name; } );
-				THROW_IF( in==_graph.Nodes.end(), "No `link in` of the flow is named '{}'.", name );
-				slot.Wires = { {(uint32)(in-_graph.Nodes.begin())} };
-			}
+			else if( linked )
+				slot.Wires = { {*linked} };
+		}
+		α LinkIn( sv name )Ι->optional<uint32>{
+			let in = find_if( _graph.Nodes, [name]( const NodeDef& n ){ return n.Type==ENodeType::LinkIn && Json::FindDefaultSV(n.Props, "name")==name; } );
+			return in==_graph.Nodes.end() ? nullopt : optional<uint32>{ in-_graph.Nodes.begin() };
 		}
 		//The flow does not start:  its fault, and the node's status, say why.
 		α Refuse( Slot& slot, string message )ι->void{
@@ -653,21 +692,23 @@ namespace Jde::Opc::Flows{
 	{}
 	Flow::~Flow(){
 		if( _engine )
-			_engine->Stop( {} );
+			_engine->Stop( {}, {} );
 	}
 	α Flow::operator=( Flow&& rhs )ι->Flow&{
 		if( this!=&rhs ){
 			if( _engine )
-				_engine->Stop( {} );
+				_engine->Stop( {}, {} );
 			_engine = move( rhs._engine );
 		}
 		return *this;
 	}
 	α Flow::Start()ι->bool{ return _engine->Start(); }
-	α Flow::Stop( absl::AnyInvocable<void()> stopped )ι->void{ _engine->Stop( std::move(stopped) ); }
+	α Flow::Stop( absl::AnyInvocable<void()> stopped )ι->void{ _engine->Stop( {}, std::move(stopped) ); }
+	α Flow::Stop( Flows::Fault why, absl::AnyInvocable<void()> stopped )ι->void{ _engine->Stop( move(why), std::move(stopped) ); }
 	α Flow::Running()Ι->bool{ return _engine->Running(); }
 	α Flow::Fault()Ι->optional<Flows::Fault>{ return _engine->Fault(); }
 	α Flow::Inject( sv nodeId, const jobject* message )ε->void{ _engine->Inject( nodeId, message ); }
+	α Flow::SetContext( sv nodeId, sv key, jvalue value, absl::AnyInvocable<void( bool )> set )ι->void{ _engine->SetContext( nodeId, key, move(value), std::move(set) ); }
 	α Flow::Post( absl::AnyInvocable<void()> f )ι->void{ _engine->Post( nullptr, std::move(f) ); }
 	α Flow::Status( sv nodeId )Ι->NodeStatus{ return _engine->Status( nodeId ); }
 	α Flow::Counts()Ι->vector<NodeCounts>{ return _engine->Counts(); }

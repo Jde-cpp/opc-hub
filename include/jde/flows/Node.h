@@ -72,8 +72,9 @@ namespace Jde::Opc::Flows{
 	//A sink a host makes:  Receive is its work, and a node with an output sends what it answers.
 	struct ISink : INode{};
 
-	//What makes the hosted types' nodes (IsHosted) as a flow starts.  What it throws is why the node cannot be, a `group in`
-	//on a gateway with no historian:  the flow stays stopped with it as its fault.
+	//What makes the hosted types' nodes (IsHosted) as a flow starts, and as a sink a `link out` whose name no `link in` of
+	//its flow holds, another flow's.  What it throws is why the node cannot be, a `group in` on a gateway with no historian:
+	//the flow stays stopped with it as its fault.
 	struct IHost{
 		virtual ~IHost()=default;
 		β Source( const NodeDef& node )ε->up<ISource> =0;

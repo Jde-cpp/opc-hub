@@ -11,7 +11,7 @@ local logsDir = args.logsDir;
 	},
 	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://127.0.0.1:4940", users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{
-		introspection: [ "../../config/introspection/serverConnection.jsonnet", "../../config/introspection/search.jsonnet", "../../config/introspection/hist.jsonnet", "../../config/introspection/oee.jsonnet" ] //relative to this file, as in Opc.Gateway.jsonnet: the extensions QLTests asserts on.
+		introspection: [ "../../config/introspection/serverConnection.jsonnet", "../../config/introspection/search.jsonnet", "../../config/introspection/hist.jsonnet", "../../config/introspection/oee.jsonnet", "../../config/introspection/flows.jsonnet" ] //relative to this file, as in Opc.Gateway.jsonnet: the extensions QLTests asserts on.
 	},
 	access:{
 		trustedCertDirs: [
@@ -81,6 +81,7 @@ local logsDir = args.logsDir;
 		reconnectDelay: "PT0.1S",
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-gateway-tests" }, //the gateway's own groups (HistGroupTests), which main.cpp empties at the start as it does the server's.
+		flows:{ path: logsDir + "/flows/opc-gateway-tests" }, //FlowTests:  a flow's trace directory, which its purge removes;  main.cpp empties it at the start.
 		oee:{ live:: "PT1S", settle: "PT2S" }, //OeeTests:  not the shipped 5 s, so OeeTests.TheSettingsReachTheHost tells the setting from the default;  the suite's clock is its own, so nothing waits on it.
 		//the gateway's own endpoint (GatewayServerTests), beside the embedded OpcServer's 4940:  two UA servers in one process.  No ssl:
 		//the process pair, http.gateway.ssl.  Its client certificates are the test product's one ssl/certs, where that pair is - the suite's

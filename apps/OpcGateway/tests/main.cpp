@@ -48,6 +48,7 @@ namespace Jde{
 			Opc::Server::Startup( Settings::AsObject("/http/opcServer") );
 		}
 		emptyHist( "/gateway/hist/path" );//the gateway's own groups' files (HistGroupTests):  a group is created afresh each run, so an older run's files are only clutter.
+		emptyHist( "/gateway/flows/path" );//and the flows' directories (FlowTests), as the historian's.
 		Opc::Gateway::Startup( Settings::AsObject("/http/gateway") );
 	}
 }

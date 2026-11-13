@@ -24,7 +24,7 @@ namespace Jde::DB::MySql{
 		α GuidType()Ι->sv override{ return "binary" ; }
 		α ToString( EType type )Ι->string override{
 			using enum EType;
-			return type==Float ? "double" : type==SmallFloat ? "float" : type==Blob ? "blob" : Syntax::ToString( type );
+			return type==Float ? "double" : type==SmallFloat ? "float" : type==Blob ? "blob" : type==Text ? "mediumtext" : Syntax::ToString( type );//mediumtext, 16 MiB:  text holds 64 KiB, under a flow's graph (gateway flow_versions).
 		}
 		α HasLength( EType type )Ι->bool override{
 			using enum EType;

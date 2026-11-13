@@ -417,6 +417,27 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 
+	//Flows 2 (#448):  deployFlow, injectFlow and setFlowContext, declared in config/introspection/flows.jsonnet, and the four tables the schema introspects itself.
+	TEST_F( QLTests, flowsIntrospection ){
+		for( sv typeName : {"DeployFlow"sv, "deployFlow"sv} ){
+			let fields = Fields( typeName );
+			for( sv name : {"flow"sv, "version"sv, "deployed"sv, "userName"sv, "running"sv, "dropped"sv, "fault"sv} )
+				EXPECT_NE( FindRow(fields, "name", name), fields.end() ) << name << ": " << serialize( fields );
+			auto fault = FindRow( fields, "name", "fault" );
+			ASSERT_NE( fault, fields.end() );
+			EXPECT_EQ( Json::AsSV(fault->as_object(), "type/name"), "FlowFault" );
+		}
+		let injectFields = Fields( "injectFlow" );
+		EXPECT_NE( FindRow(injectFields, "name", "node"), injectFields.end() ) << serialize( injectFields );
+		let contextFields = Fields( "setFlowContext" );
+		for( sv name : {"flow"sv, "node"sv, "name"sv, "value"sv} )
+			EXPECT_NE( FindRow(contextFields, "name", name), contextFields.end() ) << name << ": " << serialize( contextFields );
+		for( let& [typeName,column] : vector<std::pair<sv,sv>>{ {"flow", "guid"}, {"flowVersion", "graph"}, {"flowContext", "value"}, {"flowRun", "mode"} } ){
+			let tableFields = Fields( typeName );
+			EXPECT_NE( FindRow(tableFields, "name", column), tableFields.end() ) << typeName << "." << column << ": " << serialize( tableFields );
+		}
+	}
+
 	TEST_F( QLTests, serverConnectionIntrospection ){
 		for( sv typeName : {"ServerConnection"sv, "serverConnections"sv} ){ //both spellings are declared in config/introspection/serverConnection.jsonnet.
 			let fields = Fields( typeName );

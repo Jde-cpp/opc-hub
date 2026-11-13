@@ -13,6 +13,18 @@ namespace Jde::Opc::Gateway{
 		α Execute()ι->VoidTask;
 		ServerCnnctnPK _connection;
 	};
+	//The spelling a node column holds (HistNodeText):  the caller's node, with its index turned into the URI the connection's
+	//server has for it, which takes the collector's client.  A group's node and root are spelled so, and a flow's node is to
+	//find the group that holds it (FlowHost).
+	struct SpellAwait final : AnyAwait<string>{
+		SpellAwait( ExNodeId node, ServerCnnctnPK connection, SRCE )ι:AnyAwait<string>{ sl }, _node{ move(node) }, _connection{ connection }{}
+	protected:
+		α Suspend()ι->void override{ Execute(); }
+	private:
+		α Execute()ι->VoidTask;
+		ExNodeId _node;
+		ServerCnnctnPK _connection;
+	};
 	//A template member as resolveHistory answers it (spec *Templates*):  its row and path, the node it resolved to, Good once it
 	//has a hist_group_nodes row, else why it hasn't, and for Bad_NodeIdExists the group that holds the node - another on the
 	//connection, or this one as another member or an ad hoc node - by its row and name, so a page can say which, and by its guid,

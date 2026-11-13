@@ -4,11 +4,9 @@
 #include <jde/access/Authorize.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ops/MutationAwait.h>
-#include "../async/ConnectAwait.h"
-#include "../async/NamespacesAwait.h"
+#include "../flows/FlowHost.h"
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
-#include "../UAClient.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -134,32 +132,6 @@ namespace Jde::Opc::Gateway{
 		return nullopt;
 	}
 
-	//The spelling a node column holds:  the caller's node, or with its index turned into the URI the connection's server has
-	//for it, which takes the collector's client.
-	struct SpellAwait final : AnyAwait<string>{
-		SpellAwait( ExNodeId node, ServerCnnctnPK connection, SRCE )ι:AnyAwait<string>{ sl }, _node{ move(node) }, _connection{ connection }{}
-	protected:
-		α Suspend()ι->void override{ Execute(); }
-	private:
-		α Execute()ι->VoidTask{
-			try{
-				let slug = co_await SlugAwait{ _connection, _sl };
-				ConnectAwait connect{ string{slug}, HistHost::Instance().Collector(slug) };//an lvalue:  ConnectAwait is neither copied nor moved.
-				auto client = co_await Any( connect );
-				let namespaces = co_await Any( NamespacesAwait{client} );
-				let expanded = namespaces.ToExNodeId( _node.nodeId );
-				if( !expanded )
-					throw Exception{ _sl, ExceptionArgs{EHttpStatus::BadRequest}, "'{}' names namespace index {}, which '{}' doesn't have.", _node.ToString(), _node.NsIndex(), slug };
-				Resume( HistNodeText(*expanded) );
-			}
-			catch( runtime_error& e ){
-				ResumeExp( move(e) );
-			}
-		}
-		ExNodeId _node;
-		ServerCnnctnPK _connection;
-	};
-
 	Ω toJson( const optional<QL::TableQL>& request, const vector<HistResolved>& resolved )ι->jvalue{
 		jobject y;
 		if( let nodesQL = request ? request->FindTable("nodes") : nullptr; nodesQL ){
@@ -207,6 +179,7 @@ namespace Jde::Opc::Gateway{
 				auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)group}, .IncludeDeleted=true}) );
 				AppClient()->Acl()->Test( "gateway", "histGroups", groups.empty() ? string{} : groups.front().Guid, Access::ERights::Update, UserPK(), _sl );
 				auto resolved = co_await HistHost::Instance().Resolve( group, UserPK(), _sl );
+				FlowHost::Instance().GroupChanged( group );//a member may have resolved to a node a flow reads or writes.
 				for( auto& r : resolved ){
 					if( r.Holder && !mayRead(r.HolderGuid, UserPK(), _sl) )
 						r.HolderName.clear();
@@ -280,6 +253,10 @@ namespace Jde::Opc::Gateway{
 				}
 				if( auto work = after(_query, y, UserPK(), purgedGuid, _sl); work )
 					co_await *work;
+				//A flow's node is admitted by the group that holds it (flows spec *Rights*), which no access event reports:  a node that
+				//joined or left, a group deleted, restored or purged.  The group where the mutation names it, else 0:  a member's purge.
+				if( let table = _query.TableName(); table==Groups || table==GroupNodes )
+					FlowHost::Instance().GroupChanged( table==GroupNodes ? _query.TryNumber<HistGroupPK>("histGroupId").value_or(0) : _query.FindId<HistGroupPK>().value_or(0) );
 				if( auto row = spelled.size() && y.is_array() && y.get_array().size() ? y.get_array()[0].if_object() : nullptr; row ){
 					for( let& [key,value] : spelled )
 						(*row)[key] = value;

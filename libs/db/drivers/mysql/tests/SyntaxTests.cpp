@@ -71,6 +71,7 @@ namespace Jde::DB::MySql::Tests{
 		EXPECT_EQ( my.ToString(EType::UInt16), "smallint unsigned" ); //#6: was "smallint" - uint16 columns got half the range.
 		EXPECT_EQ( my.ToString(EType::UInt8), "tinyint unsigned" );
 		EXPECT_EQ( my.ToString(EType::Int16), "smallint" ); //signed stays plain.
+		EXPECT_EQ( my.ToString(EType::Text), "mediumtext" ); //#448: text is 64 KiB, under a flow's graph;  ToDbType reads it back as Text.
 
 		//#30: MySQL has the float widths the other way round from T-SQL/sqlite - FLOAT is single precision, REAL is a
 		//DOUBLE synonym - so the base names produced a 4-byte column for the 8-byte type and vice versa.

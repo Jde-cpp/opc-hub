@@ -15,7 +15,7 @@ local logsDir = args.logsDir;
 	},
 	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://" + instance.opcServer.address + ":" + instance.opcServer.port, users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - HubRoutingTests.LoginDefaultConnection's credential; without a list the server offers no username policy.
 	ql:{
-		introspection: [ "../../../OpcGateway/config/introspection/serverConnection.jsonnet", "../../../OpcGateway/config/introspection/search.jsonnet", "../../../OpcGateway/config/introspection/hist.jsonnet", "../../../OpcGateway/config/introspection/oee.jsonnet" ] //relative to this file (gatewayStartup.cpp).
+		introspection: [ "../../../OpcGateway/config/introspection/serverConnection.jsonnet", "../../../OpcGateway/config/introspection/search.jsonnet", "../../../OpcGateway/config/introspection/hist.jsonnet", "../../../OpcGateway/config/introspection/oee.jsonnet", "../../../OpcGateway/config/introspection/flows.jsonnet" ] //relative to this file (gatewayStartup.cpp).
 	},
 	access:{
 		trustedCertDirs: [
@@ -67,6 +67,7 @@ local logsDir = args.logsDir;
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-hub-tests" }, //the gateway role's historian:  its own path, so a gateway test run beside this one never contends for the lock.
 		oee:{ live:: "PT1S", settle:: "PT5S" }, //the gateway role's OEE, as shipped (OeeTests).
+		flows:{ path: logsDir + "/flows/opc-hub-tests" }, //the gateway role's flows, as shipped.
 		//the hub's own endpoint (EndpointTests):  loopback as the listener is, the process pair (no ssl), and a hub-shape login - a short
 		//issued token answered from this process's session map (HubAppClient::SessionInfoAwait).
 		server:{

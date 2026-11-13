@@ -118,6 +118,8 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_FAULT( Refused(Nodes({Node("lo", "link out")})), "lo", "`name` must be text" );
 		EXPECT_FAULT( Refused(Nodes({Node("a", "link in", R"({"name":"a"})"), Node("b", "link in", R"({"name":"a"})")})), "a", "Two `link in` nodes are named 'a'" );
 		EXPECT_EQ( Refused(Nodes({Node("li", "link in", R"({"name":"a"})")})), "" ) << "an input nothing feeds is no fault";
+		EXPECT_TRUE( Graph::Read(Nodes({Node("in", "inject", "{}", {{"lo"}}), Node("lo", "link out", R"({"name":"a"})")}), true).has_value() ) << "a link to another flow is its host's";
+		EXPECT_FALSE( Graph::Read(Nodes({Node("lo", "link out")}), true).has_value() ) << "which still needs its name";
 	}
 
 	TEST( Graph, AnswersTheFirstFault ){

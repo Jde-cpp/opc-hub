@@ -96,6 +96,12 @@ function( sync=false )
 			live:: "PT1S", //how often at most a client of OeeSubscribe hears a machine's figures;  a state change is pushed at once.
 			settle:: "PT5S" //how long after an interval ends the engine writes its row, for records still on their way;  a member's MinTimeInterval past it makes each held value a rebuild.  Also how long after a machine's last edit its engine starts, so a form's signals land together.
 		},
+		//Flows (docs/flows/spec.md, *Placement*):  graphs of nodes the gateway runs, each deployed under its deployer's rights.  No
+		//`flows` block, no flows.  A `::` key is its default, shown hidden.
+		flows:{
+			path: logsDir + "/flows/opc-gateway", //the trace's, a directory per flow by its slug, beside hist's:  a flow's purge removes its own.  Set here, under this layout's logsDir:  the code's own fallback is <AppDataFolder>/logs/flows/opc-gateway.
+			queue:: 1000 //messages a node's input holds;  past it the oldest is dropped and counted.
+		},
 		//A password or an issued token is sent encrypted wherever the server's token policy asks for that, certificateUri or not.
 		//Where a server offers it only under a token policy of None on a channel that is not Sign & Encrypt, it would cross the
 		//wire in the clear, and the gateway refuses the connection and says why.  true sends it anyway (open62541's
@@ -197,7 +203,8 @@ function( sync=false )
 			"introspection/serverConnection.jsonnet",
 			"introspection/search.jsonnet",
 			"introspection/hist.jsonnet",
-			"introspection/oee.jsonnet"
+			"introspection/oee.jsonnet",
+			"introspection/flows.jsonnet"
 		]
 	},
 	web:{

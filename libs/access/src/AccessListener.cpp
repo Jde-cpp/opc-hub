@@ -6,12 +6,35 @@
 #define let const auto
 
 namespace Jde::Access{
+	static mutex _observerMutex;
+	static flat_map<uint,AccessListener::Observer> _observers;
+	static uint _observerHandle{};
+	α AccessListener::Observe( Observer f )ι->uint{
+		lg _{ _observerMutex };
+		_observers.emplace( ++_observerHandle, move(f) );
+		return _observerHandle;
+	}
+	α AccessListener::Unobserve( uint handle )ι->void{
+		lg _{ _observerMutex };
+		_observers.erase( handle );
+	}
 	α AccessListener::Shutdown( bool terminate, SL )ι->void{
 		if( terminate )
 			return;
 		_qlServer->Unsubscribe( sp<QL::IListener>{sp<void>{}, this}, {} );
 	}
 	α AccessListener::OnChange( const jvalue& j, QL::SubscriptionId clientId )ε->void{
+		Apply( j, clientId );
+		vector<Observer> observers;
+		{
+			lg _{ _observerMutex };
+			for( let& [_,f] : _observers )
+				observers.push_back( f );
+		}
+		for( let& f : observers )
+			f();
+	}
+	α AccessListener::Apply( const jvalue& j, QL::SubscriptionId clientId )ε->void{
 		let& root = Json::AsObject(j);
 		let nameValue = root.begin();
 		if( nameValue==root.end() )

@@ -11,8 +11,15 @@ namespace Jde::Access{
 		AccessListener( sp<QL::IQL> qlServer )ι:QL::IListener{"Access"},_qlServer{qlServer}{}
 		α OnChange( const jvalue& j, QL::SubscriptionId clientId )ε->void override;
 		α Shutdown( bool terminate, SL sl )ι->void override;
+		//For what rests on the rights and looks again when they change, a running flow's admission (the gateway's FlowHost):
+		//`f` is called after each change a listener of this process has applied to its cache, on the subscription's thread, so
+		//it only queues.  A change the cache refused, which OnChange throws, calls none.
+		using Observer = function<void()>;
+		Ω Observe( Observer f )ι->uint;//its handle, for Unobserve.
+		Ω Unobserve( uint handle )ι->void;
 		sp<QL::IQL> _qlServer;
 	private:
+		α Apply( const jvalue& j, QL::SubscriptionId clientId )ε->void;
 		α Authorizer()ι->Access::Authorize&{ return _qlServer->Authorizer(); }
 		α AclChanged( ESubscription event, const jobject& o )ε->void;
 		α UserChanged( UserPK userPK, ESubscription event, const jobject& o )ι->void;

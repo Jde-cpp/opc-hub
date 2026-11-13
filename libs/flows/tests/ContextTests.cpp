@@ -18,6 +18,30 @@ namespace Jde::Opc::Flows::Tests{
 			<< "each node's own count from what was loaded, and the flow's they share";
 	}
 
+	TEST_F( ContextTests, AValueSetFromOutsideIsReadAtTheNextGet ){
+		NodeContext = { {"out", jobject{{"seen", 5}}} };
+		Run( Nodes({Node("in", "inject", "{}", {{"out"}}), Node("out", "log", R"({"tally":true})")}) );
+		let set = [&]( sv node, sv key, jvalue value ){
+			std::promise<bool> done;
+			Deployed->SetContext( node, key, move(value), [&]( bool set ){ done.set_value( set ); } );
+			return done.get_future().get();
+		};
+		EXPECT_TRUE( set("out", "seen", 40) );
+		EXPECT_TRUE( set({}, "seen", 100) );
+		EXPECT_TRUE( set({}, "gone", nullptr) ) << "a key that is not there has nothing to take";
+		EXPECT_FALSE( set("nowhere", "seen", 1) ) << "a node that is not the flow's";
+		Inject( 1 );
+		{
+			lg _{ ChangesMutex };
+			EXPECT_EQ( Changes, (vector<string>{"out/seen=40", "/seen=100", "out/seen=41", "/seen=101"}) ) << "the host is told of the set, and the node counts on from it";
+		}
+		EXPECT_TRUE( set({}, "seen", nullptr) );
+		Stop();
+		EXPECT_FALSE( set({}, "seen", 7) ) << "a flow that has stopped takes none";
+		lg _{ ChangesMutex };
+		EXPECT_EQ( Changes.back(), "/seen=-" );
+	}
+
 	TEST( Context, Store ){
 		vector<string> changes;
 		Store store{ jobject{{"a", 1}}, [&]( sv key, const jvalue* value ){ changes.push_back( Ƒ("{}={}", key, value ? serialize(*value) : "-") ); } };
