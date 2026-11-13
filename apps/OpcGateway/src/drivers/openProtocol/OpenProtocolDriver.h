@@ -2,13 +2,15 @@
 #include <jde/opc/usings.h>
 #include <jde/opc/uatypes/Value.h>
 #include <jde/opc/openProtocol/Session.h>
+#include "../DriverCalls.h"
 #include "../IDriver.h"
 
 namespace Jde::Opc::Gateway{
-	//The Open Protocol driver (docs/open-protocol/spec.md *The driver server*, *Address space*, *Results*, *Backfill*):  a row's
-	//session with its controller on the row's strand of the executor, its settings the /gateway/drivers/openProtocol block's and
-	//the zone and the ceilings of the row's `driver`, and, in the row's namespace, `Result`, `Counters`, `Selected`, `Alarm` and
-	//`_Op`:  each variable a stored value the strand posts to the server's own thread as the session reports.
+	//The Open Protocol driver (docs/open-protocol/spec.md *The driver server*, *Address space*, *Results*, *Backfill*,
+	//*Commands*):  a row's session with its controller on the row's strand of the executor, its settings the
+	///gateway/drivers/openProtocol block's and the zone and the ceilings of the row's `driver`, and, in the row's namespace,
+	//`Result`, `Counters`, `Selected`, `Alarm` and `_Op`, each variable a stored value the strand posts to the server's own thread
+	//as the session reports, and `Commands`, whose methods the strand sends the controller.
 	//`Result` is a variable per field of MID 0061 (TighteningResult.h), subscribed to by MID 0060 at each connect.  Each reads
 	//Bad_WaitingForInitialData until the first result, and Bad_NotSupported where the revision the results come at, or the
 	//result last written, does not carry it, set when the subscription is accepted and by a result that lacks it.  A result is
@@ -35,6 +37,17 @@ namespace Jde::Opc::Gateway{
 	//subscription refused at an earlier connect is accepted;  Bad_NotSupported where a report has no value for it or the
 	//controller refuses its subscription;  and, the link lost, Bad_NoCommunication over the value it held Good, until its next
 	//report.
+	//`Commands` holds five methods, each the MID of its purpose (§4.5):  SelectPset( pset ) MID 0018, SelectJob( job ) MID 0038,
+	//DisableTool() and EnableTool() MIDs 0042 and 0043, every tool of the connection, and DownloadVin( vin ) MID 0050.  The Call
+	//service has asked the host for Execute before a method's callback runs (DriverHost.h).  The callback, on the server's thread
+	//under the service lock, refuses Bad_OutOfRange a value no revision the row may ask carries, a set past 999, a job past 9999
+	//or a VIN past 25 characters, as the codec measures them;  else it holds the call with the host, posts the request to the
+	//strand and answers Good_CompletesAsynchronously.  The strand sends it behind whatever is outstanding and answers on the
+	//server's thread:  Good on MID 0005;  Bad_InvalidState on MID 0004, with the code and its name in `_Op.LastError` and the
+	//call's line;  Bad_Timeout where the controller is silent for replyTimeout, which is the link's loss too;  Bad_NoCommunication
+	//while the link is down, or where it goes first;  Bad_OutOfRange where the revision the controller settled does not carry
+	//the value, a job past 99 at MID 0038's revision 1, with nothing sent at it;  Bad_Shutdown where the driver stops first.  A
+	//call open62541 cancels before the strand has it is not sent;  one cancelled after is sent, its answer logged and not set.
 	//`_Op` is the diagnostics:  Connected and Since follow the link, LastError each failed attempt and each MID 0004, Reconnects
 	//the links that came back after a loss, as the endpoint's `_Connection` counts them;  Identity, LinkLevel and Revisions are the
 	//last connection's, kept through a loss;  Skew is the controller's clock less the gateway's at each connect, MID 0080's, with a
@@ -45,10 +58,11 @@ namespace Jde::Opc::Gateway{
 	struct OpenProtocolDriver final : IDriver{
 		OpenProtocolDriver( const ServerCnnctn& row, SRCE )ε;//the row's own refusal, OpenProtocolRow's, for one written past the save's rules.
 		Ω Make( const ServerCnnctn& row, SL sl )ε->up<IDriver>{ return mu<OpenProtocolDriver>( row, sl ); }
-		//maxAsyncOperationQueueSize, the block's maxAsyncOperations, and an item's deepest queue, twice its maxBackfill:  a fill
-		//is a burst inside one publishing interval, the walk's bound and as many held.
+		//maxAsyncOperationQueueSize, the block's maxAsyncOperations;  how long a call holds, its callTimeout, past replyTimeout
+		//and the wait behind what is outstanding;  and an item's deepest queue, twice its maxBackfill:  a fill is a burst inside
+		//one publishing interval, the walk's bound and as many held.
 		α Configure( Opc::Server::UASettings& settings )ε->void override;
-		α Build( UA_Server& server, UA_UInt16 ns )ε->void override;
+		α Build( UA_Server& server, UA_UInt16 ns, sp<DriverCalls> calls )ε->void override;
 		α Start()ι->void override;
 		α Stop( absl::AnyInvocable<void()> stopped )ι->void override;//MID 0003 where the link is up, then the close.
 	private:
@@ -64,7 +78,13 @@ namespace Jde::Opc::Gateway{
 			optional<uint32_t> Oldest;//the oldest id the walk reached, whichever station's.
 			TimePoint By;//the time of the last result the walk reached, and before the first the controller's clock.
 		};
+		//A method of `Commands` called, open62541's callback on the server's thread under the service lock, and the request it
+		//makes, held with the host and posted to the strand, or refused there.
+		Ω OnCall( UA_Server* server, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId* methodId, void* methodContext, const UA_NodeId* objectId, void* objectContext, size_t inputSize, const UA_Variant* input, size_t outputSize, UA_Variant* output )ι->UA_StatusCode;
+		α Command( OpenProtocol::Body&& request, string&& text, UserPK user, const UA_Variant* output )ι->UA_StatusCode;
 		//These on the strand.
+		α Send( DriverCalls::Call&& call, OpenProtocol::Body&& request )ι->void;//a held call's request, where open62541 has not cancelled it.
+		α OnCommanded( DriverCalls::Call&& call, uint16_t mid, OpenProtocol::Session::Reply&& reply )ι->void;//MID 0005, or why there is none:  the call's answer.
 		α OnConnected( OpenProtocol::Session::Connection&& connection )ι->void;
 		α OnLost( const OpenProtocol::Failure& why )ι->void;
 		α OnTime( OpenProtocol::Session::Reply&& reply )ι->void;//MID 0081, or why there is none.
@@ -93,11 +113,19 @@ namespace Jde::Opc::Gateway{
 		const string _url;
 		const std::chrono::time_zone* _zone{};//the row's, else the gateway's own.
 		Duration _maxSkew;
+		Duration _callTimeout;
 		optional<uint> _maxAsyncOperations;
 		uint _maxBackfill;//the MID 0064s one recovery may send.
+		flat_map<uint16_t,uint16_t> _ceilings;//the row's, by MID:  a command's value is measured at the highest revision it may go at.
+		const OpenProtocol::Strand _strand;//the session's.
 		optional<OpenProtocol::Session> _session;
 		UA_Server* _server{};//Build's:  posted to until Stop's `stopped`, which the loop outlives (UAServer::Post).
 		UA_UInt16 _ns{};
+		sp<DriverCalls> _calls;//Build's, the host's.
+		std::atomic<bool> _stopping{};//Stop has been called:  a method answers Bad_Shutdown.
+		//Set on the strand as the session's stop ends, ahead of `stopped`:  what the strand runs after it, a call posted from the
+		//server's thread meanwhile, touches nothing of the driver's, which may have gone.
+		const sp<bool> _stopped{ ms<bool>() };
 		sp<Posts> _posts;//how long the posts held the server's thread:  said when the last has run.
 		bool _connected{};
 		bool _wasConnected{};//a connection has stood:  the next is a reconnect.

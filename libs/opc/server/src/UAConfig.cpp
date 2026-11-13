@@ -112,10 +112,11 @@ namespace Jde::Opc::Server{
 		UAε( UA_ServerConfig_setBasics_withPort(this, settings.Port) );
 		applyAddress( *this, settings.Address, settings.Port );
 		applyLimits( *this, settings.Limit );
-		//A client's Write of a callback value source holds this long for its answer (servers spec *Writes*);  the cancel past it, or at
-		//shutdown, reaches the host through this, the base open62541 copies into the server, so its `context` is this object.
-		if( settings.WriteTimeout )
-			asyncOperationTimeout = (UA_Double)duration_cast<std::chrono::duration<double,std::milli>>( *settings.WriteTimeout ).count();
+		//A client's Write of a callback value source, or its Call of a method answered later, holds this long for its answer (servers
+		//spec *Writes*, open-protocol spec *Commands*);  the cancel past it, or at shutdown, reaches the host through this, the base
+		//open62541 copies into the server, so its `context` is this object.
+		if( settings.AsyncTimeout )
+			asyncOperationTimeout = (UA_Double)duration_cast<std::chrono::duration<double,std::milli>>( *settings.AsyncTimeout ).count();
 		context = this;
 		asyncOperationCancelCallback = AsyncCancelled;
 

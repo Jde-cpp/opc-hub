@@ -54,8 +54,8 @@ namespace Jde::Opc::Gateway{
 		y.ReadTokens( _root );
 		y.ReadLimits( _root );
 		y.ReadEditTimeout( key("editTimeout") );
-		y.WriteTimeout = 10s;//how long a client's Write holds for the source's answer (spec *Writes*).
-		y.ReadWriteTimeout( key("writeTimeout") );
+		y.AsyncTimeout = 10s;//how long a client's Write holds for the source's answer (spec *Writes*).
+		y.ReadAsyncTimeout( key("writeTimeout") );
 		return y;
 	}
 

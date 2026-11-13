@@ -6,6 +6,7 @@
 #include <jde/fwk/process/thread.h>
 #include <jde/opc/server/INodeAccess.h>
 #include "../GatewayAppClient.h"
+#include "../hist/HistHost.h"
 #include "DriverServer.h"
 #include "openProtocol/OpenProtocolDriver.h"
 
@@ -22,13 +23,62 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Server };
 	constexpr Duration _closeWait{ 2s };//how long a stop waits for the sessions its clients are closing.
 
-	//A driver server's INodeAccess:  browse and reads open to every session, #237's posture, and nothing writable, edited or,
-	//until the commands' lookup, called (docs/open-protocol/spec.md *Sessions and rights*).
+	//A driver server's INodeAccess (docs/open-protocol/spec.md *Sessions and rights*, *Commands*):  browse and reads open to
+	//every session, #237's posture, nothing writable or edited, and a method of the row's namespace called under Execute on the
+	//enforced access row of a group that holds a variable of the row.  The groups are HistHost's live ones on the row's
+	//connection with a member, as they are when asked, and each one's rights a lookup under the acl's lock
+	//(Authorize::ScopedRights):  UAAccess asks under open62541's service lock, so nothing here waits or throws.  Every node of
+	//the row's namespace answers Execute with its Read where a call would pass, which a method's UserExecutable reads;  only a
+	//method has a use for it.  A method of the server's own, namespace 0's, is called by no one, as before the drivers had
+	//methods.  The Call service's refusal is a line at Information with why, the message #237 gave history edits
+	//(Authorize::CheckEnforced), since its client hears Bad_UserAccessDenied alone.
 	struct DriverNodeAccess final : Opc::Server::INodeAccess{
-		α NodeRights( const NodeId&, UserPK )ι->Access::ERights override{ return Access::ERights::Read; }
+		DriverNodeAccess( ServerCnnctnNK slug )ι:_slug{ move(slug) }, _acl{ AppClient()->Acl() }{}
+		α NodeRights( const NodeId& node, UserPK executer )ι->Access::ERights override{
+			if( node.namespaceIndex!=ServerCnnctn::DriverBrowseNs )
+				return Access::ERights::Read;
+			for( let& guid : Groups() ){
+				if( let rights = _acl->ScopedRights(Schema, Resource, guid, executer); rights.Enforced && !empty(rights.Rights & Access::ERights::Execute) )
+					return Access::ERights::Read | Access::ERights::Execute;
+			}
+			return Access::ERights::Read;
+		}
 		α EditRights( const NodeId&, UserPK )ι->Access::ERights override{ return Access::ERights::None; }
 		α MayBrowse( const NodeId&, UserPK )ι->bool override{ return true; }
 		α UserRights( const NodeId&, UserPK )ι->Opc::Server::EAccess override{ return Opc::Server::EAccess::Read; }
+		α CallRights( const NodeId&, const NodeId& method, UserPK executer )ι->Access::ERights override{
+			let rights = NodeRights( method, executer );
+			if( empty(rights & Access::ERights::Execute) ){
+				string why;
+				if( method.namespaceIndex!=ServerCnnctn::DriverBrowseNs )
+					why = "It is no method of the connection's driver.";
+				else{
+					for( let& guid : Groups() ){
+						if( let allowed = _acl->CheckEnforced(Schema, Resource, guid, Access::ERights::Execute, executer, SRCE_CUR); !allowed )
+							why += Ƒ( "{}{}", why.empty() ? "" : "  ", allowed.error().what() );
+					}
+				}
+				if( why.empty() )
+					why = _acl ? "No group holds a variable of the connection, so nothing grants Execute on it." : "The gateway has no authorizer.";
+				INFO( "Call by '{}' of {} on '{}' refused, Bad_UserAccessDenied:  {}", _acl ? _acl->UserName(executer) : std::to_string(executer.Value), method.ToString(), _slug, why );
+			}
+			return rights;
+		}
+	private:
+		inline static const string Schema{ "gateway" }, Resource{ "histGroups" };//strings, which the acl's lookup takes:  none built per call.
+		//The guids of the groups that hold a variable of the row, the criteria of their access rows;  none without an authorizer.
+		α Groups()Ι->vector<string>{
+			vector<string> y;
+			if( !_acl )
+				return y;
+			for( let& group : HistHost::Instance().Groups() ){
+				if( group->Slug()==_slug && group->Size() )
+					y.push_back( group->Guid() );
+			}
+			return y;
+		}
+		const ServerCnnctnNK _slug;
+		const sp<Access::Authorize> _acl;
 	};
 
 	//The running hosts, and the thread their starts and stops run on after the gateway's own start.
@@ -90,7 +140,8 @@ namespace Jde::Opc::Gateway{
 	DriverHost::DriverHost( const ServerCnnctn& row, SL sl )ε:
 		_id{ row.Id },
 		_slug{ row.Slug },
-		_port{ row.DriverPort(sl) }
+		_port{ row.DriverPort(sl) },
+		_calls{ ms<DriverCalls>(_slug) }
 	{
 		bool made{};
 		try{
@@ -99,10 +150,11 @@ namespace Jde::Opc::Gateway{
 			_driver = make( row, sl );
 			auto settings = DriverServer::Settings( row.Kind, _slug, _port, sl );
 			_driver->Configure( settings );
-			_server = mu<Opc::Server::UAServer>( settings, AppClient(), ms<DriverNodeAccess>(), nullptr );
+			_server = mu<Opc::Server::UAServer>( settings, AppClient(), ms<DriverNodeAccess>(_slug), nullptr );
+			_server->OnAsyncCancel( [calls=_calls]( const void* output ){ calls->Cancelled( output ); } );//a call timed out, or the shutdown's:  its answer isn't set.
 			let ns = UA_Server_addNamespace( _server->Ptr(), NamespaceUri(_slug, row.Kind).c_str() );
 			THROW_IFSL( ns!=ServerCnnctn::DriverBrowseNs, "its namespace is {}, not {}.", ns, ServerCnnctn::DriverBrowseNs );
-			_driver->Build( *_server->Ptr(), ns );
+			_driver->Build( *_server->Ptr(), ns, _calls );
 			made = true;
 			_server->Run();//fails where it cannot listen.
 			_sessions = _server->Sessions();
@@ -155,8 +207,8 @@ namespace Jde::Opc::Gateway{
 				WARN( "{} session(s) of the gateway's own clients were still open when their driver server stopped.", left );
 		}
 		for( let& host : hosts ){
+			host->_server.reset();//first:  its thread runs the driver's methods until it has gone.
 			host->_driver.reset();
-			host->_server.reset();
 			INFO( "Connection '{}':  its driver's server on 127.0.0.1:{} stopped.", host->_slug, host->_port );
 		}
 	}
