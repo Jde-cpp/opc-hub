@@ -29,8 +29,20 @@ installed.
   A row's `kind` says what it connects to: `ua`, the default, or `open-protocol`, a tightening controller at
   `open-protocol://host[:port]` with a time zone and revision ceilings in `driver`
   ([`spec.md`](../../docs/open-protocol/spec.md), *The row*).  The gateway's clients dial such a row's own UA server on loopback, at `/gateway/drivers/portBase` plus the
-  row's id, in place of its url; the driver that serves it is the plan's Phase 4, so until then the row saves and
-  Test Connection names the controller, and nothing else connects.
+  row's id, in place of its url.
+- **Driver servers** (`src/drivers/`): a row of a kind with a driver gets a UA server of the gateway's own
+  (`DriverHost`), started with the gateway and with the row, restarted when its url, kind or `driver` is edited and
+  stopped when it is deleted.  It presents the process's `/http/ssl` certificate, takes Sign & Encrypt alone, and admits
+  the gateway's own clients and no other: a web session by its issued token, a group's collector as the gateway's own
+  user.  Every node is readable by any session and none is writable.  Behind it sits the kind's `IDriver`.  The Open
+  Protocol one (`src/drivers/openProtocol/`) keeps a session with the controller under the
+  `/gateway/drivers/openProtocol` settings and serves three objects.  `Result` has a variable per field of the
+  controller's last tightening result, MID 0061 at revisions 1 to 7: each result's fields carry one source timestamp,
+  the controller's time read in the row's zone and kept distinct and increasing, and a field the controller's revision
+  lacks reads `Bad_NotSupported`.  `Counters` are `Total`, `Ok` and `Nok`, the tightenings since the driver started.
+  `_Op` is the link's diagnostics: `Connected`, `Since`, `Url`, `LastError`, `Reconnects`, `Identity`, `Revisions`,
+  `LinkLevel`, `Results` and `Skew`, the controller's clock against the gateway's.  A group's member over a `Result`
+  variable records every result when it has no `MinTimeInterval`, and the last of each interval when it has one.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.
@@ -134,8 +146,17 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
 - `AppClientTests`, `ConnectCoalesceTests`, `RemoveClientTests`, `KeepAliveTests`: the AppServer link and the client
   life cycle.
 - `DriverRowTests`: a connection of a kind with a driver ([plan](../../docs/open-protocol/plan.md) *Phase 3*) - the
-  row's `kind` and `driver`, its save rules, the dial of the driver's server at 4970 plus the row's id, and
+  row's `kind` and `driver`, its save rules, the dial of the driver's server at 4980 plus the row's id, and
   `testConnection` against the Open Protocol library's test controller on 4645.
+- `DriverHostTests`: a driver row's server and the Open Protocol driver's `_Op` (the plan's *Phase 4*), against the
+  same controller - a row made, deleted, restored and edited while the gateway runs, the link lost and back, the
+  controller's clock, a group collecting as the gateway's own user, a web session after its certificate is issued
+  again, the server's certificate refused by a client with no anchor, a held port, and a controller the driver
+  refuses.
+- `DriverResultTests`: the Open Protocol driver's results (the plan's *Phase 5*), against the same controller - a
+  result of each revision of MID 0061 in `Result`, two in a second kept distinct, the counters, a group recording a
+  burst whole and the last result of each `MinTimeInterval`, and the endpoint's processed read of a served result
+  against the QL's `history`.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.

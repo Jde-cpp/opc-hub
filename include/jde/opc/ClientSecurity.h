@@ -13,6 +13,7 @@ namespace Jde::Opc::ClientSecurity{
 		sv ServerUri;//the endpoint filter, the server's applicationUri;  empty takes any endpoint.
 		sv AdvertisedUri;//who this client says it is;  empty takes Certificate's SAN uri, else ServerUri, else open62541's placeholder.
 		sv TrustRoot;//where ServerTrust reads trustedCertDirs and verifyServerCertificate:  "/gateway", "/emulator".
+		std::span<const fs::path> Anchors;//certificates the verifier trusts beside TrustRoot's directories, each by its file (ServerTrust::Install).
 	};
 	//Before the first connect, on a config with no policies yet:  the policies, both uris, the server-certificate verifier, and
 	//UA_ClientConfig_setDefault last.  `h` and `url` name the client in the verifier's log.

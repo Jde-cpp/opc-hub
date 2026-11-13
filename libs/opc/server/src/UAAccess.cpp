@@ -37,6 +37,8 @@ namespace Jde::Opc::Server::UAAccess{
 		vector<std::pair<string,string>> Users;//name, password.
 		string UserTokenPolicyUri;//"" names each security policy for itself.
 		sp<App::Client::IAppClient> AppClient;//the hub, which the logins and renewals ask.
+		optional<Crypto::PublicKey> OwnKey;//the server's own certificate's, under the own-certificate rule (UASettings::OwnCertificate).
+		UserPK OwnUser;//the rule's user, OwnKey's.
 		sp<INodeAccess> NodeAccess;
 		const sp<UAAccess::Renewals> Renewals{ ms<UAAccess::Renewals>() };
 		const sp<UAAccess::SessionList> Sessions{ ms<UAAccess::SessionList>() };//what the server holds now, for the host's listing.
@@ -159,7 +161,7 @@ namespace Jde::Opc::Server::UAAccess{
 		return true;
 	}
 	//The username token's login list is matched by username() the way open62541's default plugin matches its static one.
-	Ω setContext( UA_AccessControl& ac, const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ι->AccessControlContext&{
+	Ω setContext( UA_AccessControl& ac, const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->AccessControlContext&{
 		auto context = new AccessControlContext{};
 		context->AllowAnonymous = settings.Tokens.Anonymous;
 		context->AllowCertificate = settings.Tokens.Certificate;
@@ -169,7 +171,11 @@ namespace Jde::Opc::Server::UAAccess{
 		context->AllowUsername = !context->Users.empty();
 		context->AppClient = move( appClient );
 		context->NodeAccess = move( nodeAccess );
-		ac.context = context;
+		ac.context = context;//before what throws:  the config's clear frees it.
+		if( settings.OwnCertificate ){
+			context->OwnKey = Crypto::ExtractPublicKey( Crypto::ReadCertificate(settings.Ssl.Certificate.Path) );
+			context->OwnUser = *settings.OwnCertificate;
+		}
 		return *context;
 	}
 
@@ -218,12 +224,15 @@ namespace Jde::Opc::Server::UAAccess{
 		THROW_IFX( !std::ranges::any_of(context.Users, [&](let& user){ return user.first==name && user.second==password; }), UAException{UA_STATUSCODE_BADUSERACCESSDENIED} );
 		return SessionContext::Unexpiring( ResolveUser(*context.AppClient, name) );
 	}
-	//A certificate the session PKI trusts, whose key is a hub user's.
+	//A certificate the session PKI trusts, whose key is a hub user's;  or, under the own-certificate rule, the server's own, which
+	//is the host itself:  the user the host named for it, with nothing asked of the hub.
 	Ω certificate( const UA_X509IdentityToken& token, UA_ServerConfig& config, const AccessControlContext& context )ε->up<SessionContext>{
 		if( !hasPolicy(token.policyId, CertificatePolicy) || !config.sessionPKI.verifyCertificate )
 			throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
 		UAε( config.sessionPKI.verifyCertificate(&config.sessionPKI, &token.certificateData) );
 		auto publicKey = Crypto::ExtractPublicKey( std::span<byte>{(byte*)token.certificateData.data, token.certificateData.length}, SRCE_CUR );
+		if( context.OwnKey && publicKey==*context.OwnKey )
+			return SessionContext::Unexpiring( context.OwnUser );
 		let exp = publicKey.ExponentInt();
 		let user = context.AppClient->QuerySync( Ƒ("user( modulus: \"{}\", exponent: {}, deleted: null ){{id slug name}}", publicKey.ModulusHex(), exp), {} );
 		THROW_IF( user.empty(), "Certificate user not found: modulus: {}, exponent: {}", publicKey.ModulusHex(), exp );

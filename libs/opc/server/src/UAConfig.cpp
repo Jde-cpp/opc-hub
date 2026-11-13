@@ -16,7 +16,7 @@ namespace Jde::Opc::Server{
 		UA_ServerConfig{
 			.logging = &_logger,
 		},
-		_trust{ settings.TrustedCertDirs, settings.RejectedCertDir }{
+		_trust{ settings.TrustedCertDirs, settings.RejectedCertDir, settings.TrustedCerts }{
 		try{
 			//One shape:  secured.  Without a certificate this used to build a second one - a None endpoint with no certificate and
 			//no trust list (SetupUnsecured), and before that open62541's allow-all default (opcserver-review3 #7) - which open62541's
@@ -147,24 +147,31 @@ namespace Jde::Opc::Server{
 			throw;//rethrow original: `throw move(e)` slices to std::exception, losing the derived type and Jde::Exception state.
 		}
 		UA_TrustListDataType_clear( &list );
-		AddSecurityPolicies( move(certificate), move(privateKey) );
+		AddSecurityPolicies( move(certificate), move(privateKey), settings.EncryptOnly );
 
 		UAAccess::Init( *this, settings, move(appClient), move(nodeAccess) );
 
 		//None=false keeps the None policy, which AddSecurityPolicies added, but offers no endpoint on it:  a None channel then
 		//answers GetEndpoints and FindServers and nothing else (securityPolicyNoneDiscoveryOnly, ua_services.c), so a hardened
 		//site offers the secured endpoints alone and is still discoverable (spec *Limits*).
-		if( settings.None ){
-			UAε( UA_ServerConfig_addAllEndpoints(this) );
-		}
-		else{
+		//EncryptOnly:  the one secured policy AddSecurityPolicies added, at Sign & Encrypt alone.
+		if( !settings.None ){
 			securityPolicyNoneDiscoveryOnly = true;
-			UAε( UA_ServerConfig_addAllSecureEndpoints(this) );
 			INFO( "No None endpoint:  the None policy answers discovery alone." );
 		}
+		if( settings.EncryptOnly ){
+			if( settings.None )
+				UAε( UA_ServerConfig_addEndpoint(this, UA_SECURITY_POLICY_NONE_URI, UA_MESSAGESECURITYMODE_NONE) );
+			UAε( UA_ServerConfig_addEndpoint(this, "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"_uv, UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) );
+		}
+		else if( settings.None ){
+			UAε( UA_ServerConfig_addAllEndpoints(this) );
+		}
+		else
+			UAε( UA_ServerConfig_addAllSecureEndpoints(this) );
 	}
 
-	α UAConfig::AddSecurityPolicies( ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void{
+	α UAConfig::AddSecurityPolicies( ByteStringPtr&& certificate, const ByteStringPtr&& privateKey, bool encryptOnly )ε->void{
 		UA_ByteString localCertificate = *certificate;
 		UA_ByteString localPrivateKey = *privateKey;
 		//The private key in DER, decrypted with an empty password:  the key may need none.
@@ -176,8 +183,10 @@ namespace Jde::Opc::Server{
 		//The three current RSA policies, so a client takes the strongest it shares - open62541 orders endpoints by the policy's
 		//securityLevel - and one that carries Basic256Sha256 alone (most installed clients) still connects (reviews/security-matrix.md
 		//#4;  EndpointTests).  User tokens stay under UASettings::UserTokenPolicyUri, Basic256Sha256 by default.
-		UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
-		UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
+		if( !encryptOnly ){
+			UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
+			UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
+		}
 		UAε( UA_ServerConfig_addSecurityPolicyNone(this, &localCertificate) );
 		UA_ByteString_memZero( &decryptedPrivateKey );
 		UA_ByteString_clear( &decryptedPrivateKey );

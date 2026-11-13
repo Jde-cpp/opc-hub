@@ -1,10 +1,11 @@
 #pragma once
+#include <thread>
+#include <absl/functional/any_invocable.h>
 #include <open62541/server.h>
+#include "jde/fwk/process/process.h"
 #include "Condition.h"
 #include "UAConfig.h"
 #include "UAHistory.h"
-#include "jde/fwk/process/process.h"
-#include <thread>
 
 namespace Jde::App::Client{ struct IAppClient; }
 namespace Jde::Opc::Server {
@@ -34,6 +35,11 @@ namespace Jde::Opc::Server {
 		//once the flag is set, then RunShutdown.  An idle loop's poll otherwise sleeps out UA_MAXTIMEOUT (500 ms) in each - a second a stop.
 		Ω Wake( UA_Server& server )ι->void;
 		Ω RunShutdown( UA_Server& server )ι->void;
+		//`f` on the server's own thread, between its polls, in the order posted, with none of the server's locks held:  a
+		//UA_Server_* call in it waits for the service lock there, behind an ActivateSession whose issued token's lookup may need an
+		//executor thread (UAAccess), not on the caller's thread, which may be one.  Never blocks.  Post only while the loop runs or
+		//before RunShutdown, which runs what is queued:  what is left at UA_Server_delete would run on a server half gone.
+		Ω Post( UA_Server& server, absl::AnyInvocable<void(UA_Server&)> f )ι->void;
 	private:
 		UAHistory _history;//before _config, which installs its backend, and so destroyed after the server it serves.
 		UAConfig _config;

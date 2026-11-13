@@ -8,6 +8,7 @@
 #include <jde/opc/ClientSecurity.h>
 #include "../GatewayAppClient.h"
 #include "../opcInternal.h"
+#include "../drivers/IDriver.h"
 #include "OpenProtocolRow.h"
 
 #define let const auto
@@ -63,11 +64,13 @@ namespace Jde::Opc::Gateway{
 		CertificateUri = ssl ? ssl->Certificate.SanUri() : string{};
 		DefaultBrowseNs = DriverBrowseNs;
 	}
-	α ServerCnnctn::DriverUrl( SL sl )Ε->string{
-		let portBase = Settings::FindNumber<uint>( "/gateway/drivers/portBase" ).value_or( 4870 );
+	α ServerCnnctn::HasDriver()Ι->bool{ return FindDriver( Kind )!=nullptr; }
+	α ServerCnnctn::DriverPortBase()ι->uint{ return Settings::FindNumber<uint>( "/gateway/drivers/portBase" ).value_or( 4870 ); }
+	α ServerCnnctn::DriverPort( SL sl )Ε->PortType{
+		let portBase = DriverPortBase();
 		let port = portBase+Id;
 		THROW_IFSL( port>65535, "Connection '{}' has no driver port:  /gateway/drivers/portBase, {}, plus its id, {}, is past 65535.", Slug, portBase, Id );
-		return Ƒ( "opc.tcp://127.0.0.1:{}", port );
+		return (PortType)port;
 	}
 	α ServerCnnctn::SlugError( sv slug, SL sl )ι->up<Exception>{
 		if( auto e = FileSlugError(slug, sl); e )
