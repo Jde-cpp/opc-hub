@@ -81,6 +81,20 @@ message OeeSubscribe{
 message OeeUnsubscribe{
 	uint32 subscription=1;
 }
+//A flow's live activity (flows spec *Live*), Read on the flow:  answered by a FlowSubscribeAck, the running version with each
+//node's status and its figures since the flow started, then a FlowActivity while anything of it changes, every
+///gateway/flows/live at most;  with `hops`, each carries the records the flow's trace made since the one before, for the debug
+//panel.  A deploy, or a restart, is answered by another FlowSubscribeAck, the new run's, and the pushes go on from it;  the
+//flow stopped, by an exception, and one that is not running is refused with it.  The message's request_id names the
+//subscription from then on.
+message FlowSubscribe{
+	uint32 flow=1;//the flows id.
+	bool hops=2;
+}
+//Ends a flow subscription, by the request_id of its FlowSubscribe.
+message FlowUnsubscribe{
+	uint32 subscription=1;
+}
 
 message Message{
 	uint32 request_id = 1;
@@ -95,6 +109,8 @@ message Message{
 		UnsubscribeEvents unsubscribe_events = 9;
 		OeeSubscribe oee_subscribe = 10;
 		OeeUnsubscribe oee_unsubscribe = 11;
+		FlowSubscribe flow_subscribe = 12;
+		FlowUnsubscribe flow_unsubscribe = 13;
 	}
 }
 

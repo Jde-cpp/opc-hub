@@ -7,6 +7,7 @@
 
 namespace Jde::Web::Server{ struct SessionInfo; }
 namespace Jde::Opc::Gateway{
+	struct FlowFeed;
 	//Why a graph may not run for its deployer (docs/flows/spec.md *Rights*), by the node the editor marks.  Unknown:  it
 	//could not be checked - a server out of reach, a statement that failed - and may pass later.
 	struct FlowRefusal final{ Flows::Fault Fault; EHttpStatus Status{ EHttpStatus::BadRequest }; bool Unknown{}; };
@@ -52,6 +53,11 @@ namespace Jde::Opc::Gateway{
 		//FlowQLAwait a page of `readLimit` at a time.  Null before Start, and for a gateway with no flows block.
 		α Store()Ι->sp<Flows::TraceStore>{ lg _{ _mutex }; return _store; }
 		α ReadLimit()Ι->uint{ lg _{ _mutex }; return _readLimit; }
+		//The flow's live feed (spec *Live*), which FlowSubscribe joins:  one a flow, from its first run to its purge, told each
+		//run that starts, whose ack its subscribers hear, and ended when the flow has none.  None for a flow that never ran.
+		//It pushes every /gateway/flows/live at most, a message's json cut at `valueLimit` as the trace's is.
+		α Feed( FlowPK id )Ι->sp<FlowFeed>;
+		α Live()Ι->Duration{ lg _{ _mutex }; return _live; }
 
 		//deployFlow's (spec *Flows*):  Update on the flow, the graph read and admitted for the deployer, the version written
 		//and made the flow's current one, and the flow, when it is enabled, restarted from it alone.  Dropped:  what the
@@ -117,6 +123,7 @@ namespace Jde::Opc::Gateway{
 			const UserPK Deployer;
 			Resolved Spelled;//under _edits.
 			optional<Flows::ETraceLevel> Trace;//the row's level it was made at:  a row whose level changes restarts it (Changed).
+			uint Serial{};//which run it is to the flow's feed, whose hooks carry it;  0 for one never started.
 		};
 		//Links:  the names of the current version's `link in` nodes.  Retry:  the timer of a start to try again.
 		struct Entry final{ FlowRow Row; flat_set<string> Links; sp<Run> Live; Hist::IClock::TimerId Retry{}; };
@@ -155,6 +162,9 @@ namespace Jde::Opc::Gateway{
 		struct StartAwait;//a run started, its nodes' Start run.
 		struct SetAwait;//a context value set on a run's strand.
 		α Retry( FlowPK id )ι->VoidTask;//the retry timer's.
+		//The flow's subscribers hear what its run is now, under _edits:  the ack of a run that started since they last heard,
+		//or with none running their end, saying why.  After each start and each stop.
+		α Tell( FlowPK id )ι->void;
 		α Time()Ι->sp<Hist::IClock>{ lg _{ _mutex }; return _clock; }
 		α Function()Ι->Flows::FunctionLimits{ lg _{ _mutex }; return _function; }
 		α Rechecking()ι->VoidTask;
@@ -182,6 +192,10 @@ namespace Jde::Opc::Gateway{
 		sp<Flows::TraceStore> _store;//the trace's files, a directory per flow by its slug.
 		fs::path _tracePath;//the store's root, which a purge with no store removes the flow's directory from.
 		uint _readLimit{ 10'000 };//the most records one trace read answers:  /gateway/flows/readLimit, 0 for no limit.
+		flat_map<FlowPK,sp<FlowFeed>> _feeds;//each flow's live feed, made with its first run.
+		Duration _live{ 200ms };//how often at most a feed pushes:  /gateway/flows/live.
+		uint _valueLimit{ 4096 };//the block's, for the feeds' json.
+		std::atomic<uint> _serials{};//the runs started.
 		uint _queue{ 1000 };
 		Flows::FunctionLimits _function;//`/gateway/flows/function`, each flow's sandbox.
 		jobject _env;//`/gateway/flows/env`.

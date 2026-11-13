@@ -17,6 +17,9 @@ namespace Jde::Opc::Flows::Tests{
 			auto json = parse( serialize(jobject{{"_id", id}}) );
 			ToWire( json );
 			EXPECT_EQ( json.at("_id"), jvalue{ToLong(id)} ) << id;
+			jvalue held{ jobject{{"_id", id}} };//as the engine holds it, never text:  the live push's.
+			ToWire( held );
+			EXPECT_EQ( held.at("_id"), jvalue{ToLong(id)} ) << id;
 			EXPECT_EQ( FromLong(ToLong(id)).to_number<MessageId>(), id ) << id;
 		}
 	}

@@ -25,6 +25,10 @@ namespace Jde::Opc::Gateway::FromServer{
 	//A live OEE subscription's messages (oee spec *Live*), each under its OeeSubscribe's request id.
 	α OeeSubscribeAckTrans( const FromServer::OeeStatus& status, RequestId requestId )ι->FromServer::Transmission;
 	α OeeStatusTrans( const string& status, RequestId requestId )ι->string;//a push's status, serialized once for every subscriber, as its Transmission's bytes.
+	//A flow subscription's messages (flows spec *Live*), each under its FlowSubscribe's request id:  an ack or a push, serialized
+	//once for every subscriber, as its Transmission's bytes.
+	α FlowSubscribeAckTrans( const string& ack, RequestId requestId )ι->string;
+	α FlowActivityTrans( const string& activity, RequestId requestId )ι->string;
 
 	//A reading as a NodeValues:  a structure as its fields, by the type it holds or, for a body still encoded, by `types`, the connection's
 	//registry (clients spec *Structures*), and opaque where neither explains it.

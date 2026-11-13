@@ -642,4 +642,23 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_FALSE( records[0].Cut );
 		EXPECT_EQ( parse(*records[0].Json).at("payload").as_string().size(), 5000u );
 	}
+
+	//Flows 6 (#452):  the tap hears each record as the trace makes it, whole, where the file's is cut.
+	TEST_F( FileTraceTests, ATapHearsEachRecordWhole ){
+		Open( []( TraceSettings& s ){ s.ValueLimit = 64; } );
+		vector<TraceRecord> heard;//on the flow's strand, read after a Sync.
+		Tracer = Store->Trace( "flow", ETraceLevel::Hops, Time, [&]( const TraceRecord& r ){ heard.push_back( r ); } );
+		Run( Nodes({Node("in", "inject", "{}", {{"w"}}), Node("w", "opc out")}) );
+		Inject( jvalue{string(500, 'x')} );
+		Inject( "bad" );
+		Flush();
+		let records = Read();
+		EXPECT_EQ( Lines(heard), Lines(records) ) << "what the file holds, in its order";
+		ASSERT_FALSE( heard.empty() );
+		EXPECT_EQ( parse(*heard[0].Json).at("payload").as_string().size(), 500u );
+		EXPECT_FALSE( heard[0].Cut );
+		EXPECT_TRUE( records[0].Cut );
+		EXPECT_EQ( CutJson("añb", 2), "a" ) << "on a character's boundary";
+		EXPECT_EQ( CutJson("añb", 0), "añb" );
+	}
 }

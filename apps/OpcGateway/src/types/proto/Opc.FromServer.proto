@@ -169,6 +169,86 @@ message OeeSubscribeAck{
 	OeeStatus status=1;
 }
 
+//A flow's live activity (flows spec *Live*), as a FlowSubscribe's acks and its pushes carry it.  A node is its id in the graph.
+//What a Function body may have written, a status, an error or a message's json, is bytes:  quickjs-ng writes an unmatched
+//surrogate as three bytes that aren't UTF-8, which a string field won't read back.
+message FlowStatus{
+	bytes fill=1;
+	bytes shape=2;
+	bytes text=3;
+}
+//A node's figures:  since the flow started in an ack, since the push before in a FlowActivity.
+message FlowCounts{
+	uint64 received=1;
+	repeated uint64 sent=2;//per output port.
+	uint64 drops=3;
+	uint64 errors=4;
+}
+message FlowNodeState{
+	string node=1;
+	FlowStatus status=2;
+	FlowCounts counts=3;
+}
+//The run the subscription is on:  its version, and every node of its graph, in the graph's order.  Sent again, under the
+//FlowSubscribe's request_id, when a deploy or a restart puts another run in its place:  what the pushes after it add to.
+message FlowSubscribeAck{
+	uint32 version=1;
+	repeated FlowNodeState nodes=2;
+}
+//A wire a message went down since the push before, by its ends:  `node`'s output `port`, to the node `to`.
+message FlowWire{
+	string node=1;
+	uint32 port=2;
+	string to=3;
+	uint64 count=4;//the messages down it since the push before.
+	//The last of them:  its id, when it went, on the flow's clock, and its json, a 64-bit integer in it the web's Long,
+	//`{high, low, unsigned}`, cut at /gateway/flows/valueLimit where it is longer, on a character, with `cut` set.
+	uint64 msg_id=5;
+	google.protobuf.Timestamp time=6;
+	bytes json=7;
+	bool cut=8;
+}
+//A node that counted or changed its status since the push before.
+message FlowNodeActivity{
+	string node=1;
+	FlowCounts counts=2;//unset with no figure.
+	FlowStatus status=3;//set where it changed:  the node's status now.
+	bytes error=4;//the last error's text, with counts.errors.
+}
+enum EFlowRecord{
+	FlowRecordHop=0;//the node received the message, sent it on `ports` and finished it.
+	FlowRecordBirth=1;//the node made the message.
+	FlowRecordClone=2;//the clone a port's second wire and each after it took, parent_id the message it was cloned from.
+	FlowRecordError=3;//the node's error with the message, which ends at it.
+	FlowRecordStatus=4;//the node's status changed;  msg_id 0.
+	FlowRecordDrop=5;//off the node's queue, or held by it when the flow stopped.
+}
+//A record of the flow's trace (flows spec *Trace*), as flowTrace answers one, its json as a FlowWire's.
+message FlowHop{
+	google.protobuf.Timestamp time=1;
+	uint64 msg_id=2;
+	uint64 parent_id=3;
+	uint32 run_id=4;
+	string node=5;
+	EFlowRecord kind=6;
+	repeated uint32 ports=7;
+	optional bytes json=8;//a birth's message, and a hop's as sent where the node changed it.
+	bool cut=9;
+	bytes error=10;
+	FlowStatus status=11;
+	repeated bytes blocks=12;
+}
+//What the flow did since the push before, or since the ack.
+message FlowActivity{
+	repeated FlowNodeActivity nodes=1;
+	repeated FlowWire wires=2;
+	//For a FlowSubscribe with `hops`:  the records the flow's trace made since the push before, in order, at the flow's
+	//trace level, so all of them at `hops` and none at `counts` or `off`.  hops_dropped:  the oldest, left out past the
+	//1,000 a push carries.
+	repeated FlowHop hops=3;
+	uint32 hops_dropped=4;
+}
+
 message Message{
 	uint32 request_id = 1;
 	oneof Value{
@@ -186,6 +266,8 @@ message Message{
 		EventsRestored events_restored = 13;
 		OeeSubscribeAck oee_subscribe_ack = 14; //an OeeSubscribe's, then its OeeStatus pushes, each under its request_id.  No Value completes an OeeUnsubscribe.
 		OeeStatus oee_status = 15;
+		FlowSubscribeAck flow_subscribe_ack = 16; //a FlowSubscribe's, and again for each run that takes the first's place, then its FlowActivity pushes, each under its request_id.  No Value completes a FlowUnsubscribe.
+		FlowActivity flow_activity = 17;
 	}
 }
 

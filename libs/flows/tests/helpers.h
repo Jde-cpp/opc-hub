@@ -205,7 +205,8 @@ namespace Jde::Opc::Flows::Tests{
 				.ContextChanged=[this]( sv node, sv key, const jvalue* value ){
 					lg _{ ChangesMutex };
 					Changes.push_back( Ƒ("{}/{}={}", node, key, value ? serialize(*value) : "-") );
-				}
+				},
+				.Active=[this]{ ++Cues; }
 			} );
 			EXPECT_TRUE( Deployed->Start() );
 			Sync();
@@ -269,6 +270,7 @@ namespace Jde::Opc::Flows::Tests{
 		flat_map<string,jobject> NodeContext;
 		mutex ChangesMutex;
 		vector<string> Changes;//each context change the host was told of, `node/key=value`.
+		std::atomic<uint> Cues{};//the times the flow said it had activity to take.
 		optional<Flow> Deployed;
 	};
 }

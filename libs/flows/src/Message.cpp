@@ -154,8 +154,8 @@ namespace Jde::Opc{
 			for( auto& element : *a )
 				ToWire( element );
 		}
-		else if( v.is_uint64() && v.get_uint64()>(uint64_t)safe )
-			v = ToJson( (UA_UInt64)v.get_uint64() );
+		else if( let u = v.is_uint64() ? v.get_uint64() : 0; u>(uint64_t)safe )//signed while it fits, as its text reads back.
+			v = u>(uint64_t)std::numeric_limits<int64_t>::max() ? ToJson( (UA_UInt64)u ) : ToJson( (UA_Int64)u );
 		else if( v.is_int64() && (v.get_int64()>safe || v.get_int64()<-safe) )
 			v = ToJson( (UA_Int64)v.get_int64() );
 	}

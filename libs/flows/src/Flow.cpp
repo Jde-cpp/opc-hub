@@ -20,6 +20,8 @@ namespace Jde::Opc::Flows{
 	struct Entry final{ Message Msg; bool Born{}; };
 	//A message a node has received and not finished.  Watched:  as received, then as sent, for the complete nodes.
 	struct Hop final{ MessageId Id{}; optional<Message> Watched; };
+	//A wire of a watched flow since the last take:  the messages down it, and the last.
+	struct Went final{ uint Count{}; Message Last; TimePoint Time; };
 
 	//A node as its flow runs it.
 	struct Slot final{
@@ -49,6 +51,11 @@ namespace Jde::Opc::Flows{
 		//Under the state mutex.
 		NodeStatus Status;
 		NodeCounts Total, Minute;
+		//Since the last take, while the flow is watched.
+		NodeCounts Live;
+		bool StatusChanged{};
+		string LiveError;
+		vector<vector<Went>> Lasts;//per output port, a wire by its place in Wires.
 	};
 
 	//The runtime a graph's Function nodes share:  none for a graph without one, and for one that could not be made, whose
@@ -84,7 +91,7 @@ namespace Jde::Opc::Flows{
 				let context = _config.NodeContext.find( def.Id );
 				auto& slot = *_slots.emplace_back( mu<Slot>(def, i, *this, Store{context==_config.NodeContext.end() ? jobject{} : move(context->second), Changed(def.Id)}) );
 				slot.Wires = def.Wires;
-				slot.Total.Node = slot.Minute.Node = def.Id;
+				slot.Total.Node = slot.Minute.Node = slot.Live.Node = def.Id;
 			}
 		}
 
@@ -202,6 +209,46 @@ namespace Jde::Opc::Flows{
 			Traced( ended );
 			return y;
 		}
+		α Watch( bool on )ι->void{
+			vector<vector<vector<Went>>> kept;//freed past the lock.
+			lg _{ _stateMutex };
+			_watched = on;
+			_active = false;
+			for( auto& slot : _slots ){
+				slot->Live = NodeCounts{ slot->Def.Id };
+				slot->StatusChanged = false;
+				slot->LiveError.clear();
+				kept.push_back( std::exchange(slot->Lasts, {}) );
+			}
+		}
+		α TakeActivity( FlowState* now )ι->Activity{
+			Activity y;
+			lg _{ _stateMutex };
+			if( now ){
+				for( let& slot : _slots ){
+					now->Statuses.push_back( slot->Status );
+					now->Counts.push_back( slot->Total );
+				}
+			}
+			if( !std::exchange(_active, false) )
+				return y;
+			for( auto& slot : _slots ){
+				if( slot->Live.Any() || slot->StatusChanged ){
+					auto& node = y.Nodes.emplace_back( slot->Index, std::exchange(slot->Live, NodeCounts{slot->Def.Id}) );
+					if( std::exchange(slot->StatusChanged, false) )
+						node.Status = slot->Status;
+					node.Error = std::exchange( slot->LiveError, {} );
+				}
+				for( uint port=0; port<slot->Lasts.size(); ++port ){
+					auto& wires = slot->Lasts[port];
+					for( uint i=0; i<wires.size(); ++i ){
+						if( wires[i].Count )
+							y.Wires.emplace_back( slot->Index, port, slot->Wires[port][i], std::exchange(wires[i].Count, 0), std::exchange(wires[i].Last, {}), wires[i].Time );
+					}
+				}
+			}
+			return y;
+		}
 
 		//What a node reaches the flow through.
 		α Now()Ι->TimePoint{ return _clock->Now(); }
@@ -280,7 +327,7 @@ namespace Jde::Opc::Flows{
 		α Fail( Slot& slot, MessageId id, Message&& m, string&& error )ι->void{
 			if( !Entered() )
 				return;
-			Count( slot, []( NodeCounts& c ){ ++c.Errors; } );
+			Erred( slot, error );
 			if( _trace )
 				_trace->Error( slot.Def, id, error );
 			if( let hop = slot.Opened(id); hop!=slot.Open.end() )
@@ -328,12 +375,19 @@ namespace Jde::Opc::Flows{
 		α SetStatus( Slot& slot, NodeStatus&& status )ι->void{
 			if( !Entered() )
 				return;
+			bool cue{};
 			{
 				lg _{ _stateMutex };
 				if( slot.Status==status )
 					return;
 				slot.Status = status;
+				if( _watched ){
+					slot.StatusChanged = true;
+					cue = !std::exchange( _active, true );
+				}
 			}
+			if( cue )
+				Cue();
 			if( _trace )
 				_trace->Status( slot.Def, status );
 			if( slot.Def.Type==ENodeType::Status )
@@ -565,7 +619,7 @@ namespace Jde::Opc::Flows{
 			}
 		}
 		α Errored( Slot& slot, string&& error )ι->void{//the node's error with no message.
-			Count( slot, []( NodeCounts& c ){ ++c.Errors; } );
+			Erred( slot, error );
 			if( _trace )
 				_trace->Error( slot.Def, 0, error );
 			++slot.Unhandled;
@@ -677,8 +731,9 @@ namespace Jde::Opc::Flows{
 		//The message down the first port's first wire, and a clone down every other wire of the ports.
 		α Fan( Slot& slot, Message& m, std::span<const uint> ports )ι->void{
 			static const vector<uint32> none;
-			optional<uint32> first;
-			vector<std::pair<uint32,Message>> clones;
+			struct Wire final{ uint Port; uint Index; uint32 To; };
+			optional<Wire> first;
+			vector<std::pair<Wire,Message>> clones;
 			for( let port : ports ){
 				let& wires = port<slot.Wires.size() ? slot.Wires[port] : none;
 				Count( slot, [port]( NodeCounts& c ){
@@ -689,39 +744,86 @@ namespace Jde::Opc::Flows{
 				let own = !first && !wires.empty();
 				if( _trace )
 					_trace->Send( slot.Def, port, m, own ? 1 : 0 );
-				for( let wire : wires ){
+				for( uint i=0; i<wires.size(); ++i ){
 					if( own && !first ){
-						first = wire;
+						first = Wire{ port, i, wires[i] };
 						continue;
 					}
-					clones.emplace_back( wire, CloneOf(m) );
+					clones.emplace_back( Wire{port, i, wires[i]}, CloneOf(m) );
 					if( _trace )
 						_trace->Clone( slot.Def, clones.back().second, port );
 				}
 			}
 			if( let hop = slot.Opened(m.Id()); hop!=slot.Open.end() && hop->Watched )
 				hop->Watched = m;
+			if( _watched ){
+				if( first )
+					Down( slot, first->Port, first->Index, m );
+				for( let& [wire, clone] : clones )
+					Down( slot, wire.Port, wire.Index, clone );
+			}
 			if( first )
-				Enqueue( *first, move(m), false );
+				Enqueue( first->To, move(m), false );
 			for( auto& [wire, clone] : clones )
-				Enqueue( wire, move(clone), false );
+				Enqueue( wire.To, move(clone), false );
+		}
+		//A message down a wire of a watched flow:  counted, and kept as the wire's last.
+		α Down( Slot& slot, uint port, uint index, const Message& m )ι->void{
+			Message last{ jobject{m.Json} };//the one before it is freed past the lock.
+			bool cue{};
+			{
+				lg _{ _stateMutex };
+				if( !_watched )
+					return;
+				if( slot.Lasts.size()<=port )
+					slot.Lasts.resize( port+1 );
+				auto& wires = slot.Lasts[port];
+				if( wires.size()<=index )
+					wires.resize( index+1 );
+				++wires[index].Count;
+				std::swap( wires[index].Last, last );
+				wires[index].Time = _tick;
+				cue = !std::exchange( _active, true );
+			}
+			if( cue )
+				Cue();
+		}
+		//A node's error:  counted, and its text kept for a watched flow.
+		α Erred( Slot& slot, sv error )ι->void{
+			Count( slot, []( NodeCounts& c ){ ++c.Errors; } );
+			if( !_watched )
+				return;
+			lg _{ _stateMutex };
+			if( _watched )
+				slot.LiveError = error;
+		}
+		α Cue()Ι->void{
+			if( _config.Active )
+				_config.Active();
 		}
 		//A figure, in the node's total and in its minute, which ends when the flow's clock passes it:  at the first figure
 		//of a minute a timer is set for its end, so the trace has the minute as it ends and not at the next figure.
 		α Count( Slot& slot, auto&& add )ι->void{
 			optional<MinuteCounts> ended;
 			optional<TimePoint> arm;
+			bool cue{};
 			{
 				lg _{ _stateMutex };
 				ended = Roll( floor<minutes>(_tick) );
 				add( slot.Total );
 				add( slot.Minute );
+				if( _watched ){
+					add( slot.Live );
+					cue = !std::exchange( _active, true );
+				}
 				if( !std::exchange(_minuteArmed, true) )
 					arm = _minute+1min;
 			}
 			Traced( ended );
 			if( arm )
 				ArmMinute( *arm );
+			if( cue )
+				Cue();
 		}
 		α ArmMinute( TimePoint due )ι->void{
 			let timer = _clock->Schedule( due, [weak=weak_from_this()]{
@@ -803,6 +905,8 @@ namespace Jde::Opc::Flows{
 		std::deque<MinuteCounts> _minutes;
 		bool _minuteArmed{};//a timer for the end of the minute with a figure is set, or being set.
 		Hist::IClock::TimerId _minuteTimer{};
+		std::atomic<bool> _watched{};//set under _stateMutex;  read with no lock by the strand, to copy no message for an unwatched flow.
+		bool _active{};//a watched flow has something to take:  told once a take (Cue).
 	};
 
 	Flow::Flow( Graph graph, Config config )ι:
@@ -832,6 +936,8 @@ namespace Jde::Opc::Flows{
 	α Flow::Status( sv nodeId )Ι->NodeStatus{ return _engine->Status( nodeId ); }
 	α Flow::Counts()Ι->vector<NodeCounts>{ return _engine->Counts(); }
 	α Flow::TakeMinutes()ι->vector<MinuteCounts>{ return _engine->TakeMinutes(); }
+	α Flow::Watch( bool on )ι->void{ _engine->Watch( on ); }
+	α Flow::TakeActivity( FlowState* now )ι->Activity{ return _engine->TakeActivity( now ); }
 
 	α INode::Def()Ι->const NodeDef&{ return _slot->Def; }
 	α INode::Now()Ι->TimePoint{ return _slot->Flow.Now(); }

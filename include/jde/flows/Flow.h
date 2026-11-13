@@ -6,6 +6,29 @@
 namespace Jde::Opc::Flows{
 	α ToBytes( sv text )ι->optional<uint>;//a size as the settings write it:  "16MiB", "256KiB", "2GiB" or the bytes, "4096".
 
+	//What a watched flow did between two takes (docs/flows/spec.md *Live*), a node by its place in the graph.
+	struct WireActivity final{
+		uint32 Node;//the node the wire leaves, by `Port`, for the node `To`.
+		uint Port;
+		uint32 To;
+		uint Count;//the messages down it.
+		Message Last;//the last of them, and when it went, on the flow's clock.
+		TimePoint Time;
+	};
+	struct NodeActivity final{
+		uint32 Node;
+		NodeCounts Counts;//its figures.
+		optional<NodeStatus> Status;//where it changed:  the node's status now.
+		string Error;//the last error's text, with Counts.Errors.
+	};
+	struct Activity final{
+		vector<NodeActivity> Nodes;//those with a figure or a status change.
+		vector<WireActivity> Wires;//those a message went down.
+		α Any()Ι->bool{ return !Nodes.empty() || !Wires.empty(); }
+	};
+	//A flow as it stands:  each node's status and its figures since the start, in the graph's order.
+	struct FlowState final{ vector<NodeStatus> Statuses; vector<NodeCounts> Counts; };
+
 	//Each node has an input queue bounded at `Queue`, past which its oldest message is dropped, counted and traced.  The
 	//strand drains the queues in arrival order, one message through one node at a time;  a node that waits holds its message
 	//and comes back to the strand, so no two nodes of a flow run at once.  Every timer is the clock's, so a flow under a
@@ -24,6 +47,7 @@ namespace Jde::Opc::Flows{
 			jobject Context;//the flow scope's values, as loaded.
 			flat_map<string,jobject> NodeContext;//each node scope's, by node id.
 			function<void( sv nodeId, sv key, const jvalue* value )> ContextChanged;//a flow or node scope's change, on the strand:  no node id for the flow's, a null value for a key that went.
+			function<void()> Active;//a watched flow has something for TakeActivity and had nothing:  once a take, on the strand, under no lock of the flow's.
 		};
 		Flow( Graph graph, Config config )ι;
 		~Flow();//stops it.
@@ -61,6 +85,12 @@ namespace Jde::Opc::Flows{
 		//The minutes that have ended and were not taken, oldest first, each with the nodes that had a figure in it;  at most an
 		//hour of them is kept.  A minute ends on the flow's clock.
 		α TakeMinutes()ι->vector<MinuteCounts>;
+		//Whether the flow keeps what TakeActivity answers, each node's figures and each wire's last message between two takes:
+		//off as a flow starts, when no message is copied for it.  On or off, what was kept goes.
+		α Watch( bool on )ι->void;
+		//What a watched flow did since the last take, or since Watch.  `now`:  the flow at that instant, so what the next
+		//take answers adds to it with nothing counted twice.
+		α TakeActivity( FlowState* now=nullptr )ι->Activity;
 	private:
 		sp<Engine> _engine;
 	};

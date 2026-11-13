@@ -10,12 +10,14 @@
 #include "../async/ConnectAwait.h"
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
+#include "FlowFeed.h"
 #include "FlowNodes.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	constexpr uint DefaultQueue{ 1000 };
+	constexpr Duration DefaultLive{ 200ms };
 	constexpr uint MaxKey{ 256 };//flow_contexts' node_id and name.
 	constexpr uint MinMemory{ 256*1024 };//a sandbox's:  the runtime and a node, with room for a body.
 	constexpr uint MinStack{ 32*1024 };
@@ -158,8 +160,14 @@ namespace Jde::Opc::Gateway{
 			WARNT( ELogTags::Settings, "'/gateway/flows/queue' of 0 is not allowed:  a node's input holds a message at least.  Using {}.", DefaultQueue );
 			queue = DefaultQueue;
 		}
+		auto live = Settings::FindDuration( "/gateway/flows/live" ).value_or( DefaultLive );
+		if( live<=Duration::zero() ){
+			WARNT( ELogTags::Settings, "'/gateway/flows/live' of {} is not allowed:  it must be positive.  Using {}.", Chrono::ToString(live), Chrono::ToString(DefaultLive) );
+			live = DefaultLive;
+		}
 		let function = functionLimits();
 		let env = Settings::FindObject( "/gateway/flows/env" );
+		let trace = traceSettings();
 		bool observe;
 		sp<Flows::TraceStore> store;
 		{
@@ -170,8 +178,11 @@ namespace Jde::Opc::Gateway{
 			_ids = ms<Flows::MessageIds>( _clock->Now() );
 			_tracePath = tracePath();
 			if( _configured )
-				store = _store = ms<Flows::TraceStore>( traceSettings(), _clock );
+				store = _store = ms<Flows::TraceStore>( trace, _clock );
 			_readLimit = Settings::FindNumber<uint>( "/gateway/flows/readLimit" ).value_or( Hist::Settings::DefaultReadLimit );
+			_live = live;
+			_valueLimit = trace.ValueLimit;
+			_feeds.clear();
 			_queue = queue;
 			_function = function;
 			_env = env ? *env : jobject{};
@@ -200,12 +211,14 @@ namespace Jde::Opc::Gateway{
 	}
 	α FlowHost::Stop()ι->void{
 		vector<sp<Run>> runs;
+		flat_map<FlowPK,sp<FlowFeed>> feeds;
 		optional<uint> observer;
 		bool configured;
 		{
 			lg _{ _mutex };
 			_stopped = true;
 			configured = _configured;
+			feeds = std::exchange( _feeds, {} );
 			observer = std::exchange( _observer, nullopt );
 			for( auto&& [_,entry] : _flows ){
 				if( auto timer = std::exchange(entry.Retry, 0); timer )
@@ -233,6 +246,8 @@ namespace Jde::Opc::Gateway{
 			if( !wait->Done.wait_for(l, 10s, [&]{ return !wait->Left; }) )
 				WARN( "{} flows had not stopped after 10 s.", wait->Left );
 		}
+		for( let& [_,feed] : feeds )
+			feed->Ended( EHttpStatus::ServiceUnavailable, "The gateway's flows have stopped." );
 		if( !configured )
 			return;
 		sp<Flows::TraceStore> store;
@@ -304,6 +319,41 @@ namespace Jde::Opc::Gateway{
 				live = p->second.Live;
 		}
 		return live ? live->Flow.Counts() : vector<Flows::NodeCounts>{};
+	}
+	α FlowHost::Feed( FlowPK id )Ι->sp<FlowFeed>{
+		lg _{ _mutex };
+		let p = _feeds.find( id );
+		return p==_feeds.end() ? nullptr : p->second;
+	}
+	α FlowHost::Tell( FlowPK id )ι->void{
+		sp<FlowFeed> feed;
+		sp<Run> live;
+		optional<FlowRow> row;
+		{
+			lg _{ _mutex };
+			let held = _feeds.find( id );
+			if( held==_feeds.end() )
+				return;
+			feed = held->second;
+			if( let p = _flows.find(id); p!=_flows.end() ){
+				live = p->second.Live;
+				row = p->second.Row;
+			}
+			else
+				_feeds.erase( held );
+		}
+		if( live && live->Flow.Running() ){
+			vector<string> nodes;
+			for( let& node : live->Graph.Nodes )
+				nodes.push_back( node.Id );
+			feed->Started( {live->Serial, sp<Flows::Flow>{live, &live->Flow}, move(nodes), live->Version} );
+		}
+		else if( !row )
+			feed->Ended( EHttpStatus::NotFound, Ƒ("Flow {} not found:  it is purged.", id) );
+		else{
+			let fault = live ? live->Flow.Fault() : nullopt;
+			feed->Ended( EHttpStatus::Conflict, Ƒ("Flow '{}' is not running{}.", row->Name, fault ? Ƒ(":  {}", fault->Message) : row->Deleted ? ":  it is deleted" : row->Enabled ? "" : ":  it is disabled") );
+		}
 	}
 	α FlowHost::Links( const Flows::Graph& graph )Ι->flat_set<string>{
 		flat_set<string> y;
@@ -397,12 +447,15 @@ namespace Jde::Opc::Gateway{
 	α FlowHost::Refused( const FlowRow& row, Flows::Graph graph, uint32 version, UserPK deployer, Flows::Fault fault, bool retry )ι->void{
 		auto run = ms<Run>( move(graph), Flows::Flow::Config{.Name=row.Slug, .Clock=Time()}, version, deployer, Resolved{} );
 		run->Flow.Stop( move(fault) );//which logs it, an Error.
-		lg _{ _mutex };
-		if( auto p = _flows.find(row.Id); p!=_flows.end() && !_stopped ){
-			p->second.Live = move( run );
-			if( retry && !p->second.Retry )
-				p->second.Retry = _clock->Schedule( RetryInterval, [this, id=row.Id]{ Retry( id ); } );
+		{
+			lg _{ _mutex };
+			if( auto p = _flows.find(row.Id); p!=_flows.end() && !_stopped ){
+				p->second.Live = move( run );
+				if( retry && !p->second.Retry )
+					p->second.Retry = _clock->Schedule( RetryInterval, [this, id=row.Id]{ Retry( id ); } );
+			}
 		}
+		Tell( row.Id );
 	}
 	α FlowHost::Launch( FlowRow row )ι->AnyVoidTask{
 		let id = row.Id;
@@ -500,6 +553,7 @@ namespace Jde::Opc::Gateway{
 			values[{move(context.Node), move(context.Name)}] = move( context.Value );
 		Unwritten( id, values );
 		Flows::Flow::Config config{ .Name=row.Slug };
+		let serial = ++_serials;
 		{
 			lg _{ _mutex };
 			config.Clock = _clock;
@@ -508,8 +562,12 @@ namespace Jde::Opc::Gateway{
 			config.Queue = _queue;
 			config.Function = _function;
 			config.Env = _env;
+			auto& held = _feeds[id];
+			if( !held )
+				held = ms<FlowFeed>( id, _clock, _live, _valueLimit );
+			config.Active = [feed=held, serial]{ feed->OnActive( serial ); };
 			if( _store )
-				config.Trace = _store->Trace( row.Slug, row.Trace, _clock );
+				config.Trace = _store->Trace( row.Slug, row.Trace, _clock, [feed=held, serial]( const Flows::TraceRecord& record ){ feed->OnRecord( serial, record ); } );
 		}
 		for( auto&& [key, text] : values ){
 			let& [node, name] = key;
@@ -530,6 +588,7 @@ namespace Jde::Opc::Gateway{
 		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups} );
 		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
 		run->Trace = row.Trace;
+		run->Serial = serial;
 		co_await StartAwait{ run };
 		let started = run->Flow.Running();
 		let fault = started ? nullopt : run->Flow.Fault();
@@ -549,10 +608,13 @@ namespace Jde::Opc::Gateway{
 					p->second.Retry = _clock->Schedule( RetryInterval, [this, id]{ Retry( id ); } );
 			}
 		}
-		if( !kept )
+		if( !kept ){
 			run->Flow.Stop();
-		else if( started )
+			co_return;
+		}
+		if( started )
 			INFO( "[{}]Flow '{}' started from version {}.", row.Slug, row.Name, version );
+		Tell( id );
 	}
 
 	α FlowHost::Admitting( AdmitAwait& await )ι->VoidTask{
@@ -738,6 +800,7 @@ namespace Jde::Opc::Gateway{
 					y.Fault = state->Fault;
 				}
 			}
+			Tell( row.Id );
 			INFO( "[{}]Flow '{}' deployed as version {} by '{}'{}.", row.Slug, row.Name, version, writer.UserName, row.Enabled ? "" : ", and is disabled" );
 			lock.unlock();
 			await.Resume( move(y) );
@@ -872,6 +935,7 @@ namespace Jde::Opc::Gateway{
 		else if( !wanted && live && live->Flow.Running() ){
 			co_await HaltAwait{ live };
 			INFO( "[{}]Flow '{}' stopped:  it is {}.", row.Slug, row.Name, row.Deleted ? "deleted" : "disabled" );
+			Tell( row.Id );
 		}
 	}
 	α FlowHost::Purging( FlowPK id, optional<FlowRow>& row )ι->AnyVoidTask{
@@ -892,6 +956,7 @@ namespace Jde::Opc::Gateway{
 		}
 		if( live && live->Flow.Running() )
 			co_await HaltAwait{ live };
+		Tell( id );
 		co_await WriteContext();
 	}
 	α FlowHost::Purged( FlowRow row )ι->AnyVoidTask{
@@ -913,6 +978,7 @@ namespace Jde::Opc::Gateway{
 			}
 			if( live && live->Flow.Running() )
 				co_await HaltAwait{ live };
+			Tell( row.Id );
 			Forget( row.Id );
 		}
 		//Its trace directory;  the slug is held to a file name's characters at its create (FlowMAwait), and the store follows no other out of the directory.
@@ -970,8 +1036,10 @@ namespace Jde::Opc::Gateway{
 				}
 				for( auto& [row, run] : running ){
 					auto refusal = co_await Admit( row.Id, run->Graph, run->Deployer, nullptr, false, run->Spelled );
-					if( refusal && !refusal->Unknown )
+					if( refusal && !refusal->Unknown ){
 						co_await HaltAwait{ run, move(refusal->Fault) };//which logs it, an Error.
+						Tell( row.Id );
+					}
 					else if( refusal )
 						WARN( "[{}]Flow '{}' runs on unchecked:  node '{}':  {}", row.Slug, row.Name, refusal->Fault.NodeId, refusal->Fault.Message );
 				}

@@ -26,4 +26,7 @@ namespace Jde::Opc::Gateway::FromClientUtils{
 	α OeeSubscription( uint32 machine, RequestId requestId )ι->string;
 	α OeeLineSubscription( uint32 line, RequestId requestId )ι->string;
 	α OeeUnsubscription( RequestId subscription, RequestId requestId )ι->string;
+	//A flow subscription and its end (flows spec *Live*), the same.
+	α FlowSubscription( uint32 flow, bool hops, RequestId requestId )ι->string;
+	α FlowUnsubscription( RequestId subscription, RequestId requestId )ι->string;
 }

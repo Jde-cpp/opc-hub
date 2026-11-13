@@ -18,6 +18,9 @@ namespace Jde::Opc::Flows{
 		const std::chrono::time_zone* Zone{};//the days' zone;  none for the host's own.
 	};
 
+	//A message's json as a record keeps it:  cut at `limit` bytes, on a UTF-8 boundary, so what is kept is text;  0 keeps it whole.
+	α CutJson( sv json, uint limit )ι->sv;
+
 	//Where a page ended, the opaque continuation's:  the last record's time and how many at that time the page returned,
 	//counting those its query matches in file order, so a page that ends inside a tie takes up where it left.
 	struct TraceCursor final{ TimePoint Time; uint32 Skip{}; };
@@ -62,8 +65,10 @@ namespace Jde::Opc::Flows{
 		//ends.  Stop again, or a Start after, is nothing.
 		α Stop( Duration wait=std::chrono::seconds{10} )ι->void;
 		//A flow's trace, at `level`, or Level when the row names none:  what its Flow::Config takes.  `clock`:  the flow's,
-		//which the records' times are on.
-		α Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock )ι->sp<FileTrace>;
+		//which the records' times are on.  `tap`:  given each record as the trace makes it, whole, on the flow's strand,
+		//before it goes to the buffer:  the live feed's (spec *Live*).
+		using Tap = function<void( const TraceRecord& )>;
+		α Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock, Tap tap={} )ι->sp<FileTrace>;
 		//The flow's buffer written now, rather than at Delay:  `done` once it is, or at once when there is nothing to write;
 		//for a write that fails, once the records are back in the buffer.
 		α Flush( sv slug, absl::AnyInvocable<void()> done={} )ι->void;
@@ -95,7 +100,7 @@ namespace Jde::Opc::Flows{
 
 	//A flow's trace over its store:  HopTrace's fold, each record into the flow's buffer.  Made by TraceStore::Trace.
 	struct FileTrace final : HopTrace{
-		FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock )ι;
+		FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock, TraceStore::Tap tap={} )ι;
 		~FileTrace();
 	protected:
 		α Write( TraceRecord&& record )ι->void override;
@@ -103,5 +108,6 @@ namespace Jde::Opc::Flows{
 	private:
 		sp<TraceStore> _store;
 		sp<TraceStore::Files> _files;
+		TraceStore::Tap _tap;
 	};
 }
