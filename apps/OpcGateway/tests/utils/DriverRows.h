@@ -114,4 +114,12 @@ namespace Jde::Opc::Gateway::Tests{
 		}, timeout );
 	}
 	Ξ WaitConnected( const DriverRow& row, bool connected=true )ι->bool{ return WaitOp( row, "Connected", [=]( let& v ){ return OpFlag( v )==connected; } ); }
+	//The link down until Mend, as through a network's fault, while the controller's stations go on:  the controller drops its
+	//client and refuses each MID 0001 after.
+	Ξ Sever( OpenProtocol::Controller& station, const DriverRow& row )ι->bool{
+		station.Edit( []( OpenProtocol::Controller::Script& script ){ script.Refuses[1] = 16; } );
+		station.Drop();
+		return WaitConnected( row, false );
+	}
+	Ξ Mend( OpenProtocol::Controller& station )ι->void{ station.Edit( []( OpenProtocol::Controller::Script& script ){ script.Refuses.erase( 1 ); } ); }
 }

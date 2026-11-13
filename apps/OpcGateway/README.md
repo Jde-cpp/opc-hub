@@ -36,7 +36,7 @@ installed.
   the gateway's own clients and no other: a web session by its issued token, a group's collector as the gateway's own
   user.  Every node is readable by any session and none is writable.  Behind it sits the kind's `IDriver`.  The Open
   Protocol one (`src/drivers/openProtocol/`) keeps a session with the controller under the
-  `/gateway/drivers/openProtocol` settings and serves three objects.  `Result` has a variable per field of the
+  `/gateway/drivers/openProtocol` settings and serves five objects.  `Result` has a variable per field of the
   controller's last tightening result, MID 0061 at revisions 1 to 7: each result's fields carry one source timestamp,
   the controller's time read in the row's zone and kept distinct and increasing, and a field the controller's revision
   lacks reads `Bad_NotSupported`.  `Counters` are `Total`, `Ok` and `Nok`, the tightenings since the driver started.
@@ -47,6 +47,10 @@ installed.
   0064, `maxBackfill` requests at most, and written in order ahead of the ones pushed since, each with what MID 0065
   carries of it, so its limits read `Bad_NotSupported` until the next pushed result; a walk that ends short of the
   last result written adds one to `LostResults` and warns.  Nothing is fetched before a row's first result of a run.
+  `Selected` is what the controller has selected, `Pset`, `Job` and `Vin` with its identifier parts, and `Alarm` its
+  alarm, `Code`, `Active` and `Time`, each from the subscription the driver opens for it at every connect.  They read
+  `Bad_WaitingForInitialData` until the controller's first report, `Bad_NotSupported` where it gives none, and
+  `Bad_NoCommunication` over their last values from a loss of the link until each one's next report.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.
@@ -165,6 +169,10 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
   outage's results of two stations filled in order ahead of the one held, what a MID 0065 gives `Result`, a result
   that came both ways written once, a walk that runs out of `maxBackfill`, a refused MID 0064, a link lost during the
   walk, ids that began again, a first connection that fetches nothing, and a stored result's hour that comes twice.
+- `DriverStateTests`: `Selected` and `Alarm` (the plan's *Phase 7*), against the same controller - a parameter set,
+  a job, a VIN and an alarm followed as they are pushed, `Bad_NoCommunication` over the last values through a loss
+  of the link, a controller that pushes nothing as it is subscribed to, a group recording the changes and the
+  status, and what a controller lacks.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.

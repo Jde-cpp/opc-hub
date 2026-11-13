@@ -88,7 +88,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ToString(namespaces.Get<UA_String>(2)), "urn:jde:driver-op:open-protocol" );
 
 		//What the session reported, and the clock read at the connect.
-		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0061:7 0080:1"; }) ) << OpText( Op(row, "Revisions") );
+		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0015:3 0035:6 0052:2 0061:7 0071:3 0080:1"; }) ) << OpText( Op(row, "Revisions") );
 		EXPECT_EQ( OpFlag(Op(row, "LinkLevel")), true ) << "MID 0002 at 6 says the controller numbers its messages";
 		EXPECT_EQ( OpText(Op(row, "LastError")), "" );
 		EXPECT_EQ( OpCount(Op(row, "Reconnects")), 0u ) << "a first connection is no reconnect";
@@ -125,7 +125,7 @@ namespace Jde::Opc::Gateway::Tests{
 		{
 			Controller station{ *Executor(), ControllerPort(), Station() };
 			ASSERT_TRUE( WaitConnected(row) );
-			ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0061:7 0080:1"; }) ) << OpText( Op(row, "Revisions") );
+			ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0015:3 0035:6 0052:2 0061:7 0071:3 0080:1"; }) ) << OpText( Op(row, "Revisions") );
 			EXPECT_EQ( OpCount(Op(row, "Reconnects")), 0u );
 			EXPECT_EQ( OpFlag(Op(row, "LinkLevel")), true );
 		}
@@ -142,7 +142,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Controller station{ *Executor(), ControllerPort(), move(older) };
 		ASSERT_TRUE( WaitConnected(row) ) << "the controller restarted";
 		EXPECT_EQ( OpCount(Op(row, "Reconnects")), 1u );
-		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:3 0061:7 0080:1"; }) ) << OpText( Op(row, "Revisions") );
+		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:3 0015:3 0035:6 0052:2 0061:7 0071:3 0080:1"; }) ) << OpText( Op(row, "Revisions") );
 		EXPECT_EQ( OpFlag(Op(row, "LinkLevel")), false );
 		let identity = Json::Parse( OpText(Op(row, "Identity")) );
 		EXPECT_EQ( Json::FindDefaultSV(identity, "controllerName"), "Line 3 station 8" ) << serialize( identity );
@@ -301,7 +301,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let revived = WaitRevived( lost, row.Slug );
 		ASSERT_TRUE( revived ) << "the row's client never reconnected";
 		EXPECT_TRUE( WaitUntil([&]{ return listener->Pushes>pushes; }) ) << "the new server's value";
-		ASSERT_TRUE( WaitUntil([&]{ return OpText( ReadValue(revived, OpNode("Revisions")) )=="0001:2 0061:7 0080:1"; }) ) << OpText( ReadValue(revived, OpNode("Revisions")) );
+		ASSERT_TRUE( WaitUntil([&]{ return OpText( ReadValue(revived, OpNode("Revisions")) )=="0001:2 0015:3 0035:6 0052:2 0061:7 0071:3 0080:1"; }) ) << OpText( ReadValue(revived, OpNode("Revisions")) );
 		EXPECT_EQ( OpCount(ReadValue(revived, OpNode("Reconnects"))), 0u ) << "a new driver's first connection";
 	}
 

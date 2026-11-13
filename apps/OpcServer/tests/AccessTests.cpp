@@ -1,6 +1,8 @@
 #include <semaphore>
 #include <thread>
 #include <absl/cleanup/cleanup.h>
+#include <open62541/plugin/certificategroup_default.h>
+#include <open62541/server_config_default.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/io/file.h>
@@ -662,6 +664,29 @@ namespace Jde::Opc::Server::Tests{
 		UA_ServerConfig_clear( &config );
 	}
 
+	//A trust list past 65535 bytes, some 78 certificates, is taken at a rescan:  each group has the config's size, 0 for no
+	//limit, under the key its store reads.  With none it kept open62541's own, and a certificate copied into a directory that
+	//long stayed untrusted until a restart.
+	TEST( UAConfigTests, ATrustListPast64KiBIsTaken ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		UAConfig config{ ReadUASettings(), AppClient(), nodeAccess };
+		EXPECT_EQ( config.maxTrustListSize, 0u ) << "setBasics':  no limit";
+		vector<UA_Byte> bytes( 70'000, 0x30 );
+		UA_ByteString certificate{ bytes.size(), bytes.data() };
+		UA_TrustListDataType list;
+		UA_TrustListDataType_init( &list );
+		list.specifiedLists = UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;
+		list.trustedCertificates = &certificate;
+		list.trustedCertificatesSize = 1;
+		for( auto group : {&config.secureChannelPKI, &config.sessionPKI} ){
+			ASSERT_TRUE( group->setTrustList );
+			let sc = group->setTrustList( group, &list );
+			EXPECT_EQ( sc, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( sc );
+		}
+		UA_ServerConfig_clear( &config );
+	}
+
 	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started
 	//yet - is one Warning, not one per scan; a failed verify rescans, so it used to repeat for the life of the process.
 	//Later sightings are Debug.  The dir is appended to the real list in a trust of the test's own, so the running server's
@@ -685,6 +710,71 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( lines[0].Level, ELogLevel::Warning );
 		EXPECT_EQ( lines[1].Level, ELogLevel::Debug );
 		EXPECT_EQ( lines[2].Level, ELogLevel::Debug );
+	}
+
+	//A group that refuses the rescan's list is said at Warning, with the list's size and why, and the other group takes it all
+	//the same:  the refusal of an OpenSSL group past its maxTrustListSize was caught at Debug, and the throw left the second
+	//group unset (reviews-issue/469-open-state-and-alarms.md #7).  A server of the test's own, never run, over two memory
+	//stores and a trusted dir of its own, its secure channel group's setTrustList one that refuses.
+	TEST( TrustListTests, ARefusedTrustListIsSaid ){
+		let dirs = Settings::FindStringArray( "/access/trustedCertDirs" );
+		ASSERT_FALSE( dirs.empty() );
+		let root = fs::path{ dirs.front() }.parent_path()/Ƒ( "refused-trust-{}", Process::ProcessId() );
+		let trusted = root/"trusted";
+		let issued = root/"issued";
+		std::error_code ec;
+		fs::remove_all( root, ec );
+		fs::create_directories( trusted );
+		fs::create_directories( issued );
+		absl::Cleanup removed = [&]{ std::error_code e; fs::remove_all( root, e ); };
+
+		UATrust trust{ {trusted} };//outlives the server.
+		UA_ServerConfig config{};
+		ASSERT_EQ( UA_ServerConfig_setMinimal(&config, 4999, nullptr), UA_STATUSCODE_GOOD );//never run:  no port is taken.
+		UA_TrustListDataType empty; UA_TrustListDataType_init( &empty );
+		for( let [group, id] : {std::pair{&config.secureChannelPKI, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP}, std::pair{&config.sessionPKI, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP}} ){
+			if( group->clear )
+				group->clear( group );
+			UA_NodeId node = UA_NODEID_NUMERIC( 0, id );
+			ASSERT_EQ( UA_CertificateGroup_Memorystore(group, &node, &empty, config.logging, nullptr), UA_STATUSCODE_GOOD );
+		}
+		up<UA_Server,decltype(&UA_Server_delete)> server{ UA_Server_newWithConfig(&config), &UA_Server_delete };
+		ASSERT_TRUE( server );
+		{
+			UA_TrustListDataType list; UA_TrustListDataType_init( &list );
+			trust.LoadTrustList( list );//the start's, which primes the scan:  an empty dir.
+			UA_TrustListDataType_clear( &list );
+		}
+		trust.Install( *server );
+		auto& channel = UA_Server_getConfig( server.get() )->secureChannelPKI;
+		auto& session = UA_Server_getConfig( server.get() )->sessionPKI;
+		channel.setTrustList = []( UA_CertificateGroup*, const UA_TrustListDataType* )->UA_StatusCode{ return UA_STATUSCODE_BADINTERNALERROR; };//as an OpenSSL group past its maxTrustListSize answers.
+
+		let settings = Crypto::CryptoSettings{ jobject{
+			{"certificate", jobject{{"path", (issued/"cert.pem").string()}, {"commonName", "refused-trust"}, {"company", "jde-cpp"}, {"country", "US"}}},
+			{"privateKey", jobject{{"path", (issued/"private.pem").string()}}},
+			{"publicKey", jobject{{"path", (issued/"public.pem").string()}}},
+			{"dh", ""}
+		}, {} };
+		Crypto::CreateKeyCertificate( settings );
+		let der = Crypto::ReadCertificate( settings.Certificate.Path );
+		IO::SaveBinary<const byte>( trusted/"refused-trust.der", std::span{der} );//copied in after the start.
+
+		const Logging::Capture said{ ELogLevel::Warning };
+		UA_ByteString junk = UA_BYTESTRING( (char*)"no certificate" );
+		EXPECT_NE( channel.verifyCertificate(&channel, &junk), UA_STATUSCODE_GOOD );//a failed verify, which rescans.
+		let refused = said.Find( []( const Logging::Entry& e ){ return e.Message().contains( "secure channel certificate group refused the trust list" ); } );
+		ASSERT_EQ( refused.size(), 1u );
+		let message = refused.front().Message();
+		EXPECT_TRUE( message.contains("of 1 certificate(s)") ) << message;
+		EXPECT_TRUE( message.contains(" bytes, ") ) << message;
+		EXPECT_TRUE( message.contains("BadInternalError") ) << message;
+		EXPECT_TRUE( said.Find([]( const Logging::Entry& e ){ return e.Message().contains( "session certificate group refused" ); }).empty() );
+
+		UA_TrustListDataType taken; UA_TrustListDataType_init( &taken );
+		ASSERT_EQ( session.getTrustList(&session, &taken), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( taken.trustedCertificatesSize, 1u ) << "the session group took the list, though the other refused it";
+		UA_TrustListDataType_clear( &taken );
 	}
 
 	//opcserver-review3 L24:  every accepting branch of ActivateSession assigned straight through *sessionContext, and

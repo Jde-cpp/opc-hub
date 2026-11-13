@@ -16,14 +16,6 @@ namespace Jde::Opc::Gateway::Tests{
 	struct DriverBackfillTests : DriverResultFixture{
 	protected:
 		using Counts = array<optional<uint>,3>;
-		//The link down until Mend, as through a network's fault, while the controller's stations go on:  the controller drops its
-		//client and refuses each MID 0001 after.
-		Ω Sever( Controller& station, const DriverRow& row )ι->bool{
-			station.Edit( []( Controller::Script& script ){ script.Refuses[1] = 16; } );
-			station.Drop();
-			return WaitConnected( row, false );
-		}
-		Ω Mend( Controller& station )ι->void{ station.Edit( []( Controller::Script& script ){ script.Refuses.erase( 1 ); } ); }
 		//The tightening ids the controller was asked for by MID 0064, from its frame `from` on.
 		Ω Asked( const Controller& station, uint from=0 )ι->vector<uint32_t>{
 			vector<uint32_t> y;
@@ -206,7 +198,7 @@ namespace Jde::Opc::Gateway::Tests{
 		station.Push( rundown(204, 20s) );
 		let before = station.Frames().size();
 		Mend( station );
-		station.Delay( 300ms, 4 );//MID 0002, MID 0060's MID 0005, MID 0081 and the first MID 0065, which is the latest's.
+		station.Delay( 300ms, 8 );//MID 0002, MID 0060's MID 0005, MID 0081, the four of `Selected`'s and `Alarm`'s subscriptions and the first MID 0065, which is the latest's.
 		ASSERT_TRUE( WaitUntil([&]{ return Asked( station, before ).size()>0; }) ) << "no MID 0064";
 		station.Push( rundown(204, 20s) );//pushed while its MID 0065 is held:  a rundown at the reconnect.
 		ASSERT_TRUE( WaitResults(row, 3) ) << OpCount( Op(row, "Results") ).value_or( 0 ) << " result(s)";
@@ -413,10 +405,10 @@ namespace Jde::Opc::Gateway::Tests{
 			station.Push( rundown(id) );
 		auto before = station.Frames().size();
 		Mend( station );
-		station.Delay( 300ms, 4 );//MID 0002, MID 0060's MID 0005, MID 0081 and the first MID 0065.
+		station.Delay( 300ms, 8 );//MID 0002, MID 0060's MID 0005, MID 0081, the four of `Selected`'s and `Alarm`'s subscriptions and the first MID 0065.
 		ASSERT_TRUE( WaitUntil([&]{ return Asked( station, before ).size()>0; }) ) << "no MID 0064";
 		station.Push( rundown(806) );//held, while the walk's first reply is.
-		ASSERT_TRUE( WaitUntil([&]{ return RevisionsOf( station, 9997, before ).size()>=3; }) ) << "the pushed result never reached the driver";//MID 0060's MID 0005, MID 0081 and the push, each acknowledged at link level.
+		ASSERT_TRUE( WaitUntil([&]{ return RevisionsOf( station, 9997, before ).size()>=7; }) ) << "the pushed result never reached the driver";//MID 0060's MID 0005, MID 0081, the four subscriptions' MID 0005s and the push, each acknowledged at link level.
 		before = station.Frames().size();
 		station.Drop();
 		ASSERT_TRUE( WaitResults(row, 5) ) << OpCount( Op(row, "Results") ).value_or( 0 ) << " result(s)";
