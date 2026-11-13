@@ -1,6 +1,6 @@
 ---
 name: run-services
-description: Build, launch, and drive the Jde C++ services — AppServer (1967), OpcGateway (1968), OpcServer (1970), or the hub Jde.Opc.Hub (AppServer + OpcGateway in one process on 1967) — and the PLC emulator that feeds the OpcServer. Use when asked to run, start, stop, or smoke-test a service, to send it a GraphQL query or mutation, to read a running service's live log levels, or to confirm a change works in the real app rather than in the test suite.
+description: Build, launch, and drive the Jde C++ services — AppServer (1967), OpcGateway (1968), OpcServer (1970), or the hub Jde.Opc.Hub (AppServer + OpcGateway in one process on 1967) — the PLC emulator that feeds the OpcServer, and the Open Protocol simulator the driver's hand checks run against. Use when asked to run, start, stop, or smoke-test a service, to send it a GraphQL query or mutation, to read a running service's live log levels, or to confirm a change works in the real app rather than in the test suite.
 ---
 
 # Running the Jde C++ services
@@ -210,6 +210,65 @@ now — change the XML and restart OpcServer (and the emulator, which loads the 
 The old `.mutation` loader and the `createObject`/`createObjectType`/`createConstructor`
 hooks are gone; those GraphQL mutations now degrade to plain table inserts with no UA
 side effect.
+
+## Open Protocol simulator
+
+Jarrekstar's open-protocol-device-simulator, the hand check of the Open Protocol plan's
+Phase 10a (`docs/open-protocol/plan.md`, *Phase 0* 0.3's *Built*): a clone at
+`$REPO_DIR/open-protocol-device-simulator` pinned at `7e604da0`, never in the superbuild
+or on a runner. Build once, with Node and cargo on PATH; the npm and svelte-kit steps are
+what its README lacks at that commit:
+
+```bash
+git clone https://github.com/Jarrekstar/open-protocol-device-simulator.git $REPO_DIR/open-protocol-device-simulator
+cd $REPO_DIR/open-protocol-device-simulator
+git checkout 7e604da0
+npm --prefix frontend ci --replace-registry-host=always   # its lock resolves one package from a private feed
+( cd frontend && npx svelte-kit sync )                     # tsconfig.json extends .svelte-kit/tsconfig.json, which the cargo build's own sync writes elsewhere
+cargo build --release                                      # a few minutes; embeds the web UI
+```
+
+Run it on loopback at the protocol's port, its HTTP API on 8081; it writes `simulator.db`
+in the cwd (`--db-path` moves it) and is foreground, so it is not in `driver.sh`'s table:
+
+```bash
+cd $REPO_DIR/open-protocol-device-simulator
+./target/release/open-protocol-device-simulator --bind-address 127.0.0.1 --tcp-port 4545 --http-port 8081
+```
+
+Expected: `Open Protocol TCP server listening on 127.0.0.1:4545`. A gateway row against it
+is `open-protocol://127.0.0.1:4545`; `--config <toml>` with `[webui] enabled = true` serves
+its UI on 8082 (`config.example.toml` lists the keys). The smoke client
+`python3 .claude/skills/run-services/open-protocol-smoke.py [tcp] [http]` opens a session
+stepping down from MID 0001 at 6, subscribes from MID 0060 at 7, posts one tightening, acks
+the MID 0061 and stops, printing each frame and `SMOKE PASS`. It reads each frame's MID and
+revision and decodes nothing, so a pass says the simulator answers, not that the codec reads
+it. Gotchas:
+
+- **Each MID family answers the revision its profile selects**, 1 by default, or any it
+  implements, and MID 0004 code 97 to the rest, so a client steps down to 1 - which is the
+  step-down's check, not a fault. `GET /protocol/profile`, set a family's `policy` to
+  `any_implemented` or its `revision`, and `PUT` it back whole with the `version` it came
+  with; `GET /protocol/catalog` lists the families and what each implements (MID 0001 to
+  6; MID 0061 1 to 7, 998, 999).
+- **The profile outlives a restart:** it is kept in the database, so delete `simulator.db`
+  or pass a fresh `--db-path` to start from the default.
+- **MIDs 0060 to 0063 are one family**, so the tightening family pinned above 1 refuses
+  the driver's MID 0062, which goes at 1, with a MID 0004 after every result. Leave it at
+  `any_implemented` and pick MID 0061's revision with the row's ceiling, `{"0061": N}`.
+- **A lifted profile shows two differences**, Phase 10a's to settle against the tables,
+  not faults of the run. Its MID 0002 at 4 to 6 has fields 08 to 16 at widths that are not
+  the tables' (the RBU type at 19 for 24 first), so the codec refuses it and the row never
+  connects; keep MID 0002 at 3, by the profile or the row's ceiling `{"0002": 3}`. Its MID
+  0005 echoes the accepted request's revision (`00240005007` to a MID 0060 at 7), which the
+  codec refuses as past MID 0005's one revision, so a subscription above 1 waits out
+  `replyTimeout`.
+- **Driving it:** `POST /simulate/tightening` with `{"torque": 12.5, "angle": 40.0, "ok": true}`
+  makes one result, `/auto-tightening/start` a run, `/psets/{id}/select` and
+  `/jobs/{id}/select` the selections, `/config/failure` latency, loss and corruption.
+- **It has no** MID 0064, 0070 to 0077, 0080, 9997 or 9998, and its MID 0002 at 6 says no
+  sequence numbers, so link level is off: backfill, alarms, the clock and link level are
+  the bench controller's (10b).
 
 ## Test
 
