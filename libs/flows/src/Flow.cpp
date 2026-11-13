@@ -70,7 +70,6 @@ namespace Jde::Opc::Flows{
 		Engine( Graph&& graph, Flow::Config&& config )ι:
 			_graph{ move(graph) },
 			_config{ move(config) },
-			_js{ sandbox(_graph, _config) },
 			_clock{ _config.Clock ? _config.Clock : Hist::SystemClock() },
 			_ids{ _config.Ids ? _config.Ids : ms<MessageIds>(_clock->Now()) },
 			_global{ _config.Global ? _config.Global : ms<GlobalStore>() },
@@ -384,6 +383,7 @@ namespace Jde::Opc::Flows{
 				if( _state!=EState::Idle )
 					return false;
 				_state = EState::Starting;
+				_js = sandbox( _graph, _config );
 			}
 			for( auto& slot : _slots ){
 				try{
@@ -478,9 +478,9 @@ namespace Jde::Opc::Flows{
 			}
 		}
 		α End()ι->EState{//the state it had.
+			lg _{ _queueMutex };
 			if( _js )
 				Halt( *_js );
-			lg _{ _queueMutex };
 			return std::exchange( _state, EState::Stopped );
 		}
 		α Teardown()ι->void{
@@ -718,7 +718,6 @@ namespace Jde::Opc::Flows{
 
 		const Graph _graph;
 		Flow::Config _config;
-		const sp<Js::Runtime> _js;//the Function nodes' runtime, when the graph has one.
 		const sp<Hist::IClock> _clock;
 		const sp<MessageIds> _ids;
 		const sp<GlobalStore> _global;
@@ -740,6 +739,7 @@ namespace Jde::Opc::Flows{
 		vector<std::pair<Slot*,absl::AnyInvocable<void()>>> _idle;//what waits for the queues to empty.
 		mutable mutex _queueMutex;
 		EState _state{ EState::Idle };
+		sp<Js::Runtime> _js;//the Function nodes' runtime, when the graph has one, made as they are:  set under _queueMutex.
 		std::deque<uint32> _arrival;//a node's index for each message queued, in the order they came.
 		vector<std::pair<uint32,MessageId>> _dropped;//off a queue, for the strand to count.
 		bool _scheduled{};//a drain is posted or running.

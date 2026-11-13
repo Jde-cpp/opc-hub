@@ -8,7 +8,7 @@
 namespace Jde::Opc::Flows::Js{
 	namespace{
 		constexpr ELogTags _tags{ ELogTags::Flow };
-		constexpr uint _maxOutputs{ 100 };
+		constexpr uint _toldRejections{ 10 };//a node's, an entry:  the rest are counted in one line.
 
 		//What a body sees beside the language (docs/flows/spec.md *The Function node*), over the node's C functions, which
 		//no body reaches but through it.  It answers what makes a call's `node`:  each call has its own, so a send or a
@@ -78,11 +78,9 @@ namespace Jde::Opc::Flows::Js{
 			return v ? optional<string>{ v->get_string() } : nullopt;
 		}
 		Ω outputs( const jobject& props )ε->uint{
-			let v = Prop::Find( props, "outputs" );
-			boost::system::error_code ec;
-			let y = v ? v->to_number<uint>( ec ) : 1;
-			THROW_IF( ec || y>_maxOutputs, "`outputs` must be a whole number, {} at most.", _maxOutputs );
-			return y;
+			let y = FunctionOutputs( props );
+			THROW_IF( !y, "{}", y.error() );
+			return *y;
 		}
 		//As Node-RED reads a body:  one that calls `node.done` finishes its messages itself.
 		Ω callsDone( sv code )ι->bool{
@@ -96,7 +94,7 @@ namespace Jde::Opc::Flows::Js{
 
 		//A message a body was called with, until the body has returned, its promise settled, and the flow's hop is closed.
 		struct Call final{
-			uint32 Seq;//what the call's `node` carries.
+			uint32_t Seq;//what the call's `node` carries, never 0, which is On Start's and On Stop's:  32 bits, as it crosses.
 			MessageId Id;
 			Message Msg;//as received:  what a catch takes, and what a message sent as itself keeps of it.
 			JSValue Promise{ JS_UNDEFINED };//what the body returned, until it is read.
@@ -160,7 +158,7 @@ namespace Jde::Opc::Flows::Js{
 				_startFailure = move( ran.Failure );
 				Finish( move(ran.Result) );
 				_starting = false;
-				if( let failure = std::exchange(_startFailure, {}) )
+				if( let failure = std::exchange(_startFailure, {}); failure && !_rt->Halted() )//a stop under it is no refusal.
 					THROW( "On Start:  {}", *failure );
 			}
 			α Stop()ι->void override{
@@ -173,7 +171,9 @@ namespace Jde::Opc::Flows::Js{
 				Finish( move(ran.Result), true );
 			}
 			α Receive( Message& m )ε->void override{
-				let seq = ++_seq;
+				if( !++_seq )
+					++_seq;
+				let seq = _seq;
 				_current = seq;
 				_calls.push_back( Call{seq, m.Id(), move(m)} );
 				auto ran = Run( [&]()->optional<string>{
@@ -206,7 +206,7 @@ namespace Jde::Opc::Flows::Js{
 			struct Outcome final{ optional<string> Failure; Ran Result; };
 			Ω Of( JSContext* ctx )ι->Function&{ return *static_cast<Function*>( JS_GetContextOpaque(ctx) ); }
 			α Label()Ι->str{ return _name.empty() ? _id : _name; }
-			α Find( uint32 seq )ι->Call*{
+			α Find( uint32_t seq )ι->Call*{
 				let p = seq ? find( _calls, seq, &Call::Seq ) : _calls.end();
 				return p==_calls.end() ? nullptr : &*p;
 			}
@@ -250,8 +250,13 @@ namespace Jde::Opc::Flows::Js{
 				}};
 				JSValue native = JS_NewObject( _ctx );
 				bool made = !JS_IsException( native );
-				let define = [&]( const char* name, JSValue value ){
-					made = made && !JS_IsException( value ) && JS_SetPropertyStr( _ctx, native, name, value )>=0;
+				let define = [&]( const char* name, JSValue value ){//`value` is taken, set or not.
+					if( made && !JS_IsException(value) )
+						made = JS_SetPropertyStr( _ctx, native, name, value )>=0;
+					else{
+						JS_FreeValue( _ctx, value );
+						made = false;
+					}
 				};
 				for( let& entry : natives )
 					define( entry.Name, JS_NewCFunction(_ctx, entry.Call, entry.Name, entry.Args) );
@@ -276,7 +281,7 @@ namespace Jde::Opc::Flows::Js{
 				}
 				return y;
 			}
-			α NewNode( uint32 seq )ι->JSValue{
+			α NewNode( uint32_t seq )ι->JSValue{
 				JSValue arg = JS_NewUint32( _ctx, seq );
 				return JS_Call( _ctx, _node, JS_UNDEFINED, 1, &arg );
 			}
@@ -300,13 +305,15 @@ namespace Jde::Opc::Flows::Js{
 				if( entry.Interrupted() )
 					y.Failure = entry.Why();
 				else
-					entry.Drain();
+					entry.Drain( _ctx );
 				y.Result = entry.Result();
 				return y;
 			}
 			//What an entry left, read in an entry of its own, since the reading runs the bodies' getters:  each node whose
 			//code ran has its promises read, what they returned sent and its errors raised;  a rejection nothing took is its
-			//node's error;  and an entry is posted for the jobs a cut drain left.
+			//node's error, `_toldRejections` of them a node and entry, the rest counted;  and an entry is posted for the jobs a
+			//cut drain left, and for what an interrupted reading did not read, which no call could, the interrupt's stack limit
+			//in place.
 			α Finish( Ran&& ran, bool stopping=false )ι->void{
 				bool more;
 				{
@@ -318,6 +325,8 @@ namespace Jde::Opc::Flows::Js{
 							nodes.push_back( &node );
 						return node;
 					};
+					for( let ctx : std::exchange(_rt->Unread, {}) )
+						add( ctx );
 					for( let ctx : ran.Touched )
 						add( ctx );
 					for( auto& [ctx, error] : ran.Failures )
@@ -326,13 +335,29 @@ namespace Jde::Opc::Flows::Js{
 						if( auto& node = add(ran.Culprit); !ran.Killed || !node.FailHeld(ran.Why) )
 							node._errors.push_back( ran.Why );
 					}
-					for( uint i=0; i<nodes.size(); ++i )
-						nodes[i]->Settle();
-					for( auto& rejection : _rt->TakeRejected() ){
-						if( !ran.Interrupted || !JS_IsUncatchableError(rejection.Reason) )//the interrupt's own error, which a promise took, is told once, as the interrupt.
-							add( rejection.Ctx )._errors.push_back( Ƒ("A promise was rejected and nothing took it:  {}", ErrorText(rejection.Ctx, rejection.Reason)) );
-						JS_FreeValue( rejection.Ctx, rejection.Promise );
-						JS_FreeValue( rejection.Ctx, rejection.Reason );
+					for( uint i=0; i<nodes.size(); ++i ){
+						if( !nodes[i]->Settle() ){
+							for( ; i<nodes.size(); ++i )
+								_rt->Unread.push_back( nodes[i]->_ctx );
+						}
+					}
+					if( !entry.Interrupted() ){//else they wait for the next, which reads them.
+						flat_map<JSContext*,uint> told, untold;
+						for( auto& rejection : _rt->TakeRejected() ){
+							if( !ran.Interrupted || !JS_IsUncatchableError(rejection.Reason) ){//the interrupt's own error, which a promise took, is told once, as the interrupt.
+								auto& node = add( rejection.Ctx );
+								if( told[rejection.Ctx]<_toldRejections && !entry.Interrupted() ){
+									++told[rejection.Ctx];
+									node._errors.push_back( Ƒ("A promise was rejected and nothing took it:  {}", ErrorText(rejection.Ctx, rejection.Reason)) );
+								}
+								else
+									++untold[rejection.Ctx];
+							}
+							JS_FreeValue( rejection.Ctx, rejection.Promise );
+							JS_FreeValue( rejection.Ctx, rejection.Reason );
+						}
+						for( let [ctx, count] : untold )
+							Of( ctx )._errors.push_back( Ƒ("{} more promises were rejected and nothing took them.", count) );
 					}
 					for( auto node : nodes )
 						node->Report();
@@ -346,8 +371,15 @@ namespace Jde::Opc::Flows::Js{
 					} );
 				}
 			}
-			α FailHeld( str why )ι->bool{//those whose body still awaits:  one that has returned has its answer.
+			//Those whose body still awaits, and On Start's while the node starts, its refusal:  one that has returned has its
+			//answer.
+			α FailHeld( str why )ι->bool{
 				bool held{};
+				if( _starting && !JS_IsUndefined(_started) && JS_PromiseState(_ctx, _started)==JS_PROMISE_PENDING ){
+					if( !_startFailure )
+						_startFailure = why;
+					held = true;
+				}
 				for( auto& call : _calls ){
 					if( !call.Open || call.Failed || JS_IsUndefined(call.Promise) || JS_PromiseState(_ctx, call.Promise)!=JS_PROMISE_PENDING )
 						continue;
@@ -357,10 +389,13 @@ namespace Jde::Opc::Flows::Js{
 				return held;
 			}
 			//Each call's promise, read once it has settled:  what it was fulfilled with is sent, what it was rejected with is
-			//the node's error with the call's message, and the message is finished, unless the body is to call `node.done`.
-			α Settle()ι->void{
+			//the node's error with the call's message, and the message is finished, unless the body is to call `node.done`,
+			//or has, which finishes it whether or not its promise has settled.  False where the entry was interrupted before
+			//all were read:  the rest are the next entry's.
+			α Settle()ι->bool{
+				bool read{ true };
 				for( auto tab : {&_started, &_stopping} ){
-					if( JS_IsUndefined(*tab) || JS_PromiseState(_ctx, *tab)==JS_PROMISE_PENDING )
+					if( JS_IsUndefined(*tab) || JS_PromiseState(_ctx, *tab)==JS_PROMISE_PENDING || !(read = read && !_rt->Interrupted()) )
 						continue;
 					if( JS_PromiseState(_ctx, *tab)==JS_PROMISE_REJECTED ){
 						JSValue reason = JS_PromiseResult( _ctx, *tab );
@@ -379,9 +414,17 @@ namespace Jde::Opc::Flows::Js{
 				for( uint i=0; i<_calls.size(); ++i ){//by index:  what is sent runs getters, which may call back in.
 					auto& call = _calls[i];
 					if( !call.Failed && !JS_IsUndefined(call.Promise) ){
-						let state = JS_PromiseState( _ctx, call.Promise );
-						if( state==JS_PROMISE_PENDING )
+						if( !(read = read && !_rt->Interrupted()) )
 							continue;
+						let state = JS_PromiseState( _ctx, call.Promise );
+						if( state==JS_PROMISE_PENDING ){
+							if( call.Open && call.Done ){
+								if( call.Seq!=_current )
+									Done( call.Id );
+								call.Open = false;
+							}
+							continue;
+						}
 						JSValue result = state==JS_PROMISE_NOT_A_PROMISE ? JS_DupValue( _ctx, call.Promise ) : JS_PromiseResult( _ctx, call.Promise );
 						if( state==JS_PROMISE_REJECTED )
 							call.Failed = ErrorText( _ctx, result );
@@ -407,6 +450,7 @@ namespace Jde::Opc::Flows::Js{
 					}
 				}
 				std::erase_if( _calls, []( let& call ){ return !call.Open && JS_IsUndefined( call.Promise ); } );
+				return read;
 			}
 			α Report()ι->void{
 				for( auto& error : std::exchange(_errors, {}) ){
@@ -490,7 +534,7 @@ namespace Jde::Opc::Flows::Js{
 			}
 
 			//A timer's callback, in an entry of its own:  what it throws is the node's error with no message.
-			α Fire( uint32 id )ι->void{
+			α Fire( uint32_t id )ι->void{
 				let p = _timers.find( id );
 				if( p==_timers.end() )
 					return;
@@ -531,9 +575,9 @@ namespace Jde::Opc::Flows::Js{
 				}
 			}
 			α CallOf( JSValueConst seq )ι->Call*{
-				int32_t y{};
-				JS_ToInt32( _ctx, &y, seq );
-				return Find( (uint32)y );
+				uint32_t y{};
+				JS_ToUint32( _ctx, &y, seq );
+				return Find( y );
 			}
 			α NativeSend( JSValueConst* argv )ε->JSValue{//( call, msg, clone )
 				let clone = !JS_IsBool( argv[2] ) || JS_ToBool( _ctx, argv[2] )>0;
@@ -674,7 +718,10 @@ namespace Jde::Opc::Flows::Js{
 						return JS_EXCEPTION;
 					}
 				}
-				let id = ++_nextTimer;
+				do
+					++_nextTimer;
+				while( !_nextTimer || _timers.contains(_nextTimer) );
+				let id = _nextTimer;
 				timer.Id = Schedule( wait, [this, id]{ Fire( id ); } );
 				if( timer.Id )
 					_timers.emplace( id, move(timer) );
@@ -683,9 +730,9 @@ namespace Jde::Opc::Flows::Js{
 				return JS_NewUint32( _ctx, id );
 			}
 			α NativeClearTimer( JSValueConst* argv )ε->JSValue{
-				int32_t id{};
-				JS_ToInt32( _ctx, &id, argv[0] );
-				if( let p = _timers.find((uint32)id); p!=_timers.end() ){
+				uint32_t id{};
+				JS_ToUint32( _ctx, &id, argv[0] );
+				if( let p = _timers.find(id); p!=_timers.end() ){
 					Cancel( p->second.Id );
 					Free( p->second );
 					_timers.erase( p );
@@ -704,14 +751,23 @@ namespace Jde::Opc::Flows::Js{
 			bool _live{};//the flow has taken the node:  its C functions answer.
 			bool _starting{}, _stopped{};
 			optional<string> _startFailure;
-			uint32 _seq{}, _current{};//the last call, and the one Receive is in.
+			uint32_t _seq{}, _current{};//the last call, and the one Receive is in.
 			vector<Call> _calls;//oldest first.
-			flat_map<uint32,Timer> _timers;
-			uint32 _nextTimer{};
+			flat_map<uint32_t,Timer> _timers;
+			uint32_t _nextTimer{};//a body's timer ids, as they cross:  never 0, nor one in use.
 			vector<string> _errors;//the node's, with no message, for the entry's end.
 		};
 	}
 }
 namespace Jde::Opc{
 	α Flows::MakeFunction( const NodeDef& def, sp<Js::Runtime> sandbox )ε->up<INode>{ return mu<Js::Function>( def, move(sandbox) ); }
+	α Flows::FunctionOutputs( const jobject& props )ι->std::expected<uint,string>{
+		constexpr uint most{ 100 };
+		let v = Prop::Find( props, "outputs" );
+		boost::system::error_code ec;
+		let y = v ? v->to_number<uint>( ec ) : 1;
+		if( ec || y>most )
+			return std::unexpected{ Ƒ("`outputs` must be a whole number, {} at most.", most) };
+		return y;
+	}
 }

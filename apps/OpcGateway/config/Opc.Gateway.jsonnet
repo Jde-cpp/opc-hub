@@ -101,7 +101,7 @@ function( sync=false )
 		flows:{
 			path: logsDir + "/flows/opc-gateway", //the trace's, a directory per flow by its slug, beside hist's:  a flow's purge removes its own.  Set here, under this layout's logsDir:  the code's own fallback is <AppDataFolder>/logs/flows/opc-gateway.
 			queue:: 1000, //messages a node's input holds;  past it the oldest is dropped and counted.
-			function:{ memory:: "16MiB", stack:: "256KiB", timeout:: "PT0.1S" }, //a flow's sandbox, which its Function nodes share:  the heap, the first node taking some 120 KiB of it and each further one some 70 KiB before its body runs;  the stack a body may take, which must sit under the executor thread's own, 1 MB on Windows;  and how long one call may run, with the promise jobs it leaves.  A size is bytes, or KiB, MiB or GiB.
+			function:{ memory:: "16MiB", stack:: "256KiB", timeout:: "PT0.1S" }, //a flow's sandbox, which its Function nodes share:  the heap, the first node taking some 120 KiB of it and each further one some 70 KiB before its body runs;  the stack a body may take, kept under the executor thread's own, 4 MiB at most, 512 KiB on Windows, whose threads have 1 MB;  and how long one call may run, with the promise jobs it leaves.  A size is bytes, or KiB, MiB or GiB.
 			env:: {}, //what a body's `env.get( name )` answers, by name, for every flow, beside NR_NODE_ID, NR_NODE_NAME and NR_FLOW_NAME:  never the process's environment, which holds what a deployer is not to read.
 			http:{ allow:: [] } //the hosts an `http request` node may reach, names or glob patterns, `*.example.com`, read at each request and each redirect;  empty, none.
 		},

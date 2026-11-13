@@ -16,6 +16,15 @@ namespace Jde::Opc::Flows{
 	α IsSource( ENodeType type )ι->bool;//of *Sources*.
 	α HasInput( ENodeType type )ι->bool;//whether a wire may end at it.
 
+	//A flow's sandbox, the one runtime its Function nodes share (docs/flows/spec.md *The Function node*):  the heap, the
+	//stack a body may take below where it is entered, which must sit under the executor thread's own, and how long one
+	//entry may run, a body's call with the promise jobs it leaves, a timer's callback, On Start and On Stop.
+	struct FunctionLimits final{
+		uint Memory{ 16*1024*1024 };
+		uint Stack{ 256*1024 };
+		Duration Timeout{ std::chrono::milliseconds{100} };
+	};
+
 	struct NodeDef final{
 		α Label()Ι->str{ return Name.empty() ? Id : Name; }
 		string Id;
@@ -34,8 +43,10 @@ namespace Jde::Opc::Flows{
 		//to one that takes no input or from a port the node lacks, a property of a library node that is not of its type, a
 		//catch, status or complete naming no node, and a `link out` whose name no `link in` of the graph holds.  A hosted
 		//node's props are its host's to check.  `hostedLinks`:  such a `link out` is no fault but its host's, which knows the
-		//other flows:  IHost::Sink makes it.
-		Ω Read( const jvalue& json, bool hostedLinks=false )ι->std::expected<Graph,Fault>;
+		//other flows:  IHost::Sink makes it.  `check`:  the sandbox's limits, the graph's Function nodes compiled together
+		//in one runtime under them, as the flow's are;  none reads the graph's shape alone, no library node made, for one
+		//its deploy checked.
+		Ω Read( const jvalue& json, bool hostedLinks=false, optional<FunctionLimits> check=FunctionLimits{} )ι->std::expected<Graph,Fault>;
 		α IndexOf( sv id )Ι->optional<uint32>;
 		vector<NodeDef> Nodes;
 	};

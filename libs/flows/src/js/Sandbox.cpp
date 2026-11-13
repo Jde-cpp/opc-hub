@@ -22,7 +22,7 @@ namespace Jde::Opc::Flows::Js{
 		JS_SetHostPromiseRejectionTracker( Rt, Rejected, this );
 	}
 	Runtime::~Runtime(){
-		for( let& rejection : _rejected ){
+		for( let& [_, rejection] : _rejected ){
 			JS_FreeValueRT( Rt, rejection.Promise );
 			JS_FreeValueRT( Rt, rejection.Reason );
 		}
@@ -34,29 +34,35 @@ namespace Jde::Opc::Flows::Js{
 		return rt._entry && rt._entry->Expired( ctx, true );
 	}
 	α Runtime::Rejected( JSContext* ctx, JSValueConst promise, JSValueConst reason, bool handled, void* opaque )ι->void{
-		auto& rejected = static_cast<Runtime*>( opaque )->_rejected;
-		let p = find_if( rejected, [&]( let& r ){ return JS_VALUE_GET_PTR(r.Promise)==JS_VALUE_GET_PTR(promise); } );
+		auto& rt = *static_cast<Runtime*>( opaque );
+		let key = JS_VALUE_GET_PTR( promise );
 		if( !handled ){
-			if( p==rejected.end() )
-				rejected.push_back( {ctx, JS_DupValue(ctx, promise), JS_DupValue(ctx, reason)} );
+			if( !rt._rejected.contains(key) )
+				rt._rejected.emplace( key, Rejection{ctx, JS_DupValue(ctx, promise), JS_DupValue(ctx, reason), ++rt._rejections} );
 		}
-		else if( p!=rejected.end() ){
-			JS_FreeValue( ctx, p->Promise );
-			JS_FreeValue( ctx, p->Reason );
-			rejected.erase( p );
-		}
+		else
+			rt.Handled( promise );
 	}
 	α Runtime::Handled( JSValueConst promise )ι->void{
-		let p = find_if( _rejected, [&]( let& r ){ return JS_VALUE_GET_PTR(r.Promise)==JS_VALUE_GET_PTR(promise); } );
+		let p = _rejected.find( JS_VALUE_GET_PTR(promise) );
 		if( p==_rejected.end() )
 			return;
-		JS_FreeValueRT( Rt, p->Promise );
-		JS_FreeValueRT( Rt, p->Reason );
+		JS_FreeValueRT( Rt, p->second.Promise );
+		JS_FreeValueRT( Rt, p->second.Reason );
 		_rejected.erase( p );
 	}
-	α Runtime::TakeRejected()ι->vector<Rejection>{ return std::exchange( _rejected, {} ); }
+	α Runtime::TakeRejected()ι->vector<Rejection>{
+		vector<Rejection> y;
+		y.reserve( _rejected.size() );
+		for( auto& [_, rejection] : std::exchange(_rejected, {}) )
+			y.push_back( rejection );
+		std::ranges::sort( y, {}, &Rejection::Order );
+		return y;
+	}
 	α Runtime::Forget( JSContext* ctx )ι->void{
-		std::erase_if( _rejected, [&]( let& r ){
+		std::erase( Unread, ctx );
+		std::erase_if( _rejected, [&]( let& entry ){
+			let& r = entry.second;
 			if( r.Ctx!=ctx )
 				return false;
 			JS_FreeValueRT( Rt, r.Promise );
@@ -104,14 +110,16 @@ namespace Jde::Opc::Flows::Js{
 		JS_SetMaxStackSize( _rt.Rt, 1 );
 		return true;
 	}
-	α Runtime::Entry::Drain()ι->void{
+	α Runtime::Entry::Drain( JSContext* entered )ι->void{
 		let rt = _rt.Rt;
 		let cut = _ran.Interrupted;
-		while( !_ran.Interrupted && JS_IsJobPending(rt) && !Expired(JS_GetPendingJobContext(rt), false) ){
+		JSContext* last{ entered };//whose code ran last:  what the time went to, where it runs out between two jobs.
+		while( !_ran.Interrupted && JS_IsJobPending(rt) && !Expired(last, false) ){
 			JSContext* ctx{};
 			let result = JS_ExecutePendingJob( rt, &ctx );
 			if( !ctx )
 				break;
+			last = ctx;
 			if( find(_ran.Touched, ctx)==_ran.Touched.end() )
 				_ran.Touched.push_back( ctx );
 			if( result<0 ){

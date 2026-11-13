@@ -23,9 +23,10 @@ namespace Jde::Opc::Gateway{
 	//  `link out` to another flow's `link in`:  Update on each flow that holds it, at the deploy alone.
 	//A refusal at a deploy refuses the deploy and writes nothing.  At a start it leaves the flow stopped, and for a running
 	//flow it stops it, with an Error and the node's status saying why, until someone with the rights deploys it again;  a
-	//check that could not be made, or a start whose statement failed, is tried again RetryInterval on, and a check that
-	//could not be made leaves a running flow running.  A node in index form is spelled through its server at its run's
-	//admission, and the run's re-checks stand on that spelling.
+	//check that could not be made, a start whose statement failed, or a node that could not be made or started, but a
+	//Function node, is tried again RetryInterval on, and a check that could not be made leaves a running flow running.  A
+	//node in index form is spelled through its server at its run's admission, and the run's re-checks stand on that
+	//spelling.
 	//The sources and sinks are FlowNodes', one per run, made from the run's flow, its deployer and what its admission
 	//resolved;  a link to another flow is delivered here (Link).
 	struct FlowHost final : noncopyable{
@@ -148,6 +149,7 @@ namespace Jde::Opc::Gateway{
 		struct SetAwait;//a context value set on a run's strand.
 		α Retry( FlowPK id )ι->VoidTask;//the retry timer's.
 		α Time()Ι->sp<Hist::IClock>{ lg _{ _mutex }; return _clock; }
+		α Function()Ι->Flows::FunctionLimits{ lg _{ _mutex }; return _function; }
 		α Rechecking()ι->VoidTask;
 		α Links( const Flows::Graph& graph )Ι->flat_set<string>;
 		//The other flows whose current version has a `link in` of the name:  each one's row.

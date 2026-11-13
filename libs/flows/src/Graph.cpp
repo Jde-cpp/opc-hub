@@ -55,7 +55,7 @@ namespace Jde::Opc::Flows{
 		return p==Nodes.end() ? nullopt : optional<uint32>{ p-Nodes.begin() };
 	}
 
-	α Graph::Read( const jvalue& json, bool hostedLinks )ι->std::expected<Graph,Fault>{
+	α Graph::Read( const jvalue& json, bool hostedLinks, optional<FunctionLimits> check )ι->std::expected<Graph,Fault>{
 		let root = json.if_object();
 		let nodes = root ? root->if_contains( "nodes" ) : nullptr;
 		if( !nodes || !nodes->is_array() )
@@ -84,10 +84,17 @@ namespace Jde::Opc::Flows{
 			if( node.Type==ENodeType::LinkIn )
 				++links[string{ Json::FindDefaultSV(node.Props, "name") }];
 		}
+		sp<Js::Runtime> sandbox;//the Function nodes', made at the first.
+		vector<up<INode>> functions;//held until the last is made, as the flow's are.
 		for( uint i=0; i<y.Nodes.size(); ++i ){
 			auto& node = y.Nodes[i];
 			try{
-				if( !IsHosted(node.Type) )
+				if( check && node.Type==ENodeType::Function ){
+					if( !sandbox )
+						sandbox = MakeSandbox( *check, {}, {} );
+					functions.push_back( MakeFunction(node, sandbox) );
+				}
+				else if( check && !IsHosted(node.Type) )
 					MakeNode( node, y );
 				let name = Json::FindDefaultSV( node.Props, "name" );
 				THROW_IF( node.Type==ENodeType::LinkIn && links[string{name}]>1, "Two `link in` nodes are named '{}'.", name );

@@ -543,4 +543,130 @@ namespace Jde::Opc::Flows::Tests{
 		Inject( "fine" );
 		EXPECT_EQ( Took(), R"("fine")" );
 	}
+
+	//reviews-issue/450-flows-function-node.md #2:  a graph's Function nodes are checked together, in one sandbox under its
+	//limits, as the flow makes them;  #13:  a read of the graph's shape makes none;  #1:  a sandbox that runs out partway
+	//through making a node leaks nothing, which quickjs-ng's Debug build asserts as the runtime goes.
+	TEST( Function, AGraphsFunctionNodesAreCheckedTogetherUnderItsLimits ){
+		let functions = []( uint count, sv code="return msg;" ){
+			jarray nodes;
+			for( uint i=0; i<count; ++i )
+				nodes.push_back( Node(Ƒ("f{}", i), "function", serialize(jobject{{"code", code}})) );
+			return jvalue{ jobject{{"nodes", move(nodes)}} };
+		};
+		const FunctionLimits small{ .Memory=256*1024 };
+		EXPECT_TRUE( Graph::Read(functions(1), false, small).has_value() ) << "one fits";
+		let five = Graph::Read( functions(5), false, small );
+		ASSERT_FALSE( five.has_value() ) << "five do not, together";
+		EXPECT_NE( five.error().NodeId, "f0" ) << five.error().Message;
+		EXPECT_TRUE( Graph::Read(functions(5)).has_value() ) << "the default limits hold five";
+
+		EXPECT_FALSE( Graph::Read(functions(1, "return msg +;")).has_value() );
+		EXPECT_TRUE( Graph::Read(functions(1, "return msg +;"), false, nullopt).has_value() ) << "a read of the graph's shape makes no node";
+
+		for( uint memory=64*1024; memory<=512*1024; memory+=512 )
+			std::ignore = Graph::Read( functions(4), false, FunctionLimits{.Memory=memory} );//a leak aborts the suite.
+	}
+
+	//#5:  a timeout while one message's answer is read, a getter that spins, is that message's:  the others are read in
+	//the next entry, where they can still call.
+	TEST_F( FunctionTests, ATimeoutReadingOneAnswerLeavesTheOthersToTheNextEntry ){
+		Limits.Timeout = 50ms;
+		Body( R"(
+			globalThis.gate ??= new Promise( wake => globalThis.open = wake );
+			if( msg.payload === "go" ){
+				open();
+				return null;
+			}
+			await gate;
+			if( msg.payload === "spins" )
+				return { get payload(){ for(;;){} } };
+			return { payload: new Date( 0 ) };
+		)" );
+		Inject( "spins" );
+		Inject( "dated" );
+		Inject( "go" );
+		for( uint i=0; Took().empty() && i<5000; ++i )
+			Sync();
+		EXPECT_EQ( Errors(), Timeout );
+		EXPECT_EQ( Last("errors").at("payload"), "spins" );
+		EXPECT_EQ( Took(), R"("1970-01-01T00:00:00.000Z")" ) << "its Date's toJSON was called in the next entry";
+		EXPECT_EQ( Host->Took->Of("done").size(), 2u ) << "and the rest finished";
+	}
+
+	//#6:  a stop while On Start runs is no refusal:  the flow stops with no fault.
+	TEST_F( FunctionTests, AStopUnderOnStartIsNoRefusal ){
+		auto graph = Graph::Read( Nodes({Node("f", "function", R"({"code":"return msg;","onStart":"global.set( 'spinning', true );\nfor(;;){}"})")}) );
+		ASSERT_TRUE( graph.has_value() );
+		Flow flow{ move(*graph), {.Name="stopped", .Clock=Time, .Global=Global, .Function={.Timeout=60s}} };
+		ASSERT_TRUE( flow.Start() );
+		for( uint i=0; Global->Get("spinning").is_null() && i<5000; ++i )
+			std::this_thread::sleep_for( 1ms );
+		ASSERT_FALSE( Global->Get("spinning").is_null() ) << "On Start never ran";
+		std::promise<void> stopped;
+		flow.Stop( [&]{ stopped.set_value(); } );
+		ASSERT_EQ( stopped.get_future().wait_for(5s), std::future_status::ready ) << "a stop ends it";
+		EXPECT_FALSE( flow.Fault() ) << flow.Fault()->Message;
+		EXPECT_NE( flow.Status("f").Fill, "red" ) << flow.Status( "f" ).Text;
+	}
+
+	//#7:  a timeout that falls between two jobs is the node whose job ran last, which the time went to, not the one whose
+	//job is next.  heavy's jobs take the time in a few calls of long built-ins, between which the interrupt is not polled,
+	//each queueing the next first so an interrupt in one leaves the chain;  light's take none, and each follows one of heavy's.
+	TEST_F( FunctionTests, ATimeoutBetweenJobsIsTheNodeWhoseJobRanLast ){
+		Limits.Timeout = 50ms;
+		Host = ms<TestHost>();
+		Run( Nodes({
+			Node( "in", "inject", "{}", {{"heavy", "light"}} ),
+			Node( "heavy", "function", R"({"code":"function again(){ Promise.resolve().then( again ); 'x'.repeat( 1e6 ).indexOf( 'y' ); }\nagain();\nreturn null;"})" ),
+			Node( "light", "function", R"({"code":"function again(){ Promise.resolve().then( again ); }\nagain();\nreturn null;"})" )
+		}) );
+		Deployed->Inject( "in" );
+		for( uint i=0; Counts("heavy").Errors<3 && i<5000; ++i )
+			std::this_thread::sleep_for( 1ms );
+		EXPECT_GE( Counts("heavy").Errors, 3u );
+		EXPECT_EQ( Counts("light").Errors, 0u ) << "light's jobs take no time:  each deadline passed in one of heavy's";
+	}
+
+	//#8:  an On Start past the timeout after its first await is the node's refusal, as one before it is:  quickjs-ng ends
+	//an async function on the interrupt without settling its promise.
+	TEST_F( FunctionTests, AnOnStartPastTheTimeoutAfterAnAwaitIsTheNodesRefusal ){
+		for( sv onStart : {"for(;;){}", "await null;\nfor(;;){}"} ){
+			auto graph = Graph::Read( Nodes({Node("f", "function", serialize(jobject{{"code", "return msg;"}, {"onStart", onStart}}))}) );
+			ASSERT_TRUE( graph.has_value() );
+			Flow flow{ move(*graph), {.Name="unstarted", .Clock=Time, .Function={.Timeout=50ms}} };
+			EXPECT_TRUE( flow.Start() );
+			for( uint i=0; flow.Running() && i<1000; ++i )
+				std::this_thread::sleep_for( 1ms );
+			EXPECT_FALSE( flow.Running() ) << onStart;
+			ASSERT_TRUE( flow.Fault() ) << onStart;
+			EXPECT_EQ( flow.Fault()->Message, "On Start:  It ran past the timeout of 50 ms." ) << onStart;
+		}
+	}
+
+	//#9:  rejections nothing takes are the node's errors, ten an entry, and the rest counted in one.
+	TEST_F( FunctionTests, RejectionsNothingTakesAreToldTenAnEntry ){
+		Body( "for( let i=0; i<1000; ++i )\n\tPromise.reject( new Error(`n${i}`) );\nreturn msg;" );
+		Inject( 1 );
+		EXPECT_EQ( Took(), "1" );
+		EXPECT_EQ( Counts("f").Errors, 11u ) << "ten told, and one for the rest";
+		EXPECT_TRUE( Has(Deployed->Status("f").Text, "990 more promises were rejected and nothing took them.") ) << Deployed->Status("f").Text;
+	}
+
+	//#10:  `node.done` before an await finishes the message then, the body's promise still pending, and what the body
+	//returns after goes as a message of its own.
+	TEST_F( FunctionTests, NodeDoneBeforeAnAwaitFinishesTheMessage ){
+		Body( R"(
+			node.send( msg );
+			node.done();
+			await new Promise( wake => setTimeout( wake, 60000 ) );
+			return { payload: "later" };
+		)" );
+		Inject( 1 );
+		EXPECT_EQ( Took("done"), "1" ) << "finished as `done` was called, not a minute on";
+		Advance( 60s );
+		EXPECT_EQ( Took(), R"(1 "later")" );
+		EXPECT_EQ( Took("done"), "1" ) << "and once";
+		EXPECT_EQ( Id("out", 1, "_parent"), Id("done", 0, "_parent") ) << "what it returned is a message of its own, the finished one its parent";
+	}
 }

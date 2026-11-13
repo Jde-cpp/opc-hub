@@ -12,13 +12,13 @@ namespace Jde::Opc::Flows::Js{
 		bool Halted{};//interrupted by the flow's stop.
 		bool InDrain{};//interrupted among the jobs, what it entered for having returned.
 		bool Killed{};//the interrupt ended code that was running;  false for one that fell between two jobs.
-		JSContext* Culprit{};//whose code the interrupt ended, or whose job was next.
+		JSContext* Culprit{};//whose code the interrupt ended, or whose ran last where the time ran out between two jobs.
 		string Why;//the interrupt, as an error's text.
 		vector<JSContext*> Touched;//each context a job ran in.
 		vector<std::pair<JSContext*,string>> Failures;//a job that ended on what no promise takes, out of memory.
 	};
 	//A promise rejected with no handler, which the tracker reports and a handler added later takes back.
-	struct Rejection final{ JSContext* Ctx; JSValue Promise; JSValue Reason; };
+	struct Rejection final{ JSContext* Ctx; JSValue Promise; JSValue Reason; uint Order; };
 
 	//A flow's runtime, on its strand alone but for Halt:  the memory limit, the stack limit, a GC threshold at a share of
 	//the memory, the interrupt handler and the rejection tracker.  No module loader and no dynamic-import hook is set.
@@ -41,8 +41,9 @@ namespace Jde::Opc::Flows::Js{
 			Entry( const Entry& )=delete;
 			α operator=( const Entry& )->Entry& =delete;
 			//The pending jobs, every context's, until none is left, one is interrupted or the timeout passes between two:
-			//the rest wait for the runtime's next entry.
-			α Drain()ι->void;
+			//the rest wait for the runtime's next entry.  `entered`:  whose code the entry ran first, what the time went to
+			//where it runs out before a job has.
+			α Drain( JSContext* entered )ι->void;
 			α Interrupted()Ι->bool{ return _ran.Interrupted; }
 			α Why()Ι->string;
 			α Result()ι->Ran;//once, as the entry ends.
@@ -55,11 +56,13 @@ namespace Jde::Opc::Flows::Js{
 			friend struct Runtime;
 		};
 		α Halt()ι->void{ _halted.store( true, std::memory_order_relaxed ); }//any thread.
+		α Halted()Ι->bool{ return _halted.load( std::memory_order_relaxed ); }
+		α Interrupted()Ι->bool{ return _entry && _entry->Interrupted(); }//the entry under way:  no call starts in it any more.
 		//The pending exception as an error's text, and no longer pending:  the interrupt's when the entry was interrupted,
 		//whatever the body made of it.
 		α TakeError( JSContext* ctx )ι->string;
 		α Handled( JSValueConst promise )ι->void;//a rejected promise its node has read:  not the tracker's to report.
-		α TakeRejected()ι->vector<Rejection>;//those still unhandled, the caller's to free.
+		α TakeRejected()ι->vector<Rejection>;//those still unhandled, in the order they came, the caller's to free.
 		α Forget( JSContext* ctx )ι->void;//a context is going.
 
 		JSRuntime* const Rt;
@@ -67,13 +70,15 @@ namespace Jde::Opc::Flows::Js{
 		const string Flow;//its name, for the log.
 		const jobject Env;
 		bool Continuing{};//an entry is posted for the jobs a cut drain left.
+		vector<JSContext*> Unread;//the nodes whose promises an interrupted reading left, for the next entry to read.
 	private:
 		Ω Interrupt( JSContext* ctx, void* opaque )ι->int;
 		Ω Rejected( JSContext* ctx, JSValueConst promise, JSValueConst reason, bool handled, void* opaque )ι->void;
 		α GcShare()Ι->size_t{ return Limits.Memory/4*3; }
 		atomic<bool> _halted{};
 		Entry* _entry{};
-		vector<Rejection> _rejected;
+		std::unordered_map<const void*,Rejection> _rejected;//by the promise's object.
+		uint _rejections{};//how many came, each one's order.
 	};
 
 	//An error as its text, `ReferenceError: x is not defined (code:3:11)`:  null is out of memory, what quickjs-ng throws

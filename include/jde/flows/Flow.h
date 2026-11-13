@@ -4,14 +4,6 @@
 //The engine (docs/flows/spec.md *Messages*, *Errors and status*):  one flow's graph run on a strand of its own, with no
 //gateway in it.
 namespace Jde::Opc::Flows{
-	//A flow's sandbox, the one runtime its Function nodes share (docs/flows/spec.md *The Function node*):  the heap, the
-	//stack a body may take below where it is entered, which must sit under the executor thread's own, and how long one
-	//entry may run, a body's call with the promise jobs it leaves, a timer's callback, On Start and On Stop.
-	struct FunctionLimits final{
-		uint Memory{ 16*1024*1024 };
-		uint Stack{ 256*1024 };
-		Duration Timeout{ std::chrono::milliseconds{100} };
-	};
 	α ToBytes( sv text )ι->optional<uint>;//a size as the settings write it:  "16MiB", "256KiB", "2GiB" or the bytes, "4096".
 
 	//Each node has an input queue bounded at `Queue`, past which its oldest message is dropped, counted and traced.  The

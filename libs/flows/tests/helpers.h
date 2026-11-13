@@ -190,7 +190,7 @@ namespace Jde::Opc::Flows::Tests{
 		}
 		//The graph started on the clock, its nodes' Start run.
 		α Run( const jvalue& graph, ETraceLevel level=ETraceLevel::Hops, uint queue=1000 )->Flow&{
-			auto read = Graph::Read( graph );
+			auto read = Graph::Read( graph, false, Limits );
 			if( !read ){
 				ADD_FAILURE() << read.error().NodeId << ":  " << read.error().Message;
 				read = Graph{};
