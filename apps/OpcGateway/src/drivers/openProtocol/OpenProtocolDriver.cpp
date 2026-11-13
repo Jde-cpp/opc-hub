@@ -429,8 +429,9 @@ namespace Jde::Opc::Gateway{
 
 	//A result, or a report to `Selected` or `Alarm` (spec *Address space*).  MID 0052 carries the identifier parts from revision
 	//2.  An alarm is active from MID 0071 until MID 0074 says it was acknowledged on the controller, which carries its code and
-	//no time;  MID 0076 is the alarm's status as the controller has it, sent as the subscription is accepted.  An alarm's time is
-	//whole seconds local to the row's zone, read as a pushed result's is (TighteningResult::ToSys).
+	//no time, and clears only the alarm held under that code;  MID 0076 is the alarm's status as the controller has it, sent as
+	//the subscription is accepted, one of no alarm and no time leaving the time.  An alarm's time is whole seconds local to the
+	//row's zone, read as a pushed result's is (TighteningResult::ToSys).
 	α OpenProtocolDriver::OnPushed( Message&& pushed )ι->void{
 		let revision = pushed.Head.Revision;
 		let time = [this]( optional<LocalTime> local )ι->optional<Value>{
@@ -451,10 +452,21 @@ namespace Jde::Opc::Gateway{
 		}
 		else if( let alarm = get_if<Mid0071>(&pushed.Data) )
 			Report( Mid0071::Id, revision, {{AlarmCode, text(alarm->ErrorCode)}, {AlarmActive, flag(true)}, {AlarmTime, time(alarm->Time)}} );
-		else if( let status = get_if<Mid0076>(&pushed.Data) )
-			Report( Mid0071::Id, revision, {{AlarmCode, text(status->ErrorCode)}, {AlarmActive, status->AlarmStatus ? flag(*status->AlarmStatus==1) : nullopt}, {AlarmTime, time(status->Time)}} );
-		else if( let acknowledged = get_if<Mid0074>(&pushed.Data) )
-			Report( 0, 0, {{AlarmCode, text(acknowledged->ErrorCode)}, {AlarmActive, flag(false)}} );
+		else if( let status = get_if<Mid0076>(&pushed.Data) ){
+			vector<std::pair<uint8_t,optional<Value>>> values{ {AlarmCode, text(status->ErrorCode)}, {AlarmActive, status->AlarmStatus ? flag(*status->AlarmStatus==1) : nullopt} };
+			if( status->Time || status->AlarmStatus!=0 )//no alarm and no time is not an alarm with no time:  the time stays as the alarm left it.
+				values.emplace_back( AlarmTime, time(status->Time) );
+			Report( Mid0071::Id, revision, move(values) );
+		}
+		else if( let acknowledged = get_if<Mid0074>(&pushed.Data) ){
+			//`Alarm` is one alarm:  an older one acknowledged leaves the one it holds active, and over a lost link not known to be.
+			let& held = _state[AlarmCode];
+			let code = ToSV( *(const UA_String*)held.value.data );
+			if( (held.status!=UA_STATUSCODE_GOOD && held.status!=UA_STATUSCODE_BADNOCOMMUNICATION) || code==acknowledged->ErrorCode )
+				Report( 0, 0, {{AlarmCode, text(acknowledged->ErrorCode)}, {AlarmActive, flag(false)}} );
+			else
+				DBG( "({}) MID 0074 acknowledged alarm '{}', not '{}', which Alarm holds:  left as it is.", _slug, acknowledged->ErrorCode, code );
+		}
 	}
 	//Sourced at its receipt, as the loss of the link is, so a variable's source timestamps increase whatever the controller's
 	//clock.  A variable that reads Bad_NotSupported already is left as it is.
@@ -473,29 +485,37 @@ namespace Jde::Opc::Gateway{
 			ShowRevision( named, revision );
 	}
 	//A controller with no such subscription, MID 0004 past the step-down, is no fault of the link's:  its variables read
-	//Bad_NotSupported, said once, and `_Op.LastError` has the refusal.  A link that went first is OnLost's.
+	//Bad_NotSupported, said once, and `_Op.LastError` has the refusal.  Accepted at a later connect, as a controller given the
+	//feature since would, they wait for its report again;  a Bad_NotSupported a report left under one never refused stays.  A
+	//link that went first is OnLost's.
 	α OpenProtocolDriver::OnStateSubscribed( uint16_t mid, Session::Reply&& reply )ι->void{
+		if( !reply && reply.error().Kind!=EFailure::Refused )
+			return;
+		//The subscription's variables whose status `from` picks, each written `to` now:  their paths, for the log.
+		let restate = [&, at=UA_DateTime_now()]( auto from, UA_StatusCode to ){
+			Writes writes;
+			string names;
+			for( uint i=0; i<_state.size(); ++i ){
+				let& variable = _stateVariables[i];
+				if( variable.Subscribes!=mid || !from(_state[i].status) )
+					continue;
+				_state[i] = TighteningResult::Unset( UA_TYPES[variable.Type], to );
+				writes.emplace_back( statePath(i), stamped(Value{_state[i]}, at) );
+				names += Ƒ( "{}{}", names.empty() ? "" : ", ", writes.back().first );
+			}
+			Post( move(writes) );
+			return names;
+		};
 		if( reply ){
+			if( let names = _refused.erase(mid) ? restate([]( UA_StatusCode s ){ return s==UA_STATUSCODE_BADNOTSUPPORTED; }, UA_STATUSCODE_BADWAITINGFORINITIALDATA) : string{}; names.size() )
+				INFO( "({}) the controller accepted MID {:04}, refused before, so {} read Bad_WaitingForInitialData until its report.", _slug, mid, names );
 			WriteRevisions();
 			return;
 		}
-		if( reply.error().Kind!=EFailure::Refused )
-			return;
 		WriteText( "LastError", reply.error().What );
-		Writes writes;
-		string names;
-		let at = UA_DateTime_now();
-		for( uint i=0; i<_state.size(); ++i ){
-			let& variable = _stateVariables[i];
-			if( variable.Subscribes!=mid || _state[i].status==UA_STATUSCODE_BADNOTSUPPORTED )
-				continue;
-			_state[i] = TighteningResult::Unset( UA_TYPES[variable.Type], UA_STATUSCODE_BADNOTSUPPORTED );
-			writes.emplace_back( statePath(i), stamped(Value{_state[i]}, at) );
-			names += Ƒ( "{}{}", names.empty() ? "" : ", ", writes.back().first );
-		}
-		if( writes.size() )
+		_refused.emplace( mid );
+		if( let names = restate([]( UA_StatusCode s ){ return s!=UA_STATUSCODE_BADNOTSUPPORTED; }, UA_STATUSCODE_BADNOTSUPPORTED); names.size() )
 			INFO( "({}) the controller refused MID {:04}, so {} read Bad_NotSupported:  {}", _slug, mid, names, reply.error().What );
-		Post( move(writes) );
 	}
 
 	//MID 0064 for the result before `below`, each reply asking for the next:  one request out at a time.  A controller answers

@@ -29,10 +29,12 @@ namespace Jde::Opc::Gateway{
 	//result.  A link lost during the walk drops what was found and held, and the next connection walks again from the latest.
 	//`Selected` is what the controller has selected, the parameter set of MID 0015, the job of MID 0035 and the VIN of MID 0052
 	//with revision 2's identifier parts beside it, and `Alarm` its alarm:  MID 0071's code and time with Active true, MID 0076's
-	//status as the controller gives it, and MID 0074's acknowledgement, Active false.  Their four subscriptions are asked at
-	//each connect behind the results' and the clock's read, and a report is one post, sourced at its receipt.  A variable reads
-	//Bad_WaitingForInitialData until its first report;  Bad_NotSupported where a report has no value for it or the controller
-	//refuses its subscription;  and, the link lost, Bad_NoCommunication over the value it held Good, until its next report.
+	//status as the controller gives it, and MID 0074's acknowledgement of the alarm held, Active false, another code's leaving the
+	//held one active.  Their four subscriptions are asked at each connect behind the results' and the clock's read, and a report
+	//is one post, sourced at its receipt.  A variable reads Bad_WaitingForInitialData until its first report, and again once a
+	//subscription refused at an earlier connect is accepted;  Bad_NotSupported where a report has no value for it or the
+	//controller refuses its subscription;  and, the link lost, Bad_NoCommunication over the value it held Good, until its next
+	//report.
 	//`_Op` is the diagnostics:  Connected and Since follow the link, LastError each failed attempt and each MID 0004, Reconnects
 	//the links that came back after a loss, as the endpoint's `_Connection` counts them;  Identity, LinkLevel and Revisions are the
 	//last connection's, kept through a loss;  Skew is the controller's clock less the gateway's at each connect, MID 0080's, with a
@@ -109,6 +111,7 @@ namespace Jde::Opc::Gateway{
 		optional<Recovery> _recovery;//from a reconnect until its walk ends:  results pushed meanwhile are held.
 		bool _clockBack{};//results are taking the last's time after a clock went back past maxSkew:  warned once.
 		vector<Value> _state;//`Selected`'s and `Alarm`'s variables, each as it was last written:  one that reads Good goes Bad_NoCommunication with the link.
+		flat_set<uint16_t> _refused;//the state subscriptions a refusal marked Bad_NotSupported:  accepted, their variables wait for a report again.
 		UA_UInt64 _results{}, _lost{}, _total{}, _ok{}, _nok{};
 	};
 }

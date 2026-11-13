@@ -12,6 +12,7 @@ namespace Jde::Opc::Gateway::Tests{
 	using OpenProtocol::Mid0035;
 	using OpenProtocol::Mid0052;
 	using OpenProtocol::Mid0071;
+	using OpenProtocol::Mid0074;
 	using OpenProtocol::Mid0076;
 
 	//docs/open-protocol/plan.md Phase 7 (#469):  the Open Protocol driver's `Selected` and `Alarm`
@@ -69,7 +70,8 @@ namespace Jde::Opc::Gateway::Tests{
 	//`Selected` and `Alarm` are fixed, as the rest of the row's address space is, and each of their variables reads
 	//Bad_WaitingForInitialData until its report.  Their subscriptions are asked at the connect behind the results' and the
 	//clock's read.  A parameter set, a job, a VIN with its identifier parts and an alarm each land as they are pushed, sourced
-	//at their receipt, the alarm's own time read in the row's zone;  an alarm acknowledged on the controller is no longer active.
+	//at their receipt, the alarm's own time read in the row's zone;  an alarm acknowledged on the controller is no longer active,
+	//and an older one acknowledged leaves the alarm held active.
 	TEST_F( DriverStateTests, SelectedAndAlarmFollowTheirPushes ){
 		Controller station{ *Executor(), ControllerPort(), Station() };
 		const DriverRow row{ "driver-state", NewYork };
@@ -142,14 +144,30 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( SourceTime(Of(raised, "Alarm.Time")) );
 		EXPECT_GE( *SourceTime(Of(raised, "Alarm.Time")), before ) << "its receipt, not the alarm's own time";
 
+		station.Raise( Alarm("E405", Raised+1min) );
+		ASSERT_TRUE( Wait(row, "Alarm.Code", UA_STATUSCODE_GOOD, "\"E405\"") ) << Statuses( ReadState(row) );
+		let second = ReadState( row );
+		let older = OpenProtocol::Encode( {.Revision=2}, Mid0074{.ErrorCode="E404"} );
+		ASSERT_TRUE( older.has_value() ) << older.error().What;
+		station.SendRaw( *older );
+		station.Select( Pset(8) );//behind it on the link:  the set written, the acknowledgement has been read.
+		ASSERT_TRUE( Wait(row, "Selected.Pset", UA_STATUSCODE_GOOD, "8") ) << Statuses( ReadState(row) );
+		{
+			let read = ReadState( row );
+			EXPECT_EQ( Text(Of(read, "Alarm.Active")), "true" ) << "E404 acknowledged, E405 still active";
+			EXPECT_EQ( Text(Of(read, "Alarm.Code")), "\"E405\"" );
+			for( let path : {"Alarm.Code", "Alarm.Active", "Alarm.Time"} )
+				EXPECT_EQ( SourceTime(Of(read, path)), SourceTime(Of(second, path)) ) << path << ":  nothing written";
+		}
+
 		station.AcknowledgeAlarm();
 		ASSERT_TRUE( Wait(row, "Alarm.Active", UA_STATUSCODE_GOOD, "false") ) << Statuses( ReadState(row) );
 		{
 			let read = ReadState( row );
 			EXPECT_EQ( Of(read, "Alarm.Code").status, UA_STATUSCODE_GOOD );
-			EXPECT_EQ( Text(Of(read, "Alarm.Code")), "\"E404\"" ) << "MID 0074's";
-			EXPECT_EQ( Time(Of(read, "Alarm.Time")), optional<TimePoint>{RaisedUtc} );
-			EXPECT_EQ( SourceTime(Of(read, "Alarm.Time")), SourceTime(Of(raised, "Alarm.Time")) ) << "MID 0074 carries no time:  as the alarm left it";
+			EXPECT_EQ( Text(Of(read, "Alarm.Code")), "\"E405\"" ) << "MID 0074's";
+			EXPECT_EQ( Time(Of(read, "Alarm.Time")), optional<TimePoint>{RaisedUtc+1min} );
+			EXPECT_EQ( SourceTime(Of(read, "Alarm.Time")), SourceTime(Of(second, "Alarm.Time")) ) << "MID 0074 carries no time:  as the alarm left it";
 		}
 		station.Select( Pset(9) );
 		EXPECT_TRUE( Wait(row, "Selected.Pset", UA_STATUSCODE_GOOD, "9") ) << Statuses( ReadState(row) );
@@ -157,8 +175,9 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//The link lost, each variable that read Good reads Bad_NoCommunication over the value it had, from the loss on.  The link
-	//back, a controller that pushes nothing as a subscription is accepted leaves them so, and a push to each clears it;  one
-	//that pushes what it has clears them at the connect, the alarm by MID 0076's status.
+	//back, a controller that pushes nothing as a subscription is accepted leaves them so, and a push to each clears it, though
+	//not another alarm's acknowledgement;  one that pushes what it has clears them at the connect, the alarm by MID 0076's
+	//status.
 	TEST_F( DriverStateTests, ALostLinkIsBadNoCommunication ){
 		Controller station{ *Executor(), ControllerPort(), Station() };
 		const DriverRow row{ "driver-state-link", NewYork };
@@ -198,7 +217,17 @@ namespace Jde::Opc::Gateway::Tests{
 		station.Select( Pset(7) );//as it was:  a report all the same.
 		ASSERT_TRUE( Wait(row, "Selected.Pset", UA_STATUSCODE_GOOD, "7") ) << Statuses( ReadState(row) );
 		EXPECT_EQ( Of(ReadState(row), "Selected.Job").status, NoCommunication ) << "each one's own report";
-		station.Select( Job(12) );
+		let other = OpenProtocol::Encode( {.Revision=2}, Mid0074{.ErrorCode="E403"} );
+		ASSERT_TRUE( other.has_value() ) << other.error().What;
+		station.SendRaw( *other );
+		station.Select( Job(12) );//behind it on the link.
+		ASSERT_TRUE( Wait(row, "Selected.Job", UA_STATUSCODE_GOOD, "12") ) << Statuses( ReadState(row) );
+		{
+			let read = ReadState( row );
+			for( let path : {"Alarm.Code", "Alarm.Active", "Alarm.Time"} )
+				EXPECT_EQ( Of(read, path).status, NoCommunication ) << path << ":  E403 acknowledged says nothing of E404";
+			EXPECT_EQ( Text(Of(read, "Alarm.Code")), "\"E404\"" );
+		}
 		station.Select( Vin("VIN0123456789") );
 		station.Raise( Alarm("E405", Raised+1min) );
 		ASSERT_TRUE( WaitAll(row, UA_STATUSCODE_GOOD) ) << Statuses( ReadState(row) );
@@ -290,8 +319,9 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//What a controller lacks reads Bad_NotSupported:  a subscription it refuses, said once and in `_Op.LastError`, the link
-	//standing;  the identifier parts of a VIN pushed at revision 1, though its subscription was accepted at 2, which
-	//`_Op.Revisions` follows;  and the time of an alarm sent with none.  MID 0076's status of no alarm reads Active false.  The
+	//standing, and accepted at a later connection, waiting for its report again;  the identifier parts of a VIN pushed at
+	//revision 1, though its subscription was accepted at 2, which `_Op.Revisions` follows;  and the time of an alarm sent with
+	//none.  MID 0076's status of no alarm reads Active false, and with no time leaves the time as the alarm left it.  The
 	//controller numbers no messages here, so each push is acknowledged by its own MID.
 	TEST_F( DriverStateTests, WhatAControllerLacksIsNotSupported ){
 		auto plain = Station();
@@ -333,6 +363,19 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Of(read, "Alarm.Time").status, UA_STATUSCODE_GOOD );
 			EXPECT_EQ( Time(Of(read, "Alarm.Time")), optional<TimePoint>{RaisedUtc} );
 		}
+		let timeless = OpenProtocol::Encode( {.Revision=3}, Mid0076{.AlarmStatus=0, .ControllerReady=1, .ToolReady=1, .ToolHealth=1} );
+		ASSERT_TRUE( timeless.has_value() ) << timeless.error().What;
+		let sent = ReadState( row );
+		station.SendRaw( *timeless );
+		station.Select( Pset(3) );//behind it on the link.
+		ASSERT_TRUE( Wait(row, "Selected.Pset", UA_STATUSCODE_GOOD, "3") ) << Statuses( ReadState(row) );
+		{
+			let read = ReadState( row );
+			EXPECT_NE( SourceTime(Of(read, "Alarm.Active")), SourceTime(Of(sent, "Alarm.Active")) ) << "the status written";
+			EXPECT_EQ( Of(read, "Alarm.Time").status, UA_STATUSCODE_GOOD ) << "no alarm, not an alarm with no time";
+			EXPECT_EQ( Time(Of(read, "Alarm.Time")), optional<TimePoint>{RaisedUtc} );
+			EXPECT_EQ( SourceTime(Of(read, "Alarm.Time")), SourceTime(Of(sent, "Alarm.Time")) ) << "as the alarm left it";
+		}
 
 		//The next connection is refused the same, and says nothing more of it.
 		station.Drop();
@@ -344,5 +387,20 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( SourceTime(Of(again, "Selected.Job")), SourceTime(Of(refused, "Selected.Job")) ) << "as the first refusal left it";
 		EXPECT_EQ( SourceTime(Of(again, "Selected.IdentifierPart2")), SourceTime(Of(vin, "Selected.IdentifierPart2")) ) << "Bad_NotSupported already";
 		EXPECT_EQ( said.Find([&]( const Logging::Entry& e ){ return e.Message().contains( "MID 0034" ) && e.Message().contains( "Bad_NotSupported" ) && e.Message().contains( row.Slug ); }).size(), 1u );
+
+		//Accepted at the next, as by a controller given jobs since, the job waits for its report again.
+		station.Edit( []( Controller::Script& script ){ script.Refuses.erase( 34 ); } );
+		station.Drop();
+		ASSERT_TRUE( WaitOp(row, "Reconnects", []( let& v ){ return OpCount( v )==2u; }) );
+		ASSERT_TRUE( WaitRevisions(row, "0001:6 0015:3 0035:6 0052:1 0061:7 0071:3 0080:1") ) << OpText( Op(row, "Revisions") );
+		ASSERT_TRUE( Until(row, []( const State& read ){ return Of( read, "Selected.Job" ).status==Waiting; }) ) << Statuses( ReadState(row) );
+		let accepted = ReadState( row );
+		for( let path : {"Selected.IdentifierPart2", "Selected.IdentifierPart3", "Selected.IdentifierPart4"} ){
+			EXPECT_EQ( Of(accepted, path).status, NotSupported ) << path << ":  a report's, not the refusal's";
+			EXPECT_EQ( SourceTime(Of(accepted, path)), SourceTime(Of(vin, path)) ) << path;
+		}
+		EXPECT_EQ( said.Find([&]( const Logging::Entry& e ){ return e.Message().contains( "MID 0034" ) && e.Message().contains( "Bad_WaitingForInitialData" ) && e.Message().contains( row.Slug ); }).size(), 1u );
+		station.Select( Job(12) );
+		EXPECT_TRUE( Wait(row, "Selected.Job", UA_STATUSCODE_GOOD, "12") ) << Statuses( ReadState(row) );
 	}
 }

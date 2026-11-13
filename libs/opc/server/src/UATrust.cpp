@@ -1,7 +1,6 @@
 #include <jde/opc/server/UATrust.h>
 #include <shared_mutex>
 #include <jde/fwk/crypto/Certificate.h>
-#include <jde/opc/UAException.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
@@ -129,18 +128,18 @@ namespace Jde::Opc::Server{
 			return y;//rescanned just now, or another thread is: the original failure, exactly as before the reload existed.
 		UA_TrustListDataType fresh;
 		UA_TrustListDataType_init( &fresh );
-		try{
-			if( LoadTrustList(fresh) ){//a cert re-issued or copied in after startup shouldn't require a restart - rescan before failing.
-				for( auto g : _groups ){
-					if( g && g->setTrustList )
-						UAε( g->setTrustList(g, &fresh) );//sets reloadRequired - the retry rebuilds lazily. Not UA_Server_setCertificates: that closes now-untrusted channels, re-entrant with the OPN handshake this runs inside.
-				}
-				y = _originals[i]( group, certificate );
-				LOG( y==UA_STATUSCODE_GOOD ? ELogLevel::Information : ELogLevel::Warning, _tags, "Reloaded trusted certificates after failed verify: {} -> {}.", UA_StatusCode_name(sc), UA_StatusCode_name(y) );
+		if( LoadTrustList(fresh) ){//a cert re-issued or copied in after startup shouldn't require a restart - rescan before failing.
+			//Each group on its own, a refusal said:  that group keeps the list it had, so what was added since stays untrusted by
+			//it until the files change again or a restart, which loads the list unmeasured.  Said once a change, as the scan only
+			//hands over a list that changed.
+			for( uint g=0; g<_groups.size(); ++g ){
+				if( !_groups[g] || !_groups[g]->setTrustList )
+					continue;
+				if( let refused = _groups[g]->setTrustList(_groups[g], &fresh); refused )//sets reloadRequired - the retry rebuilds lazily. Not UA_Server_setCertificates: that closes now-untrusted channels, re-entrant with the OPN handshake this runs inside.
+					WARN( "The {} certificate group refused the trust list of {} certificate(s), {} bytes, at a rescan:  {}.  The certificates added since it last took one stay untrusted until the trusted files change again or the server restarts.", g ? "session" : "secure channel", fresh.trustedCertificatesSize, UA_TrustListDataType_getSize(&fresh), UA_StatusCode_name(refused) );
 			}
-		}
-		catch( UAException& e ){//degradation is exactly the pre-reload behavior: return the original failure.
-			e.PrependWhat( "Trust rescan failed" );
+			y = _originals[i]( group, certificate );
+			LOG( y==UA_STATUSCODE_GOOD ? ELogLevel::Information : ELogLevel::Warning, _tags, "Reloaded trusted certificates after failed verify: {} -> {}.", UA_StatusCode_name(sc), UA_StatusCode_name(y) );
 		}
 		UA_TrustListDataType_clear( &fresh );
 		if( y!=UA_STATUSCODE_GOOD && !_rejectedDir.empty() )
