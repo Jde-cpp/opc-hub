@@ -12,11 +12,13 @@ namespace Jde::Access{
 		α OnChange( const jvalue& j, QL::SubscriptionId clientId )ε->void override;
 		α Shutdown( bool terminate, SL sl )ι->void override;
 		//For what rests on the rights and looks again when they change, a running flow's admission (the gateway's FlowHost):
-		//`f` is called after each change a listener of this process has applied to its cache, on the subscription's thread, so
-		//it only queues.  A change the cache refused, which OnChange throws, calls none.
+		//`f` is called after each change a listener of this process has applied to its cache, and after each snapshot a
+		//ConfigureAwait loads - a reconnect's reload, which no event reports - on that thread, so it only queues.  A change the
+		//cache refused, which OnChange throws, calls none.
 		using Observer = function<void()>;
 		Ω Observe( Observer f )ι->uint;//its handle, for Unobserve.
 		Ω Unobserve( uint handle )ι->void;
+		Ω Notify()ι->void;//every observer called:  the cache changed.
 		sp<QL::IQL> _qlServer;
 	private:
 		α Apply( const jvalue& j, QL::SubscriptionId clientId )ε->void;

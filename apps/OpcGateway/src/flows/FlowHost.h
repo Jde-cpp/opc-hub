@@ -23,7 +23,9 @@ namespace Jde::Opc::Gateway{
 	//  `link out` to another flow's `link in`:  Update on each flow that holds it, at the deploy alone.
 	//A refusal at a deploy refuses the deploy and writes nothing.  At a start it leaves the flow stopped, and for a running
 	//flow it stops it, with an Error and the node's status saying why, until someone with the rights deploys it again;  a
-	//check that could not be made is tried again at a start, RetryInterval on, and leaves a running flow running.
+	//check that could not be made, or a start whose statement failed, is tried again RetryInterval on, and a check that
+	//could not be made leaves a running flow running.  A node in index form is spelled through its server at its run's
+	//admission, and the run's re-checks stand on that spelling.
 	//The sources and sinks are a later phase's:  until then a hosted node is made as a stand-in, a source that emits
 	//nothing and a sink whose message is its error, each with a status that says so.
 	struct FlowHost final : noncopyable{
@@ -47,7 +49,7 @@ namespace Jde::Opc::Gateway{
 		//deployFlow's (spec *Flows*):  Update on the flow, the graph read and admitted for the deployer, the version written
 		//and made the flow's current one, and the flow, when it is enabled, restarted from it alone.  Dropped:  what the
 		//run before it held or had queued, counted as its Stop counts them.  A refusal is thrown with its node, and the
-		//flow runs on as it was.
+		//flow runs on as it was.  A start that fails once the version is written answers with its Fault, and is tried again.
 		struct Deployed final{ uint32 Version; TimePoint Time; string UserName; bool Running; optional<Flows::Fault> Fault; uint Dropped; };
 		struct DeployAwait final : AnyAwait<Deployed>{
 			DeployAwait( FlowHost& host, FlowPK flow, jvalue&& graph, string&& comment, QL::Creds&& deployer, SL sl )ι:
@@ -73,55 +75,66 @@ namespace Jde::Opc::Gateway{
 		α SetContext( optional<FlowPK> flow, string node, string key, jvalue value, SRCE )ι->AnyVoidTask;
 		//FlowMAwait's:  the live side of each table edit, lazy as HistHost's are.
 		α Changed( DB::Key key )ι->AnyVoidTask;//created, updated, deleted or restored:  the row read again, and the flow started or stopped as it now says.
-		α Purging( FlowPK id, optional<FlowRow>& row )ι->AnyVoidTask;//before its statement:  the flow stops and its versions, runs and context rows go;  row:  its, for Purged.
-		α Purged( FlowRow row )ι->AnyVoidTask;//its trace directory, and its access row and the grants on it, best effort.
+		//Before its statement, flow_purge, which takes the versions, runs and context rows with the row:  the flow stops and
+		//what it left of its context is written, so a purge that fails leaves it whole.  row:  its, for Purged.
+		α Purging( FlowPK id, optional<FlowRow>& row )ι->AnyVoidTask;
+		//The entry again, which an edit while the statement ran may have made, its trace directory, and its access row and the
+		//grants on it, best effort.
+		α Purged( FlowRow row )ι->AnyVoidTask;
 		//A group's rows changed - its nodes, its deletion, its purge (HistGroupMAwait):  every running flow is admitted
 		//again, since a node that left its group has no enforced row behind it.  Only queues.
 		α GroupChanged( HistGroupPK group )ι->void;
 		α Recheck()ι->void;//the access observer's, and GroupChanged's:  one pass at a time, and one more for a change during it.
 		α Rechecks()Ι->uint{ return _rechecks; }//the passes finished, for tests.
 		static constexpr Duration ContextDelay{ 1s };//the context's debounce:  a change is written this long after the first not yet written.
-		static constexpr Duration RetryInterval{ 30s };//how soon a start whose admission could not be checked is tried again.
+		static constexpr Duration RetryInterval{ 30s };//how soon a start that could not be checked or made, or a context write that failed, is tried again.
+		static constexpr uint ContextTries{ 3 };//the writes a context value may fail while others are written, before it is dropped with an Error.
 	private:
+		//An index-form node's spelling (HistNodeText), by its id in the graph:  its server asked once a run.
+		using Spellings = flat_map<string,string>;
 		//A flow's run:  one Flows::Flow, which runs once, with what it was made from.
 		struct Run final{
-			Run( Flows::Graph graph, Flows::Flow::Config&& config, uint32 version, UserPK deployer )ι:
-				Graph{ graph }, Flow{ move(graph), move(config) }, Version{ version }, Deployer{ deployer }
+			Run( Flows::Graph graph, Flows::Flow::Config&& config, uint32 version, UserPK deployer, Spellings spelled )ι:
+				Graph{ graph }, Flow{ move(graph), move(config) }, Version{ version }, Deployer{ deployer }, Spelled{ move(spelled) }
 			{}
 			const Flows::Graph Graph;
 			Flows::Flow Flow;
 			const uint32 Version;
 			const UserPK Deployer;
+			Spellings Spelled;//under _edits.
 		};
 		//Links:  the names of the current version's `link in` nodes.  Retry:  the timer of a start to try again.
 		struct Entry final{ FlowRow Row; flat_set<string> Links; sp<Run> Live; Hist::IClock::TimerId Retry{}; };
 		struct AdmitAwait final : AnyAwait<optional<FlowRefusal>>{
-			AdmitAwait( FlowHost& host, FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, SL sl )ι:
-				AnyAwait<optional<FlowRefusal>>{ sl }, Flow{ flow }, Graph{ graph }, Deployer{ deployer }, Session{ move(session) }, Deploying{ deploying }, _host{ host }
+			AdmitAwait( FlowHost& host, FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, Spellings& spelled, SL sl )ι:
+				AnyAwait<optional<FlowRefusal>>{ sl }, Flow{ flow }, Graph{ graph }, Deployer{ deployer }, Session{ move(session) }, Deploying{ deploying }, Spelled{ spelled }, _host{ host }
 			{}
 			const FlowPK Flow;
 			const Flows::Graph& Graph;
 			const UserPK Deployer;
 			const sp<Web::Server::SessionInfo> Session;//the deployer's, at a deploy that has one.
 			const bool Deploying;
+			Spellings& Spelled;//the run's:  read, and added to for a node it lacks.
 		protected:
 			α Suspend()ι->void override{ _host.Admitting( *this ); }
 		private:
 			FlowHost& _host;
 		};
 		//The graph's first refusal for its deployer, in node order, or none.  `deploying`:  the checks a deploy alone makes.
-		α Admit( FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, SRCE )ι->AdmitAwait{ return { *this, flow, graph, deployer, move(session), deploying, sl }; }
+		α Admit( FlowPK flow, const Flows::Graph& graph, UserPK deployer, sp<Web::Server::SessionInfo> session, bool deploying, Spellings& spelled, SRCE )ι->AdmitAwait{ return { *this, flow, graph, deployer, move(session), deploying, spelled, sl }; }
 		α Admitting( AdmitAwait& await )ι->VoidTask;
 		α Deploying( DeployAwait& await )ι->VoidTask;
 		α Loading( AnyVoidAwait& await )ι->VoidTask;
 		//Each under _edits.
 		//The flow's current version read, admitted for its deployer and started:  its entry holds the run, running or
-		//stopped with its fault.  A check that could not be made schedules another Launch.
+		//stopped with its fault.  A check that could not be made, or a statement that failed, schedules another Launch.
 		α Launch( FlowRow row )ι->AnyVoidTask;
-		//The run made over the flow's context rows and started, the entry's from here.
-		α Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer )ι->AnyVoidTask;
-		//A start that was refused:  the entry's run is one that never started, stopped with the fault.
-		α Refused( const FlowRow& row, Flows::Graph graph, uint32 version, UserPK deployer, Flows::Fault fault )ι->void;
+		//The run made over the flow's context rows, and what of its context is still to write, and started, the entry's from
+		//here.  A select that fails leaves the entry a refused run, to try again.
+		α Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer, Spellings spelled )ι->AnyVoidTask;
+		//A start that was refused:  the entry's run is one that never started, stopped with the fault.  `retry`:  Launch again,
+		//RetryInterval on.
+		α Refused( const FlowRow& row, Flows::Graph graph, uint32 version, UserPK deployer, Flows::Fault fault, bool retry=false )ι->void;
 		struct HaltAwait;//a run stopped, its teardown done.
 		struct SetAwait;//a context value set on a run's strand.
 		α Retry( FlowPK id )ι->VoidTask;//the retry timer's.
@@ -134,7 +147,14 @@ namespace Jde::Opc::Gateway{
 		α ContextChanged( optional<FlowPK> flow, sv node, sv key, const jvalue* value )ι->void;
 		α Flush()ι->void;//the debounce's.
 		α Flushing( AnyVoidAwait* await )ι->VoidTask;//takes _edits.
-		α WriteContext()ι->AnyVoidTask;//under _edits:  what is queued, written.
+		//Under _edits:  what is queued, written, each key on its own.  One that fails is queued again, RetryInterval on, and
+		//dropped once it has failed ContextTries passes in which others were written:  a pass that writes nothing is the
+		//database's failure, not the key's.
+		α WriteContext()ι->AnyVoidTask;
+		//A scope's context:  json text by node and key, the global scope's with flow 0.
+		using ContextValues = flat_map<std::pair<string,string>,optional<string>>;
+		α Unwritten( FlowPK flow, ContextValues& values )Ι->void;//what is still to write laid over `values`, the rows read:  a write that failed left the row behind it.
+		α Forget( FlowPK flow )ι->void;//a purged flow's context still to write.
 
 		mutable std::mutex _mutex;
 		flat_map<FlowPK,Entry> _flows;
@@ -149,9 +169,10 @@ namespace Jde::Opc::Gateway{
 		bool _recheck{}, _rechecking{};
 		std::atomic<uint> _rechecks{};
 		CoMutex _edits;//every start, stop, deploy, purge and check of a flow, and each write of the context.
-		std::mutex _contextMutex;
+		mutable std::mutex _contextMutex;
 		using ContextKey = tuple<FlowPK,string,string>;//a flow, 0 for the global scope, a node and a key.
 		flat_map<ContextKey,optional<string>> _pending;//the values to write, json text:  none for a key that went.
+		flat_map<ContextKey,uint> _contextFailures;//the passes a key has failed while others were written.
 		bool _contextArmed{};
 	};
 }

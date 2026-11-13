@@ -219,6 +219,7 @@ local attributes( i ) = {
 		//refusal of every generic mutation of the other three, which deployFlow, the host and a replay write.
 		flows:{
 			comment: "A flow:  a graph of nodes the gateway runs, deployed as versions (flow_versions)",
+			purgeProc: "flow_purge", //its context, runs and versions go with it, in one transaction:  a purge that fails leaves the flow whole, to start again.
 			columns: {
 				flowId: common.pkSequenced,
 				guid: common.types.guid+{ length: 16, updateable:false, i:1, comment:"Generated when the flow is created (FlowMAwait), unique, and the criteria of the flow's own access row (spec *Rights*), which no later flow inherits, as a group's is.  QL reads and writes its text." },
@@ -249,8 +250,8 @@ local attributes( i ) = {
 			columns: {
 				flowContextId: common.pkSequenced,
 				flowId: tables.flows.columns.flowId+{ pkTable: "flows", sk:null, nullable:true, updateable:false, i:1, comment:"Null for the global scope, the gateway's." },
-				nodeId: common.types.varchar+{ length:256, updateable:false, i:2, comment:"The node's id in the graph;  empty for the flow's own scope, and for the global one." },
-				name: common.types.varchar+{ length:256, updateable:false, i:3, comment:"The key.  With the two before it, under mysql's 3072-byte key limit at four bytes a character." },
+				nodeId: common.types.varchar+{ length:256, caseSensitive:true, updateable:false, i:2, comment:"The node's id in the graph;  empty for the flow's own scope, and for the global one." },
+				name: common.types.varchar+{ length:256, caseSensitive:true, updateable:false, i:3, comment:"The key, case-sensitive as the flow's store is:  under a server's default collation count and Count were one row.  With the two before it, under mysql's 3072-byte key limit at four bytes a character." },
 				value: common.types.text+{ i:4, comment:"The value as json text." }
 			},
 			naturalKeys: [["flow_id", "node_id", "name"]]

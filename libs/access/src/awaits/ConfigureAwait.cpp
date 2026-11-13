@@ -3,6 +3,7 @@
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/db/meta/AppSchema.h>
+#include <jde/access/AccessListener.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/awaits/EventsSubscribeAwait.h>
 #include "IdentityLoadAwait.h"
@@ -28,6 +29,7 @@ namespace Jde::Access{
 			//round trips to the AppServer, so a startup or reconnect waits for the slowest instead of the sum.
 			auto [identities, resources, roles, acl] = co_await All( IdentityLoadAwait{QlServer, Executer}, ResourceLoadAwait{QlServer, Schemas, OpcServerInstance, Executer, AllSchemas}, RoleLoadAwait{QlServer, Executer}, AclLoadAwait{QlServer, Executer} );
 			Authorizer->Load( move(identities), move(resources), move(roles), move(acl) );
+			AccessListener::Notify();//a reload's snapshot is a change no event reports.
 			if( !Reload ){//a reload's subscriptions are still live (Replay re-issued them) - it was only ever about the snapshot.
 				vector<string> schemaNames;//empty = every schema:  the await then sends no predicate at all - an empty array would be an In filter matching nothing.
 				if( !AllSchemas ){

@@ -32,6 +32,7 @@ namespace Jde::DB{
 		β PatternOperator( EOperator op, SRCE )Ε->sv;              //SQL Server: LIKE, but no regex before 2025.
 		β PatternParam( EOperator op, str pattern, SRCE )Ε->string;
 		β BoolLiteral( bool v )Ι->sv{ return v ? "1" : "0"; } //how a bit default is spelled in ddl.
+		β BinaryCollation()Ι->sv{ return "Latin1_General_100_BIN2_UTF8"; } //a caseSensitive column's:  case, accents and trailing spaces all count.  _UTF8 keeps a varchar's text UTF-8.  Empty (sqlite):  the default already is.
 		//A configured `default:` as this dialect's ddl spells it:  a bool through BoolLiteral, "$now" through NowDefault, a
 		//string quoted (QuoteLiteral), a number as is.  Empty for no default - null, or the empty bytes a nullable binary
 		//column carries - and a throw for a type ddl has no spelling for.  The create statement and #241's reconciliation

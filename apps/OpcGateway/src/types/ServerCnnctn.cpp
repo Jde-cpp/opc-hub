@@ -70,10 +70,8 @@ namespace Jde::Opc::Gateway{
 		return Ƒ( "opc.tcp://127.0.0.1:{}", port );
 	}
 	α ServerCnnctn::SlugError( sv slug, SL sl )ι->up<Exception>{
-		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
-		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
-		if( !valid )
-			return mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+		if( auto e = FileSlugError(slug, sl); e )
+			return e;
 		//the web's routes under a gateway, apps/gateways/<instance>/<segment>, would shadow the connection's page:  the watch list
 		//(419-watch #12), the historian's lists (#337), the calendars (#391), OEE's lists (#404, #409) and its dashboard (#406).  As ServerCnnctn.fieldError.
 		constexpr std::array reserved{ "watch"sv, "templates"sv, "groups"sv, "calendars"sv, "machines"sv, "lines"sv, "reasons"sv, "oee"sv };
@@ -177,5 +175,12 @@ namespace Jde::Opc::Gateway{
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
+	}
+}
+namespace Jde::Opc{
+	α Gateway::FileSlugError( sv slug, SL sl )ι->up<Exception>{
+		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
+		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
+		return valid ? nullptr : mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
 	}
 }

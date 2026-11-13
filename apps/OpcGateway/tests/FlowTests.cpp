@@ -97,6 +97,35 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		Ω Versions( uint32 flow )ε->jarray{ return QL().QuerySync<jarray>( "flowVersions( flowId:$flow ){ version graph identityId userName comment }", {{"flow", flow}}, User() ); }
 		Ω Contexts( uint32 flow )ε->jarray{ return QL().QuerySync<jarray>( "flowContexts( flowId:$flow ){ nodeId name value }", {{"flow", flow}}, User() ); }
+		//setFlowContext:  a null flow is the gateway's scope, a null node the flow's.
+		Ω SetContext( const jvalue& flow, const jvalue& node, sv name, const jvalue& value )ε->jobject{
+			return Mutate( "setFlowContext( flow:$flow, node:$node, name:$name, value:$value ){ flow node name value }", {{"flow", flow}, {"node", node}, {"name", name}, {"value", value}} ).as_object();
+		}
+		//The row's value, compared as C++ compares:  none with no row.
+		Ω Held( uint32 flow, sv node, sv name )ε->string{
+			for( let& row : Contexts(flow) ){
+				if( let& o = row.as_object(); Json::AsSV(o, "name")==name && Json::FindDefaultSV(o, "nodeId")==node )
+					return Json::AsString( o, "value" );
+			}
+			return {};
+		}
+		Ω Execute( string sql )ε->void{ DS()->ExecuteSync( {move(sql), {}} ); }//mysql's text protocol, with no params:  a trigger can't be prepared.
+		//The table under another name until the cleanup, so each statement that names it fails.
+		Ω Renamed( sv table )ε{
+			let name = GetViewPtr( table )->SqlName();
+			Execute( Ƒ("alter table {} rename to {}_away", name, name) );
+			return absl::Cleanup{ [name]{ try{ Execute( Ƒ("alter table {}_away rename to {}", name, name) ); }catch( const std::exception& e ){ ADD_FAILURE() << name << " wasn't named again:  " << e.what(); } } };
+		}
+		//A trigger that fails each insert of the context key `name` until the cleanup:  sqlite's or mysql's, the dialects the suite runs on.
+		Ω FailingInserts( sv name )ε{
+			let table = GetViewPtr( FlowTable::Contexts )->SqlName();
+			let& syntax = DS()->Syntax();
+			THROW_IF( syntax.HasProcs() && !syntax.HasUnsigned(), "No trigger is written here for SQL Server." );
+			Execute( syntax.HasProcs()
+				? Ƒ( "create trigger flow_tests_fail before insert on {} for each row begin if new.name='{}' then signal sqlstate '45000' set message_text='refused by the test'; end if; end", table, name )
+				: Ƒ( "create trigger flow_tests_fail before insert on {} when new.name='{}' begin select raise(abort, 'refused by the test'); end", table, name ) );
+			return absl::Cleanup{ []{ try{ Execute( "drop trigger flow_tests_fail" ); }catch( const std::exception& e ){ ADD_FAILURE() << "the trigger wasn't dropped:  " << e.what(); } } };
+		}
 		Ω Row( uint32 flow )ε->jobject{
 			let rows = QL().QuerySync<jarray>( "flows( id:$id ){ id guid version enabled deleted }", {{"id", flow}}, User() );
 			THROW_IF( rows.size()!=1, "Flow {} has {} rows.", flow, rows.size() );
@@ -504,16 +533,8 @@ namespace Jde::Opc::Gateway::Tests{
 			N( "same", "switch", R"({"rules":[{"t":"eq","v":"limit","vt":"flow"},{"t":"else"}]})", {{"d"}, {"d"}} ),
 			N( "d", "debug" )
 		}) );
-		let set = []( const jvalue& flow, const jvalue& node, sv name, const jvalue& value ){
-			return Mutate( "setFlowContext( flow:$flow, node:$node, name:$name, value:$value ){ flow node name value }", {{"flow", flow}, {"node", node}, {"name", name}, {"value", value}} ).as_object();
-		};
-		let held = [&]( sv node, sv name )->string{//the row's value;  none with no row.
-			for( let& row : Contexts(flow) ){
-				if( let& o = row.as_object(); Json::AsSV(o, "name")==name && Json::FindDefaultSV(o, "nodeId")==node )
-					return Json::AsString( o, "value" );
-			}
-			return {};
-		};
+		let set = SetContext;
+		let held = [&]( sv node, sv name ){ return Held( flow, node, name ); };
 		let probe = [&]( vector<uint> sent, sv because ){
 			Inject( flow, "probe", jobject{{"payload", 8}} );
 			EXPECT_EQ( Sent(flow, "same", sent), sent ) << because;
@@ -586,5 +607,132 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitUntil([&]{ return !Running( flow ); }, 15s) ) << "the group's purge is a check";
 		EXPECT_EQ( Fault(flow).NodeId, "g" );
 		EXPECT_TRUE( Has(Fault(flow).Message, "isn't one this gateway historizes") );
+	}
+
+	//reviews-issue/448-flows-host.md #1:  a start whose statement fails leaves the flow with its fault and is tried again, and a
+	//deploy whose version is written answers with it.  The context rows' table is renamed away, so the start's select fails.
+	TEST_F( FlowTests, AStartThatFailsIsTriedAgain ){
+		let flow = CreateFlow( "start-fails" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		auto clock = ms<Hist::Tests::ManualClock>( Clock::now() );
+		Flows().Stop();
+		absl::Cleanup restart = []{ Flows().Stop(); Flows().Start(); };
+		Flows().Start( clock );
+		ASSERT_EQ( Deploy(flow, Plain()).at("running"), true );
+
+		auto named = Renamed( FlowTable::Contexts );
+		let deployed = Deploy( flow, Plain() );
+		EXPECT_EQ( deployed.at("version"), 2 ) << serialize( deployed );
+		EXPECT_EQ( deployed.at("running"), false );
+		ASSERT_TRUE( deployed.at("fault").is_object() ) << serialize( deployed );
+		EXPECT_TRUE( Has(Json::AsString(deployed.at("fault").as_object(), "message"), "It could not be started:") );
+		EXPECT_EQ( Row(flow).at("version"), 2 ) << "the version is current";
+		EXPECT_TRUE( Has(Fault(flow).Message, "It could not be started:") );
+
+		std::move( named ).Invoke();
+		clock->Advance( FlowHost::RetryInterval );
+		EXPECT_TRUE( WaitUntil([&]{ return Running( flow ); }, 15s) ) << Fault( flow ).Message;
+	}
+
+	//#2:  flow_purge takes the rows in one transaction, so a purge that fails leaves the flow whole, and it runs again.
+	TEST_F( FlowTests, APurgeThatFailsLeavesTheFlowWhole ){
+		let flow = CreateFlow( "purge-fails" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		Deploy( flow, Graph({N("in", "inject", "{}", {{"set"}}), N("set", "change", R"({"rules":[{"t":"set","p":"seen","pt":"flow","to":"payload","tot":"msg"}]})")}) );
+		Inject( flow, "in", jobject{{"payload", 5}} );
+		ASSERT_TRUE( WaitUntil([&]{ return !Contexts( flow ).empty(); }) );
+		{
+			auto named = Renamed( FlowTable::Runs );
+			EXPECT_THROW( Mutate("purgeFlow( id:$id )", {{"id", flow}}), std::exception );
+		}
+		EXPECT_EQ( Versions(flow).size(), 1u ) << "its versions stand";
+		EXPECT_EQ( Held(flow, {}, "seen"), "5" ) << "and its context";
+		EXPECT_TRUE( WaitUntil([&]{ return Running( flow ); }) ) << "and it runs again:  " << Fault( flow ).Message;
+	}
+
+	//#3:  a context value whose write fails holds back none sorted after it, and once it has failed ContextTries passes in which
+	//others were written, it is dropped.
+	TEST_F( FlowTests, AContextValueThatFailsHoldsNoOtherBack ){
+		let flow = CreateFlow( "context-fails" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		Deploy( flow, Plain() );
+		{
+			auto failing = FailingInserts( "fails" );
+			SetContext( flow, nullptr, "fails", 1 );
+			EXPECT_EQ( Held(flow, {}, "fails"), "" );
+			SetContext( flow, nullptr, "later", 2 );
+			EXPECT_EQ( Held(flow, {}, "later"), "2" ) << "a key sorted after the one that fails is written";
+			for( uint i=1; i<FlowHost::ContextTries; ++i )
+				SetContext( flow, nullptr, "later", 2+i );
+		}
+		SetContext( flow, nullptr, "later", 9 );
+		EXPECT_EQ( Held(flow, {}, "later"), "9" );
+		EXPECT_EQ( Held(flow, {}, "fails"), "" ) << "dropped, unwritten, after its tries";
+	}
+
+	//#4:  a key's case is its own, as in the flow's store:  under a server's default collation count and Count were one row.
+	TEST_F( FlowTests, AContextKeyKeepsItsCase ){
+		let flow = CreateFlow( "cased-context" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		Deploy( flow, Plain() );
+		SetContext( flow, nullptr, "count", 1 );
+		SetContext( flow, nullptr, "Count", 2 );
+		EXPECT_EQ( Held(flow, {}, "count"), "1" );
+		EXPECT_EQ( Held(flow, {}, "Count"), "2" );
+	}
+
+	//#6:  an index-form node is spelled through its server at the run's admission, and its re-checks stand on that spelling:  a
+	//grant withdrawn while the server is out of reach still stops the flow.
+	TEST_F( FlowTests, ARecheckStandsOnTheRunsSpelling ){
+		const string slug{ "flowsSpelled" };
+		PurgeServerCnnctn( slug );
+		let row = GetConnection( slug, OpcUrl(), OpcUrn() );
+		absl::Cleanup purgeConnection = [&]{ PurgeServerCnnctn( slug ); };
+		let itemsBefore = Items();
+		let group = Id( Mutate("createHistGroup( name:\"Collector flow-spelled\", slug:\"flow-spelled\", serverConnectionId:$connection ){ id }", {{"connection", row.Id}}) );
+		absl::Cleanup purgeGroup = [=]{ Purge( group, itemsBefore ); };
+		AddNode( group, RpmManual );
+		let flow = CreateFlow( "spelled" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		auto reopen = EnforcedHistGroups();
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"w"}}), N("w", "opc out", serialize(jobject{{"connection", slug}, {"node", Node(RpmManual).ToString()}}))})).at("running"), true );
+
+		QL().QuerySync<jvalue>( "mutation updateServerConnection( id:$id, url:\"opc.tcp://127.0.0.1:6\" )", {{"id", row.Id}}, {UserPK::System} );
+		ScopeHistGroup( group, ERights::Read );
+		ASSERT_TRUE( WaitUntil([&]{ return !Running( flow ); }, 15s) ) << "the withdrawal is checked with the server out of reach";
+		EXPECT_TRUE( Has(Fault(flow).Message, "needs Update on group 'Collector flow-spelled'") ) << Fault( flow ).Message;
+	}
+
+	//#7:  a start loads what of its context is still to write over the rows:  a write that failed left the row behind it.
+	TEST_F( FlowTests, AStartLoadsTheContextStillToWrite ){
+		let flow = CreateFlow( "unwritten-context" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let graph = Graph({
+			N( "probe", "inject", "{}", {{"same"}} ),
+			N( "same", "switch", R"({"rules":[{"t":"eq","v":"limit","vt":"flow"},{"t":"else"}]})", {{"d"}, {"d"}} ),
+			N( "d", "debug" )
+		});
+		Deploy( flow, graph );
+		SetContext( flow, nullptr, "limit", 8 );
+		auto failing = FailingInserts( "limit" );
+		SetContext( flow, nullptr, "limit", 9 );
+		EXPECT_NE( Held(flow, {}, "limit"), "9" ) << "the write failed";
+		Deploy( flow, graph );
+		Inject( flow, "probe", jobject{{"payload", 9}} );
+		EXPECT_EQ( Sent(flow, "same", {1}), vector<uint>{1} ) << "the new run has the value its row lacks";
+	}
+
+	//#9, #12:  a flow deleted when the host starts still names its `link in`s, so one restored disabled is a link's to reach.
+	TEST_F( FlowTests, ALinkInOfAFlowDeletedAtTheStartIsKnown ){
+		let to = CreateFlow( "link-deleted", false ), from = CreateFlow( "link-to-deleted" );
+		absl::Cleanup purge = [=]{ PurgeFlow( from ); PurgeFlow( to ); };
+		Deploy( to, Graph({N("from", "link in", R"({"name":"to-the-deleted"})", {{"d"}}), N("d", "debug")}) );
+		Mutate( "deleteFlow( id:$id )", {{"id", to}} );
+		Flows().Stop();
+		Flows().Start();
+		Mutate( "restoreFlow( id:$id )", {{"id", to}} );
+		ASSERT_FALSE( Running(to) );
+		let link = Graph( {N("in", "inject", "{}", {{"to"}}), N("to", "link out", R"({"name":"to-the-deleted"})")} );
+		EXPECT_EQ( Deploy(from, link).at("running"), true );
 	}
 }

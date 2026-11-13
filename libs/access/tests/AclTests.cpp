@@ -325,13 +325,14 @@ namespace Jde::Access::Tests{
 	TEST_F( AclTests, AnObserverHearsEachAppliedChange ){
 		std::atomic<uint> heard{};
 		let handle = AccessListener::Observe( [&]{ ++heard; } );
+		absl::Cleanup unobserve = [handle]{ AccessListener::Unobserve( handle ); };//on the way out of a throw too:  `heard` is this frame's.
 		AccessListener listener{ QLPtr() };
 		let updated = [&]{ listener.OnChange( jvalue{jobject{{"userUpdated", jobject{{"id", GetRoot().Value}}}}}, (QL::SubscriptionId)underlying(ESubscription::User | ESubscription::Updated) ); };
 		updated();
 		EXPECT_EQ( heard, 1u );
 		EXPECT_THROW( listener.OnChange(jvalue{jobject{{"aclCreated", jobject{}}}}, (QL::SubscriptionId)underlying(ESubscription::Acl | ESubscription::Created)), Exception );
 		EXPECT_EQ( heard, 1u ) << "a change the cache refused is none";
-		AccessListener::Unobserve( handle );
+		std::move( unobserve ).Invoke();
 		updated();
 		EXPECT_EQ( heard, 1u );
 	}

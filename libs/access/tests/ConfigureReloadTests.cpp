@@ -4,6 +4,7 @@
 //pinned here: it must fill the authorizer from the server, and it must NOT subscribe (Replay already did, and a second
 //subscription delivers every event twice).  Run against a throwaway Authorize and listener so the suite's own state is untouched;
 //a reload reads only - ResourceSyncAwait, the one step that writes, is skipped.
+#include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 #include <jde/access/AccessListener.h>
 #include <jde/access/Authorize.h>
@@ -33,6 +34,16 @@ namespace Jde::Access::Tests{
 		EXPECT_NE( authorizer->UserName(root), missing ) << "the reload did not re-read the identity snapshot";
 		//StopListen returns what it removed; nothing to remove means the reload stopped at Acl instead of falling through to Subscribe.
 		EXPECT_TRUE( QL::Subscriptions::StopListen(listener).empty() ) << "a reload subscribed a second time - every event would now arrive twice";
+	}
+
+	//#448 (reviews-issue/448-flows-host.md #5):  a reconnect's reload is a change no event reports, so it is heard as an applied
+	//change is - the gateway's running flows are admitted again on it.
+	TEST( ConfigureReloadTests, AReloadIsHeard ){
+		std::atomic<uint> heard{};
+		let handle = AccessListener::Observe( [&]{ ++heard; } );
+		absl::Cleanup unobserve = [handle]{ AccessListener::Unobserve( handle ); };
+		reload( ms<Access::Authorize>("access"), ms<Access::AccessListener>(QLPtr()) );
+		EXPECT_GE( heard, 1u );
 	}
 
 	//access-refactor A1:  a reload is one swap.  The chain it replaced swapped Users for fresh, rightless User objects, then ran

@@ -13,6 +13,7 @@ namespace Jde::DB::MySql{
 			return Ƒ( "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {}", tableName, columnName, literal );
 		}
 		α BoolLiteral( bool v )Ι->sv override{ return v ? "true" : "false"; }
+		α BinaryCollation()Ι->sv override{ return "utf8mb4_bin"; }
 		α DefaultConstraint( sv, sv )Ι->string override{ return {}; }
 		α QuoteLiteral( sv text )Ι->string override{ return Syntax::QuoteLiteral( Str::Replace(text, "\\", "\\\\") ); } //a backslash escapes unless sql_mode has NO_BACKSLASH_ESCAPES, which the driver never sets.
 		α BackslashEscapes()Ι->bool override{ return true; }

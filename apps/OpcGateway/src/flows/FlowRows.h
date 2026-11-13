@@ -30,14 +30,11 @@ namespace Jde::Opc::Gateway{
 	//What the host writes, each for DS()->Execute.
 	namespace FlowSql{
 		α LastVersion( FlowPK flow )ε->DB::Sql;//the flow's highest version, null for none:  a select.
+		α CurrentGraphs()ε->DB::Sql;//every flow's current version, deleted or not, as flow_id and graph:  a select.
 		α InsertVersion( FlowPK flow, uint32 version, sv graph, TimePoint deployed, UserPK deployer, sv userName, sv comment )ε->DB::Sql;
 		α SetVersion( FlowPK flow, uint32 version )ε->DB::Sql;//flows.version.
 		//A context value is written as a delete and an insert:  the scope's columns are nullable, which no dialect's upsert keys on alike.
 		α DeleteContext( optional<FlowPK> flow, sv node, sv name )ε->DB::Sql;
 		α InsertContext( optional<FlowPK> flow, sv node, sv name, sv value )ε->DB::Sql;
-		//A purge's, before its statement:  the flow's rows of the other three tables.
-		α DeleteContexts( FlowPK flow )ε->DB::Sql;
-		α DeleteRuns( FlowPK flow )ε->DB::Sql;
-		α DeleteVersions( FlowPK flow )ε->DB::Sql;
 	}
 }

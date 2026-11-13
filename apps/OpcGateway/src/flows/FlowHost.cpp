@@ -75,9 +75,7 @@ namespace Jde::Opc::Gateway{
 		let& fault = refusal.Fault;
 		return Exception{ sl, ExceptionArgs{refusal.Status}, "{}{}", fault.NodeId.empty() ? string{} : Ƒ("Node '{}':  ", fault.NodeId), fault.Message };
 	}
-	Ω linkIn( const Flows::Graph& graph, sv name )ι->bool{
-		return std::ranges::any_of( graph.Nodes, [name]( const Flows::NodeDef& n ){ return n.Type==ENodeType::LinkIn && Json::FindDefaultSV(n.Props, "name")==name; } );
-	}
+	Ω unstarted( sv why )ι->Flows::Fault{ return { {}, Ƒ("It could not be started:  {}", why) }; }
 
 	α FlowHost::Instance()ι->FlowHost&{
 		static FlowHost instance;
@@ -136,7 +134,6 @@ namespace Jde::Opc::Gateway{
 					_clock->Cancel( timer );
 				if( entry.Live )
 					runs.push_back( move(entry.Live) );
-				entry.Live = nullptr;
 			}
 		}
 		if( observer )
@@ -245,41 +242,48 @@ namespace Jde::Opc::Gateway{
 		bool resumed{};
 		try{
 			auto lock = co_await _edits.Lock();
-			auto [rows, contexts] = co_await All( SelectFlows({.IncludeDeleted=true}), SelectFlowContexts(nullopt) );
+			auto [rows, contexts, graphs] = co_await All( SelectFlows({.IncludeDeleted=true}), SelectFlowContexts(nullopt), DS()->SelectAsync(FlowSql::CurrentGraphs()) );
+			ContextValues values;
+			for( auto& row : contexts )
+				values[{string{}, move(row.Name)}] = move( row.Value );
+			Unwritten( 0, values );
 			jobject global;
-			for( let& row : contexts ){
+			for( auto&& [key, text] : values ){
 				try{
-					global[row.Name] = Json::ParseValue( row.Value );
+					if( text )
+						global[key.second] = Json::ParseValue( *text );
 				}
 				catch( const std::exception& e ){
-					WARN( "The global context's '{}' does not read, and is left out:  {}", row.Name, e.what() );
+					WARN( "The global context's '{}' does not read, and is left out:  {}", key.second, e.what() );
 				}
+			}
+			vector<FlowRow> enabled;
+			flat_set<FlowPK> launching;
+			for( let& row : rows ){
+				if( !row.Deleted && row.Version && row.Enabled ){
+					enabled.push_back( row );
+					launching.emplace( row.Id );
+				}
+			}
+			flat_map<FlowPK,flat_set<string>> links;//a link into a flow that is disabled, or deleted, still names it:  Launch reads the rest.
+			for( auto& graph : graphs ){
+				let id = graph.Get<uint32>( 0 );
+				if( launching.contains(id) )
+					continue;
+				try{
+					if( let read = Flows::Graph::Read(Json::ParseValue(graph.TakeString(1)), true); read )
+						links.emplace( id, Links(*read) );
+				}
+				catch( const std::exception& )
+				{}
 			}
 			{
 				lg _{ _mutex };
 				_global = ms<Flows::GlobalStore>( move(global), [this]( sv key, const jvalue* value ){ ContextChanged( nullopt, {}, key, value ); } );
 				for( let& row : rows )
 					_flows[row.Id].Row = row;
-			}
-			vector<FlowRow> enabled;
-			for( auto& row : rows ){
-				if( row.Deleted || !row.Version )
-					continue;
-				if( row.Enabled ){
-					enabled.push_back( move(row) );
-					continue;
-				}
-				auto versions = co_await Any( SelectFlowVersion(row.Id, *row.Version) );//a link into a flow that is disabled still names it.
-				if( versions.empty() )
-					continue;
-				try{
-					if( let graph = Flows::Graph::Read(Json::ParseValue(versions.front().Graph), true); graph ){
-						lg _{ _mutex };
-						_flows[row.Id].Links = Links( *graph );
-					}
-				}
-				catch( const std::exception& )
-				{}
+				for( auto&& [id, names] : links )
+					_flows[id].Links = move( names );
 			}
 			resumed = true;
 			await.Resume();//Start returns here:  the flows start behind it, under _edits still, so no edit of one comes between.
@@ -305,12 +309,15 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	α FlowHost::Refused( const FlowRow& row, Flows::Graph graph, uint32 version, UserPK deployer, Flows::Fault fault )ι->void{
-		auto run = ms<Run>( move(graph), Flows::Flow::Config{.Name=row.Slug, .Clock=Time()}, version, deployer );
+	α FlowHost::Refused( const FlowRow& row, Flows::Graph graph, uint32 version, UserPK deployer, Flows::Fault fault, bool retry )ι->void{
+		auto run = ms<Run>( move(graph), Flows::Flow::Config{.Name=row.Slug, .Clock=Time()}, version, deployer, Spellings{} );
 		run->Flow.Stop( move(fault) );//which logs it, an Error.
 		lg _{ _mutex };
-		if( auto p = _flows.find(row.Id); p!=_flows.end() && !_stopped )
+		if( auto p = _flows.find(row.Id); p!=_flows.end() && !_stopped ){
 			p->second.Live = move( run );
+			if( retry && !p->second.Retry )
+				p->second.Retry = _clock->Schedule( RetryInterval, [this, id=row.Id]{ Retry( id ); } );
+		}
 	}
 	α FlowHost::Launch( FlowRow row )ι->AnyVoidTask{
 		let id = row.Id;
@@ -322,7 +329,18 @@ namespace Jde::Opc::Gateway{
 					_clock->Cancel( timer );
 			}
 		}
-		auto versions = co_await Any( SelectFlowVersion(id, number) );
+		vector<FlowVersionRow> versions;
+		string failed;//a statement's error:  no co_await in a handler.
+		try{
+			versions = co_await Any( SelectFlowVersion(id, number) );
+		}
+		catch( const std::exception& e ){
+			failed = e.what();
+		}
+		if( failed.size() ){
+			Refused( row, {}, number, {}, unstarted(failed), true );
+			co_return;
+		}
 		if( versions.empty() ){
 			Refused( row, {}, number, {}, {{}, Ƒ("Version {} has no flow_versions row.", number)} );
 			co_return;
@@ -344,17 +362,19 @@ namespace Jde::Opc::Gateway{
 			if( auto p = _flows.find(id); p!=_flows.end() )
 				p->second.Links = Links( *graph );
 		}
-		auto refusal = co_await Admit( id, *graph, version.Deployer, nullptr, false );
+		Spellings spelled;
+		optional<FlowRefusal> refusal;
+		try{
+			refusal = co_await Admit( id, *graph, version.Deployer, nullptr, false, spelled );
+		}
+		catch( const std::exception& e ){
+			refusal = FlowRefusal{ {{}, Ƒ("It could not be checked:  {}", e.what())}, EHttpStatus::ServiceUnavailable, true };
+		}
 		if( refusal ){
-			Refused( row, move(*graph), number, version.Deployer, refusal->Fault );
-			if( refusal->Unknown ){
-				lg _{ _mutex };
-				if( auto p = _flows.find(id); p!=_flows.end() && !_stopped )
-					p->second.Retry = _clock->Schedule( RetryInterval, [this, id]{ Retry( id ); } );
-			}
+			Refused( row, move(*graph), number, version.Deployer, refusal->Fault, refusal->Unknown );
 			co_return;
 		}
-		co_await Begin( move(row), move(*graph), number, version.Deployer );
+		co_await Begin( move(row), move(*graph), number, version.Deployer, move(spelled) );
 	}
 	α FlowHost::Retry( FlowPK id )ι->VoidTask{
 		try{
@@ -375,10 +395,25 @@ namespace Jde::Opc::Gateway{
 			ERR( "Flow {} could not be started again:  {}", id, e.what() );
 		}
 	}
-	α FlowHost::Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer )ι->AnyVoidTask{
+	α FlowHost::Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer, Spellings spelled )ι->AnyVoidTask{
 		let id = row.Id;
-		co_await WriteContext();//what the run before this one left to write, so the rows read are whole.
-		auto rows = co_await Any( SelectFlowContexts(id) );
+		co_await WriteContext();//what the run before this one left to write;  what still fails is laid over its row (Unwritten).
+		vector<FlowContextRow> rows;
+		string failed;
+		try{
+			rows = co_await Any( SelectFlowContexts(id) );
+		}
+		catch( const std::exception& e ){
+			failed = e.what();
+		}
+		if( failed.size() ){
+			Refused( row, move(graph), version, deployer, unstarted(failed), true );
+			co_return;
+		}
+		ContextValues values;
+		for( auto& context : rows )
+			values[{move(context.Node), move(context.Name)}] = move( context.Value );
+		Unwritten( id, values );
 		Flows::Flow::Config config{ .Name=row.Slug };
 		{
 			lg _{ _mutex };
@@ -388,20 +423,23 @@ namespace Jde::Opc::Gateway{
 			config.Global = _global;
 			config.Queue = _queue;
 		}
-		for( auto& context : rows ){
+		for( auto&& [key, text] : values ){
+			let& [node, name] = key;
 			try{
-				auto value = Json::ParseValue( context.Value );
-				if( context.Node.empty() )
-					config.Context[context.Name] = move( value );
+				if( !text )
+					continue;
+				auto value = Json::ParseValue( *text );
+				if( node.empty() )
+					config.Context[name] = move( value );
 				else
-					config.NodeContext[context.Node][context.Name] = move( value );
+					config.NodeContext[node][name] = move( value );
 			}
 			catch( const std::exception& e ){
-				WARN( "[{}]The context's '{}' does not read, and is left out:  {}", row.Slug, context.Name, e.what() );
+				WARN( "[{}]The context's '{}' does not read, and is left out:  {}", row.Slug, name, e.what() );
 			}
 		}
 		config.ContextChanged = [this, id]( sv node, sv key, const jvalue* value ){ ContextChanged( id, node, key, value ); };
-		auto run = ms<Run>( move(graph), move(config), version, deployer );
+		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
 		let started = run->Flow.Start();
 		bool kept;
 		{
@@ -421,6 +459,7 @@ namespace Jde::Opc::Gateway{
 		let sl = await.Source();
 		try{
 			let acl = AppClient()->Acl();
+			let local = await.Deploying ? Links( await.Graph ) : flat_set<string>{};
 			optional<FlowRefusal> refusal;
 			for( let& node : await.Graph.Nodes ){
 				try{
@@ -433,7 +472,15 @@ namespace Jde::Opc::Gateway{
 						auto connections = co_await Any( ServerCnnctnAwait{DB::Key{string{slug}}} );
 						REFUSE_IF( connections.empty(), "'{}' is no connection of this gateway.", slug );
 						let connection = connections.front().Id;
-						let spelled = ex.namespaceUri.length ? HistNodeText( ex ) : co_await SpellAwait{ ExNodeId{ex}, connection, sl };
+						string spelled;
+						if( ex.namespaceUri.length )
+							spelled = HistNodeText( ex );
+						else if( let p = await.Spelled.find(node.Id); p!=await.Spelled.end() )
+							spelled = p->second;
+						else{
+							spelled = co_await SpellAwait{ ExNodeId{ex}, connection, sl };
+							await.Spelled.emplace( node.Id, spelled );
+						}
 						auto members = co_await Any( SelectHistGroupNodes({.Connection=connection, .Node=spelled}) );
 						vector<HistGroupRow> groups;
 						if( members.size() )
@@ -483,7 +530,7 @@ namespace Jde::Opc::Gateway{
 					}
 					else if( node.Type==ENodeType::LinkOut && await.Deploying ){
 						let name = Json::FindDefaultSV( node.Props, "name" );
-						if( linkIn(await.Graph, name) )
+						if( local.contains(string{name}) )
 							continue;
 						let receivers = Receivers( name, await.Flow );
 						REFUSE_IF( receivers.empty(), "No `link in` of this flow or of another is named '{}'.", name );
@@ -539,7 +586,8 @@ namespace Jde::Opc::Gateway{
 				if( node.Id.size()>MaxKey )
 					throw refused( {{node.Id, Ƒ("Its id is {} characters, over the {} a context row holds.", node.Id.size(), MaxKey)}}, sl );
 			}
-			if( let refusal = co_await Admit(row.Id, *graph, by, dynamic_pointer_cast<Web::Server::SessionInfo>(await.Deployer.Session()), true, sl); refusal )
+			Spellings spelled;
+			if( let refusal = co_await Admit(row.Id, *graph, by, dynamic_pointer_cast<Web::Server::SessionInfo>(await.Deployer.Session()), true, spelled, sl); refusal )
 				throw refused( *refusal, sl );
 
 			let last = co_await Any( DS()->SelectAsync(FlowSql::LastVersion(row.Id)) );
@@ -556,7 +604,6 @@ namespace Jde::Opc::Gateway{
 				entry.Row = row;
 				entry.Links = Links( *graph );
 				live = move( entry.Live );
-				entry.Live = nullptr;
 				if( auto timer = std::exchange(entry.Retry, 0); timer )
 					_clock->Cancel( timer );
 			}
@@ -567,7 +614,7 @@ namespace Jde::Opc::Gateway{
 				y.Dropped = drops( live->Flow.Counts() )-before;
 			}
 			if( row.Enabled ){
-				co_await Begin( row, move(*graph), version, by );
+				co_await Begin( row, move(*graph), version, by, move(spelled) );//a start that fails leaves its Fault, which the answer carries, and is tried again.
 				if( let state = Find(row.Id); state ){
 					y.Running = state->Running;
 					y.Fault = state->Fault;
@@ -696,19 +743,26 @@ namespace Jde::Opc::Gateway{
 		}
 		if( live && live->Flow.Running() )
 			co_await HaltAwait{ live };
-		{
-			lg _{ _contextMutex };
-			erase_if( _pending, [id]( let& entry ){ return get<0>( entry.first )==id; } );
-		}
-		co_await Any( DS()->Execute(FlowSql::DeleteContexts(id)) );
-		co_await Any( DS()->Execute(FlowSql::DeleteRuns(id)) );
-		co_await Any( DS()->Execute(FlowSql::DeleteVersions(id)) );
+		co_await WriteContext();
 	}
 	α FlowHost::Purged( FlowRow row )ι->AnyVoidTask{
 		fs::path path;
 		{
-			lg _{ _mutex };
-			path = _path;
+			auto lock = co_await _edits.Lock();
+			sp<Run> live;
+			{
+				lg _{ _mutex };
+				path = _path;
+				if( auto p = _flows.find(row.Id); p!=_flows.end() ){//Changed's, for an edit of the row while the statement ran.
+					live = move( p->second.Live );
+					if( auto timer = std::exchange(p->second.Retry, 0); timer )
+						_clock->Cancel( timer );
+					_flows.erase( p );
+				}
+			}
+			if( live && live->Flow.Running() )
+				co_await HaltAwait{ live };
+			Forget( row.Id );
 		}
 		//The slug is held to a file name's characters at its create (FlowMAwait);  a row written another way is not followed out of the directory.
 		if( !path.empty() && !row.Slug.empty() && row.Slug.find_first_of("/\\")==string::npos && row.Slug!="." && row.Slug!=".." ){
@@ -764,7 +818,7 @@ namespace Jde::Opc::Gateway{
 					}
 				}
 				for( auto& [row, run] : running ){
-					auto refusal = co_await Admit( row.Id, run->Graph, run->Deployer, nullptr, false );
+					auto refusal = co_await Admit( row.Id, run->Graph, run->Deployer, nullptr, false, run->Spelled );
 					if( refusal && !refusal->Unknown )
 						co_await HaltAwait{ run, move(refusal->Fault) };//which logs it, an Error.
 					else if( refusal )
@@ -811,32 +865,61 @@ namespace Jde::Opc::Gateway{
 			pending = std::exchange( _pending, {} );
 			_contextArmed = false;
 		}
-		string failed;
-		auto p = pending.begin();
-		for( ; p!=pending.end() && failed.empty(); ++p ){
-			let& [flow, node, key] = p->first;
+		vector<ContextKey> written;
+		vector<tuple<ContextKey,optional<string>,string>> failed;//the key, its value and why.
+		for( auto&& [contextKey, value] : pending ){
+			let& [flow, node, key] = contextKey;
 			let scope = flow ? optional<FlowPK>{ flow } : nullopt;
+			string error;
 			try{
 				co_await Any( DS()->Execute(FlowSql::DeleteContext(scope, node, key)) );
-				if( p->second )
-					co_await Any( DS()->Execute(FlowSql::InsertContext(scope, node, key, *p->second)) );
+				if( value )
+					co_await Any( DS()->Execute(FlowSql::InsertContext(scope, node, key, *value)) );
 			}
 			catch( const std::exception& e ){
-				failed = Ƒ( "'{}' of flow {}:  {}", key, flow, e.what() );
-				break;
+				error = e.what();
 			}
+			if( error.empty() )
+				written.push_back( contextKey );
+			else
+				failed.emplace_back( contextKey, move(value), move(error) );
 		}
-		if( failed.empty() )
-			co_return;
-		WARN( "The flows' context could not be written, and is tried again:  {}", failed );
-		bool arm;
+		let named = []( const ContextKey& key ){ return Ƒ( "'{}' of flow {}{}", get<2>(key), get<0>(key), get<1>(key).empty() ? string{} : Ƒ(", node '{}'", get<1>(key)) ); };
+		vector<string> dropped;
+		uint left{}; string first;
+		bool arm{};
 		{
 			lg _{ _contextMutex };
-			for( ; p!=pending.end(); ++p )
-				_pending.try_emplace( p->first, move(p->second) );//a value set since stands.
-			arm = !std::exchange( _contextArmed, true );
+			for( let& key : written )
+				_contextFailures.erase( key );
+			for( auto& [key, value, error] : failed ){
+				if( written.size() && ++_contextFailures[key]>=ContextTries ){
+					_contextFailures.erase( key );
+					dropped.push_back( Ƒ("{}:  {}", named(key), error) );
+					continue;
+				}
+				if( !left++ )
+					first = Ƒ( "{} first:  {}", named(key), error );
+				_pending.try_emplace( key, move(value) );//a value set since stands.
+			}
+			if( left )
+				arm = !std::exchange( _contextArmed, true );
 		}
+		for( let& why : dropped )
+			ERR( "A context value failed {} writes in which others were written, and is dropped:  {}", ContextTries, why );
+		if( left )
+			WARN( "{} of the flows' context values could not be written, and are tried again, {}", left, first );
 		if( arm )
 			Time()->Schedule( RetryInterval, [this]{ Flush(); } );
+	}
+	α FlowHost::Unwritten( FlowPK flow, ContextValues& values )Ι->void{
+		lg _{ _contextMutex };
+		for( auto p = _pending.lower_bound( ContextKey{flow, string{}, string{}} ); p!=_pending.end() && get<0>(p->first)==flow; ++p )
+			values[{get<1>(p->first), get<2>(p->first)}] = p->second;
+	}
+	α FlowHost::Forget( FlowPK flow )ι->void{
+		lg _{ _contextMutex };
+		erase_if( _pending, [flow]( let& entry ){ return get<0>( entry.first )==flow; } );
+		erase_if( _contextFailures, [flow]( let& entry ){ return get<0>( entry.first )==flow; } );
 	}
 }

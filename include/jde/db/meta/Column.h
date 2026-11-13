@@ -28,6 +28,7 @@ namespace Jde::DB{
 
 		optional<DB::Criteria> Criteria;//unUsers=not is_group
 		bool IsNullable{};
+		bool CaseSensitive{};//compared byte for byte, the dialect's binary collation:  a key the code holds case-sensitive.
 		optional<uint> MaxLength;
 		optional<uint> NumericPrecision; //currently for db schema columns
 		optional<uint> NumericScale; //currently for db schema columns

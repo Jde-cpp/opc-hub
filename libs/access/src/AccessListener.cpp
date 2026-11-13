@@ -25,6 +25,9 @@ namespace Jde::Access{
 	}
 	α AccessListener::OnChange( const jvalue& j, QL::SubscriptionId clientId )ε->void{
 		Apply( j, clientId );
+		Notify();
+	}
+	α AccessListener::Notify()ι->void{
 		vector<Observer> observers;
 		{
 			lg _{ _observerMutex };

@@ -22,9 +22,10 @@ namespace Jde::DB::Sqlite::GatewayProcs{
 	α RegisterGatewayOeeLineInsert( IProcs& procs )ι->void;
 	α RegisterGatewayOeeLineMemberInsert( IProcs& procs )ι->void;
 	α RegisterGatewayOeeLinePurge( IProcs& procs )ι->void;
-	//The flows' four tables (gateway_flow_insert.cpp).
+	//The flows' four tables (gateway_flow_insert.cpp, gateway_flow_purge.cpp).
 	α RegisterGatewayFlowInsert( IProcs& procs )ι->void;
 	α RegisterGatewayFlowVersionInsert( IProcs& procs )ι->void;
 	α RegisterGatewayFlowContextInsert( IProcs& procs )ι->void;
 	α RegisterGatewayFlowRunInsert( IProcs& procs )ι->void;
+	α RegisterGatewayFlowPurge( IProcs& procs )ι->void;
 }

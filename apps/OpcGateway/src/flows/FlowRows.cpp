@@ -58,6 +58,9 @@ namespace Jde::Opc{
 	α Gateway::FlowSql::LastVersion( FlowPK flow )ε->DB::Sql{
 		return { Ƒ("select max(version) from {} where flow_id=?", name(FlowTable::Versions)), {DB::Value{(uint)flow}} };
 	}
+	α Gateway::FlowSql::CurrentGraphs()ε->DB::Sql{
+		return { Ƒ("select v.flow_id, v.graph from {} v join {} f on f.flow_id=v.flow_id and f.version=v.version", name(FlowTable::Versions), name(FlowTable::Flows)), {} };
+	}
 	α Gateway::FlowSql::InsertVersion( FlowPK flow, uint32 version, sv graph, TimePoint deployed, UserPK deployer, sv userName, sv comment )ε->DB::Sql{
 		return { Ƒ("insert into {}( flow_id, version, graph, deployed, identity_id, user_name, comment ) values( ?, ?, ?, ?, ?, ?, ? )", name(FlowTable::Versions)),
 			{DB::Value{(uint)flow}, DB::Value{(uint)version}, DB::Value{string{graph}}, DB::Value{DB::DBTimePoint{deployed}}, DB::Value{std::min<uint>(deployer.Value, _systemIdentity)}, DB::Value{string{userName}}, text(comment)} };
@@ -75,14 +78,5 @@ namespace Jde::Opc{
 	α Gateway::FlowSql::InsertContext( optional<FlowPK> flow, sv node, sv name_, sv value )ε->DB::Sql{
 		return { Ƒ("insert into {}( flow_id, node_id, name, value ) values( ?, ?, ?, ? )", name(FlowTable::Contexts)),
 			{flow ? DB::Value{(uint)*flow} : DB::Value{}, DB::Value{string{node}}, DB::Value{string{name_}}, DB::Value{string{value}}} };
-	}
-	α Gateway::FlowSql::DeleteContexts( FlowPK flow )ε->DB::Sql{
-		return { Ƒ("delete from {} where flow_id=?", name(FlowTable::Contexts)), {DB::Value{(uint)flow}} };
-	}
-	α Gateway::FlowSql::DeleteRuns( FlowPK flow )ε->DB::Sql{
-		return { Ƒ("delete from {} where flow_id=?", name(FlowTable::Runs)), {DB::Value{(uint)flow}} };
-	}
-	α Gateway::FlowSql::DeleteVersions( FlowPK flow )ε->DB::Sql{
-		return { Ƒ("delete from {} where flow_id=?", name(FlowTable::Versions)), {DB::Value{(uint)flow}} };
 	}
 }

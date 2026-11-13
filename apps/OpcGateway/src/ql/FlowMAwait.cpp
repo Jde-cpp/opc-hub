@@ -7,6 +7,7 @@
 #include <jde/ql/ops/MutationAwait.h>
 #include "../GatewayAppClient.h"
 #include "../flows/FlowHost.h"
+#include "../types/ServerCnnctn.h"
 #include "HistGroupQLAwait.h"
 
 #define let const auto
@@ -40,14 +41,13 @@ namespace Jde::Opc::Gateway{
 		if( let p = args.if_contains("trace"); p && !p->is_null() )
 			REFUSE_IF( !p->is_string() || !Flows::ToTraceLevel(p->get_string()), "trace is off, counts, errors or hops, not {}.", serialize(*p) );
 	}
-	//A file name's characters, as a connection's (ServerCnnctn::SlugError):  the slug is the flow's trace directory.
+	//The slug is the flow's trace directory.
 	Ω checkSlug( const jobject& args, SL sl )ε->string{
 		let p = args.if_contains( "slug" );
 		REFUSE_IF( !p || !p->is_string(), "slug is required." );
 		const sv slug{ p->get_string() };
-		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
-		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
-		REFUSE_IF( !valid, "Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug );
+		if( auto e = FileSlugError(slug, sl); e )
+			e->Throw();
 		return string{ slug };
 	}
 
@@ -136,7 +136,7 @@ namespace Jde::Opc::Gateway{
 			if( type==Purge )
 				co_await host.Purging( (FlowPK)key->PK(), purged );
 			jvalue y;
-			std::exception_ptr failed;//a purge's, rethrown once the host has the row again:  no co_await in a handler.
+			std::exception_ptr failed;//a purge's, rethrown once the host has started the flow again from its rows, which flow_purge's transaction left whole:  no co_await in a handler.
 			try{
 				y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, sl };//the stock op:  no QL, so nothing routes it back here.
 			}
