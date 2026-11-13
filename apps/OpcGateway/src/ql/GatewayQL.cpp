@@ -10,6 +10,7 @@
 #include "TrustServerQLAwait.h"
 #include "../GatewayAppClient.h"
 #include "../UAClient.h"
+#include "../flows/FlowQLAwait.h"
 #include "../hist/HistHost.h"
 
 namespace Jde::Opc{
@@ -38,6 +39,8 @@ namespace Jde::Opc{
 		status["historianUser"] = AppClient()->UserPK().Value;
 	}
 	α Gateway::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
+		if( FlowQLAwait::IsApplicable(q) )//the trace's reads, flowTrace, flowMessage and flowCounts:  files, no server.
+			return mu<FlowQLAwait>( move(q), move(creds), sl );
 		return GatewayQLAwait::Test( q, move(creds), sl );
 	}
 	α Gateway::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{

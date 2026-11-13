@@ -30,6 +30,7 @@
 #include "ql/ServerCnnctnMAwait.h"
 #include "drivers/DriverHost.h"
 #include "flows/FlowHost.h"
+#include "flows/FlowQLAwait.h"
 #include "hist/HistHost.h"
 #include "oee/OeeHost.h"
 #include "ql/HistGroupQLAwait.h"
@@ -64,7 +65,7 @@ namespace Jde::Opc{
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
 		//logSetting, the app client's;  sessions, the AppServer's ask for this process's web sessions, answered only over its socket (GatewayAppClient::ClientQuery).
 		flat_set<string> tables{ "logSetting", "sessions", string{SearchQLAwait::Command}, string{EndpointQLAwait::Command} };//endpoint:  the gateway's own (OpcSessionsQLAwait.h);  its sub-tables inherit.
-		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}, std::span<const sv>{OeeQLAwait::Tables}} ){//OEE's reads:  oeeStops is a table's name too, and as a system table its `stops` and `continuation` resolve no view.
+		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}, std::span<const sv>{OeeQLAwait::Tables}, std::span<const sv>{FlowQLAwait::Tables}} ){//OEE's reads:  oeeStops is a table's name too, and as a system table its `stops` and `continuation` resolve no view.  The flows' trace reads the same.
 			for( let table : family )
 				tables.emplace( table );
 		}
@@ -112,6 +113,7 @@ namespace Jde::Opc{
 		//the groups' last flushes run while the executor still does;  then the driver rows' servers, which the clients read.
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ FlowHost::Instance().Stop(); } );//ahead of the historian's too:  a flow's sources end on groups and clients that still stand.
+		Process::AddShutdownFunction( [](bool, SL){ FlowReadPool::Stop(); } );//after the flows':  their store's stop ends a trace read under way, so the join is short.
 		Process::AddShutdownFunction( [](bool, SL){ OeeHost::Instance().Stop(); } );//ahead of the historian's:  each machine's subscription ends on a group that still stands.
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.

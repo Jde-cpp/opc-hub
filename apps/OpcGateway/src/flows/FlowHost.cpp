@@ -108,6 +108,45 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 
+	//The trace's block (spec *Trace*):  a key that does not read, or reads as nothing, keeps its default with a Warning.  The
+	//days' zone is the historian's, /gateway/hist/timeZone, UTC without one, so a flow's files sit beside its groups' days.
+	Ω tracePath()ι->fs::path{ return Settings::FindPath( "/gateway/flows/path" ).value_or( Process::AppDataFolder()/"logs"/"flows"/"opc-gateway" ); }
+	Ω traceSettings()ι->Flows::TraceSettings{
+		Flows::TraceSettings y;
+		y.Root = tracePath();
+		let duration = [&]( sv key, Duration& value ){
+			let path = Ƒ( "/gateway/flows/{}", key );
+			let read = Settings::FindDuration( path );
+			if( read && *read>Duration::zero() )
+				value = *read;
+			else if( read || Settings::FindString(path) )
+				WARNT( ELogTags::Settings, "'{}' is not a duration above zero.  Using {}.", path, Chrono::ToString(value) );
+		};
+		duration( "delay", y.Delay );
+		duration( "retention", y.Retention );
+		if( let v = Json::FindValue(Settings::Value(), "/gateway/flows/maxSize"); v ){
+			boost::system::error_code ec;
+			let read = v->is_string() ? Flows::ToBytes( v->get_string() ) : optional<uint>{ v->to_number<uint>(ec) };
+			if( read && !ec && *read )
+				y.MaxSize = *read;
+			else
+				WARNT( ELogTags::Settings, "'/gateway/flows/maxSize' of {} is not a size, as \"10GiB\" is.  Using {}.", serialize(*v), y.MaxSize );
+		}
+		if( let limit = Settings::FindNumber<uint>("/gateway/flows/valueLimit"); limit )
+			y.ValueLimit = *limit;
+		if( let level = Settings::FindString("/gateway/flows/trace"); level ){
+			if( let parsed = Flows::ToTraceLevel(*level); parsed )
+				y.Level = *parsed;
+			else
+				WARNT( ELogTags::Settings, "'/gateway/flows/trace' of '{}' is not off, counts, errors or hops.  Using {}.", *level, ToString(y.Level) );
+		}
+		if( let hist = Settings::FindObject("/gateway/hist"); hist )
+			y.Zone = &Json::FindTimeZone( *hist, "timeZone", *std::chrono::locate_zone("UTC") );
+		else
+			y.Zone = std::chrono::locate_zone( "UTC" );
+		return y;
+	}
+
 	α FlowHost::Instance()ι->FlowHost&{
 		static FlowHost instance;
 		return instance;
@@ -122,13 +161,17 @@ namespace Jde::Opc::Gateway{
 		let function = functionLimits();
 		let env = Settings::FindObject( "/gateway/flows/env" );
 		bool observe;
+		sp<Flows::TraceStore> store;
 		{
 			lg _{ _mutex };
 			_stopped = false;
 			_configured = flows!=nullptr;
 			_clock = clock ? move( clock ) : Hist::SystemClock();
 			_ids = ms<Flows::MessageIds>( _clock->Now() );
-			_path = Settings::FindPath( "/gateway/flows/path" ).value_or( Process::AppDataFolder()/"logs"/"flows"/"opc-gateway" );
+			_tracePath = tracePath();
+			if( _configured )
+				store = _store = ms<Flows::TraceStore>( traceSettings(), _clock );
+			_readLimit = Settings::FindNumber<uint>( "/gateway/flows/readLimit" ).value_or( Hist::Settings::DefaultReadLimit );
 			_queue = queue;
 			_function = function;
 			_env = env ? *env : jobject{};
@@ -142,6 +185,7 @@ namespace Jde::Opc::Gateway{
 			INFO( "No '/gateway/flows':  this gateway runs no flows." );
 			return;
 		}
+		store->Start();
 		if( observe ){
 			let handle = Access::AccessListener::Observe( []{ Instance().Recheck(); } );
 			lg _{ _mutex };
@@ -191,6 +235,13 @@ namespace Jde::Opc::Gateway{
 		}
 		if( !configured )
 			return;
+		sp<Flows::TraceStore> store;
+		{
+			lg _{ _mutex };
+			store = move( _store );
+		}
+		if( store )//the flows' last records, now that each has stopped;  before the context, which waits on no file.
+			store->Stop();
 		struct FlushAwait final : AnyVoidAwait{
 			FlushAwait( FlowHost& host )ι:_host{ host }{}
 			α Suspend()ι->void override{ _host.Flushing( this ); }
@@ -457,6 +508,8 @@ namespace Jde::Opc::Gateway{
 			config.Queue = _queue;
 			config.Function = _function;
 			config.Env = _env;
+			if( _store )
+				config.Trace = _store->Trace( row.Slug, row.Trace, _clock );
 		}
 		for( auto&& [key, text] : values ){
 			let& [node, name] = key;
@@ -476,6 +529,7 @@ namespace Jde::Opc::Gateway{
 		config.ContextChanged = [this, id]( sv node, sv key, const jvalue* value ){ ContextChanged( id, node, key, value ); };
 		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups} );
 		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
+		run->Trace = row.Trace;
 		co_await StartAwait{ run };
 		let started = run->Flow.Running();
 		let fault = started ? nullopt : run->Flow.Fault();
@@ -795,18 +849,25 @@ namespace Jde::Opc::Gateway{
 		auto& row = rows.front();
 		let wanted = row.Enabled && !row.Deleted && row.Version;
 		sp<Run> live;
+		bool retrace{};//a running flow whose row's trace level changed, which its run's trace was made at.
 		{
 			lg _{ _mutex };
 			auto& entry = _flows[row.Id];
 			entry.Row = row;
 			live = entry.Live;
-			if( !wanted ){
+			retrace = wanted && live && live->Flow.Running() && live->Trace!=row.Trace;
+			if( !wanted || retrace ){
 				entry.Live = nullptr;
 				if( auto timer = std::exchange(entry.Retry, 0); timer )
 					_clock->Cancel( timer );
 			}
 		}
-		if( wanted && !live )
+		if( retrace ){
+			co_await HaltAwait{ live };
+			INFO( "[{}]Flow '{}' restarts at trace level {}.", row.Slug, row.Name, row.Trace ? ToString(*row.Trace) : "the gateway's" );
+			co_await Launch( move(row) );
+		}
+		else if( wanted && !live )
 			co_await Launch( move(row) );
 		else if( !wanted && live && live->Flow.Running() ){
 			co_await HaltAwait{ live };
@@ -834,13 +895,15 @@ namespace Jde::Opc::Gateway{
 		co_await WriteContext();
 	}
 	α FlowHost::Purged( FlowRow row )ι->AnyVoidTask{
-		fs::path path;
+		sp<Flows::TraceStore> store;
+		fs::path root;
 		{
 			auto lock = co_await _edits.Lock();
 			sp<Run> live;
 			{
 				lg _{ _mutex };
-				path = _path;
+				store = _store;
+				root = _tracePath;
 				if( auto p = _flows.find(row.Id); p!=_flows.end() ){//Changed's, for an edit of the row while the statement ran.
 					live = move( p->second.Live );
 					if( auto timer = std::exchange(p->second.Retry, 0); timer )
@@ -852,12 +915,11 @@ namespace Jde::Opc::Gateway{
 				co_await HaltAwait{ live };
 			Forget( row.Id );
 		}
-		//The slug is held to a file name's characters at its create (FlowMAwait);  a row written another way is not followed out of the directory.
-		if( !path.empty() && !row.Slug.empty() && row.Slug.find_first_of("/\\")==string::npos && row.Slug!="." && row.Slug!=".." ){
-			std::error_code ec;
-			if( fs::remove_all(path/row.Slug, ec); ec )
-				WARN( "[{}]The flow's trace directory wasn't removed with it:  {}", row.Slug, ec.message() );
-		}
+		//Its trace directory;  the slug is held to a file name's characters at its create (FlowMAwait), and the store follows no other out of the directory.
+		if( store )
+			store->Purge( row.Slug );
+		else if( !root.empty() )//the store stopped, or there was none:  a flow made later with the slug is not to read this one's trace.
+			Flows::TraceStore::Remove( root, row.Slug );
 		//Its own access row and the grants on it, through the AppServer, best effort, as a group's are purged (HistHost::GroupPurged).
 		try{
 			co_await Any( *AppClient()->Query<jvalue>("purgeResource( schemaName:\"gateway\", slug:\"flows\", criteria:$criteria )", {{"criteria", row.Guid}}) );

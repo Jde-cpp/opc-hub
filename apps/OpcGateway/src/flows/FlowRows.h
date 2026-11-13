@@ -1,4 +1,5 @@
 #pragma once
+#include <jde/flows/Trace.h>
 #include "../hist/HistRows.h"
 
 //The flows' tables (opcGateway-meta.jsonnet, docs/flows/spec.md *Flows*, *Context*) as rows:  the selects the host and
@@ -15,6 +16,7 @@ namespace Jde::Opc::Gateway{
 		string Name;
 		string Slug;
 		bool Deleted;
+		optional<Flows::ETraceLevel> Trace;//the row's level;  none takes the block's.
 	};
 	//Deployer:  the row's identity_id, UserPK::System for the UINT32_MAX it is stored as (Hist::Writer).
 	struct FlowVersionRow final{ FlowPK Flow; uint32 Version; string Graph; UserPK Deployer; };

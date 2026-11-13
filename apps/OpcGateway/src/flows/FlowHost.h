@@ -1,6 +1,7 @@
 #pragma once
 #include <jde/fwk/co/CoMutex.h>
 #include <jde/ql/IQLSession.h>
+#include <jde/flows/FileTrace.h>
 #include <jde/flows/Flow.h>
 #include "FlowRows.h"
 
@@ -46,6 +47,11 @@ namespace Jde::Opc::Gateway{
 		α Status( FlowPK id, sv node )Ι->Flows::NodeStatus;//of the flow's run, running or stopped;  empty with none.
 		α Counts( FlowPK id )Ι->vector<Flows::NodeCounts>;
 		α Global()Ι->sp<Flows::GlobalStore>{ lg _{ _mutex }; return _global; }
+		//The trace's files (spec *Trace*, *History*):  under /gateway/flows/path, each flow's at its row's level else the
+		//block's `trace`, flushed at `delay`, cut at `valueLimit`, rolled daily past `retention` and `maxSize`, and read by
+		//FlowQLAwait a page of `readLimit` at a time.  Null before Start, and for a gateway with no flows block.
+		α Store()Ι->sp<Flows::TraceStore>{ lg _{ _mutex }; return _store; }
+		α ReadLimit()Ι->uint{ lg _{ _mutex }; return _readLimit; }
 
 		//deployFlow's (spec *Flows*):  Update on the flow, the graph read and admitted for the deployer, the version written
 		//and made the flow's current one, and the flow, when it is enabled, restarted from it alone.  Dropped:  what the
@@ -110,6 +116,7 @@ namespace Jde::Opc::Gateway{
 			const uint32 Version;
 			const UserPK Deployer;
 			Resolved Spelled;//under _edits.
+			optional<Flows::ETraceLevel> Trace;//the row's level it was made at:  a row whose level changes restarts it (Changed).
 		};
 		//Links:  the names of the current version's `link in` nodes.  Retry:  the timer of a start to try again.
 		struct Entry final{ FlowRow Row; flat_set<string> Links; sp<Run> Live; Hist::IClock::TimerId Retry{}; };
@@ -172,7 +179,9 @@ namespace Jde::Opc::Gateway{
 		sp<Hist::IClock> _clock;
 		sp<Flows::MessageIds> _ids;
 		sp<Flows::GlobalStore> _global;
-		fs::path _path;//the trace's, a directory per flow by its slug.
+		sp<Flows::TraceStore> _store;//the trace's files, a directory per flow by its slug.
+		fs::path _tracePath;//the store's root, which a purge with no store removes the flow's directory from.
+		uint _readLimit{ 10'000 };//the most records one trace read answers:  /gateway/flows/readLimit, 0 for no limit.
 		uint _queue{ 1000 };
 		Flows::FunctionLimits _function;//`/gateway/flows/function`, each flow's sandbox.
 		jobject _env;//`/gateway/flows/env`.

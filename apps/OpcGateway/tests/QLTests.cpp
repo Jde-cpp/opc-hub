@@ -432,6 +432,15 @@ namespace Jde::Opc::Gateway::Tests{
 		let contextFields = Fields( "setFlowContext" );
 		for( sv name : {"flow"sv, "node"sv, "name"sv, "value"sv} )
 			EXPECT_NE( FindRow(contextFields, "name", name), contextFields.end() ) << name << ": " << serialize( contextFields );
+		//Flows 5 (#451):  the trace's reads.
+		for( let& [typeName,column] : vector<std::pair<sv,sv>>{ {"flowTrace", "continuation"}, {"flowMessage", "more"}, {"flowCounts", "counts"}, {"flowCounts", "continuation"}, {"FlowTraceRecord", "msgId"}, {"FlowCount", "sent"}, {"FlowNodeStatus", "fill"} } ){
+			let fields = Fields( typeName );
+			EXPECT_NE( FindRow(fields, "name", column), fields.end() ) << typeName << "." << column << ": " << serialize( fields );
+		}
+		let traceFields = Fields( "flowTrace" );
+		auto records = FindRow( traceFields, "name", "records" );
+		ASSERT_NE( records, traceFields.end() );
+		EXPECT_EQ( Json::AsSV(records->as_object(), "type/ofType/name"), "FlowTraceRecord" );
 		for( let& [typeName,column] : vector<std::pair<sv,sv>>{ {"flow", "guid"}, {"flowVersion", "graph"}, {"flowContext", "value"}, {"flowRun", "mode"} } ){
 			let tableFields = Fields( typeName );
 			EXPECT_NE( FindRow(tableFields, "name", column), tableFields.end() ) << typeName << "." << column << ": " << serialize( tableFields );

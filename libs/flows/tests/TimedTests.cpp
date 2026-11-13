@@ -41,7 +41,7 @@ namespace Jde::Opc::Flows::Tests{
 		Advance( 2s );
 		EXPECT_EQ( Took(), "1 2" );
 		EXPECT_EQ( Counts("n").Sent, vector<uint>{2} );
-		EXPECT_EQ( Time->Pending(), 0u );
+		EXPECT_EQ( Time->Pending(), 1u ) << "the minute's end alone";
 	}
 
 	TEST_F( TimedTests, DelayLimitsARate ){
@@ -88,7 +88,7 @@ namespace Jde::Opc::Flows::Tests{
 			Advance( 1s );
 		}
 		EXPECT_EQ( Counts("n").Drops, 1u );
-		EXPECT_EQ( Time->Pending(), 2u ) << "the oldest's timer went with it";
+		EXPECT_EQ( Time->Pending(), 3u ) << "the oldest's timer went with it;  two, and the minute's end";
 		Advance( 2999ms );
 		EXPECT_EQ( Took(), "" );
 		Advance( 1ms );
@@ -145,7 +145,7 @@ namespace Jde::Opc::Flows::Tests{
 		Deployed->Inject( "in", &reset );
 		Advance( 20s );
 		EXPECT_EQ( Took(), "1 1" );
-		EXPECT_EQ( Time->Pending(), 0u );
+		EXPECT_EQ( Time->Pending(), 1u ) << "the minute's end alone";
 		Stop();
 		Host = ms<TestHost>();
 		One( "trigger", R"({"second":"late","wait":"PT10S","perTopic":true})" );
@@ -244,7 +244,7 @@ namespace Jde::Opc::Flows::Tests{
 	TEST_F( TimedTests, AStopCancelsTheTimers ){
 		One( "delay", R"({"duration":"PT5S"})" );
 		Inject( 1 );
-		EXPECT_EQ( Time->Pending(), 1u );
+		EXPECT_EQ( Time->Pending(), 2u ) << "the delay's, and the minute's end";
 		Stop();
 		EXPECT_EQ( Time->Pending(), 0u );
 		EXPECT_EQ( Counts("n").Drops, 1u ) << "what the delay held";

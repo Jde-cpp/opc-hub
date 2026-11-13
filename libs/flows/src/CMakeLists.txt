@@ -13,11 +13,24 @@ add_library( ${targetName} )
 compileOptions( ${targetName} )
 file( GLOB_RECURSE sources CONFIGURE_DEPENDS *.cpp )
 file( GLOB_RECURSE headers CONFIGURE_DEPENDS *.h ${jdeRoot}/include/jde/flows/*.h )
-target_sources( ${targetName} PRIVATE ${sources} ${headers} )
+file( GLOB protos CONFIGURE_DEPENDS proto/*.proto )
+target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 if( WIN32 )
 	target_compile_definitions( ${targetName} PRIVATE NOMINMAX )
 endif()
 
-#Jde.Opc.HistorianLib for IClock;  Jde.Opc for Value;  qjs for the Function node's sandbox.
-target_link_libraries( ${targetName} Jde.Opc.HistorianLib Jde.Opc qjs )
+#Jde.Opc.HistorianLib for IClock;  Jde.Opc for Value;  qjs for the Function node's sandbox;  protobuf for the trace's records.
+target_link_libraries( ${targetName} Jde.Opc.HistorianLib Jde.Opc qjs protobuf::libprotobuf )
 target_precompile_headers( ${targetName} PRIVATE pc.h )
+
+#Out-of-source, as the historian's.  The generated Flow.Records.pb.h includes Jde.IO.Records.pb.h by bare name, which Jde's
+#PUBLIC include of its proto dir resolves.
+set( protoOutDir ${jdeGeneratedIncludeDir}/jde/flows/proto )
+file( MAKE_DIRECTORY ${protoOutDir} )
+protobuf_generate(
+	TARGET ${targetName}
+	IMPORT_DIRS proto ${jdeRoot}/libs/fwk/src/io/records/proto
+	PROTOC_OUT_DIR ${protoOutDir}
+)
+suppressProtoWarnings( "${protos}" ${protoOutDir} )
+target_include_directories( ${targetName} PUBLIC ${jdeGeneratedIncludeDir} )

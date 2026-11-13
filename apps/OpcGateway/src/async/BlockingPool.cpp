@@ -59,10 +59,13 @@ namespace Jde::Opc::Gateway{
 		};
 		Slot _blocking{ "Blocking", "/workers/blocking/threads" };
 		Slot _discovery{ "Discovery", "/workers/discovery/threads" };
+		Slot _flowReads{ "FlowRead", "/workers/flowReads/threads" };
 	}
 	α BlockingPool::Post( absl::AnyInvocable<void()> work )ι->void{ _blocking.Post( std::move(work) ); }
 	α BlockingPool::Stop()ι->void{ _blocking.Stop(); }
 	α BlockingPool::Run( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL sl )ι->void{ _blocking.Run( std::move(work), std::move(onError), sl ); }
 	α DiscoveryPool::Stop()ι->void{ _discovery.Stop(); }
 	α DiscoveryPool::Run( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL sl )ι->void{ _discovery.Run( std::move(work), std::move(onError), sl ); }
+	α FlowReadPool::Stop()ι->void{ _flowReads.Stop(); }
+	α FlowReadPool::Run( absl::AnyInvocable<void()> work, absl::AnyInvocable<void(up<Exception>)> onError, SL sl )ι->void{ _flowReads.Run( std::move(work), std::move(onError), sl ); }
 }

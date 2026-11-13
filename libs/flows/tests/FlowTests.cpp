@@ -58,7 +58,7 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( a.at("payload"), "changed" );
 		EXPECT_EQ( b.at("payload"), "original" ) << "a node downstream changes what it holds, and no other's";
 		EXPECT_EQ( b.at("_time"), a.at("_time") );
-		EXPECT_EQ( Trace->Lines(), (vector<string>{"clone in [0]", "clone in [0]", "birth in [0]*", "hop a [0]*", "hop b []", "hop c []", "hop outA []"}) );
+		EXPECT_EQ( Trace->Lines(), (vector<string>{"birth in [0]*", "clone in [0]", "clone in [0]", "hop a [0]*", "hop b []", "hop c []", "hop outA []"}) ) << "a message's record before its clones'";
 	}
 
 	TEST_F( EngineTests, TheQueuesDrainInArrivalOrder ){

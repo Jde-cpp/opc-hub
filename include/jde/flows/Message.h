@@ -49,4 +49,8 @@ namespace Jde::Opc::Flows{
 	//A value as a message carries it:  what Value::ToJson writes, but for a 64-bit integer, an integer here and the socket's
 	//Long there, so the nodes compare and compute on it.  Null for a Bad or an empty value.
 	α ToPayload( const Value& value, const ITypes* types=nullptr )ι->jvalue;
+	//A value as the web reads it, the inverse:  every integer past JavaScript's safe range, ±(2^53-1), as the protobufjs
+	//Long `{high, low, unsigned}` Value::ToJson writes, at any depth.  What the trace's reads and the live push render.
+	α ToWire( jvalue& v )ι->void;
+	α ToLong( MessageId id )ι->jobject;//a message's id as the web reads it.
 }
