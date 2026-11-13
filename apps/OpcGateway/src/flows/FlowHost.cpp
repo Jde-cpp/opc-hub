@@ -10,6 +10,7 @@
 #include "../async/ConnectAwait.h"
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
+#include "FlowNodes.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -17,24 +18,6 @@ namespace Jde::Opc::Gateway{
 	constexpr uint DefaultQueue{ 1000 };
 	constexpr uint MaxKey{ 256 };//flow_contexts' node_id and name.
 	using Flows::ENodeType;
-
-	//Until the sources and sinks are built (docs/flows/plan.md, phase 3), what a hosted node is made as:  a source that
-	//emits nothing, and a sink whose message is its error, but a link to another flow, which ends the message.
-	struct PendingSource final : Flows::ISource{
-		α Start()ε->void override{ SetStatus( {"grey", "ring", "Not built yet:  it emits nothing."} ); }
-	};
-	struct PendingSink final : Flows::ISink{
-		α Start()ε->void override{
-			SetStatus( {"grey", "ring", Def().Type==ENodeType::LinkOut ? "Not built yet:  nothing reaches the other flow." : "Not built yet:  a message it takes is its error."} );
-		}
-		α Receive( Flows::Message& )ε->void override{
-			THROW_IF( Def().Type!=ENodeType::LinkOut, "A '{}' node is not built yet.", Flows::ToString(Def().Type) );
-		}
-	};
-	struct FlowNodes final : Flows::IHost{
-		α Source( const Flows::NodeDef& )ε->up<Flows::ISource> override{ return mu<PendingSource>(); }
-		α Sink( const Flows::NodeDef& )ε->up<Flows::ISink> override{ return mu<PendingSink>(); }
-	};
 
 	struct FlowHost::HaltAwait final : AnyVoidAwait{
 		HaltAwait( sp<Run> run, optional<Flows::Fault> why={}, SRCE )ι:AnyVoidAwait{ sl }, _run{ move(run) }, _why{ move(why) }{}
@@ -49,6 +32,18 @@ namespace Jde::Opc::Gateway{
 	private:
 		sp<Run> _run;
 		optional<Flows::Fault> _why;
+	};
+
+	//Resumed off the flow's strand, which has its first messages to take.
+	struct FlowHost::StartAwait final : AnyVoidAwait{
+		StartAwait( sp<Run> run, SRCE )ι:AnyVoidAwait{ sl }, _run{ move(run) }{}
+	protected:
+		α Suspend()ι->void override{
+			auto run = _run;//the resume may end this await.
+			run->Flow.Start( [this]{ boost::asio::post( *Executor(), [this]{ Resume(); } ); } );
+		}
+	private:
+		sp<Run> _run;
 	};
 
 	struct FlowHost::SetAwait final : AnyAwait<bool>{
@@ -95,7 +90,6 @@ namespace Jde::Opc::Gateway{
 			_configured = flows!=nullptr;
 			_clock = clock ? move( clock ) : Hist::SystemClock();
 			_ids = ms<Flows::MessageIds>( _clock->Now() );
-			_nodes = ms<FlowNodes>();
 			_path = Settings::FindPath( "/gateway/flows/path" ).value_or( Process::AppDataFolder()/"logs"/"flows"/"opc-gateway" );
 			_queue = queue;
 			_global = nullptr;
@@ -310,7 +304,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α FlowHost::Refused( const FlowRow& row, Flows::Graph graph, uint32 version, UserPK deployer, Flows::Fault fault, bool retry )ι->void{
-		auto run = ms<Run>( move(graph), Flows::Flow::Config{.Name=row.Slug, .Clock=Time()}, version, deployer, Spellings{} );
+		auto run = ms<Run>( move(graph), Flows::Flow::Config{.Name=row.Slug, .Clock=Time()}, version, deployer, Resolved{} );
 		run->Flow.Stop( move(fault) );//which logs it, an Error.
 		lg _{ _mutex };
 		if( auto p = _flows.find(row.Id); p!=_flows.end() && !_stopped ){
@@ -362,7 +356,7 @@ namespace Jde::Opc::Gateway{
 			if( auto p = _flows.find(id); p!=_flows.end() )
 				p->second.Links = Links( *graph );
 		}
-		Spellings spelled;
+		Resolved spelled;
 		optional<FlowRefusal> refusal;
 		try{
 			refusal = co_await Admit( id, *graph, version.Deployer, nullptr, false, spelled );
@@ -395,7 +389,7 @@ namespace Jde::Opc::Gateway{
 			ERR( "Flow {} could not be started again:  {}", id, e.what() );
 		}
 	}
-	α FlowHost::Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer, Spellings spelled )ι->AnyVoidTask{
+	α FlowHost::Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer, Resolved spelled )ι->AnyVoidTask{
 		let id = row.Id;
 		co_await WriteContext();//what the run before this one left to write;  what still fails is laid over its row (Unwritten).
 		vector<FlowContextRow> rows;
@@ -418,7 +412,6 @@ namespace Jde::Opc::Gateway{
 		{
 			lg _{ _mutex };
 			config.Clock = _clock;
-			config.Host = _nodes;
 			config.Ids = _ids;
 			config.Global = _global;
 			config.Queue = _queue;
@@ -439,8 +432,10 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		config.ContextChanged = [this, id]( sv node, sv key, const jvalue* value ){ ContextChanged( id, node, key, value ); };
+		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups} );
 		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
-		let started = run->Flow.Start();
+		co_await StartAwait{ run };
+		let started = run->Flow.Running();
 		bool kept;
 		{
 			lg _{ _mutex };
@@ -475,11 +470,11 @@ namespace Jde::Opc::Gateway{
 						string spelled;
 						if( ex.namespaceUri.length )
 							spelled = HistNodeText( ex );
-						else if( let p = await.Spelled.find(node.Id); p!=await.Spelled.end() )
+						else if( let p = await.Spelled.Nodes.find(node.Id); p!=await.Spelled.Nodes.end() )
 							spelled = p->second;
 						else{
 							spelled = co_await SpellAwait{ ExNodeId{ex}, connection, sl };
-							await.Spelled.emplace( node.Id, spelled );
+							await.Spelled.Nodes.emplace( node.Id, spelled );
 						}
 						auto members = co_await Any( SelectHistGroupNodes({.Connection=connection, .Node=spelled}) );
 						vector<HistGroupRow> groups;
@@ -527,6 +522,13 @@ namespace Jde::Opc::Gateway{
 						REFUSE_IF( groups.empty() || !HistHost::Instance().Find(groups.front().Id), "Group '{}' isn't one this gateway historizes.", label );
 						if( let allowed = acl->Check("gateway", "histGroups", groups.front().Guid, Access::ERights::Read, await.Deployer, sl); !allowed )
 							throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "Group '{}' needs Read:  {}", groups.front().Name, allowed.error().what() };
+						await.Spelled.Groups.insert_or_assign( node.Id, groups.front().Id );
+					}
+					else if( node.Type==ENodeType::Connection ){
+						let slug = Json::FindDefaultSV( node.Props, "connection" );
+						REFUSE_IF( slug.empty(), "`connection` is required, a connection's slug." );
+						auto connections = co_await Any( ServerCnnctnAwait{DB::Key{string{slug}}} );
+						REFUSE_IF( connections.empty(), "'{}' is no connection of this gateway.", slug );
 					}
 					else if( node.Type==ENodeType::LinkOut && await.Deploying ){
 						let name = Json::FindDefaultSV( node.Props, "name" );
@@ -585,8 +587,17 @@ namespace Jde::Opc::Gateway{
 			for( let& node : graph->Nodes ){
 				if( node.Id.size()>MaxKey )
 					throw refused( {{node.Id, Ƒ("Its id is {} characters, over the {} a context row holds.", node.Id.size(), MaxKey)}}, sl );
+				string fault;//a hosted node's props, which the library leaves to its host.
+				try{
+					FlowNodes::Check( node, sl );
+				}
+				catch( const std::exception& e ){
+					fault = e.what();
+				}
+				if( fault.size() )
+					throw refused( {{node.Id, move(fault)}}, sl );
 			}
-			Spellings spelled;
+			Resolved spelled;
 			if( let refusal = co_await Admit(row.Id, *graph, by, dynamic_pointer_cast<Web::Server::SessionInfo>(await.Deployer.Session()), true, spelled, sl); refusal )
 				throw refused( *refusal, sl );
 
@@ -697,6 +708,28 @@ namespace Jde::Opc::Gateway{
 		co_await WriteContext();
 	}
 
+	α FlowHost::Link( FlowPK from, UserPK deployer, sv name, const Flows::Message& m, SL sl )ε->uint{
+		vector<std::pair<FlowRow,sp<Run>>> to;
+		{
+			lg _{ _mutex };
+			for( let& [id,entry] : _flows ){
+				if( id!=from && !entry.Row.Deleted && entry.Links.contains(string{name}) )
+					to.emplace_back( entry.Row, entry.Live );
+			}
+		}
+		let acl = AppClient()->Acl();
+		for( let& [row, _] : to ){
+			if( let allowed = acl->Check("gateway", "flows", row.Guid, Access::ERights::Update, deployer, sl); !allowed )
+				throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "A link to flow '{}' needs Update on it, as an inject into it does:  {}", row.Name, allowed.error().what() };
+		}
+		uint taken{};
+		for( let& [_, run] : to ){
+			if( run && run->Flow.Link(name, m) )
+				++taken;
+		}
+		return taken;
+	}
+
 	α FlowHost::Changed( DB::Key key )ι->AnyVoidTask{
 		if( !Enabled() )
 			co_return;
@@ -783,6 +816,7 @@ namespace Jde::Opc::Gateway{
 
 	α FlowHost::GroupChanged( HistGroupPK group )ι->void{
 		TRACE( "Group {} changed:  the running flows are admitted again.", group );
+		FlowNodes::GroupChanged( group );
 		Recheck();
 	}
 	α FlowHost::Recheck()ι->void{

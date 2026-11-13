@@ -26,6 +26,7 @@ namespace Jde::Opc::Gateway{
 	using EKind = ConnectionChange::EKind;
 
 	static sp<GatewayServer> _instance; static std::mutex _instanceMutex;
+	static optional<uint> _connectionObserver;//under _instanceMutex.
 	α GatewayServer::Instance()ι->sp<GatewayServer>{
 		lg _{ _instanceMutex };
 		return _instance;
@@ -93,10 +94,14 @@ namespace Jde::Opc::Gateway{
 			_instance = server;
 		}
 		wp<GatewayServer> weak{ server };
-		UAClient::SetConnectionListener( [weak]( const ConnectionChange& change ){
+		let observer = UAClient::ObserveConnections( [weak]( const ConnectionChange& change ){
 			if( auto p = weak.lock(); p )
 				p->OnChange( change );
 		} );
+		{
+			lg _{ _instanceMutex };
+			_connectionObserver = observer;
+		}
 		HistHost::Instance().Listen( server );
 	}
 	α GatewayServer::Start()ε->void{
@@ -171,13 +176,16 @@ namespace Jde::Opc::Gateway{
 	GatewayServer::~GatewayServer(){ _work.reset(); }
 	α GatewayServer::Stop()ι->void{
 		sp<GatewayServer> server;
+		optional<uint> observer;
 		{
 			lg _{ _instanceMutex };
 			server = move( _instance );
+			observer = std::exchange( _connectionObserver, nullopt );
 		}
+		if( observer )
+			UAClient::UnobserveConnections( *observer );
 		if( !server )
 			return;
-		UAClient::SetConnectionListener( nullptr );
 		HistHost::Instance().Listen( {} );
 		server->_writes->Stop();//a forward still out answers after this, when the server may be gone:  logged, never set.
 		up<UAServer> ua;

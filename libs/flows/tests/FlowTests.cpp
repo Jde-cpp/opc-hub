@@ -258,6 +258,62 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_TRUE( Has(none.Fault()->Message, "No `link in` of the flow is named 'elsewhere'") );
 	}
 
+	TEST_F( EngineTests, ALinkFromAnotherFlowIsBornAtItsLinkIn ){
+		Run( Nodes({Node("from", "link in", R"({"name":"alerts"})", {{"out"}}), Node("out", "log")}) );
+		const Message sent{ jobject{{"_id", 7}, {"payload", "over"}, {"topic", "t"}} };
+		EXPECT_TRUE( Deployed->Link("alerts", sent) );
+		Sync();
+		let took = Host->Took->Of( "out" );
+		ASSERT_EQ( took.size(), 1u );
+		EXPECT_EQ( took[0].at("payload"), "over" );
+		EXPECT_EQ( took[0].at("_parent"), 7 ) << "a clone, the sender's message its parent";
+		EXPECT_NE( took[0].at("_id"), 7 );
+		EXPECT_EQ( Trace->Lines(), (vector<string>{"birth from [0]*", "hop out []"}) );
+		EXPECT_EQ( Counts("from").Sent, vector<uint>{1} );
+
+		EXPECT_FALSE( Deployed->Link("elsewhere", sent) ) << "no `link in` of the name";
+		Stop();
+		EXPECT_FALSE( Deployed->Link("alerts", sent) ) << "a flow that is not running takes none";
+	}
+
+	//What the queue's bound would drop, sent in one go, a source that waits for the flow between pages gets through whole.
+	TEST_F( EngineTests, AReadingSourceKeepsWithinTheQueues ){
+		Run( Nodes({
+			Node( "pump", "opc in", "{}", {{"a"}} ),
+			Node( "a", "change", R"({"rules":[{"t":"set","p":"seen","to":true}]})", {{"b", "out"}} ),
+			Node( "b", "change", R"({"rules":[{"t":"set","p":"seen","to":true}]})", {{"out"}} ),
+			Node( "out", "log" )
+		}), ETraceLevel::Counts, 10 );
+		constexpr uint count{ 2500 };
+		Host->Pumps["pump"]->Read( count, 5 );
+		for( uint i=0; Host->Took->Of("out").size()<2*count && i<5000; ++i )
+			std::this_thread::sleep_for( 1ms );
+		Sync();
+		EXPECT_EQ( Host->Took->Of("out").size(), 2*count ) << "each value twice, by the wire and by its clone through b";
+		for( let node : {"pump", "a", "b", "out"} )
+			EXPECT_EQ( Counts(node).Drops, 0u ) << node;
+	}
+
+	TEST_F( EngineTests, StartTellsWhenItsNodesHaveStarted ){
+		auto graph = Graph::Read( Nodes({Node("in", "inject", "{}", {{"v"}}), Node("v", "variable")}) );
+		ASSERT_TRUE( graph.has_value() );
+		Flow failing{ move(*graph), {.Name="unstarted", .Clock=Time, .Host=Host} };
+		std::promise<bool> told;
+		EXPECT_TRUE( failing.Start([&]{ told.set_value( failing.Running() ); }) ) << "its nodes were made";
+		EXPECT_FALSE( told.get_future().get() ) << "told once the node's Start has thrown";
+		EXPECT_EQ( failing.Fault()->NodeId, "v" );
+
+		Flow running{ *Graph::Read(Nodes({Node("in", "inject", "{}", {{"out"}}), Node("out", "log")})), {.Name="started", .Clock=Time, .Host=Host} };
+		std::promise<bool> started;
+		EXPECT_TRUE( running.Start([&]{ started.set_value( running.Running() ); }) );
+		EXPECT_TRUE( started.get_future().get() );
+
+		Flow unhosted{ *Graph::Read(Nodes({Node("out", "log")})), {.Name="unhosted", .Clock=Time} };
+		bool here{};
+		EXPECT_FALSE( unhosted.Start([&]{ here = true; }) );
+		EXPECT_TRUE( here ) << "a flow whose nodes could not be made is told at once";
+	}
+
 	TEST_F( EngineTests, AHostStopsAFlowForANode ){
 		auto& flow = Run( Nodes({Node("in", "inject", "{}", {{"w"}}), Node("w", "opc out", "{}", {{"out"}}), Node("out", "log")}) );
 		Inject( "hold" );

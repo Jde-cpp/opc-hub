@@ -74,36 +74,17 @@ namespace Jde::Opc::Flows{
 			}
 		}
 
-		α Start()ι->bool{
-			{
-				lg _{ _queueMutex };
-				if( _state!=EState::Idle )
-					return false;
-				_state = EState::Starting;
-			}
-			for( auto& slot : _slots ){
-				try{
-					Make( *slot );
-				}
-				catch( const std::exception& e ){
-					Refuse( *slot, e.what() );
-					lg _{ _queueMutex };
-					_state = EState::Stopped;
-					return false;
-				}
-			}
-			{
-				lg _{ _stateMutex };
-				_minute = floor<minutes>( _clock->Now() );
-			}
-			{
-				lg _{ _queueMutex };
-				if( _state!=EState::Starting )//stopped while its nodes were made.
-					return false;
-				_state = EState::Running;
-			}
-			boost::asio::post( _strand, [self=shared_from_this()]{ self->Enter( [&]{ self->StartNodes(); } ); } );
-			return true;
+		α Start( absl::AnyInvocable<void()> started )ι->bool{
+			let made = Making();
+			if( made )
+				boost::asio::post( _strand, [self=shared_from_this(), started=std::move(started)]()mutable{
+					self->Enter( [&]{ self->StartNodes(); } );
+					if( started )
+						started();
+				} );
+			else if( started )
+				started();
+			return made;
 		}
 		α Stop( optional<Flows::Fault> why, absl::AnyInvocable<void()> stopped )ι->void{
 			let prior = End();
@@ -137,6 +118,13 @@ namespace Jde::Opc::Flows{
 		}
 		α Running()Ι->bool{ lg _{ _queueMutex }; return _state==EState::Running; }
 		α Fault()Ι->optional<Flows::Fault>{ lg _{ _stateMutex }; return _fault; }
+		α Link( sv name, const Message& m )ι->bool{
+			let index = LinkIn( name );
+			if( !index || !Running() )
+				return false;
+			Enqueue( *index, CloneOf(m), true );
+			return true;
+		}
 		α Inject( sv nodeId, const jobject* message )ε->void{
 			let index = _graph.IndexOf( nodeId );
 			THROW_IF( !index || _graph.Nodes[*index].Type!=ENodeType::Inject, "'{}' is not an inject node of '{}'.", nodeId, _config.Name );
@@ -353,6 +341,10 @@ namespace Jde::Opc::Flows{
 			slot.Timers.emplace( id, timer );
 			return id;
 		}
+		α Idle( Slot& slot, absl::AnyInvocable<void()>&& f )ι->void{
+			if( Entered() )//every entry drains after its work, and a drain runs these once its queues are empty.
+				_idle.emplace_back( &slot, std::move(f) );
+		}
 		α Cancel( Slot& slot, INode::TimerId id )ι->bool{
 			let p = Entered() ? slot.Timers.find( id ) : slot.Timers.end();
 			if( p==slot.Timers.end() )
@@ -363,6 +355,36 @@ namespace Jde::Opc::Flows{
 			return true;
 		}
 	private:
+		//The nodes made, and the flow running:  false for one that could not be, the flow's fault, for a flow that has run,
+		//and for a Stop meanwhile.
+		α Making()ι->bool{
+			{
+				lg _{ _queueMutex };
+				if( _state!=EState::Idle )
+					return false;
+				_state = EState::Starting;
+			}
+			for( auto& slot : _slots ){
+				try{
+					Make( *slot );
+				}
+				catch( const std::exception& e ){
+					Refuse( *slot, e.what() );
+					lg _{ _queueMutex };
+					_state = EState::Stopped;
+					return false;
+				}
+			}
+			{
+				lg _{ _stateMutex };
+				_minute = floor<minutes>( _clock->Now() );
+			}
+			lg _{ _queueMutex };
+			if( _state!=EState::Starting )//stopped while its nodes were made.
+				return false;
+			_state = EState::Running;
+			return true;
+		}
 		α Changed( string nodeId )ι->Store::Changed{
 			if( !_config.ContextChanged )
 				return {};
@@ -462,6 +484,7 @@ namespace Jde::Opc::Flows{
 			for( let& [index, id] : dropped )
 				Dropped( *_slots[index], id );
 			_stale.clear();
+			_idle.clear();
 		}
 
 		α Check()Ι->void{
@@ -511,20 +534,28 @@ namespace Jde::Opc::Flows{
 			_draining = true;
 			uint taken{};
 			for( ;; ){
-				while( (!turn || taken<_turn) && Take() )
+				bool empty{};
+				while( (!turn || taken<_turn) && !(empty = !Take()) )
 					++taken;
-				if( _stale.empty() )
+				if( !_stale.empty() ){
+					for( auto slot : std::exchange(_stale, {}) ){//once a drain, however many it dropped.
+						slot->Dirty = false;
+						if( slot->Unhandled )
+							SetStatus( *slot, {"red", "ring", Ƒ("{} uncaught, the last:  {}", slot->Unhandled, slot->LastError)} );
+						else
+							SetStatus( *slot, {"yellow", "ring", Ƒ("{} dropped", slot->Dropped)} );
+					}
+					continue;
+				}
+				if( !empty || _idle.empty() || !Running() )
 					break;
-				for( auto slot : std::exchange(_stale, {}) ){//once a drain, however many it dropped.
-					slot->Dirty = false;
-					if( slot->Unhandled )
-						SetStatus( *slot, {"red", "ring", Ƒ("{} uncaught, the last:  {}", slot->Unhandled, slot->LastError)} );
-					else
-						SetStatus( *slot, {"yellow", "ring", Ƒ("{} dropped", slot->Dropped)} );
+				for( auto& [slot, f] : std::exchange(_idle, {}) ){//each counts toward the turn, as a message does:  one that sends nothing and asks again takes no more than its turn.
+					Guard( slot, f );
+					++taken;
 				}
 			}
 			_draining = false;
-			if( turn && taken==_turn ){
+			if( turn && taken>=_turn ){
 				{
 					lg _{ _queueMutex };
 					_scheduled = true;
@@ -676,6 +707,7 @@ namespace Jde::Opc::Flows{
 		TimePoint _tick;//the clock, as the entry or the message in hand began.
 		INode::TimerId _nextTimer{};
 		vector<Slot*> _stale;
+		vector<std::pair<Slot*,absl::AnyInvocable<void()>>> _idle;//what waits for the queues to empty.
 		mutable mutex _queueMutex;
 		EState _state{ EState::Idle };
 		std::deque<uint32> _arrival;//a node's index for each message queued, in the order they came.
@@ -702,12 +734,13 @@ namespace Jde::Opc::Flows{
 		}
 		return *this;
 	}
-	α Flow::Start()ι->bool{ return _engine->Start(); }
+	α Flow::Start( absl::AnyInvocable<void()> started )ι->bool{ return _engine->Start( std::move(started) ); }
 	α Flow::Stop( absl::AnyInvocable<void()> stopped )ι->void{ _engine->Stop( {}, std::move(stopped) ); }
 	α Flow::Stop( Flows::Fault why, absl::AnyInvocable<void()> stopped )ι->void{ _engine->Stop( move(why), std::move(stopped) ); }
 	α Flow::Running()Ι->bool{ return _engine->Running(); }
 	α Flow::Fault()Ι->optional<Flows::Fault>{ return _engine->Fault(); }
 	α Flow::Inject( sv nodeId, const jobject* message )ε->void{ _engine->Inject( nodeId, message ); }
+	α Flow::Link( sv name, const Message& m )ι->bool{ return _engine->Link( name, m ); }
 	α Flow::SetContext( sv nodeId, sv key, jvalue value, absl::AnyInvocable<void( bool )> set )ι->void{ _engine->SetContext( nodeId, key, move(value), std::move(set) ); }
 	α Flow::Post( absl::AnyInvocable<void()> f )ι->void{ _engine->Post( nullptr, std::move(f) ); }
 	α Flow::Status( sv nodeId )Ι->NodeStatus{ return _engine->Status( nodeId ); }
@@ -732,6 +765,7 @@ namespace Jde::Opc::Flows{
 	α INode::Schedule( TimePoint due, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, due, std::move(f) ); }
 	α INode::Cancel( TimerId id )ι->bool{ return _slot->Flow.Cancel( *_slot, id ); }
 	α INode::Post( absl::AnyInvocable<void()> f )ι->void{ _slot->Flow.Post( _slot, std::move(f) ); }
+	α INode::Idle( absl::AnyInvocable<void()> f )ι->void{ _slot->Flow.Idle( *_slot, std::move(f) ); }
 	α INode::Context()ι->Store&{ return _slot->Context; }
 	α INode::FlowContext()ι->Store&{ return _slot->Flow.FlowContext(); }
 	α INode::Global()ι->GlobalStore&{ return _slot->Flow.Global(); }

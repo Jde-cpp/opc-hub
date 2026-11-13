@@ -1,11 +1,19 @@
 //Flows 2 (#448):  the host (docs/flows/spec.md *Flows*, *Rights*, *Context*) - the four tables, each edit's live side
 //(FlowMAwait), deployFlow, injectFlow and setFlowContext, the admission of a graph for its deployer at the deploy and again
-//as the rights and the groups change, and the context kept across a restart - over the embedded OpcServer's pumps.  The sources and sinks
-//are the next phase's:  a hosted node here is its stand-in, which is all the admission needs.
+//as the rights and the groups change, and the context kept across a restart - over the embedded OpcServer's pumps.
+//Flows 3 (#449):  the sources and sinks (*Sources*, *Sinks*) - `opc in`, `group in`, `timer`, `calendar`, `connection` and a
+//link from another flow, and `opc out`, `log` and `http request` - each run in a deployed flow, what it sent read from the
+//counts and from the lines a `log` node wrote.
 #include <fstream>
+#include <thread>
 #include <absl/cleanup/cleanup.h>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <jde/tests/Capture.h>
 #include <jde/db/meta/AppSchema.h>
+#include <jde/calendar/client/Calendars.h>
 #include "utils/HistGroupFixture.h"
+#include "utils/Subscribing.h"
 #include "../src/flows/FlowHost.h"
 #include "../../OpcServer/src/access/OpcAuthorize.h"
 #include "../../../libs/historian/tests/ManualClock.h"
@@ -13,6 +21,67 @@
 
 namespace Jde::Opc::Gateway::Tests{
 	using Access::ERights;
+	//The `http request` cases' own web server, on a loopback port the system picks:  `/ok` answers 200 with the request's
+	//method and body as json, and `/redirect?to=<url>` a 302 to the url.  One request a connection, as the client makes them.
+	struct TestWeb final{
+		TestWeb()ε:
+			_acceptor{ _ioc, Endpoint(0) },
+			_port{ _acceptor.local_endpoint().port() },
+			_thread{ [this]{ Serve(); } }
+		{}
+		~TestWeb(){
+			_stopped = true;
+			try{
+				boost::asio::ip::tcp::socket wake{ _ioc };
+				wake.connect( Endpoint(_port) );
+			}
+			catch( const std::exception& )
+			{}
+			_thread.join();
+		}
+		α Url( sv host, sv target )Ι->string{ return Ƒ( "http://{}:{}{}", host, _port, target ); }
+		std::atomic<uint> Requests{};
+	private:
+		Ω Endpoint( PortType port )ι->boost::asio::ip::tcp::endpoint{ return { boost::asio::ip::make_address_v4("127.0.0.1"), port }; }
+		α Serve()ι->void{
+			namespace http = boost::beast::http;
+			for( ;; ){
+				boost::beast::error_code ec;
+				boost::asio::ip::tcp::socket socket{ _ioc };
+				_acceptor.accept( socket, ec );
+				if( _stopped || ec )
+					return;
+				boost::beast::flat_buffer buffer;
+				http::request<http::string_body> req;
+				http::read( socket, buffer, req, ec );
+				if( ec )
+					continue;
+				++Requests;
+				const sv target{ req.target() };
+				http::response<http::string_body> res{ http::status::ok, req.version() };
+				if( let to = target.find("to="); target.starts_with("/redirect") && to!=sv::npos ){
+					res.result( http::status::found );
+					res.set( http::field::location, target.substr(to+3) );
+				}
+				else if( target.starts_with("/ok") ){
+					res.set( http::field::content_type, "application/json" );
+					res.body() = serialize( jobject{{"ok", true}, {"method", sv{req.method_string()}}, {"body", req.body()}} );
+				}
+				else
+					res.result( http::status::not_found );
+				res.keep_alive( false );
+				res.prepare_payload();
+				http::write( socket, res, ec );
+				socket.shutdown( boost::asio::ip::tcp::socket::shutdown_both, ec );
+			}
+		}
+		boost::asio::io_context _ioc;
+		boost::asio::ip::tcp::acceptor _acceptor;
+		const PortType _port;
+		std::atomic<bool> _stopped{};
+		std::thread _thread;
+	};
+
 	struct FlowTests : HistGroupFixture{
 	protected:
 		α SetUp()->void override{
@@ -43,6 +112,25 @@ namespace Jde::Opc::Gateway::Tests{
 		Ω On( const jvalue& node )->string{ return serialize( jobject{{"connection", OpcServerSlug}, {"node", node}} ); }
 		Ω Writes( const jvalue& node )->jvalue{ return Graph( {N("in", "inject", "{}", {{"w"}}), N("w", "opc out", On(node))} ); }
 		Ω Reads( const jvalue& node )->jvalue{ return Graph( {N("src", "opc in", On(node), {{"d"}}), N("d", "debug")} ); }
+		//A `log` node, `line`, and what it wrote since `capture` began, in order, each less its `[flow.node]` head.
+		Ω Line( sv text )->jobject{ return N( "line", "log", serialize(jobject{{"template", text}}) ); }
+		Ω Lines( const Logging::Capture& capture, sv flow )ι->vector<string>{
+			let head = Ƒ( "[{}.line]", flow );
+			vector<string> y;
+			for( let& entry : capture.Find([&]( const Logging::Entry& e ){ return e.Message().starts_with( head ); }) )
+				y.push_back( entry.Message().substr(head.size()) );
+			return y;
+		}
+		Ω Errors( uint32 flow, sv node, uint count )ι->bool{ return WaitUntil( [&]{ return Counts( flow, node ).Errors==count; } ); }
+		//The flows on a clock the test moves, until the cleanup puts them back on the system's, for the tests after.
+		Ω OnClock( TimePoint start )ε{
+			auto clock = ms<Hist::Tests::ManualClock>( start );
+			Flows().Stop();
+			Flows().Start( clock );
+			return std::pair{ clock, absl::Cleanup{ []{ Flows().Stop(); Flows().Start(); } } };
+		}
+		//The hosts an `http request` may reach, until the cleanup, which leaves none.
+		Ω Allow( jarray hosts )ε->void{ Settings::Set( "/gateway/flows/http/allow", move(hosts) ); }
 
 		Ω CreateFlow( sv slug, bool enabled=true )ε->uint32{
 			return Id( Mutate("createFlow( name:$name, slug:$slug, enabled:$enabled ){ id }", {{"name", Ƒ("Flow {}", slug)}, {"slug", slug}, {"enabled", enabled}}) );
@@ -386,8 +474,9 @@ namespace Jde::Opc::Gateway::Tests{
 	//node, and a deny of Read on the node itself, which wins over any grant another suite's role holds, refuses it.  The roles
 	//and the row are found or made and taken back after, as CallTests' are.
 	TEST_F( FlowTests, AnUngroupedOpcInIsItsServersToAdmit ){
+		let itemsBefore = Items();
 		let flow = CreateFlow( "reads-ungrouped" );
-		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); try{ WaitItems( itemsBefore ); }catch( const std::exception& ){} };//the flow's item goes a delay after its purge.
 		let node = Node( Status2 );
 		let graph = Reads( HistGroupFixture::Ex(Status2) );
 		let sessionless = Refused( [&]{ Deploy( flow, graph ); } );
@@ -426,7 +515,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitUntil([&]{ return !empty( authorizer.NodeRights(node, user) & ERights::Read ); }) ) << "the reader's grant reaches the server";
 		let admitted = DeployBySession( flow, graph );
 		EXPECT_EQ( admitted.at("running"), true ) << serialize( admitted );
-		EXPECT_EQ( Flows().Status(flow, "src").Fill, "grey" ) << "the source is the next phase's";
+		EXPECT_TRUE( WaitUntil([&]{ return Flows().Status( flow, "src" ).Fill=="green"; }) ) << "its item is the collector client's:  " << Flows().Status( flow, "src" ).Text;
 
 		enforce( false );
 		denied = GrantRole( *app, "GatewayFlowStatus2Denied", user, {{schema, "nodeIds", ERights::None, ERights::Read, node.ToString(), "status2"}} );
@@ -734,5 +823,318 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_FALSE( Running(to) );
 		let link = Graph( {N("in", "inject", "{}", {{"to"}}), N("to", "link out", R"({"name":"to-the-deleted"})")} );
 		EXPECT_EQ( Deploy(from, link).at("running"), true );
+	}
+
+	//Flows 3 (#449).
+	//A hosted node's props are its host's to read, at the deploy:  the node is named, and nothing is written.
+	TEST_F( FlowTests, AHostedNodesPropsAreReadAtTheDeploy ){
+		let flow = CreateFlow( "hosted-props" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let refused = [&]( sv type, sv props ){ return Refused( [&]{ Deploy( flow, Graph({N("in", "inject", "{}", {{"n"}}), N("n", type, props)}) ); } ); };
+		let source = [&]( sv type, sv props ){ return Refused( [&]{ Deploy( flow, Graph({N("n", type, props, {{"d"}}), N("d", "debug")}) ); } ); };
+		let variable = refused( "variable", R"({"name":"mean"})" );
+		EXPECT_EQ( variable.Status, EHttpStatus::BadRequest );
+		EXPECT_TRUE( variable.What.starts_with("Node 'n':  ") && Has(variable.What, "waits for the flow server") ) << variable.What;
+		EXPECT_TRUE( Has(refused("log", R"({"level":"loud"})").What, "`level` must be one of") );
+		EXPECT_TRUE( Has(refused("log", R"({"template":"{{#each}}"})").What, "its variables alone") );
+		EXPECT_TRUE( Has(refused("http request", R"({"url":"ftp://example.org/"})").What, "is not an http or https url") );
+		EXPECT_TRUE( Has(refused("http request", R"({"url":"http://hooks.example.org@example.com/"})").What, "carries a user") );
+		EXPECT_TRUE( Has(refused("http request", R"({"url":"http://example.org/hook"})").What, "`url`'s host 'example.org' is not one /gateway/flows/http/allow lets a flow reach") ) << "the early word:  the gate is the send";
+		EXPECT_TRUE( Has(refused("http request", R"({"method":"FETCH"})").What, "is not an http method") );
+		EXPECT_TRUE( Has(source("timer", "{}").What, "A timer takes `every`") );
+		EXPECT_TRUE( Has(source("timer", R"({"every":"PT1M","at":{"times":["06:00"]}})").What, "not both") );
+		EXPECT_TRUE( Has(source("timer", R"({"at":{"times":["25:00"]}})").What, "is not a time of day") );
+		EXPECT_TRUE( Has(source("timer", R"({"at":{"times":["06:00"],"zone":"Mars/Olympus"}})").What, "is no time zone the gateway knows") );
+		EXPECT_TRUE( Has(source("calendar", R"({"calendar":"no-such-calendar"})").What, "is no calendar the gateway holds") );
+		EXPECT_TRUE( Has(source("connection", "{}").What, "`connection` is required") );
+		EXPECT_TRUE( Has(source("connection", R"({"connection":"nowhere"})").What, "'nowhere' is no connection of this gateway") );
+		EXPECT_TRUE( Has(source("opc in", serialize(jobject{{"connection", OpcServerSlug}, {"node", HistGroupFixture::Ex(RpmManual)}, {"filter", jobject{{"deadbandType", "wide"}}}})).What, "`deadbandType` must be one of none, absolute, percent") );
+		EXPECT_TRUE( Versions(flow).empty() );
+	}
+
+	//`opc in` on a pump's motorRpm through a `switch` into a `log`.  The item is the group's collector's, which the flow's
+	//listener joins, so the node's value now is read once, where a new item's first value would come.
+	TEST_F( FlowTests, AnOpcInRunsThroughASwitchIntoALog ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		const OneNodeGroup made{ "flow-opc-in", RpmManual };
+		let flow = CreateFlow( "opc-in" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let base = std::floor( BaseRpm() );
+		Deploy( flow, Graph({
+			N( "src", "opc in", On(HistGroupFixture::Ex(RpmManual)), {{"sw"}} ),
+			N( "sw", "switch", serialize(jobject{{"rules", jarray{jobject{{"t", "gt"}, {"v", base+500}}}}}), {{"line"}} ),
+			Line( "rpm {{payload}} of {{topic}} on {{node.connection}}" )
+		}) );
+		ASSERT_TRUE( Received(flow, "sw", 1) ) << "the node's value now:  " << Flows().Status( flow, "src" ).Text;
+		EXPECT_TRUE( WaitUntil([&]{ return Flows().Status( flow, "src" )==Flows::NodeStatus{"green", "dot", "subscribed"}; }) );
+		let t0 = Since();
+		WriteRpm( base+100, t0 );
+		WriteRpm( base+1000.25, t0+10ms );
+		ASSERT_TRUE( Received(flow, "sw", 3) ) << "each change is a message";
+		ASSERT_TRUE( Received(flow, "line", 1) ) << "the switch took the one over its limit";
+		ASSERT_TRUE( WaitUntil([&]{ return !Lines( capture, "opc-in" ).empty(); }) ) << "a message is counted in before its node has it";
+		EXPECT_EQ( Lines(capture, "opc-in"), vector<string>{Ƒ("rpm {} of nsu={};i={} on {}", base+1000.25, PumpsUri, RpmManual, OpcServerSlug)} );
+	}
+
+	//`opc out`:  the message's value written to the node on the collector's client, the answer on the message it sends on, and
+	//the write in the log.  What does not convert toward the node's DataType is the node's error.
+	TEST_F( FlowTests, AnOpcOutWritesItsNode ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		const OneNodeGroup made{ "flow-opc-out", RpmManual };
+		auto reopen = EnforcedHistGroups();
+		let flow = CreateFlow( "opc-out" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"w"}}), N("w", "opc out", On(HistGroupFixture::Ex(RpmManual)), {{"line"}}), Line("{{status}}")})).at("running"), true );
+		let value = std::floor( BaseRpm() )+0.5;
+		Inject( flow, "in", jobject{{"payload", value}} );
+		ASSERT_TRUE( WaitUntil([&]{ return !Lines( capture, "opc-out" ).empty(); }) ) << "the answer goes on:  " << Flows().Status( flow, "w" ).Text;
+		EXPECT_EQ( Current(RpmManual).AsNumber<double>(), value ) << "a read agrees";
+		EXPECT_EQ( Lines(capture, "opc-out"), vector<string>{"0"} ) << "with its status, Good";
+		EXPECT_EQ( Flows().Status(flow, "w"), (Flows::NodeStatus{"green", "dot", "Good"}) );
+		let audited = capture.Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.starts_with( "[opc-out.w]wrote" ) && m.contains( Ƒ("{}", value) ) && m.contains( "Good" ); } );
+		EXPECT_EQ( audited.size(), 1u ) << "the write is logged with its answer";
+
+		Inject( flow, "in", jobject{{"payload", jobject{{"not", "a number"}}}} );
+		ASSERT_TRUE( Errors(flow, "w", 1) ) << "what does not convert is the node's error";
+		EXPECT_EQ( Current(RpmManual).AsNumber<double>(), value );
+		for( uint i=1; i<=5; ++i )
+			Inject( flow, "in", jobject{{"payload", value+i}} );
+		ASSERT_TRUE( Received(flow, "line", 6) );
+		EXPECT_EQ( Current(RpmManual).AsNumber<double>(), value+5 ) << "one write at a time, in the order the messages came";
+	}
+
+	//A `group in` from a time replays the group's records in order and then takes each as it is stored.  A redeploy resumes
+	//from its mark less the lateness, which reads the records again and sends none twice, and a record of another member
+	//stamped before the mark, stored while the flow was stopped, is in that lookback and comes once.
+	TEST_F( FlowTests, AGroupInReplaysFromATimeAndResumesFromItsMark ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		let itemsBefore = Items();
+		let group = CreateGroup( "flow-replay" );
+		absl::Cleanup purgeGroup = [=]{ Purge( group, itemsBefore ); };
+		let rpm = AddNode( group, RpmManual ), status = AddNode( group, Status1 );
+		let host = Host( group );
+		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
+		WaitStored( host, rpm, Joined, 1 );
+		WaitStored( host, status, Joined, 1 );
+		let base = std::floor( BaseRpm() );
+		let t0 = Since();
+		for( uint i=0; i<3; ++i )
+			WriteRpm( base+100*(i+1), t0+milliseconds{10*i} );
+		WaitStored( host, rpm, t0, 3 );
+
+		let flow = CreateFlow( "replay" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let graph = Graph( {N("src", "group in", serialize(jobject{{"group", group}, {"from", ToIsoString(t0)}, {"lateness", "PT1M"}}), {{"line"}}), Line("{{payload}}")} );
+		ASSERT_EQ( Deploy(flow, graph).at("running"), true );
+		let values = [&]{ return Lines( capture, "replay" ); };
+		let text = []( double value ){ return Ƒ( "{}", value ); };
+		ASSERT_TRUE( WaitUntil([&]{ return values().size()>=3; }) ) << Flows().Status( flow, "src" ).Text;
+		EXPECT_EQ( values(), (vector<string>{text(base+100), text(base+200), text(base+300)}) ) << "the group's records from the time, in order";
+		WriteRpm( base+400, t0+30ms );
+		ASSERT_TRUE( WaitUntil([&]{ return values().size()>=4; }) ) << "then each as it is stored";
+		EXPECT_TRUE( WaitUntil([&]{ return Held( flow, "src", "mark" )==serialize( jvalue{ToIsoString(t0+30ms)} ); }) ) << "the mark is the last record's time:  " << Held( flow, "src", "mark" );
+
+		ASSERT_EQ( Deploy(flow, graph).at("running"), true );
+		WriteRpm( base+500, t0+40ms );
+		ASSERT_TRUE( WaitUntil([&]{ return values().size()>=5; }) );
+		EXPECT_EQ( values().size(), 5u ) << "the redeploy read the four again, and sent none";
+		EXPECT_EQ( values().back(), text(base+500) );
+
+		Mutate( "updateFlow( id:$id, enabled:false )", {{"id", flow}} );
+		ASSERT_FALSE( Running(flow) );
+		let on = !*(const UA_Boolean*)Current( Status1 ).value.data;
+		WriteStatus( on, t0+20ms );//before the mark, and stored after the flow last ran.
+		WaitStored( host, status, t0, 1 );
+		Mutate( "updateFlow( id:$id, enabled:true )", {{"id", flow}} );
+		ASSERT_TRUE( WaitUntil([&]{ return values().size()>=6; }) ) << "a late record within the lookback is delivered";
+		EXPECT_EQ( values().back(), on ? "true" : "false" );
+		ASSERT_EQ( Deploy(flow, graph).at("running"), true );
+		WriteRpm( base+600, t0+50ms );
+		ASSERT_TRUE( WaitUntil([&]{ return values().size()>=7; }) );
+		EXPECT_EQ( values().size(), 7u ) << "once";
+		EXPECT_EQ( values().back(), text(base+600) );
+	}
+
+	//reviews-issue/448-flows-host.md #10:  a deploy answers once the nodes' Start has run, so one that throws is its fault.
+	TEST_F( FlowTests, ADeployAnswersOnceItsNodesHaveStarted ){
+		const OneNodeGroup made{ "flow-members", RpmManual };
+		let flow = CreateFlow( "node-start" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let deployed = Deploy( flow, Graph({N("src", "group in", serialize(jobject{{"group", made.Id}, {"members", jarray{HistGroupFixture::Ex(Status2)}}}), {{"d"}}), N("d", "debug")}) );
+		EXPECT_EQ( deployed.at("version"), 1 ) << serialize( deployed );
+		EXPECT_EQ( deployed.at("running"), false );
+		ASSERT_TRUE( deployed.at("fault").is_object() ) << serialize( deployed );
+		EXPECT_EQ( deployed.at("fault").as_object().at("node"), "src" );
+		EXPECT_TRUE( Has(Json::AsString(deployed.at("fault").as_object(), "message"), "is no member of its group") );
+		EXPECT_FALSE( Running(flow) );
+	}
+
+	TEST_F( FlowTests, ATimerTicks ){
+		let flow = CreateFlow( "ticks" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("t", "timer", R"({"every":"PT0.05S"})", {{"d"}}), N("d", "debug")})).at("running"), true );
+		EXPECT_TRUE( WaitUntil([&]{ return Counts( flow, "d" ).Received>=3; }) ) << Counts( flow, "d" ).Received;
+	}
+
+	//`every` ticks at the multiples of its duration from the epoch, so on the hour's quarters, and `at` at its local times in
+	//its zone:  06:00 in New York, daylight time since the day before, is 10:00 UTC, and 14:30 is 18:30.
+	TEST_F( FlowTests, ATimerIsAlignedAndInItsZone ){
+		using namespace std::chrono;
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		let monday = sys_days{ 2026y/March/9 };
+		auto [clock, restart] = OnClock( monday+10h+7min );
+		let flow = CreateFlow( "aligned" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({
+			N( "quarter", "timer", R"({"every":"PT15M"})", {{"line"}} ),
+			N( "shift", "timer", R"({"at":{"times":["14:30","06:00"],"days":["mon"],"zone":"America/New_York"}})", {{"line"}} ),
+			Line( "{{topic}} {{payload}}" )
+		})).at("running"), true );
+		let lines = [&]{ return Lines( capture, "aligned" ); };
+		clock->Advance( 7min );
+		EXPECT_TRUE( lines().empty() ) << "10:14 is no quarter";
+		clock->Advance( 1min );
+		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==1; }) );
+		EXPECT_EQ( lines()[0], Ƒ("quarter {}", ToIsoString(TimePoint{monday+10h+15min})) );
+		clock->AdvanceTo( monday+18h+30min );
+		let shift = Ƒ( "shift {}", ToIsoString(TimePoint{monday+18h+30min}) );
+		EXPECT_TRUE( WaitUntil([&]{ return std::ranges::count( lines(), shift )==1; }) ) << "06:00 had passed, and 14:30 there is 18:30 UTC";
+	}
+
+	//A calendar's shift on the weekdays from 06:00 for eight hours, in New York:  its start and its end are the node's messages.
+	TEST_F( FlowTests, ACalendarNodeSendsItsBoundaries ){
+		using namespace std::chrono;
+		namespace Calendars = Calendar::Client::Calendars;
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		let app = AppClient();
+		for( let& v : app->QuerySync<jarray>("calendars( slug:\"flow-shifts\" ){ id }", {}) )
+			app->QuerySync<jvalue>( Ƒ("purgeCalendar( id:{} )", QL::AsId<uint32>(v)), {} );
+		let calendar = QL::AsId<uint32>( app->QuerySync<jobject>("createCalendar( name:\"flow-shifts\", slug:\"flow-shifts\", timeZone:\"America/New_York\", dayStart:360 ){ id }", {}) );
+		absl::Cleanup purgeCalendar = [=]{ try{ AppClient()->QuerySync<jvalue>( Ƒ("purgeCalendar( id:{} )", calendar), {} ); }catch( const std::exception& ){} };
+		sp<const Calendar::Schedule> held;
+		ASSERT_TRUE( WaitUntil([&]{ held = Calendars::Find( calendar ); return held && held->Patterns().size()==1; }) ) << "the gateway's cache holds the calendar";
+		app->QuerySync<jobject>( Ƒ("createCalendarShift( calendarPatternId:{}, name:\"Day\", days:31, start:0, minutes:480 ){{ id }}", held->Patterns().front().Id), {} );
+		ASSERT_TRUE( WaitUntil([&]{ held = Calendars::Find( calendar ); return held && held->Patterns().size()==1 && held->Patterns().front().Shifts.size()==1; }) );
+
+		let monday = sys_days{ 2026y/March/9 };
+		auto [clock, restart] = OnClock( monday+9h );
+		let flow = CreateFlow( "shifts" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("cal", "calendar", R"({"calendar":"flow-shifts"})", {{"line"}}), Line("{{payload}} {{occurrence.name}} {{topic}}")})).at("running"), true );
+		EXPECT_EQ( Flows().Status(flow, "cal").Text, Ƒ("next {}", ToIsoString(TimePoint{monday+10h})) );
+		let lines = [&]{ return Lines( capture, "shifts" ); };
+		clock->AdvanceTo( monday+10h );
+		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==1; }) );
+		EXPECT_EQ( lines()[0], "shiftStart Day flow-shifts" );
+		clock->AdvanceTo( monday+18h );
+		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==2; }) );
+		EXPECT_EQ( lines()[1], "shiftEnd Day flow-shifts" );
+	}
+
+	//A link's message reaches the other flow's `link in` as a clone, under the sender's deployer's Update on that flow, asked
+	//at each message:  one who loses it stops delivering, and the refusal is the sender's node's error.
+	TEST_F( FlowTests, ALinkCrossesTwoFlows ){
+		let to = CreateFlow( "link-taker" ), from = CreateFlow( "link-sender" );
+		absl::Cleanup purge = [=]{ PurgeFlow( from ); PurgeFlow( to ); };
+		Deploy( to, Graph({N("from", "link in", R"({"name":"across"})", {{"d"}}), N("d", "debug")}) );
+		Deploy( from, Graph({N("in", "inject", "{}", {{"to"}}), N("to", "link out", R"({"name":"across"})")}) );
+		Inject( from, "in", jobject{{"payload", 5}} );
+		EXPECT_TRUE( Received(to, "d", 1) ) << "the other flow's `link in` sends it on";
+		EXPECT_EQ( Sent(to, "from", {1}), vector<uint>{1} );
+		EXPECT_TRUE( WaitUntil([&]{ return Flows().Status( from, "to" ).Text=="1 flow"; }) );
+
+		Mutate( "updateFlow( id:$id, enabled:false )", {{"id", to}} );
+		Inject( from );
+		EXPECT_TRUE( WaitUntil([&]{ return Flows().Status( from, "to" ).Fill=="grey"; }) ) << "a flow that is not running takes none";
+		EXPECT_EQ( Counts(from, "to").Errors, 0u ) << "which is no error";
+		Mutate( "updateFlow( id:$id, enabled:true )", {{"id", to}} );
+
+		auto reopen = EnforcedFlows();
+		ScopeFlow( to, ERights::Read );
+		Inject( from );
+		ASSERT_TRUE( Errors(from, "to", 1) ) << "the deployer lost Update on the flow it reaches";
+		EXPECT_TRUE( Has(Flows().Status(from, "to").Text, "A link to flow 'Flow link-taker' needs Update on it") ) << Flows().Status( from, "to" ).Text;
+		EXPECT_EQ( Counts(to, "d").Received, 0u ) << "and nothing is delivered";
+		UnscopeFlow( to );
+		Inject( from );
+		EXPECT_TRUE( Received(to, "d", 1) ) << "with the right back, the next is";
+	}
+
+	//An `http request` reaches a host /gateway/flows/http/allow holds and no other, the list read at each send:  empty, none;
+	//a redirect is followed to a host on it, and one to a host off it ends the request with the redirect as its answer.
+	TEST_F( FlowTests, AnHttpRequestReachesOnlyTheHostsAllowed ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		TestWeb web;
+		absl::Cleanup none = []{ try{ Allow( {} ); }catch( const std::exception& ){} };
+		Allow( {} );
+		let flow = CreateFlow( "requests" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"http"}}), N("http", "http request", R"({"output":"json"})", {{"line"}}), Line("{{statusCode}} {{payload.method}} {{payload.body}}")})).at("running"), true );
+		let request = [&]( string url, jobject message={} ){
+			message["url"] = move( url );
+			Inject( flow, "in", move(message) );
+		};
+		let lines = [&]{ return Lines( capture, "requests" ); };
+		let status = [&]{ return Flows().Status( flow, "http" ).Text; };
+
+		request( web.Url("127.0.0.1", "/ok") );
+		ASSERT_TRUE( Errors(flow, "http", 1) ) << "an empty list allows none";
+		EXPECT_TRUE( Has(status(), "'127.0.0.1' is not a host /gateway/flows/http/allow lets a flow reach") ) << status();
+		EXPECT_EQ( web.Requests, 0u ) << "nothing was sent";
+
+		Allow( {"hooks.example.org", "127.0.0.1"} );
+		request( web.Url("127.0.0.1", "/ok") );
+		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==1; }) ) << status();
+		EXPECT_EQ( lines()[0], "200 GET " );
+		request( web.Url("127.0.0.1", "/ok"), {{"method", "post"}, {"payload", jobject{{"rpm", 1450}}}} );
+		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==2; }) ) << status();
+		EXPECT_EQ( lines()[1], R"(200 POST {"rpm":1450})" ) << "the payload is the body";
+
+		request( web.Url("127.0.0.1", "/redirect?to="+web.Url("127.0.0.1", "/ok")) );
+		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==3; }) ) << "a redirect to a host on the list is followed:  " << status();
+		EXPECT_EQ( web.Requests, 4u );
+		request( web.Url("127.0.0.1", "/redirect?to="+web.Url("localhost", "/ok")) );
+		ASSERT_TRUE( Errors(flow, "http", 2) ) << "and one to a host off it is not";
+		EXPECT_TRUE( Has(status(), "(302) It was redirected to 'http://localhost:") ) << "with the redirect as its answer";
+		EXPECT_EQ( web.Requests, 5u ) << "the redirect was asked for, and its target never";
+		EXPECT_EQ( lines().size(), 3u );
+
+		Allow( {"local*"} );
+		request( web.Url("localhost", "/ok") );
+		EXPECT_TRUE( WaitUntil([&]{ return lines().size()==4; }) ) << "a pattern's match:  " << status();
+		request( web.Url("127.0.0.1", "/ok") );
+		EXPECT_TRUE( Errors(flow, "http", 3) ) << "the list is read at each send";
+	}
+
+	//A `connection` node hears its connection's loss and its return, on a flow with no `opc in`.  A row of its own:  another
+	//client of the suite's slug, still up, would make the loss no outage.
+	TEST_F( FlowTests, AConnectionNodeSeesTheLossAndTheReturn ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		const string slug{ "flowsConnection" };
+		PurgeServerCnnctn( slug );
+		let row = GetConnection( slug, OpcUrl(), OpcUrn() );
+		absl::Cleanup purgeConnection = [&]{ PurgeServerCnnctn( slug ); };
+		let itemsBefore = Items();
+		let group = Id( Mutate("createHistGroup( name:\"Collector flow-connection\", slug:\"flow-connection\", serverConnectionId:$connection ){ id }", {{"connection", row.Id}}) );
+		absl::Cleanup purgeGroup = [=]{ Purge( group, itemsBefore ); };
+		AddNode( group, Status1 );
+		ASSERT_NO_THROW( WaitSubscribed(Host(group), 1) );
+		let credential = HistHost::Instance().Collector( slug );
+		auto collector = UAClient::Find( slug, credential );
+		ASSERT_TRUE( collector ) << "the group's collector is the slug's client";
+
+		let flow = CreateFlow( "connection" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Graph({N("c", "connection", serialize(jobject{{"connection", slug}}), {{"line"}}), Line("{{topic}} {{payload.connected}}")})).at("running"), true );
+		EXPECT_EQ( Flows().Status(flow, "c").Text, "connected" );
+		let lines = [&]{ return Lines( capture, "connection" ); };
+		let lost = collector->Handle();
+		UAClient::ConnectionLost( move(collector) );
+		ASSERT_TRUE( WaitUntil([&]{ return !lines().empty(); }) ) << "the loss";
+		EXPECT_EQ( lines()[0], "flowsConnection false" );
+		ASSERT_TRUE( WaitRevived(lost, slug) ) << "the reconnect";
+		ASSERT_TRUE( WaitUntil([&]{ return lines().size()==2; }) ) << "and the return";
+		EXPECT_EQ( lines()[1], "flowsConnection true" );
+		EXPECT_EQ( Flows().Status(flow, "c").Text, "connected" );
 	}
 }

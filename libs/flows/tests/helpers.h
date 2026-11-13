@@ -57,7 +57,7 @@ namespace Jde::Opc::Flows::Tests{
 	};
 
 	//The sources and sinks a gateway would make, as a test needs them.
-	//  `opc in`:  a source the test pushes values through, from its own thread.
+	//  `opc in`:  a source the test pushes values through, from its own thread, or has read a run of them a page at a time.
 	//  `group in`:  refused, as a gateway with no historian refuses it.
 	//  `log`:  keeps what it takes;  with `tally` in its props it counts them in its own context and in the flow's.
 	//  `opc out`:  a write.  A payload of "bad" is refused, the node's error;  one of "hold" is held until the test answers
@@ -78,6 +78,19 @@ namespace Jde::Opc::Flows::Tests{
 				m.SetDataChange( "plc1", "ns=2;s=Count", value );
 				m.Json["topic"] = "ns=2;s=Count";
 				Emit( move(m) );
+			}
+			//As a source that reads what it sends:  0 to `count`, `page` at a time, each page once the flow has taken the last.
+			α Read( uint count, uint page )ι->void{ Post( [=, this]{ Next( 0, count, page ); } ); }
+		private:
+			α Next( uint from, uint count, uint page )ι->void{
+				let end = std::min( from+page, count );
+				for( uint i=from; i<end; ++i ){
+					auto m = Make();
+					m.Json["payload"] = i;
+					Send( move(m) );
+				}
+				if( end<count )
+					Idle( [=, this]{ Next( end, count, page ); } );
 			}
 		};
 		struct Taker final : ISink{

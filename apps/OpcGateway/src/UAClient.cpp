@@ -179,20 +179,30 @@ namespace Jde::Opc::Gateway{
 		} );
 		return slugs;
 	}
-	//The endpoint's listener (ConnectionChange).  Its own lock, held for the copy alone:  the listener runs off every lock here.
-	static function<void(const ConnectionChange&)> _connectionListener; static mutex _connectionListenerMutex;
-	α UAClient::SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void{
-		lg _{ _connectionListenerMutex };
-		_connectionListener = move( listener );
+	//The observers (ConnectionChange).  Their own lock, held for the copy alone:  each runs off every lock here.
+	static flat_map<uint,function<void(const ConnectionChange&)>> _connectionObservers; static uint _connectionObserverId; static mutex _connectionObserverMutex;
+	α UAClient::ObserveConnections( function<void(const ConnectionChange&)> observer )ι->uint{
+		lg _{ _connectionObserverMutex };
+		_connectionObservers.emplace( ++_connectionObserverId, move(observer) );
+		return _connectionObserverId;
+	}
+	α UAClient::UnobserveConnections( uint handle )ι->void{
+		lg _{ _connectionObserverMutex };
+		_connectionObservers.erase( handle );
 	}
 	Ω notifyChange( const ServerCnnctnNK& slug, ConnectionChange::EKind kind, string error={} )ι->void{
-		function<void(const ConnectionChange&)> listener;
+		vector<function<void(const ConnectionChange&)>> observers;
 		{
-			lg _{ _connectionListenerMutex };
-			listener = _connectionListener;
+			lg _{ _connectionObserverMutex };
+			observers.reserve( _connectionObservers.size() );
+			for( let& [_,observer] : _connectionObservers )
+				observers.push_back( observer );
 		}
-		if( listener )
-			listener( ConnectionChange{slug, kind, !UAClient::HasSession(slug), move(error)} );
+		if( observers.empty() )
+			return;
+		const ConnectionChange change{ slug, kind, !UAClient::HasSession(slug), move(error) };
+		for( let& observer : observers )
+			observer( change );
 	}
 	α UAClient::SetConnectError( const ServerCnnctnNK& slug, string message )ι->void{
 		lg _{ _connectErrorMutex };

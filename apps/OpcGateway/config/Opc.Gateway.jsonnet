@@ -100,7 +100,8 @@ function( sync=false )
 		//`flows` block, no flows.  A `::` key is its default, shown hidden.
 		flows:{
 			path: logsDir + "/flows/opc-gateway", //the trace's, a directory per flow by its slug, beside hist's:  a flow's purge removes its own.  Set here, under this layout's logsDir:  the code's own fallback is <AppDataFolder>/logs/flows/opc-gateway.
-			queue:: 1000 //messages a node's input holds;  past it the oldest is dropped and counted.
+			queue:: 1000, //messages a node's input holds;  past it the oldest is dropped and counted.
+			http:{ allow:: [] } //the hosts an `http request` node may reach, names or glob patterns, `*.example.com`, read at each request and each redirect;  empty, none.
 		},
 		//A password or an issued token is sent encrypted wherever the server's token policy asks for that, certificateUri or not.
 		//Where a server offers it only under a token policy of None on a channel that is not Sign & Encrypt, it would cross the

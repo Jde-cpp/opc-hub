@@ -29,7 +29,9 @@ namespace Jde::Opc::Flows{
 		//Makes the nodes, the host's among them, and posts their Start.  False when one could not be made, or the flow has
 		//run already:  it stays stopped, with Fault and the node's status saying why.  False too, with no fault, for a Stop
 		//while the nodes were made.  A node whose Start throws stops the flow the same way, after this has returned.
-		α Start()ι->bool;
+		//`started`:  on the strand once the nodes' Start has run, the flow running or stopped by one that threw;  here, when
+		//this answers false.
+		α Start( absl::AnyInvocable<void()> started={} )ι->bool;
 		//Nothing more is queued or taken.  On the strand the timers are cancelled, each node's Stop is called and what was
 		//queued or held is dropped and counted;  `stopped` runs after, there.  For a flow that has stopped already it runs there
 		//too, behind the teardown, and for one that never started it runs here.
@@ -42,6 +44,9 @@ namespace Jde::Opc::Flows{
 		//An inject node's message, `message` in place of its props' when given, `payload` its time when it has none.  Throws
 		//for a node that is not an inject of this flow and for a flow that is not running.
 		α Inject( sv nodeId, const jobject* message=nullptr )ε->void;
+		//Another flow's message at this flow's `link in` of the name, from any thread:  a clone under a new `_id`, `m`'s its
+		//`_parent`, born at the `link in`.  False for a flow that is not running, and for one with no `link in` of the name.
+		α Link( sv name, const Message& m )ι->bool;
 		//A context value from outside the flow, the Context tab's:  set on the strand, as a node's own is, so the host is told
 		//of it.  `nodeId`:  none for the flow's scope;  a null `value` takes the key away.  `set`:  whether it was, there, or
 		//false, here, for a flow that is not running and for a node that is not its.
