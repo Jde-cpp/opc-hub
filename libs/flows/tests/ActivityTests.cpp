@@ -1,5 +1,5 @@
 //The live activity (docs/flows/spec.md *Live*):  what a watched flow keeps between two takes - each node's figures, its
-//status change and its last error, and each wire's count and last message - its cue, and a flow that is not watched.
+//status change and its last error, and each wire's count and first message - its cue, and a flow that is not watched.
 #include "helpers.h"
 
 namespace Jde::Opc::Flows::Tests{
@@ -10,7 +10,7 @@ namespace Jde::Opc::Flows::Tests{
 			let id = [&]( uint32 index ){ return string{ nodes.at(index).at("id").as_string() }; };
 			vector<string> y;
 			for( let& wire : activity.Wires )
-				y.push_back( Ƒ("{}:{}>{} {} {}", id(wire.Node), wire.Port, id(wire.To), wire.Count, serialize(wire.Last.Payload())) );
+				y.push_back( Ƒ("{}:{}>{} {} {}", id(wire.Node), wire.Port, id(wire.To), wire.Count, serialize(wire.First.Payload())) );
 			return y;
 		}
 		Ω Of( const Activity& activity, uint32 node )->const NodeActivity*{
@@ -19,7 +19,7 @@ namespace Jde::Opc::Flows::Tests{
 		}
 	};
 
-	TEST_F( ActivityTests, AWatchedFlowKeepsEachWiresCountAndLastMessage ){
+	TEST_F( ActivityTests, AWatchedFlowKeepsEachWiresCountAndFirstMessage ){
 		let graph = Nodes({
 			Node( "in", "inject", "{}", {{"a", "b"}} ),
 			Node( "a", "change", R"({"rules":[{"t":"set","p":"payload","to":"changed"}]})", {{"out"}} ),
@@ -38,12 +38,12 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( Cues, 1u ) << "told once, at the first thing to take";
 		FlowState before;
 		let activity = Deployed->TakeActivity( &before );
-		EXPECT_EQ( Wires(activity, graph), (vector<string>{"in:0>a 2 2", "in:0>b 2 2", "a:0>out 2 \"changed\""}) );
+		EXPECT_EQ( Wires(activity, graph), (vector<string>{"in:0>a 2 1", "in:0>b 2 1", "a:0>out 2 \"changed\""}) ) << "the first since the take, one copy a take";
 		ASSERT_EQ( activity.Wires.size(), 3u );
-		let sent = Host->Took->Of( "out" ).back();
-		EXPECT_EQ( activity.Wires[0].Last.Id(), sent.at("_id").to_number<MessageId>() ) << "the message itself down the first wire";
-		EXPECT_EQ( activity.Wires[1].Last.Parent(), activity.Wires[0].Last.Id() ) << "and its clone down the second";
-		EXPECT_EQ( activity.Wires[0].Time, At(6, 0, 10) ) << "when the last went, on the flow's clock";
+		let sent = Host->Took->Of( "out" ).at( 1 );
+		EXPECT_EQ( activity.Wires[0].First.Id(), sent.at("_id").to_number<MessageId>() ) << "the message itself down the first wire";
+		EXPECT_EQ( activity.Wires[1].First.Parent(), activity.Wires[0].First.Id() ) << "and its clone down the second";
+		EXPECT_EQ( activity.Wires[0].Time, At(6, 0, 5) ) << "when the first went, on the flow's clock";
 		ASSERT_EQ( activity.Nodes.size(), 4u );
 		EXPECT_EQ( activity.Nodes[0].Counts.Sent, vector<uint>{2} );
 		EXPECT_EQ( activity.Nodes[1].Counts.Received, 2u );

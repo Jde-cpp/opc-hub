@@ -10,7 +10,7 @@ namespace Jde::Opc::Gateway{
 	//FlowSubscriber.cpp.
 	struct FlowSubscriber final : std::enable_shared_from_this<FlowSubscriber>{
 		FlowSubscriber( wp<GatewaySocketSession> session, Jde::RequestId requestId, sp<FlowFeed> feed, bool hops )ι;
-		α Join( SRCE )ε->FromServer::FlowSubscribeAck{ return _feed->Add( shared_from_this(), sl ); }
+		α Join( sv name, SRCE )ε->FromServer::FlowSubscribeAck{ return _feed->Add( shared_from_this(), name, sl ); }//`name`:  the flow's.
 		α End()ι->void;//a FlowUnsubscribe's, the close's or the feed's:  out of the feed, and nothing more is sent.
 		α Ended()Ι->bool{ return _ended; }
 		α Request()Ι->Jde::RequestId{ return _requestId; }

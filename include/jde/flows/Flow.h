@@ -12,7 +12,7 @@ namespace Jde::Opc::Flows{
 		uint Port;
 		uint32 To;
 		uint Count;//the messages down it.
-		Message Last;//the last of them, and when it went, on the flow's clock.
+		Message First;//the first of them, and when it went, on the flow's clock.
 		TimePoint Time;
 	};
 	struct NodeActivity final{
@@ -85,7 +85,7 @@ namespace Jde::Opc::Flows{
 		//The minutes that have ended and were not taken, oldest first, each with the nodes that had a figure in it;  at most an
 		//hour of them is kept.  A minute ends on the flow's clock.
 		α TakeMinutes()ι->vector<MinuteCounts>;
-		//Whether the flow keeps what TakeActivity answers, each node's figures and each wire's last message between two takes:
+		//Whether the flow keeps what TakeActivity answers, each node's figures and each wire's first message between two takes:
 		//off as a flow starts, when no message is copied for it.  On or off, what was kept goes.
 		α Watch( bool on )ι->void;
 		//What a watched flow did since the last take, or since Watch.  `now`:  the flow at that instant, so what the next

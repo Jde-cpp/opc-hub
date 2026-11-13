@@ -6,25 +6,27 @@
 namespace Jde::Opc::Gateway{
 	struct FlowSubscriber;
 	//A flow's live feed (docs/flows/spec.md *Live*):  what every FlowSubscribe of the flow hears, built once a push.  While it
-	//has a subscriber its run is watched, so the engine keeps each node's figures and each wire's last message between two
+	//has a subscriber its run is watched, so the engine keeps each node's figures and each wire's first message between two
 	//pushes and says when it has the first of them;  the feed takes them then, `live` after the push before at the soonest, so
 	//a push costs no read, and adds the records the trace made since for the subscribers that asked for hops.  It outlasts
 	//its flow's runs:  the host hands it each run that starts, whose ack every subscriber hears in the first's place, and ends
-	//them when the flow has none.  The host holds one per flow from its first run to its purge.  The run is held weakly:  its
-	//engine's hooks hold the feed.
+	//them when the flow has none, each after what the run before had still to push.  The host holds one per flow from its
+	//first run to its purge.  The run is held weakly:  its engine's hooks hold the feed.
 	struct FlowFeed final : std::enable_shared_from_this<FlowFeed>{
-		FlowFeed( FlowPK id, sp<Hist::IClock> clock, Duration live, uint valueLimit )ι;
+		FlowFeed( sp<Hist::IClock> clock, Duration live, uint valueLimit )ι;
 		//A run of the flow.  Serial:  the host's, which the run's hooks carry.  Nodes:  its graph's ids, in the graph's order.
 		struct Run final{ uint Serial{}; wp<Flows::Flow> Flow; vector<string> Nodes; uint32 Version{}; };
-		//The flow's run now, running:  each subscriber hears its ack, under its id, and the pushes go on from it.  Nothing
-		//for the run the feed is on.
+		//The flow's run now, running:  what the run before had still to push goes, then each subscriber hears the new one's
+		//ack, under its id, and the pushes go on from it, the records the run made as it started first.  Nothing for the run
+		//the feed is on.
 		α Started( Run run )ι->void;
-		//The flow has no run:  every subscription ends with `what` under its id, a `status` exception.
+		//The flow has no run:  what it had still to push goes, then every subscription ends with `what` under its id, a
+		//`status` exception.
 		α Ended( EHttpStatus status, sv what )ι->void;
 		//`subscriber` joins:  its ack, the run as it stands, and what is pushed from then on reaches it too.  What was still to
 		//push goes first to those already subscribed, so the ack and the pushes after it count nothing twice.  Conflict
-		//with no run.
-		α Add( sp<FlowSubscriber> subscriber, SRCE )ε->FromServer::FlowSubscribeAck;
+		//with no run, as between the host's start of a run and its telling this.  `name`:  the flow's, for that.
+		α Add( sp<FlowSubscriber> subscriber, sv name, SRCE )ε->FromServer::FlowSubscribeAck;
 		α Remove( const FlowSubscriber* subscriber )ι->void;
 		//A run's hooks, on its strand:  the engine's cue, and the trace's tap.
 		α OnActive( uint serial )ι->void;
@@ -36,12 +38,13 @@ namespace Jde::Opc::Gateway{
 		α Tick( uint tick )ι->void;
 		//Under _sendMutex.
 		α Push()ι->void;
-		α Send( const vector<sp<FlowSubscriber>>& to, Flows::Activity&& activity, const Run& run, std::deque<Flows::TraceRecord>&& records, uint dropped )ι->void;
+		α Flush( const vector<sp<FlowSubscriber>>& to, const Run& run, std::deque<Flows::TraceRecord>&& records, uint dropped )ι->void;//`run`'s activity and `records` to `to`.
+		α Send( const vector<sp<FlowSubscriber>>& to, Flows::Activity&& activity, const Run& run, std::deque<Flows::TraceRecord>&& records, uint dropped )ι->bool;//whether any had something.
 		//Under _mutex.
 		α Arm()ι->void;//the push's timer, when none is set:  now, or `live` after the last.
-		α Disarm()ι->void;//the timer and the records held go.
+		α Disarm()ι->void;//the timer goes.
+		α Taken( uint serial )ι->std::deque<Flows::TraceRecord>;//the records held of the runs up to `serial`, those of a later one kept.
 
-		const FlowPK _id;
 		const sp<Hist::IClock> _clock;
 		const Duration _live;
 		const uint _valueLimit;
@@ -50,11 +53,12 @@ namespace Jde::Opc::Gateway{
 		Run _run;
 		vector<sp<FlowSubscriber>> _subscribers;
 		std::atomic<bool> _hops{};//a subscriber asked for the records:  the tap's first test.
-		std::deque<Flows::TraceRecord> _records;//the trace's since the last push.
+		struct Held final{ uint Serial; Flows::TraceRecord Record; };
+		std::deque<Held> _records;//the trace's since the last push, each by its run, its json cut at _valueLimit.
 		uint _dropped{};
 		Hist::IClock::TimerId _timer{};
 		uint _tick{};//the timer's serial:  one cancelled too late finds another's.
-		optional<TimePoint> _last;//the last push;  none with no subscriber.
+		optional<TimePoint> _last;//the last push that sent something;  none with no subscriber.
 		std::atomic<uint> _pushed{};
 	};
 }

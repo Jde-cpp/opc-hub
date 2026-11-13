@@ -1,5 +1,5 @@
 //Flows 6 (#452):  a flow's live activity over the gateway's socket (docs/flows/spec.md *Live*) - a FlowSubscribe's ack with
-//the version, each node's status and its figures, a FlowActivity every `live` at most with each wire's count and last
+//the version, each node's status and its figures, a FlowActivity every `live` at most with each wire's count and first
 //message, the status changes and the errors, the trace's records with `hops`, the ack of a run that takes the first's
 //place, a FlowUnsubscribe, the refusals, the socket dropped and the subscription ended with its flow.  The cadence's cases
 //are on a manual clock:  a feed's timer runs only when a test moves it.
@@ -71,14 +71,16 @@ namespace Jde::Opc::Gateway::Tests{
 			} );
 		}
 		Ω Marked()->jvalue{ return Graph( {N("in", "inject", "{}", {{"mark"}}), N("mark", "change", R"({"rules":[{"t":"set","p":"seen","to":true}]})", {{"d"}}), N("d", "debug")} ); }
+		//An inject into a debug, and a Function node whose On Start sends into it.
+		Ω Starting()->jvalue{ return Graph( {N("in", "inject", "{}", {{"d"}}), N("f", "function", serialize(jobject{{"code", "return msg;"}, {"onStart", "node.send( {payload:'start'} );"}}), {{"d"}}), N("d", "debug")} ); }
 		Ω Send( uint32 flow, uint n, jvalue payload={} )ε->void{ Inject( flow, "in", jobject{{"payload", payload.is_null() ? jvalue{ n } : move(payload)}, {"n", n}} ); }
 	};
 
 	//The ack carries the version, and each node's status and figures since the flow started.  What the flow does next is pushed
-	//when the clock reaches it, each wire's count and last message, a 64-bit integer of its json a Long, the status that changed
-	//and the figures;  a second change `live` after the first at the soonest;  nothing while nothing changes;  an error with its
-	//text and a json past valueLimit cut;  and nothing follows a FlowUnsubscribe.
-	TEST_F( FlowSubscribeTests, TheAckThenEveryLiveTheCountsTheLastMessagesAndTheStatusChanges ){
+	//when the clock reaches it, each wire's count and first message since the push before, a 64-bit integer of its json a
+	//Long, the status that changed and the figures;  a second change `live` after the first at the soonest;  nothing while
+	//nothing changes;  an error with its text and a json past valueLimit cut;  and nothing follows a FlowUnsubscribe.
+	TEST_F( FlowSubscribeTests, TheAckThenEveryLiveTheCountsTheFirstMessagesAndTheStatusChanges ){
 		auto [clock, restart] = OnClock( Clock::now() );
 		let flow = CreateFlow( "live" );
 		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
@@ -122,7 +124,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( toF.port(), 0u );
 		EXPECT_EQ( toF.count(), 2u );
 		EXPECT_EQ( toD.count(), 2u );
-		EXPECT_EQ( Json(toF.json()).at("n"), 3 ) << "the last message down the wire";
+		EXPECT_EQ( Json(toF.json()).at("n"), 2 ) << "the first message down the wire since the push before";
 		EXPECT_EQ( Json(toF.json()).at("_id"), Flows::ToLong(toF.msg_id()) ) << "a 64-bit integer of the json is the web's Long";
 		EXPECT_EQ( toD.msg_id(), toF.msg_id() ) << "the message itself passes the node";
 		EXPECT_FALSE( toF.cut() );
@@ -228,6 +230,14 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Node(plain->Push(0), "d").counts().received(), 1u );
 		EXPECT_EQ( Hops(hops->Push(1)), (vector<string>{"birth in", "hop mark", "hop d"}) );
 		EXPECT_EQ( Wire(hops->Push(1), "in", "mark").count(), 1u );
+		Inject( flow, "in", jobject{{"payload", string(5000, 'x')}} );
+		ASSERT_TRUE( Received(flow, "d", 3) );
+		clock->Advance( live );
+		ASSERT_TRUE( WaitHeard(*hops, 3) );
+		let big = hops->Push( 2 ).hops( 0 );
+		EXPECT_EQ( big.kind(), FromServer::FlowRecordBirth );
+		EXPECT_TRUE( big.cut() ) << "a record's json past valueLimit is cut, and says so";
+		EXPECT_LE( big.json().size(), 4096u );
 
 		Mutate( "updateFlow( id:$id, trace:\"counts\" )", {{"id", flow}} );
 		ASSERT_TRUE( WaitUntil([&]{ return hops->Acks().size()==1 && plain->Acks().size()==1; }) ) << "a restart is a new run, and its ack";
@@ -236,9 +246,9 @@ namespace Jde::Opc::Gateway::Tests{
 		Inject( flow, "in", jobject{{"payload", 9}} );
 		ASSERT_TRUE( Received(flow, "d", 1) );
 		clock->Advance( live );
-		ASSERT_TRUE( WaitHeard(*hops, 3) );
-		EXPECT_EQ( hops->Push(2).hops_size(), 0 ) << "`counts` makes no record";
-		EXPECT_EQ( Wire(hops->Push(2), "mark", "d").count(), 1u );
+		ASSERT_TRUE( WaitHeard(*hops, 4) );
+		EXPECT_EQ( hops->Push(3).hops_size(), 0 ) << "`counts` makes no record";
+		EXPECT_EQ( Wire(hops->Push(3), "mark", "d").count(), 1u );
 		EXPECT_TRUE( Unsubscribe(first) );
 		EXPECT_TRUE( Unsubscribe(second) );
 		EXPECT_EQ( Flows().Feed(flow)->Subscribers(), 0u );
@@ -293,6 +303,80 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitUntil([&]{ return again->Errors().size()==1; }, 15s) );
 		EXPECT_TRUE( Has(again->Errors()[0], "purged") );
 		EXPECT_EQ( Refused([&]{ Subscribe( flow, false, ms<FlowHeard>() ); }).Status, EHttpStatus::NotFound );
+	}
+
+	//What a run had still to push goes before its change:  a deploy's ack comes after the run before's last push, and the
+	//records the new run made as it started, before the host told the feed of it, come after the ack;  a stop's end comes
+	//after the stopping run's last push.
+	TEST_F( FlowSubscribeTests, WhatARunHadStillToPushGoesBeforeItsChange ){
+		auto [clock, restart] = OnClock( Clock::now() );
+		let flow = CreateFlow( "live-change" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Plain()).at("running"), true );
+		let live = Flows().Live();
+		auto heard = ms<FlowHeard>();
+		Subscribe( flow, true, heard );
+		Inject( flow, "in", jobject{{"payload", 1}} );
+		ASSERT_TRUE( Received(flow, "d", 1) );
+		EXPECT_EQ( heard->Count(), 0u ) << "pushed by the feed's timer, on the flows' clock";
+
+		ASSERT_EQ( Deploy(flow, Starting()).at("running"), true );
+		ASSERT_TRUE( WaitUntil([&]{ return heard->Acks().size()==1; }) );
+		ASSERT_EQ( heard->Count(), 1u ) << "the run before's last push, ahead of the ack";
+		EXPECT_EQ( Wire(heard->Push(0), "in", "d").count(), 1u );
+		EXPECT_EQ( Hops(heard->Push(0)), (vector<string>{"birth in", "hop d"}) );
+		EXPECT_EQ( heard->Acks()[0].version(), 2u );
+		EXPECT_EQ( Node(heard->Acks()[0], "d").counts().received(), 1u ) << "On Start's message";
+		clock->Advance( live );
+		ASSERT_TRUE( WaitHeard(*heard, 2) ) << "the records the run made as it started";
+		EXPECT_EQ( Hops(heard->Push(1)), (vector<string>{"birth f", "hop d"}) );
+		EXPECT_EQ( heard->Push(1).hops_dropped(), 0u );
+
+		Inject( flow, "in", jobject{{"payload", 2}} );
+		ASSERT_TRUE( Received(flow, "d", 2) );
+		Mutate( "updateFlow( id:$id, enabled:false )", {{"id", flow}} );
+		ASSERT_TRUE( WaitUntil([&]{ return heard->Errors().size()==1; }, 15s) );
+		ASSERT_EQ( heard->Count(), 3u ) << "the stopping run's last push, ahead of the end";
+		EXPECT_EQ( Wire(heard->Push(2), "in", "d").count(), 1u );
+		EXPECT_EQ( Hops(heard->Push(2)), (vector<string>{"birth in", "hop d"}) );
+		EXPECT_TRUE( Has(heard->Errors()[0], "disabled") );
+	}
+
+	//A join with nothing to push to those subscribed before it holds back no push;  nor does the wall clock set back, a push
+	//armed before the step or after it coming `live` from it at the latest.
+	TEST_F( FlowSubscribeTests, AQuietJoinAndAClockSetBackHoldBackNoPush ){
+		auto [clock, restart] = OnClock( Clock::now() );
+		let flow = CreateFlow( "live-cadence" );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		ASSERT_EQ( Deploy(flow, Plain()).at("running"), true );
+		let live = Flows().Live();
+		auto a = ms<FlowHeard>(), b = ms<FlowHeard>();
+		Subscribe( flow, false, a );
+		let first = Last();
+		Subscribe( flow, false, b );
+		let second = Last();
+		std::this_thread::sleep_for( 100ms );
+		EXPECT_EQ( a->Count(), 0u ) << "the join had nothing to push";
+		Inject( flow, "in", jobject{{"payload", 1}} );
+		ASSERT_TRUE( Received(flow, "d", 1) );
+		clock->Advance( 0s );
+		ASSERT_TRUE( WaitHeard(*a, 1) ) << "the first at once, the quiet join held nothing back";
+		ASSERT_TRUE( WaitHeard(*b, 1) );
+		EXPECT_TRUE( Unsubscribe(second) );
+
+		Inject( flow, "in", jobject{{"payload", 2}} );
+		ASSERT_TRUE( Received(flow, "d", 2) );
+		clock->Step( -1h );
+		clock->Advance( live );
+		clock->Advance( live );
+		ASSERT_TRUE( WaitHeard(*a, 2) ) << "a push armed before the step";
+		EXPECT_EQ( Wire(a->Push(1), "in", "d").count(), 1u );
+		clock->Step( -1h );
+		Inject( flow, "in", jobject{{"payload", 3}} );
+		ASSERT_TRUE( Received(flow, "d", 3) );
+		clock->Advance( live );
+		ASSERT_TRUE( WaitHeard(*a, 3) ) << "and one armed after it";
+		EXPECT_TRUE( Unsubscribe(first) );
 	}
 
 	//The refusals - no flow, no id, one never deployed, a socket that bound no session, a caller without Read on the flow, an

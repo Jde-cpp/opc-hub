@@ -7,7 +7,9 @@
 
 namespace Jde::Opc::Gateway{
 	using Flows::TraceRecord;
-	static_assert( (int)Flows::ERecordKind::Hop==FromServer::FlowRecordHop && (int)Flows::ERecordKind::Drop==FromServer::FlowRecordDrop );
+	using Kind = Flows::ERecordKind;
+	static_assert( (int)Kind::Hop==FromServer::FlowRecordHop && (int)Kind::Birth==FromServer::FlowRecordBirth && (int)Kind::Clone==FromServer::FlowRecordClone
+		&& (int)Kind::Error==FromServer::FlowRecordError && (int)Kind::Status==FromServer::FlowRecordStatus && (int)Kind::Drop==FromServer::FlowRecordDrop );
 
 	Ω stamp( TimePoint t )ι->google::protobuf::Timestamp{ return UADateTime{ t }.ToProto(); }
 	Ω toProto( const Flows::NodeStatus& status )ι->FromServer::FlowStatus{
@@ -79,10 +81,10 @@ namespace Jde::Opc::Gateway{
 			to.set_port( (uint32_t)sent.Port );
 			to.set_to( id(sent.To) );
 			to.set_count( sent.Count );
-			to.set_msg_id( sent.Last.Id() );
+			to.set_msg_id( sent.First.Id() );
 			*to.mutable_time() = stamp( sent.Time );
 			bool cut{};
-			to.set_json( wire(jvalue{move(sent.Last.Json)}, limit, cut) );
+			to.set_json( wire(jvalue{move(sent.First.Json)}, limit, cut) );
 			to.set_cut( cut );
 		}
 		return y.SerializeAsString();
@@ -103,7 +105,7 @@ namespace Jde::Opc::Gateway{
 			if( r.Json ){
 				bool cut{};
 				hop.set_json( wire(*r.Json, limit, cut) );
-				hop.set_cut( cut );
+				hop.set_cut( cut || r.Cut );
 			}
 			if( r.Error.size() )
 				hop.set_error( move(r.Error) );
@@ -116,21 +118,37 @@ namespace Jde::Opc::Gateway{
 			y.set_hops_dropped( (uint32_t)dropped );
 		return y.SerializeAsString();
 	}
+	//A record as the feed holds it:  its json cut at `limit` as the files cut it, raw, so none held is larger.
+	Ω holding( const TraceRecord& r, uint limit )ι->TraceRecord{
+		TraceRecord y{ .Time=r.Time, .Id=r.Id, .Parent=r.Parent, .Node=r.Node, .Kind=r.Kind, .Ports=r.Ports, .Error=r.Error, .Status=r.Status, .Run=r.Run, .Cut=r.Cut, .Blocks=r.Blocks };
+		if( r.Json ){
+			let kept = Flows::CutJson( *r.Json, limit );
+			y.Json = string{ kept };
+			y.Cut = y.Cut || kept.size()<r.Json->size();
+		}
+		return y;
+	}
 
-	FlowFeed::FlowFeed( FlowPK id, sp<Hist::IClock> clock, Duration live, uint valueLimit )ι:
-		_id{ id }, _clock{ move(clock) }, _live{ live }, _valueLimit{ valueLimit }
+	FlowFeed::FlowFeed( sp<Hist::IClock> clock, Duration live, uint valueLimit )ι:
+		_clock{ move(clock) }, _live{ live }, _valueLimit{ valueLimit }
 	{}
 	α FlowFeed::Started( Run run )ι->void{
 		lg send{ _sendMutex };
 		vector<sp<FlowSubscriber>> subscribers;
+		Run before;
+		std::deque<TraceRecord> records;
+		uint dropped;
 		{
 			lg _{ _mutex };
 			if( run.Serial==_run.Serial )
 				return;
-			_run = run;
+			before = std::exchange( _run, run );
 			Disarm();
 			subscribers = _subscribers;
+			records = Taken( before.Serial );
+			dropped = std::exchange( _dropped, 0 );
 		}
+		Flush( subscribers, before, move(records), dropped );
 		let flow = run.Flow.lock();
 		if( subscribers.empty() || !flow )
 			return;
@@ -140,22 +158,35 @@ namespace Jde::Opc::Gateway{
 		let message = ack( run, state ).SerializeAsString();
 		for( let& subscriber : subscribers )
 			subscriber->OnAck( message );
+		lg _{ _mutex };
+		if( _records.size() )//what the run made as it started, before it was told of.
+			Arm();
 	}
 	α FlowFeed::Ended( EHttpStatus status, sv what )ι->void{
 		vector<sp<FlowSubscriber>> subscribers;
 		{
 			lg send{ _sendMutex };
+			Run ended;
+			std::deque<TraceRecord> records;
+			uint dropped;
+			{
+				lg _{ _mutex };
+				ended = std::exchange( _run, {} );
+				Disarm();
+				_hops = false;
+				subscribers = std::exchange( _subscribers, {} );
+				records = Taken( ended.Serial );
+				_records.clear();//a run's that started and was never told of.
+				dropped = std::exchange( _dropped, 0 );
+			}
+			Flush( subscribers, ended, move(records), dropped );
 			lg _{ _mutex };
-			_run = {};
-			Disarm();
 			_last = nullopt;
-			_hops = false;
-			subscribers = std::exchange( _subscribers, {} );
 		}
 		for( let& subscriber : subscribers )//under no lock:  the session's end comes back through Remove.
 			subscriber->OnEnded( status, string{what} );
 	}
-	α FlowFeed::Add( sp<FlowSubscriber> subscriber, SL sl )ε->FromServer::FlowSubscribeAck{
+	α FlowFeed::Add( sp<FlowSubscriber> subscriber, sv name, SL sl )ε->FromServer::FlowSubscribeAck{
 		lg send{ _sendMutex };
 		Run run;
 		sp<Flows::Flow> flow;
@@ -165,23 +196,23 @@ namespace Jde::Opc::Gateway{
 		{
 			lg _{ _mutex };
 			flow = _run.Flow.lock();
-			if( !flow || !flow->Running() )
-				throw Exception{ sl, ExceptionArgs{EHttpStatus::Conflict}, "Flow {} is not running.", _id };
+			if( !flow || !flow->Running() )//the host has a run this has not been told of yet, or the run stopped since the host was asked.
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::Conflict}, "Flow '{}' is starting or stopping:  subscribe again.", name };
 			run = _run;
 			before = _subscribers;
-			records = std::exchange( _records, {} );
+			records = Taken( run.Serial );
 			dropped = std::exchange( _dropped, 0 );
-			if( before.size() )
-				_last = _clock->Now();
+			if( subscriber->Hops() )
+				_hops = true;
+			_subscribers.push_back( move(subscriber) );//before the take, so the cue of what comes after it arms the push.
 		}
 		if( before.empty() )
 			flow->Watch( true );
 		Flows::FlowState state;
-		Send( before, flow->TakeActivity(&state), run, move(records), dropped );
-		lg _{ _mutex };
-		if( subscriber->Hops() )
-			_hops = true;
-		_subscribers.push_back( move(subscriber) );
+		if( Send(before, flow->TakeActivity(&state), run, move(records), dropped) ){
+			lg _{ _mutex };
+			_last = _clock->Now();
+		}
 		return ack( run, state );
 	}
 	α FlowFeed::Remove( const FlowSubscriber* subscriber )ι->void{
@@ -213,20 +244,24 @@ namespace Jde::Opc::Gateway{
 	α FlowFeed::OnRecord( uint serial, const TraceRecord& record )ι->void{
 		if( !_hops.load(std::memory_order_relaxed) )
 			return;
+		auto kept = holding( record, _valueLimit );
 		lg _{ _mutex };
-		if( serial!=_run.Serial || !_hops )
+		if( serial<_run.Serial || !_hops )//a later run's is held until the host tells of it:  it makes records as it starts.
 			return;
 		if( _records.size()>=MaxHops ){
 			_records.pop_front();
 			++_dropped;
 		}
-		_records.push_back( record );
-		Arm();
+		_records.push_back( {serial, move(kept)} );
+		if( serial==_run.Serial )
+			Arm();
 	}
 	α FlowFeed::Arm()ι->void{
 		if( _timer || _subscribers.empty() )
 			return;
 		let now = _clock->Now();
+		if( _last && *_last>now )//the clock was set back:  from the last push as of now.
+			_last = now;
 		let due = _last ? std::max( now, *_last+_live ) : now;
 		_timer = _clock->Schedule( due-now, [weak=weak_from_this(), tick=++_tick]{
 			if( auto self = weak.lock() )
@@ -237,8 +272,18 @@ namespace Jde::Opc::Gateway{
 		if( auto timer = std::exchange(_timer, 0); timer )
 			_clock->Cancel( timer );
 		++_tick;
-		_records.clear();
-		_dropped = 0;
+	}
+	α FlowFeed::Taken( uint serial )ι->std::deque<TraceRecord>{
+		std::deque<TraceRecord> y;
+		std::deque<Held> later;
+		for( auto& h : _records ){
+			if( h.Serial<=serial )
+				y.push_back( move(h.Record) );
+			else
+				later.push_back( move(h) );
+		}
+		_records = move( later );
+		return y;
 	}
 	α FlowFeed::Tick( uint tick )ι->void{
 		lg send{ _sendMutex };
@@ -247,12 +292,10 @@ namespace Jde::Opc::Gateway{
 			if( tick!=_tick )
 				return;
 			_timer = 0;
-			let now = _clock->Now();
-			if( _last && now<*_last+_live ){//a join pushed since the timer was set.
+			if( _last && _clock->Now()<*_last+_live ){//a push since the timer was set, or the clock set back, which Arm sees to.
 				Arm();
 				return;
 			}
-			_last = now;
 		}
 		Push();
 	}
@@ -265,15 +308,21 @@ namespace Jde::Opc::Gateway{
 			lg _{ _mutex };
 			run = _run;
 			subscribers = _subscribers;
-			records = std::exchange( _records, {} );
+			records = Taken( run.Serial );
 			dropped = std::exchange( _dropped, 0 );
 		}
-		if( let flow = run.Flow.lock(); flow && subscribers.size() )
-			Send( subscribers, flow->TakeActivity(), run, move(records), dropped );
+		Flush( subscribers, run, move(records), dropped );
 	}
-	α FlowFeed::Send( const vector<sp<FlowSubscriber>>& to, Flows::Activity&& activity, const Run& run, std::deque<TraceRecord>&& records, uint dropped )ι->void{
+	α FlowFeed::Flush( const vector<sp<FlowSubscriber>>& to, const Run& run, std::deque<TraceRecord>&& records, uint dropped )ι->void{
+		let flow = run.Flow.lock();
+		if( Send(to, flow ? flow->TakeActivity() : Flows::Activity{}, run, move(records), dropped) ){
+			lg _{ _mutex };
+			_last = _clock->Now();
+		}
+	}
+	α FlowFeed::Send( const vector<sp<FlowSubscriber>>& to, Flows::Activity&& activity, const Run& run, std::deque<TraceRecord>&& records, uint dropped )ι->bool{
 		if( to.empty() )
-			return;
+			return false;
 		let activityBody = body( move(activity), run.Nodes, _valueLimit );
 		let both = records.empty() && !dropped ? string{} : activityBody+hops( move(records), dropped, _valueLimit );
 		bool sent{};
@@ -286,5 +335,6 @@ namespace Jde::Opc::Gateway{
 		}
 		if( sent )
 			++_pushed;
+		return sent;
 	}
 }

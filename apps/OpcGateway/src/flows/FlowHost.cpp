@@ -564,7 +564,7 @@ namespace Jde::Opc::Gateway{
 			config.Env = _env;
 			auto& held = _feeds[id];
 			if( !held )
-				held = ms<FlowFeed>( id, _clock, _live, _valueLimit );
+				held = ms<FlowFeed>( _clock, _live, _valueLimit );
 			config.Active = [feed=held, serial]{ feed->OnActive( serial ); };
 			if( _store )
 				config.Trace = _store->Trace( row.Slug, row.Trace, _clock, [feed=held, serial]( const Flows::TraceRecord& record ){ feed->OnRecord( serial, record ); } );

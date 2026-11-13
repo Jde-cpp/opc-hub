@@ -201,7 +201,7 @@ message FlowWire{
 	uint32 port=2;
 	string to=3;
 	uint64 count=4;//the messages down it since the push before.
-	//The last of them:  its id, when it went, on the flow's clock, and its json, a 64-bit integer in it the web's Long,
+	//The first of them:  its id, when it went, on the flow's clock, and its json, a 64-bit integer in it the web's Long,
 	//`{high, low, unsigned}`, cut at /gateway/flows/valueLimit where it is longer, on a character, with `cut` set.
 	uint64 msg_id=5;
 	google.protobuf.Timestamp time=6;

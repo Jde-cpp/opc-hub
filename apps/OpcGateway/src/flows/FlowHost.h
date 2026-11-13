@@ -163,7 +163,9 @@ namespace Jde::Opc::Gateway{
 		struct SetAwait;//a context value set on a run's strand.
 		α Retry( FlowPK id )ι->VoidTask;//the retry timer's.
 		//The flow's subscribers hear what its run is now, under _edits:  the ack of a run that started since they last heard,
-		//or with none running their end, saying why.  After each start and each stop.
+		//or with none running their end, saying why.  After each start and each stop, by hand:  a deploy and a restart at
+		//another trace level halt a run and keep its subscriptions, which a stop that told the feed itself could not tell from
+		//one that ends them, so a new path that starts or halts a run calls this after it.
 		α Tell( FlowPK id )ι->void;
 		α Time()Ι->sp<Hist::IClock>{ lg _{ _mutex }; return _clock; }
 		α Function()Ι->Flows::FunctionLimits{ lg _{ _mutex }; return _function; }

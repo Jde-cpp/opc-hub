@@ -105,7 +105,7 @@ function( sync=false )
 			retention:: "P30D", maxSize:: "10GiB", //trace days older than this, or past this size over every flow, oldest first, go at the daily roll, on the host's clock at midnight.
 			valueLimit:: 4096, readLimit:: 10000, //bytes of a message's json a hop record keeps, past it the record is cut and says so;  and the most records one trace read returns, a page, the historian's rule, here since the hist block may be absent.  0 lifts either.
 			queue:: 1000, //messages a node's input holds;  past it the oldest is dropped and counted.
-			live:: "PT0.2S", //how often at most a client of FlowSubscribe hears a flow's activity, its counts, last messages, status changes and, where it asked, its hops.
+			live:: "PT0.2S", //how often at most a client of FlowSubscribe hears a flow's activity, its counts, wires' messages, status changes and, where it asked, its hops.
 			function:{ memory:: "16MiB", stack:: "256KiB", timeout:: "PT0.1S" }, //a flow's sandbox, which its Function nodes share:  the heap, the first node taking some 120 KiB of it and each further one some 70 KiB before its body runs;  the stack a body may take, kept under the executor thread's own, 4 MiB at most, 512 KiB on Windows, whose threads have 1 MB;  and how long one call may run, with the promise jobs it leaves.  A size is bytes, or KiB, MiB or GiB.
 			env:: {}, //what a body's `env.get( name )` answers, by name, for every flow, beside NR_NODE_ID, NR_NODE_NAME and NR_FLOW_NAME:  never the process's environment, which holds what a deployer is not to read.
 			http:{ allow:: [] } //the hosts an `http request` node may reach, names or glob patterns, `*.example.com`, read at each request and each redirect;  empty, none.

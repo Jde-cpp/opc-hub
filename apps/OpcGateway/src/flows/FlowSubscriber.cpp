@@ -57,7 +57,7 @@ namespace Jde::Opc::Gateway{
 			}
 			FromServer::FlowSubscribeAck ack;
 			try{
-				ack = subscriber->Join();
+				ack = subscriber->Join( state->Row.Name );
 			}
 			catch( runtime_error& ){
 				RemoveFlow( requestId, subscriber.get() );
