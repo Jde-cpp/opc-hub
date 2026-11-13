@@ -1,4 +1,6 @@
 #include <jde/opc/openProtocol/Controller.h>
+#include <future>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/strand.hpp>
 #include <jde/opc/openProtocol/logTags.h>
@@ -494,8 +496,17 @@ namespace Jde::Opc::OpenProtocol{
 	{
 		boost::asio::post( _impl->Executor(), [impl=_impl]{ impl->Listen(); } );
 	}
+	//Closed when this returns, so the next controller takes the port at once, as a suite's cases do on one port.  Not waited
+	//for past five seconds, a strand with no thread free to run it, nor where the close is dropped with its context.
 	Controller::~Controller(){
-		boost::asio::post( _impl->Executor(), [impl=_impl]{ impl->Close(); } );
+		std::promise<void> closed;
+		auto done = closed.get_future();
+		boost::asio::dispatch( _impl->Executor(), [impl=_impl, closed=std::move(closed)]()mutable{
+			impl->Close();
+			closed.set_value();
+		} );
+		if( done.wait_for(std::chrono::seconds{5})==std::future_status::timeout )
+			WARN( "The test controller on port {} has not closed after 5 s:  no thread ran its strand, so the port may still be held.", Port() );
 	}
 	α Controller::Port()Ι->uint16_t{ return _impl->Port(); }
 	α Controller::Edit( function<void( Script& )> edit )ι->void{

@@ -8,7 +8,9 @@ Overall equipment effectiveness is the share of its planned time a machine spent
 
 The gateway works it out from what its historian already keeps. A **machine** is a [historian group](/help/gateways/groups) whose members are given roles: its run state, its counts, its stop reason. The gateway turns the group's records into stops and per-interval rows, and computes the figures when they are read.
 
-Machines, lines and reasons are edited from the gateway's page under [Applications](/apps), on its **Machines**, **Lines** and **Reasons** tabs. The Machines tab opens the [dashboard](#the-dashboard), every machine live.
+Machines, lines and reasons are edited from the gateway's page under [Applications](/apps), on its **Machines**, **Lines** and **Reasons** tabs.
+
+**OEE dashboard**, on the Machines tab, opens the [dashboard](#the-dashboard), every machine live.
 
 OEE runs on a gateway whose settings have an `oee` block and a historian.
 
@@ -109,7 +111,7 @@ Each line that is in no line has a **tile**, the site or the areas first:
 - how many of its machines are running and stopped, and how many are unknown when any is
 - the availability, performance, quality and OEE of its shift so far, by the line's own calendar
 
-A line's tile opens the [line's OEE page](#the-lines-oee-page). A line with a machine whose group you may not read has no tile. Its machines you may read are then shown as machines in no line, each with a tile of its own.
+A line's tile opens the [line's OEE page](#the-line-s-oee-page). A line with a machine whose group you may not read has no tile. Its machines you may read are then shown as machines in no line, each with a tile of its own.
 
 Each machine that is in no line has a **tile**:
 
@@ -180,13 +182,13 @@ A period with more stops than the gateway reads at once is shown from a later st
 
 **Losses** is a Pareto: the time lost to each reason, to uncoded stops and to small stops, longest first. The table under it has the same rows with each one's share and stop count.
 
-**Trend** is OEE for each shift or each day of the period. A machine with no calendar has UTC days, which the trend labels as such.
+**Trend** is OEE for each shift or each day of the period, picked with **By shift** and **By day** beside its heading. **By shift** is offered when the machine has a calendar. A machine with no calendar has UTC days, which the trend labels as such.
 
 The timeline and the two charts need the add-on the install does not include - see [Trend chart](/help/gateways#trend-chart). Without it the page is its figures and its tables.
 
 ### Stops and coding
 
-**Stops** lists the period's stops, newest first. **Uncoded** keeps only the stops with time no reason covers.
+**Stops** lists the period's stops, newest first. **Uncoded** keeps only the stops with time no reason covers. **Earlier stops**, under the table, reads the next page of them.
 
 **Code** on a row, or a click on a stop's band, opens the coding dialog:
 

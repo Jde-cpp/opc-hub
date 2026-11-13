@@ -37,7 +37,7 @@ namespace Jde::Opc::OpenProtocol{
 		Controller( boost::asio::io_context& context, uint16_t port, Script script )ε;//`port` 0 takes a free one.  Throws where it cannot listen.
 		Controller( const Controller& )=delete;
 		α operator=( const Controller& )->Controller& =delete;
-		~Controller();//closes the acceptor and every client.
+		~Controller();//closes the acceptor and every client:  the port is free when it returns.
 		α Port()Ι->uint16_t;
 		α Edit( function<void( Script& )> edit )ι->void;
 

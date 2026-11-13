@@ -21,44 +21,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//through the gateway's clients, as a web session, a group's collector and the socket reach any server.
 	struct DriverHostTests : HistGroupFixture{
 	protected:
-		//A row for the suite's controller, made while the gateway runs, with its server listening:  purged as it goes.
-		struct Row final{
-			Row( string slug, sv driver={} )ε:Slug{ move(slug) }{
-				PurgeServerCnnctn( Slug );
-				let created = CreateDriverRow( Slug, driver );
-				THROW_IF( !created, "{}", created.error() );
-				Id = *created;
-				if( !WaitHost(Slug) ){
-					PurgeServerCnnctn( Id );
-					THROW( "the server of '{}' never started.", Slug );
-				}
-			}
-			Row( const Row& )=delete;
-			~Row(){
-				PurgeServerCnnctn( Id );
-				WaitNoHost( Slug );
-			}
-			string Slug;
-			ServerCnnctnPK Id;
-		};
-		//A PF6000 station that answers every revision the codec has, and numbers its messages.
-		Ω Station()ι->Controller::Script{
-			return { .Identity={ .CellId=1, .ChannelId=2, .ControllerName="Line 3 station 7", .SupplierCode="ACT", .OpenProtocolVersion="2.20.1", .ControllerSoftwareVersion="3.11.5", .ToolSoftwareVersion="1.4.2",
-				.RbuType="Gold", .ControllerSerialNumber="C00123456", .SystemType=3, .SystemSubtype=1, .SequenceNumberSupport=1, .LinkingSupport=0, .StationId=7, .StationName="Station 7", .ClientId=1 } };
-		}
-		Ω Op( const Row& row, sv name )ε->Value{ return ReadOp( row.Slug, name, SessionCredential() ); }//as a web session's client reads it.
-		//Until `_Op`'s `name` is as `is` has it;  a read the row's server is not there for is one that is not yet.
-		Ω WaitOp( const Row& row, sv name, function<bool(const Value&)> is, Duration timeout=15s )ι->bool{
-			return WaitUntil( [&]{
-				try{
-					return is( Op(row, name) );
-				}
-				catch( const std::exception& ){
-					return false;
-				}
-			}, timeout );
-		}
-		Ω WaitConnected( const Row& row, bool connected=true )ι->bool{ return WaitOp( row, "Connected", [=]( let& v ){ return OpFlag( v )==connected; } ); }
+		using Row = DriverRow;
 		Ω Collector( const Row& row )ι->sp<UAClient>{ return UAClient::Find( row.Slug, HistHost::Instance().Collector(row.Slug) ); }
 		//A group over the row goes, and its collector's items before the row does:  an item's delete comes _itemDeleteDelay on, and
 		//would find its client closed.
@@ -125,7 +88,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ToString(namespaces.Get<UA_String>(2)), "urn:jde:driver-op:open-protocol" );
 
 		//What the session reported, and the clock read at the connect.
-		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0080:1"; }) ) << OpText( Op(row, "Revisions") );
+		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0061:7 0080:1"; }) ) << OpText( Op(row, "Revisions") );
 		EXPECT_EQ( OpFlag(Op(row, "LinkLevel")), true ) << "MID 0002 at 6 says the controller numbers its messages";
 		EXPECT_EQ( OpText(Op(row, "LastError")), "" );
 		EXPECT_EQ( OpCount(Op(row, "Reconnects")), 0u ) << "a first connection is no reconnect";
@@ -162,7 +125,7 @@ namespace Jde::Opc::Gateway::Tests{
 		{
 			Controller station{ *Executor(), ControllerPort(), Station() };
 			ASSERT_TRUE( WaitConnected(row) );
-			ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0080:1"; }) ) << OpText( Op(row, "Revisions") );
+			ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:6 0061:7 0080:1"; }) ) << OpText( Op(row, "Revisions") );
 			EXPECT_EQ( OpCount(Op(row, "Reconnects")), 0u );
 			EXPECT_EQ( OpFlag(Op(row, "LinkLevel")), true );
 		}
@@ -179,7 +142,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Controller station{ *Executor(), ControllerPort(), move(older) };
 		ASSERT_TRUE( WaitConnected(row) ) << "the controller restarted";
 		EXPECT_EQ( OpCount(Op(row, "Reconnects")), 1u );
-		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:3 0080:1"; }) ) << OpText( Op(row, "Revisions") );
+		ASSERT_TRUE( WaitOp(row, "Revisions", []( let& v ){ return OpText( v )=="0001:3 0061:7 0080:1"; }) ) << OpText( Op(row, "Revisions") );
 		EXPECT_EQ( OpFlag(Op(row, "LinkLevel")), false );
 		let identity = Json::Parse( OpText(Op(row, "Identity")) );
 		EXPECT_EQ( Json::FindDefaultSV(identity, "controllerName"), "Line 3 station 8" ) << serialize( identity );
@@ -338,7 +301,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let revived = WaitRevived( lost, row.Slug );
 		ASSERT_TRUE( revived ) << "the row's client never reconnected";
 		EXPECT_TRUE( WaitUntil([&]{ return listener->Pushes>pushes; }) ) << "the new server's value";
-		ASSERT_TRUE( WaitUntil([&]{ return OpText( ReadValue(revived, OpNode("Revisions")) )=="0001:2 0080:1"; }) ) << OpText( ReadValue(revived, OpNode("Revisions")) );
+		ASSERT_TRUE( WaitUntil([&]{ return OpText( ReadValue(revived, OpNode("Revisions")) )=="0001:2 0061:7 0080:1"; }) ) << OpText( ReadValue(revived, OpNode("Revisions")) );
 		EXPECT_EQ( OpCount(ReadValue(revived, OpNode("Reconnects"))), 0u ) << "a new driver's first connection";
 	}
 
