@@ -17,9 +17,14 @@ namespace Jde::Opc::Gateway::TighteningResult{
 	//Every variable in the order a result is written, TighteningId last:  it changes with every result, so a client that has
 	//it has the result whole.
 	α Variables()ι->const vector<Variable>&;
+	//The scalar as a value of its own, with `status` where it is not Good, and no timestamps.
+	α Scalar( const void* scalar, const UA_DataType& type, UA_StatusCode status=UA_STATUSCODE_GOOD )ι->Value;
 	//`type`'s zero under `status`:  open62541 refuses a typed variable a value of none, whatever its status.
 	α Unset( const UA_DataType& type, UA_StatusCode status )ι->Value;
+	//`local`, whole seconds of a clock that keeps `zone`, as UTC.  An hour that comes twice is the pass nearer `seen`, when it
+	//was read:  a controller sends a result seconds after it is made, and the passes are an hour apart.
+	α ToSys( OpenProtocol::LocalTime local, const std::chrono::time_zone& zone, TimePoint seen )ι->TimePoint;
 	//The variables `revision` carries, in Variables' order, each with the result's value, or Bad_NotSupported where the result
-	//sent none, its field all spaces (§2.3, Table 3).  A name's empty text is a value.
-	α Values( const OpenProtocol::Mid0061& result, uint16_t revision, const std::chrono::time_zone& zone )ι->vector<std::pair<sv,Value>>;
+	//sent none, its field all spaces (§2.3, Table 3).  A name's empty text is a value.  Its times are read as ToSys reads them.
+	α Values( const OpenProtocol::Mid0061& result, uint16_t revision, const std::chrono::time_zone& zone, TimePoint seen )ι->vector<std::pair<sv,Value>>;
 }

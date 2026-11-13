@@ -221,9 +221,9 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//The controller's time is whole seconds:  a result not after the last one written takes the last's time and a millisecond, so
-	//two rundowns in a second, and one after the clock is set back, are distinct and in order.  `Time` holds the controller's own.
-	//A result with no time is sourced at its receipt, and a field it leaves blank reads Bad_NotSupported.  The row's zone is not
-	//the suite's, so no box's own zone reads its times right.
+	//two rundowns in a second, and one after the clock is set back, are distinct and in order, with one warning for a clock set
+	//back past maxSkew.  `Time` holds the controller's own.  A result with no time is sourced at its receipt, and a field it leaves
+	//blank reads Bad_NotSupported.  The row's zone is not the suite's, so no box's own zone reads its times right.
 	TEST_F( DriverResultTests, TwoResultsInASecondAreDistinct ){
 		Controller station{ *Executor(), ControllerPort(), Station() };
 		const DriverRow row{ "driver-second", R"({"timeZone":"Europe/Stockholm"})" };
@@ -243,10 +243,17 @@ namespace Jde::Opc::Gateway::Tests{
 		for( let path : {"Result.Vin", "Result.Torque", "Result.Time", "Counters.Total", "Counters.Ok"} )
 			EXPECT_EQ( SourceTime(Of(second, path)), optional<TimePoint>{source+1ms} ) << path << ":  one result, one source timestamp";
 		EXPECT_EQ( Time(Of(second, "Result.Time")), optional<TimePoint>{source} ) << "the controller's own";
+		const Logging::Capture warnings{ OpenProtocol::LogTag, ELogLevel::Warning };
+		let wentBack = [&]{ return warnings.Find( [&]( const Logging::Entry& e ){ return e.Message().contains( "clock went back" ) && e.Message().contains( row.Slug ); } ).size(); };
 		EXPECT_EQ( sourced(push(Rundown(3, at-10s))), optional<TimePoint>{source+2ms} ) << "a clock set back";
+		EXPECT_EQ( wentBack(), 0u ) << "inside maxSkew";
 		EXPECT_EQ( sourced(push(Rundown(4, at+1s))), optional<TimePoint>{source+1s} ) << "a later second as it is";
+		EXPECT_EQ( sourced(push(Rundown(5, at-10min))), optional<TimePoint>{source+1s+1ms} ) << "a clock set back past maxSkew";
+		EXPECT_EQ( wentBack(), 1u );
+		EXPECT_EQ( sourced(push(Rundown(6, at-9min))), optional<TimePoint>{source+1s+2ms} );
+		EXPECT_EQ( wentBack(), 1u ) << "once, until a result is after the last";
 
-		auto blank = Rundown( 5, nullopt );
+		auto blank = Rundown( 7, nullopt );
 		blank.Torque.reset();
 		let before = Clock::now();
 		let read = push( move(blank) );
@@ -257,12 +264,35 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Of(read, "Result.Torque").status, NotSupported );
 		EXPECT_EQ( SourceTime(Of(read, "Result.Torque")), sourced(read) );
 		EXPECT_EQ( Of(read, "Result.TorqueMax").status, UA_STATUSCODE_GOOD );
-		EXPECT_EQ( ResultId(read), optional<uint>{5} );
+		EXPECT_EQ( ResultId(read), optional<uint>{7} );
+	}
+
+	//An hour that comes twice, New York's on 1 November 2026, is the pass nearer the time it is read at:  a live result comes
+	//seconds after it is made.  A result made in it and read long after, as the suite's is, is the second pass's, `Time` with it.
+	TEST_F( DriverResultTests, AnHourThatComesTwiceIsThePassNearerItsReceipt ){
+		let& zone = *std::chrono::locate_zone( "America/New_York" );
+		let local = LocalTime{ local_days{year{2026}/11/1}+1h+30min };
+		const TimePoint first{ sys_days{year{2026}/11/1}+5h+30min }, second{ first+1h };//EDT's, then EST's.
+		EXPECT_EQ( TighteningResult::ToSys(local, zone, first+2s), first );
+		EXPECT_EQ( TighteningResult::ToSys(local, zone, second+2s), second );
+		EXPECT_EQ( TighteningResult::ToSys(local, zone, first+29min), first ) << "short of halfway";
+		EXPECT_EQ( TighteningResult::ToSys(local, zone, second-29min), second ) << "past halfway";
+		EXPECT_EQ( TighteningResult::ToSys(LocalTime{local_days{year{2026}/7/4}+10h}, zone, first), TimePoint{sys_days{year{2026}/7/4}+14h} ) << "an hour that comes once";
+
+		Controller station{ *Executor(), ControllerPort(), Station() };
+		const DriverRow row{ "driver-twice", NewYork };
+		ASSERT_TRUE( WaitRevision(row, 7) );
+		station.Push( Rundown(1, local) );
+		ASSERT_TRUE( WaitResults(row, 1) );
+		let read = Variables( row );
+		EXPECT_EQ( SourceTime(Of(read, "Result.TighteningId")), optional<TimePoint>{second} ) << "read after the fall-back:  the second pass";
+		EXPECT_EQ( Time(Of(read, "Result.Time")), optional<TimePoint>{second} );
 	}
 
 	//The counters count since the driver started:  at revision 3 a tightening, result type 1, and no loosening or batch
 	//increment, Ok and Nok by the tightening status;  below revision 3, where a result names no type, every result.  They keep
-	//their values through a loss of the link, and `_Op.Results` counts every result written.
+	//their values through a loss of the link, and `_Op.Results` counts every result written.  A field the next connection's lower
+	//revision lacks turns Bad_NotSupported a millisecond past the last result, whose clock is the controller's, not the gateway's.
 	TEST_F( DriverResultTests, TheCountersCountTightenings ){
 		auto typed = Station();
 		typed.Revisions[60] = 3;
@@ -290,13 +320,20 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( serialize(Of(loosening, "Result.ResultType").ValueJson(nullptr)), "2" ) << "written all the same";
 		EXPECT_EQ( SourceTime(Of(loosening, "Counters.Total")), SourceTime(Of(nok, "Result.TighteningId")) ) << "as the last result counted left it";
 		EXPECT_EQ( Counters(push(3, 1)), (Counts{2, 1, 1}) ) << "a batch increment";
-		EXPECT_EQ( Counters(push(1, 1)), (Counts{3, 2, 1}) );
+		let last = push( 1, 1 );//sourced seconds ahead of the gateway's clock.
+		EXPECT_EQ( Counters(last), (Counts{3, 2, 1}) );
 		EXPECT_EQ( OpCount(Op(row, "Results")), optional<uint>{5} );
 
 		station.Edit( []( Controller::Script& script ){ script.Revisions[60] = 1; } );
 		station.Drop();
 		ASSERT_TRUE( WaitRevision(row, 1) );
-		EXPECT_EQ( Counters(Variables(row)), (Counts{3, 2, 1}) ) << "through the loss of the link";
+		let reconnected = Variables( row );
+		EXPECT_EQ( Counters(reconnected), (Counts{3, 2, 1}) ) << "through the loss of the link";
+		let lastSource = SourceTime( Of(last, "Result.TighteningId") );
+		ASSERT_TRUE( lastSource );
+		let& lacked = Of( reconnected, "Result.Strategy" );//revision 2's.
+		EXPECT_EQ( lacked.status, NotSupported ) << UAException::Message( lacked.status );
+		EXPECT_EQ( SourceTime(lacked), optional<TimePoint>{*lastSource+1ms} ) << "after the last result";
 		EXPECT_EQ( Counters(push(2, 0)), (Counts{4, 2, 2}) ) << "revision 1 names no type";
 		EXPECT_EQ( Counters(push(3, 1)), (Counts{5, 3, 2}) );
 	}
@@ -395,7 +432,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//A controller that takes a subscription at 7 and pushes at its own revision 3, as the specification allows it (§1.4):  each
 	//result is read by its own header, the fields past it turn Bad_NotSupported at its time, and `_Op.Revisions` follows.  Its
-	//next connection, accepted at 7 again, turns none of them back.
+	//next connection, accepted at 7 again, turns none of them back, and its next result puts `_Op.Revisions` back at 3.
 	TEST_F( DriverResultTests, AControllerThatAnswersLowerIsReadByItsHeader ){
 		auto lower = Station();
 		lower.Revisions[60] = 3;
@@ -425,6 +462,9 @@ namespace Jde::Opc::Gateway::Tests{
 		let again = Of( Variables(row), "Result.CustomerErrorCode" );
 		EXPECT_EQ( again.status, NotSupported );
 		EXPECT_EQ( SourceTime(again), optional<TimePoint>{source} ) << "written at the connect";
+		station.Push( Rundown(2, LocalTime{local_days{year{2026}/7/4}+10h+1min}) );
+		ASSERT_TRUE( WaitResults(row, 2) );
+		EXPECT_TRUE( WaitRevision(row, 3) ) << "the result's own:  " << OpText( Op(row, "Revisions") );
 	}
 
 	//A controller that refuses the subscription makes no results:  a warning and `_Op.LastError`, the link standing.

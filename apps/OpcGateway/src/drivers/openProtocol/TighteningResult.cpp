@@ -22,20 +22,21 @@ namespace Jde::Opc::Gateway{
 		α Number( sv name, uint8_t since, optional<uint32_t> value )ι->void{ Scalar<UA_UInt32>( name, since, UA_TYPES_UINT32, value ); }
 		α Real( sv name, uint8_t since, optional<double> value )ι->void{ Scalar<UA_Double>( name, since, UA_TYPES_DOUBLE, value ); }
 		α Degrees( sv name, uint8_t since, optional<uint32_t> value )ι->void{ Real( name, since, value ? optional<double>{ *value } : nullopt ); }
-		//Whole seconds local to the row's zone, an hour that comes twice read as its first.
+		//Whole seconds local to the row's zone (TighteningResult::ToSys).
 		α Time( sv name, uint8_t since, optional<OpenProtocol::LocalTime> value )ι->void{
-			let ua = value ? UADateTime{ Zone->to_sys(*value, std::chrono::choose::earliest) }.UA() : UA_DateTime{};
+			let ua = value ? UADateTime{ TighteningResult::ToSys(*value, *Zone, Seen) }.UA() : UA_DateTime{};
 			Put( name, since, UA_TYPES[UA_TYPES_DATETIME], value ? &ua : nullptr );
 		}
 		TPut Put;
 		const std::chrono::time_zone* Zone;
+		TimePoint Seen;
 	private:
 		template<class T, class U> α Scalar( sv name, uint8_t since, uint16_t type, optional<U> value )ι->void{
 			const T ua{ value.value_or(U{}) };
 			Put( name, since, UA_TYPES[type], value ? &ua : nullptr );
 		}
 	};
-	template<class TPut> Each( TPut, const std::chrono::time_zone* )->Each<TPut>;
+	template<class TPut> Each( TPut, const std::chrono::time_zone*, TimePoint )->Each<TPut>;
 
 	//Tables 108 to 114, a row a variable, as the type has them (jde/opc/openProtocol/Mids.h).
 	Ω walk( const Mid0061& r, auto&& v )ι->void{
@@ -96,33 +97,37 @@ namespace Jde::Opc::Gateway{
 		v.Real( "CompensatedAngle", 7, r.CompensatedAngle );
 		v.Number( "TighteningId", 1, r.TighteningId );
 	}
-	Ω scalar( const void* value, const UA_DataType& type, UA_StatusCode status )ι->Value{
+	α TighteningResult::Variables()ι->const vector<Variable>&{
+		static const vector<Variable> variables = []{
+			vector<Variable> y;
+			walk( Mid0061{}, Each{[&]( sv name, uint8_t since, const UA_DataType& type, const void* ){ y.push_back( {name, since, &type} ); }, nullptr, TimePoint{}} );
+			return y;
+		}();
+		return variables;
+	}
+	α TighteningResult::Scalar( const void* scalar, const UA_DataType& type, UA_StatusCode status )ι->Value{
 		UA_DataValue view; UA_DataValue_init( &view );
-		UA_Variant_setScalar( &view.value, const_cast<void*>(value), &type );
+		UA_Variant_setScalar( &view.value, const_cast<void*>(scalar), &type );
 		view.hasValue = true;
 		view.status = status;
 		view.hasStatus = status!=UA_STATUSCODE_GOOD;
 		return Value{ view };
 	}
-
-	α TighteningResult::Variables()ι->const vector<Variable>&{
-		static const vector<Variable> variables = []{
-			vector<Variable> y;
-			walk( Mid0061{}, Each{[&]( sv name, uint8_t since, const UA_DataType& type, const void* ){ y.push_back( {name, since, &type} ); }, nullptr} );
-			return y;
-		}();
-		return variables;
-	}
 	α TighteningResult::Unset( const UA_DataType& type, UA_StatusCode status )ι->Value{
-		return scalar( _zero, type, status );
+		return Scalar( _zero, type, status );
 	}
-	α TighteningResult::Values( const Mid0061& result, uint16_t revision, const std::chrono::time_zone& zone )ι->vector<std::pair<sv,Value>>{
+	α TighteningResult::ToSys( OpenProtocol::LocalTime local, const std::chrono::time_zone& zone, TimePoint seen )ι->TimePoint{
+		const TimePoint first{ zone.to_sys(local, std::chrono::choose::earliest) };
+		const TimePoint second{ zone.to_sys(local, std::chrono::choose::latest) };
+		return second-seen<seen-first ? second : first;
+	}
+	α TighteningResult::Values( const Mid0061& result, uint16_t revision, const std::chrono::time_zone& zone, TimePoint seen )ι->vector<std::pair<sv,Value>>{
 		vector<std::pair<sv,Value>> y;
 		y.reserve( Variables().size() );
 		walk( result, Each{[&]( sv name, uint8_t since, const UA_DataType& type, const void* value ){
 			if( since<=revision )
-				y.emplace_back( name, value ? scalar(value, type, UA_STATUSCODE_GOOD) : Unset(type, UA_STATUSCODE_BADNOTSUPPORTED) );
-		}, &zone} );
+				y.emplace_back( name, value ? Scalar(value, type) : Unset(type, UA_STATUSCODE_BADNOTSUPPORTED) );
+		}, &zone, seen} );
 		return y;
 	}
 }

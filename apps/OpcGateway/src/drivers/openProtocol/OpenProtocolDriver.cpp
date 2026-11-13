@@ -5,7 +5,6 @@
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/UAString.h>
-#include <jde/opc/uatypes/Value.h>
 #include <jde/opc/server/UAServer.h>
 #include <jde/opc/openProtocol/logTags.h>
 #include "../../types/OpenProtocolRow.h"
@@ -78,25 +77,16 @@ namespace Jde::Opc::Gateway{
 
 	//Each node's id is the string of its path, `_Op.Connected` (spec *Address space*).
 	Ω nodeId( UA_UInt16 ns, sv path )ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(ns, string{path}.c_str()) }; }
-	//With its source timestamp, and the gateway's receipt as the server's where it has one.  A read and an item's sample answer
-	//the server's with open62541's own clock, which for an item at 0 is the write's.
-	Ω stamped( Value&& value, UA_DateTime source, optional<UA_DateTime> received={} )ι->Value{
+	//With its source timestamp and no server timestamp:  open62541 answers a read's and an item's sample's with its own clock
+	//(addMissingTimestamps), which for an item at 0 is the write's.
+	Ω stamped( Value&& value, UA_DateTime source )ι->Value{
 		value.sourceTimestamp = source;
 		value.hasSourceTimestamp = true;
-		if( received ){
-			value.serverTimestamp = *received;
-			value.hasServerTimestamp = true;
-		}
 		return move( value );
 	}
 	//The scalar as `_Op`'s value, with `status` and the time now, owned:  a posted write runs after the caller's scalar is gone.
 	Ω opValue( const void* scalar, const UA_DataType& type, UA_StatusCode status=UA_STATUSCODE_GOOD )ι->Value{
-		UA_DataValue view; UA_DataValue_init( &view );
-		UA_Variant_setScalar( &view.value, const_cast<void*>(scalar), &type );
-		view.hasValue = true;
-		view.status = status;
-		view.hasStatus = status!=UA_STATUSCODE_GOOD;
-		return stamped( Value{view}, UA_DateTime_now() );
+		return stamped( TighteningResult::Scalar(scalar, type, status), UA_DateTime_now() );
 	}
 	Ω write( UA_Server& server, UA_UInt16 ns, sv slug, sv path, const UA_DataValue& value )ι->void{
 		if( let sc = UA_Server_writeDataValue(&server, nodeId(ns, path), value); sc )
@@ -161,6 +151,8 @@ namespace Jde::Opc::Gateway{
 
 	//On the server's own thread, not the strand's executor thread, which the service lock's wait would hold (UAServer::Post).
 	α OpenProtocolDriver::Post( Writes&& writes )ι->void{
+		if( writes.empty() )
+			return;
 		Opc::Server::UAServer::Post( *_server, [ns=_ns, slug=_slug, writes=move(writes)]( UA_Server& server ){
 			for( let& [path, value] : writes )
 				write( server, ns, slug, path, value );
@@ -190,6 +182,8 @@ namespace Jde::Opc::Gateway{
 		flat_map<uint16_t,uint16_t> named;
 		for( let& [asked, revision] : _session->Revisions() )
 			named[revisionName(asked)] = revision;
+		let results = named.find( Mid0061::Id );
+		_shownRevision = results==named.end() ? 0 : results->second;
 		string text;
 		for( let& [mid, revision] : named )
 			text += Ƒ( "{}{:04}:{}", text.empty() ? "" : " ", mid, revision );
@@ -232,13 +226,14 @@ namespace Jde::Opc::Gateway{
 		WriteText( "LastError", why.What );
 	}
 	//The controller's clock is the plant's to set:  read, shown and warned of, never corrected (spec *Open questions* #5).  Its
-	//time is whole seconds local to the row's zone, an hour that comes twice read as its first.  A reply the link's loss answered
-	//is OnLost's.
+	//time is whole seconds local to the row's zone, read as a result's is (TighteningResult::ToSys).  A reply the link's loss
+	//answered is OnLost's.
 	α OpenProtocolDriver::OnTime( Session::Reply&& reply )ι->void{
 		let time = reply ? get_if<Mid0081>( &reply->Data ) : nullptr;
 		if( time && time->Time ){
-			let controller = _zone->to_sys( *time->Time, std::chrono::choose::earliest );
-			const UA_Double skew{ std::chrono::duration<double>(controller-Clock::now()).count() };
+			let now = Clock::now();
+			let controller = TighteningResult::ToSys( *time->Time, *_zone, now );
+			const UA_Double skew{ std::chrono::duration<double>(controller-now).count() };
 			Write( "Skew", &skew, UA_TYPES[UA_TYPES_DOUBLE] );
 			if( std::chrono::duration<double>{std::abs(skew)}>_maxSkew )
 				WARN( "({}) the controller's clock is {:.0f} s {} the gateway's, past {}/maxSkew, {}:  each result carries the controller's time.", _slug, std::abs(skew), skew>0 ? "ahead of" : "behind", _block, Chrono::ToString(_maxSkew) );
@@ -263,8 +258,12 @@ namespace Jde::Opc::Gateway{
 			return;
 		}
 		if( let revision = _session->Revision(Mid0060::Id); !_resultRevision || revision<_resultRevision ){
+			//After the last result by the controller's clock, as a result is, so the row's source timestamps stay increasing.
+			let at = _lastResult ? *_lastResult+1ms : Clock::now();
 			Writes writes;
-			SetRevision( revision, UA_DateTime_now(), writes );
+			SetRevision( revision, UADateTime{at}.UA(), writes );
+			if( _lastResult && writes.size() )
+				_lastResult = at;
 			Post( move(writes) );
 		}
 		WriteRevisions();
@@ -278,25 +277,29 @@ namespace Jde::Opc::Gateway{
 	}
 	//MID 0061, which the session has acknowledged (spec *Results*).  Its time is whole seconds local to the row's zone, so two
 	//rundowns in a second, or a clock set back, would share a time or reverse:  a result not after the last takes the last's time
-	//and a millisecond.
+	//and a millisecond, with a warning where the clock went back past maxSkew.
 	α OpenProtocolDriver::OnResult( uint16_t revision, const Mid0061& result )ι->void{
 		let received = Clock::now();
-		TimePoint at{ result.Time ? TimePoint{_zone->to_sys(*result.Time, std::chrono::choose::earliest)} : received };
-		if( _lastResult && at<=*_lastResult )
+		TimePoint at{ result.Time ? TighteningResult::ToSys(*result.Time, *_zone, received) : received };
+		if( _lastResult && at<=*_lastResult ){
+			if( *_lastResult-at>_maxSkew && !std::exchange(_clockBack, true) )
+				WARN( "({}) result {} is timed {}, {} before the last result's {}:  the controller's clock went back, so each result takes the last's time and a millisecond until the clock passes it.", _slug, result.TighteningId.value_or(0), ToIsoString(at), Chrono::ToString(*_lastResult-at), ToIsoString(*_lastResult) );
 			at = *_lastResult+1ms;
+		}
+		else
+			_clockBack = false;
 		_lastResult = at;
 		let source = UADateTime{ at }.UA();
-		let server = UADateTime{ received }.UA();
 		Writes writes;
-		if( revision!=_resultRevision ){
+		if( revision!=_resultRevision )
 			SetRevision( revision, source, writes );
+		if( revision!=_shownRevision )
 			WriteRevisions();
-		}
-		for( auto& [name, value] : TighteningResult::Values(result, revision, *_zone) )
-			writes.emplace_back( Ƒ("Result.{}", name), stamped(move(value), source, server) );
+		for( auto& [name, value] : TighteningResult::Values(result, revision, *_zone, received) )
+			writes.emplace_back( Ƒ("Result.{}", name), stamped(move(value), source) );
 		let count = [&]( sv name, UA_UInt64& counter ){
 			++counter;
-			writes.emplace_back( Ƒ("Counters.{}", name), stamped(opValue(&counter, UA_TYPES[UA_TYPES_UINT64]), source, server) );
+			writes.emplace_back( Ƒ("Counters.{}", name), stamped(opValue(&counter, UA_TYPES[UA_TYPES_UINT64]), source) );
 		};
 		if( revision<3 || result.ResultType.value_or(1)==1 ){//a tightening:  below revision 3 a result names no type.
 			count( "Total", _total );

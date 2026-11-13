@@ -59,7 +59,9 @@ namespace Jde::Opc::Gateway{
 		bool _wasConnected{};//a connection has stood:  the next is a reconnect.
 		UA_UInt32 _reconnects{};
 		uint16_t _resultRevision{};//MID 0061's that `Result`'s Bad_NotSupported variables stand at:  0 before the first subscription.
-		optional<TimePoint> _lastResult;//the last result's source timestamp.
+		uint16_t _shownRevision{};//MID 0061's as `_Op.Revisions` last showed it.
+		optional<TimePoint> _lastResult;//the last result's source timestamp, or the last NotSupported marks'.
+		bool _clockBack{};//results are taking the last's time after a clock went back past maxSkew:  warned once.
 		UA_UInt64 _results{}, _total{}, _ok{}, _nok{};
 	};
 }

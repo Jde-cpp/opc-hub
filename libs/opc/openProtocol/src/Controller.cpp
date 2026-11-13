@@ -505,7 +505,8 @@ namespace Jde::Opc::OpenProtocol{
 			impl->Close();
 			closed.set_value();
 		} );
-		done.wait_for( std::chrono::seconds{5} );
+		if( done.wait_for(std::chrono::seconds{5})==std::future_status::timeout )
+			WARN( "The test controller on port {} has not closed after 5 s:  no thread ran its strand, so the port may still be held.", Port() );
 	}
 	α Controller::Port()Ι->uint16_t{ return _impl->Port(); }
 	α Controller::Edit( function<void( Script& )> edit )ι->void{
