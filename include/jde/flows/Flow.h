@@ -34,11 +34,18 @@ namespace Jde::Opc::Flows{
 		//queued or held is dropped and counted;  `stopped` runs after, there.  For a flow that has stopped already it runs there
 		//too, behind the teardown, and for one that never started it runs here.
 		α Stop( absl::AnyInvocable<void()> stopped={} )ι->void;
+		//Stopped by its host for a node, whose admission went:  as Stop, with `why` as its Fault and the node's status saying
+		//it, as a refusal at Start leaves them.  For a flow that never started too;  one that has stopped keeps the fault it has.
+		α Stop( Flows::Fault why, absl::AnyInvocable<void()> stopped={} )ι->void;
 		α Running()Ι->bool;
 		α Fault()Ι->optional<Flows::Fault>;
 		//An inject node's message, `message` in place of its props' when given, `payload` its time when it has none.  Throws
 		//for a node that is not an inject of this flow and for a flow that is not running.
 		α Inject( sv nodeId, const jobject* message=nullptr )ε->void;
+		//A context value from outside the flow, the Context tab's:  set on the strand, as a node's own is, so the host is told
+		//of it.  `nodeId`:  none for the flow's scope;  a null `value` takes the key away.  `set`:  whether it was, there, or
+		//false, here, for a flow that is not running and for a node that is not its.
+		α SetContext( sv nodeId, sv key, jvalue value, absl::AnyInvocable<void( bool )> set={} )ι->void;
 		α Post( absl::AnyInvocable<void()> f )ι->void;//`f` on the strand, from any thread;  dropped unless the flow is running.
 		α Status( sv nodeId )Ι->NodeStatus;
 		α Counts()Ι->vector<NodeCounts>;//since the start, a row per node in the graph's order.

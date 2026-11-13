@@ -13,6 +13,7 @@ namespace Jde::DB::MySql{
 			return Ƒ( "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {}", tableName, columnName, literal );
 		}
 		α BoolLiteral( bool v )Ι->sv override{ return v ? "true" : "false"; }
+		α BinaryCollation()Ι->sv override{ return "utf8mb4_bin"; }
 		α DefaultConstraint( sv, sv )Ι->string override{ return {}; }
 		α QuoteLiteral( sv text )Ι->string override{ return Syntax::QuoteLiteral( Str::Replace(text, "\\", "\\\\") ); } //a backslash escapes unless sql_mode has NO_BACKSLASH_ESCAPES, which the driver never sets.
 		α BackslashEscapes()Ι->bool override{ return true; }
@@ -24,7 +25,7 @@ namespace Jde::DB::MySql{
 		α GuidType()Ι->sv override{ return "binary" ; }
 		α ToString( EType type )Ι->string override{
 			using enum EType;
-			return type==Float ? "double" : type==SmallFloat ? "float" : type==Blob ? "blob" : Syntax::ToString( type );
+			return type==Float ? "double" : type==SmallFloat ? "float" : type==Blob ? "blob" : type==Text ? "mediumtext" : Syntax::ToString( type );//mediumtext, 16 MiB:  text holds 64 KiB, under a flow's graph (gateway flow_versions).
 		}
 		α HasLength( EType type )Ι->bool override{
 			using enum EType;

@@ -19,6 +19,7 @@
 #include "ql/CallQLAwait.h"
 #include "ql/RefreshConditionsQLAwait.h"
 #include "ql/DiscoverQLAwait.h"
+#include "ql/FlowMAwait.h"
 #include "ql/GatewayQL.h"
 #include "ql/GatewayQLAwait.h"
 #include "ql/HistGroupInfoQLAwait.h"
@@ -28,6 +29,7 @@
 #include "ql/SearchQLAwait.h"
 #include "ql/ServerCnnctnMAwait.h"
 #include "drivers/DriverHost.h"
+#include "flows/FlowHost.h"
 #include "hist/HistHost.h"
 #include "oee/OeeHost.h"
 #include "ql/HistGroupQLAwait.h"
@@ -67,7 +69,7 @@ namespace Jde::Opc{
 				tables.emplace( table );
 		}
 		QL::SetSystemTables( move(tables) );
-		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command}, string{DiscoverQLAwait::Command}, string{TrustServerQLAwait::Command}, string{CallQLAwait::Command}, string{RefreshConditionsQLAwait::Command}, string{OeeMAwait::RecomputeCommand}, string{OeeMAwait::CodeCommand}, string{OeeMAwait::UncodeCommand} };//resolveHistory, testConnection, discover, trustServer, call, refreshConditions, recomputeOee, codeOee, uncodeOee:  resolve, test, discover, trust, call, refresh, recompute, code and uncode are no verbs either.
+		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command}, string{DiscoverQLAwait::Command}, string{TrustServerQLAwait::Command}, string{CallQLAwait::Command}, string{RefreshConditionsQLAwait::Command}, string{OeeMAwait::RecomputeCommand}, string{OeeMAwait::CodeCommand}, string{OeeMAwait::UncodeCommand}, string{FlowMAwait::DeployCommand}, string{FlowMAwait::InjectCommand}, string{FlowMAwait::ContextCommand} };//resolveHistory, testConnection, discover, trustServer, call, refreshConditions, recomputeOee, codeOee, uncodeOee, deployFlow, injectFlow, setFlowContext:  resolve, test, discover, trust, call, refresh, recompute, code, uncode, deploy, inject and set are no verbs either.
 		for( let command : HistQL::EditCommands )
 			mutations.emplace( command );
 		QL::SetSystemMutations( move(mutations) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.
@@ -109,6 +111,7 @@ namespace Jde::Opc{
 		//clients it reports on;  then the historian, before the UA clients go:  the collectors' items are dropped on live clients, and
 		//the groups' last flushes run while the executor still does;  then the driver rows' servers, which the clients read.
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
+		Process::AddShutdownFunction( [](bool, SL){ FlowHost::Instance().Stop(); } );//ahead of the historian's too:  a flow's sources end on groups and clients that still stand.
 		Process::AddShutdownFunction( [](bool, SL){ OeeHost::Instance().Stop(); } );//ahead of the historian's:  each machine's subscription ends on a group that still stands.
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.
@@ -120,6 +123,7 @@ namespace Jde::Opc{
 		DriverHost::Start();//the driver rows' servers, after the access snapshot, which their sessions' rights read, and before the groups load:  a group's first subscribe finds its row's server listening.
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
 		OeeHost::Instance().Start();//after the historian, whose groups its machines subscribe to, and the calendars.
+		FlowHost::Instance().Start();//after the historian, which a flow's group source needs loaded, and the access snapshot, which admits each flow for its deployer.
 		GatewayServer::Start();//last:  the hub and the standalone gateway both reach here, after the groups are loaded.
 	}
 	α Gateway::Startup( jobject webServerSettings )ε->void{

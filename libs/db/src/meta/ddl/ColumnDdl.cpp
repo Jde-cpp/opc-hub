@@ -38,6 +38,8 @@ namespace Jde::DB{
 		const string sequence = config.IsSequence && ( DeclaresKey(config) || !syntax.IdentityIsPrimaryKey() ) ? " "+string{syntax.IdentityColumnSyntax()} : string{};
 		let defaultLiteral = config.Default ? syntax.DefaultLiteral( *config.Default ) : string{};
 		let defaultClause = defaultLiteral.size() ? " default "+defaultLiteral : string{};
-		return Ƒ( "{} {} {}{}{}", config.Name, DataTypeString(config), null, sequence, defaultClause );
+		let collation = config.CaseSensitive ? syntax.BinaryCollation() : sv{};
+		let collate = collation.size() ? Ƒ( " collate {}", collation ) : string{};
+		return Ƒ( "{} {}{} {}{}{}", config.Name, DataTypeString(config), collate, null, sequence, defaultClause );
 	}
 }

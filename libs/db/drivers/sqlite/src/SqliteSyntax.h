@@ -7,6 +7,7 @@ namespace Jde::DB::Sqlite{
 	//needed it statically; the mysql driver keeps its MySqlSyntax the same way.
 	struct SqliteSyntax final : Syntax{
 		Ω Instance()->const SqliteSyntax&{ static const SqliteSyntax _instance; return _instance; }
+		α BinaryCollation()Ι->sv override{ return {}; } //BINARY is every column's default.
 		α CanAddForeignKeys()Ι->bool override{ return false; } //no 'alter table add constraint' - fks only enforced when inline in create table.
 		α CanSetDefaultSchema()Ι->bool override{ return false; } //single db per connection; ATTACH could emulate schemas.
 		α CatalogSelect()Ι->sv override{ return {}; }

@@ -6,6 +6,9 @@
 #include <jde/opc/usings.h>
 
 namespace Jde::Opc::Gateway{
+	//A slug that names a file or a directory - a connection's certificate, a flow's trace - so never a path:  letters, digits,
+	//'.', '_' and '-' only, starting with a letter or digit.  Null for a valid one.
+	α FileSlugError( sv slug, SRCE )ι->up<Exception>;
 	struct ServerCnnctn final{
 		ServerCnnctn( str address )ι:Url{address}{}
 		ServerCnnctn( DB::Row&& r )ε;

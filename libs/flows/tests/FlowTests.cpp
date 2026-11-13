@@ -244,6 +244,46 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( Trace->Lines(), (vector<string>{"birth in [0]*", "hop to [0]", "hop from [0]", "hop out []"}) );
 	}
 
+	TEST_F( EngineTests, ALinkToAnotherFlowIsItsHosts ){
+		let nodes = Nodes( {Node("in", "inject", "{}", {{"to"}}), Node("to", "link out", R"({"name":"elsewhere"})")} );
+		auto graph = Graph::Read( nodes, true );
+		ASSERT_TRUE( graph.has_value() ) << graph.error().Message;
+		Deployed.emplace( move(*graph), Flow::Config{.Name="linked", .Clock=Time, .Host=Host} );
+		ASSERT_TRUE( Deployed->Start() );
+		Inject( "over" );
+		EXPECT_EQ( Took("to"), R"("over")" ) << "the host's sink takes what the link sends";
+
+		Flow none{ *Graph::Read(nodes, true), {.Name="unhosted", .Clock=Time} };
+		EXPECT_FALSE( none.Start() );
+		EXPECT_TRUE( Has(none.Fault()->Message, "No `link in` of the flow is named 'elsewhere'") );
+	}
+
+	TEST_F( EngineTests, AHostStopsAFlowForANode ){
+		auto& flow = Run( Nodes({Node("in", "inject", "{}", {{"w"}}), Node("w", "opc out", "{}", {{"out"}}), Node("out", "log")}) );
+		Inject( "hold" );
+		std::promise<void> done;
+		flow.Stop( {"w", "Update on the group was withdrawn."}, [&]{ done.set_value(); } );
+		done.get_future().get();
+		EXPECT_FALSE( flow.Running() );
+		ASSERT_TRUE( flow.Fault().has_value() );
+		EXPECT_EQ( flow.Fault()->NodeId, "w" );
+		EXPECT_EQ( flow.Status("w"), (NodeStatus{"red", "ring", "Update on the group was withdrawn."}) );
+		EXPECT_EQ( Counts("w").Drops, 1u ) << "what the node held is dropped, as any Stop drops it";
+		flow.Stop( {"out", "later"} );
+		EXPECT_EQ( flow.Fault()->NodeId, "w" ) << "a flow that has stopped keeps the fault it has";
+
+		Flow idle{ *Graph::Read(Nodes({Node("out", "log")})), {.Name="idle", .Clock=Time, .Host=Host} };
+		idle.Stop( {"out", "The group is gone."} );
+		EXPECT_EQ( idle.Fault()->Message, "The group is gone." ) << "a flow that never started takes it too";
+		EXPECT_EQ( idle.Status("out"), (NodeStatus{"red", "ring", "The group is gone."}) );
+		EXPECT_FALSE( idle.Start() );
+
+		Flow whole{ *Graph::Read(Nodes({Node("out", "log")})), {.Name="whole", .Clock=Time, .Host=Host} };
+		whole.Stop( {"", "Its deployer is gone."} );
+		EXPECT_EQ( whole.Fault()->NodeId, "" ) << "a fault of no node is the flow's own";
+		EXPECT_EQ( whole.Fault()->Message, "Its deployer is gone." );
+	}
+
 	TEST_F( EngineTests, AFlowWhoseSourceIsRefusedStaysStopped ){
 		auto graph = Graph::Read( Nodes({Node("in", "inject", "{}", {{"out"}}), Node("history", "group in", R"({"group":"pumps"})", {{"out"}}), Node("out", "log")}) );
 		ASSERT_TRUE( graph.has_value() );

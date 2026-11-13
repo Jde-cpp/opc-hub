@@ -126,6 +126,21 @@ namespace Jde::Opc::Gateway{
 			ResumeExp( move(e) );
 		}
 	}
+	α SpellAwait::Execute()ι->VoidTask{
+		try{
+			let slug = co_await SlugAwait{ _connection, _sl };
+			ConnectAwait connect{ string{slug}, HistHost::Instance().Collector(slug) };//an lvalue:  ConnectAwait is neither copied nor moved.
+			auto client = co_await Any( connect );
+			let namespaces = co_await Any( NamespacesAwait{client} );
+			let expanded = namespaces.ToExNodeId( _node.nodeId );
+			if( !expanded )
+				throw Exception{ _sl, ExceptionArgs{EHttpStatus::BadRequest}, "'{}' names namespace index {}, which '{}' doesn't have.", _node.ToString(), _node.NsIndex(), slug };
+			Resume( HistNodeText(*expanded) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
+	}
 	Ω memberOf( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistThresholdColumns*{
 		let row = FindHistTemplateNode( members, id );
 		return row ? &row->Thresholds : nullptr;

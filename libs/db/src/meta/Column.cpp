@@ -42,6 +42,7 @@ namespace Jde::DB{
 		Name{ name },
 		Criteria{ getCriteria(j) },
 		IsNullable{ FindBool(j, "nullable").value_or(false) },
+		CaseSensitive{ FindBool(j, "caseSensitive").value_or(false) },
 		MaxLength{ FindNumber<uint16>(j, "length") },
 		PKTable{ getPK(j) },
 		IsSequence{ PKTable ? false : FindBool(j, "sequence").value_or(false) },

@@ -1,5 +1,6 @@
 #include "GatewayQL.h"
 #include "DiscoverQLAwait.h"
+#include "FlowMAwait.h"
 #include "GatewayQLAwait.h"
 #include "HistGroupEditQLAwait.h"
 #include "HistGroupQLAwait.h"
@@ -45,6 +46,8 @@ namespace Jde::Opc{
 		if( auto await = HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory.
 			return await;
 		if( auto await = HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits.
+			return await;
+		if( auto await = FlowMAwait::Test(m, creds, sl); await )//the flows' tables, deployFlow, injectFlow and setFlowContext.
 			return await;
 		if( auto await = TestConnectionQLAwait::Test(m, creds, sl); await )
 			return await;

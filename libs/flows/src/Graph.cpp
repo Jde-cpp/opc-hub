@@ -55,7 +55,7 @@ namespace Jde::Opc::Flows{
 		return p==Nodes.end() ? nullopt : optional<uint32>{ p-Nodes.begin() };
 	}
 
-	α Graph::Read( const jvalue& json )ι->std::expected<Graph,Fault>{
+	α Graph::Read( const jvalue& json, bool hostedLinks )ι->std::expected<Graph,Fault>{
 		let root = json.if_object();
 		let nodes = root ? root->if_contains( "nodes" ) : nullptr;
 		if( !nodes || !nodes->is_array() )
@@ -91,7 +91,7 @@ namespace Jde::Opc::Flows{
 					MakeNode( node, y );
 				let name = Json::FindDefaultSV( node.Props, "name" );
 				THROW_IF( node.Type==ENodeType::LinkIn && links[string{name}]>1, "Two `link in` nodes are named '{}'.", name );
-				THROW_IF( node.Type==ENodeType::LinkOut && !links.contains(string{name}), "No `link in` of the flow is named '{}'.", name );
+				THROW_IF( node.Type==ENodeType::LinkOut && !hostedLinks && !links.contains(string{name}), "No `link in` of the flow is named '{}'.", name );
 				let outputs = Outputs( node );
 				for( uint port=0; port<wires[i].size(); ++port ){
 					auto& targets = node.Wires.emplace_back();

@@ -213,6 +213,64 @@ local attributes( i ) = {
 				memberLineId: tables.oeeLines.columns.oeeLineId+{ pkTable: "oee_lines", name: "member_line_id", sk:null, nullable:true, updateable:false, i:3, comment:"The member when it is a line.  A member is this or oee_machine_id;  once in a line, which is OeeMAwait's check, not an index:  SQL Server's unique index holds one null." },
 				sort: common.types.uint+{ default:0, i:4, comment:"The members' order on the pages, and of a line's machines in oeeTimeline." }
 			}
+		},
+		//Flows (docs/flows/spec.md *Flows*, *Context*, *Replay*).  Every edit of the four is routed by Gateway::CustomMutation, the
+		//hub's HubQL too, to ql/FlowMAwait:  a flow's create, update, delete, restore and purge, whose live side is src/flows, and a
+		//refusal of every generic mutation of the other three, which deployFlow, the host and a replay write.
+		flows:{
+			comment: "A flow:  a graph of nodes the gateway runs, deployed as versions (flow_versions)",
+			purgeProc: "flow_purge", //its context, runs and versions go with it, in one transaction:  a purge that fails leaves the flow whole, to start again.
+			columns: {
+				flowId: common.pkSequenced,
+				guid: common.types.guid+{ length: 16, updateable:false, i:1, comment:"Generated when the flow is created (FlowMAwait), unique, and the criteria of the flow's own access row (spec *Rights*), which no later flow inherits, as a group's is.  QL reads and writes its text." },
+				enabled: common.types.bit+{ default:true, i:2, comment:"Whether the flow runs:  an enabled flow starts with the gateway from its current version, and a change here starts it or stops it." },
+				trace: common.types.varchar+{ length:8, nullable:true, i:3, comment:"The flow's trace level, off, counts, errors or hops (spec *Trace*).  Null takes the gateway's." },
+				version: common.types.uint+{ nullable:true, insertable:false, updateable:false, i:4, comment:"The current version's number, a flow_versions row's:  written by deployFlow alone.  Null until the first deploy." }
+			}+common.slugColumns+{
+				slug: common.slugColumns.slug+{ updateable:false, comment:"The directory of the flow's trace under /gateway/flows/path, so it never changes:  purge the flow and create it again." }
+			},
+			naturalKeys: [common.valuesNK, ["slug"], ["guid"]]
+		},
+		flowVersions:{
+			comment: "A deploy of a flow:  its graph, who deployed it and when.  Written by deployFlow alone.  No generic mutation, and no deleted",
+			columns: {
+				flowVersionId: common.pkSequenced,
+				flowId: tables.flows.columns.flowId+{ pkTable: "flows", sk:null, updateable:false, i:1 },
+				version: common.types.uint+{ updateable:false, i:2, comment:"Counting from one within the flow." },
+				graph: common.types.text+{ updateable:false, i:3, comment:'The graph as json text, Node-RED\'s shape:  {"nodes":[{"id":"n1","type":"inject","name":"","x":0,"y":0,"props":{},"wires":[["n2"]]}]}.' },
+				deployed: common.types.dateTime+{ updateable:false, i:4 },
+				identityId: common.types.uint+{ updateable:false, i:5, comment:"The deployer's identity as a value, the historian's identity rule:  never a key into the access schema, which a split gateway's database does not hold.  The flow runs under this identity's rights, checked again as they change." },
+				userName: common.types.varchar+{ length:256, updateable:false, i:6, comment:"The deployer's name as it was then." },
+				comment: common.types.varchar+{ length:2048, nullable:true, updateable:false, i:7 }
+			},
+			naturalKeys: [["flow_id", "version"]]
+		},
+		flowContexts:{
+			comment: "A context value (spec *Context*):  a node's, a flow's or the gateway's own.  Written by the host as the flows set them.  No generic mutation, and no deleted",
+			columns: {
+				flowContextId: common.pkSequenced,
+				flowId: tables.flows.columns.flowId+{ pkTable: "flows", sk:null, nullable:true, updateable:false, i:1, comment:"Null for the global scope, the gateway's." },
+				nodeId: common.types.varchar+{ length:256, caseSensitive:true, updateable:false, i:2, comment:"The node's id in the graph;  empty for the flow's own scope, and for the global one." },
+				name: common.types.varchar+{ length:256, caseSensitive:true, updateable:false, i:3, comment:"The key, case-sensitive as the flow's store is:  under a server's default collation count and Count were one row.  With the two before it, under mysql's 3072-byte key limit at four bytes a character." },
+				value: common.types.text+{ i:4, comment:"The value as json text." }
+			},
+			naturalKeys: [["flow_id", "node_id", "name"]]
+		},
+		flowRuns:{
+			comment: "A replay of a flow over its sources' history (spec *Replay*).  Written by the replay alone.  No generic mutation, and no deleted",
+			columns: {
+				flowRunId: common.pkSequenced,
+				flowId: tables.flows.columns.flowId+{ pkTable: "flows", sk:null, updateable:false, i:1 },
+				version: common.types.uint+{ updateable:false, i:2, comment:"The version replayed." },
+				start: common.types.dateTime+{ updateable:false, i:3, comment:"The spec's from:  where the replay's range starts.  FROM is reserved, and column names are emitted unquoted." },
+				finish: common.types.dateTime+{ updateable:false, i:4, comment:"The spec's to." },
+				mode: common.types.varchar+{ length:8, updateable:false, i:5, comment:"dry or commit." },
+				started: common.types.dateTime+{ updateable:false, i:6 },
+				finished: common.types.dateTime+{ nullable:true, i:7, comment:"Null while the run is under way." },
+				identityId: common.types.uint+{ updateable:false, i:8, comment:"Who ran it, as a version's deployer is held." },
+				userName: common.types.varchar+{ length:256, updateable:false, i:9 },
+				status: common.types.varchar+{ length:2048, nullable:true, i:10, comment:"How the run ended;  null while it is under way." }
+			}
 		}
 	},
 	//The gateway's other two Authorize::Test gates (reviews/m2-closing.md #8).  `opcSessions` and `search` are QL *system*
