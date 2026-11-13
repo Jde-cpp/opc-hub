@@ -21,7 +21,7 @@ namespace Jde::Opc::Server {
 		Ω AsyncCancelled( UA_Server* server, const void* out )ι->void;//open62541's asyncOperationCancelCallback, to the handler.
 		α SetConfig( const UASettings& settings, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->void;
 		α SetupSecurityPolicies( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, SRCE )ε->void;
-		α AddSecurityPolicies( ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void;
+		α AddSecurityPolicies( ByteStringPtr&& certificate, const ByteStringPtr&& privateKey, bool encryptOnly )ε->void;//the three secured policies, or Basic256Sha256 alone, and None.
 		Logger _logger;
 		UATrust _trust;//outlives the server, which UA_Server_newWithConfig copies this base into:  its verify wrapper finds it.
 		AsyncCancel _asyncCancel;//found through the copied base's `context`, which points here.

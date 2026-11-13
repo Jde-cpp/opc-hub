@@ -8,6 +8,12 @@ namespace Jde::Opc{
 	static sp<App::Client::IAppClient> _appClient = ms<Gateway::GatewayAppClient>();
 	α Gateway::AppClient()ι->sp<App::Client::IAppClient>{ return _appClient; }
 	α Gateway::SetAppClient( sp<App::Client::IAppClient> client )ι->void{ _appClient = move(client); }//the displaced client's dtor removes its IShutdown registration.
+	static std::atomic<Jde::UserPK::Type> _certificateUser{};//none set:  the app client's login's.
+	α Gateway::CertificateUser()ι->Jde::UserPK{
+		const auto user = _certificateUser.load();
+		return user ? Jde::UserPK{ user } : _appClient->UserPK();
+	}
+	α Gateway::SetCertificateUser( Jde::UserPK user )ι->void{ _certificateUser = user.Value; }
 }
 namespace Jde::Opc::Gateway{
 	//The instance page's Web Sessions tab (#364):  this socket is the only way to this process's sessions, as the OpcServer's -

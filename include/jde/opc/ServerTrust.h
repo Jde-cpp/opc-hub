@@ -1,4 +1,5 @@
 #pragma once
+#include <span>
 #include <jde/opc/uatypes/Logger.h>
 
 struct UA_ClientConfig;
@@ -44,8 +45,11 @@ namespace Jde::Opc::ServerTrust{
 	//`expectedUri` is the applicationUri the chosen endpoint carries - the connection's certificateUri, open62541's endpoint
 	//filter - against which the verifier holds a trusted certificate's SAN URI, warning (never refusing) on a mismatch (spec
 	//*Trust*, *Open questions* #14);  empty where the connection pins no url (a None channel), so the check is skipped.
-	α Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri={}, SRCE )ε->void;
-	α Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& trustedCertDirs, Jde::Handle h, str url, sv settingsRoot="/gateway", sv expectedUri={}, SRCE )ε->void;//explicit, for tests.
+	//`anchors` are certificates trusted beside the directories', each by its own file and in memory alone, copied into no
+	//directory:  the process's own pair, for the client of a server that process runs for itself and presents the pair on, a
+	//driver row's (docs/open-protocol/spec.md *The driver server*).  The list and verifyServerCertificate keep their meaning.
+	α Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, sv expectedUri={}, std::span<const fs::path> anchors={}, SRCE )ε->void;
+	α Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& trustedCertDirs, Jde::Handle h, str url, sv settingsRoot="/gateway", sv expectedUri={}, std::span<const fs::path> anchors={}, SRCE )ε->void;//explicit, for tests.
 	//Test seam:  the directories TrustedDirs answers - and so the settings-driven Install uses - instead of <root>/trustedCertDirs,
 	//for every client created until nullopt restores the setting - the live rejection is provoked here, mid-run, without
 	//rewriting a setting other clients in the process are reading.  An empty list is an override too:  no directories, nothing trusted.

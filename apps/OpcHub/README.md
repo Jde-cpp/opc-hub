@@ -87,7 +87,9 @@ comment there) and restart the service.  A listed dir that is never created logs
 hub:
 
 - the hub: http 1973, and its OPC UA endpoint on opc.tcp 4976;
-- the OpcServer: http 1975, and opc.tcp 4975.
+- the OpcServer: http 1975, and opc.tcp 4975;
+- a driver row's server: opc.tcp 5170 plus the row's id, against a test Open Protocol controller on 4745
+  (`DriverTests`).
 
 Run it with `ctest --timeout 300 -R Jde.Opc.Hub.Tests`.
 

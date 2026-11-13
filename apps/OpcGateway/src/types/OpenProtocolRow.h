@@ -1,5 +1,6 @@
 #pragma once
 
+namespace Jde::Opc::OpenProtocol{ struct Mid0002; }
 namespace Jde::Opc::Gateway{
 	struct ServerCnnctn;
 	//What an Open Protocol row's url and `driver` say (docs/open-protocol/spec.md *The row*):  the controller's host and port,
@@ -10,6 +11,9 @@ namespace Jde::Opc::Gateway{
 		//`timeZone` that is no name the zone database has;  a `revisions` that is no object of four-digit MIDs to revisions 1 to 999,
 		//what the header's three digits hold.
 		OpenProtocolRow( const ServerCnnctn& row, SRCE )ε;
+		//The controller's MID 0002 under the names testConnection answers and the driver's `_Op.Identity` holds, each null where
+		//the revision it came at carries none.
+		Ω Identity( const OpenProtocol::Mid0002& id )ι->jobject;
 		static constexpr sv Scheme{ "open-protocol://" };
 		static constexpr uint16_t DefaultPort{ 4545 };//where the url names none (§2.1.1).
 		string Host;

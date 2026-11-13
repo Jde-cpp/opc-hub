@@ -80,7 +80,7 @@ namespace Jde::Opc{
 		config.securityPolicies = policies.release();
 		config.securityPoliciesSize = size;
 		config.secureChannelLifeTime = 60*60*1000;
-		ServerTrust::Install( config, recipe.TrustRoot, h, url, recipe.ServerUri, sl );//before setDefault, which would install AcceptAll.  ServerUri is the endpoint filter, so the chosen endpoint's applicationUri, for the SAN-URI warning.
+		ServerTrust::Install( config, recipe.TrustRoot, h, url, recipe.ServerUri, recipe.Anchors, sl );//before setDefault, which would install AcceptAll.  ServerUri is the endpoint filter, so the chosen endpoint's applicationUri, for the SAN-URI warning.
 		//Last:  setDefault back-fills only what is unset, and installs its own None policy only into a config with none.
 		Check( UA_ClientConfig_setDefault(&config), "UA_ClientConfig_setDefault", EOpcLogTags::Client, sl );
 	}

@@ -20,8 +20,9 @@ namespace Jde::Opc::Server{
 	static std::shared_mutex _installedMutex;
 	static flat_map<const UA_CertificateGroup*,UATrust*> _installed;
 
-	UATrust::UATrust( vector<fs::path> dirs, fs::path rejectedDir )ι:
+	UATrust::UATrust( vector<fs::path> dirs, fs::path rejectedDir, vector<fs::path> files )ι:
 		_dirPaths{ move(dirs) },
+		_filePaths{ move(files) },
 		_rejectedDir{ move(rejectedDir) },
 		_dirs{ "trusted client certificate", _tags, ELogLevel::Critical }
 	{}
@@ -33,9 +34,43 @@ namespace Jde::Opc::Server{
 		}
 	}
 
+	//A file that is not there is no fault:  its host has still to issue it, and the failed verify of whoever presents it reads it.
+	α UATrust::ScanFiles()ι->bool{
+		bool changed{};
+		for( let& path : _filePaths ){
+			std::error_code ec;
+			let time = fs::last_write_time( path, ec );
+			let known = _fileTimes.find( path );
+			if( ec ){
+				if( known!=_fileTimes.end() ){
+					_fileTimes.erase( known );
+					if( _ders.erase(path) ){
+						INFO( "Removed certificate:  {}", path.string() );
+						changed = true;
+					}
+				}
+				continue;
+			}
+			if( known!=_fileTimes.end() && known->second==time )
+				continue;
+			_fileTimes.insert_or_assign( path, time );
+			try{
+				auto der = Crypto::ReadCertificate( path );
+				INFO( "{} certificate:  {}", _ders.contains(path) ? "Updated" : "Added", path.string() );
+				_ders[path] = move( der );
+				changed = true;
+			}
+			catch( const std::exception& e ){
+				CRITICAL( "The trusted client certificate '{}' does not read:  {}", path.string(), e.what() );
+				changed = _ders.erase( path ) || changed;
+			}
+		}
+		return changed;
+	}
+
 	α UATrust::LoadTrustList( UA_TrustListDataType& list )ι->bool{
 		std::lock_guard _{ _mutex };
-		let changed = _dirs.Scan( _dirPaths, [this]( const fs::path& path, vector<byte>&& der ){
+		auto changed = _dirs.Scan( _dirPaths, [this]( const fs::path& path, vector<byte>&& der ){
 			if( der.size() ){
 				INFO( "{} certificate:  {}", _ders.contains(path) ? "Updated" : "Added", path.string() );
 				_ders[path] = move( der );
@@ -43,6 +78,7 @@ namespace Jde::Opc::Server{
 			else if( _ders.erase(path) )
 				INFO( "Removed certificate:  {}", path.string() );
 		});
+		changed = ScanFiles() || changed;
 		vector<UA_ByteString> certs;//shallow views into the cache, only used to feed UA_Array_copy.
 		for( let& [_2,der] : _ders )
 			certs.emplace_back( UA_ByteString{ der.size(), (UA_Byte*)der.data() } );

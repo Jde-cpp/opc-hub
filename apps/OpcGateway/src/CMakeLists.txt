@@ -6,17 +6,17 @@ include( ${jdeRoot}/build/dependencies.cmake )
 set( targetName Jde.Opc.GatewayLib )
 add_library( ${targetName} )
 compileOptions( ${targetName} )
-file( GLOB sources CONFIGURE_DEPENDS *.cpp async/*.cpp auth/*.cpp hist/*.cpp oee/*.cpp ql/*.cpp server/*.cpp types/*.cpp types/proto/*.cpp uatypes/*.cpp )
+file( GLOB sources CONFIGURE_DEPENDS *.cpp async/*.cpp auth/*.cpp drivers/*.cpp drivers/*/*.cpp hist/*.cpp oee/*.cpp ql/*.cpp server/*.cpp types/*.cpp types/proto/*.cpp uatypes/*.cpp )
 file( GLOB protos CONFIGURE_DEPENDS types/proto/*.proto )
 get_filename_component( main_cpp ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ABSOLUTE )
 list( REMOVE_ITEM sources ${main_cpp} )
-file( GLOB headers CONFIGURE_DEPENDS */*.h )
+file( GLOB headers CONFIGURE_DEPENDS */*.h drivers/*/*.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 
 sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.OpcGateway ) #config/args/sqlite + the 'Debug - Sqlite' launch config load these
 linkConfigFile( "${jdeRoot}/libs/db/config/common-meta.libsonnet" "${jdeRoot}/apps/OpcGateway/config/common-meta.libsonnet" ) #here, not in an exe:  the gateway's, the hub's and the superbuild all configure this dir.
 
-target_link_libraries( ${targetName} Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.HistorianLib Jde.Opc.UAServer Jde.CalendarLib Jde.Opc.OeeLib Jde.Opc.OpenProtocol ) #the historian:  the pass-through's continuation (ql/HistQL.h) and the gateway's groups;  the UA server library:  the gateway's endpoint (server/GatewayServer.h), which is how the hub gets it;  the calendar library:  its client, the cache of every calendar (gatewayStartup.cpp);  the OEE library:  the engine each machine runs and the rules its tables are held to (oee/OeeHost.h);  Open Protocol:  the session an Open Protocol row's testConnection runs (async/OpenProtocolTestAwait.h).
+target_link_libraries( ${targetName} Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.HistorianLib Jde.Opc.UAServer Jde.CalendarLib Jde.Opc.OeeLib Jde.Opc.OpenProtocol ) #the historian:  the pass-through's continuation (ql/HistQL.h) and the gateway's groups;  the UA server library:  the gateway's endpoint (server/GatewayServer.h), which is how the hub gets it;  the calendar library:  its client, the cache of every calendar (gatewayStartup.cpp);  the OEE library:  the engine each machine runs and the rules its tables are held to (oee/OeeHost.h);  Open Protocol:  the session an Open Protocol row's testConnection runs (async/OpenProtocolTestAwait.h) and its driver keeps (drivers/openProtocol/OpenProtocolDriver.h).
 
 target_precompile_headers(${targetName}
 	PRIVATE

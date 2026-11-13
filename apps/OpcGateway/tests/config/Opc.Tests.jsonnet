@@ -7,7 +7,7 @@ local logsDir = args.logsDir;
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
 		embeddedAppServer:: true,
 		embeddedOpcServer:: true,
-		openProtocolPort:: 4645 //the test controller's (DriverRowTests):  a controller's 4545 plus 100, as the ports below are.
+		openProtocolPort:: 4645 //the test controller's (DriverRowTests, DriverHostTests):  a controller's 4545 plus 100, as the ports below are.
 	},
 	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://127.0.0.1:4940", users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{
@@ -92,7 +92,9 @@ local logsDir = args.logsDir;
 			users: instance.opc.users,
 			limits: { maxSecureChannels: 120 } //UASettings::ReadLimits, the emulator's reader too (GatewayServerTests.TheBlockIsReadAndTheEndpointRuns)
 		},
-		drivers:{ portBase: 4970 } //a driver row's server, at 4970 plus its row's id (DriverRowTests):  the shipped 4870 plus 100.
+		//a driver row's server, at 4980 plus its row's id (DriverRowTests, DriverHostTests):  past the shipped 4870 range and the hub
+		//suite's 4975 and 4976.  The link's waits are not the shipped ones, which a case that stops its controller would wait out.
+		drivers:{ portBase: 4980, openProtocol:{ reconnectMin: "PT0.1S", reconnectMax: "PT0.5S" } }
 	},
 	opcServer:{
 		slug: "TestServer",

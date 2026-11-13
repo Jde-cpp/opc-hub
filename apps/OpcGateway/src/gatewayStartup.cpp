@@ -27,6 +27,7 @@
 #include "ql/OpcSessionsQLAwait.h"
 #include "ql/SearchQLAwait.h"
 #include "ql/ServerCnnctnMAwait.h"
+#include "drivers/DriverHost.h"
 #include "hist/HistHost.h"
 #include "oee/OeeHost.h"
 #include "ql/HistGroupQLAwait.h"
@@ -106,15 +107,17 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool terminate, SL sl){ Calendar::Client::Calendars::Shutdown(terminate, sl); } );//its listener's, as ConnectAccess registered the access listener's.
 		//Registration order is run order (process.cpp):  the endpoint first, so its sessions are gone before the historian and the UA
 		//clients it reports on;  then the historian, before the UA clients go:  the collectors' items are dropped on live clients, and
-		//the groups' last flushes run while the executor still does.
+		//the groups' last flushes run while the executor still does;  then the driver rows' servers, which the clients read.
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ OeeHost::Instance().Stop(); } );//ahead of the historian's:  each machine's subscription ends on a group that still stands.
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
+		Process::AddShutdownFunction( [](bool terminate, SL){ DriverHost::Shutdown( terminate ); } );//after the clients':  the collectors have unsubscribed and the clients are closing their sessions, which the driver rows' servers wait for before they go.
 		Process::AddShutdownFunction( [](bool, SL){ DiscoveryPool::Stop(); } );//last:  its clients are no registered client, so nothing above waits on its join.
 		THROW_IF( !_processSsl, "Connect before Configure." );
 		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.
+		DriverHost::Start();//the driver rows' servers, after the access snapshot, which their sessions' rights read, and before the groups load:  a group's first subscribe finds its row's server listening.
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
 		OeeHost::Instance().Start();//after the historian, whose groups its machines subscribe to, and the calendars.
 		GatewayServer::Start();//last:  the hub and the standalone gateway both reach here, after the groups are loaded.

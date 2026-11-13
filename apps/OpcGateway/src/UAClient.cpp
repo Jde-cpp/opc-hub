@@ -12,6 +12,7 @@
 #include "async/BlockingPool.h"
 #include "async/ConnectionManager.h"
 #include "async/Subscriptions.h"
+#include "drivers/DriverServer.h"
 
 #define let const auto
 
@@ -508,7 +509,12 @@ namespace Jde::Opc::Gateway{
 			//What the gateway advertises as itself (reviews/security-matrix.md #8; ApplicationUriTests):  with no AdvertisedUri, the uri
 			//in its certificate's SAN, from the file Configure reads anyway.  The issued certificate's comes from /gateway/issuedCerts,
 			//the app client's own from its web ssl block, an operator's own pair (managed:false) from wherever it was made.
-			ClientSecurity::Configure( *config, {.Certificate=settings, .Secure=addSecurity, .ServerUri=serverUri, .TrustRoot="/gateway"}, Handle(), Url() );
+			//A driver row's server is the gateway's own, presenting the process's pair, which neither shipped directory of
+			///gateway/trustedCertDirs holds:  anchored by its file beside them, and verified as the loopback url it is dialed at
+			//(docs/open-protocol/spec.md *The driver server*).
+			let driver = _opcServer.HasDriver();
+			let anchors = driver ? DriverServer::Anchors() : vector<fs::path>{};
+			ClientSecurity::Configure( *config, {.Certificate=settings, .Secure=addSecurity, .ServerUri=serverUri, .TrustRoot="/gateway", .Anchors=anchors}, Handle(), driver ? _opcServer.DriverUrl() : Url() );
 		}
 		catch( UAException& e ){//ConnectAwait's per-waiter copy and HttpRequestAwait's ThrowRest keep only a UAClientException whole.
 			throw UAClientException{ move(e), Handle() };

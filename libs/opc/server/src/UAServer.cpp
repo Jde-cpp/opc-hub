@@ -66,6 +66,29 @@ namespace Jde::Opc::Server {
 		if( added==UA_STATUSCODE_GOOD )
 			el.removeTimer( &el, tick );
 	}
+	//A delayed callback, open62541's own way onto the loop's thread from another (UA_AsyncManager's):  the queue is lock-free and
+	//runs in order at the top of each pass, before the poll, and the cancel ends a poll running now.
+	struct Posted final{
+		UA_DelayedCallback Callback{};
+		absl::AnyInvocable<void(UA_Server&)> F;
+	};
+	α UAServer::Post( UA_Server& server, absl::AnyInvocable<void(UA_Server&)> f )ι->void{
+		auto posted = new Posted{ .F=std::move(f) };
+		posted->Callback.callback = []( void* application, void* context ){
+			up<Posted> p{ static_cast<Posted*>(context) };
+			try{
+				p->F( *static_cast<UA_Server*>(application) );
+			}
+			catch( const std::exception& e ){
+				ERRT( ELogTags::App, "A post to the OPC UA server's thread threw:  {}", e.what() );
+			}
+		};
+		posted->Callback.application = &server;
+		posted->Callback.context = posted;
+		auto& el = *UA_Server_getConfig( &server )->eventLoop;
+		el.addDelayedCallback( &el, &posted->Callback );
+		el.cancel( &el );
+	}
 
 	α UAServer::Sessions()ι->sp<UAAccess::SessionList>{ return UAAccess::Sessions( *_ua ); }
 	α UAServer::Policies()Ι->vector<std::pair<string,UA_MessageSecurityMode>>{

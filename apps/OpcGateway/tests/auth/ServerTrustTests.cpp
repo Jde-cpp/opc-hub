@@ -102,6 +102,23 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Verify(_other), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
 	}
 
+	//A certificate anchored by its file, beside the directories and in none of them:  a driver row's client's, of the process's
+	//own pair (docs/open-protocol/spec.md *The driver server*).  It is trusted as a directory's is, and the rejection of another
+	//says it was there, and still names what the directories passed over.
+	TEST_F( ServerTrustTests, AnAnchorByFileIsTrustedBesideTheDirectories ){
+		fs::remove( _trustedDir/"trusted.pem" );
+		let readme = string{ "not a certificate" };
+		IO::SaveBinary<const char>( _trustedDir/"README.txt", std::span{readme} );
+		const vector<fs::path> anchors{ _other };
+		ServerTrust::Install( _config, true, {_trustedDir}, TestHandle, "opc.tcp://server.under.test:4840", "/gateway", {}, anchors );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 1u );
+		EXPECT_EQ( Verify(_other), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+		let rejection = ServerTrust::Rejection( _config );
+		EXPECT_NE( rejection.find("0 trusted certificates loaded from /gateway/trustedCertDirs and 1 given by file"), string::npos ) << rejection;
+		EXPECT_NE( rejection.find("1 file was passed over"), string::npos ) << rejection;
+	}
+
 	//#415:  the thumbprint of the certificate the verifier rejected is readable through the config, for the client to keep per
 	//slug - what rejectedCertificate{} answers and trustServer moves - and is its SHA-1, the <thumbprint>.der it writes;  a trusted
 	//certificate records none, and a later success clears it.  The file is the once-only test, not the process having seen the
