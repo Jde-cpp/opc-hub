@@ -97,6 +97,8 @@ namespace Jde::Opc::Server{
 		}
 		if( limits.MaxAsyncOperations )
 			config.maxAsyncOperationQueueSize = *limits.MaxAsyncOperations;
+		if( limits.MaxQueueSize )
+			config.queueSizeLimits.max = (UA_UInt32)std::min<uint>( std::max<uint>(config.queueSizeLimits.max, *limits.MaxQueueSize), std::numeric_limits<UA_UInt32>::max() );
 	}
 
 	//The cancel of an async operation, to the host's handler when it set one (OnAsyncCancel):  under the service lock.

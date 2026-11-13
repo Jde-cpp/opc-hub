@@ -634,6 +634,25 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( channels(10), 100 ) << "open62541's own, kept";
 	}
 
+	//docs/open-protocol/plan.md Phase 6:  a host that writes a burst inside one publishing interval asks for an item's deepest
+	//queue, which is raised to it and never lowered below open62541's own.
+	TEST( UAConfigTests, MaxQueueSizeRaisesTheItemQueue ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		let deepest = [&]( optional<uint> asked ){
+			auto settings = ReadUASettings();
+			settings.Limit.MaxQueueSize = asked;
+			UAConfig config{ settings, AppClient(), nodeAccess };
+			let y = config.queueSizeLimits.max;
+			UA_ServerConfig_clear( &config );
+			return y;
+		};
+		EXPECT_EQ( deepest(nullopt), 100u ) << "open62541's own";
+		EXPECT_EQ( deepest(4000), 4000u );
+		EXPECT_EQ( deepest(12), 100u ) << "never lowered";
+		EXPECT_EQ( deepest(std::numeric_limits<uint>::max()), std::numeric_limits<UA_UInt32>::max() );
+	}
+
 	//reviews-issue/servers-2-endpoint.md #4:  the memory stores' rejected lists are capped, where setBasics' 0 left them unbounded.
 	TEST( UAConfigTests, TheRejectedListIsCapped ){
 		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );

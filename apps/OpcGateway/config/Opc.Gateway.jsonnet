@@ -144,7 +144,7 @@ function( sync=false )
 				maxAsyncOperations:: 0, //the server's async queue, maxAsyncOperationQueueSize:  0 unlimited, as open62541's own
 				reconnectMin:: "PT1S", //the wait between connection attempts, doubling to reconnectMax
 				reconnectMax:: "PT1M",
-				maxBackfill:: 2000, //MID 0064 requests one recovery may send
+				maxBackfill:: 2000, //MID 0064 requests one recovery may send;  twice it is the deepest queue the row's server gives an item, where that is past open62541's 100
 				maxSkew:: "PT5M", //the controller's clock against the gateway's, past which each connect warns
 				log:: false //every frame in and out at Trace under the openProtocol tag
 			}
