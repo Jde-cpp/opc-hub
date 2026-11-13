@@ -360,7 +360,7 @@ namespace Jde::Opc::Gateway{
 		}
 		++_results;
 		writes.emplace_back( "_Op.Results", opValue(&_results, UA_TYPES[UA_TYPES_UINT64]) );
-		if( result.TighteningId )
+		if( result.TighteningId.value_or(0) )//0 is no id, as MID 0064 has it:  a walk could never reach it.
 			_lastId = result.TighteningId;
 		TRACE( "({}) result {} at revision {} of MID {:04}, sourced {}.", _slug, result.TighteningId.value_or(0), revision, T::Id, ToIsoString(at) );
 		Post( move(writes) );
@@ -374,10 +374,13 @@ namespace Jde::Opc::Gateway{
 
 	//MID 0064 for the result before `below`, each reply asking for the next:  one request out at a time.  A controller answers
 	//an id no result has with the result before it, which is how the walk passes the ids of its other stations and the gaps
-	//between them.  0 asks for the latest (Table 121).
+	//between them.  0 asks for the latest (Table 121).  Nothing is asked where the id before `below` is the last written:  the
+	//walk is whole, though its last request has gone.
 	α OpenProtocolDriver::Walk( uint32_t below )ι->void{
 		if( below==1 )
 			EndWalk( "The controller's results begin at id 1." );
+		else if( below && below-1==*_lastId )
+			EndWalk();
 		else if( _recovery->Requests>=_maxBackfill )
 			EndWalk( Ƒ("{}/maxBackfill, {} request(s), was reached.", _block, _maxBackfill) );
 		else{

@@ -276,6 +276,63 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ShortWalks(warnings, row).size(), 1u );
 	}
 
+	//Six results made while the link is down, under the ids after the last written, take all six of the suite's MID 0064s.
+	//The last finds the result after the last written, so the walk is whole:  nothing is asked for the last id, and nothing
+	//counted lost.
+	TEST_F( DriverBackfillTests, AWalkWholeAtItsLastRequestLosesNothing ){
+		Controller station{ *Executor(), ControllerPort(), Station() };
+		const DriverRow row{ "driver-whole", NewYork };
+		ASSERT_TRUE( WaitRevision(row, 7) );
+		const TimePoint t0{ ceil<seconds>(Clock::now()) };
+		let rundown = [&]( uint32_t id ){ return Rundown( id, Local(t0+seconds{id-300}) ); };
+		station.Push( rundown(300) );
+		ASSERT_TRUE( WaitResults(row, 1) );
+
+		const Logging::Capture warnings{ OpenProtocol::LogTag, ELogLevel::Warning };
+		ASSERT_TRUE( Sever(station, row) );
+		for( uint32_t id=301; id<=306; ++id )
+			station.Push( rundown(id) );
+		let before = station.Frames().size();
+		Mend( station );
+		ASSERT_TRUE( WaitResults(row, 7) ) << OpCount( Op(row, "Results") ).value_or( 0 ) << " result(s)";
+
+		EXPECT_EQ( Asked(station, before), (vector<uint32_t>{0, 305, 304, 303, 302, 301}) ) << "six, the last finding 301";
+		EXPECT_EQ( OpCount(Op(row, "LostResults")), optional<uint>{0} );
+		EXPECT_TRUE( ShortWalks(warnings, row).empty() );
+		let read = Variables( row );
+		EXPECT_EQ( ResultId(read), optional<uint>{306} );
+		EXPECT_EQ( Counters(read), (Counts{7, 7, 0}) );
+	}
+
+	//A result whose tightening id is 0, a batch's increment here, is no last id:  MID 0064 reads 0 as the latest, and every id
+	//the walk finds is above it.  The walk ends at the tightening before it, and nothing is written twice.
+	TEST_F( DriverBackfillTests, AnIdOf0IsNoLastId ){
+		Controller station{ *Executor(), ControllerPort(), Station() };
+		const DriverRow row{ "driver-id0", NewYork };
+		ASSERT_TRUE( WaitRevision(row, 7) );
+		const TimePoint t0{ ceil<seconds>(Clock::now()) };
+		station.Push( Rundown(300, Local(t0)) );
+		auto increment = Rundown( 0, Local(t0+5s) );
+		increment.ResultType = 3;
+		station.Push( move(increment) );
+		ASSERT_TRUE( WaitResults(row, 2) );
+
+		const Logging::Capture warnings{ OpenProtocol::LogTag, ELogLevel::Warning };
+		ASSERT_TRUE( Sever(station, row) );
+		station.Push( Rundown(302, Local(t0+10s)) );
+		let before = station.Frames().size();
+		Mend( station );
+		ASSERT_TRUE( WaitResults(row, 3) ) << OpCount( Op(row, "Results") ).value_or( 0 ) << " result(s)";
+
+		EXPECT_EQ( Asked(station, before), (vector<uint32_t>{0, 301}) ) << "ended at 300, the last id";
+		EXPECT_EQ( OpCount(Op(row, "LostResults")), optional<uint>{0} );
+		EXPECT_TRUE( ShortWalks(warnings, row).empty() );
+		let read = Variables( row );
+		EXPECT_EQ( ResultId(read), optional<uint>{302} );
+		EXPECT_EQ( Counters(read), (Counts{2, 2, 0}) ) << "300 and 302, each once, and the increment no tightening";
+		EXPECT_EQ( OpCount(Op(row, "Results")), optional<uint>{3} );
+	}
+
 	//A controller that answers MID 0064 with MID 0004 ends the walk at its first request:  the refusal in `_Op.LastError`, the
 	//outage's results counted lost as one, the link standing and the results that follow written.
 	TEST_F( DriverBackfillTests, AControllerThatRefusesMid0064EndsTheWalk ){

@@ -168,7 +168,7 @@ The ids run up, a controller's stations sharing them. So a result of a higher id
 
 Short of the last id, at a MID 0004, at `maxBackfill` requests, at id 1 or at a reply with no id, it adds the gap's unknown size as one to `_Op.LostResults` and warns, naming the last id it has and the oldest it reached. A link lost during the walk writes nothing of it: what was found and held is still the controller's, and the next connection walks again from the latest.
 
-Until a result has been written in a run there is no last id, so nothing is filled: not on a row's first connection, and not on a link that returns before the row's first result. Nor is anything filled after a gateway restart, which is the gap every source's collection has across a restart (*Open questions* #6).
+Until a result has been written in a run there is no last id, and a result whose tightening id is 0, which MID 0064 reads as the latest, gives none. Without a last id nothing is filled: not on a row's first connection, and not on a link that returns before the row's first result. Nor is anything filled after a gateway restart, which is the gap every source's collection has across a restart (*Open questions* #6).
 
 A fill is a burst of writes inside one publishing interval of the collector's subscription, 500 ms ([`HistGroupHost.h:90`](../../apps/OpcGateway/src/hist/HistGroupHost.h#L90)). So the Open Protocol driver raises its server's `queueSizeLimits` maximum ([`server.h:2303`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/server.h#L2303)) to the larger of open62541's 100 and twice `maxBackfill`, the walk's bound plus as many held, since the held count is not known when the config is fixed, and a fill reaches the collector's queue whole (plan review #8).
 
