@@ -125,14 +125,20 @@ namespace Jde::Opc::Server{
 
 		//The certificate groups' parameters.  The rejected list capped:  setBasics leaves it 0, unbounded.
 		maxRejectedListSize = UATrust::MaxRejected;
-		UA_KeyValuePair params[2];
+		UA_KeyValuePair params[3];
 		params[0].key = UA_QualifiedName{ 0, "max-trust-listsize"_uv };
 		UA_Variant_setScalar( &params[0].value, &maxTrustListSize, &UA_TYPES[UA_TYPES_UINT32] );
 		params[1].key = UA_QualifiedName{ 0, "max-rejected-listsize"_uv };
 		UA_Variant_setScalar( &params[1].value, &maxRejectedListSize, &UA_TYPES[UA_TYPES_UINT32] );
+		//The trust list's size again, as open62541's OpenSSL group spells it, where its header, its default config and its mbedTLS
+		//group have the key above (v1.5.10, plugins/crypto/openssl/certificategroup.c).  A group that finds no size keeps its own
+		//65535 bytes, some 78 certificates, and refuses a longer list at a rescan (UATrust::Verify):  the next certificate
+		//copied in stays untrusted until a restart, which loads the list unmeasured.
+		params[2].key = UA_QualifiedName{ 0, "maxTrustListSize"_uv };
+		UA_Variant_setScalar( &params[2].value, &maxTrustListSize, &UA_TYPES[UA_TYPES_UINT32] );
 		UA_KeyValueMap paramsMap;
 		paramsMap.map = params;
-		paramsMap.mapSize = 2;
+		paramsMap.mapSize = 3;
 
 		if( secureChannelPKI.clear )
 			secureChannelPKI.clear( &secureChannelPKI );

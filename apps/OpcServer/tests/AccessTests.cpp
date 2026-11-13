@@ -662,6 +662,29 @@ namespace Jde::Opc::Server::Tests{
 		UA_ServerConfig_clear( &config );
 	}
 
+	//A trust list past 65535 bytes, some 78 certificates, is taken at a rescan:  each group has the config's size, 0 for no
+	//limit, under the key its store reads.  With none it kept open62541's own, and a certificate copied into a directory that
+	//long stayed untrusted until a restart.
+	TEST( UAConfigTests, ATrustListPast64KiBIsTaken ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		UAConfig config{ ReadUASettings(), AppClient(), nodeAccess };
+		EXPECT_EQ( config.maxTrustListSize, 0u ) << "setBasics':  no limit";
+		vector<UA_Byte> bytes( 70'000, 0x30 );
+		UA_ByteString certificate{ bytes.size(), bytes.data() };
+		UA_TrustListDataType list;
+		UA_TrustListDataType_init( &list );
+		list.specifiedLists = UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;
+		list.trustedCertificates = &certificate;
+		list.trustedCertificatesSize = 1;
+		for( auto group : {&config.secureChannelPKI, &config.sessionPKI} ){
+			ASSERT_TRUE( group->setTrustList );
+			let sc = group->setTrustList( group, &list );
+			EXPECT_EQ( sc, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( sc );
+		}
+		UA_ServerConfig_clear( &config );
+	}
+
 	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started
 	//yet - is one Warning, not one per scan; a failed verify rescans, so it used to repeat for the life of the process.
 	//Later sightings are Debug.  The dir is appended to the real list in a trust of the test's own, so the running server's

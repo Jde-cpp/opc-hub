@@ -103,7 +103,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Counters(read), (array<optional<uint>,3>{revision, revision, 0}) );
 			EXPECT_EQ( SourceTime(Of(read, "Counters.Total")), optional<TimePoint>{time} );
 		}
-		EXPECT_EQ( OpText(Op(row, "Revisions")), "0001:6 0061:7 0064:7 0080:1" ) << "MID 0064's, of the reconnects' recoveries";
+		EXPECT_EQ( OpText(Op(row, "Revisions")), "0001:6 0015:3 0035:6 0052:2 0061:7 0064:7 0071:3 0080:1" ) << "MID 0064's, of the reconnects' recoveries, and `Selected`'s and `Alarm`'s subscriptions";
 	}
 
 	//The controller's time is whole seconds:  a result not after the last one written takes the last's time and a millisecond, so
