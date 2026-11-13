@@ -1,5 +1,6 @@
 #include "OpenProtocolRow.h"
 #include <jde/fwk/exceptions/refuse.h>
+#include <jde/opc/openProtocol/Mids.h>
 #include "ServerCnnctn.h"
 
 #define let const auto
@@ -70,5 +71,21 @@ namespace Jde::Opc::Gateway{
 		readUrl( row.Url, *this, sl );
 		if( row.Driver.size() )
 			readDriver( row.Driver, *this, sl );
+	}
+	α OpenProtocolRow::Identity( const OpenProtocol::Mid0002& id )ι->jobject{
+		let text = []( str value ){ return value.empty() ? jvalue{} : jvalue{ value }; };
+		let number = []( optional<uint32_t> value ){ return value ? jvalue{ *value } : jvalue{}; };
+		return {
+			{ "controllerName", text(id.ControllerName) },
+			{ "supplierCode", text(id.SupplierCode) },
+			{ "openProtocolVersion", text(id.OpenProtocolVersion) },
+			{ "controllerSoftwareVersion", text(id.ControllerSoftwareVersion) },
+			{ "toolSoftwareVersion", text(id.ToolSoftwareVersion) },
+			{ "controllerSerialNumber", text(id.ControllerSerialNumber) },
+			{ "systemType", number(id.SystemType) },
+			{ "systemSubtype", number(id.SystemSubtype) },
+			{ "stationId", number(id.StationId) },
+			{ "stationName", text(id.StationName) }
+		};
 	}
 }

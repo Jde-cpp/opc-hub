@@ -25,7 +25,8 @@ namespace Jde::Opc::Gateway{
 		DriverHost( const DriverHost& )=delete;
 		α operator=( const DriverHost& )->DriverHost& =delete;
 
-		//Gateway::Connect's:  a host for each row there is with a driver.  One that cannot start is the start-up's error.
+		//Gateway::Connect's:  a host for each row there is with a driver.  One that cannot start is logged and the row stands, as
+		//after the start, so no row takes the gateway or another row's server down;  the start fails where the rows cannot be read.
 		Ω Start()ε->void;
 		//The shutdown's, after UAClient::Shutdown's:  every driver stops, then, without `terminate`, the sessions the clients
 		//are closing are waited for, then the servers go.

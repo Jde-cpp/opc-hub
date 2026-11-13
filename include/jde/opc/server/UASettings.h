@@ -24,11 +24,11 @@ namespace Jde::Opc::Server{
 		//One secured policy and endpoint, Basic256Sha256 at Sign & Encrypt, where false carries each secured policy at Sign and at
 		//Sign & Encrypt:  a server whose every client is its host's own, which asks for nothing less.
 		bool EncryptOnly{};
-		//The own-certificate rule:  a certificate token whose key is Ssl's opens its session as the host's own user, its
-		//appClient's UserPK, with no lookup.  For a server its host runs for itself, whose clients log in with the host's own
-		//pair:  it admits the host as itself, with nothing asked under the service lock and no hub needed.  false asks the hub
-		//for every certificate, the OpcServer's and the gateway's endpoint's.
-		bool OwnCertificate{};
+		//The own-certificate rule:  a certificate token whose key is Ssl's opens its session as this user, the one the host's pair
+		//logs in as, with no lookup.  For a server its host runs for itself, whose clients log in with the host's own pair:  it
+		//admits the host as itself, with nothing asked under the service lock and no hub needed.  None asks the hub for every
+		//certificate, the OpcServer's and the gateway's endpoint's.
+		optional<UserPK> OwnCertificate;
 		struct TokenTypes final{ bool Anonymous{}; bool Certificate{ true }; bool Issued{ true }; };
 		TokenTypes Tokens;
 		vector<std::pair<string,string>> Users;//the username token's logins, name and password;  none offers no username token.

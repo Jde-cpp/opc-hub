@@ -123,7 +123,7 @@ namespace Jde::Opc{
 			catch( const std::exception& e ){
 				//"0 trusted certificates loaded" alone reads as "the directory is empty" - the operator who *did* copy the
 				//certificate in is then told to do the thing they just did (install-issues #33), so say what was passed over.
-				let skipped = c.Anchors || c.Skipped.empty() ? string{} : ", "+c.Skipped;
+				let skipped = c.Anchors>c.Given || c.Skipped.empty() ? string{} : ", "+c.Skipped;
 				c.Rejection = Ƒ( "server certificate for '{}' rejected: {} ({} loaded from {}/trustedCertDirs{}{}) - add the server's certificate to one of those directories, or set {}/verifyServerCertificate=false", c.Url, e.what(), anchorsNote(c), c.SettingsRoot, givenNote(c), skipped, c.SettingsRoot );
 				ERRT( _tags, "[{}]{}", hex(c.Handle), c.Rejection );
 				recordRejected( c, certificate );//the <thumbprint>.der the admin trusts, and the thumbprint the client keeps per slug.

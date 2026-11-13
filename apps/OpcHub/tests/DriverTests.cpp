@@ -1,9 +1,10 @@
 //Open Protocol phase 4 (#466), the hub's shape:  a driver row's server inside the hub, on ports of this suite's own
 //(Opc.Hub.Tests.jsonnet).  The collector's session, which presents the process's pair, opens by the server's own-certificate
-//rule and no lookup, as the hub's own user, the system's:  a lookup would answer the user the hub enrolls for that certificate
-//(hubStartup.cpp), another.  And a web session's short issued token is answered from this process's session map, as the
-//endpoint's is (EndpointTests).
+//rule and no lookup, as the user the hub enrolls for that certificate (hubStartup.cpp), the one the bundled OpcServer's lookup
+//finds, not the hub's own, the system's.  And a web session's short issued token is answered from this process's session map,
+//as the endpoint's is (EndpointTests).
 #include <jde/fwk/process/execution.h>
+#include <jde/ql/ql.h>
 #include "../../OpcGateway/src/GatewayAppClient.h"
 #include "../../OpcGateway/tests/utils/DriverRows.h"
 #include "../../OpcGateway/src/hist/HistHost.h"
@@ -20,7 +21,7 @@ namespace Jde::Opc::Hub::Tests{
 
 	struct DriverTests : ::testing::Test{};
 
-	TEST_F( DriverTests, TheCollectorsSessionOpensAsTheGatewaysUser ){
+	TEST_F( DriverTests, TheCollectorsSessionOpensAsItsCertificatesUser ){
 		Controller station{ *Executor(), ControllerPort(), {.Identity={ .ControllerName="Hub station", .SystemType=3 }} };
 		const string slug{ "hub-driver" };
 		PurgeServerCnnctn( slug );
@@ -52,8 +53,12 @@ namespace Jde::Opc::Hub::Tests{
 		}, 15s) ) << "the collector never read the link up";
 		let own = sessions( "Certificate" );
 		ASSERT_EQ( own.size(), 1u );
-		EXPECT_EQ( own.front().User, Gateway::AppClient()->UserPK() ) << "the gateway's own user";
-		EXPECT_EQ( own.front().User, Jde::UserPK{Jde::UserPK::System} ) << "which in the hub is the system's, not the certificate's enrolled user";
+		let client = Gateway::AppClient();
+		let key = Crypto::ExtractPublicKey( Crypto::ReadCertificate(client->SslSettings->Certificate.Path) );
+		let enrolled = client->QuerySync( Ƒ("user( modulus: \"{}\", exponent: {}, deleted: null ){{id}}", key.ModulusHex(), key.ExponentInt()), {} );
+		ASSERT_FALSE( enrolled.empty() ) << "the hub enrolls its certificate at its start";
+		EXPECT_EQ( own.front().User, Jde::UserPK{QL::AsId<Jde::UserPK::Type>(enrolled)} ) << "the certificate's enrolled user";
+		EXPECT_NE( own.front().User, Jde::UserPK{Jde::UserPK::System} ) << "not the hub's own";
 
 		WebSession session;//a hub session as the page holds one;  its id in hex is the token the gateway's clients present.
 		Credential token{ session.Authorization };

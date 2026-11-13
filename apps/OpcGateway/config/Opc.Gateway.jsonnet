@@ -231,7 +231,8 @@ function( sync=false )
 		},
 		ssl: {
 			certificate:{
-				subjectAltName: "URI:" + applicationUri,
+				//IP:127.0.0.1:  a driver row's server presents this pair on loopback, and its clients check the url's host against it.
+				subjectAltName: "URI:" + applicationUri + ",DNS:localhost,DNS:$(HostName),IP:127.0.0.1",
 				company:: "Jde-Cpp",
 				fileName: args.instanceName + ".web",
 				commonName: args.instanceName + ".web.$(HostName)",

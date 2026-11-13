@@ -1,3 +1,4 @@
+#include <latch>
 #include <boost/asio/ip/tcp.hpp>
 #include <jde/fwk/process/execution.h>
 #include <jde/tests/Capture.h>
@@ -376,6 +377,70 @@ namespace Jde::Opc::Gateway::Tests{
 		let error = UpdateRow( id, "driver:$driver", {{"driver", "{}"}} );
 		ASSERT_FALSE( error ) << *error;
 		EXPECT_TRUE( WaitHost(slug) ) << "the freed port's host";
+	}
+
+	//At the gateway's start, as after it, a row whose port another holds is logged and the row stands:  the start goes on and
+	//the other rows' servers listen.
+	TEST_F( DriverHostTests, AHeldPortAtTheStartIsLogged ){
+		const Row free{ "driver-start-free" };
+		const Row taken{ "driver-start-taken" };
+		let port = (PortType)( ServerCnnctn::DriverPortBase()+taken.Id );
+		DriverHost::Shutdown( true );
+		Logging::Capture errors{ ELogLevel::Error };
+		string failure;
+		{
+			using boost::asio::ip::tcp;
+			boost::asio::io_context context;
+			tcp::acceptor held{ context, tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"), port} };
+			try{
+				DriverHost::Start();//waits for every row's host.
+			}
+			catch( const std::exception& e ){
+				failure = e.what();
+			}
+		}
+		if( failure.size() ){
+			DriverHost::Start();//for the suites after this one, and the rows' purges.
+			FAIL() << "the start failed: " << failure;
+		}
+		EXPECT_TRUE( DriverHost::Find(free.Slug) ) << "the other row's server";
+		EXPECT_FALSE( DriverHost::Find(taken.Slug) );
+		let logged = errors.Find( [&]( const Logging::Entry& e ){ return e.Message().contains( taken.Slug ) && e.Message().contains( Ƒ("127.0.0.1:{}", port) ); } );
+		EXPECT_EQ( logged.size(), 1u ) << "a line naming the row and its port";
+
+		let error = UpdateRow( taken.Id, "driver:$driver", {{"driver", "{}"}} );
+		ASSERT_FALSE( error ) << *error;
+		EXPECT_TRUE( WaitHost(taken.Slug) ) << "the freed port's host";
+	}
+
+	//UAServer::Post, which the driver's writes take, on the suite's OpcServer:  each post runs on the server's own thread, in the
+	//order posted, and returns at once while that thread is held, as ActivateSession holds it through an issued token's lookup.
+	TEST_F( DriverHostTests, APostRunsOnTheServersThreadInOrder ){
+		struct State final{ std::latch Release{ 1 }; std::mutex Mutex; vector<uint> Ran; std::thread::id Thread; };
+		auto state = ms<State>();//the posts' own:  one still queued outlives a failed assertion.
+		auto& server = *Server::GetUAServer().Ptr();
+		Opc::Server::UAServer::Post( server, [state]( UA_Server& ){
+			{
+				lg _{ state->Mutex };
+				state->Thread = std::this_thread::get_id();
+			}
+			state->Release.wait();
+		} );
+		absl::Cleanup release = [state]{ state->Release.count_down(); };
+		let posted = steady_clock::now();
+		for( uint i=1; i<=3; ++i )
+			Opc::Server::UAServer::Post( server, [state, i]( UA_Server& ){ lg _{ state->Mutex }; state->Ran.push_back( i ); } );
+		EXPECT_LT( steady_clock::now()-posted, 100ms ) << "a post waited for the held thread";
+		ASSERT_TRUE( WaitUntil([&]{ lg _{ state->Mutex }; return state->Thread!=std::thread::id{}; }) ) << "the first post never ran";
+		{
+			lg _{ state->Mutex };
+			EXPECT_TRUE( state->Ran.empty() ) << "a post ran beside the held one";
+			EXPECT_NE( state->Thread, std::this_thread::get_id() );
+		}
+		std::move( release ).Invoke();
+		ASSERT_TRUE( WaitUntil([&]{ lg _{ state->Mutex }; return state->Ran.size()==3; }) );
+		lg _{ state->Mutex };
+		EXPECT_EQ( state->Ran, (vector<uint>{1, 2, 3}) );
 	}
 
 	//A controller whose results are not MID 0061 is refused at the connect:  the reason in LastError and the log, and no attempt

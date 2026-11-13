@@ -5,6 +5,8 @@
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/UAString.h>
+#include <jde/opc/uatypes/Value.h>
+#include <jde/opc/server/UAServer.h>
 #include <jde/opc/openProtocol/logTags.h>
 #include "../../types/OpenProtocolRow.h"
 #include "../../types/ServerCnnctn.h"
@@ -66,28 +68,27 @@ namespace Jde::Opc::Gateway{
 			{}
 		} );
 	}
-	α OpenProtocolDriver::Identity( const Mid0002& id )ι->jobject{
-		let text = []( str value ){ return value.empty() ? jvalue{} : jvalue{ value }; };
-		let number = []( optional<uint32_t> value ){ return value ? jvalue{ *value } : jvalue{}; };
-		return {
-			{ "controllerName", text(id.ControllerName) },
-			{ "supplierCode", text(id.SupplierCode) },
-			{ "openProtocolVersion", text(id.OpenProtocolVersion) },
-			{ "controllerSoftwareVersion", text(id.ControllerSoftwareVersion) },
-			{ "toolSoftwareVersion", text(id.ToolSoftwareVersion) },
-			{ "controllerSerialNumber", text(id.ControllerSerialNumber) },
-			{ "systemType", number(id.SystemType) },
-			{ "systemSubtype", number(id.SystemSubtype) },
-			{ "stationId", number(id.StationId) },
-			{ "stationName", text(id.StationName) }
-		};
-	}
 	α OpenProtocolDriver::Configure( Opc::Server::UASettings& settings )ε->void{
 		settings.Limit.MaxAsyncOperations = _maxAsyncOperations;
 	}
 
 	//Each node's id is the string of its path, `_Op.Connected` (spec *Address space*).
 	Ω nodeId( UA_UInt16 ns, sv path )ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(ns, string{path}.c_str()) }; }
+	//The scalar as `_Op`'s value, with `status` and the time now, owned:  a posted write runs after the caller's scalar is gone.
+	Ω opValue( const void* scalar, const UA_DataType& type, UA_StatusCode status )ι->Value{
+		UA_DataValue view; UA_DataValue_init( &view );
+		UA_Variant_setScalar( &view.value, const_cast<void*>(scalar), &type );
+		view.hasValue = true;
+		view.status = status;
+		view.hasStatus = status!=UA_STATUSCODE_GOOD;
+		view.sourceTimestamp = UA_DateTime_now();
+		view.hasSourceTimestamp = true;
+		return Value{ view };
+	}
+	Ω writeOp( UA_Server& server, UA_UInt16 ns, sv slug, sv name, const UA_DataValue& value )ι->void{
+		if( let sc = UA_Server_writeDataValue(&server, nodeId(ns, Ƒ("_Op.{}", name)), value); sc )
+			WARN( "({}) could not write _Op.{}:  {}", slug, name, UAException::Message(sc) );
+	}
 	α OpenProtocolDriver::Build( UA_Server& server, UA_UInt16 ns )ε->void{
 		_server = &server;
 		_ns = ns;
@@ -122,21 +123,17 @@ namespace Jde::Opc::Gateway{
 		add( "Results", UA_TYPES[UA_TYPES_UINT64], &count );
 		add( "LostResults", UA_TYPES[UA_TYPES_UINT64], &count );
 		add( "Skew", UA_TYPES[UA_TYPES_DOUBLE], &skew );
-		WriteNoSkew( UA_STATUSCODE_BADWAITINGFORINITIALDATA );//no clock read yet.
+		//No clock read yet.  Written here, before Run, with no lock to wait for:  a post would wait for a loop that may never run.
+		writeOp( server, ns, _slug, "Skew", opValue(&skew, UA_TYPES[UA_TYPES_DOUBLE], UA_STATUSCODE_BADWAITINGFORINITIALDATA) );
 	}
 	α OpenProtocolDriver::Start()ι->void{ _session->Start(); }
 	α OpenProtocolDriver::Stop( absl::AnyInvocable<void()> stopped )ι->void{ _session->Stop( std::move(stopped) ); }
 
+	//On the server's own thread, not the strand's executor thread, which the service lock's wait would hold (UAServer::Post).
 	α OpenProtocolDriver::Write( sv name, const void* scalar, const UA_DataType& type, UA_StatusCode status )ι->void{
-		UA_DataValue value; UA_DataValue_init( &value );
-		UA_Variant_setScalar( &value.value, const_cast<void*>(scalar), &type );//a view:  the write copies it.
-		value.hasValue = true;
-		value.status = status;
-		value.hasStatus = status!=UA_STATUSCODE_GOOD;
-		value.sourceTimestamp = UA_DateTime_now();
-		value.hasSourceTimestamp = true;
-		if( let sc = UA_Server_writeDataValue(_server, nodeId(_ns, Ƒ("_Op.{}", name)), value); sc )
-			WARN( "({}) could not write _Op.{}:  {}", _slug, name, UAException::Message(sc) );
+		Opc::Server::UAServer::Post( *_server, [ns=_ns, slug=_slug, name=string{name}, value=opValue(scalar, type, status)]( UA_Server& server ){
+			writeOp( server, ns, slug, name, value );
+		} );
 	}
 	α OpenProtocolDriver::WriteText( sv name, sv text )ι->void{
 		let value = ToUV( text );
@@ -165,7 +162,7 @@ namespace Jde::Opc::Gateway{
 
 	α OpenProtocolDriver::OnConnected( Session::Connection&& connection )ι->void{
 		jobject identity;
-		for( let& field : Identity(connection.Identity) ){
+		for( let& field : OpenProtocolRow::Identity(connection.Identity) ){
 			if( !field.value().is_null() )
 				identity.emplace( field.key(), field.value() );
 		}

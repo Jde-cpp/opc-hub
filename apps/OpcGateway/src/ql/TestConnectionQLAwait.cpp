@@ -6,7 +6,6 @@
 #include "../async/OpenProtocolTestAwait.h"
 #include "../async/TestConnectAwait.h"
 #include "../async/UAStrandAwait.h"
-#include "../drivers/openProtocol/OpenProtocolDriver.h"
 #include "../UAClient.h"
 #include "GatewayQL.h"
 #include "GatewayQLAwait.h"
@@ -17,7 +16,7 @@ namespace Jde::Opc::Gateway{
 	//What MID 0002 answered, of the fields `q` selects (Open Protocol Tables 13 to 18):  null where its revision carries none.
 	Ω identity( const QL::TableQL& q, const OpenProtocol::Mid0002& id )ι->jobject{
 		jobject y;
-		for( let& field : OpenProtocolDriver::Identity(id) ){
+		for( let& field : OpenProtocolRow::Identity(id) ){
 			if( q.FindColumn(field.key()) )
 				y.emplace( field.key(), field.value() );
 		}

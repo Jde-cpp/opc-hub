@@ -51,6 +51,7 @@ namespace Jde::Opc::Hub{
 		auto description = Ƒ( "{} '{}' on {}", Process::AppName(), App::InstanceName(), Process::HostName() );
 		let collector = BlockAwait( Access::Server::LoginAwait::Own(Crypto::ReadCertificate(hub->SslSettings->Certificate.Path), move(description)) );
 		DBG( "Collector user: {}.", collector.Value );
+		Opc::Gateway::SetCertificateUser( collector );//a driver row's server opens the collector's sessions as it, not as the system.
 
 		//5. The one listener.  Its shutdown closes the app sockets; the gateway's registry needs its own close, as its listener's did.
 		auto handler = ms<Hub::RequestHandler>( move(httpSettings) );

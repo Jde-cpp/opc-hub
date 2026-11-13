@@ -1,7 +1,6 @@
 #include "DriverHost.h"
 #include <latch>
 #include <boost/asio/executor_work_guard.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/thread.h>
@@ -35,10 +34,16 @@ namespace Jde::Opc::Gateway{
 	//The running hosts, and the thread their starts and stops run on after the gateway's own start.
 	struct DriverHosts final{
 		~DriverHosts(){ Work.reset(); }
-		α Add( const ServerCnnctn& row )ε->void{
-			auto host = ms<DriverHost>( row );
-			lg _{ Mutex };
-			Running.insert_or_assign( row.Id, move(host) );
+		//A host that cannot start is a line at Error and the row stands, at the gateway's start as after it.
+		α Add( const ServerCnnctn& row )ι->void{
+			try{
+				auto host = ms<DriverHost>( row );
+				lg _{ Mutex };
+				Running.insert_or_assign( row.Id, move(host) );
+			}
+			catch( const std::exception& e ){
+				ERR( "{}", e.what() );
+			}
 		}
 		α Find( const DB::Key& row )ι->sp<DriverHost>{
 			lg _{ Mutex };
@@ -124,18 +129,17 @@ namespace Jde::Opc::Gateway{
 	α DriverHost::Stop( std::span<const sp<DriverHost>> hosts, bool wait )ι->void{
 		if( hosts.empty() )
 			return;
-		vector<IDriver*> drivers;
-		for( let& host : hosts )
-			drivers.push_back( host->_driver.get() );
-		stopDrivers( drivers );
 		//The clients were told to go before this:  each closes its session on a live server, as a UA client should.  Those open
-		//now, not one a reconnect opens meanwhile, which the server's stop ends and the next server takes.
+		//now, not one a reconnect opens while the drivers stop, which the server's stop ends and the next server takes.
+		vector<IDriver*> drivers;
+		flat_map<const DriverHost*,flat_set<string>> closing;
+		for( let& host : hosts ){
+			drivers.push_back( host->_driver.get() );
+			for( let& session : host->Sessions() )
+				closing[host.get()].emplace( session.Id );
+		}
+		stopDrivers( drivers );
 		if( wait ){
-			flat_map<const DriverHost*,flat_set<string>> closing;
-			for( let& host : hosts ){
-				for( let& session : host->Sessions() )
-					closing[host.get()].emplace( session.Id );
-			}
 			let open = [&]{
 				uint y{};
 				for( let& host : hosts ){
@@ -158,26 +162,24 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α DriverHost::Start()ε->void{
-		DriverHosts* hosts;
+		struct Started final{ std::latch Done{ 1 }; std::exception_ptr Error; };
+		auto started = ms<Started>();
 		{
 			lg _{ _hostsMutex };
 			_hosts = mu<DriverHosts>();
-			hosts = _hosts.get();
-		}
-		struct Started final{ std::latch Done{ 1 }; std::exception_ptr Error; };
-		auto started = ms<Started>();
-		boost::asio::post( hosts->Context, [hosts, started]{
-			try{
-				for( let& row : BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>(ServerCnnctnAwait{}) ){
-					if( row.HasDriver() )
-						hosts->Add( row );
+			boost::asio::post( _hosts->Context, [hosts=_hosts.get(), started]{
+				try{
+					for( let& row : BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>(ServerCnnctnAwait{}) ){
+						if( row.HasDriver() )
+							hosts->Add( row );
+					}
 				}
-			}
-			catch( ... ){
-				started->Error = std::current_exception();
-			}
-			started->Done.count_down();
-		} );
+				catch( ... ){
+					started->Error = std::current_exception();
+				}
+				started->Done.count_down();
+			} );
+		}
 		started->Done.wait();
 		if( started->Error ){
 			Shutdown( true );
@@ -203,10 +205,6 @@ namespace Jde::Opc::Gateway{
 	}
 	α DriverHost::Find( const ServerCnnctnNK& slug )ι->sp<DriverHost>{
 		lg _{ _hostsMutex };
-		if( !_hosts )
-			return nullptr;
-		lg _2{ _hosts->Mutex };
-		let p = std::ranges::find_if( _hosts->Running, [&]( let& host ){ return host.second->Slug()==slug; } );
-		return p==_hosts->Running.end() ? nullptr : p->second;
+		return _hosts ? _hosts->Find( DB::Key{slug} ) : nullptr;
 	}
 }

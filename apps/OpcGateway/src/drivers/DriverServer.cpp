@@ -25,7 +25,7 @@ namespace Jde::Opc::Gateway{
 		y.TrustedCerts = { UAClient::CryptoSettings(slug).Certificate.Path, ssl->Certificate.Path };
 		y.None = false;
 		y.EncryptOnly = true;
-		y.OwnCertificate = true;
+		y.OwnCertificate = CertificateUser();
 		return y;
 	}
 	α DriverServer::Anchors()ι->vector<fs::path>{
