@@ -1,0 +1,193 @@
+{
+	"name": "Pump 1 rpm",
+	"slug": "pump1",
+	"description": "The demo:  pump1 motorRpm as a mean a minute, a watchdog over the feed and an alert over a limit.",
+	"graph": {
+		"nodes": [
+			{
+				"id": "rpm",
+				"type": "opc in",
+				"name": "pump1 motorRpm",
+				"x": 40,
+				"y": 160,
+				"props": {
+					"connection": "OpcServer",
+					"node": {
+						"nsu": "urn:jde:pumps",
+						"i": 6012
+					}
+				},
+				"wires": [
+					[
+						"minute",
+						"watchdog"
+					]
+				]
+			},
+			{
+				"id": "minute",
+				"type": "window",
+				"name": "a minute",
+				"x": 520,
+				"y": 120,
+				"props": {
+					"duration": "PT1M"
+				},
+				"wires": [
+					[
+						"mean"
+					]
+				]
+			},
+			{
+				"id": "mean",
+				"type": "function",
+				"name": "the mean",
+				"x": 760,
+				"y": 120,
+				"props": {
+					"code": "msg.payload = Math.round( msg.payload.mean*10 )/10;\nreturn msg;"
+				},
+				"wires": [
+					[
+						"rpmMean",
+						"limit"
+					]
+				]
+			},
+			{
+				"id": "rpmMean",
+				"type": "variable",
+				"name": "rpmMean",
+				"x": 1000,
+				"y": 40,
+				"props": {
+					"name": "rpmMean",
+					"dataType": "Double",
+					"description": "pump1 motorRpm, the mean of each minute",
+					"engineeringUnits": "rpm",
+					"euRange": {
+						"low": 0,
+						"high": 1500
+					}
+				},
+				"wires": []
+			},
+			{
+				"id": "limit",
+				"type": "switch",
+				"name": "over 1400",
+				"x": 1000,
+				"y": 160,
+				"props": {
+					"rules": [
+						{
+							"t": "gt",
+							"v": 1400
+						}
+					]
+				},
+				"wires": [
+					[
+						"high",
+						"webhook"
+					]
+				]
+			},
+			{
+				"id": "high",
+				"type": "log",
+				"name": "alert",
+				"x": 1240,
+				"y": 120,
+				"props": {
+					"template": "pump1 ran at a mean of {{payload}} rpm over the last minute, above 1400",
+					"level": "Warning"
+				},
+				"wires": []
+			},
+			{
+				"id": "webhook",
+				"type": "http request",
+				"name": "webhook",
+				"x": 1240,
+				"y": 200,
+				"props": {
+					"url": "https://hooks.example.com/pump1",
+					"method": "POST"
+				},
+				"wires": [
+					[]
+				]
+			},
+			{
+				"id": "watchdog",
+				"type": "trigger",
+				"name": "no value for 30 s",
+				"x": 280,
+				"y": 280,
+				"props": {
+					"wait": "PT30S",
+					"second": "no value for 30 s",
+					"extend": true
+				},
+				"wires": [
+					[
+						"silent"
+					]
+				]
+			},
+			{
+				"id": "silent",
+				"type": "log",
+				"name": "silent",
+				"x": 520,
+				"y": 280,
+				"props": {
+					"template": "pump1 motorRpm:  {{payload}}",
+					"level": "Warning"
+				},
+				"wires": []
+			},
+			{
+				"id": "shift",
+				"type": "calendar",
+				"name": "shift start",
+				"x": 40,
+				"y": 40,
+				"props": {
+					"calendar": "plant",
+					"boundaries": [
+						"shiftStart"
+					]
+				},
+				"wires": [
+					[
+						"reset"
+					]
+				]
+			},
+			{
+				"id": "reset",
+				"type": "change",
+				"name": "reset",
+				"x": 280,
+				"y": 40,
+				"props": {
+					"rules": [
+						{
+							"t": "set",
+							"p": "reset",
+							"to": true
+						}
+					]
+				},
+				"wires": [
+					[
+						"minute"
+					]
+				]
+			}
+		]
+	}
+}

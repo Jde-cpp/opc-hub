@@ -17,7 +17,7 @@
 					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
-			<ng-template instanceTab="Flows"><!--the flows the gateway runs (#455):  their list, with Create and Import-->
+			<ng-template instanceTab="Flows" instanceTabHelp="flows"><!--the flows the gateway runs (#455):  their list, with Create and Import-->
 				@for( g of [gateway()]; track g ){
 					<gateway-flow-list [gateway]=g! [url]=url()></gateway-flow-list>
 				}

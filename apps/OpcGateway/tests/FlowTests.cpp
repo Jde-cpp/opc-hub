@@ -685,6 +685,8 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( Has(source("connection", "{}").What, "`connection` is required") );
 		EXPECT_TRUE( Has(source("connection", R"({"connection":"nowhere"})").What, "'nowhere' is no connection of this gateway") );
 		EXPECT_TRUE( Has(source("opc in", serialize(jobject{{"connection", OpcServerSlug}, {"node", HistGroupFixture::Ex(RpmManual)}, {"filter", jobject{{"deadbandType", "wide"}}}})).What, "`deadbandType` must be one of none, absolute, percent") );
+		EXPECT_TRUE( Has(source("opc in", serialize(jobject{{"connection", OpcServerSlug}, {"node", Ƒ("nsu={};i={}", PumpsUri, RpmManual)}, {"filter", jobject{{"deadbandType", "wide"}}}})).What, "`deadbandType` must be one of none, absolute, percent") ) << "#457:  a node by its ExpandedNodeId's text is read, as a message's `topic` spells it";
+		EXPECT_TRUE( Has(source("opc in", serialize(jobject{{"connection", OpcServerSlug}, {"node", "nsu=urn:x;q=1"}})).What, "is not a node id") );
 		EXPECT_TRUE( Versions(flow).empty() );
 	}
 

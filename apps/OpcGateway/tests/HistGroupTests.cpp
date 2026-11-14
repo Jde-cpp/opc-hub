@@ -883,6 +883,32 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( segments[2].as_object().contains("id") ) << text;
 		EXPECT_EQ( ParseHistPath(text, SRCE_CUR), path ) << text;
 	}
+	//A node by its ExpandedNodeId's UA spelling, `nsu=urn:jde:pumps;i=5001` (#457):  what ExNodeId::ToString writes, a flow's
+	//`topic` among it, is read back as the node it was written from, beside the json and a NodeId's own spelling.
+	TEST( HistNodeTests, AnExpandedNodesSpellingIsRead ){
+		let json = serialize( jobject{{"nsu", PumpsUri}, {"i", Pump1}} );
+		let text = Ƒ( "nsu={};i={}", PumpsUri, Pump1 );
+		let node = ParseHistNode( sv{json}, SRCE_CUR );
+		EXPECT_EQ( ParseHistNode(sv{text}, SRCE_CUR), node );
+		EXPECT_EQ( ParseHistNode(jvalue{text}, SRCE_CUR), node ) << "as a flow's prop holds it";
+		EXPECT_EQ( HistNodeText(ParseHistNode(sv{text}, SRCE_CUR)), json ) << "the column's spelling";
+		const std::array<sv,5> written{ R"({"nsu":"urn:x","s":"Pump1.Rpm"})", R"({"nsu":"urn:x","s":"a=b;c d"})", R"({"nsu":"urn:x","serverindex":2,"i":5})", R"({"serverindex":2,"ns":3,"i":5})", R"({"ns":3,"s":"tag"})" };
+		for( let each : written ){
+			const ExNodeId from{ Json::ParseValue(each) };
+			EXPECT_EQ( ParseHistNode(sv{from.ToString()}, SRCE_CUR), from ) << from.ToString();
+		}
+		EXPECT_EQ( ParseHistNode(sv{"ns=5;i=6012"}, SRCE_CUR).NsIndex(), 5 ) << "an index is the connection's to resolve, as before";
+		const std::array<sv,3> refused{ "nsu=urn:x", "nsu=urn:x;q=1", "svr=x;i=1" };
+		for( let each : refused ){
+			try{
+				ParseHistNode( each, SRCE_CUR );
+				ADD_FAILURE() << each;
+			}
+			catch( const Exception& e ){
+				EXPECT_TRUE( sv{e.what()}.contains("is not a node id") ) << e.what();
+			}
+		}
+	}
 	//Servers 0.2 (#379):  what the server says of each member - the attributes a served variable carries, its EURange and
 	//EngineeringUnits properties, the DataType served and its browse path from the Objects folder - lands on its hist_group_nodes row
 	//once the collector has its item (HistGroupHost::Describe), which histGroupNodes serves and the QL never writes.

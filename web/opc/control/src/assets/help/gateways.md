@@ -110,10 +110,11 @@ The **Trend** tab draws the rows ticked in the list's **Trend** column, up to ei
 
 ## Instances
 
-Under [Applications](/apps), a gateway instance's page has the tabs [Applications help](/help/apps#opchub) lists. Its own eight:
+Under [Applications](/apps), a gateway instance's page has the tabs [Applications help](/help/apps#opchub) lists. Its own nine:
 
 - **Connections** lists its server connections. The **Status** column reads *Connected*, *Idle* or *Error*. Press **Add** to connect the gateway to another OPC server, or open a row to edit one.
 - **Templates** and **Groups** are the gateway historian's: what it stores, and by what rules. See [Historian groups and templates](/help/gateways/groups).
+- **Flows** are the flows the gateway runs: nodes wired on a canvas, from a source such as a data change to a sink such as a derived variable. See [Flows](/help/gateways/flows).
 - **Machines**, **Lines** and **Reasons** are OEE's: the machines whose stops and figures the gateway works out from its groups, the lines that combine them, and the reasons a stop is coded with. See [OEE](/help/gateways/oee).
 - **Endpoint** is the gateway's own OPC UA endpoint, where a SCADA or any UA client reads what the gateway collects. See [Endpoint](#endpoint).
 - **Watch** opens the gateway's watch list, the live values you chose to follow. See [Watching](#watching).
@@ -147,6 +148,10 @@ Once an admin enforces them, the tab needs *Read* on the gateway's `endpoint` re
 ## Historian groups and templates
 
 The gateway keeps the history of the nodes in its groups, each a template applied to a root or a list of nodes of its own. They have a page of their own: [Historian groups and templates](/help/gateways/groups).
+
+## Flows
+
+A flow is a graph of nodes the gateway runs. A message from a source, such as a node's data change, passes through processing nodes to a sink, such as a derived variable, a log line or a write. Every message's path is recorded, and a flow can be replayed over the historian's records. They have a page of their own, with a sample to import: [Flows](/help/gateways/flows).
 
 ## OEE machines and reasons
 

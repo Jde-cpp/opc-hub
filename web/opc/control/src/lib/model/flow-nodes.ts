@@ -83,7 +83,7 @@ export function flowPathFault( text:string ):string|undefined{
 	return steps ? undefined : refuse( 'it is empty' );
 }
 const pathRoot = ( text:string )=>text.split( /[.[]/ )[0];
-//a node of a connection, as ParseHistNode reads one:  ns=2;s=Pump1.Rpm, its json text, or the json itself
+//a node of a connection, as ParseHistNode reads one:  ns=2;s=Pump1.Rpm, nsu=urn:…;s=Pump1.Rpm, its json text, or the json itself
 function isNodeId( v:unknown ):boolean{
 	if( typeof v=='string' )
 		return !!parseHistNodeText( v );

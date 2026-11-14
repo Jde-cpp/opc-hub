@@ -252,6 +252,12 @@ namespace Jde::Opc{
 		try{
 			if( text.starts_with('{') )
 				return ExNodeId{ jvalue{Json::Parse(text, sl)} };
+			if( text.starts_with("nsu=") || text.starts_with("svr=") ){//an ExpandedNodeId's UA spelling, what ExNodeId::ToString writes:  a flow's `topic` is one.
+				ExNodeId y;
+				let sc = UA_ExpandedNodeId_parse( &y, ToUV(text) );
+				THROW_IFSL( sc, "{}", UA_StatusCode_name(sc) );
+				return y;
+			}
 			return ExNodeId{ NodeId::DecodeJson(string{text}) };
 		}
 		catch( const std::exception& e ){

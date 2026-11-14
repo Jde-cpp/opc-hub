@@ -49,9 +49,10 @@ namespace Jde::Opc::Gateway{
 	//The node columns' spelling, hist_group_nodes.node and hist_groups.root:  ExNodeId::ToJson with the namespace URI set and
 	//the index 0, `{"nsu":"urn:jde:pumps","i":6042}`, so equal nodes spell alike for the unique index.
 	α HistNodeText( const ExNodeId& node )ι->string;
-	//Back, from that text or from what a caller sends - the json object, or a NodeId's UA spelling - as an ExNodeId that may
-	//still carry an index in place of its URI, which the caller's connection then resolves (HistGroupMAwait).  Throws for
-	//anything else, as a BadRequest.
+	//Back, from that text or from what a caller sends - the json object, a NodeId's UA spelling, `ns=5;i=6042`, or an
+	//ExpandedNodeId's, `nsu=urn:jde:pumps;i=6042`, as ExNodeId::ToString writes one - as an ExNodeId that may still carry an
+	//index in place of its URI, which the caller's connection then resolves (HistGroupMAwait).  Throws for anything else, as a
+	//BadRequest.
 	α ParseHistNode( const jvalue& node, SL sl )ε->ExNodeId;
 	α ParseHistNode( sv text, SL sl )ε->ExNodeId;
 
