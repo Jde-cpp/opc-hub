@@ -7,10 +7,11 @@ import { MatDialog } from '@angular/material/dialog';
 import { OpcStore } from '../../../services/opc-store';
 import { ServerCnnctn } from '../../../model/server-cnnctn';
 import { namespaceColumns, serverDescColumns } from '../../../model/server';
+import { identityColumns, opIds, opQuery } from '../../../model/open-protocol';
 import { flush } from 'jde-spa/testing';
 import { ClientDetail } from './client-detail';
 import { DiscoverDialog } from './discover-dialog';
-import { configureDetailPage, dialogStub } from 'jde-framework/testing';
+import { configureDetailPage, dialogStub, scalar, slugSchema } from 'jde-framework/testing';
 
 //angular-review3 L2: only group-detail clamped the stored tab index.  The Connection tab used to be gated on the row being
 //saved, so a stored index of 1 named a tab that did not exist for a new connection - mat-tab-group hard-loops on an index
@@ -90,7 +91,7 @@ describe( 'ClientDetail test connection', ()=>{
 		return { page, snackbar, announced: ()=>announce.mock.calls.map( ([m])=>m ) };
 	};
 	const edit = ( page:ClientDetail, fields:Record<string,unknown> )=>page.properties.set( Properties.edited(ServerCnnctn, page.properties(), fields) );//the Properties form's keystrokes
-	const unset = { securityMode: null, securityPolicy: null, sessionTimeout: null, requestTimeout: null, pingInterval: null, ttl: null, locale: null };//the spec's settings as a form that leaves them sends them
+	const unset = { kind: "ua", driver: null, securityMode: null, securityPolicy: null, sessionTimeout: null, requestTimeout: null, pingInterval: null, ttl: null, locale: null };//the spec's settings as a form that leaves them sends them, and a UA row's kind
 
 	it( 'needs a url and a valid slug', async ()=>{
 		const { page } = await create( {}, async ()=>({}) );
@@ -110,7 +111,7 @@ describe( 'ClientDetail test connection', ()=>{
 		expect( page.tabIndex() ).toBe( 0 );
 		await page.onTestClick();
 		expect( send ).toHaveBeenCalledTimes( 1 );
-		expect( send.mock.calls[0][0] ).toMatch( /^mutation testConnection\( opc: \$opc, url: \$url, certificateUri: \$certificateUri, securityMode: \$securityMode, securityPolicy: \$securityPolicy, sessionTimeout: \$sessionTimeout, requestTimeout: \$requestTimeout, pingInterval: \$pingInterval, ttl: \$ttl, locale: \$locale \)/ );//POSTed:  a GET must not connect the gateway anywhere
+		expect( send.mock.calls[0][0] ).toMatch( /^mutation testConnection\( opc: \$opc, url: \$url, kind: \$kind, driver: \$driver, certificateUri: \$certificateUri, securityMode: \$securityMode, securityPolicy: \$securityPolicy, sessionTimeout: \$sessionTimeout, requestTimeout: \$requestTimeout, pingInterval: \$pingInterval, ttl: \$ttl, locale: \$locale \)/ );//POSTed:  a GET must not connect the gateway anywhere
 		expect( send.mock.calls[0][1] ).toEqual( {opc: "plc1", url: "opc.tcp://plc:4840", certificateUri: "urn:plc", ...unset} );//trimmed, as the save trims them;  the settings null, as the save leaves them
 		expect( page.tabIndex() ).toBe( 1 );
 		expect( page.server()?.applicationName ).toBe( "PLC 1" );
@@ -210,8 +211,8 @@ describe( 'ClientDetail test connection', ()=>{
 
 	//#250 review L3:  the describe's columns were listed here and in OpcStore.getConnection, so a ServerDesc field added to one
 	//would show blank on the other path - after a test, or on the page's load.  opc-store.spec checks the store's half.
-	it( "selects the describe the resolver's OpcStore query selects", ()=>{
-		expect( ClientDetail.testMutation ).toContain( `{ ${serverDescColumns} securityPolicyUri securityMode namespaces{ ${namespaceColumns} } }` );
+	it( "selects the describe the resolver's OpcStore query selects, and an Open Protocol row's identity beside it", ()=>{
+		expect( ClientDetail.testMutation ).toContain( `{ ${serverDescColumns} securityPolicyUri securityMode namespaces{ ${namespaceColumns} } ${identityColumns} }` );
 	} );
 
 	//#250 review #6:  the button is disabledInteractive, so focus stays on it while a test runs - and a disabled press still clicks.
@@ -542,4 +543,184 @@ describe( 'ClientDetail server tab', ()=>{
 	} );
 	//a new connection lands on Properties (the tab-index describe), whose form cannot render against the stub schema here;  its Server
 	//tab, shown later, has no slug and reads nothing - server-diagnostics.spec's 'not saved yet'
+} );
+//docs/open-protocol/spec.md *Web* (#475):  the Kind pick swaps the form - a UA row's url, certificate URI, namespace, mode and policy for
+//an Open Protocol row's own fields, rendered after the pick - Test Connection sends the kind and the driver settings and shows the
+//controller's identity, and a saved Open Protocol row's `_Op` is read from its driver server for the Connection tab.
+describe( 'ClientDetail Open Protocol', ()=>{
+	const identity = { controllerName: "PF6000-1", supplierCode: "ACT", openProtocolVersion: "2.20.1", controllerSoftwareVersion: "3.8.0", toolSoftwareVersion: null, controllerSerialNumber: "SN1", systemType: 3, systemSubtype: 1, stationId: 2, stationName: "Station A" };
+	const opRows = [ {id: {ns: 2, s: "_Op.Connected"}, value: true}, {id: {ns: 2, s: "_Op.Url"}, value: "open-protocol://plc:4545"}, {id: {ns: 2, s: "_Op.Skew"}, value: {sc: 0x80320000}} ];
+	//a row's describe as the resolver stores it, whole:  the Connection tab renders every field of it
+	const described = ( applicationName:string )=>({ applicationName, applicationUri: "urn:x", applicationType: "Server", productUri: "", gatewayServerUri: "", discoveryProfileUri: "", discoveryUrls: [], policy: "http://opcfoundation.org/UA/SecurityPolicy#None", mode: "None", namespaces: [] });
+	type Send = ( ql:string, vars:any )=>Promise<unknown>;
+	const unsetSettings = { securityMode: null, securityPolicy: null, sessionTimeout: null, requestTimeout: null, pingInterval: null, ttl: null, locale: null };
+	//the connection's schema with the columns the form shows, so the Properties tab renders where a test lands on it - a new row's does -
+	//and the Open Protocol fields with it
+	const schema = ()=>slugSchema( "ServerConnection", scalar("url"), scalar("description"), scalar("certificateUri"), scalar("defaultBrowseNs", "Int"), scalar("kind"), scalar("driver"), scalar("securityMode"), scalar("securityPolicy"), scalar("sessionTimeout", "Int"), scalar("requestTimeout", "Int"), scalar("pingInterval", "Int"), scalar("ttl", "Int"), scalar("locale") );
+	const pageData = ( row:any, gateway:unknown )=>({pageData: {row, routing: {}, schema: schema(), gateway}});
+	//the page over a gateway whose test answers through `send` and whose row reads answer the certificates and `_Op`, rendered on the
+	//stored tab:  this gateway's queries resolve, so the row's loads are real async and change detection runs after them - through
+	//the fixture, never a bare ngOnInit, and destroyed at the end of each test, as the trust describe's are
+	const create = async ( row:any, send:Send=async ()=>identity, nodes:unknown[]=opRows, data?:Observable<any> )=>{
+		const query = vi.fn( async ( ql:string, _vars:any )=>ql.startsWith( "nodes(" ) ? { nodes } : { serverConnection: {rejectedCertificate: null, clientCertificate: null} } );
+		const announce = vi.fn( async ( _m:string )=>{} );
+		const gateway = { slug: "g", query, postQL: async ( ql:string, vars:any )=>({ testConnection: await send(ql, vars) }) };
+		configureDetailPage( row, {gateway, data: data ?? new BehaviorSubject<any>( pageData(row, gateway) ), providers: [
+			{ provide: LiveAnnouncer, useValue: {announce} },
+			{ provide: OpcStore, useValue: {forget: ()=>{}} }
+		]} );
+		const fixture = TestBed.createComponent( ClientDetail );
+		const page = fixture.componentInstance;
+		fixture.detectChanges();//runs ngOnInit once (the route subscription) and renders the tab the stored index names
+		await flush( 2 );
+		return { fixture, page, query, gateway, announced: ()=>announce.mock.calls.map( ([m])=>m ) };
+	};
+	const edit = ( page:ClientDetail, fields:Record<string,unknown> )=>page.properties.set( Properties.edited(ServerCnnctn, page.properties(), fields) );
+	beforeEach( ()=>localStorage.setItem('client-detail/tabIndex', '1') );//Connection, where a saved row's `_Op` shows;  a new row still lands on Properties
+	afterEach( ()=>localStorage.removeItem('client-detail/tabIndex') );
+
+	it( 'offers the two kinds, and the flow server\'s row its own, read-only', async ()=>{
+		const { fixture, page } = await create( {} );
+		expect( page.picks().kind ).toEqual( [{value: "ua", label: "OPC UA"}, {value: "open-protocol", label: "Open Protocol"}] );
+		expect( page.readonlyFields() ).toEqual( [] );
+		fixture.destroy();
+		TestBed.resetTestingModule();//this test builds twice
+		const flow = await create( {id: 3, slug: "flow-server", name: "Flows", kind: "flow", url: "opc.tcp://127.0.0.1:4860"} );
+		expect( flow.page.picks().kind.map( o=>o.value ) ).toEqual( ["ua", "open-protocol", "flow"] );
+		expect( flow.page.readonlyFields() ).toEqual( ["slug", "kind"] );
+		flow.fixture.destroy();
+	} );
+	it( 'swaps the form with the kind:  the url and the four the gateway fixes go, the driver column never shows', async ()=>{
+		const { fixture, page } = await create( {} );
+		expect( page.formKind() ).toBe( "ua" );
+		expect( page.excludedColumns() ).toEqual( ["driver"] );
+		expect( page.fieldOrder.indexOf("kind") ).toBe( page.fieldOrder.indexOf("description")+1 );
+		edit( page, {kind: "open-protocol"} );
+		expect( page.formKind() ).toBe( "open-protocol" );
+		expect( page.excludedColumns() ).toEqual( ["driver", "url", "certificateUri", "defaultBrowseNs", "securityMode", "securityPolicy"] );
+		expect( page.canDiscover() ).toBe( false );//a controller answers no discovery
+		fixture.destroy();
+	} );
+	it( 'renders its own fields after the Kind pick, and only for an Open Protocol form', async ()=>{
+		localStorage.setItem( 'client-detail/tabIndex', '0' );//Properties, where the form is
+		const { fixture, page } = await create( {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", driver: '{"timeZone":"UTC"}', server: described("Jde-Cpp open-protocol pf")} );
+		expect( Object.keys(page.slots()) ).toEqual( ["kind"] );
+		const root = fixture.nativeElement as HTMLElement;
+		const labels = ()=>Array.from( root.querySelectorAll('properties mat-label') ).map( l=>l.textContent!.trim() );
+		expect( labels() ).toEqual( ["Slug", "Name", "Description", "Kind", "Host", "Port", "Time Zone", "Revision Ceilings", "Session Timeout", "Request Timeout", "Ping Interval", "Idle TTL", "Locales"] );
+		expect( (root.querySelector('open-protocol-fields input[type=text]') as HTMLInputElement).value ).toBe( "plc" );
+		edit( page, {kind: "ua"} );
+		await flush( 2 );
+		expect( page.slots() ).toEqual( {} );
+		expect( labels() ).toEqual( ["Slug", "Name", "Description", "Kind", "URL", "Certificate URI", "Default Namespace", "Security Mode", "Security Policy", "Session Timeout", "Request Timeout", "Ping Interval", "Idle TTL", "Locales"] );
+		fixture.destroy();
+	} );
+	it( 'tests an Open Protocol form with its kind and driver settings and shows the controller it reached', async ()=>{
+		const send = vi.fn( async ( _ql:string, _vars:any )=>identity );
+		const { fixture, page, announced } = await create( {}, send );
+		edit( page, {kind: "open-protocol", slug: "pf", certificateUri: "urn:x", securityMode: "Sign"} );//the two left from a UA form say nothing
+		expect( page.canTest() ).toBe( false );//no host yet
+		edit( page, {host: "plc", port: "", timeZone: "UTC", revisions: "0061:3"} );
+		expect( page.canTest() ).toBe( true );
+		await page.onTestClick();
+		expect( send.mock.calls[0][1] ).toEqual( {opc: "pf", url: "open-protocol://plc:4545", kind: "open-protocol", driver: '{"timeZone":"UTC","revisions":{"0061":3}}', certificateUri: "", ...unsetSettings} );
+		expect( page.identity()?.controllerName ).toBe( "PF6000-1" );
+		expect( page.server() ).toBeUndefined();
+		expect( page.serverError() ).toBeUndefined();
+		expect( page.untested ).toBe( false );
+		expect( page.tabIndex() ).toBe( 1 );
+		expect( announced() ).toEqual( ["Connecting to open-protocol://plc:4545.", "Connected to PF6000-1."] );
+		expect( page.staleFor() ).toBeUndefined();
+		edit( page, {timeZone: "Europe/Stockholm", revisions: ""} );
+		expect( page.staleFor() ).toBe( "Time Zone UTC, Revision Ceilings 0061:3" );
+		edit( page, {kind: "ua", url: "opc.tcp://plc:4840"} );
+		expect( page.staleFor() ).toContain( "Kind Open Protocol" );
+		fixture.destroy();
+	} );
+	it( 'cannot test a field the gateway would refuse', async ()=>{
+		const send = vi.fn( async ( _ql:string, _vars:any )=>identity );
+		const { fixture, page } = await create( {}, send );
+		edit( page, {kind: "open-protocol", slug: "pf", host: "plc", port: "70000"} );
+		expect( page.canTest() ).toBe( false );
+		await page.onTestClick();
+		expect( send ).not.toHaveBeenCalled();
+		edit( page, {port: "4545"} );
+		expect( page.canTest() ).toBe( true );
+		fixture.destroy();
+	} );
+	it( 'shows a failed test\'s reason in the not-connected state and clears the identity', async ()=>{
+		const { fixture, page } = await create( {}, async ()=>{ throw new Error( "(504)'plc:4545' did not answer MID 0001 within 10 s" ); } );
+		edit( page, {kind: "open-protocol", slug: "pf", host: "plc"} );
+		await page.onTestClick();
+		expect( page.identity() ).toBeUndefined();
+		expect( page.serverError() ).toContain( "MID 0001" );
+		expect( page.untested ).toBe( false );
+		fixture.destroy();
+	} );
+	it( 'reads a saved row\'s _Op from its driver server, by the eleven ids, and keeps its describe under a test\'s identity', async ()=>{
+		const { fixture, page, query } = await create( {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", server: described("Jde-Cpp open-protocol pf")} );
+		expect( query.mock.calls.filter( ([ql])=>ql==opQuery ).map( ([, vars])=>vars ) ).toEqual( [{opc: "pf", id: opIds}] );
+		expect( page.op()?.Connected ).toEqual( {value: true} );
+		expect( page.op()?.Skew ).toEqual( {sc: 0x80320000} );
+		expect( page.opReading() ).toBe( false );
+		await flush( 2 );
+		const root = fixture.nativeElement as HTMLElement;
+		expect( root.querySelector('server-properties section.op h3')!.textContent ).toBe( "Driver" );
+		expect( Array.from(root.querySelectorAll('server-properties section.op dt')).map( d=>d.textContent ) ).toContain( "Clock Skew" );
+		await page.onTestClick();
+		expect( page.identity()?.controllerName ).toBe( "PF6000-1" );
+		expect( page.server()?.applicationName ).toBe( "Jde-Cpp open-protocol pf" );//the driver server's session is not the test's to drop
+		expect( query.mock.calls.filter( ([ql])=>ql==opQuery ).length ).toBe( 2 );//read again after the test
+		await flush( 2 );
+		expect( Array.from(root.querySelectorAll('server-properties section')).map( s=>s.className ) ).toEqual( ["identity", "op"] );
+		fixture.destroy();
+	} );
+	it( 'reads no _Op for a UA row or a new one, and says why one could not be read', async ()=>{
+		const ua = await create( {id: 7, slug: "plc", name: "PLC", url: "opc.tcp://plc:4840", server: described("PLC")} );
+		expect( ua.query.mock.calls.filter( ([ql])=>ql==opQuery ) ).toEqual( [] );
+		expect( ua.page.op() ).toBeUndefined();
+		expect( (ua.fixture.nativeElement as HTMLElement).querySelector('server-properties dl.fields') ).not.toBeNull();//the description, as before
+		ua.fixture.destroy();
+		TestBed.resetTestingModule();//this test builds three times
+		const fresh = await create( {} );
+		expect( fresh.query.mock.calls.filter( ([ql])=>ql==opQuery ) ).toEqual( [] );
+		fresh.fixture.destroy();
+		TestBed.resetTestingModule();
+		const gateway = { slug: "g", query: vi.fn( async ( ql:string, _vars:any )=>{ if( ql.startsWith("nodes(") ) throw new Error( "(502) no session with the driver server" ); return { serverConnection: {rejectedCertificate: null, clientCertificate: null} }; } ) };
+		const pf = {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", server: described("Jde-Cpp open-protocol pf")};
+		configureDetailPage( pf, {gateway, data: new BehaviorSubject<any>( pageData(pf, gateway) ), providers: [
+			{ provide: LiveAnnouncer, useValue: {announce: async ()=>{}} },
+			{ provide: OpcStore, useValue: {forget: ()=>{}} }
+		]} );
+		const fixture = TestBed.createComponent( ClientDetail );
+		const page = fixture.componentInstance;
+		fixture.detectChanges();
+		await flush( 2 );
+		expect( page.op() ).toBeUndefined();
+		expect( page.opError() ).toContain( "no session" );
+		expect( page.opReading() ).toBe( false );
+		expect( (fixture.nativeElement as HTMLElement).querySelector('server-properties section.op p.op-error')!.textContent ).toContain( "no session" );
+		fixture.destroy();
+	} );
+	it( 'drops an _Op read that answers after the page moved to another connection', async ()=>{
+		let answer!:( r:unknown )=>void;
+		const query = vi.fn( ( ql:string, _vars:any )=>ql.startsWith( "nodes(" ) ? new Promise( r=>{ answer = r; } ) : Promise.resolve( {serverConnection: {rejectedCertificate: null, clientCertificate: null}} ) );
+		const gateway = { slug: "g", query };
+		const pf = {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", server: described("Jde-Cpp open-protocol pf")};
+		const route = new BehaviorSubject<any>( pageData(pf, gateway) );
+		configureDetailPage( pf, {gateway, data: route, providers: [
+			{ provide: LiveAnnouncer, useValue: {announce: async ()=>{}} },
+			{ provide: OpcStore, useValue: {forget: ()=>{}} }
+		]} );
+		const fixture = TestBed.createComponent( ClientDetail );
+		const page = fixture.componentInstance;
+		fixture.detectChanges();
+		expect( page.opReading() ).toBe( true );
+		route.next( pageData({id: 8, slug: "plc", name: "PLC", url: "opc.tcp://plc:4840", server: described("PLC")}, gateway) );
+		expect( page.opReading() ).toBe( false );
+		answer( {nodes: opRows} );
+		await flush( 2 );
+		expect( page.op() ).toBeUndefined();//the first row's, for a page that shows the second
+		fixture.destroy();
+	} );
 } );

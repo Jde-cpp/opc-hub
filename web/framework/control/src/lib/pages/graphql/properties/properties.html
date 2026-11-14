@@ -58,5 +58,8 @@
 				<mat-hint>{{field.hint}}</mat-hint>
 			}
 		</mat-form-field>
+		@if( slots()[field.name]; as slot ){<!-- the page's own controls after this field -->
+			<ng-container [ngTemplateOutlet]="slot"></ng-container>
+		}
 	}
 </div>

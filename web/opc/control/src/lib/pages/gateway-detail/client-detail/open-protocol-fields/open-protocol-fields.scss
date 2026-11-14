@@ -1,0 +1,21 @@
+/* in the `properties` form's column:  the fields take its width, and the disclosure sits among them as a labelled row */
+:host{
+	display: block;
+}
+.disclosure{
+	margin-block: 0 1rem;
+}
+/* the summary as a field label's text, on the fields' 1rem inset, with the browser's marker for the state */
+.disclosure summary{
+	cursor: pointer;
+	padding: .5rem 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+.disclosure summary:focus-visible{
+	outline: 2px solid var(--mat-sys-primary);
+	outline-offset: -2px;
+}
+.disclosure[open] summary{
+	margin-block-end: .25rem;
+}

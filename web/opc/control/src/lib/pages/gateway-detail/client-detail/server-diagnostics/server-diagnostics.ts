@@ -6,7 +6,7 @@ import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
 import { IGraphQL, ProtoUtils, SnackbarService, Timestamp, errorMessage, isRefusal } from 'jde-framework';
-import { ClientDiagnostics, clientDiagnosticsQuery, serverDiagnosticsIds, serverDiagnosticsQuery, ServerDiagnosticsRow, serverDiagnosticsSummaryId, serverStatusId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId, UaStructure } from '../../../../model/server';
+import { ClientDiagnostics, clientDiagnosticsQuery, reading, serverDiagnosticsIds, serverDiagnosticsQuery, ServerDiagnosticsRow, serverDiagnosticsSummaryId, serverStatusId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId, UaStructure } from '../../../../model/server';
 import { NodeId } from '../../../../model/node-id';
 import { nameKey, statusText } from '../../../../model/status-code';
 
@@ -51,17 +51,6 @@ export const memberLabel = ( name:string ):string=>name.replace( /([a-z])([A-Z])
 export const ageText = ( seconds:number ):string=>{
 	const h = Math.floor( seconds/3600 ), m = Math.floor( seconds%3600/60 ), s = seconds%60;
 	return [h ? `${h} h` : "", h || m ? `${m} m` : "", `${s} s`].filter( x=>x ).join( " " );
-};
-//a read's value:  the reading, unwrapped from an Uncertain {v, sc}, or undefined with the status for a Bad read ({sc} alone)
-export const reading = ( value:unknown ):{ value?:unknown; sc?:number }=>{
-	if( value && typeof value=='object' && !Array.isArray(value) ){
-		const o = value as UaStructure;
-		if( o.hasOwnProperty('v') )
-			return { value: o['v'], sc: o['sc'] as number|undefined };
-		if( o.hasOwnProperty('sc') )
-			return { sc: o['sc'] as number };
-	}
-	return { value };
 };
 export type DiagnosticField = { label:string; value:string; hint?:string };//hint:  shown under the value, not on hover
 type ClientAnswer = { serverConnection:{ clientDiagnostics:ClientDiagnostics|null }|null };

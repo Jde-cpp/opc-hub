@@ -81,6 +81,7 @@ export const serverDiagnosticsQuery = "nodes( opc:$opc, id:$id ){ id value }";
 export type UaStructure = Record<string,unknown>;
 //a read's value:  the structure, its array, a Bad status alone ({sc}) for a node the server does not serve, or an Uncertain reading ({v, sc})
 export type ServerDiagnosticsRow = { id:{ns:number; i:number}; value:unknown };
+export { reading } from './reading';//a read's value, unwrapped from its status (reading.ts) - the Server tab's and the Open Protocol row's `_Op`
 //The gateway's own client for the connection, the caller's (ServerCnnctnSessionsQLAwait), else the lost one its reconnect is standing in
 //for;  null with neither - the query never connects.  sessionAge is null while no session is up:  that lost client's, or one reconnecting in place.  The times are ISO strings, sessionAge whole
 //seconds;  monitoredItems is the client's, the last three the connection's.

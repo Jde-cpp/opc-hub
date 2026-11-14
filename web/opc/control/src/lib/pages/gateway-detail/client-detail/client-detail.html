@@ -3,14 +3,14 @@
 	<mat-tab>
 		<ng-template mat-tab-label>Properties</ng-template><!--was the record's name: the same word as the breadcrumb and the side nav, and it re-titled with every keystroke in Name-->
 		<ng-template matTabContent>
-			<properties [ctor]=ctor [(record)]=properties type=role [schema]=schema [order]=fieldOrder [displayNames]=fieldLabels [readonlyFields]="isNew ? [] : ['slug']" [picks]="picks()" [units]="units" [hints]="hints"></properties>
+			<properties [ctor]=ctor [(record)]=properties type=role [schema]=schema [order]=fieldOrder [displayNames]=fieldLabels [readonlyFields]="readonlyFields()" [excludedColumns]="excludedColumns()" [picks]="picks()" [units]="units" [hints]="hints" [slots]="slots()"></properties>
 		</ng-template>
 	</mat-tab>
 	<!--every connection, saved or not, live or not:  the tab says why one is not connected, and is where Test Connection answers-->
 	<mat-tab>
 		<ng-template mat-tab-label>Connection</ng-template>
 		<ng-template matTabContent>
-				<server-properties [server]="server()" [error]="serverError()" [untested]="untested" [connecting]="testing()" [staleFor]="staleFor()" [rejected]="certificates()?.rejectedCertificate ?? null" [client]="certificates()?.clientCertificate ?? null" [trusting]="trusting()" (trust)="onTrust($event)"></server-properties>
+				<server-properties [server]="server()" [error]="serverError()" [untested]="untested" [connecting]="testing()" [staleFor]="staleFor()" [identity]="identity()" [openProtocol]="formOpenProtocol()" [op]="op()" [opError]="opError()" [opReading]="opReading()" [rejected]="certificates()?.rejectedCertificate ?? null" [client]="certificates()?.clientCertificate ?? null" [trusting]="trusting()" (trust)="onTrust($event)"></server-properties>
 		</ng-template>
 	</mat-tab>
 	<!--#427:  the server's own diagnostics - its status, summary, sessions and subscriptions - and the gateway's client for it.  Read when
@@ -29,3 +29,6 @@
 	<!--the servers at the form's url and the endpoints of the one picked, a pick filling the form (DiscoverDialog);  saves nothing, issues nothing-->
 	<button matButton="outlined" (click)="onDiscoverClick()" [disabled]="!canDiscover()" disabledInteractive>Discover</button>
 </detail-actions>
+<!--an Open Protocol row's own fields, which the Properties form renders after its Kind pick (slots):  declared here, outside the tab's
+	lazy content, so the template is there whenever the form asks for it-->
+<ng-template #openProtocolFields><open-protocol-fields [(record)]="properties"></open-protocol-fields></ng-template>
