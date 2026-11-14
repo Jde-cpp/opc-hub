@@ -69,7 +69,7 @@ local logsDir = args.logsDir;
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-hub-tests" }, //the gateway role's historian:  its own path, so a gateway test run beside this one never contends for the lock.
 		oee:{ live:: "PT1S", settle:: "PT5S" }, //the gateway role's OEE, as shipped (OeeTests).
-		flows:{ path: logsDir + "/flows/opc-hub-tests" }, //the gateway role's flows, as shipped.
+		flows:{ path: logsDir + "/flows/opc-hub-tests", server:{ port: 4977 } }, //the gateway role's flows, as shipped, and their flow server (FlowServerTests) beside the endpoint's 4976, clear of a live hub's 4860 and the gateway suite's 4960.
 		//the hub's own endpoint (EndpointTests):  loopback as the listener is, the process pair (no ssl), and a hub-shape login - a short
 		//issued token answered from this process's session map (HubAppClient::SessionInfoAwait).
 		server:{

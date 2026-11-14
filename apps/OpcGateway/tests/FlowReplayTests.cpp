@@ -2,9 +2,12 @@
 //dry run capturing an `opc out`'s values under its run's id with nothing written, its flow_runs row, a run paged past a
 //small readLimit, a second run refused while one is under way, cancelFlowRun, an `opc in` taking its group's records and
 //one no group holds refusing the run by its node, a caller who may not read a source's group and a member that is none
-//of it refused with no row, a `to` after now refused, and the reads' `run`.  The cases replay seconds and minutes:  the
-//days are the library's, on the stream's clock (libs/flows/tests/ReplayTests.cpp).
+//of it refused with no row, a `to` after now refused, and the reads' `run`.  With the flow server (#454), a committed run
+//writing a `variable`'s values into the history of the group that holds it, over a range the group already stored, the
+//range its own after it, a value outside it refused, and an edit its group refuses counted.  The cases replay seconds
+//and minutes:  the days are the library's, on the stream's clock (libs/flows/tests/ReplayTests.cpp).
 #include "utils/FlowFixture.h"
+#include "../src/flows/FlowNodes.h"
 
 namespace Jde::Opc::Gateway::Tests{
 	struct FlowReplayTests : FlowFixture{
@@ -107,6 +110,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		EXPECT_EQ( Current(RpmManual).AsNumber<double>(), before ) << "and wrote none";
 		EXPECT_TRUE( Json::AsArray(Trace({{"flow", flow}, {"start", ToIsoString(from)}, {"end", ToIsoString(to)}}), "records").empty() ) << "the live trace has none of the run's records";
+		EXPECT_TRUE( WaitUntil([&]{ return !EndLine( capture, run ).empty(); }) ) << "the run's line comes behind its row";
 		EXPECT_TRUE( Has(EndLine(capture, run), "completed, after 60 records in 1 pages") ) << EndLine( capture, run );
 
 		let lineageQL = "flowMessage( flow:$flow, id:$id, run:$run ){ more records{ node kind runId } }";
@@ -145,6 +149,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Flows().Start();
 		let paged = RunId( Replay(flow, from, to) );
 		EXPECT_EQ( Ended(flow, paged).at("status"), "completed" );
+		EXPECT_TRUE( WaitUntil([&]{ return !EndLine( capture, paged ).empty(); }) ) << "the run's line comes behind its row";
 		EXPECT_TRUE( Has(EndLine(capture, paged), "60 records in 9 pages") ) << EndLine( capture, paged );
 		let again = Captured( flow, paged, from, to );
 		ASSERT_EQ( again.size(), 60u ) << "none lost between two pages, and none twice";
@@ -237,5 +242,137 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsSV(message, "node/connection"), OpcServerSlug ) << "a message as the node sends it live";
 		EXPECT_EQ( message.at("_time"), jvalue{ToIsoString(from)} );
 		EXPECT_EQ( message.at("sourceTime"), jvalue{ToIsoString(from)} );
+	}
+
+	//A committed replay (spec *Replay*):  a derived variable over a range its group already stored, written through the
+	//group's edit as the flow's deployer, read back through `history` with the replaced values as modifications.  Every
+	//value is a capture as well, and the flow server hears none.
+	TEST_F( FlowReplayTests, ACommittedReplayWritesAVariablesHistory ){
+		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
+		let [source, rpm, sourceHost, _] = OneNodeGroup{ "commit-source", RpmManual };
+		auto open = EnforcedHistGroups();
+		const TimePoint from{ floor<seconds>(Clock::now())-4h }, to{ from+59s };
+		Record( source, from );
+		const string slug{ "commits" };
+		let flow = CreateFlow( slug, false );
+		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
+		let graph = Graph( {N("src", "group in", serialize(jobject{{"group", source}}), {{"f"}}), N("f", "function", R"({"code":"msg.payload = msg.payload*2;\nreturn msg;"})", {{"v", "w"}}),
+			N("v", "variable", R"({"name":"doubled","dataType":"Double"})"), N("w", "opc out", On(Ex(RpmManual)))} );
+		ASSERT_EQ( Deploy(flow, graph).at("running"), false ) << "a flow is replayed before it is let loose";
+		let ungrouped = Refused( [&]{ Replay( flow, from, to, "commit" ); } );
+		EXPECT_EQ( ungrouped.Status, EHttpStatus::BadRequest ) << ungrouped.What;
+		EXPECT_TRUE( ungrouped.What.starts_with("Node 'v':  ") && Has(ungrouped.What, "is in no group this gateway historizes:  a committed run has no history to write it into") ) << ungrouped.What;
+		EXPECT_TRUE( Runs(flow).empty() ) << "a refusal writes no run";
+		let dry = RunId( Replay(flow, from, to) );
+		EXPECT_EQ( Ended(flow, dry).at("status"), "completed" ) << "a dry run needs no group";
+
+		auto held = GroupVariable( "commit-derived", slug, "doubled" );
+		absl::Cleanup purgeGroup = [&]{ held.Host = nullptr; Purge( held.Id, Items() ); };
+		let variable = Variable( slug, "doubled" );
+		//What the collector stored while the flow ran live:  every sixth second of the range.
+		jarray stored;
+		for( uint i=0; i<60; i+=6 )
+			stored.push_back( jobject{{"node", variable}, {"source", UADateTime{from+seconds{i}}.ToJson()}, {"value", -1.5}} );
+		let inserted = Edit( "createHistory( group: $group, values: $values ){ values{ node source status } nodes{ node status } }", {{"group", held.Id}, {"values", move(stored)}} );
+		ASSERT_EQ( inserted.Values, vector<StatusCode>(10, UA_STATUSCODE_GOODENTRYINSERTED) );
+
+		ScopeHistGroup( held.Id, ERights::Read );//the deployer's Update on the group that holds the variable.
+		let denied = Refused( [&]{ Replay( flow, from, to, "commit" ); } );
+		EXPECT_EQ( denied.Status, EHttpStatus::Forbidden ) << denied.What;
+		EXPECT_TRUE( denied.What.starts_with("Node 'v':  ") && Has(denied.What, "as the flow's deployer, which needs Update") ) << denied.What;
+		UnscopeHistGroup( held.Id );
+		EXPECT_EQ( Runs(flow).size(), 1u ) << "and no row";
+
+		let before = Current( RpmManual ).AsNumber<double>();
+		let writes = FlowServer::Instance()->Writes();
+		let started = Replay( flow, from, to, "commit" );
+		EXPECT_EQ( started.at("mode"), "commit" );
+		let run = RunId( started );
+		let row = Ended( flow, run );
+		EXPECT_EQ( row.at("status"), "completed" ) << serialize( row );
+		EXPECT_EQ( row.at("mode"), "commit" );
+		EXPECT_TRUE( WaitUntil([&]{ return !EndLine( capture, run ).empty(); }) ) << "the run's line comes behind its row";
+		EXPECT_TRUE( Has(EndLine(capture, run), "60 records in 1 pages, 60 values committed.") ) << EndLine( capture, run );
+		EXPECT_FALSE( EndLine(capture, dry).empty() ) << "the dry run's line, which the check below would pass without";
+		EXPECT_FALSE( Has(EndLine(capture, dry), "committed") ) << EndLine( capture, dry );
+
+		let request = Request{ .Start=from, .End=to+1s };
+		let history = ReadAll( Group(held.Id), jarray{variable}, request );
+		ASSERT_EQ( history.size(), 60u ) << "its group's history over the range is the run's";
+		for( uint i=0; i<history.size(); ++i ){
+			EXPECT_EQ( history[i].Value.to_number<double>(), 2000.0+2*i ) << i;
+			EXPECT_EQ( history[i].Source, optional<TimePoint>{from+seconds{i}} ) << "at its record's time";
+			EXPECT_EQ( history[i].Status, UA_STATUSCODE_GOOD );
+		}
+		let modifications = ReadAll( Group(held.Id), jarray{variable}, Request{.Start=from, .End=to+1s, .Modified=true} );
+		uint cleared{};
+		for( let& was : modifications ){
+			if( was.Value.is_number() && was.Value.to_number<double>()==-1.5 && was.Modified && was.Modified->Type=="Delete" ){//beside the Insert that stored it.
+				++cleared;
+				EXPECT_EQ( jvalue{was.Modified->User}, started.at("userName") ) << "by the flow's deployer";
+			}
+		}
+		EXPECT_EQ( cleared, 10u ) << "each value the collector had stored, cleared:  " << modifications.size() << " modifications";
+
+		let captured = Captured( flow, run, from, to );
+		ASSERT_EQ( captured.size(), 120u ) << "every sink a capture, the variable among them";
+		uint variables{};
+		for( let& record : captured ){
+			if( record.as_object().at("node")=="v" )
+				EXPECT_EQ( record.as_object().at("json").to_number<double>(), 2000.0+2*variables++ );
+		}
+		EXPECT_EQ( variables, 60u );
+		EXPECT_EQ( Current(RpmManual).AsNumber<double>(), before ) << "an `opc out` writes none, committed or not";
+		EXPECT_EQ( FlowServer::Instance()->Writes(), writes ) << "and the flow server hears none of a run";
+
+		let again = RunId( Replay(flow, from, to, "commit") );
+		EXPECT_EQ( Ended(flow, again).at("status"), "completed" );
+		EXPECT_EQ( ReadAll(Group(held.Id), jarray{variable}, request).size(), 60u ) << "a second run replaces the first's";
+
+		//A version that writes one value in ten:  the range is its run's, the values of the run before between its own cleared, and
+		//those after its last.
+		let variableNode = N( "v", "variable", R"({"name":"doubled","dataType":"Double"})" );
+		let body = [&]( string code ){ return Graph( {N("src", "group in", serialize(jobject{{"group", source}}), {{"f"}}), N("f", "function", serialize(jobject{{"code", move(code)}}), {{"v"}}), variableNode} ); };
+		ASSERT_EQ( Deploy(flow, body("return msg.payload%10==0 ? msg : null;")).at("running"), false );
+		let tenth = RunId( Replay(flow, from, to, "commit") );
+		EXPECT_EQ( Ended(flow, tenth).at("status"), "completed" );
+		let sparse = ReadAll( Group(held.Id), jarray{variable}, request );
+		ASSERT_EQ( sparse.size(), 6u ) << "the range is the run's alone";
+		for( uint i=0; i<sparse.size(); ++i ){
+			EXPECT_EQ( sparse[i].Source, optional<TimePoint>{from+seconds{10*i}} ) << i;
+			EXPECT_EQ( sparse[i].Value.to_number<double>(), 1000.0+10*i ) << i;
+		}
+		//A body that moves a value out of the range:  refused, which fails the run, and clears nothing.
+		ASSERT_EQ( Deploy(flow, body(Ƒ("msg.sourceTime = '{}';\nreturn msg;", ToIsoString(to+1h)))).at("running"), false );
+		let outside = RunId( Replay(flow, from, to, "commit") );
+		let status = Json::AsString( Ended(flow, outside), "status" );
+		EXPECT_TRUE( Has(status, "failed:  60 of 60 values were not committed, the first variable 'doubled':  its source time") && Has(status, "is outside the run's range") ) << status;
+		EXPECT_EQ( ReadAll(Group(held.Id), jarray{variable}, request).size(), 6u ) << "the history as the run before left it";
+		EXPECT_TRUE( ReadAll(Group(held.Id), jarray{variable}, Request{.Start=to+1s, .End=to+2h}).empty() ) << "and none outside it";
+	}
+
+	//An edit its group refuses, the group removed meanwhile:  its values counted as failed, the group's reason kept, and the
+	//wait for them over, where the group answers on the caller's own stack.
+	TEST_F( FlowReplayTests, AnEditItsGroupRefusesIsCounted ){
+		auto group = mu<OneNodeGroup>( "commit-removed", RpmManual );
+		auto host = group->Host;
+		let member = group->Index;
+		group = nullptr;//purged, the test's hold on its host kept.
+		const TimePoint from{ floor<seconds>(Clock::now())-1h };
+		auto commits = ms<FlowCommits>( HistHost::Instance().Writer(AppClient()->UserPK()), from, from+1min );
+		commits->Hold( host, member, "removed" );
+		Value value{ jvalue{1.5}, &UA_TYPES[UA_TYPES_DOUBLE] };
+		value.sourceTimestamp = UADateTime{ from }.UA();
+		value.hasSourceTimestamp = true;
+		commits->Add( host, member, "removed", move(value) );
+		std::promise<void> drained;
+		auto done = drained.get_future();
+		commits->Drained( [&]{ drained.set_value(); } );
+		ASSERT_EQ( done.wait_for(10s), std::future_status::ready ) << "the edit was never answered";
+		let result = commits->Result();
+		EXPECT_EQ( result.Failed, 1u );
+		EXPECT_EQ( result.Uncleared, 1u ) << "the delete before it, in the same edit";
+		EXPECT_EQ( result.Written, 0u );
+		EXPECT_TRUE( Has(result.First, "variable 'removed'") && Has(result.First, "was removed") ) << result.First;
 	}
 }

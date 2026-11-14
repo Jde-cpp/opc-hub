@@ -37,10 +37,14 @@ namespace Jde::Opc::Gateway{
 			ServerCnnctn cnnctn{ url };
 			cnnctn.Slug = slug;
 			cnnctn.Name = slug;
+			if( slug==ServerCnnctn::FlowSlug )//the flow server's row, of the one kind it is saved at:  a form that sends no kind tests it as stored.
+				cnnctn.Kind = ServerCnnctn::KindFlow;
 			//The kind and its driver, the certificateUri and the spec's connection settings, as the save merges them, under the save's
 			//rules:  the test connects as the row Save would save, and a row Save would refuse is refused here (spec *Connection settings*).
 			cnnctn = MergeSettings( _query, move(cnnctn), _sl );
 			cnnctn.Url = url;//trimmed, where the merge has it as sent.
+			if( !cnnctn.HasDriver() )//what a kind of the gateway's own server fixes, as a saved row is supplied it:  the flow server's.
+				cnnctn.SupplyDriver();
 			if( auto e = RowError(_query, cnnctn, _sl); e )
 				e->Throw();
 			jvalue y = jobject{};//MutationsAwait keys it under the command name.

@@ -12,7 +12,8 @@ namespace Jde::Opc::Gateway{
 	//ServerCnnctn::MaxDurationMs, is refused here, BadRequest.
 	α MergeSettings( const QL::Input& input, ServerCnnctn base, SL sl )ε->ServerCnnctn;
 	//The save's rules over `row`, the merged row, and testConnection's over its throwaway one:  a certificate URI, a default browse
-	//namespace, a mode or a policy that `input` names with a value on a kind with a driver, which fixes all four;  the kind's own
+	//namespace, a mode or a policy that `input` names with a value on a kind whose server is the gateway's own, a driver's or the
+	//flow server's, which fixes all four;  the kind's own
 	//(ServerCnnctn::KindError);  the connection settings' (ServerCnnctn::SettingsError).  Null for a row that saves.
 	α RowError( const QL::Input& input, const ServerCnnctn& row, SL sl )ι->up<Exception>;
 

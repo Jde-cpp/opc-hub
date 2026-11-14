@@ -64,19 +64,20 @@ namespace Jde::Opc::Gateway{
 	}
 	//The columns the save rules read (clients spec *Connection settings*, open-protocol spec *The row*), by their QL names.
 	constexpr array<sv,12> _ruleColumns{ "url", "kind", "driver", "defaultBrowseNs", "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "pingInterval", "ttl", "locale" };
-	//What a kind with a driver fixes (open-protocol spec *The row*):  the certificate URI and the default browse namespace, which
-	//ServerCnnctn supplies, and the channel's mode and policy.  The row stores none of them.
+	//What a kind whose server is the gateway's own fixes, a driver's (open-protocol spec *The row*) and the flow server's (flows
+	//spec *Derived variables*):  the certificate URI and the default browse namespace, which ServerCnnctn supplies, and the
+	//channel's mode and policy.  The row stores none of them.
 	constexpr array<sv,4> _driverFixed{ "certificateUri", "defaultBrowseNs", "securityMode", "securityPolicy" };
 	Ω namesAny( const QL::MutationQL& m, std::span<const sv> columns )ι->bool{ return std::ranges::any_of( columns, [&m]( sv c ){ return m.Args.contains(c); } ); }
 	//The mutation merged onto `base`, held to the save's rules (RowError):  the merged row, or the refusal thrown, MergeSettings'
 	//own included.
 	Ω mergedRow( const QL::MutationQL& m, ServerCnnctn base, SL sl )ε->ServerCnnctn{
-		if( base.HasDriver() ){//as stored:  what ServerCnnctn supplies a driver row is no column's.
+		if( base.OwnServer() ){//as stored:  what ServerCnnctn supplies a row of the gateway's own server is no column's.
 			base.CertificateUri.clear();
 			base.DefaultBrowseNs = 1;
 		}
 		auto row = MergeSettings( m, move(base), sl );
-		if( row.HasDriver() ){//a UA row's own four, which a kind changed to a driver's writes null to (Query):  judged as stored.  A value sent is RowError's to refuse.
+		if( row.OwnServer() ){//a UA row's own four, which a kind changed to one of the gateway's own servers writes null to (Query):  judged as stored.  A value sent is RowError's to refuse.
 			row.CertificateUri.clear();
 			row.DefaultBrowseNs = 1;
 			row.SecurityMode.clear();
@@ -183,7 +184,10 @@ namespace Jde::Opc::Gateway{
 				QL::CheckCreate( _query, UserPK(), _sl );//the engine's refusals before the provider step, which would reuse a provider and then purge it.
 				if( auto e = slugError(_query, _sl); e )
 					e->Throw();
-				mergedRow( _query, ServerCnnctn{string{}}, _sl );//over a blank row:  an insert carries every column it sets.
+				ServerCnnctn blank{ string{} };//an insert carries every column it sets;  the slug, which the flow kind's rule reads, is its own.
+				if( let slug = _query.FindPtr<jstring>("slug"); slug )
+					blank.Slug = string{ *slug };
+				mergedRow( _query, move(blank), _sl );
 				if( provider )
 					steps = { InsertBefore, InsertFailure };
 			}
@@ -200,7 +204,7 @@ namespace Jde::Opc::Gateway{
 				auto rows = co_await Any( select );
 				THROW_IFX( rows.empty(), Exception(_sl, {EHttpStatus::NotFound}, "The connection to update was not found:  {}.", _query.ToString()) );
 				let row = mergedRow( _query, move(rows.front()), _sl );
-				if( row.HasDriver() && _query.Args.contains("kind") ){//a kind changed to a driver's:  what the kind fixes leaves with the old one.
+				if( row.OwnServer() && _query.Args.contains("kind") ){//a kind changed to a driver's:  what the kind fixes leaves with the old one.
 					for( let column : _driverFixed )
 						_query.Args.insert_or_assign( column, nullptr );
 				}
@@ -278,10 +282,10 @@ namespace Jde::Opc{
 		return base;
 	}
 	α Gateway::RowError( const QL::Input& input, const ServerCnnctn& row, SL sl )ι->up<Exception>{
-		for( let name : row.HasDriver() ? std::span<const sv>{_driverFixed} : std::span<const sv>{} ){
+		for( let name : row.OwnServer() ? std::span<const sv>{_driverFixed} : std::span<const sv>{} ){
 			let v = input.FindPtr<jvalue>( name );
 			if( v && !v->is_null() && !(v->is_string() && v->get_string().empty()) )
-				return mu<Exception>( Ƒ("A connection of kind '{}' takes no {}:  its clients connect to the gateway's own driver server, Sign & Encrypt, and the gateway supplies the certificate URI and the default browse namespace.", row.Kind, name), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+				return mu<Exception>( Ƒ("A connection of kind '{}' takes no {}:  its clients connect to the gateway's own {} server, Sign & Encrypt, and the gateway supplies the certificate URI and the default browse namespace.", row.Kind, name, row.Kind==ServerCnnctn::KindFlow ? "flow" : "driver"), ExceptionArgs{EHttpStatus::BadRequest}, sl );
 		}
 		if( auto e = ServerCnnctn::KindError(row, sl); e )
 			return e;

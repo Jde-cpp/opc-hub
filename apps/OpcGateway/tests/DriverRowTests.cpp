@@ -108,7 +108,7 @@ namespace Jde::Opc::Gateway::Tests{
 		};
 		{
 			let created = CreateRow( slug, "url:$url, kind:\"plc\"", {{"url", OpcUrl()}} );
-			expect( created ? nullopt : optional<string>{created.error()}, "is not one of ua or open-protocol", "kind plc" );
+			expect( created ? nullopt : optional<string>{created.error()}, "is not one of ua, open-protocol or flow", "kind plc" );
 		}
 		for( let& [more, expected] : vector<std::pair<string,string>>{
 			{ ", certificateUri:\"urn:x\"", "takes no certificateUri" },
@@ -306,7 +306,7 @@ namespace Jde::Opc::Gateway::Tests{
 			for( let& [more, expected] : vector<std::pair<jobject,string>>{
 				{ {{"driver", R"({"timeZone":"Mars/Olympus_Mons"})"}}, "is not a time zone the gateway knows" },
 				{ {{"url", OpcUrl()}}, "does not start with the scheme" },
-				{ {{"kind", "plc"}}, "is not one of ua or open-protocol" },
+				{ {{"kind", "plc"}}, "is not one of ua, open-protocol or flow" },
 				{ {{"kind", "ua"}}, "set the kind to open-protocol" } } ){
 				auto refused = variables( nullptr );
 				for( let& member : more )
