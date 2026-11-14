@@ -36,7 +36,4 @@ endif()
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/Access.Tests.jsonnet )
 
-target_precompile_headers(${targetName}
-  PRIVATE
-		"pc.h"
-)
+testPch( ${targetName} Jde.Access )

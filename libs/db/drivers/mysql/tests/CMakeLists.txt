@@ -35,4 +35,4 @@ endif()
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/MySql.Tests.jsonnet )
 
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+testPch( ${targetName} Jde.DB ) #the library it links: Jde.DB.MySql's PCH carries BOOST_MYSQL_SEPARATE_COMPILATION, whose code this suite does not link.

@@ -121,6 +121,9 @@ then the targets the installer packs: `--target Jde.Opc.Hub Jde.Opc.Server Jde.D
 | tests | `Jde.Fwk.Tests`, `Jde.DB.Tests`, `Jde.DB.Sqlite.Tests`, `Jde.DB.MySql.Tests`, `Jde.QL.Tests`, `Jde.Access.Tests`, `Jde.Web.Tests`, `Jde.App.Tests`, `Jde.Opc.Lib.Tests`, `Jde.Opc.OpenProtocol.Tests`, `Jde.Opc.Historian.Tests`, `Jde.Opc.Oee.Tests`, `Jde.Opc.Flow.Tests`, `Jde.App.Server.Tests`, `Jde.Opc.Server.Tests`, `Jde.Opc.Tests` (= `apps/OpcGateway/tests`), `Jde.Opc.Hub.Tests`, `Jde.Opc.PlcEmulator.Tests` |
 
 odbc (`Jde.DB.Odbc*`) is Windows-only. The OpcServer, Gateway and Hub exes reuse `Jde.App.Server`'s PCH (`REUSE_FROM`), so that target builds first.
+Each test suite reuses its library's PCH (`testPch` in `build/functions.cmake`): it compiles `-fPIC`, since clang refuses a
+PCH built under another PIE setting, and force-includes its `pc.h` unprecompiled. So a stale-PCH error on a suite names
+the library's `cmake_pch.hxx`. Windows keeps each suite's own PCH.
 
 ## The third-party tree
 

@@ -192,6 +192,21 @@ function( addJdeTest targetName settingsFile )
 	)
 endfunction()
 
+#A suite's PCH is its library's, not one of its own:  the suites' own came to 1.8 GB of the debug tree, each rebuilt
+#after an edit to any header it held.  The suite's pc.h - gtest and what its sources assume - is force-included
+#unprecompiled.  clang refuses a PCH built under another PIE setting, and the library's is -fPIC, so the suite compiles
+#-fPIC too and still links as a PIE.  The suite's own defines (TESTS) are absent from the PCH:  no header a library PCH
+#holds may test them.  Windows keeps the suite's own PCH, since a dll's PCH reads its own exports as dllexport.  A
+#configure that does not define libTarget keeps it too.
+function( testPch targetName libTarget )
+	if( WIN32 OR NOT TARGET ${libTarget} )
+		target_precompile_headers( ${targetName} PRIVATE pc.h )
+		return()
+	endif()
+	target_compile_options( ${targetName} PRIVATE -fPIC "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/pc.h" )
+	target_precompile_headers( ${targetName} REUSE_FROM ${libTarget} )
+endfunction()
+
 #Build-order dependency on the sqlite driver plus the native-proc MODULEs targetName dlopen's at runtime from the
 #paths in its jsonnet.  They are never linked, so without this nothing makes the build produce them and the run dies
 #in DB::DataSource with "Dynamic Library ... not found".  Jde.DB.Sqlite is implied - a proc MODULE is only reachable
