@@ -25,11 +25,11 @@ namespace Jde::Opc::Gateway::Tests{
 			return std::unexpected{ string{e.what()} };
 		}
 	}
-	//An Open Protocol row for the suite's controller, with `driver` where one is given.
-	Ξ CreateDriverRow( str slug, sv driver={} )ι->std::expected<ServerCnnctnPK,string>{
+	//An Open Protocol row for the suite's controller, or the one at `url`, with `driver` where one is given.
+	Ξ CreateDriverRow( str slug, sv driver={}, string url=ControllerUrl() )ι->std::expected<ServerCnnctnPK,string>{
 		return driver.empty()
-			? CreateRow( slug, "url:$url, kind:\"open-protocol\"", {{"url", ControllerUrl()}} )
-			: CreateRow( slug, "url:$url, kind:\"open-protocol\", driver:$driver", {{"url", ControllerUrl()}, {"driver", driver}} );
+			? CreateRow( slug, "url:$url, kind:\"open-protocol\"", {{"url", move(url)}} )
+			: CreateRow( slug, "url:$url, kind:\"open-protocol\", driver:$driver", {{"url", move(url)}, {"driver", driver}} );
 	}
 	Ξ UpdateRow( ServerCnnctnPK id, sv args, jobject variables={} )ι->optional<string>{//what the save refused it with.
 		try{
@@ -76,11 +76,11 @@ namespace Jde::Opc::Gateway::Tests{
 		return value.hasValue && UA_Variant_hasScalarType( &value.value, &UA_TYPES[UA_TYPES_UINT64] ) ? optional<uint>{ value.Get<UA_UInt64>(0) } : nullopt;
 	}
 
-	//A row for the suite's controller, made while the gateway runs, with its server listening:  purged as it goes.
+	//A row for the suite's controller, or the one at `url`, made while the gateway runs, with its server listening:  purged as it goes.
 	struct DriverRow final{
-		DriverRow( string slug, sv driver={} )ε:Slug{ move(slug) }{
+		DriverRow( string slug, sv driver={}, string url=ControllerUrl() )ε:Slug{ move(slug) }{
 			PurgeServerCnnctn( Slug );
-			let created = CreateDriverRow( Slug, driver );
+			let created = CreateDriverRow( Slug, driver, move(url) );
 			THROW_IF( !created, "{}", created.error() );
 			Id = *created;
 			if( !WaitHost(Slug) ){

@@ -6,6 +6,21 @@
 //revisions it settles, both ways of acknowledging, the sequence numbers, the keep-alive, the lost link and its backoff.
 namespace Jde::Opc::OpenProtocol::Tests{
 	Ω millis( steady_clock::duration d )ι->_int{ return duration_cast<milliseconds>( d ).count(); }
+	//A request's reply where the station is silent and the test speaks for it:  `answers`, each as it is, the nth once the
+	//station has heard the request n times.
+	Ω said( Rig& rig, Body request, vector<string> answers )ι->Session::Reply{
+		let mid = MidOf( request );
+		auto answered = ms<std::promise<Session::Reply>>();
+		auto reply = answered->get_future();
+		rig.Client.Request( move(request), [answered]( Session::Reply&& y ){ answered->set_value( move(y) ); } );
+		for( uint i=0; i<answers.size(); ++i ){
+			EXPECT_TRUE( WaitUntil([&]{ return rig.Got( mid ).size()==i+1; }) ) << "MID " << mid << " asked " << i+1 << " times";
+			rig.Station.SendRaw( move(answers[i]) );
+		}
+		if( reply.wait_for(5s)!=std::future_status::ready )
+			return std::unexpected{ Failure{EFailure::Timeout, 0, 0, "The test's own wait."} };
+		return reply.get();
+	}
 
 	//What each request starts at with no ceiling:  the codec's last revision of what it asks for (plan review #11).
 	TEST( SessionTests, FirstRevisions ){
@@ -471,6 +486,47 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_EQ( Sequences(acks), (vector<uint16_t>{2, 3, 4}) );
 		EXPECT_EQ( As<Mid9997>(acks[1]).Mid, 61 );
 		EXPECT_TRUE( rig.Told.Losses().empty() );
+	}
+
+	//docs/open-protocol/plan.md Phase 10a:  Jarrekstar's simulator, the station silent and the test its voice.  It writes the
+	//revision of the request it answers into its acknowledgement's header.  A MID 0005 under revision 7 accepts the MID 0060
+	//asked at 7, which settles there, and a MID 0004 under revision 3, its code two digits still, refuses a MID 0070 with
+	//that code:  neither request waits out replyTimeout, and the link stands.
+	TEST( SessionTests, AnAcknowledgementUnderTheRequestsRevisionAnswers ){
+		Rig rig{ Unnumbered() };
+		ASSERT_TRUE( rig.Start() );
+		rig.Station.Silence();
+		let subscribed = said( rig, Mid0060{}, {ExampleFrame("00240005007", "0060")} );
+		ASSERT_TRUE( subscribed ) << Why( subscribed );
+		EXPECT_TRUE( subscribed->Data==Body{Mid0005{.Mid=60}} );
+		EXPECT_EQ( rig.Revision(Mid0060::Id), 7 );
+		let alarms = said( rig, Mid0070{}, {ExampleFrame("00260004003", "007099")} );
+		ASSERT_FALSE( alarms );
+		EXPECT_EQ( alarms.error().Kind, EFailure::Refused );
+		EXPECT_EQ( alarms.error().What, "MID 0004 to MID 0070:  code 99, Unknown MID." );
+		EXPECT_TRUE( rig.Told.Losses().empty() );
+		rig.Station.Silence( false );
+	}
+	//And it follows a subscription it refuses with the subscription's push all the same:  MID 0015 at revision 1 behind its
+	//MID 0004 to a MID 0014 at 3.  The push is acknowledged and told as any is, the request steps down behind it, and the
+	//revision the subscription settles at is the one it is accepted at.
+	TEST( SessionTests, APushBehindARefusedSubscriptionIsTold ){
+		Rig rig{ Unnumbered() };
+		ASSERT_TRUE( rig.Start() );
+		rig.Station.Silence();
+		let subscribed = said( rig, Mid0014{}, {
+			ExampleFrame("00260004001", "001497")+Encode( {.Revision=1}, CaseOf<Mid0015>(1) ).value(),
+			ExampleFrame("00240005002", "0014")+Encode( {.Revision=2}, CaseOf<Mid0015>(2) ).value()
+		} );
+		ASSERT_TRUE( subscribed ) << Why( subscribed );
+		EXPECT_EQ( Revisions(rig.Got(Mid0014::Id)), (vector<uint16_t>{3, 2}) );
+		ASSERT_TRUE( WaitUntil([&]{ return rig.Told.Pushes().size()==2 && rig.Got(Mid0016::Id).size()==2; }) );
+		let pushes = rig.Told.Pushes();
+		EXPECT_TRUE( As<Mid0015>(pushes[0])==CaseOf<Mid0015>(1) ) << "behind the refusal";
+		EXPECT_TRUE( As<Mid0015>(pushes[1])==CaseOf<Mid0015>(2) );
+		EXPECT_EQ( rig.Revision(Mid0014::Id), 2 );
+		EXPECT_TRUE( rig.Told.Losses().empty() );
+		rig.Station.Silence( false );
 	}
 
 	//§3.2.1:  one request out at a time, each behind the answer before it.

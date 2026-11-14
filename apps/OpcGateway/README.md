@@ -194,6 +194,10 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
 - `DriverEventTests`: a result's event (the plan's *Phase 9*), against the same controller, through the socket's
   `SubscribeEvents` - an OK and a NOK heard at `Result` and at the Server object with their fields, the event's type
   as a client browses it, what an event leaves out of a result that lacks it, and a fill's event per result written.
+- `DriverSimulatorTests`: the driver against Jarrekstar's open-protocol-device-simulator (the plan's *Phase 10*), a
+  hand check no runner runs, skipped unless `/testing/openProtocolSimulator` names the simulator's ports - the
+  step-down to the revisions the simulator has, a result of each revision of MID 0061, the five commands and the
+  simulator's own account after each, and a group recording a run of its automatic tightenings.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.
