@@ -111,19 +111,11 @@ namespace Jde::Opc::Flows{
 			return made;
 		}
 		α Stop( optional<Flows::Fault> why, absl::AnyInvocable<void()> stopped )ι->void{
-			let prior = End( &stopped );
-			Slot* refused{};
-			if( why && prior!=EState::Stopped ){
-				if( let index = _graph.IndexOf(why->NodeId) ){
-					refused = _slots[*index].get();
-					Refuse( *refused, move(why->Message) );
-				}
-				else{
-					ERR( "[{}]The flow is stopped:  {}", _label, why->Message );
-					lg _{ _stateMutex };
-					_fault = move( *why );
-				}
-			}
+			let index = why ? _graph.IndexOf( why->NodeId ) : nullopt;
+			Slot* refused = index ? _slots[*index].get() : nullptr;
+			let prior = End( &stopped, why ? &*why : nullptr, refused );
+			if( why && prior!=EState::Stopped )
+				ERR( "[{}]The flow is stopped:  {}", refused ? Ƒ("{}.{}", _label, refused->Def.Label()) : _label, why->Message );
 			if( prior==EState::Running ){
 				boost::asio::post( _strand, [self=shared_from_this(), refused, stopped=std::move(stopped)]()mutable{
 					self->Teardown();
@@ -543,9 +535,14 @@ namespace Jde::Opc::Flows{
 		//The flow does not start:  its fault, and the node's status, say why.
 		α Refuse( Slot& slot, string message )ι->void{
 			ERR( "[{}.{}]The flow is stopped:  {}", _label, slot.Def.Label(), message );
+			Faulted( &slot, Flows::Fault{slot.Def.Id, move(message)} );
+		}
+		//End takes _stateMutex here inside _queueMutex, and nothing takes the two the other way.
+		α Faulted( Slot* slot, Flows::Fault fault )ι->void{
 			lg _{ _stateMutex };
-			slot.Status = { "red", "ring", message };
-			_fault = Flows::Fault{ slot.Def.Id, move(message) };
+			if( slot )
+				slot->Status = { "red", "ring", fault.Message };
+			_fault = move( fault );
 		}
 		α StartNodes()ι->void{
 			for( auto& slot : _slots ){
@@ -563,13 +560,17 @@ namespace Jde::Opc::Flows{
 				}
 			}
 		}
-		//The state it had.  `stopped`:  a Stop's, which a flow whose nodes are being made takes, to run once they are.
-		α End( absl::AnyInvocable<void()>* stopped=nullptr )ι->EState{
+		//The state it had.  `stopped`:  a Stop's, which a flow whose nodes are being made takes, to run once they are.  `why`:  a
+		//Stop's fault, on `refused`'s status, kept before the state ends, so whoever finds the flow stopped finds why;  none for
+		//a flow already stopped.
+		α End( absl::AnyInvocable<void()>* stopped=nullptr, const Flows::Fault* why=nullptr, Slot* refused=nullptr )ι->EState{
 			lg _{ _queueMutex };
 			if( _js )
 				Halt( *_js );
 			if( stopped && *stopped && _state==EState::Starting )//the first stop's alone:  it ends the state.
 				_made = std::move( *stopped );
+			if( why && _state!=EState::Stopped )
+				Faulted( refused, *why );
 			return std::exchange( _state, EState::Stopped );
 		}
 		α Teardown()ι->void{
