@@ -19,8 +19,28 @@
 				},
 				"wires": [
 					[
-						"minute",
+						"number",
 						"watchdog"
+					]
+				]
+			},
+			{
+				"id": "number",
+				"type": "switch",
+				"name": "a number",
+				"x": 280,
+				"y": 160,
+				"props": {
+					"rules": [
+						{
+							"t": "istype",
+							"v": "number"
+						}
+					]
+				},
+				"wires": [
+					[
+						"minute"
 					]
 				]
 			},

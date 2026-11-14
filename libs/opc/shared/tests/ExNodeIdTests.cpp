@@ -208,4 +208,22 @@ namespace Jde::Opc::Tests{
 		let round = ExNodeId{ jvalue{original.ToJson()} };
 		EXPECT_TRUE( round==original ) << original.ToString();
 	}
+
+	//reviews-issue/457-flows-demo-help.md #1/#3/#5:  Parse reads what ToString writes, a URI's percent-escapes undone, and
+	//refuses an empty URI, which every reader would take for ns 0.
+	TEST( ExNodeIdTests, ParseIsToStringsInverse ){
+		let spaced = exFromJson( R"({"nsu":"urn:acme:line 1","i":5})" );
+		EXPECT_EQ( spaced.ToString(), "nsu=urn:acme:line%201;i=5" );
+		for( let json : {R"({"nsu":"urn:acme:line 1","i":5})", R"({"nsu":"urn:a;b%c","s":"tag"})", R"({"nsu":"urn:x","serverindex":2,"i":5})", R"({"ns":3,"s":"tag"})"} ){
+			let x = exFromJson( json );
+			let y = ExNodeId::Parse( x.ToString() );
+			ASSERT_TRUE( y ) << x.ToString();
+			EXPECT_TRUE( *y==x ) << x.ToString();
+		}
+		for( let text : {"nsu=;i=5", "nsu=urn:%2;i=5", "nsu=urn:%zz;i=5", "nsu=urn:x", "tag"} ){
+			let y = ExNodeId::Parse( text );
+			ASSERT_FALSE( y ) << text;
+			EXPECT_EQ( y.error(), UA_STATUSCODE_BADDECODINGERROR ) << text;
+		}
+	}
 }

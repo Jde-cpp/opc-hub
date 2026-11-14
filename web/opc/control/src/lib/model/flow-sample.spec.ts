@@ -14,7 +14,7 @@ describe( 'the pump rpm sample', ()=>{
 		expect( {name: flow.name, slug: flow.slug} ).toEqual( {name: 'Pump 1 rpm', slug: 'pump1'} );
 		expect( flow.description ).toBeTruthy();
 		expect( flow.graph.nodes.map( n=>n.id ) ).toEqual( sample.graph.nodes.map( n=>n.id ) );//each node came with its id
-		expect( flow.graph.nodes.map( n=>n.type ).sort() ).toEqual( ['calendar', 'change', 'function', 'http request', 'log', 'log', 'opc in', 'switch', 'trigger', 'variable', 'window'] );
+		expect( flow.graph.nodes.map( n=>n.type ).sort() ).toEqual( ['calendar', 'change', 'function', 'http request', 'log', 'log', 'opc in', 'switch', 'switch', 'trigger', 'variable', 'window'] );
 	} );
 	it( 'has nothing the editor would mark', ()=>{
 		const { graph } = read();
@@ -32,7 +32,10 @@ describe( 'the pump rpm sample', ()=>{
 		const by = new Map( read().graph.nodes.map( n=>[n.id, n] ) );
 		//the node by its namespace's URI, since an index is one server's
 		expect( by.get( 'rpm' )!.props ).toEqual( {connection: 'OpcServer', node: {nsu: 'urn:jde:pumps', i: 6012}} );
-		expect( by.get( 'rpm' )!.wires ).toEqual( [['minute', 'watchdog']] );
+		expect( by.get( 'rpm' )!.wires ).toEqual( [['number', 'watchdog']] );
+		//a loss's message, its payload null, stops short of the window, which would throw on it (reviews-issue/457-flows-demo-help.md #2)
+		expect( by.get( 'number' )!.props ).toEqual( {rules: [{t: 'istype', v: 'number'}]} );
+		expect( by.get( 'number' )!.wires ).toEqual( [['minute']] );
 		expect( by.get( 'minute' )!.props ).toEqual( {duration: 'PT1M'} );
 		expect( by.get( 'mean' )!.props['code'] ).toContain( 'msg.payload.mean' );
 		expect( by.get( 'mean' )!.wires ).toEqual( [['rpmMean', 'limit']] );

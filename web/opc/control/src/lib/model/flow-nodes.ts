@@ -182,7 +182,7 @@ function checkField( f:FlowField, o:Props, graph:FlowGraph ):void{
 	}
 	case 'node':
 		if( !isNodeId( v ) )
-			fail( `${JSON.stringify( v )} is not a node id, as ns=2;s=Pump1.Rpm is.` );
+			fail( `${JSON.stringify( v )} is not a node id, as ns=2;s=Pump1.Rpm and nsu=urn:…;s=Pump1.Rpm are.` );
 		break;
 	case 'scope':
 		if( !Array.isArray( v ) )
@@ -239,7 +239,7 @@ const changeRule = ( rule:Props ):FlowField[]=>{
 	return y;
 };
 const connection:FlowField = { key: 'connection', label: 'Connection', kind: 'text', required: "`connection` is required, a connection's slug.", hint: "A connection's slug." };
-const node:FlowField = { key: 'node', label: 'Node', kind: 'node', required: "`node` is required, the node's id.", hint: 'ns=2;s=Pump1.Rpm, or {"nsu":"urn:…","s":"Pump1.Rpm"}' };
+const node:FlowField = { key: 'node', label: 'Node', kind: 'node', required: "`node` is required, the node's id.", hint: 'ns=2;s=Pump1.Rpm, nsu=urn:…;s=Pump1.Rpm, or its json' };
 const levels = ['Trace', 'Debug', 'Information', 'Warning', 'Error'] as const;
 const scope = ( required?:string ):FlowField=>({ key: 'scope', label: 'From', kind: 'scope', required, hint: required ? 'The nodes it takes from.' : 'The nodes it takes from;  none is every node.' });
 const one = ()=>1, none = ()=>0;

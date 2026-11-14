@@ -398,7 +398,7 @@ The pump's values move while the PLC emulator runs.
 
 1. Download the file above.
 2. On the gateway's **Flows** tab, press **Import** and choose the file.
-3. The dialog says the graph has 11 nodes, and fills in the name and the slug, `pump1`. Press **Import**.
+3. The dialog says the graph has 12 nodes, and fills in the name and the slug, `pump1`. Press **Import**.
 
 The editor opens with the flow on the canvas, not deployed.
 
@@ -409,9 +409,10 @@ Three strands meet at the window.
 The mean:
 
 1. **pump1 motorRpm**, an **opc in**, sends each change of the pump's speed.
-2. **a minute**, a **window**, collects them. At the end of each minute that had a change, it sends the minute's figures as its payload.
-3. **the mean**, a **function**, keeps the mean, to a tenth.
-4. **rpmMean**, a **variable**, writes it to `rpmMean`, in rpm.
+2. **a number**, a **switch**, passes a change whose payload is a number. The message a lost connection sends has no payload, so it goes no further: the window would refuse it as an error.
+3. **a minute**, a **window**, collects them. At the end of each minute that had a change, it sends the minute's figures as its payload.
+4. **the mean**, a **function**, keeps the mean, to a tenth.
+5. **rpmMean**, a **variable**, writes it to `rpmMean`, in rpm.
 
 The function's body:
 
@@ -428,10 +429,10 @@ The alert:
 
 The watchdog:
 
-1. **no value for 30 s**, a **trigger**, takes the same changes as the window. Each one starts its wait again.
-2. When 30 seconds pass with no change, it sends `no value for 30 s`, which **silent**, a **log**, writes as a warning.
+1. **no value for 30 s**, a **trigger**, takes every message the opc in sends, a lost connection's among them. Each one starts its wait again.
+2. When 30 seconds pass with no message, it sends `no value for 30 s`, which **silent**, a **log**, writes as a warning.
 
-The first wire has two ends, the window and the trigger. The window gets the message and the trigger a clone, as the History tab's paths show.
+The first wire has two ends, **a number** and the trigger. **a number** gets the message and the trigger a clone, as the History tab's paths show.
 
 The reset:
 
@@ -461,9 +462,9 @@ Then the flow is quiet. A plant's speed signal is rarely that still.
 
 To give the flow work, stop the pump: write `false` to `pump1`'s `status`. The speed falls away, and for a good half hour each second is a change.
 
-On **Activity**, a message a second goes down each of the first two wires. At the top of each minute the mean goes on to the variable and the switch.
+On **Activity**, a message a second goes down the opc in's wire and on from **a number** to the window. At the top of each minute the mean goes on to the variable and **over 1400**.
 
-Once a minute's mean is under 1400 the switch passes nothing, and the alert stops.
+Once a minute's mean is under 1400 **over 1400** passes nothing, and the alert stops.
 
 Write `true` to `status` and the pump runs up again. Two minutes later it holds its speed, and thirty seconds after its last change the watchdog fires.
 

@@ -892,13 +892,15 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ParseHistNode(sv{text}, SRCE_CUR), node );
 		EXPECT_EQ( ParseHistNode(jvalue{text}, SRCE_CUR), node ) << "as a flow's prop holds it";
 		EXPECT_EQ( HistNodeText(ParseHistNode(sv{text}, SRCE_CUR)), json ) << "the column's spelling";
-		const std::array<sv,5> written{ R"({"nsu":"urn:x","s":"Pump1.Rpm"})", R"({"nsu":"urn:x","s":"a=b;c d"})", R"({"nsu":"urn:x","serverindex":2,"i":5})", R"({"serverindex":2,"ns":3,"i":5})", R"({"ns":3,"s":"tag"})" };
+		const std::array<sv,7> written{ R"({"nsu":"urn:x","s":"Pump1.Rpm"})", R"({"nsu":"urn:x","s":"a=b;c d"})", R"({"nsu":"urn:x","serverindex":2,"i":5})", R"({"serverindex":2,"ns":3,"i":5})", R"({"ns":3,"s":"tag"})",
+			R"({"nsu":"urn:acme:line 1","i":5})", R"({"nsu":"urn:a;b%c","s":"tag"})" };//a URI ToString percent-escapes (reviews-issue/457-flows-demo-help.md #1)
 		for( let each : written ){
 			const ExNodeId from{ Json::ParseValue(each) };
 			EXPECT_EQ( ParseHistNode(sv{from.ToString()}, SRCE_CUR), from ) << from.ToString();
 		}
 		EXPECT_EQ( ParseHistNode(sv{"ns=5;i=6012"}, SRCE_CUR).NsIndex(), 5 ) << "an index is the connection's to resolve, as before";
-		const std::array<sv,3> refused{ "nsu=urn:x", "nsu=urn:x;q=1", "svr=x;i=1" };
+		EXPECT_EQ( ParseHistNode(sv{Ƒ(" {} ", text)}, SRCE_CUR), node ) << "trimmed, as the editor reads it (#4)";
+		const std::array<sv,4> refused{ "nsu=urn:x", "nsu=urn:x;q=1", "svr=x;i=1", "nsu=;i=5" };
 		for( let each : refused ){
 			try{
 				ParseHistNode( each, SRCE_CUR );

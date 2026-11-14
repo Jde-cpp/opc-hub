@@ -63,6 +63,8 @@ describe( 'hist node text', ()=>{
 		expect( byIndex.id ).toBe( 'pump1' );
 		expect( byIndex.nsu ).toBeUndefined();
 		expect( parseHistNodeText( 'pump1' ) ).toBeUndefined();
+		expect( parseHistNodeText( 'nsu=urn:jde:pumps;ns=1;i=6012' ) ).toBeUndefined();//reviews-issue/457-flows-demo-help.md #4
+		expect( parseHistNodeText( 'nsu=urn:jde:pumps;i=6012' )?.nsu ).toBe( 'urn:jde:pumps' );
 		expect( parseHistNodeText( '{"ns":2}' ) ).toBeUndefined();
 		expect( parseHistNodeText( '' ) ).toBeUndefined();
 	} );
