@@ -373,9 +373,11 @@ def walk( b ):
 		text = lambda name: fields.get( name, b"" ).decode( "latin-1" ).strip()
 		whose = "no station id" if made is None else f"station {made} {text( 'station name' )!r}" + ( "" if made==station else ", another station's" )
 		b.say( f"# asked {below-1 if below else 0}, answered {id} at revision {answer.rev}, time {text( 'time' )}, {whose}" + ( f"  !! {stopped}" if stopped else "" ) )
-		if id is None or id<=1:
+		if id is None:
 			break
 		ids.append( id )
+		if id<=1:
+			break#below it is 0, the latest.
 		below = id
 	gaps = [ a-c for a, c in zip( ids, ids[1:] ) ]
 	b.say( f"# {len( ids )} result(s), newest first:  {ids};  the steps between them {gaps}." )
@@ -509,12 +511,16 @@ def main():
 	if args.mode=="frames":
 		return frames( args )
 	b = Bench( args )
+	closed = None
 	try:
 		closed = globals()[args.mode]( b )
 	except Closed:
 		b.say( "# !! The controller closed the connection." )
 		closed = "closed"
-	if closed!="closed":
-		b.stop()
+	except KeyboardInterrupt:
+		b.say( "# Stopped by hand." )
+	finally:#MID 0003 on every way out the link is still up by, a mode's SystemExit among them.
+		if closed!="closed":
+			b.stop()
 
 main()

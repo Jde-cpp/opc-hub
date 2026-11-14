@@ -1,3 +1,4 @@
+#include <jde/fwk/io/file.h>
 #include "helpers.h"
 #include "Harness.h"
 
@@ -30,7 +31,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 			if( !entry.is_regular_file() || entry.path().extension()!=".frame" )
 				continue;
 			let file = entry.path().filename().string();
-			let frame = ReadFile( entry.path() );
+			let frame = IO::Load( entry.path() );
 			let decoded = Decode( frame );
 			if( !decoded ){
 				ADD_FAILURE() << file << ":  " << decoded.error().What;

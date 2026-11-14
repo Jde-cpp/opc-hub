@@ -1,3 +1,5 @@
+#include <fstream>
+#include <jde/fwk/io/file.h>
 #include "helpers.h"
 #include "Harness.h"
 
@@ -35,7 +37,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 			if( !entry.is_regular_file() )
 				continue;
 			++files;
-			EXPECT_EQ( Exercise(ReadFile(entry.path())), "" ) << entry.path().filename().string();
+			EXPECT_EQ( Exercise(IO::Load(entry.path())), "" ) << entry.path().filename().string();
 		}
 		EXPECT_GE( files, seeds().size() );
 	}
@@ -44,7 +46,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	//`--gtest_also_run_disabled_tests --gtest_filter=CorpusTests.DISABLED_WritesSeeds` writes the files.
 	TEST( CorpusTests, HoldsTheSuitesFrames ){
 		for( let& [file, frame] : seeds() )
-			EXPECT_EQ( ReadFile(corpus()/file), frame ) << file;
+			EXPECT_EQ( IO::Load(corpus()/file), frame ) << file;
 	}
 
 	TEST( CorpusTests, DISABLED_WritesSeeds ){

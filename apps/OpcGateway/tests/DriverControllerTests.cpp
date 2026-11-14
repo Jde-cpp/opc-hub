@@ -2,6 +2,7 @@
 #include <boost/asio/connect.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/write.hpp>
+#include <jde/fwk/str.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/opc/openProtocol/Session.h>
 #include <jde/opc/openProtocol/tests/StandIn.h>
@@ -50,6 +51,9 @@ namespace Jde::Opc::Gateway::Tests{
 							self->Drop( pair );
 							return;
 						}
+						error_code ignored;//as the session and the controller set theirs:  no hold of the relay's own.
+						pair->Row.set_option( Tcp::no_delay{true}, ignored );
+						pair->Station.set_option( Tcp::no_delay{true}, ignored );
 						self->Carry( pair, pair->Row, pair->Station, pair->FromRow );
 						self->Carry( pair, pair->Station, pair->Row, pair->FromStation );
 					} );
@@ -237,12 +241,7 @@ namespace Jde::Opc::Gateway::Tests{
 			return BlockAwait( ReadValueAwait{move(nodes), BlockAwait(UAClient::GetClient(row.Slug, SessionCredential())), UA_TIMESTAMPSTORETURN_BOTH} );
 		}
 		Ω Shown( const Value& v )ι->string{ return v.status ? string{ UA_StatusCode_name(v.status) } : Text( v ); }
-		Ω Shown( const vector<uint32_t>& ids )ι->string{
-			string y;
-			for( let id : ids )
-				y += Ƒ( "{}{}", y.empty() ? "" : " ", id );
-			return y;
-		}
+		Ω Shown( const vector<uint32_t>& ids )ι->string{ return Str::Join( ids, " " ); }
 		Ω WaitState( const DriverRow& row, function<bool( const State& )> is, Duration timeout )ι->bool{
 			return WaitUntil( [&]{
 				try{
@@ -265,7 +264,7 @@ namespace Jde::Opc::Gateway::Tests{
 				return 0;
 			}
 		}
-		Ω WaitResults( const DriverRow& row, uint count, Duration timeout )ι->bool{ return WaitUntil( [&]{ return Results( row )>=count; }, timeout, 100ms ); }
+		Ω WaitAtLeast( const DriverRow& row, uint count, Duration timeout )ι->bool{ return WaitUntil( [&]{ return Results( row )>=count; }, timeout, 100ms ); }
 		//A time of the controller's as the row gave it, against the gateway's clock over the case's run.
 		Ω Within( optional<TimePoint> time, TimePoint from )ι->::testing::AssertionResult{
 			if( !time )
@@ -324,18 +323,18 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitRevision(row, 7) && WaitRevision(other, 7) ) << OpText( Op(row, "Revisions") ) << ";  " << OpText( Op(other, "Revisions") );
 		let from = Clock::now();
 		bench.Tighten( 0, 2 );
-		ASSERT_TRUE( WaitResults(row, 2, bench.Wait) ) << Results( row ) << " result(s)";
+		ASSERT_TRUE( WaitAtLeast(row, 2, bench.Wait) ) << Results( row ) << " result(s)";
 
 		let read = Variables( row );
-		string blank;
+		vector<sv> blank;
 		for( let& field : Fields() ){
 			let& v = Of( read, Path(field.Name) );
 			EXPECT_TRUE( Is(v, field.Type) ) << field.Name << " holds no " << UA_TYPES[field.Type].typeName;
 			EXPECT_TRUE( !v.status || v.status==NotSupported ) << field.Name << ":  " << UAException::Message( v.status );
 			if( v.status==NotSupported )
-				blank += Ƒ( "{}{}", blank.empty() ? "" : ", ", field.Name );
+				blank.push_back( field.Name );
 		}
-		Note( Ƒ("sent blank at revision 7:  {}", blank.empty() ? "nothing" : blank) );
+		Note( Ƒ("sent blank at revision 7:  {}", blank.empty() ? "nothing" : Str::Join(blank, ", ")) );
 		for( let own : {"Pset", "Status", "TorqueStatus", "AngleStatus", "Torque", "Angle"} )
 			EXPECT_EQ( Of(read, Path(own)).status, Good ) << own << ":  " << UAException::Message( Of(read, Path(own)).status );
 		EXPECT_TRUE( ResultId(read) ) << UAException::Message( Of(read, "Result.TighteningId").status );
@@ -393,7 +392,7 @@ namespace Jde::Opc::Gateway::Tests{
 		const ResultGroup group{ row, "driver-bench", {{"Result.TighteningId", {}}} };
 
 		bench.Tighten( 0, 1 );
-		ASSERT_TRUE( WaitResults(row, 1, bench.Wait) );
+		ASSERT_TRUE( WaitAtLeast(row, 1, bench.Wait) );
 		relay.Sever();
 		ASSERT_TRUE( WaitConnected(row, false) );
 		bench.Tighten( 0, 2 );
