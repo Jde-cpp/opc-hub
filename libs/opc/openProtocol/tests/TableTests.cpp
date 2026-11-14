@@ -57,11 +57,13 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		}
 	}
 
-	//A revision past a type's last is refused as that, which a controller's side answers with MID 0004 code 97.
+	//A revision past a type's last is refused as that, which a controller's side answers with MID 0004 code 97.  An
+	//acknowledgement's frame is read by its data, whatever its revision (SimulatorTests).
 	TEST( TableTests, RevisionPastTheLast ){
 		for( let& [mid, last] : Revisions() ){
 			let frame = Frame( {.Mid=mid, .Revision=(uint16_t)(last+1)}, {} );
-			EXPECT_EQ( Refused(frame), ERefusal::UnknownRevision ) << "MID " << mid;
+			if( mid!=Mid0004::Id && mid!=Mid0005::Id )
+				EXPECT_EQ( Refused(frame), ERefusal::UnknownRevision ) << "MID " << mid;
 			let none = DecodeBody( {.Mid=mid, .Revision=0}, {} );//no frame's:  a header's 000 reads as 1.
 			ASSERT_FALSE( none ) << "MID " << mid;
 			EXPECT_EQ( none.error().Code, ERefusal::UnknownRevision ) << "MID " << mid;

@@ -1,7 +1,7 @@
 #include <open62541/client_highlevel_async.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/tests/Capture.h>
-#include "utils/DriverResults.h"
+#include "utils/DriverCommands.h"
 
 #define let const auto
 
@@ -14,31 +14,11 @@ namespace Jde::Opc::Gateway::Tests{
 	//docs/open-protocol/plan.md Phase 8 (#470):  the Open Protocol driver's `Commands` (drivers/openProtocol/OpenProtocolDriver.h) and
 	//the calls its host holds (drivers/DriverCalls.h) - the five methods called through the QL's `call`, as a web session's client
 	//calls one under its issued token, against the library's test controller, with the right the host asks for them.
-	struct DriverCommandTests : DriverResultFixture{
+	struct DriverCommandTests : DriverCommandFixture{
 	protected:
-		static constexpr StatusCode Good{ UA_STATUSCODE_GOOD }, Denied{ UA_STATUSCODE_BADUSERACCESSDENIED }, OutOfRange{ UA_STATUSCODE_BADOUTOFRANGE };
+		static constexpr StatusCode Denied{ UA_STATUSCODE_BADUSERACCESSDENIED }, OutOfRange{ UA_STATUSCODE_BADOUTOFRANGE };
 		//`_Op.Revisions` once the connection's seven requests are answered:  nothing of the driver's is outstanding.
 		static constexpr sv Subscribed{ "0001:6 0015:3 0035:6 0052:2 0061:7 0071:3 0080:1" };
-		Ω WaitRevisions( const DriverRow& row, sv text )ι->bool{ return WaitOp( row, "Revisions", [=]( let& v ){ return OpText( v )==text; } ); }
-		Ω Method( sv name )ι->NodeId{ return DriverNode( Ƒ("Commands.{}", name) ); }
-		//A method of the row's `Commands` through the QL's `call`:  the call's status, the server's whatever it is.
-		Ω Call( const DriverRow& row, sv method, jarray args={} )ε->StatusCode{
-			const jobject vars{ {"opc", row.Slug}, {"object", DriverNode("Commands").ToJson()}, {"method", Method(method).ToJson()}, {"args", move(args)} };
-			return Socket().QuerySync( "call( opc: $opc, object: $object, method: $method, args: $args ){ statusCode }", vars ).as_object().at( "statusCode" ).to_number<StatusCode>();
-		}
-		//Until the session's user may, or may not, call the row's methods, as a method's UserExecutable has it:  a grant reaches
-		//the gateway's authorizer after the mutation that made it returns.
-		Ω WaitExecutable( const DriverRow& row, bool executable )ι->bool{
-			return WaitUntil( [&]{
-				try{
-					let node = Socket().QuerySync( "node( opc: $opc, id: $id ){ userExecutable }", {{"opc", row.Slug}, {"id", Method("EnableTool").ToJson()}} ).as_object();
-					return Json::FindBool( node, "userExecutable" )==executable;
-				}
-				catch( const std::exception& ){
-					return false;
-				}
-			}, 15s );
-		}
 		//The messages of `T` the controller heard, from its frame `from` on.
 		template<class T> Ω Heard( const Controller& station, uint from=0 )ι->vector<T>{
 			vector<T> y;
@@ -61,19 +41,6 @@ namespace Jde::Opc::Gateway::Tests{
 					y.push_back( mid );
 			}
 			return y;
-		}
-		Ω Text( const Value& v )ι->string{ return v.hasValue && !v.IsEmpty() ? serialize( v.ValueJson(nullptr) ) : "no value"; }
-		//Until the row's `path` reads Good with `json`, as a web session's client reads it.
-		Ω WaitValue( const DriverRow& row, sv path, sv json )ι->bool{
-			return WaitUntil( [&]{
-				try{
-					let v = ReadValue( BlockAwait(UAClient::GetClient(row.Slug, SessionCredential())), DriverNode(path) );
-					return !v.status && Text( v )==json;
-				}
-				catch( const std::exception& ){
-					return false;
-				}
-			}, 15s );
 		}
 		//A call's line starts so, and ends with its answer (DriverCalls).
 		Ω Line( sv slug, sv call )ι->string{ return Ƒ( "Call by '{}' of {} on '{}'", AppClient()->Acl()->UserName(User()), call, slug ); }

@@ -57,7 +57,9 @@ namespace Jde::Opc::OpenProtocol{
 	α DecodeHeader( sv frame )ι->Expected<FrameHeader>;
 	//A frame's data field, without the NUL, by the revision of its own header whatever was asked.
 	α DecodeBody( const Header& head, sv data )ι->Expected<Body>;
-	//A whole frame with its NUL.
+	//A whole frame with its NUL.  An acknowledgement is read by its data, whatever revision its header carries, and comes
+	//back under the revision of the table it was read by:  MID 0005 Table 24's one, and MID 0004 under a revision past 1
+	//Table 21's where its code is two digits and Table 22's where three.
 	α Decode( sv frame )ι->Expected<Message>;
 	//The frame with its NUL, at the revision the header names;  its MID is the body's, whatever the header holds.
 	α Encode( Header head, const Body& body )ι->Expected<string>;

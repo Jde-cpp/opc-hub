@@ -59,6 +59,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 
 	α Cases()ι->vector<Case>;//every MID at every revision.
 	α Examples()ι->vector<Case>;//the specification's example frames.
+	α Simulator()ι->vector<std::pair<string,string>>;//frames of Jarrekstar's simulator as it wrote them, by their files in the fuzz corpus (SimulatorTests.cpp).
 
 	template<class... T> α Revisions( std::type_identity<variant<T...>> )ι->vector<std::pair<uint16_t,uint16_t>>{ return { {T::Id, T::MaxRevision}... }; }
 	//Each MID with a type and its last revision.

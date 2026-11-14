@@ -243,7 +243,23 @@ its UI on 8082 (`config.example.toml` lists the keys). The smoke client
 stepping down from MID 0001 at 6, subscribes from MID 0060 at 7, posts one tightening, acks
 the MID 0061 and stops, printing each frame and `SMOKE PASS`. It reads each frame's MID and
 revision and decodes nothing, so a pass says the simulator answers, not that the codec reads
-it. Gotchas:
+it.
+
+The driver's check against it is four cases of `Jde.Opc.Tests`, `DriverSimulatorTests`
+(the plan's Phase 10a *Built*), skipped unless `/testing/openProtocolSimulator` names the
+simulator's two ports. That key and the suite's filter are hidden in the suite's config, so
+a scratch config beside it sets both with `:::`. A case makes its own rows, lifts the
+simulator's profile itself and puts it back:
+
+```bash
+C=$JDE_DIR/apps/OpcGateway/tests/config/simulator.jsonnet
+echo "(import 'Opc.Tests.jsonnet') + { testing+:{ tests::: 'DriverSimulatorTests.*', openProtocolSimulator::: { port: 4545, httpPort: 8081 } } }" > $C
+cd $buildDir/runtime
+REPO_SOURCE_DIR=$JDE_DIR REPO_BUILD_DIR=$(dirname $buildDir) $buildDir/apps/OpcGateway/tests/Jde.Opc.Tests -tests -settings=$C -include=args/sqlite -arg path=:memory:
+rm $C
+```
+
+Gotchas:
 
 - **Each MID family answers the revision its profile selects**, 1 by default, or any it
   implements, and MID 0004 code 97 to the rest, so a client steps down to 1 - which is the
@@ -256,13 +272,16 @@ it. Gotchas:
 - **MIDs 0060 to 0063 are one family**, so the tightening family pinned above 1 refuses
   the driver's MID 0062, which goes at 1, with a MID 0004 after every result. Leave it at
   `any_implemented` and pick MID 0061's revision with the row's ceiling, `{"0061": N}`.
-- **A lifted profile shows two differences**, Phase 10a's to settle against the tables,
-  not faults of the run. Its MID 0002 at 4 to 6 has fields 08 to 16 at widths that are not
-  the tables' (the RBU type at 19 for 24 first), so the codec refuses it and the row never
-  connects; keep MID 0002 at 3, by the profile or the row's ceiling `{"0002": 3}`. Its MID
-  0005 echoes the accepted request's revision (`00240005007` to a MID 0060 at 7), which the
-  codec refuses as past MID 0005's one revision, so a subscription above 1 waits out
-  `replyTimeout`.
+- **Where it is not the tables'** (the plan's Phase 10a *Built*), none a fault of the run.
+  Its MID 0002 at 4 to 6 has fields 08 to 16 at widths that are not the tables' (the RBU
+  type at 19 for 24 first), so the codec refuses it and the row never connects: keep MID
+  0002 at 3, by the profile or the row's `driver`, `{"revisions":{"0002":3}}`. Its MID 0004
+  and MID 0005 carry the revision of the request they answer (`00240005007` to a MID 0060
+  at 7), which the codec reads all the same. A subscription it refuses is followed by its
+  push at revision 1, which the session acknowledges.
+- **A command answers by its mode:** MID 0038 only in Job mode (`POST /config/operation-mode`
+  with `{"mode": "job"}`, and a job to select, `POST /jobs`), code 20 outside it, and MID
+  0018 only outside it, code 3 inside.
 - **Driving it:** `POST /simulate/tightening` with `{"torque": 12.5, "angle": 40.0, "ok": true}`
   makes one result, `/auto-tightening/start` a run, `/psets/{id}/select` and
   `/jobs/{id}/select` the selections, `/config/failure` latency, loss and corruption.

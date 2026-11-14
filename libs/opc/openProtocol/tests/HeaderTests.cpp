@@ -98,7 +98,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	//with MID 0004 code 99 or 97.
 	TEST( HeaderTests, LinkedPartOfAnUnknownMid ){
 		EXPECT_EQ( Refused("00200900"+after(Parts, "21")+'\0'), ERefusal::UnknownMid );
-		EXPECT_EQ( Refused(Frame({.Mid=Mid0005::Id, .Revision=Mid0005::MaxRevision+1, .Parts=2, .Part=1}, "0018")), ERefusal::UnknownRevision );
+		EXPECT_EQ( Refused(Frame({.Mid=Mid0018::Id, .Revision=Mid0018::MaxRevision+1, .Parts=2, .Part=1}, "012")), ERefusal::UnknownRevision );
 	}
 
 	TEST( HeaderTests, FrameSizeIsTheLengthAndItsNul ){

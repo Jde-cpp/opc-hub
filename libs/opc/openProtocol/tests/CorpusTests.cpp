@@ -11,14 +11,15 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		std::ifstream is{ file, std::ios::binary };
 		return { std::istreambuf_iterator<char>{is}, {} };
 	}
-	//The suite's frames by their files:  each MID at each revision, the specification's examples, and a frame refused each
-	//way, for the fuzzer to start from.
+	//The suite's frames by their files:  each MID at each revision, the specification's examples, the simulator's, and a
+	//frame refused each way, for the fuzzer to start from.
 	Ω seeds()ι->vector<std::pair<string,string>>{
 		vector<std::pair<string,string>> y;
 		for( let& cases : {Cases(), Examples()} ){
 			for( let& c : cases )
 				y.emplace_back( c.File, c.Frame );
 		}
+		y.append_range( Simulator() );
 		y.emplace_back( "refused-length", ExampleFrame("00190001003", {}) );
 		y.emplace_back( "refused-revision", ExampleFrame("002400050 1", "0018") );
 		y.emplace_back( "refused-parts", ExampleFrame("00240005001001010023", "0018") );

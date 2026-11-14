@@ -131,7 +131,14 @@ namespace OpenProtocol{
 			return refuse( ERefusal::Length, "MID {:04}:  the length {} and its NUL make {} bytes, and the frame is {}.", head->Head.Mid, length, length+1, frame.size() );
 		if( frame.size()==length || frame[length]!='\0' )
 			return refuse( ERefusal::Nul, "MID {:04}:  no NUL follows the length's {} bytes.", head->Head.Mid, length );
-		return DecodeBody( head->Head, frame.substr(HeaderSize, length-HeaderSize) ).transform( [&]( Body&& body ){ return Message{head->Head, move(body)}; } );
+		auto h = head->Head;
+		//No request names an acknowledgement's revision, and a controller may write there the revision of the request it answers:
+		//MID 0005 is Table 24's one layout, and MID 0004's code is Table 21's two digits where its frame holds no third.
+		if( h.Mid==Mid0005::Id )
+			h.Revision = 1;
+		else if( h.Mid==Mid0004::Id && h.Revision>1 )
+			h.Revision = length<HeaderSize+7 ? 1 : 2;
+		return DecodeBody( h, frame.substr(HeaderSize, length-HeaderSize) ).transform( [&]( Body&& body ){ return Message{h, move(body)}; } );
 	}
 
 	α OpenProtocol::Encode( Header head, const Body& body )ι->Expected<string>{
