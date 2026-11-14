@@ -4,7 +4,7 @@ import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 import { DetailResolver, DetailRoute, SlugNotFoundError, SnackbarService } from 'jde-framework';
 import { GATEWAY_SERVICE } from '../gateway-service';
 import { GatewayDetailData } from './client-resolver';
-import { gatewayListLink, GatewayListKind, gatewayListRoute } from '../../pages/gateway-detail/gateway-list-route';
+import { GatewayListKind, gatewayListRoute } from '../../pages/gateway-detail/gateway-list-route';
 
 //A template's or a group's row for its page (#337), a machine's or a reason's (#404) and a flow's (#455), under the gateway page's
 //`templates/:slug`, `groups/:slug`, `machines/:slug`, `reasons/:slug` and `flows/:slug` routes, each naming its kind in its data, as
@@ -45,7 +45,7 @@ export class HistAdminResolver implements Resolve<GatewayDetailData<any>>{
 			}
 			else
 				this.#snackbar.exception( `Could not load '${slug}'`, e );
-			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, gatewayListLink( kind, route.data['suffix'] ) ) );//<page>/<kind>, which redirects to the page:  '..' drops one segment, the suffix's under a row's own
+			this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, route.data['suffix'] ? ['../..'] : ['..'] ) );//<page>/<kind>, which redirects to the page:  '..' drops one segment, the suffix's under a row's own
 			return null as unknown as GatewayDetailData<any>;
 		}
 	}

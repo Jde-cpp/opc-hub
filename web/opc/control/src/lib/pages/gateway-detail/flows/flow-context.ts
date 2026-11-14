@@ -58,13 +58,15 @@ export class FlowContext{
 		return contextValueProblem( e.text );
 	} );
 	#reads = new Latest();
+	//the flow, by its gateway and id:  a deploy, an enable or a disable gives the page a new row of the same flow, which keeps what is typed
+	#shown = computed( ()=>({ gateway: this.gateway(), id: this.flow().id }), {equal: ( a, b )=>a.gateway==b.gateway && a.id==b.id} );
 	#flows = inject( FlowService );
 	#snackbar = inject( SnackbarService );
 	#dialog = inject( MatDialog );
 
 	constructor(){
 		effect( ()=>{//the router reuses the page from one flow to the next
-			this.flow().id;
+			this.#shown();
 			untracked( ()=>{ this.editing.set( undefined ); this.load(); } );
 		} );
 	}

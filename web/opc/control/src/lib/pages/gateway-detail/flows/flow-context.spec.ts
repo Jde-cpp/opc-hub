@@ -49,6 +49,18 @@ describe( 'FlowContext', ()=>{
 		await tab.save();
 		expect( flows.setContext ).toHaveBeenLastCalledWith( gateway, {flowId: undefined, nodeId: undefined, name: 'site'}, {name: 'B'} );
 	} );
+	//a deploy, an enable or a disable hands the tab a new row of the same flow (reviews-issue/455-flows-web-editor.md #5)
+	it( "keeps the value being typed over a new row of the flow, not over another flow", async ()=>{
+		const { tab, flows, fixture } = await create();
+		tab.add();
+		tab.set( 'name', 'limit' );
+		fixture.componentRef.setInput( 'flow', new Flow( {id: 7, name: 'Pump', slug: 'pump', enabled: false} ) );
+		await stable( fixture );
+		expect( [tab.editing()?.name, flows.contexts.mock.calls.length] ).toEqual( ['limit', 1] );
+		fixture.componentRef.setInput( 'flow', new Flow( {id: 8, name: 'Fan', slug: 'fan'} ) );
+		await stable( fixture );
+		expect( [tab.editing(), flows.contexts.mock.calls.length] ).toEqual( [undefined, 2] );
+	} );
 	it( 'adds a value once it has a name, a node and json', async ()=>{
 		const { tab, flows, gateway, snackbar } = await create();
 		tab.add();

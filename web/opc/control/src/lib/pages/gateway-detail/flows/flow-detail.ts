@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal, viewChild } from '@angular/core';
 import { CdkCopyToClipboard } from '@angular/cdk/clipboard';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -6,11 +6,11 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { DetailActions, DetailPage, errorMessage, Properties } from 'jde-framework';
+import { Latest } from 'jde-spa';
 import { Flow, FlowDeployed, FlowGraph, FlowNode, FlowProps, FlowVersion } from '../../../model/flow';
 import { FlowService } from '../../../services/flow-service';
 import { Gateway } from '../../../services/gateway-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
-import { gatewayListLink } from '../gateway-list-route';
 import { AccessSubject, HistGroupAccess } from '../hist-admin/hist-group-access';
 import { FlowEditor, FlowEditorSource } from './editor/flow-editor';
 import { FlowContext } from './flow-context';
@@ -55,11 +55,11 @@ export class FlowDetail extends DetailPage<Flow>{
 		const draft = this.#drafts.take( this.row.guid );
 		if( draft || !this.row.version )//a flow just made or imported, or one with nothing deployed:  the canvas, whichever tab the last flow was left on
 			this.tabIndex.set( 0 );
-		this.#load( draft );
+		this.#opening = { draft };
+		this.refreshVersions();
 	}
 	protected override upsert():Flow{ return new Flow( <FlowProps>this.properties() ); }
 	protected override get title(){ return `${this.row.name} - Flow`; }
-	protected override get listLink(){ return gatewayListLink( 'flows' ); }
 	protected override get onlyPropertiesTab(){ return false; }
 	protected override get deleteWarning(){ return 'The flow stops.  Its versions, its context and its trace stay, and Restore brings it back, started again if it is enabled.'; }
 	protected override get purgeWarning(){ return 'Its versions, its replays, its context values and its trace go with it.'; }
@@ -78,31 +78,32 @@ export class FlowDetail extends DetailPage<Flow>{
 	nodes = computed<FlowNode[]>( ()=>this.#current( this.versions(), this.row?.version )?.nodes ?? [] );
 
 	#current( versions:FlowVersion[], version:number|undefined ):FlowGraph|undefined{ return versions.find( v=>v.version==version && !v.unread )?.graph; }
-	//The versions, and from them the graph the editor opens with:  the current one's, under a draft where there is one.  A read
-	//that fails opens no editor:  an empty canvas would deploy over a version it never showed.
-	async #load( draft?:FlowGraph ):Promise<void>{
-		if( await this.refreshVersions() )
-			this.source.set( { deployed: this.#current( this.versions(), this.row.version ) ?? {nodes: []}, draft } );
-	}
-	retry():void{ this.#load(); }
-	async refreshVersions():Promise<boolean>{
-		const gateway = this.gateway, id = this.row.id;
+	//What the editor opens with once a read of the versions lands, an import's draft kept until then, so Retry has it:  the
+	//current version's graph, under the draft.  A read that fails opens no editor:  an empty canvas would deploy over a version
+	//it never showed.
+	#opening?:{ draft?:FlowGraph };
+	#reads = new Latest();//the newest read alone lands, whatever order the answers come in, and a read for the last flow not at all
+	retry():void{ this.refreshVersions(); }
+	async refreshVersions():Promise<void>{
+		const read = this.#reads.next();
 		this.versionsLoading.set( true );
 		this.versionsError.set( undefined );
 		try{
-			const versions = await this.flows.versions( gateway, id );
-			if( gateway!=this.gateway || this.row?.id!=id )//the router reused the page for another flow meanwhile
-				return false;
+			const versions = await this.#flows.versions( this.gateway, this.row.id );
+			if( !this.#reads.is( read ) )
+				return;
 			this.versions.set( versions );
-			return true;
+			if( this.#opening ){
+				this.source.set( { deployed: this.#current( versions, this.row.version ) ?? {nodes: []}, draft: this.#opening.draft } );
+				this.#opening = undefined;
+			}
 		}
 		catch( e ){
-			if( gateway==this.gateway && this.row?.id==id )
+			if( this.#reads.is( read ) )
 				this.versionsError.set( errorMessage( e, 'Could not read the versions.' ) );
-			return false;
 		}
 		finally{
-			if( gateway==this.gateway && this.row?.id==id )
+			if( this.#reads.is( read ) )
 				this.versionsLoading.set( false );
 		}
 	}
@@ -116,8 +117,10 @@ export class FlowDetail extends DetailPage<Flow>{
 		this.refreshVersions();
 	}
 	onEnabled( enabled:boolean ):void{ this.#changed( {enabled} ); }
-	//a version's graph back on the canvas, over the one deployed, for Deploy to make the next
-	openVersion( version:FlowVersion ):void{
+	//a version's graph back on the canvas, over the one deployed, for Deploy to make the next, once what the canvas holds may go
+	async openVersion( version:FlowVersion ):Promise<void>{
+		if( !await (this.editor()?.mayReplace( `Open version ${version.version} on the canvas?` ) ?? true) )
+			return;
 		this.source.set( { deployed: this.#current( this.versions(), this.row.version ) ?? {nodes: []}, draft: version.version==this.row.version ? undefined : version.graph } );
 		this.tabIndex.set( 0 );
 		this.snackbar.info( version.version==this.row.version ? `Version ${version.version}, the current one, is on the canvas.` : `Version ${version.version} is on the canvas, not deployed:  Deploy makes it the next version.` );
@@ -128,7 +131,8 @@ export class FlowDetail extends DetailPage<Flow>{
 		else
 			this.snackbar.error( 'Could not copy the guid.' );
 	}
-	flows = inject( FlowService );
+	editor = viewChild( FlowEditor );
+	#flows = inject( FlowService );
 	#drafts = inject( FlowDrafts );
 	gateway!:Gateway;
 }

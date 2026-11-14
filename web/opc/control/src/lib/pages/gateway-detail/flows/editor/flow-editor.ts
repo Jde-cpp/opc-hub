@@ -4,7 +4,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { errorMessage, SnackbarService } from 'jde-framework';
+import { confirm, errorMessage, SnackbarService } from 'jde-framework';
 import { exportFlow, Flow, FlowDeployed, FlowFault, flowFaultText, FlowGraph, sameFlowGraph, toFlowFault } from '../../../../model/flow';
 import { flowGraphFault, flowNodeFaults, FlowNodePatch, normalizeFlowGraph } from '../../../../model/flow-nodes';
 import { FlowService } from '../../../../services/flow-service';
@@ -98,7 +98,14 @@ export class FlowEditor{
 
 	patch( id:string, patch:FlowNodePatch ):void{ this.#canvas?.instance.patch( id, patch ); }
 	show( id:string ):void{ this.#canvas?.instance.select( id ); }
-	revert():void{
+	//Whether what is on the canvas may go, asked where it is not what is deployed:  a load begins the history again, so no Undo
+	//brings it back.
+	async mayReplace( title:string ):Promise<boolean>{
+		return !this.dirty() || confirm( this.#dialog, {title, message: "What is on the canvas isn't deployed, and Undo won't bring it back.", confirm: 'Replace', destructive: true} );
+	}
+	async revert():Promise<void>{
+		if( !await this.mayReplace( 'Revert to the version deployed?' ) )
+			return;
 		this.#load( this.base() );
 		this.refusal.set( undefined );
 	}
@@ -158,8 +165,10 @@ export class FlowEditor{
 		const a = document.createElement( 'a' );
 		a.href = url;
 		a.download = `${flow.slug}.json`;
+		document.body.appendChild( a );//Firefox and Safari save from an anchor in the page, and may read the url after the click returns
 		a.click();
-		URL.revokeObjectURL( url );
+		a.remove();
+		setTimeout( ()=>URL.revokeObjectURL( url ) );
 	}
 	refusalText = computed( ()=>{ const r = this.refusal(); return r ? flowFaultText( r, this.graph() ) : undefined; } );
 }

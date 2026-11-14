@@ -239,6 +239,14 @@ describe( 'flow form values', ()=>{
 		expect( flowFieldValue( field( 'variable', 'engineeringUnits' ), '{"displayName":"rpm"}' ) ).toEqual( {displayName: 'rpm'} );
 		expect( flowFieldValue( field( 'variable', 'engineeringUnits' ), 'rpm' ) ).toBe( 'rpm' );
 	} );
+	//a row given by its id stays one where it is edited, since the gateway reads text as a slug (reviews-issue/455-flows-web-editor.md #6)
+	it( "keeps a row's id a number", ()=>{
+		expect( flowFieldValue( field( 'group in', 'group' ), ' 6 ', 5 ) ).toBe( 6 );
+		expect( flowFieldValue( field( 'calendar', 'calendar' ), '3', 2 ) ).toBe( 3 );
+		expect( flowFieldValue( field( 'group in', 'group' ), 'pumps', 5 ) ).toBe( 'pumps' );
+		expect( flowFieldValue( field( 'group in', 'group' ), '6', 'pumps' ) ).toBe( '6' );//a slug of digits stays a slug
+		expect( flowFieldValue( field( 'group in', 'group' ), '', 5 ) ).toBeUndefined();
+	} );
 	it( 'shows a value as its input holds it', ()=>{
 		expect( flowFieldText( field( 'filter', 'band' ), 2.5 ) ).toBe( '2.5' );
 		expect( flowFieldText( field( 'filter', 'band' ), undefined ) ).toBe( '' );

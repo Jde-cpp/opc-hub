@@ -6,9 +6,10 @@ import { SnackbarService } from 'jde-framework';
 import { dialogStub, snackbarStub } from 'jde-framework/testing';
 import { provideRoute, routerStub, stable } from 'jde-spa/testing';
 import { Flow, FlowGraph } from '../../../model/flow';
+import { ServerCnnctn } from '../../../model/server-cnnctn';
 import { FlowService } from '../../../services/flow-service';
 import { GatewayHistList } from '../hist-admin/gateway-hist-list';
-import { FlowCreateDialog, FlowCreated, flowSlug, flowSlugError } from './flow-create-dialog';
+import { FlowCreateDialog, FlowCreated, flowSlug } from './flow-create-dialog';
 import { FlowDrafts } from './flow-drafts';
 import { GatewayFlowList } from './gateway-flow-list';
 
@@ -77,10 +78,10 @@ describe( 'FlowCreateDialog', ()=>{
 		dialog.setSlug( '../x' );
 		expect( [dialog.slugError(), dialog.valid()] ).toEqual( ["Letters, digits, '.', '_' and '-' only, starting with a letter or digit.", false] );
 		dialog.setSlug( 'pump1' );
-		dialog.description.set( ' Mean ' );
+		dialog.setDescription( ' Mean ' );
 		dialog.apply();
 		expect( ref.close ).toHaveBeenCalledWith( {name: 'Pump one', slug: 'pump1', description: 'Mean'} );
-		expect( [flowSlug( '  Línea 3 / A  ' ), flowSlug( '.hidden' ), flowSlugError( 'a.b_c-1' ), flowSlugError( '-a' )] ).toEqual( ['l-nea-3-a', 'hidden', undefined, "Letters, digits, '.', '_' and '-' only, starting with a letter or digit."] );
+		expect( [flowSlug( '  Línea 3 / A  ' ), flowSlug( '.hidden' ), ServerCnnctn.fileSlugError( 'a.b_c-1' ), ServerCnnctn.fileSlugError( '-a' )] ).toEqual( ['l-nea-3-a', 'hidden', undefined, "Letters, digits, '.', '_' and '-' only, starting with a letter or digit."] );
 	} );
 	//the json names the flow where the form hasn't, and what the gateway would refuse of it is said, not held against the import
 	it( "reads an import's json", ()=>{
@@ -97,5 +98,17 @@ describe( 'FlowCreateDialog', ()=>{
 		expect( dialog.valid() ).toBe( true );
 		dialog.apply();
 		expect( ref.close.mock.lastCall![0] ).toMatchObject( {name: 'Pump', slug: 'x', description: 'Mean rpm', graph: {nodes: [{id: 'a'}, {id: 'w', props: {}, wires: []}]}} );
+	} );
+	//another file, or another paste, names the flow afresh:  its name, slug and description of one export (reviews-issue/455-flows-web-editor.md #9)
+	it( 'names the flow from the last json given', ()=>{
+		const { dialog } = open( true );
+		const text = ( name:string, slug:string, description?:string )=>JSON.stringify( {name, slug, description, graph} );
+		dialog.setText( text( 'Pump 1', 'pump1', 'The first' ) );
+		dialog.setText( text( 'Pump 2', 'pump2' ) );
+		expect( [dialog.name(), dialog.slug(), dialog.description()] ).toEqual( ['Pump 2', 'pump2', ''] );
+		dialog.setName( 'Mine' );
+		dialog.setDescription( 'Typed' );
+		dialog.setText( text( 'Pump 3', 'pump3', 'The third' ) );
+		expect( [dialog.name(), dialog.slug(), dialog.description()] ).toEqual( ['Mine', 'pump3', 'Typed'] );
 	} );
 } );

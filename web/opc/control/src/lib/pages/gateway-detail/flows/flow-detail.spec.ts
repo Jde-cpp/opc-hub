@@ -1,9 +1,10 @@
-import { Component, input, output } from '@angular/core';
+import { Component, forwardRef, input, output } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
+import { By } from '@angular/platform-browser';
 import { Mutation, Properties } from 'jde-framework';
 import { configureDetailPage, dialogStub } from 'jde-framework/testing';
-import { flush } from 'jde-spa/testing';
+import { flush, stable } from 'jde-spa/testing';
 import { Flow, FlowGraph, FlowVersion } from '../../../model/flow';
 import { FlowService } from '../../../services/flow-service';
 import { HistGroupAccess } from '../hist-admin/hist-group-access';
@@ -13,9 +14,10 @@ import { flowAccessSubject, FlowDetail } from './flow-detail';
 import { FlowDrafts } from './flow-drafts';
 import { FlowVersions } from './flow-versions';
 
-//the tabs' components, standing in for the real ones:  the page is what gives each its inputs
-@Component( {selector: 'flow-editor', template: ''} )
-class EditorStub{ gateway = input<unknown>(); flow = input<unknown>(); source = input<unknown>(); deployed = output<unknown>(); enabledChange = output<boolean>(); }
+//the tabs' components, standing in for the real ones:  the page is what gives each its inputs.  The editor's is the page's query
+//of the editor, which asks it whether the canvas may be replaced.
+@Component( {selector: 'flow-editor', template: '', providers: [{ provide: FlowEditor, useExisting: forwardRef( ()=>EditorStub ) }]} )
+class EditorStub{ gateway = input<unknown>(); flow = input<unknown>(); source = input<unknown>(); deployed = output<unknown>(); enabledChange = output<boolean>(); mayReplace = vi.fn( async ( _title:string )=>true ); }
 @Component( {selector: 'flow-versions', template: ''} )
 class VersionsStub{ gateway = input<unknown>(); flow = input<unknown>(); versions = input<unknown>(); loading = input<boolean>(); open = output<unknown>(); refresh = output<void>(); }
 @Component( {selector: 'flow-context', template: ''} )
@@ -77,6 +79,30 @@ describe( 'FlowDetail', ()=>{
 		expect( d.page.source() ).toEqual( {deployed: graph( 'a' ), draft: undefined} );
 		expect( d.page.versionsError() ).toBeUndefined();
 	} );
+	//the draft is the page's until the editor has it (reviews-issue/455-flows-web-editor.md #2)
+	it( "keeps an import's draft for a Retry", async ()=>{
+		const d = await create( {...row, version: null}, {versions: new Error( 'the gateway is down' ), draft: graph( 'x' )} );
+		expect( d.page.source() ).toBeUndefined();
+		d.flows.versions.mockResolvedValue( [] );
+		d.page.retry();
+		await flush( 3 );
+		expect( d.page.source() ).toEqual( {deployed: {nodes: []}, draft: graph( 'x' )} );
+	} );
+	//a Refresh answered after the deploy's read is not the versions (reviews-issue/455-flows-web-editor.md #7)
+	it( 'takes the newest read of the versions, whatever order the answers come in', async ()=>{
+		const d = await create();
+		let late!:( v:FlowVersion[] )=>void;
+		d.flows.versions.mockImplementationOnce( ()=>new Promise<FlowVersion[]>( resolve=>late = resolve ) );
+		d.page.refreshVersions();
+		d.flows.versions.mockResolvedValueOnce( [version( 3, graph( 'a', 'b', 'c' ) ), version( 2, graph( 'a', 'b' ) )] );
+		d.page.onDeployed( {version: 3, userName: 'ann', running: true, dropped: 0} );
+		await flush( 3 );
+		expect( [d.page.versions().map( v=>v.version ), d.page.versionsLoading()] ).toEqual( [[3, 2], false] );
+		late( [version( 2, graph( 'a', 'b' ) ), version( 1, graph( 'a' ) )] );
+		await flush( 3 );
+		expect( [d.page.versions().map( v=>v.version ), d.page.versionsLoading()] ).toEqual( [[3, 2], false] );
+		expect( d.page.nodes().map( n=>n.id ) ).toEqual( ['a', 'b', 'c'] );
+	} );
 	it( 'takes a deploy and an enable onto the row, and reads the versions again', async ()=>{
 		const d = await create();
 		const source = d.page.source();
@@ -94,23 +120,37 @@ describe( 'FlowDetail', ()=>{
 	it( "puts a version's graph back on the canvas", async ()=>{
 		const d = await create();
 		d.page.tabIndex.set( 1 );
-		d.page.openVersion( d.page.versions()[1] );
+		await d.page.openVersion( d.page.versions()[1] );
 		expect( d.page.source() ).toEqual( {deployed: graph( 'a', 'b' ), draft: graph( 'a' )} );
 		expect( d.page.tabIndex() ).toBe( 0 );
 		expect( d.snackbar.info ).toHaveBeenCalledWith( 'Version 1 is on the canvas, not deployed:  Deploy makes it the next version.' );
-		d.page.openVersion( d.page.versions()[0] );//the current one:  no draft
+		await d.page.openVersion( d.page.versions()[0] );//the current one:  no draft
 		expect( d.page.source() ).toEqual( {deployed: graph( 'a', 'b' ), draft: undefined} );
 	} );
-	//the row's own form:  its name, description and trace level.  The list has no url - `flows` is the flow server's connection - so
-	//a save, a cancel and a delete go to the gateway's page
-	it( "saves the row's form and goes back to the gateway's page", async ()=>{
+	//a load begins the canvas's history again, so the editor asks first where it holds what isn't deployed (reviews-issue/455-flows-web-editor.md #3)
+	it( 'opens a version only once the editor lets what it holds go', async ()=>{
+		const d = await create();
+		await stable( d.fixture );
+		const editor = <EditorStub>d.fixture.debugElement.query( By.directive( EditorStub ) ).componentInstance;
+		const source = d.page.source();
+		editor.mayReplace.mockResolvedValue( false );
+		await d.page.openVersion( d.page.versions()[1] );
+		expect( editor.mayReplace ).toHaveBeenCalledWith( 'Open version 1 on the canvas?' );
+		expect( d.page.source() ).toBe( source );
+		editor.mayReplace.mockResolvedValue( true );
+		await d.page.openVersion( d.page.versions()[1] );
+		expect( d.page.source() ).toEqual( {deployed: graph( 'a', 'b' ), draft: graph( 'a' )} );
+	} );
+	//the row's own form:  its name, description and trace level.  A save, a cancel and a delete go to the list, `<page>/flows`,
+	//which redirects to the gateway's page
+	it( "saves the row's form and goes back to the list", async ()=>{
 		const d = await create();
 		d.page.properties.set( new Flow( {...d.page.properties(), name: 'Pump 1', trace: null} ) );
 		await d.page.onSubmitClick();
 		expect( d.mutations() ).toEqual( ['updateFlow( id:7, name:"Pump 1", trace:null )'] );
-		expect( d.router.navigate.mock.lastCall![0] ).toEqual( ['../..'] );
+		expect( d.router.navigate.mock.lastCall![0] ).toEqual( ['..'] );
 		d.page.onCancelClick();
-		expect( d.router.navigate.mock.lastCall![0] ).toEqual( ['../..'] );
+		expect( d.router.navigate.mock.lastCall![0] ).toEqual( ['..'] );
 		await d.page.onDeleteClick();
 		expect( (<{message:string}>d.dialog.open.mock.lastCall![1]!.data).message ).toContain( 'The flow stops.' );
 		expect( d.mutations().at( -1 ) ).toBe( 'deleteFlow(id:7)' );

@@ -62,7 +62,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 		let namespaces = ReadValue( BlockAwait(UAClient::GetClient(row.Slug, SessionCredential())), NodeId{0, UA_NS0ID_SERVER_NAMESPACEARRAY} );
 		ASSERT_EQ( namespaces.value.arrayLength, 3u );
-		EXPECT_EQ( ToString(namespaces.Get<UA_String>(2)), "urn:jde:flows:flows" );
+		EXPECT_EQ( ToString(namespaces.Get<UA_String>(2)), "urn:jde:flow-server:flows" );
 		let web = Sessions( "IssuedToken" );
 		ASSERT_FALSE( web.empty() ) << "the suite's session, by issued token";
 		for( let& session : web ){//one, and any a client a test removed is still closing.
@@ -70,15 +70,15 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( session.Mode, UA_MESSAGESECURITYMODE_SIGNANDENCRYPT );
 		}
 
-		let other = CreateRow( "flows-too", "url:$url, kind:\"flow\"", {{"url", row.Url}} );
+		let other = CreateRow( "flow-server-too", "url:$url, kind:\"flow\"", {{"url", row.Url}} );
 		ASSERT_FALSE( other ) << "a second row of the kind was made";
-		EXPECT_TRUE( Has(other.error(), "is the flow server's connection alone, 'flows'") ) << other.error();
+		EXPECT_TRUE( Has(other.error(), "is the flow server's connection alone, 'flow-server'") ) << other.error();
 		let refused = [&]( sv args, jobject variables, sv why ){
 			let error = UpdateRow( row.Id, args, move(variables) );
 			EXPECT_TRUE( error && Has(*error, why) ) << args << ":  " << error.value_or( "saved" );
 		};
 		refused( "url:$url", {{"url", "opc.tcp://127.0.0.1:4940"}}, "is not the flow server's, opc.tcp://127.0.0.1:4960" );
-		refused( "kind:\"ua\"", {}, "Slug 'flows' is the flow server's connection, of kind 'flow'" );
+		refused( "kind:\"ua\"", {}, "Slug 'flow-server' is the flow server's connection, of kind 'flow'" );
 		refused( "certificateUri:\"urn:other\"", {}, "takes no certificateUri:  its clients connect to the gateway's own flow server" );
 		refused( "securityMode:\"None\"", {}, "takes no securityMode" );
 		refused( "driver:\"{}\"", {}, "takes no driver settings" );

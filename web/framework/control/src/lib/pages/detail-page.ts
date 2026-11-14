@@ -66,13 +66,13 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 			const answer = await this.ql.mutate<unknown>( this.upsert().mutation(this.row) );
 			this.afterMutate();
 			this.saved( answer );
-			this.router.navigate( this.listLink, {relativeTo: this.route} );
+			this.router.navigate( ['..'], {relativeTo: this.route} );
 		}
 		catch( e ){
 			this.saveFailed( e );
 		}
 	}
-	onCancelClick(){ this.router.navigate( this.listLink, {relativeTo: this.route} ); }
+	onCancelClick(){ this.router.navigate( ['..'], {relativeTo: this.route} ); }
 
 	//The soft delete every page under a ql collection gets for free:  the generic `delete<Type>`/`restore<Type>` mutations
 	//(Introspection.cpp advertises them per table), which stamp/clear `deleted` rather than removing the row.  Up here for
@@ -86,7 +86,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 		try{
 			await this.ql.mutate( `${restore ? "restore" : "delete"}${this.row.type}(id:${this.row.id})` );
 			this.afterMutate();
-			this.router.navigate( this.listLink, {relativeTo: this.route} );
+			this.router.navigate( ['..'], { relativeTo: this.route } );
 		}catch( e ){
 			this.snackbar.exception( `${restore ? "Restore" : "Delete"} failed.`, e );
 		}
@@ -104,7 +104,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 		try{
 			await this.ql.mutate( `purge${this.row.type}(id:${this.row.id})` );
 			this.afterMutate();
-			this.router.navigate( this.listLink, {relativeTo: this.route} );
+			this.router.navigate( ['..'], { relativeTo: this.route } );
 		}catch( e ){
 			this.snackbar.exception( "Purge failed.", e );
 		}
@@ -118,7 +118,6 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	protected get deleteWarning():string|undefined{ return undefined; }//what a Delete costs beyond the row, which it then confirms with:  none, and a Delete is one click, as a Restore undoes it
 	protected get purgeWarning():string{ return ""; }//the same for the Purge's confirmation, after its own words
 	protected afterMutate():void{}//a save, delete, restore or purge landed - for a page whose row something else caches (ClientDetail, reviews/m3-closing.md #5)
-	protected get listLink():string[]{ return ['..']; }//the row's list, where a save, a cancel, a delete and a purge go:  the segment above, but for a page whose list has no url of its own (FlowDetail)
 	protected get onlyPropertiesTab():boolean{ return !this.row.id; }
 	protected get title():string{ return this.row.name; }
 

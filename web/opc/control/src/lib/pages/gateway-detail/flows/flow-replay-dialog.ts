@@ -4,15 +4,13 @@ import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogContent, MatDial
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
+import { DateUtils } from 'jde-framework';
 
 export type FlowReplayDialogData = { name:string; version:number; now?:Date };
 export type FlowReplayAsked = { from:Date; to:Date; mode:'dry'|'commit' };
 
 //a time as a datetime-local input holds it, local and to the minute
-export const localInput = ( d:Date ):string=>{
-	const pad = ( n:number )=>String( n ).padStart( 2, '0' );
-	return `${d.getFullYear()}-${pad( d.getMonth()+1 )}-${pad( d.getDate() )}T${pad( d.getHours() )}:${pad( d.getMinutes() )}`;
-};
+export const localInput = ( d:Date ):string=>DateUtils.toLocalInput( d ).slice( 0, 16 );
 //what is wrong with a replay's range, or nothing:  each a time, in order, and none of it to come, so its records are all written
 export function replayProblem( from:string, to:string, now:Date ):string|undefined{
 	const start = new Date( from ), end = new Date( to );

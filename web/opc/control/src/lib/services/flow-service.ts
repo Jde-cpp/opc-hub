@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Service } from '@angular/core';
 import { Flow, FlowContextValue, FlowDeployed, FlowGraph, FlowRun, FlowVersion, toFlowContextValue, toFlowDeployed, toFlowRun, toFlowVersion } from '../model/flow';
 import { HistPoster, HistReader } from './history-service';
 import { HistAdminService } from './hist-admin-service';
@@ -6,7 +6,7 @@ import { HistAdminService } from './hist-admin-service';
 //The flows' tables and mutations for the pages (#455, docs/flows/spec.md *Flows*, *Context*, *Replay*):  the generic queries over
 //flow_versions, flow_contexts and flow_runs, and the edits, each by POST as every mutation goes.  A throw is the gateway's refusal;
 //a deploy's names its node, `Node '<id>':  <why>` (toFlowFault).  A flow's own row is saved through DetailPage, as a group's is.
-@Injectable({ providedIn: 'root' })
+@Service()
 export class FlowService{
 	//a flow's deploys, newest first
 	async versions( reader:HistReader, flowId:number ):Promise<FlowVersion[]>{

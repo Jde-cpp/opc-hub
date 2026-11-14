@@ -42,6 +42,7 @@ export class FlowVersions{
 	runsError = signal<string|undefined>( undefined );
 	busy = signal( false );
 	#reads = new Latest();
+	#shown = computed( ()=>({ gateway: this.gateway(), id: this.flow().id }), {equal: ( a, b )=>a.gateway==b.gateway && a.id==b.id} );
 	#flows = inject( FlowService );
 	#dialog = inject( MatDialog );
 	#snackbar = inject( SnackbarService );
@@ -55,8 +56,8 @@ export class FlowVersions{
 				this.from.set( versions[1]?.version );
 			} );
 		} );
-		effect( ()=>{
-			this.flow().id;
+		effect( ()=>{//another flow:  not a new row of this one, a deploy's or an enable's
+			this.#shown();
 			untracked( ()=>this.loadRuns() );
 		} );
 	}

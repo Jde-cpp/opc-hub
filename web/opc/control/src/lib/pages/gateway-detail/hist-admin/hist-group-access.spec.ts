@@ -112,6 +112,17 @@ describe( 'HistGroupAccess', ()=>{
 		await d.page.load();
 		expect( d.page.status().detail ).toContain( 'only those granted Administer here change these grants' );
 	} );
+	//a page that hands the tab a new object of the same row - a flow's deploy, enable or disable - keeps the ticks not saved
+	//(reviews-issue/455-flows-web-editor.md #4)
+	it( 'keeps the ticks not saved over a new object of the same row', async ()=>{
+		const d = await create( [table] );
+		const reads = d.calls().length;
+		d.page.onToggle( {role: d.page.grants.roles()[0], rights: Rights.Read} );
+		d.fixture.componentRef.setInput( 'group', {id: 5, guid, name: 'Pumps'} );
+		d.fixture.detectChanges();
+		await flush( 3 );
+		expect( [d.page.grants.mutations().length, d.calls().length] ).toEqual( [1, reads] );
+	} );
 	//#3:  the row is named for the group, whose name runs to 256 characters, and access_resources.name to 64 - MySQL refused the first grant
 	//and Make own resource outright.  Cut in code points, as the column counts:  a slice of UTF-16 units would split the emoji below.
 	it( "names the group's row with its first 64 characters", async ()=>{

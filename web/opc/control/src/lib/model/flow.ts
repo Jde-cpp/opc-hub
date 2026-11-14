@@ -7,6 +7,8 @@ import { ISlugRow, Mutation, MutationType, SlugRow, SlugRowProps } from 'jde-fra
 //A node of the graph:  `wires` has one list per output port of the ids the port feeds.
 export interface FlowNode{ id:string; type:string; name:string; x:number; y:number; props:Record<string,unknown>; wires:string[][]; }
 export interface FlowGraph{ nodes:FlowNode[]; }
+//A node's id, made once and kept by the graph, so a trace written under one version reads under the next.
+export function newFlowNodeId():string{ return `n${crypto.randomUUID().replace( /-/g, '' ).substring( 0, 10 )}`; }
 
 export const flowTraceLevels = ['off', 'counts', 'errors', 'hops'] as const;
 
@@ -130,9 +132,20 @@ export function importFlow( text:string ):FlowExport{
 		return fromNodeRed( json );
 	if( json && typeof json=='object' && json.graph!==undefined ){
 		const text = ( v:unknown )=>typeof v=='string' && v ? v : undefined;
-		return { name: text( json.name ), slug: text( json.slug ), description: text( json.description ), graph: readFlowGraph( json.graph ) };
+		return { name: text( json.name ), slug: text( json.slug ), description: text( json.description ), graph: importedIds( readFlowGraph( json.graph ) ) };
 	}
-	return { graph: readFlowGraph( json ) };
+	return { graph: importedIds( readFlowGraph( json ) ) };
+}
+//An import's ids:  a node with none gets one, as the palette's does, since no wire can name it, and two nodes of one id refuse the
+//file, since a wire to it can't say which it meant.  The canvas keys its nodes by id, so either would lose a node.
+function importedIds( graph:FlowGraph ):FlowGraph{
+	const seen = new Set<string>();
+	for( const n of graph.nodes ){
+		if( n.id && seen.has( n.id ) )
+			throw new Error( `Two nodes have the id '${n.id}':  a wire to it can't say which it meant.` );
+		seen.add( n.id );
+	}
+	return { nodes: graph.nodes.map( n=>n.id ? n : {...n, id: newFlowNodeId()} ) };
 }
 function fromNodeRed( _nodes:unknown[] ):FlowExport{
 	throw new Error( 'It is a Node-RED export, a list of nodes, which is not imported yet:  import a flow exported from this editor, or a graph, { "nodes": [ … ] }.' );

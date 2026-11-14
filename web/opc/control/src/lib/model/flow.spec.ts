@@ -58,6 +58,15 @@ describe( 'flow graphs', ()=>{
 		expect( ()=>importFlow( '{"name":"x"}' ) ).toThrow( '`nodes` list' );
 		expect( ()=>importFlow( '[{"id":"n1","type":"inject","z":"f1","wires":[[]]}]' ) ).toThrow( 'Node-RED export' );//the importer's seam
 	} );
+	//the canvas keys its nodes by id, so an import with none or one twice would lose a node there (reviews-issue/455-flows-web-editor.md #1)
+	it( "gives an imported node with no id one, and refuses two nodes of one id", ()=>{
+		const read = importFlow( '{"nodes":[{"type":"inject","wires":[[]]},{"type":"debug"},{"id":"d","type":"debug"}]}' ).graph.nodes;
+		expect( read.map( n=>n.type ) ).toEqual( ['inject', 'debug', 'debug'] );
+		expect( read[0].id ).toMatch( /^n[0-9a-f]{10}$/ );
+		expect( new Set( read.map( n=>n.id ) ).size ).toBe( 3 );
+		expect( read[2].id ).toBe( 'd' );
+		expect( ()=>importFlow( '{"graph":{"nodes":[{"id":"a","type":"inject","wires":[["a"]]},{"id":"a","type":"debug"}]}}' ) ).toThrow( "Two nodes have the id 'a'" );
+	} );
 	//Versions' diff, by node:  the later one's added, the earlier one's removed, and in both what changed
 	it( 'diffs two graphs by node', ()=>{
 		const later:FlowGraph = { nodes: [

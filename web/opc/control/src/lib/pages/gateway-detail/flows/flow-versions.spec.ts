@@ -80,6 +80,16 @@ describe( 'FlowVersions', ()=>{
 		expect( snackbar.exception ).toHaveBeenCalledWith( 'Could not start the replay.', expect.anything() );
 		expect( tab.busy() ).toBe( false );
 	} );
+	//a deploy, an enable or a disable is a new row of the same flow, whose runs are as they were (reviews-issue/455-flows-web-editor.md #5)
+	it( "reads the runs again for another flow alone", async ()=>{
+		const { fixture, flows } = await create();
+		fixture.componentRef.setInput( 'flow', new Flow( {id: 7, name: 'Pump', slug: 'pump', version: 4, enabled: false} ) );
+		await stable( fixture );
+		expect( flows.runs ).toHaveBeenCalledTimes( 1 );
+		fixture.componentRef.setInput( 'flow', new Flow( {id: 8, name: 'Fan', slug: 'fan', version: 1} ) );
+		await stable( fixture );
+		expect( flows.runs ).toHaveBeenCalledTimes( 2 );
+	} );
 	it( "holds a replay's range to what is stored", ()=>{
 		const now = new Date( 2026, 10, 14, 12, 0 );
 		expect( replayProblem( '2026-11-14T10:00', '2026-11-14T11:00', now ) ).toBeUndefined();

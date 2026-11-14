@@ -1,5 +1,5 @@
 import { fromIsoDuration } from 'jde-framework';
-import { FlowFault, FlowGraph, FlowNode } from './flow';
+import { FlowFault, FlowGraph, FlowNode, newFlowNodeId } from './flow';
 import { parseHistNodeText } from './hist-admin';
 
 //The node types of a flow (#455, docs/flows/spec.md *Sources*, *Nodes*, *Sinks*), as the editor draws them and as a deploy holds
@@ -611,9 +611,9 @@ export function flowNodeFault( node:FlowNode, graph:FlowGraph ):string|undefined
 }
 //each node's fault, its props' or its wires', by its id:  what the canvas warns of
 export function flowNodeFaults( graph:FlowGraph ):Map<string,string>{
-	const y = new Map<string,string>();
+	const y = new Map<string,string>(), index = indexGraph( graph );
 	for( const node of graph.nodes ){
-		const fault = flowNodeFault( node, graph ) ?? wireFault( node, graph );
+		const fault = flowNodeFault( node, graph ) ?? wireFault( node, index );
 		if( fault )
 			y.set( node.id, fault );
 	}
@@ -633,23 +633,37 @@ export function flowGraphFault( graph:FlowGraph ):FlowFault|undefined{
 		if( !flowNodeType( node.type ) )
 			return { node: node.id, message: `\`type\` ${node.type ? JSON.stringify( node.type ) : 'is missing, and so'} is not a node type.` };
 	}
+	const index = indexGraph( graph );
 	for( const node of graph.nodes ){
-		const fault = flowNodeFault( node, graph ) ?? wireFault( node, graph );
+		const fault = flowNodeFault( node, graph ) ?? wireFault( node, index );
 		if( fault )
 			return { node: node.id, message: fault };
 	}
 	return undefined;
 }
-function wireFault( node:FlowNode, graph:FlowGraph ):string|undefined{
+//what wireFault looks up of the graph, made once a pass rather than a scan a wire:  the first node of an id, and the `link in`
+//nodes by name
+type GraphIndex = { byId:Map<string,FlowNode>; linkIns:Map<unknown,number> };
+function indexGraph( graph:FlowGraph ):GraphIndex{
+	const byId = new Map<string,FlowNode>(), linkIns = new Map<unknown,number>();
+	for( const n of graph.nodes ){
+		if( !byId.has( n.id ) )
+			byId.set( n.id, n );
+		if( n.type=='link in' )
+			linkIns.set( n.props['name'], (linkIns.get( n.props['name'] ) ?? 0)+1 );
+	}
+	return { byId, linkIns };
+}
+function wireFault( node:FlowNode, index:GraphIndex ):string|undefined{
 	const name = node.props['name'];
-	if( node.type=='link in' && graph.nodes.filter( n=>n.type=='link in' && n.props['name']===name ).length>1 )
+	if( node.type=='link in' && (index.linkIns.get( name ) ?? 0)>1 )
 		return `Two \`link in\` nodes are named '${name}'.`;
 	const outputs = flowOutputs( node );
 	for( const [port, targets] of node.wires.entries() ){
 		if( port>=outputs && targets.length )
 			return `Output ${port+1} is wired, and a '${node.type}' node has ${outputs}.`;
 		for( const id of targets ){
-			const to = graph.nodes.find( n=>n.id==id );
+			const to = index.byId.get( id );
 			if( !to )
 				return `A wire goes to '${id}', which is not a node of the graph.`;
 			if( !flowNodeType( to.type )?.input )
@@ -665,7 +679,6 @@ export function newFlowNode( type:string, x:number, y:number, id:string=newFlowN
 	const props = flowNodeType( type )?.defaults?.() ?? {};
 	return { id, type, name: '', x, y, props, wires: Array.from( {length: flowOutputs( {type, props} )}, ()=>[] ) };
 }
-export function newFlowNodeId():string{ return `n${crypto.randomUUID().replace( /-/g, '' ).substring( 0, 10 )}`; }
 //A graph as the canvas holds one, so two are compared like for like:  each node's wires a list per port it has, or is wired from,
 //a target once a port, and none that is no node of the graph, which has no connector to end at.
 export function normalizeFlowGraph( graph:FlowGraph ):FlowGraph{
@@ -695,8 +708,9 @@ export function flowFieldText( f:FlowField, v:unknown ):string{
 	return typeof v=='string' ? v : typeof v=='number' || typeof v=='boolean' ? String( v ) : JSON.stringify( v );
 }
 //What was typed into a field as its value, none for a field left blank, which takes its key away:  text that is no number stays
-//text for a number, so its fault says so;  what is no json is text for a literal;  a list is a text a line.
-export function flowFieldValue( f:FlowField, text:string ):unknown{
+//text for a number, so its fault says so;  what is no json is text for a literal;  a list is a text a line.  `was` is the value
+//it held:  a row's id stays a number while it is an integer, since a slug may be all digits and the gateway reads text as a slug.
+export function flowFieldValue( f:FlowField, text:string, was?:unknown ):unknown{
 	const t = text.trim();
 	switch( f.kind ){
 	case 'number':
@@ -726,6 +740,8 @@ export function flowFieldValue( f:FlowField, text:string ):unknown{
 			}
 			catch{}
 		}
+		if( f.orNumber && typeof was=='number' && /^\d+$/.test( t ) )
+			return Number( t );
 		return t || undefined;
 	}
 }

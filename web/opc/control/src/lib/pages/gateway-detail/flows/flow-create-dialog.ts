@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { flowFaultText, FlowGraph, importFlow } from '../../../model/flow';
 import { flowGraphFault } from '../../../model/flow-nodes';
+import { ServerCnnctn } from '../../../model/server-cnnctn';
 
 export type FlowCreateDialogData = { import:boolean };
 //the row to make, and for an import the graph its editor opens with
@@ -13,8 +14,6 @@ export type FlowCreated = { name:string; slug:string; description?:string; graph
 
 //a name as a slug:  lower case, what is no letter or digit a '-'
 export const flowSlug = ( name:string ):string=>name.trim().toLowerCase().replace( /[^a-z0-9._]+/g, '-' ).replace( /^[-._]+|-+$/g, '' );
-//the gateway's rule for a slug (FileSlugError):  it names the flow's trace directory
-export const flowSlugError = ( slug:string ):string|undefined=>/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test( slug ) ? undefined : "Letters, digits, '.', '_' and '-' only, starting with a letter or digit.";
 
 //The Flows tab's Create and Import (#455):  a flow's name, its slug, which names its trace directory and never changes, and a
 //description;  an import reads a flow's json first, an export of this editor's or a bare graph, and names the flow from it.  The
@@ -36,7 +35,9 @@ export class FlowCreateDialog{
 	slug = signal( '' );
 	description = signal( '' );
 	text = signal( '' );//an import's json
-	#slugTyped = false;//the slug follows the name until it is typed
+	//A field follows the import's json until it is typed, and the slug the name too.  A name or a description typed away follows
+	//the json again.
+	#typed = { name: false, slug: false, description: false };
 	//the import's json read:  its graph, or why it has none
 	read = computed<{ graph?:FlowGraph; error?:string; name?:string; slug?:string; description?:string }>( ()=>{
 		if( !this.text().trim() )
@@ -54,28 +55,37 @@ export class FlowCreateDialog{
 		const fault = graph ? flowGraphFault( graph ) : undefined;
 		return fault ? flowFaultText( fault, graph ) : undefined;
 	} );
-	slugError = computed<string|undefined>( ()=>this.slug() ? flowSlugError( this.slug() ) : undefined );
+	slugError = computed<string|undefined>( ()=>this.slug() ? ServerCnnctn.fileSlugError( this.slug() ) : undefined );//it names the flow's trace directory
 	valid = computed<boolean>( ()=>!!this.name().trim() && !!this.slug() && !this.slugError() && (!this.data.import || !!this.read().graph) );
 
 	setName( name:string ):void{
+		this.#typed.name = !!name.trim();
+		this.#name( name );
+	}
+	#name( name:string ):void{
 		this.name.set( name );
-		if( !this.#slugTyped )
+		if( !this.#typed.slug )
 			this.slug.set( flowSlug( name ) );
 	}
 	setSlug( slug:string ):void{
-		this.#slugTyped = true;
+		this.#typed.slug = true;
 		this.slug.set( slug.trim() );
 	}
-	//the json given, typed or from a file:  it names the flow where the form hasn't yet
+	setDescription( description:string ):void{
+		this.#typed.description = !!description.trim();
+		this.description.set( description );
+	}
+	//The json given, typed or from a file:  it names the flow where the form hasn't been typed, so another file or paste names it
+	//afresh, its name, slug and description all of one export.
 	setText( text:string ):void{
 		this.text.set( text );
 		const read = this.read();
-		if( read.name && !this.name() )
-			this.setName( read.name );
-		if( read.slug && !this.#slugTyped && !flowSlugError( read.slug ) )
+		if( !this.#typed.name )
+			this.#name( read.name ?? '' );
+		if( read.slug && !this.#typed.slug && !ServerCnnctn.fileSlugError( read.slug ) )
 			this.slug.set( read.slug );
-		if( read.description && !this.description() )
-			this.description.set( read.description );
+		if( !this.#typed.description )
+			this.description.set( read.description ?? '' );
 	}
 	async onFile( input:HTMLInputElement ):Promise<void>{
 		const file = input.files?.[0];

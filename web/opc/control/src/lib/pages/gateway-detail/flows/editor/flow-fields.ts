@@ -30,7 +30,7 @@ export class FlowFields{
 
 	text( f:FlowField ):string{ return flowFieldText( f, this.value()[f.key] ); }
 	placeholder( f:FlowField ):string{ return f.dflt===undefined ? '' : typeof f.dflt=='string' ? f.dflt : JSON.stringify( f.dflt ); }
-	setText( f:FlowField, text:string ):void{ this.#set( f.key, flowFieldValue( f, text ) ); }
+	setText( f:FlowField, text:string ):void{ this.#set( f.key, flowFieldValue( f, text, this.value()[f.key] ) ); }
 	checked( f:FlowField ):boolean{ const v = this.value()[f.key]; return typeof v=='boolean' ? v : f.dflt===true; }
 	//a flag at its default is left out, as a blank field is
 	setFlag( f:FlowField, checked:boolean ):void{ this.#set( f.key, f.dflt!==undefined && checked===f.dflt ? undefined : checked ); }

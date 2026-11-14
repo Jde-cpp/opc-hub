@@ -81,12 +81,14 @@ export const histGroupSubject:AccessSubject = {
 export class HistGroupAccess{
 	constructor(){
 		effect( ()=>{//the router reuses the page from one group to the next:  read the one it holds now
-			const group = this.group();
-			untracked( ()=>this.load( group ) );
+			this.#shownGuid();
+			untracked( ()=>this.load() );
 		} );
 	}
 	group = input.required<HistGroupRef>();
 	subject = input<AccessSubject>( histGroupSubject );//the group's, unless the tab is on another table's row
+	//the row by its guid:  a page that gives the tab a new object of the same row, as a flow's deploy does, keeps the ticks not saved
+	#shownGuid = computed( ()=>this.group().guid );
 	own = signal<HistGroupResource|undefined>( undefined );
 	table = signal<HistGroupResource|undefined>( undefined );
 	//By key, never by id:  access_role_add finds the row by it whether or not the authorizer's cache holds the row, and makes it,

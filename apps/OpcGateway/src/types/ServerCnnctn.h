@@ -41,7 +41,7 @@ namespace Jde::Opc::Gateway{
 		//the constructors supply the server's, the gateway's own applicationUri - the uri in the SAN of the process's pair,
 		///http/ssl, which that server presents - and DriverBrowseNs.
 		α OwnServer()Ι->bool{ return Kind==KindFlow || HasDriver(); }
-		static constexpr sv FlowSlug{ "flows" };//the flow server's row, the one of KindFlow.
+		static constexpr sv FlowSlug{ "flow-server" };//the flow server's row, the one of KindFlow:  not `flows`, the web's list segment, which SlugError refuses.
 		Ω FlowPort()ι->PortType;///gateway/flows/server/port, 4860 where the block names none.
 		Ω FlowUrl()ι->string{ return Ƒ( "opc.tcp://127.0.0.1:{}", FlowPort() ); }//what the flow row's url holds, and its clients dial.
 		//Where a driver row's server listens:  loopback, at /gateway/drivers/portBase plus the row's id.  Throws past port 65535.

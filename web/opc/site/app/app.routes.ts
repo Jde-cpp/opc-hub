@@ -126,11 +126,13 @@ export const routes: Routes = [
 				canActivate: [AuthGuard],
 				data: { tableSettings: gatewayTableSettings }
 			},
-			//The historian's templates and groups (#337):  their lists are tabs of the gateway's page, so the bare list urls - Back and
-			//Cancel from a detail land on them - redirect to it, ahead of ':connection', which would take the segment for a connection.
-			//A segment added ahead of ':connection' joins ServerCnnctn.reservedSlugs and ServerCnnctn::SlugError, which refuse it as a slug.
+			//The historian's templates and groups (#337) and the flows (#455):  their lists are tabs of the gateway's page, so the bare
+			//list urls - Back and Cancel from a detail land on them - redirect to it, ahead of ':connection', which would take the segment
+			//for a connection.  A segment added ahead of ':connection' joins ServerCnnctn.reservedSlugs and ServerCnnctn::SlugError, which
+			//refuse it as a slug.
 			{ path: 'templates', pathMatch: 'full', redirectTo: '' },
 			{ path: 'groups', pathMatch: 'full', redirectTo: '' },
+			{ path: 'flows', pathMatch: 'full', redirectTo: '' },
 			{
 				path: 'templates/:slug',
 				loadComponent: loadHistTemplateDetail,
@@ -199,9 +201,7 @@ export const routes: Routes = [
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},
-			//A flow's page (#455), under the Flows tab's list.  No bare `flows` redirect, as the lists above have:  `flows` is the flow
-			//server's connection, the one row the gateway makes itself, and ':connection' serves its page, so a flow's page goes back to
-			//the gateway's own (gatewayListLink).
+			//A flow's page (#455), under the Flows tab's list.
 			{
 				path: 'flows/:slug',
 				loadComponent: loadFlowDetail,

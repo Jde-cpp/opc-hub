@@ -4,11 +4,11 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { FCanvasComponent, FCreateConnectionEvent, FCreateNodeEvent, FFlowComponent, FFlowModule, FSelectionChangeEvent, FZoomDirective, injectFlowState, provideFFlow, withA11y, withFlowState } from '@foblex/flow';
 import { FlowGraph } from '../../../../model/flow';
-import { flowCategories, FlowNodePatch, flowNodeTypes, flowOutputs, newFlowNodeId } from '../../../../model/flow-nodes';
-import { CanvasNode, CanvasWire, inNode, outPort, toCanvas, toGraph, wire, wireId } from './flow-canvas-state';
+import { flowCategories, FlowNodePatch, flowNodeTypes, flowOutputs, newFlowNode } from '../../../../model/flow-nodes';
+import { canvasRecord, CanvasNode, CanvasWire, inNode, outPort, toCanvas, toGraph, wire, wireId } from './flow-canvas-state';
 import { FlowNodeView } from './flow-node-view';
 
-const canvasNode = ( type:string, x:number, y:number ):CanvasNode=>({ id: newFlowNodeId(), position: {x, y}, type, name: '', props: flowNodeTypes.find( t=>t.type==type )?.defaults?.() ?? {} });
+const canvasNode = ( type:string, x:number, y:number ):CanvasNode=>canvasRecord( newFlowNode( type, x, y ) );
 
 //The flow editor's canvas (#455), on @foblex/flow (#446):  a palette by category, a node a component drawn by its type, wires
 //dragged from port to port, zoom, the minimap, and undo and redo from the library's managed state, whose records are mapped to the

@@ -3,6 +3,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { By } from '@angular/platform-browser';
 import { SnackbarService } from 'jde-framework';
 import { dialogStub, snackbarStub } from 'jde-framework/testing';
+import { ConfirmDialog } from 'jde-framework';
 import { stable } from 'jde-spa/testing';
 import { Flow, FlowDeployed, FlowGraph } from '../../../../model/flow';
 import { normalizeFlowGraph } from '../../../../model/flow-nodes';
@@ -19,6 +20,7 @@ const create = async ( {flow=row(), source={deployed: deployed()}}:{flow?:Flow; 
 	const answer:FlowDeployed = { version: 3, userName: 'ann', running: true, dropped: 0 };
 	const flows = { deploy: vi.fn( async ( ..._args:unknown[] )=>answer ), setEnabled: vi.fn( async ( ..._args:unknown[] )=>{} ), inject: vi.fn( async ( ..._args:unknown[] )=>{} ) };
 	const dialog = dialogStub( 'the comment' ), snackbar = snackbarStub(), gateway = { postQL: vi.fn() };
+	dialog.answers.set( ConfirmDialog, true );//what the canvas holds may go
 	TestBed.configureTestingModule( {providers: [{ provide: FlowService, useValue: flows }, { provide: MatDialog, useValue: dialog }, { provide: SnackbarService, useValue: snackbar }]} );
 	const fixture = TestBed.createComponent( FlowEditor ), editor = fixture.componentInstance;
 	fixture.componentRef.setInput( 'gateway', gateway );
@@ -55,13 +57,30 @@ describe( 'FlowEditor', ()=>{
 		expect( editor.graph() ).toEqual( draft );
 		expect( [editor.dirty(), editor.canDeploy()] ).toEqual( [true, true] );
 		expect( element.querySelector( '.dirty' )!.textContent ).toContain( 'changes not deployed' );
-		editor.revert();
+		await editor.revert();
 		await stable( fixture );
 		expect( [editor.graph(), editor.dirty()] ).toEqual( [deployed(), false] );
 		fixture.componentRef.setInput( 'source', {deployed: {nodes: []}} );//another flow, with nothing deployed
 		fixture.componentRef.setInput( 'flow', row( {id: 8, version: undefined} ) );
 		await stable( fixture );
 		expect( [editor.graph().nodes.length, editor.dirty(), editor.canDeploy()] ).toEqual( [0, false, true] );//a first deploy, of whatever is drawn
+	} );
+	//a load begins the history again, so what isn't deployed goes only once it is confirmed (reviews-issue/455-flows-web-editor.md #3)
+	it( 'asks before Revert replaces what is not deployed', async ()=>{
+		const draft = { nodes: [node( 'in', 'inject', {wires: [[]]} )] };
+		const { editor, dialog, fixture } = await create( {source: {deployed: deployed(), draft}} );
+		dialog.answers.set( ConfirmDialog, false );
+		await editor.revert();
+		await stable( fixture );
+		expect( (<{title:string}>dialog.open.mock.lastCall![1]!.data).title ).toBe( 'Revert to the version deployed?' );
+		expect( [editor.graph(), editor.dirty()] ).toEqual( [draft, true] );
+		dialog.answers.set( ConfirmDialog, true );
+		await editor.revert();
+		await stable( fixture );
+		expect( [editor.graph(), editor.dirty()] ).toEqual( [deployed(), false] );
+		dialog.open.mockClear();
+		expect( await editor.mayReplace( 'x' ) ).toBe( true );//nothing to lose:  nothing asked
+		expect( dialog.open ).not.toHaveBeenCalled();
 	} );
 	it( 'shows the selected node its form, whose edits go to the canvas', async ()=>{
 		const { editor, element, fixture } = await create();

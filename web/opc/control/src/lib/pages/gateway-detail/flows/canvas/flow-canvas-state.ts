@@ -1,5 +1,5 @@
 import type { IFStateConnection, IFStateData, IFStateNode } from '@foblex/flow';
-import { FlowGraph } from '../../../../model/flow';
+import { FlowGraph, FlowNode } from '../../../../model/flow';
 import { flowOutputs } from '../../../../model/flow-nodes';
 
 //The graph (docs/flows/spec.md *Flows*) against the canvas library's records (#446):  a node's wires are a list of target ids
@@ -18,8 +18,9 @@ export function outPort( connector:string ):{ node:string; port:number }{
 export const inNode = ( connector:string )=>connector.substring( 3 );
 export const wire = ( node:string, port:number, target:string ):CanvasWire=>({ id: wireId( outId( node, port ), inId( target ) ), sourceId: outId( node, port ), targetId: inId( target ) });
 
+export const canvasRecord = ( x:FlowNode ):CanvasNode=>({ id: x.id, position: {x: x.x, y: x.y}, type: x.type, name: x.name, props: x.props });
 export function toCanvas( graph:FlowGraph ):Partial<IFStateData<CanvasNode,CanvasWire>>{
-	const nodes = graph.nodes.map( x=>({ id: x.id, position: {x: x.x, y: x.y}, type: x.type, name: x.name, props: x.props }) );
+	const nodes = graph.nodes.map( canvasRecord );
 	const ids = new Set( graph.nodes.map( x=>x.id ) );//a wire to no node of the graph has no connector to end at
 	const connections = graph.nodes.flatMap( x=>x.wires.flatMap( ( targets, port )=>targets.filter( t=>ids.has( t ) ).map( target=>wire( x.id, port, target ) ) ) );
 	return { nodes, connections, groups: [] };
