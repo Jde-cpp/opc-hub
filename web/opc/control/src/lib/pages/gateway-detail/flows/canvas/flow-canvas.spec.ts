@@ -158,4 +158,22 @@ describe( 'FlowCanvas', ()=>{
 		await stable( fixture );
 		expect( wireKeys.at( -1 ) ).toBeUndefined();
 	} );
+	//the library's keyboard layer deletes the selection on Delete:  read-only, the key goes no further
+	it( 'keeps a node selected read-only from the Delete key', async ()=>{
+		const press = ( element:HTMLElement, key:string )=>element.querySelector( 'f-flow' )!.dispatchEvent( new KeyboardEvent( 'keydown', {key, bubbles: true} ) );
+		const editable = await create();
+		editable.canvas.select( 'b' );
+		await stable( editable.fixture );//the library takes a selection once its wires have settled
+		press( editable.element, 'Delete' );
+		await stable( editable.fixture );
+		expect( editable.canvas.state.nodes().length ).toBe( 4 );//editing, the layer deletes it
+		TestBed.resetTestingModule();//a read-only canvas in the same test
+		const { canvas, fixture, element } = await create( graph(), true );
+		canvas.select( 'b' );
+		await stable( fixture );
+		press( element, 'Delete' );
+		press( element, 'Backspace' );
+		await stable( fixture );
+		expect( [canvas.state.nodes().length, canvas.state.connections().length] ).toEqual( [5, 5] );
+	} );
 } );

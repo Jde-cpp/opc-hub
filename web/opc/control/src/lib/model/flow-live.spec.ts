@@ -62,4 +62,17 @@ describe( 'flow-live', ()=>{
 		expect( flowHopsShown( state.hops, undefined, 'birth' ).map( h=>h.msgId ) ).toEqual( ['13', '12'] );
 		expect( flowHopsShown( state.hops, 'in', 'hop' ) ).toEqual( [] );
 	} );
+	//a push comes wherever anything changed:  a quiet wire's rate is over the time since a push last named it, not the busy one's
+	it( "takes each wire's rate over its own interval", ()=>{
+		let state = flowLiveNext( flowLiveStart(), {kind: 'ack', version: 1, nodes: []}, 0 );
+		for( let i=1; i<=10; ++i ){
+			const wires = [wire( 'a', 0, 'b', 1, i, '{}' ), ...( i%5==0 ? [wire( 'c', 0, 'd', 1, 100+i, '{}' )] : [] )];
+			state = flowLiveNext( state, {kind: 'activity', activity: toFlowLiveActivity( activity( {wires} ) )}, i*200 );
+		}
+		expect( [state.wires.get( 'a:0>b' )?.rate, state.wires.get( 'c:0>d' )?.rate] ).toEqual( [5, 1] );
+		expect( state.wires.get( 'c:0>d' ) ).toMatchObject( {node: 'c', port: 0, to: 'd', count: 2} );
+		//named again after a quiet spell:  over the quiet time at most
+		state = flowLiveNext( state, {kind: 'activity', activity: toFlowLiveActivity( activity( {wires: [wire( 'c', 0, 'd', 3, 200, '{}' )]} ) )}, 12_000 );
+		expect( state.wires.get( 'c:0>d' )?.rate ).toBe( 1.5 );
+	} );
 } );

@@ -1,11 +1,11 @@
 <div class="actions" role="toolbar" aria-label="Range">
 	<mat-form-field subscriptSizing="dynamic" class="time">
 		<mat-label>From</mat-label>
-		<input matInput type="datetime-local" [value]="from()" (input)="from.set($any($event.target).value)" (change)="read()">
+		<input matInput type="datetime-local" step="1" [value]="from()" (input)="from.set($any($event.target).value)" (change)="read()">
 	</mat-form-field>
 	<mat-form-field subscriptSizing="dynamic" class="time">
 		<mat-label>To</mat-label>
-		<input matInput type="datetime-local" [value]="to()" (input)="to.set($any($event.target).value)" (change)="read()">
+		<input matInput type="datetime-local" step="1" [value]="to()" (input)="to.set($any($event.target).value)" (change)="read()">
 	</mat-form-field>
 	<button matButton type="button" (click)="preset(3_600_000)" matTooltip="The last hour of the live trace">Hour</button>
 	<button matButton type="button" (click)="preset(86_400_000)" matTooltip="The last day">Day</button>

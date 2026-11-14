@@ -39,12 +39,13 @@ export function toFlowRecordKind( v:unknown ):FlowRecordKind{ return (<readonly 
 export function toFlowNodeStatus( json:any ):FlowNodeStatus|undefined{
 	return json && typeof json=='object' ? { fill: String( json.fill ?? '' ), shape: String( json.shape ?? '' ), text: String( json.text ?? '' ) } : undefined;
 }
-//a record as the reads answer one:  its json parsed where whole, its text where cut
+//a record as the reads answer one:  its json parsed where whole, its text where cut, and none where the gateway's is null, a
+//message that passed the node unchanged
 export function toFlowTraceRecord( json:any ):FlowTraceRecord{
 	return {
 		time: new Date( json.time ), msgId: flowMessageId( json.msgId ), parentId: flowMessageId( json.parentId ), runId: Number( json.runId ?? 0 ),
 		node: String( json.node ?? '' ), kind: toFlowRecordKind( json.kind ), ports: Array.isArray( json.ports ) ? json.ports.map( Number ) : [],
-		json: json.json===undefined ? undefined : json.json, cut: !!json.cut, error: json.error || undefined, status: toFlowNodeStatus( json.status ),
+		json: json.json ?? undefined, cut: !!json.cut, error: json.error || undefined, status: toFlowNodeStatus( json.status ),
 		blocks: Array.isArray( json.blocks ) ? json.blocks.map( String ) : []
 	};
 }

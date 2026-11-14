@@ -81,7 +81,8 @@ export function flowDeployMarks( versions:FlowVersion[], start:Date, end:Date ):
 
 //A message's path from its lineage, the records flowMessage answers in time order:  the message's own records, its ancestors'
 //and its descendants'.  The nodes each passed, in order, and the wires between a record and the next of the same message, the
-//port the one the node's wires take to the next, so the canvas lights the path.  `own` is the message selected, `kin` the rest.
+//port the first the record sent on whose wires take it to the next, else the first that does, so the canvas lights the path.
+//`own` is the message selected, `kin` the rest.
 export type FlowLineagePath = { own:{ nodes:string[]; wires:string[] }; kin:{ nodes:string[]; wires:string[] } };
 export function flowLineagePath( records:FlowTraceRecord[], id:string, graph:FlowGraph ):FlowLineagePath{
 	const byNode = new Map( graph.nodes.map( n=>[n.id, n] ) );
@@ -95,7 +96,8 @@ export function flowLineagePath( records:FlowTraceRecord[], id:string, graph:Flo
 		//a clone's first record follows its parent's at the node it was made:  the wire is from there
 		const before = last.get( r.msgId ) ?? ( r.kind=='clone' && r.parentId ? last.get( r.parentId ) : undefined );
 		if( before && before.node!=r.node ){
-			const port = byNode.get( before.node )?.wires.findIndex( targets=>targets.includes( r.node ) ) ?? -1;
+			const wires = byNode.get( before.node )?.wires ?? [];
+			const port = before.ports.find( p=>wires[p]?.includes( r.node ) ) ?? wires.findIndex( targets=>targets.includes( r.node ) );
 			if( port>=0 )
 				path.wires.add( flowWireKey( before.node, port, r.node ) );
 		}
@@ -108,13 +110,20 @@ export function flowOwnRecords( records:FlowTraceRecord[], id:string ):FlowTrace
 
 //Play (spec *History*):  the range's records stepped through the canvas at a speed, the live animation driven from the files.
 //The player stands at a time of the range, `at`, and moves it by the wall clock's step times the speed each `tick`, answering
-//the records between where it stood and where it stands, in order, and whether the range is done.  The records come in pages,
-//`add`ed as they are read, oldest first;  `starved` says the player has stepped to the end of what it holds while more is to
-//come, so the tab reads the next page before it goes on.  A fake clock drives it in a spec:  nothing here reads Date.now.
+//the records between where it stood and where it stands, in order, and whether the range is done.  Its records begin at `from`,
+//where it was put to play, and come in pages, `add`ed as they are read, oldest first:  while more are to come it stops at the
+//last it holds, for the tab to read the next, whose account the tab keeps in `reading` and `continuation`.  A time outside what
+//it `holds` is a player of its own.  A fake clock drives it in a spec:  nothing here reads Date.now.
 export class FlowPlayer{
-	constructor( readonly start:Date, readonly end:Date ){ this.at = start.getTime(); }
+	constructor( readonly start:Date, readonly end:Date, from=start.getTime() ){
+		this.from = Math.min( Math.max( from, start.getTime() ), end.getTime() );
+		this.at = this.from;
+	}
+	readonly from:number;//ms, the time its records begin at
 	at:number;//ms, the time the player stands at
 	speed = 1;
+	reading = false;//a page is asked for
+	continuation?:string;//where the next page starts
 	#records:FlowTraceRecord[] = [];
 	#next = 0;//the first record not yet fired
 	#complete = false;//every page is in
@@ -126,11 +135,17 @@ export class FlowPlayer{
 	}
 	get held():number{ return this.#records.length-this.#next; }
 	get complete():boolean{ return this.#complete; }
-	get starved():boolean{ return this.playing && !this.#complete && this.#next>=this.#records.length; }
 	get done():boolean{ return this.#complete && this.#next>=this.#records.length && this.at>=this.end.getTime(); }
+	//whether the player can be put at a time:  from where its records begin, to the range's end once they are all in, else to the
+	//last it holds
+	holds( ms:number ):boolean{
+		if( ms<this.from || ms>this.end.getTime() )
+			return false;
+		return this.#complete || (this.#records.length>0 && ms<=this.#records[this.#records.length-1].time.getTime());
+	}
 	play( wall:number ):void{
 		if( this.done )
-			this.seek( this.start.getTime() );
+			this.seek( this.from );
 		this.playing = true;
 		this.#wall = wall;
 	}
@@ -140,7 +155,7 @@ export class FlowPlayer{
 	}
 	//the player put at a time:  what is before it is as fired, and the records from it on fire as it goes
 	seek( ms:number ):void{
-		this.at = Math.min( Math.max( ms, this.start.getTime() ), this.end.getTime() );
+		this.at = Math.min( Math.max( ms, this.from ), this.end.getTime() );
 		this.#next = this.#records.findIndex( r=>r.time.getTime()>=this.at );
 		if( this.#next<0 )
 			this.#next = this.#records.length;

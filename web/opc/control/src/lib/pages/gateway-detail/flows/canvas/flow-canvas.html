@@ -8,7 +8,6 @@
 	<button matIconButton type="button" aria-label="Zoom in" matTooltip="Zoom in" (click)="zoom().zoomIn()"><mat-icon aria-hidden="true">zoom_in</mat-icon></button>
 	<button matIconButton type="button" aria-label="Zoom out" matTooltip="Zoom out" (click)="zoom().zoomOut()"><mat-icon aria-hidden="true">zoom_out</mat-icon></button>
 	<button matIconButton type="button" aria-label="Fit the flow to the view" matTooltip="Fit" (click)="fit()"><mat-icon aria-hidden="true">fit_screen</mat-icon></button>
-	<ng-content select="[canvasBar]"/>
 	<span class="figures">{{ state.nodes().length }} {{ state.nodes().length==1 ? 'node' : 'nodes' }}, {{ state.connections().length }} {{ state.connections().length==1 ? 'wire' : 'wires' }}</span>
 </div>
 <div class="body">

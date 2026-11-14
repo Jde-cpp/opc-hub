@@ -25,6 +25,7 @@ describe( 'flow-trace', ()=>{
 		expect( flowJsonText( r.json ) ).toBe( '{\n\t"payload": 3,\n\t"_id": {\n\t\t"low": 5,\n\t\t"high": 0,\n\t\t"unsigned": true\n\t}\n}' );
 		const s = toFlowTraceRecord( {time: '2026-11-14T08:00:01Z', msgId: null, runId: 3, node: 'fn', kind: 'status', ports: [], json: null, cut: false, error: null, status: {fill: 'red', shape: 'dot', text: 'down'}, blocks: ['a']} );
 		expect( s ).toMatchObject( {msgId: undefined, runId: 3, kind: 'status', status: {fill: 'red', shape: 'dot', text: 'down'}, blocks: ['a']} );
+		expect( s.json ).toBeUndefined();//the gateway's null, a message the node passed on unchanged:  no json to show
 		expect( flowRecordSummary( s ) ).toBe( 'down' );
 		expect( flowRecordSummary( record( '08:00:00', 'fn', '1', {error: 'boom'} ) ) ).toBe( 'boom' );
 		expect( flowRecordSummary( record( '08:00:00', 'fn', '1', {json: {payload: {a: [1, 2]}}} ) ) ).toBe( '{ "a": [ 1, 2 ] }' );
@@ -80,6 +81,10 @@ describe( 'flow-trace', ()=>{
 		expect( clone.own ).toEqual( {nodes: ['fn', 'dbg'], wires: ['fn:0>dbg']} );
 		expect( clone.kin.nodes ).toEqual( ['in', 'sw', 'log'] );
 		expect( flowOwnRecords( lineage, '2' ).map( r=>r.node ) ).toEqual( ['fn', 'dbg'] );
+		//two outputs wired to one node:  the wire of the port the record sent on
+		const both:FlowGraph = { nodes: [node( 'sw', 'switch', [['dbg'], ['dbg']] ), node( 'dbg', 'debug' )] };
+		expect( flowLineagePath( [record( '08:00:00', 'sw', '3', {ports: [1]} ), record( '08:00:01', 'dbg', '3' )], '3', both ).own.wires ).toEqual( ['sw:1>dbg'] );
+		expect( flowLineagePath( [record( '08:00:00', 'sw', '3' ), record( '08:00:01', 'dbg', '3' )], '3', both ).own.wires ).toEqual( ['sw:0>dbg'] );//no port said:  the first
 	} );
 	//Play on a fake clock:  the player moves speed times the wall clock's step, fires the records it passes, waits at the end of
 	//a page while more are to come, and stops at the range's end
@@ -96,10 +101,10 @@ describe( 'flow-trace', ()=>{
 		expect( player.at ).toBe( t( '08:00:01' ).getTime() );
 		expect( player.tick( 2000 ).map( r=>r.node ) ).toEqual( ['sw', 'fn'] );//to 08:00:10 by the clock, held at the last record while a page is to come
 		expect( player.at ).toBe( t( '08:00:05' ).getTime() );
-		expect( player.starved ).toBe( true );
+		expect( [player.held, player.holds( t( '08:00:05' ).getTime() ), player.holds( t( '08:00:06' ).getTime() )] ).toEqual( [0, true, false] );
 		player.add( [record( '08:00:07', 'log', '1' )], true );
 		expect( player.tick( 2100 ).map( r=>r.node ) ).toEqual( [] );//a second on from where it stood
-		expect( [player.at, player.playing, player.done, player.starved] ).toEqual( [t( '08:00:06' ).getTime(), true, false, false] );
+		expect( [player.at, player.playing, player.done, player.holds( t( '08:00:10' ).getTime() )] ).toEqual( [t( '08:00:06' ).getTime(), true, false, true] );
 		expect( player.tick( 3000 ).map( r=>r.node ) ).toEqual( ['log'] );//to the range's end, and no further
 		expect( [player.at, player.playing, player.done] ).toEqual( [t( '08:00:10' ).getTime(), false, true] );
 		expect( player.tick( 3100 ) ).toEqual( [] );//paused by its end
@@ -111,5 +116,19 @@ describe( 'flow-trace', ()=>{
 		expect( player.tick( 6500 ).map( r=>r.node ) ).toEqual( ['fn'] );
 		player.pause();
 		expect( player.tick( 7500 ) ).toEqual( [] );
+	} );
+	//a player put to play at a time:  its records begin there, and it holds no time before it, nor past what it has read
+	it( 'plays from where it was put', ()=>{
+		const player = new FlowPlayer( t( '08:00:00' ), t( '08:00:10' ), t( '08:00:04' ).getTime() );
+		expect( [player.from, player.at] ).toEqual( [t( '08:00:04' ).getTime(), t( '08:00:04' ).getTime()] );
+		expect( player.holds( t( '08:00:04' ).getTime() ) ).toBe( false );//nothing read yet
+		player.add( [record( '08:00:04', 'sw', '1' ), record( '08:00:05', 'fn', '1' )], false );
+		expect( [t( '08:00:03' ), t( '08:00:04' ), t( '08:00:05' ), t( '08:00:06' )].map( d=>player.holds( d.getTime() ) ) ).toEqual( [false, true, true, false] );
+		player.seek( t( '08:00:01' ).getTime() );
+		expect( player.at ).toBe( t( '08:00:04' ).getTime() );//no further back than its records
+		player.play( 0 );
+		expect( player.tick( 1000 ).map( r=>r.node ) ).toEqual( ['sw', 'fn'] );
+		player.add( [], true );
+		expect( player.holds( t( '08:00:10' ).getTime() ) ).toBe( true );
 	} );
 } );

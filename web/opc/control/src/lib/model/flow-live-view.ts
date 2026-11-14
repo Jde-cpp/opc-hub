@@ -8,13 +8,13 @@ import { addFlowCounts } from './flow-trace-view';
 
 //A node as the canvas decorates it:  its status, its figures since the ack, its last error's text, and whether it has erred.
 export type FlowNodeLive = { status?:FlowNodeStatus; counts:FlowNodeCounts; error?:string };
-//A wire as the canvas decorates it:  the messages down it since the ack, its rate a second over the last push's interval,
-//and the last message the pushes carried.
-export type FlowWireLive = { count:number; rate:number; at:number; msgId?:string; time?:Date; json?:unknown; cut:boolean };
+//A wire as the canvas decorates it:  its ends, the messages down it since the ack, its rate a second, and the last message the
+//pushes carried.
+export type FlowWireLive = { node:string; port:number; to:string; count:number; rate:number; at:number; msgId?:string; time?:Date; json?:unknown; cut:boolean };
 //The state of a subscribed flow, built from its events:  `version` the run's, `nodes` and `wires` by the canvas's keys, the
-//`hops` newest first, capped, `dropped` the oldest the gateway or the cap left out.  A push's rate is its count over the time
-//since the push before, and `settle` lets a wire's rate go once no push has named it for `quiet` ms, since a push comes only
-//where something changed.
+//`hops` newest first, capped, `dropped` the oldest the gateway or the cap left out.  A push comes wherever anything in the flow
+//changed, so a wire's rate is its count over the time since the last push that named it, at most `flowLiveQuiet`, or since the
+//push before where none has;  `settle` lets a wire's rate go once no push has named it for `quiet` ms.
 export type FlowLiveState = { version?:number; nodes:Map<string,FlowNodeLive>; wires:Map<string,FlowWireLive>; hops:FlowTraceRecord[]; dropped:number; pushed:number; pushes:number };
 export const flowLiveStart = ():FlowLiveState=>({ nodes: new Map(), wires: new Map(), hops: [], dropped: 0, pushed: 0, pushes: 0 });
 export const flowHopsKept = 500;
@@ -32,11 +32,12 @@ export function flowLiveNext( state:FlowLiveState, event:FlowLiveEvent, now:numb
 		const was = nodes.get( n.node ) ?? { counts: noFlowCounts() };
 		nodes.set( n.node, { status: n.status ?? was.status, counts: n.counts ? addFlowCounts( was.counts, n.counts ) : was.counts, error: n.error ?? was.error } );
 	}
-	const interval = Math.max( 1, now-state.pushed )/1000;
+	const since = Math.max( 1, now-state.pushed );//ms since the push before
 	const wires = new Map( state.wires );
 	for( const w of activity.wires ){
 		const key = flowWireKey( w.node, w.port, w.to ), was = wires.get( key );
-		wires.set( key, { count: (was?.count ?? 0)+w.count, rate: w.count/interval, at: now, msgId: w.msgId ?? was?.msgId, time: w.time ?? was?.time, json: w.msgId ? w.json : was?.json, cut: w.msgId ? w.cut : (was?.cut ?? false) } );
+		const interval = ( was ? Math.min( Math.max( 1, now-was.at ), flowLiveQuiet ) : since )/1000;
+		wires.set( key, { node: w.node, port: w.port, to: w.to, count: (was?.count ?? 0)+w.count, rate: w.count/interval, at: now, msgId: w.msgId ?? was?.msgId, time: w.time ?? was?.time, json: w.msgId ? w.json : was?.json, cut: w.msgId ? w.cut : (was?.cut ?? false) } );
 	}
 	let hops = state.hops, dropped = state.dropped+activity.hopsDropped;
 	if( activity.hops.length ){

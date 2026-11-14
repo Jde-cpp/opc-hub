@@ -21,7 +21,7 @@
 	<aside class="panel" aria-label="Debug">
 		@if( wire(); as w ){
 			<section class="selection" aria-label="The wire's last message">
-				<h3>{{ wireText( selectedWire()! ) }}</h3>
+				<h3>{{ wireText( w ) }}</h3>
 				<p class="hint">{{ w.count }} {{ w.count==1 ? 'message' : 'messages' }} since the subscription@if( w.time ){, the last at {{ w.time | date:'mediumTime' }}}@if( w.cut ){, its json cut}.</p>
 				@if( w.msgId ){ <pre class="json">{{ json( w.json ) }}</pre> }
 			</section>

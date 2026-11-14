@@ -1,4 +1,4 @@
-import { Component, computed, effect, input, output, untracked, viewChild, ViewEncapsulation } from '@angular/core';
+import { Component, computed, effect, ElementRef, inject, input, output, untracked, viewChild, ViewEncapsulation } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -56,8 +56,15 @@ export class FlowCanvas{
 	wires = computed( ()=>new Map<string,FlowWireDecor|undefined>( this.state.connections().map( c=>[c.id, this.decor().wires.get( wireKey( c ) )] ) ) );
 	#rendered = false;
 	#loads = 0;
+	#host:HTMLElement = inject( ElementRef ).nativeElement;
 
 	constructor(){
+		//Read-only, Delete and Backspace go no further:  the library's keyboard layer, on the f-flow below, would take the selection
+		//out of the state, and its config is the component's, not the input's.  A capture, so it runs ahead of the layer.
+		this.#host.addEventListener( 'keydown', ( e:KeyboardEvent )=>{
+			if( this.readonly() && (e.key=='Delete' || e.key=='Backspace') )
+				e.stopPropagation();
+		}, {capture: true} );
 		effect( ()=>{
 			const graph = this.graph();
 			untracked( ()=>this.graphChange.emit( graph ) );
@@ -82,7 +89,7 @@ export class FlowCanvas{
 			this.#fitWhenDrawn( this.#loads, 120 );
 	}
 	//fFullRendered comes for the flow's first render and again when an undo empties the history, never for a load:  the first
-	//fits the view, and a later load fits once every wire has its path.
+	//fits the view, and a later load fits once every wire has its path.  Its own paths:  another tab's canvas is alive beside it.
 	onFullRendered():void{
 		if( this.#rendered )
 			return;
@@ -92,7 +99,7 @@ export class FlowCanvas{
 	#fitWhenDrawn( load:number, frames:number ):void{
 		if( load!=this.#loads )
 			return;
-		const paths = Array.from( document.querySelectorAll( '.flow-canvas f-connection path.f-connection-path' ) );
+		const paths = Array.from( this.#host.querySelectorAll( 'f-connection path.f-connection-path' ) );
 		if( frames<=0 || (paths.length>=this.state.connections().length && paths.every( x=>x.getAttribute( 'd' ) )) )
 			this.fit( false );
 		else

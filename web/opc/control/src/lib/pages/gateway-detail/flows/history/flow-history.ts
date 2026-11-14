@@ -7,9 +7,8 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
-import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { errorMessage } from 'jde-framework';
+import { DateUtils, errorMessage } from 'jde-framework';
 import { Latest } from 'jde-spa';
 import { Flow, FlowGraph, FlowRun, FlowVersion } from '../../../../model/flow';
 import { FlowCountRow, FlowRecordKind, flowRecordKinds, FlowTraceRecord, flowWireKey } from '../../../../model/flow-trace';
@@ -18,7 +17,6 @@ import { FlowService } from '../../../../services/flow-service';
 import { HistReader } from '../../../../services/history-service';
 import type { FlowCanvas } from '../canvas/flow-canvas';
 import { FlowCanvasDecor, FlowLit, FlowNodeDecor, FlowWireDecor } from '../canvas/flow-canvas-state';
-import { localInput } from '../flow-replay-dialog';
 import { loadFlowView } from '../flow-view';
 
 //a run asked onto the tab by Versions:  `n` counts the asks, so the same run asked twice is taken twice
@@ -37,6 +35,11 @@ export const flowHistoryPage = 200;//records a read of the list
 export const flowPlayPage = 1000;//records a read for Play
 export const flowFiredFor = 600;//ms a fired node or wire stays lit
 export const flowPlayTick = 100;//ms between the player's steps
+//a time as From and To hold it, local and to the second, so "to now" leaves out no record of the last minute
+export const historyInput = ( d:Date ):string=>DateUtils.toLocalInput( d ).slice( 0, 19 );
+//what Play fired, and when:  nodes by id and wires by key apart, since a node's id may hold the key's `>`
+export type FlowFired = { nodes:Map<string,number>; wires:Map<string,number> };
+const noFired = ():FlowFired=>({ nodes: new Map(), wires: new Map() });
 
 //A flow's History tab (#456, docs/flows/spec.md *History*, *Web*):  the canvas read-only over a range picked as the node
 //History tab picks one, the live trace's or a replay's, with flowCounts' figures on the wires and under the nodes, the version
@@ -48,7 +51,7 @@ export const flowPlayTick = 100;//ms between the player's steps
 	selector: 'flow-history',
 	templateUrl: './flow-history.html',
 	styleUrl: './flow-history.scss',
-	imports: [DatePipe, MatButtonModule, MatButtonToggleModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTooltipModule]
+	imports: [DatePipe, MatButtonModule, MatButtonToggleModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTooltipModule]
 })
 export class FlowHistory implements OnDestroy{
 	gateway = input.required<HistReader>();
@@ -57,12 +60,11 @@ export class FlowHistory implements OnDestroy{
 	request = input<FlowHistoryRequest|undefined>( undefined );
 	slot = viewChild.required( 'slot', {read: ViewContainerRef} );
 	readonly kinds = flowRecordKinds;
-	readonly columns = ['time', 'node', 'kind', 'msg', 'summary'];
 	readonly speeds = [1, 10, 100];
 
 	//the range typed, and the one read
-	from = signal( localInput( new Date( Date.now()-3_600_000 ) ) );
-	to = signal( localInput( new Date() ) );
+	from = signal( historyInput( new Date( Date.now()-3_600_000 ) ) );
+	to = signal( historyInput( new Date() ) );
 	problem = computed( ()=>rangeProblem( this.from(), this.to() ) );
 	range = signal<FlowRange|undefined>( undefined );
 	run = signal<FlowRun|undefined>( undefined );//none is the live trace
@@ -84,14 +86,14 @@ export class FlowHistory implements OnDestroy{
 	playing = signal( false );
 	speed = signal( 1 );
 	playError = signal<string|undefined>( undefined );
-	fired = signal<Map<string,number>>( new Map() );//a node's id or a wire's key, when it fired
+	fired = signal<FlowFired>( noFired() );
 	ready = signal( false );
 	loadError = signal<string|undefined>( undefined );
 	#canvas?:ComponentRef<FlowCanvas>;
-	#reads = new Latest();//the counts and the list, of one range
+	#countReads = new Latest();//the counts and the list apart, so a filter's read of the list leaves the counts' alone
+	#listReads = new Latest();
 	#lineageReads = new Latest();
 	#player?:FlowPlayer;
-	#playReading = false;
 	#ticker?:ReturnType<typeof setInterval>;
 	#flows = inject( FlowService );
 	#taken?:number;//the request answered
@@ -99,10 +101,14 @@ export class FlowHistory implements OnDestroy{
 	//the flow, by its gateway and id:  a deploy, an enable or a disable gives the page a new row of the same flow
 	#shown = computed( ()=>({ gateway: this.gateway(), id: this.flow().id }), {equal: ( a, b )=>a.gateway==b.gateway && a.id==b.id} );
 
-	//the version in force at the scrubber, its graph drawn
-	version = computed<FlowVersion|undefined>( ()=>flowVersionAt( this.versions().filter( v=>!v.unread ), new Date( this.at() ) ) );
+	//The version drawn:  a replay's own, which it ran over the range whatever was deployed then (spec *Replay*), else the one in
+	//force at the scrubber.  The deploys are marked on the live trace's range alone.
+	version = computed<FlowVersion|undefined>( ()=>{
+		const versions = this.versions().filter( v=>!v.unread ), run = this.run();
+		return run ? versions.find( v=>v.version==run.version ) : flowVersionAt( versions, new Date( this.at() ) );
+	} );
 	graph = computed<FlowGraph|undefined>( ()=>this.version()?.graph );
-	marks = computed( ()=>{ const r = this.range(); return r ? flowDeployMarks( this.versions(), r.start, r.end ) : []; } );
+	marks = computed( ()=>{ const r = this.range(); return r && !this.run() ? flowDeployMarks( this.versions(), r.start, r.end ) : []; } );
 	//the nodes the filter offers:  every version's, by id, named by the latest
 	nodes = computed( ()=>{
 		const y = new Map<string,string>();
@@ -134,8 +140,10 @@ export class FlowHistory implements OnDestroy{
 			path.own.nodes.forEach( n=>lit( nodes, n, 'own' ) );
 			path.own.wires.forEach( w=>lit( wires, w, 'own' ) );
 		}
-		for( const key of fired.keys() )
-			lit( key.includes( '>' ) ? wires : nodes, key, 'fired' );
+		for( const id of fired.nodes.keys() )
+			lit( nodes, id, 'fired' );
+		for( const key of fired.wires.keys() )
+			lit( wires, key, 'fired' );
 		return { nodes, wires };
 	} );
 	total = computed( ()=>{
@@ -204,8 +212,8 @@ export class FlowHistory implements OnDestroy{
 	//the last hour, day or week, to now
 	preset( ms:number ):void{
 		const now = new Date();
-		this.from.set( localInput( new Date( now.getTime()-ms ) ) );
-		this.to.set( localInput( now ) );
+		this.from.set( historyInput( new Date( now.getTime()-ms ) ) );
+		this.to.set( historyInput( now ) );
 		this.run.set( undefined );
 		this.read();
 	}
@@ -216,22 +224,20 @@ export class FlowHistory implements OnDestroy{
 	}
 	openRun( run:FlowRun|undefined ):void{
 		this.run.set( run );
+		if( run )//among the select's:  one started since they were read is not, and one read is as it was then
+			this.runs.update( runs=>runs.some( r=>r.id==run.id ) ? runs.map( r=>r.id==run.id ? run : r ) : [run, ...runs] );
 		if( run?.start && run.finish ){
-			this.from.set( localInput( run.start ) );
-			this.to.set( localInput( new Date( run.finish.getTime()+60_000 ) ) );//to the minute, inclusive of the run's last
+			this.from.set( historyInput( run.start ) );
+			this.to.set( historyInput( new Date( run.finish.getTime()+1000 ) ) );//to the second past the run's last
 		}
 		this.read();
 	}
 	//The range read anew:  the counts over it, in pages of whole buckets, and the list's first page.  The scrubber goes to the
-	//end, the version in force there drawn, and what was selected or playing is let go.
+	//end, the version in force there drawn, and what was selected or playing is let go.  A range that is no range reads nothing
+	//and keeps nothing of the last, whose trace may not be the one now picked;  the problem says why.
 	async read():Promise<void>{
-		if( this.problem() )
-			return;
-		const range:FlowRange = { start: new Date( this.from() ), end: new Date( this.to() ) };
 		this.stop();
 		this.#player = undefined;
-		this.range.set( range );
-		this.at.set( range.end.getTime() );
 		this.selected.set( undefined );
 		this.lineage.set( undefined );
 		this.records.set( [] );
@@ -239,8 +245,15 @@ export class FlowHistory implements OnDestroy{
 		this.counts.set( [] );
 		this.countsError.set( undefined );
 		this.listError.set( undefined );
-		const read = this.#reads.next();
-		await Promise.all( [this.#readCounts( read, range ), this.#readList( read, range )] );
+		const counts = this.#countReads.next(), list = this.#listReads.next();//what the last range has out comes to nothing
+		if( this.problem() ){
+			this.range.set( undefined );
+			return;
+		}
+		const range:FlowRange = { start: new Date( this.from() ), end: new Date( this.to() ) };
+		this.range.set( range );
+		this.at.set( range.end.getTime() );
+		await Promise.all( [this.#readCounts( counts, range ), this.#readList( list, range )] );
 	}
 	#args(){ return { flow: this.flow().id, run: this.run()?.id }; }
 	async #readCounts( read:number, range:FlowRange ):Promise<void>{
@@ -250,7 +263,7 @@ export class FlowHistory implements OnDestroy{
 			let continuation:string|undefined, rows:FlowCountRow[] = [];
 			do{
 				const page = await this.#flows.counts( this.gateway(), { ...this.#args(), start: range.start, end: range.end, by, continuation } );
-				if( !this.#reads.is( read ) )
+				if( !this.#countReads.is( read ) )
 					return;
 				rows = rows.concat( page.counts );
 				continuation = page.continuation;
@@ -258,7 +271,7 @@ export class FlowHistory implements OnDestroy{
 			this.counts.set( rows );
 		}
 		catch( e ){
-			if( this.#reads.is( read ) )
+			if( this.#countReads.is( read ) )
 				this.countsError.set( errorMessage( e ) );
 		}
 		finally{
@@ -270,13 +283,13 @@ export class FlowHistory implements OnDestroy{
 		try{
 			const msg = this.filterMsg().trim();
 			const page = await this.#flows.trace( this.gateway(), { ...this.#args(), start: range.start, end: range.end, node: this.filterNode(), kind: this.filterKind(), msg: msg || undefined, limit: flowHistoryPage, continuation } );
-			if( !this.#reads.is( read ) )
+			if( !this.#listReads.is( read ) )
 				return;
 			this.records.update( r=>continuation ? r.concat( page.records ) : page.records );
 			this.continuation.set( page.continuation );
 		}
 		catch( e ){
-			if( this.#reads.is( read ) )
+			if( this.#listReads.is( read ) )
 				this.listError.set( errorMessage( e ) );
 		}
 		finally{
@@ -291,12 +304,12 @@ export class FlowHistory implements OnDestroy{
 		this.records.set( [] );
 		this.continuation.set( undefined );
 		this.listError.set( undefined );
-		await this.#readList( this.#reads.next(), range );
+		await this.#readList( this.#listReads.next(), range );
 	}
 	async more():Promise<void>{
 		const range = this.range(), continuation = this.continuation();
 		if( range && continuation )
-			await this.#readList( this.#reads.current, range, continuation );
+			await this.#readList( this.#listReads.current, range, continuation );
 	}
 	//a record picked:  its message's lineage, the path lit and the scrubber at its time
 	async select( record:FlowTraceRecord ):Promise<void>{
@@ -322,30 +335,37 @@ export class FlowHistory implements OnDestroy{
 				this.lineageError.set( errorMessage( e ) );
 		}
 	}
+	//the scrubber moved:  the player with it where it holds the time, and one of its own from there where it is playing past them
 	seek( ms:number ):void{
 		this.at.set( ms );
-		this.#player?.seek( ms );
+		const player = this.#player;
+		if( player?.holds( ms ) )
+			player.seek( ms );
+		else if( this.playing() ){
+			this.pause();
+			this.play();
+		}
 	}
-	//Play:  the range's records read ahead a page at a time and stepped through the canvas at the speed, each lighting its node
-	//and the wires it sent on for a moment, the scrubber following.
+	//Play:  the range's records read ahead a page at a time from the scrubber, from the start where it is at the end, and stepped
+	//through the canvas at the speed, each lighting its node and the wires it sent on for a moment, the scrubber following.  A
+	//player of the range that holds the scrubber's time goes on from it, put there only where the scrubber moved since, since a
+	//record at the time it stands at has fired.
 	play():void{
 		const range = this.range();
 		if( !range || this.playing() )
 			return;
-		if( !this.#player || this.#player.start.getTime()!=range.start.getTime() || this.#player.end.getTime()!=range.end.getTime() ){
-			this.#player = new FlowPlayer( range.start, range.end );
-			this.#playReading = false;
-			this.#playContinuation = undefined;
-		}
-		this.#player.speed = this.speed();
-		if( this.#player.done || this.at()>=range.end.getTime() )
-			this.#player.seek( range.start.getTime() );
-		else
-			this.#player.seek( this.at() );
-		this.at.set( this.#player.at );
-		this.#player.play( Date.now() );
+		const at = this.at()>=range.end.getTime() ? range.start.getTime() : this.at();
+		let player = this.#player;
+		if( !player || player.start.getTime()!=range.start.getTime() || player.end.getTime()!=range.end.getTime() || (at!=player.at && !player.holds( at )) )
+			player = this.#player = new FlowPlayer( range.start, range.end, at );
+		else if( at!=player.at )
+			player.seek( at );
+		player.speed = this.speed();
+		this.at.set( player.at );
+		player.play( Date.now() );
 		this.playing.set( true );
 		this.playError.set( undefined );
+		clearInterval( this.#ticker );//the last marks' fading, where it was still under way
 		this.#ticker = setInterval( ()=>this.tick( Date.now() ), flowPlayTick );
 		this.#feed();
 	}
@@ -357,57 +377,63 @@ export class FlowHistory implements OnDestroy{
 	}
 	stop():void{
 		this.pause();
-		this.fired.set( new Map() );
+		this.fired.set( noFired() );
 	}
 	setSpeed( speed:number ):void{
 		this.speed.set( speed );
 		if( this.#player )
 			this.#player.speed = speed;
 	}
-	//a step of the wall clock:  what the player passed lights up, what lit a while ago goes dark, and the next page is read
-	//once the player nears the end of what it holds
+	//A step of the wall clock:  what the player passed lights up, what lit a while ago goes dark, and the next page is read
+	//once the player nears the end of what it holds.  Past the end the steps go on until the last marks are dark.
 	tick( now:number ):void{
 		const player = this.#player;
 		if( !player )
 			return;
-		const graph = this.graph();
-		const fired = new Map( [...this.fired()].filter( ( [, at] )=>now-at<flowFiredFor ) );
+		const graph = this.graph(), was = this.fired(), playing = player.playing;
+		const lit = ( marks:Map<string,number> )=>new Map( [...marks].filter( ( [, at] )=>now-at<flowFiredFor ) );
+		const fired:FlowFired = { nodes: lit( was.nodes ), wires: lit( was.wires ) };
 		for( const r of player.tick( now ) ){
-			fired.set( r.node, now );
+			fired.nodes.set( r.node, now );
 			const node = graph?.nodes.find( n=>n.id==r.node );
 			for( const port of r.ports )
 				for( const to of node?.wires[port] ?? [] )
-					fired.set( flowWireKey( r.node, port, to ), now );
+					fired.wires.set( flowWireKey( r.node, port, to ), now );
 		}
 		this.fired.set( fired );
-		this.at.set( player.at );
-		if( !player.playing ){
-			this.playing.set( false );
-			clearInterval( this.#ticker );
-			this.#ticker = undefined;
+		if( playing )//not once it has ended, where the scrubber is the user's
+			this.at.set( player.at );
+		if( player.playing ){
+			if( player.held<flowPlayPage/2 )
+				this.#feed();
 		}
-		else if( player.held<flowPlayPage/2 )
-			this.#feed();
+		else{
+			this.playing.set( false );
+			if( !fired.nodes.size && !fired.wires.size ){
+				clearInterval( this.#ticker );
+				this.#ticker = undefined;
+			}
+		}
 	}
-	#playContinuation?:string;
+	//the player's next page, from where its records begin:  what a player the tab has let go reads lands on it alone
 	async #feed():Promise<void>{
 		const player = this.#player, range = this.range();
-		if( !player || !range || player.complete || this.#playReading )
+		if( !player || !range || player.complete || player.reading )
 			return;
-		this.#playReading = true;
+		player.reading = true;
 		try{
-			const page = await this.#flows.trace( this.gateway(), { ...this.#args(), start: range.start, end: range.end, limit: flowPlayPage, continuation: this.#playContinuation } );
-			if( this.#player!=player )
-				return;
-			this.#playContinuation = page.continuation;
+			const page = await this.#flows.trace( this.gateway(), { ...this.#args(), start: new Date( player.from ), end: range.end, limit: flowPlayPage, continuation: player.continuation } );
+			player.continuation = page.continuation;
 			player.add( page.records, !page.continuation );
 		}
 		catch( e ){
-			this.playError.set( errorMessage( e ) );
-			this.pause();
+			if( this.#player==player ){
+				this.playError.set( errorMessage( e ) );
+				this.pause();
+			}
 		}
 		finally{
-			this.#playReading = false;
+			player.reading = false;
 		}
 	}
 	nodeName( id:string ):string{

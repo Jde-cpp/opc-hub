@@ -11,7 +11,7 @@ import { Observable, Subscription } from 'rxjs';
 import { errorMessage } from 'jde-framework';
 import { Flow, FlowGraph, FlowVersion } from '../../../../model/flow';
 import { FlowLiveEvent } from '../../../../model/flow-live';
-import { flowHopsShown, flowLiveNext, flowLiveSettle, flowLiveStart, FlowLiveState } from '../../../../model/flow-live-view';
+import { flowHopsShown, flowLiveNext, flowLiveSettle, flowLiveStart, FlowLiveState, FlowWireLive } from '../../../../model/flow-live-view';
 import { FlowRecordKind, flowRecordKinds, FlowTraceRecord } from '../../../../model/flow-trace';
 import { flowJsonText, flowRecordSummary } from '../../../../model/flow-trace-view';
 import { gatewayAnswer } from '../../../../services/gateway-service';
@@ -198,10 +198,8 @@ export class FlowActivity implements OnDestroy{
 		const node = this.nodes().find( n=>n.id==id );
 		return node ? node.name || node.type : id;
 	}
-	wireText( key:string ):string{
-		const at = key.indexOf( ':' ), to = key.indexOf( '>' );
-		return `${this.nodeName( key.substring( 0, at ) )}, output ${Number( key.substring( at+1, to ) )+1}, to ${this.nodeName( key.substring( to+1 ) )}`;
-	}
+	//by the wire's ends, not its key, which a node's id holding a `:` or a `>` would split wrong
+	wireText( w:Pick<FlowWireLive,'node'|'port'|'to'> ):string{ return `${this.nodeName( w.node )}, output ${w.port+1}, to ${this.nodeName( w.to )}`; }
 	summary( hop:FlowTraceRecord ):string{ return flowRecordSummary( hop ); }
 	json( v:unknown ):string{ return flowJsonText( v ); }
 	hopKindIcon( kind:FlowRecordKind ):string{

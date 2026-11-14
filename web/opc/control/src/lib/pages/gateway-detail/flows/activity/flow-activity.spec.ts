@@ -79,6 +79,7 @@ describe( 'FlowActivity', ()=>{
 		tab.selectedWire.set( 'in:0>fn' );
 		await stable( fixture );
 		expect( text( '.selection h3' ) ).toBe( 'inject, output 1, to Scale' );
+		expect( tab.wireText( {node: 'a:1>b', port: 2, to: 'c'} ) ).toBe( 'a:1>b, output 3, to c' );//by its ends:  an id holding the key's marks
 		expect( text( '.selection .json' ) ).toBe( '{ "payload": 4 }' );
 		tab.selectedWire.set( undefined );
 		tab.selectedNode.set( 'fn' );
