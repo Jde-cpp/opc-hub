@@ -293,6 +293,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( row.at("mode"), "commit" );
 		EXPECT_TRUE( WaitUntil([&]{ return !EndLine( capture, run ).empty(); }) ) << "the run's line comes behind its row";
 		EXPECT_TRUE( Has(EndLine(capture, run), "60 records in 1 pages, 60 values committed.") ) << EndLine( capture, run );
+		EXPECT_FALSE( EndLine(capture, dry).empty() ) << "the dry run's line, which the check below would pass without";
 		EXPECT_FALSE( Has(EndLine(capture, dry), "committed") ) << EndLine( capture, dry );
 
 		let request = Request{ .Start=from, .End=to+1s };
