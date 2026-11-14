@@ -8,18 +8,20 @@ namespace Jde::Opc::Gateway{
 	//flow, and answers at most /gateway/flows/readLimit records, a page, with the opaque continuation the history reads
 	//carry.  A time is an ISO 8601 string, as a message's `_time` is;  an id a message's `_id`, as the web holds it, a
 	//Long, or its decimal text.  A 64-bit integer goes out as the web's Long, in a record's `msgId` and `parentId` and
-	//inside its json.
+	//inside its json.  Each read is of one trace:  the live one with no `run`, or a replay's, by its flow_runs id, whose
+	//records sit in the same files at the stream's times (spec *Replay*).
 	//flowTrace( flow, start, end, node, msg, kind, run, limit, continuation ){ continuation records{ time msgId parentId runId
 	//node kind ports json cut error status{ fill shape text } blocks } }:  the records in the range, oldest first from `start`,
 	//newest first back from `end` with no `start`, and in their order with both, each bound inclusive;  narrowed to a node's
-	//id, a message, a kind (hop, birth, clone, error, status, drop) or a run.  `json`:  the message where the record carries
-	//it, or its cut text with `cut` true.  `continuation`:  for the next page, null on the last.
-	//flowMessage( flow, id, start, end, limit ){ more records{ … } }:  the message's lineage, its ancestors' records up to the
-	//source, its own and its descendants', oldest first, over the days from `start`, or the day of the gateway's start the id
-	//carries, to `end`, or today.  `more`:  the limit cut it short.
-	//flowCounts( flow, start, end, by, limit, continuation ){ continuation counts{ time node received sent drops errors } }:  the
-	//minute records from `start` to before `end`, summed per node into buckets `by` wide, an ISO 8601 duration of a minute or
-	//more;  `sent` per output port.  A page holds whole buckets, at most `limit` rows unless its one bucket has more.
+	//id, a message or a kind (hop, birth, clone, error, status, drop, captured).  `json`:  the message where the record
+	//carries it, what a capture's sink would have sent, or its cut text with `cut` true.  `continuation`:  for the next page,
+	//null on the last.
+	//flowMessage( flow, id, run, start, end, limit ){ more records{ … } }:  the message's lineage, its ancestors' records up to
+	//the source, its own and its descendants', oldest first, over the days from `start`, or the day of the start the id
+	//carries, the gateway's or its run's range's, to `end`, or today.  `more`:  the limit cut it short.
+	//flowCounts( flow, start, end, by, run, limit, continuation ){ continuation counts{ time node received sent drops errors } }:
+	//the minute records from `start` to before `end`, summed per node into buckets `by` wide, an ISO 8601 duration of a minute
+	//or more;  `sent` per output port.  A page holds whole buckets, at most `limit` rows unless its one bucket has more.
 	//Each read runs on FlowReadPool, never an executor thread.
 	struct FlowQLAwait final : QL::IQLTableAwaitExe{
 		using base = QL::IQLTableAwaitExe;

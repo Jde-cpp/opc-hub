@@ -80,6 +80,10 @@ namespace Jde::Opc::Flows{
 		//false, here, for a flow that is not running and for a node that is not its.
 		α SetContext( sv nodeId, sv key, jvalue value, absl::AnyInvocable<void( bool )> set={} )ι->void;
 		α Post( absl::AnyInvocable<void()> f )ι->void;//`f` on the strand, from any thread;  dropped unless the flow is running.
+		//From the strand, a Post's `f`:  `f` there, once, when no message waits at any node's input, whatever a node holds,
+		//so what was sent before it is through the flow as far as it goes with no wait.  How a replay keeps its clock
+		//behind its messages (Replay.h).  Dropped unless the flow is running.
+		α Quiet( absl::AnyInvocable<void()> f )ι->void;
 		α Status( sv nodeId )Ι->NodeStatus;
 		α Counts()Ι->vector<NodeCounts>;//since the start, a row per node in the graph's order.
 		//The minutes that have ended and were not taken, oldest first, each with the nodes that had a figure in it;  at most an

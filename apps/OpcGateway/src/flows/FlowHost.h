@@ -1,8 +1,9 @@
 #pragma once
+#include <condition_variable>
 #include <jde/fwk/co/CoMutex.h>
 #include <jde/ql/IQLSession.h>
 #include <jde/flows/FileTrace.h>
-#include <jde/flows/Flow.h>
+#include <jde/flows/Replay.h>
 #include "FlowRows.h"
 
 namespace Jde::Web::Server{ struct SessionInfo; }
@@ -31,6 +32,9 @@ namespace Jde::Opc::Gateway{
 	//spelling.
 	//The sources and sinks are FlowNodes', one per run, made from the run's flow, its deployer and what its admission
 	//resolved;  a link to another flow is delivered here (Link).
+	//A replay (spec *Replay*, Replay) is a run of a flow's current version beside its live one, over its sources' history:
+	//the library's Run on the stream's clock, its nodes FlowNodes' with the range, its trace the flow's own under the run's
+	//id, and its flow_runs row written as it starts and as it ends.
 	struct FlowHost final : noncopyable{
 		Ω Instance()ι->FlowHost&;
 		//The settings, the rows and the global context, then every enabled flow from its current version, behind it on the
@@ -81,6 +85,47 @@ namespace Jde::Opc::Gateway{
 		//injectFlow's:  the inject node's message, or `message` in its place.  Refused for a flow that is not running and
 		//for a node that is not an inject of it.
 		α Inject( FlowPK id, sv node, const jobject* message, SRCE )ε->void;
+		//replayFlow's (spec *Replay*):  Update on the flow, whose current version is read and admitted for its deployer as a
+		//start admits it, enabled or not, each `opc in` a node a group holds, since a replay has no other records of one:  a
+		//refusal is thrown with its node, and writes nothing.  The run's row is then written and the run started over
+		//`from` to `to`, each inside the range, on a strand, a sandbox and a clock of its own, with a copy of the flow's
+		//context as its rows and what is still to write stand, and of the gateway's, of which it writes none back.  Its
+		//trace is the flow's, each record under the run's id at the stream's time, at the flow's level or `errors` when
+		//that is below it, so the captures are always written.  Every sink is captured, in either mode:  what `commit`
+		//writes, a `variable`, comes with the flow server.  Answered as the run starts:  how it ends is its row's `status`,
+		//`completed`, `cancelled` or `failed:  <why>`, null while it is under way, written once its records are on file.
+		//One run at a time per flow:  a second is refused, Conflict.  A deploy meanwhile leaves the run on its version.
+		struct Replayed final{ FlowRunPK Id; uint32 Version; TimePoint Started; string UserName; };
+		struct ReplayAwait final : AnyAwait<Replayed>{
+			ReplayAwait( FlowHost& host, FlowPK flow, TimePoint from, TimePoint to, bool commit, QL::Creds&& by, SL sl )ι:
+				AnyAwait<Replayed>{ sl }, Flow{ flow }, From{ from }, To{ to }, Commit{ commit }, By{ move(by) }, _host{ host }
+			{}
+			const FlowPK Flow;
+			const TimePoint From, To;
+			const bool Commit;
+			QL::Creds By;
+		protected:
+			α Suspend()ι->void override{ _host.Replaying( *this ); }
+		private:
+			FlowHost& _host;
+		};
+		α Replay( FlowPK id, TimePoint from, TimePoint to, bool commit, QL::Creds by, SRCE )ι->ReplayAwait{ return { *this, id, from, to, commit, move(by), sl }; }
+		//cancelFlowRun's:  Update on the run's flow, the table's for a run that isn't there.  The run stops, what its nodes
+		//held dropped and counted, and this answers how it ended once its row says so, which for one that finished as the
+		//cancel came is `completed`.  A run that is not under way is refused, Conflict.
+		struct RunEnd final{ string Status; TimePoint Finished; };
+		struct CancelAwait final : AnyAwait<RunEnd>{
+			CancelAwait( FlowHost& host, FlowRunPK run, UserPK by, SL sl )ι:AnyAwait<RunEnd>{ sl }, Run{ run }, By{ by }, _host{ host }{}
+			const FlowRunPK Run;
+			const UserPK By;
+		protected:
+			α Suspend()ι->void override{ _host.Cancelling( *this ); }
+		private:
+			FlowHost& _host;
+		};
+		α CancelRun( FlowRunPK run, UserPK by, SRCE )ι->CancelAwait{ return { *this, run, by, sl }; }
+		α ReplayOf( FlowPK id )Ι->optional<FlowRunPK>;//the flow's run under way.
+		static constexpr uint ReplayBuffer{ 4<<20 };//the bytes of trace a replay lets wait before it stops for their flush, a quarter of the buffer's cap, so it drops no record of its own or of the live flow's.
 		//setFlowContext's (spec *Context*), the Context tab's edit:  a value of the gateway's scope with no flow, of the flow's
 		//with no node, else of that node's, a null one taking the key away.  Set in the store of a flow that is running, so
 		//it is there at the flow's next get, and its row written before this ends, where a flow's own change waits
@@ -110,7 +155,8 @@ namespace Jde::Opc::Gateway{
 		static constexpr uint ContextTries{ 3 };//the writes a context value may fail while others are written, before it is dropped with an Error.
 	private:
 		//What a run's admission resolved, by a node's id in the graph.  Nodes:  an index-form node's spelling (HistNodeText),
-		//its server asked once a run.  Groups:  a `group in`'s group, as the last admission found it.
+		//its server asked once a run.  Groups:  a `group in`'s group, and the group that holds an `opc in`'s node, which a
+		//replay reads, as the last admission found it.
 		struct Resolved final{ flat_map<string,string> Nodes; flat_map<string,HistGroupPK> Groups; };
 		//A flow's run:  one Flows::Flow, which runs once, with what it was made from.
 		struct Run final{
@@ -161,6 +207,19 @@ namespace Jde::Opc::Gateway{
 		struct HaltAwait;//a run stopped, its teardown done.
 		struct StartAwait;//a run started, its nodes' Start run.
 		struct SetAwait;//a context value set on a run's strand.
+		//A replay under way, from its row's insert until its row says how it ended.  Waiting:  what awaits that, under Mutex.
+		struct ReplayRun final{
+			FlowRunPK Id; FlowPK Flow; string Slug; string Name; sp<Flows::Run> Run;
+			std::mutex Mutex; optional<RunEnd> End; vector<absl::AnyInvocable<void()>> Waiting;
+		};
+		struct EndAwait;//a replay's end, its row written.
+		α Replaying( ReplayAwait& await )ι->VoidTask;
+		α Cancelling( CancelAwait& await )ι->VoidTask;
+		//A replay's end, from its strand:  the flow's trace written, so the run's records are on file, then its row, and
+		//what waits for it.
+		α Ending( sp<ReplayRun> replay, Flows::ERunEnd end, string why )ι->VoidTask;
+		//A flow's context for a run, from the scope's rows with what is still to write laid over them.
+		α Loaded( FlowPK flow, str slug, vector<FlowContextRow>&& rows, Flows::Flow::Config& config )Ι->void;
 		α Retry( FlowPK id )ι->VoidTask;//the retry timer's.
 		//The flow's subscribers hear what its run is now, under _edits:  the ack of a run that started since they last heard,
 		//or with none running their end, saying why.  After each start and each stop, by hand:  a deploy and a restart at
@@ -194,6 +253,8 @@ namespace Jde::Opc::Gateway{
 		sp<Flows::TraceStore> _store;//the trace's files, a directory per flow by its slug.
 		fs::path _tracePath;//the store's root, which a purge with no store removes the flow's directory from.
 		uint _readLimit{ 10'000 };//the most records one trace read answers:  /gateway/flows/readLimit, 0 for no limit.
+		flat_map<FlowPK,sp<ReplayRun>> _replays;//each flow's replay under way, one at the most.
+		std::condition_variable _replayEnded;//_replays lost one:  with _mutex.
 		flat_map<FlowPK,sp<FlowFeed>> _feeds;//each flow's live feed, made with its first run.
 		Duration _live{ 200ms };//how often at most a feed pushes:  /gateway/flows/live.
 		uint _valueLimit{ 4096 };//the block's, for the feeds' json.

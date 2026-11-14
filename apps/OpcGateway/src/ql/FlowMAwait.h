@@ -13,12 +13,15 @@ namespace Jde::Opc::Gateway{
 	//flow_versions, flow_contexts and flow_runs take no generic mutation, whatever the caller's rights:  deployFlow writes the
 	//first with its deployer, the host the second as the flows set their context, and a replay the third.
 	//deployFlow( flow, graph, comment ){ flow version deployed userName running dropped fault{ node message } },
-	//injectFlow( flow, node, message ){ flow node } and setFlowContext( flow, node, name, value ){ flow node name value },
-	//system mutations by their whole names, so only a POST or the socket runs them, each under Update on the flow, the
-	//table's for the gateway's context (FlowHost::Deploy, Inject, SetContext).
+	//injectFlow( flow, node, message ){ flow node }, setFlowContext( flow, node, name, value ){ flow node name value },
+	//replayFlow( flow, from, to, mode ){ id flow version start finish mode started userName status }, `mode` dry, the
+	//default, or commit, answered as the run starts with its flow_runs row, and cancelFlowRun( id ){ id status finished },
+	//answered once the run's row says how it ended:  system mutations by their whole names, so only a POST or the socket
+	//runs them, each under Update on the flow, the table's for the gateway's context (FlowHost::Deploy, Inject, SetContext,
+	//Replay, CancelRun).
 	struct FlowMAwait final : QL::IQLTableMutationExe{
 		using base = QL::IQLTableMutationExe;
-		static constexpr sv DeployCommand{ "deployFlow" }, InjectCommand{ "injectFlow" }, ContextCommand{ "setFlowContext" };
+		static constexpr sv DeployCommand{ "deployFlow" }, InjectCommand{ "injectFlow" }, ContextCommand{ "setFlowContext" }, ReplayCommand{ "replayFlow" }, CancelRunCommand{ "cancelFlowRun" };
 		FlowMAwait( QL::MutationQL&& m, QL::Creds creds, SRCE )ι:base{ move(m), move(creds), sl }{}
 		Ω IsApplicable( const QL::MutationQL& m )ι->bool;
 		Ω Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;

@@ -424,6 +424,14 @@ namespace Jde::Opc::Flows{
 			if( Entered() )//every entry drains after its work, and a drain runs these once its queues are empty.
 				_idle.emplace_back( &slot, std::move(f) );
 		}
+		α Quiet( absl::AnyInvocable<void()>&& f )ι->void{
+			if( Entered() )//as Idle's, whatever a node holds.
+				_quiet.push_back( std::move(f) );
+		}
+		α Capture( Slot& slot, MessageId id, const jvalue& what )ι->void{
+			if( Entered() && _trace )
+				_trace->Capture( slot.Def, id, serialize(what) );
+		}
 		α Cancel( Slot& slot, INode::TimerId id )ι->bool{
 			let p = Entered() ? slot.Timers.find( id ) : slot.Timers.end();
 			if( p==slot.Timers.end() )
@@ -571,6 +579,7 @@ namespace Jde::Opc::Flows{
 				Dropped( *_slots[index], id );
 			_stale.clear();
 			_idle.clear();
+			_quiet.clear();
 			optional<MinuteCounts> ended;//the minute under way, the run's part of it.
 			{
 				lg _{ _stateMutex };
@@ -643,7 +652,16 @@ namespace Jde::Opc::Flows{
 					}
 					continue;
 				}
-				if( !empty || _idle.empty() || !Running() || std::ranges::any_of(_slots, [](let& slot){ return !slot->Open.empty(); }) )
+				if( !empty || !Running() )
+					break;
+				if( !_quiet.empty() ){//the queues are empty:  a replay's next step, whatever is held.
+					for( auto& f : std::exchange(_quiet, {}) ){
+						Guard( nullptr, f );
+						++taken;
+					}
+					continue;
+				}
+				if( _idle.empty() || std::ranges::any_of(_slots, [](let& slot){ return !slot->Open.empty(); }) )
 					break;
 				for( auto& [slot, f] : std::exchange(_idle, {}) ){//each counts toward the turn, as a message does:  one that sends nothing and asks again takes no more than its turn.
 					Guard( slot, f );
@@ -892,7 +910,8 @@ namespace Jde::Opc::Flows{
 		TimePoint _tick;//the clock, as the entry or the message in hand began.
 		INode::TimerId _nextTimer{};
 		vector<Slot*> _stale;
-		vector<std::pair<Slot*,absl::AnyInvocable<void()>>> _idle;//what waits for the queues to empty.
+		vector<std::pair<Slot*,absl::AnyInvocable<void()>>> _idle;//what waits for the queues to empty, and for what is held.
+		vector<absl::AnyInvocable<void()>> _quiet;//what waits for the queues alone.
 		mutable mutex _queueMutex;
 		EState _state{ EState::Idle };
 		sp<Js::Runtime> _js;//the Function nodes' runtime, when the graph has one, made as they are:  set under _queueMutex.
@@ -933,6 +952,7 @@ namespace Jde::Opc::Flows{
 	α Flow::Link( sv name, const Message& m )ι->bool{ return _engine->Link( name, m ); }
 	α Flow::SetContext( sv nodeId, sv key, jvalue value, absl::AnyInvocable<void( bool )> set )ι->void{ _engine->SetContext( nodeId, key, move(value), std::move(set) ); }
 	α Flow::Post( absl::AnyInvocable<void()> f )ι->void{ _engine->Post( nullptr, std::move(f) ); }
+	α Flow::Quiet( absl::AnyInvocable<void()> f )ι->void{ _engine->Quiet( std::move(f) ); }
 	α Flow::Status( sv nodeId )Ι->NodeStatus{ return _engine->Status( nodeId ); }
 	α Flow::Counts()Ι->vector<NodeCounts>{ return _engine->Counts(); }
 	α Flow::TakeMinutes()ι->vector<MinuteCounts>{ return _engine->TakeMinutes(); }
@@ -953,6 +973,7 @@ namespace Jde::Opc::Flows{
 	}
 	α INode::Drop( MessageId id )ι->void{ _slot->Flow.Drop( *_slot, id ); }
 	α INode::Error( string error )ι->void{ _slot->Flow.Error( *_slot, move(error) ); }
+	α INode::Capture( MessageId id, const jvalue& what )ι->void{ _slot->Flow.Capture( *_slot, id, what ); }
 	α INode::SetStatus( NodeStatus status )ι->void{ _slot->Flow.SetStatus( *_slot, move(status) ); }
 	α INode::Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, after, std::move(f) ); }
 	α INode::Schedule( TimePoint due, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, due, std::move(f) ); }

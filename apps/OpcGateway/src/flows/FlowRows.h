@@ -2,8 +2,8 @@
 #include <jde/flows/Trace.h>
 #include "../hist/HistRows.h"
 
-//The flows' tables (opcGateway-meta.jsonnet, docs/flows/spec.md *Flows*, *Context*) as rows:  the selects the host and
-//FlowMAwait make, and the statements the host writes a version and the context with.
+//The flows' tables (opcGateway-meta.jsonnet, docs/flows/spec.md *Flows*, *Context*, *Replay*) as rows:  the selects the host
+//and FlowMAwait make, and the statements the host writes a version, the context and a replay's run with.
 namespace Jde::Opc::Gateway{
 	using FlowPK = uint32;
 	namespace FlowTable{ constexpr sv Flows{ "flows" }, Versions{ "flow_versions" }, Contexts{ "flow_contexts" }, Runs{ "flow_runs" }; }
@@ -22,12 +22,16 @@ namespace Jde::Opc::Gateway{
 	struct FlowVersionRow final{ FlowPK Flow; uint32 Version; string Graph; UserPK Deployer; };
 	//A context value:  the global scope's with no flow, the flow's own with no node.  Value is json text.
 	struct FlowContextRow final{ optional<FlowPK> Flow; string Node; string Name; string Value; };
+	using FlowRunPK = uint32;
+	//A replay's run.  Status:  how it ended, none while it is under way.
+	struct FlowRunRow final{ FlowRunPK Id; FlowPK Flow; optional<string> Status; };
 
 	//flows:  by key, or all;  deleted rows only when asked.
 	struct FlowFilter final{ optional<DB::Key> Key; bool IncludeDeleted{}; };
 	α SelectFlows( FlowFilter filter={}, SRCE )ι->HistRowsAwait<FlowRow>;
 	α SelectFlowVersion( FlowPK flow, uint32 version, SRCE )ι->HistRowsAwait<FlowVersionRow>;
 	α SelectFlowContexts( optional<FlowPK> flow, SRCE )ι->HistRowsAwait<FlowContextRow>;//a flow's, or with none the global scope's.
+	α SelectFlowRun( FlowRunPK run, SRCE )ι->HistRowsAwait<FlowRunRow>;
 
 	//What the host writes, each for DS()->Execute.
 	namespace FlowSql{
@@ -38,5 +42,9 @@ namespace Jde::Opc::Gateway{
 		//A context value is written as a delete and an insert:  the scope's columns are nullable, which no dialect's upsert keys on alike.
 		α DeleteContext( optional<FlowPK> flow, sv node, sv name )ε->DB::Sql;
 		α InsertContext( optional<FlowPK> flow, sv node, sv name, sv value )ε->DB::Sql;
+		//A run as it starts, through the table's insert proc, for DS()->InsertSeq:  its id is what its trace records carry.
+		α InsertRun( FlowPK flow, uint32 version, TimePoint start, TimePoint finish, sv mode, TimePoint started, UserPK by, sv userName )ε->DB::InsertClause;
+		α EndRun( FlowRunPK run, TimePoint finished, sv status )ε->DB::Sql;
+		α EndRuns( TimePoint finished, sv status )ε->DB::Sql;//every run with no status, which a gateway that stopped under one left.
 	}
 }

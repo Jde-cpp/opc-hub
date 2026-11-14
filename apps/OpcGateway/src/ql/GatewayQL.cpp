@@ -50,7 +50,7 @@ namespace Jde::Opc{
 			return await;
 		if( auto await = HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits.
 			return await;
-		if( auto await = FlowMAwait::Test(m, creds, sl); await )//the flows' tables, deployFlow, injectFlow and setFlowContext.
+		if( auto await = FlowMAwait::Test(m, creds, sl); await )//the flows' tables, deployFlow, injectFlow, setFlowContext, replayFlow and cancelFlowRun.
 			return await;
 		if( auto await = TestConnectionQLAwait::Test(m, creds, sl); await )
 			return await;

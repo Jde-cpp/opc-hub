@@ -222,6 +222,7 @@ enum EFlowRecord{
 	FlowRecordError=3;//the node's error with the message, which ends at it.
 	FlowRecordStatus=4;//the node's status changed;  msg_id 0.
 	FlowRecordDrop=5;//off the node's queue, or held by it when the flow stopped.
+	FlowRecordCaptured=6;//a replay's alone, which no subscription hears:  what a sink would have sent, here so the kinds stay the trace's.
 }
 //A record of the flow's trace (flows spec *Trace*), as flowTrace answers one, its json as a FlowWire's.
 message FlowHop{

@@ -4,7 +4,7 @@
 
 namespace Jde::Opc::Flows{
 	constexpr std::array<sv,4> _levels{ "off", "counts", "errors", "hops" };
-	constexpr std::array<sv,6> _kinds{ "hop", "birth", "clone", "error", "status", "drop" };
+	constexpr std::array<sv,7> _kinds{ "hop", "birth", "clone", "error", "status", "drop", "captured" };
 
 	struct HopTrace::Impl final{
 		//A message at the `Errors` level:  its finished records, held while it is queued or a node has it, Refs counting both,
@@ -146,6 +146,14 @@ namespace Jde::Opc::Flows{
 		let parent = _impl->Close( *this, node, id );
 		_impl->Release( id );
 		Write( _impl->Record(node, id, parent, ERecordKind::Drop) );
+	}
+	α HopTrace::Capture( const NodeDef& node, MessageId id, sv json )ι->void{
+		if( !_impl->Writes() )
+			return;
+		let open = _impl->Opened.find( Impl::Key{&node, id} );
+		auto record = _impl->Record( node, id, open==_impl->Opened.end() ? 0 : open->second.Record.Parent, ERecordKind::Captured );
+		record.Json = string{ json };
+		Write( move(record) );
 	}
 	α HopTrace::Minute( const MinuteCounts& minute )ι->void{
 		if( _impl->Level>=ETraceLevel::Counts )

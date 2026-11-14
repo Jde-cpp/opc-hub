@@ -79,6 +79,11 @@ namespace Jde::Opc::Gateway{
 			throw invalid( command, "the continuation is for a read with other arguments", sl );
 		return { TimePoint{ std::chrono::duration_cast<Duration>(std::chrono::nanoseconds{(int64_t)get(4, 8)}) }, (uint32)get(12, 4) };
 	}
+	//The trace a read is of:  the live one with no `run`, or a replay's.
+	Ω run( const QL::Input& input, SL sl )ε->uint32{
+		let p = input.FindPtr<jvalue>( "run" );
+		return p && !p->is_null() ? input.AsNumber<uint32>( "run", sl ) : 0;
+	}
 	Ω idJson( Flows::MessageId id )ι->jvalue{ return id ? jvalue{ Flows::ToLong(id) } : jvalue{}; }
 	//A record as the result carries it:  its json parsed, with the web's Longs, or its cut text.
 	Ω recordJson( const TraceRecord& r )ι->jobject{
@@ -157,14 +162,13 @@ namespace Jde::Opc::Gateway{
 		if( let kind = _query.FindPtr<jstring>("kind"); kind && kind->size() ){
 			query.Kind = Flows::ToRecordKind( *kind );
 			if( !query.Kind )
-				throw invalid( TraceCommand, Ƒ("'kind' is hop, birth, clone, error, status or drop, not '{}'", sv{*kind}), sl );
+				throw invalid( TraceCommand, Ƒ("'kind' is hop, birth, clone, error, status, drop or captured, not '{}'", sv{*kind}), sl );
 		}
-		if( let run = _query.FindPtr<jvalue>("run"); run && !run->is_null() )
-			query.Run = _query.AsNumber<uint32>( "run", sl );
+		query.Run = run( _query, sl );
 		if( !query.Start && !query.End )
 			throw invalid( TraceCommand, "needs a start or an end", sl );
 		let iso = []( optional<TimePoint> t ){ return t ? ToIsoString( *t ) : string{}; };
-		let crc = IO::Crc::Calc32c( Ƒ("{}|{}|{}|{}|{}|{}|{}", flow.Id, iso(query.Start), iso(query.End), query.Node.value_or(""), query.Msg.value_or(0), query.Kind ? ToString(*query.Kind) : sv{}, query.Run.value_or(0)) );
+		let crc = IO::Crc::Calc32c( Ƒ("{}|{}|{}|{}|{}|{}|{}", flow.Id, iso(query.Start), iso(query.End), query.Node.value_or(""), query.Msg.value_or(0), query.Kind ? ToString(*query.Kind) : sv{}, query.Run) );
 		if( let c = _query.FindPtr<jstring>("continuation"); c && c->size() )
 			query.From = decode( TraceCommand, *c, crc, sl );
 		auto page = store.Read( flow.Slug, query, sl );
@@ -174,7 +178,7 @@ namespace Jde::Opc::Gateway{
 		let messageId = _query.FindPtr<jvalue>( "id" );
 		if( !messageId || messageId->is_null() )
 			throw invalid( MessageCommand, "needs id, the message's", sl );
-		auto lineage = store.Lineage( flow.Slug, id(*messageId, "id", MessageCommand, sl), time(_query, "start", MessageCommand, sl), time(_query, "end", MessageCommand, sl), limit(_query, FlowHost::Instance().ReadLimit()), sl );
+		auto lineage = store.Lineage( flow.Slug, id(*messageId, "id", MessageCommand, sl), time(_query, "start", MessageCommand, sl), time(_query, "end", MessageCommand, sl), limit(_query, FlowHost::Instance().ReadLimit()), run(_query, sl), sl );
 		return { {"records", recordsJson(lineage.Records)}, {"more", lineage.More} };
 	}
 	α FlowQLAwait::Counts( const FlowRow& flow, Flows::TraceStore& store, SL sl )ε->jobject{
@@ -187,11 +191,12 @@ namespace Jde::Opc::Gateway{
 		let width = Chrono::TryToDuration( *by );
 		if( !width || *width<std::chrono::minutes{1} )
 			throw invalid( CountsCommand, Ƒ("'by' is a duration of a minute or more, not '{}'", sv{*by}), sl );
-		let crc = IO::Crc::Calc32c( Ƒ("{}|{}|{}|{}", flow.Id, ToIsoString(*start), ToIsoString(*end), sv{*by}) );
+		let of = run( _query, sl );
+		let crc = IO::Crc::Calc32c( Ƒ("{}|{}|{}|{}|{}", flow.Id, ToIsoString(*start), ToIsoString(*end), sv{*by}, of) );
 		optional<TimePoint> from;
 		if( let c = _query.FindPtr<jstring>("continuation"); c && c->size() )
 			from = decode( CountsCommand, *c, crc, sl ).Time;
-		let page = store.Counts( flow.Slug, *start, *end, *width, limit(_query, FlowHost::Instance().ReadLimit()), from, sl );
+		let page = store.Counts( flow.Slug, *start, *end, *width, limit(_query, FlowHost::Instance().ReadLimit()), from, of, sl );
 		jarray counts;
 		for( let& row : page.Rows ){
 			jarray sent;
