@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <expected>
 #include "NodeId.h"
 #include "Owned.h"
 
@@ -30,6 +31,9 @@ namespace Jde::Opc{
 		α ToJson()Ι->jobject;
 		α Add( jobject& j )Ι->void;
 		α ToString()Ι->string;//the UA spelling, `nsu=…;s=…`, as NodeId::ToString.
+		//ToString's inverse, `svr=1;nsu=urn:x;i=5` or `ns=2;s=tag`, the URI's percent-escapes undone.  BadDecodingError for
+		//other text, `nsu=;i=5` among it.
+		Ω Parse( sv text )ι->std::expected<ExNodeId,StatusCode>;
 	};
 	static_assert( !std::is_polymorphic_v<ExNodeId> && sizeof(ExNodeId)==sizeof(UA_ExpandedNodeId),
 		"ExNodeId must stay layout-compatible with UA_ExpandedNodeId - see reviews/opc-review3.md #2" );

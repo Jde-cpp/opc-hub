@@ -1,8 +1,32 @@
 ﻿#include <jde/opc/uatypes/ExNodeId.h>
+#include <charconv>
 #include <jde/opc/uatypes/NodeId.h>
 
 #define let const auto
 namespace Jde::Opc{
+	//UA_ExpandedNodeId_print percent-escapes a URI, and UA_ExpandedNodeId_parse undoes it only where it maps the URI to an index.
+	Ω unescape( UA_String& uri )ι->StatusCode{
+		let s = ToSV( uri );
+		if( s.find('%')==sv::npos )
+			return UA_STATUSCODE_GOOD;
+		string y;
+		y.reserve( s.size() );
+		for( uint i=0; i<s.size(); ++i ){
+			if( s[i]!='%' ){
+				y += s[i];
+				continue;
+			}
+			uint8_t c{};
+			if( i+2>=s.size() || std::from_chars(s.data()+i+1, s.data()+i+3, c, 16).ptr!=s.data()+i+3 )
+				return UA_STATUSCODE_BADDECODINGERROR;
+			y += (char)c;
+			i += 2;
+		}
+		UA_String_clear( &uri );
+		uri = AllocUAString( y );
+		return UA_STATUSCODE_GOOD;
+	}
+
 	ExNodeId::ExNodeId( const NodeId& x )ι:
 		ExNodeId{}{
 		UA_NodeId_copy( &x, &nodeId );
@@ -36,6 +60,17 @@ namespace Jde::Opc{
 		if( let sc = UA_ExpandedNodeId_print(this, &s); sc )
 			return serialize( ToJson() );
 		return s.ToString();
+	}
+	α ExNodeId::Parse( sv text )ι->std::expected<ExNodeId,StatusCode>{
+		ExNodeId y;
+		auto sc = UA_ExpandedNodeId_parse( &y, ToUV(text) );
+		if( !sc && y.namespaceUri.data && !y.namespaceUri.length )//ns 0's node otherwise, where every reader tests the length.
+			sc = UA_STATUSCODE_BADDECODINGERROR;
+		if( !sc )
+			sc = unescape( y.namespaceUri );
+		if( sc )
+			return std::unexpected( sc );
+		return y;
 	}
 	Ω addExNodeId( jobject& j, const UA_ExpandedNodeId& x )ι->void{
 		if( x.namespaceUri.length )

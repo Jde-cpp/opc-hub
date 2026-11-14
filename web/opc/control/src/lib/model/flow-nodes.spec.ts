@@ -134,6 +134,8 @@ describe( 'flow node props', ()=>{
 		expect( fault( 'opc in', {connection: 'local', node: {nsu: 'urn:jde:pumps', s: 'Pump1.Rpm'}} ) ).toBeUndefined();
 		expect( fault( 'opc in', {connection: 'local'} ) ).toBe( "`node` is required, the node's id." );
 		expect( fault( 'opc in', {connection: 'local', node: 'rpm'} ) ).toContain( 'is not a node id' );
+		expect( fault( 'opc in', {connection: 'local', node: 'nsu=urn:jde:pumps;i=6012'} ) ).toBeUndefined();
+		expect( fault( 'opc in', {connection: 'local', node: 'nsu=urn:jde:pumps;ns=1;i=6012'} ) ).toContain( 'is not a node id' );//the gateway's grammar takes one or the other (reviews-issue/457-flows-demo-help.md #4)
 		expect( fault( 'opc in', {...target, queueSize: 1.5} ) ).toBe( '`queueSize` must be a whole number.' );
 		expect( fault( 'opc in', {...target, filter: {trigger: 'value'}} ) ).toContain( '`trigger` must be one of status, statusValue' );
 		expect( fault( 'opc in', {...target, filter: {deadbandType: 'absolute', deadbandValue: -1}} ) ).toBe( '`deadbandValue` must not be negative.' );

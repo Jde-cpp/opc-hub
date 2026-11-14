@@ -101,7 +101,8 @@ export function parseHistNodeText( text:string ):ExNodeId|undefined{
 		}
 	}
 	try{
-		return ExNodeId.fromUaString( t );//with a `svr=` histNodeText writes for a server index (reviews-issue/423-clients-writes.md #9)
+		const y = ExNodeId.fromUaString( t );//with a `svr=` histNodeText writes for a server index (reviews-issue/423-clients-writes.md #9)
+		return /^(?:svr=\d+;)?nsu=[^;]+;ns=/.test( t ) ? undefined : y;//its namespace by URI or by index, as ParseHistNode's grammar has it, where a value's editor takes both
 	}
 	catch{
 		return undefined;

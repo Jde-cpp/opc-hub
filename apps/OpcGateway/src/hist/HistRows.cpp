@@ -249,9 +249,15 @@ namespace Jde::Opc{
 		}
 	}
 	α Gateway::ParseHistNode( sv text, SL sl )ε->ExNodeId{
+		text = Str::Trim( text );//as the editor's mirror reads it.
 		try{
 			if( text.starts_with('{') )
 				return ExNodeId{ jvalue{Json::Parse(text, sl)} };
+			if( text.starts_with("nsu=") || text.starts_with("svr=") ){//an ExpandedNodeId's UA spelling, what ExNodeId::ToString writes:  a flow's `topic` is one.
+				auto y = ExNodeId::Parse( text );
+				THROW_IFSL( !y, "{}", UA_StatusCode_name(y.error()) );
+				return move( *y );
+			}
 			return ExNodeId{ NodeId::DecodeJson(string{text}) };
 		}
 		catch( const std::exception& e ){

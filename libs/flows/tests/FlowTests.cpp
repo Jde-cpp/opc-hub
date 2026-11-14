@@ -355,6 +355,31 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( whole.Fault()->Message, "Its deployer is gone." );
 	}
 
+	//A reader that finds a flow stopped finds why:  the fault was kept after the state ended, past the log line, and a host's
+	//read between the two had a stopped flow with no fault (reviews-issue/457-flows-demo-help.md, the Stop race).
+	TEST_F( EngineTests, AFlowFoundStoppedHasItsFault ){
+		for( uint i=0; i<200; ++i ){
+			Flow flow{ *Graph::Read(Nodes({Node("out", "log")})), {.Name="faulted", .Clock=Time, .Host=Host} };
+			std::promise<void> started;
+			ASSERT_TRUE( flow.Start([&]{ started.set_value(); }) );
+			started.get_future().get();
+			std::atomic<bool> reading{};
+			optional<Fault> seen;
+			std::thread reader{ [&]{
+				reading = true;
+				while( flow.Running() ){}
+				seen = flow.Fault();
+			} };
+			while( !reading ){}
+			std::promise<void> done;
+			flow.Stop( {"out", "The group is gone."}, [&]{ done.set_value(); } );
+			reader.join();
+			done.get_future().get();
+			ASSERT_TRUE( seen ) << "stop " << i;
+			EXPECT_EQ( seen->NodeId, "out" );
+		}
+	}
+
 	TEST_F( EngineTests, AFlowWhoseSourceIsRefusedStaysStopped ){
 		auto graph = Graph::Read( Nodes({Node("in", "inject", "{}", {{"out"}}), Node("history", "group in", R"({"group":"pumps"})", {{"out"}}), Node("out", "log")}) );
 		ASSERT_TRUE( graph.has_value() );

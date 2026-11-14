@@ -49,9 +49,10 @@ namespace Jde::Opc{
 		return NodeId{ j };
 	}
 	Ω exNodeIdFromJson( const jvalue& j )ε->ExNodeId{
-		ExNodeId y;
-		if( j.is_string() && UA_ExpandedNodeId_parse(&y, ToUV(j.get_string()))==UA_STATUSCODE_GOOD )
-			return y;
+		if( j.is_string() ){
+			if( auto y = ExNodeId::Parse(j.get_string()); y )
+				return move( *y );
+		}
 		return ExNodeId{ j };
 	}
 	//The inverse of Variant.cpp's toJson( double ).  nullopt means "not one of the three", and the caller falls through to the ordinary numeric read, so
