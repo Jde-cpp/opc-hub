@@ -25,7 +25,8 @@ namespace Jde::Opc::Gateway{
 	//subtype with an optional property per variable of `Result`, from `Result`, whose EventNotifier says so, and so from the
 	//Server object.  Its fields are the values the result wrote, under their variables' names in the row's namespace, a field
 	//the result has no value for left empty;  its Time the result's source timestamp, its Severity 100 for OK and 500 for
-	//anything else, and its Message `OK` or `NOK` with the parameter set.
+	//anything else, and its Message `OK` or `NOK`, or `No status` where the result sent none, with the parameter set where it
+	//names one.
 	//A link that returns once a result has been written is filled:  the results pushed from the subscription on are held, and
 	//after the clock's read MID 0064 walks back, from the oldest held id less one, or from id 0, the latest, where none is held,
 	//then from each id it is answered less one.  The walk ends at the last id written, or at a lower id timed no later than the

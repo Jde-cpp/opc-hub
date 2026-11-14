@@ -62,8 +62,8 @@ installed.
   link is down, and `Bad_OutOfRange`, with nothing sent, for a value its field does not hold.
   Each result is an event too, a `TighteningResultEventType` from `Result`, which an event item there or at the
   Server object hears: its Time the result's source timestamp, its Severity 100 for OK and 500 otherwise, its Message
-  `OK` or `NOK` with the parameter set, and a field per `Result` variable the result has a value for, selected as
-  `2:Torque`.
+  `OK` or `NOK`, or `No status` where the result sent none, with the parameter set where it names one, and a field per
+  `Result` variable the result has a value for, selected as `2:Torque`.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.

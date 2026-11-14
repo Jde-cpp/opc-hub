@@ -4,7 +4,6 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/DateTime.h>
-#include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/UAString.h>
 #include <jde/opc/server/UAAccess.h>
 #include <jde/opc/server/UAServer.h>
@@ -368,13 +367,14 @@ namespace Jde::Opc::Gateway{
 		_calls->Answer( *_server, move(call), result, move(detail) );
 	}
 
-	//A result's event (spec *Events*), from `Result` and so from the Server object, which emits every event.  Every field a
-	//client may select is given here, under the key open62541 prints its clause as, so each resolves at the server's first
-	//lookup:  one it does not find there it looks for by parsing every key given, a clause at a time
+	//A result's event (spec *Events*), from `Result` and so from the Server object, which emits every event.  Every field the
+	//event carries is given here, under the key open62541 prints its clause as, so a clause naming one resolves at the
+	//server's first lookup:  one it does not find there it looks for by parsing every key given, a clause at a time
 	//(ua_subscription_event.c resolveSAO), on the server's thread, for each item, which a fill pays a result at a time.  So
 	//the base fields are given and not left to their defaults, and each variable of `Result` twice, as a clause on
 	//BaseEventType and as one on the event's type name it, with the value the result wrote, or empty where it wrote none, which
-	//is what a field the event lacks answers.  The EventId is the server's.  The values are borrowed from the writes.
+	//is what a field the event lacks answers.  A clause naming no field of the event, such as the Alarms view's condition
+	//fields, still pays that parse.  The EventId is the server's.  The values are borrowed from the writes.
 	α OpenProtocolDriver::Posts::Raise( UA_Server& server, UA_UInt16 ns, const Writes& writes, const Event& event )Ι->void{
 		vector<UA_KeyValuePair> fields;
 		fields.reserve( 7+2*Keys.size() );
