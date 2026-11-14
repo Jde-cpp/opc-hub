@@ -6,8 +6,8 @@ import { GATEWAY_SERVICE } from '../gateway-service';
 import { GatewayDetailData } from './client-resolver';
 import { GatewayListKind, gatewayListRoute } from '../../pages/gateway-detail/gateway-list-route';
 
-//A template's or a group's row for its page (#337), and a machine's or a reason's (#404), under the gateway page's
-//`templates/:slug`, `groups/:slug`, `machines/:slug` and `reasons/:slug` routes, each naming its kind in its data, as
+//A template's or a group's row for its page (#337), a machine's or a reason's (#404) and a flow's (#455), under the gateway page's
+//`templates/:slug`, `groups/:slug`, `machines/:slug`, `reasons/:slug` and `flows/:slug` routes, each naming its kind in its data, as
 //ClientResolver resolves a connection's:  the gateway is the url's, the row is DetailResolver's query of the gateway's table, and
 //the siblings are the rows the page's list put in the RouteStore under `<page url>/<kind>` (GatewayHistList).  The sidenav's
 //parent is the page itself ('.'), so a sibling link is `./<kind>/<slug>` from the sidenav's route, which is the page's.  A route

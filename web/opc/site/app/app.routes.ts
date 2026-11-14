@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadFlowDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
@@ -126,11 +126,13 @@ export const routes: Routes = [
 				canActivate: [AuthGuard],
 				data: { tableSettings: gatewayTableSettings }
 			},
-			//The historian's templates and groups (#337):  their lists are tabs of the gateway's page, so the bare list urls - Back and
-			//Cancel from a detail land on them - redirect to it, ahead of ':connection', which would take the segment for a connection.
-			//A segment added ahead of ':connection' joins ServerCnnctn.reservedSlugs and ServerCnnctn::SlugError, which refuse it as a slug.
+			//The historian's templates and groups (#337) and the flows (#455):  their lists are tabs of the gateway's page, so the bare
+			//list urls - Back and Cancel from a detail land on them - redirect to it, ahead of ':connection', which would take the segment
+			//for a connection.  A segment added ahead of ':connection' joins ServerCnnctn.reservedSlugs and ServerCnnctn::SlugError, which
+			//refuse it as a slug.
 			{ path: 'templates', pathMatch: 'full', redirectTo: '' },
 			{ path: 'groups', pathMatch: 'full', redirectTo: '' },
+			{ path: 'flows', pathMatch: 'full', redirectTo: '' },
 			{
 				path: 'templates/:slug',
 				loadComponent: loadHistTemplateDetail,
@@ -196,6 +198,16 @@ export const routes: Routes = [
 				providers: [ HistAdminResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "OEE stop reason", kind: "reasons" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			//A flow's page (#455), under the Flows tab's list.
+			{
+				path: 'flows/:slug',
+				loadComponent: loadFlowDetail,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "Flow", kind: "flows" },
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},

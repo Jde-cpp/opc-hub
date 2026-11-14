@@ -1,0 +1,53 @@
+<!--preserveContent:  a tab, once opened, stays alive behind another, so a switch away keeps the canvas with what is not deployed
+	on it, as it keeps the Access tab's ticks-->
+<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start" preserveContent [(selectedIndex)]="tabIndex">
+	<mat-tab>
+		<ng-template mat-tab-label>Editor</ng-template>
+		<ng-template matTabContent>
+			@if( source(); as s ){
+				<flow-editor [gateway]="gateway" [flow]="row" [source]="s" (deployed)="onDeployed($event)" (enabledChange)="onEnabled($event)"></flow-editor>
+			}
+			@else if( versionsError(); as e ){
+				<div class="jde-empty" role="alert">
+					<mat-icon aria-hidden="true">error_outline</mat-icon>
+					<p class="title">Could not open the flow's graph.</p>
+					<p class="detail">{{ e }}</p>
+					<div class="actions"><button matButton="filled" type="button" (click)="retry()">Retry</button></div>
+				</div>
+			}
+			@else{
+				<mat-progress-bar mode="indeterminate" aria-label="Loading the flow's graph"></mat-progress-bar>
+			}
+		</ng-template>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>Versions</ng-template>
+		<ng-template matTabContent>
+			<flow-versions [gateway]="gateway" [flow]="row" [versions]="versions()" [loading]="versionsLoading()" (open)="openVersion($event)" (refresh)="refreshVersions()"></flow-versions>
+		</ng-template>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>Context</ng-template>
+		<ng-template matTabContent>
+			<flow-context [gateway]="gateway" [flow]="row" [nodes]="nodes()"></flow-context>
+		</ng-template>
+	</mat-tab>
+	<mat-tab><!--who may see the flow and change it:  the flow's own resource row, by the hub's access schema, as a group's-->
+		<ng-template mat-tab-label>Access</ng-template>
+		<ng-template matTabContent>
+			<hist-group-access [group]="row" [subject]="accessSubject"></hist-group-access>
+		</ng-template>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>Properties</ng-template>
+		<ng-template matTabContent>
+			<properties [ctor]=ctor [(record)]=properties type="flow" [schema]=schema [order]=fieldOrder [readonlyFields]="['slug']" [excludedColumns]=excludedFields [picks]=picks [hints]=hints></properties>
+			<section class="form-section" aria-label="Guid"><!--an id for the flow's own resource, never typed:  last, and copyable-->
+				<p class="hint guid">Guid <span class="value">{{ row.guid }}</span>
+					<button matIconButton type="button" [cdkCopyToClipboard]="row.guid ?? ''" (cdkCopyToClipboardCopied)="copied($event)" aria-label="Copy the guid" matTooltip="Copy"><mat-icon>content_copy</mat-icon></button>
+				</p>
+			</section>
+			<detail-actions [page]="this"/><!--the row's Save, with Delete, which stops the flow and keeps what it has, and Purge-->
+		</ng-template>
+	</mat-tab>
+</mat-tab-group>

@@ -1,0 +1,30 @@
+<div class="actions" role="toolbar" aria-label="Flow">
+	<button matButton="filled" type="button" (click)="deploy()" [disabled]="!canDeploy()" matTooltip="Store the graph as the next version, and start it"><mat-icon>rocket_launch</mat-icon>Deploy</button>
+	<button matButton="outlined" type="button" (click)="revert()" [disabled]="!dirty() || busy()" matTooltip="Back to the version deployed"><mat-icon>undo</mat-icon>Revert</button>
+	<button matButton="outlined" type="button" (click)="setEnabled( !flow().enabled )" [disabled]="busy()" [matTooltip]="flow().enabled ? 'Stop the flow' : 'Start the flow from its current version'">
+		<mat-icon>{{ flow().enabled ? 'pause_circle' : 'play_circle' }}</mat-icon>{{ flow().enabled ? 'Disable' : 'Enable' }}
+	</button>
+	<button matButton type="button" (click)="export()" matTooltip="The canvas as a json file, which Import reads"><mat-icon>download</mat-icon>Export</button>
+	<span class="state" role="status">
+		{{ flow().version ? 'Version ' + flow().version : 'Not deployed yet' }}, {{ flow().enabled ? 'enabled' : 'disabled' }}@if( dirty() ){<span class="dirty"> · changes not deployed</span>}
+	</span>
+</div>
+<mat-progress-bar class="refresh-bar" [mode]="busy() || !ready() && !loadError() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Working"></mat-progress-bar>
+@if( refusalText(); as text ){
+	<p class="refusal" role="alert">
+		<mat-icon aria-hidden="true">error</mat-icon><span>{{ text }}</span>
+		@if( refusal()?.node; as id ){ <button matButton type="button" (click)="show(id)">Show the node</button> }
+		<button matIconButton type="button" (click)="refusal.set(undefined)" aria-label="Dismiss" matTooltip="Dismiss"><mat-icon>close</mat-icon></button>
+	</p>
+}
+@if( loadError(); as e ){
+	<div class="jde-empty" role="alert"><mat-icon aria-hidden="true">error_outline</mat-icon><p class="title">Could not load the canvas.</p><p class="detail">{{ e }}</p></div>
+}
+<div class="work">
+	<div class="canvas"><ng-container #slot/></div>
+	@if( selectedNode(); as node ){
+		<aside class="form" aria-label="The node's properties">
+			<flow-node-form [node]="node" [graph]="graph()" [fault]="faults().get(node.id)" (patch)="patch(node.id, $event)"/>
+		</aside>
+	}
+</div>

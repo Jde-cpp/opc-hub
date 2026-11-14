@@ -64,6 +64,17 @@ the loader's `state` signal, which the History toolbar reads too. Specs subclass
 URL import: with literal `import('highcharts/esm/…')` specifiers, which esbuild bundles into the test only, or with a rejection
 and `fetch` stubbed for the absent and failed cases. A component that only reads the state gets `{state: signal(…)}`.
 
+## The flow editor's canvas
+
+`@foblex/flow` (MIT, bundled; `jde-opc.sh` installs it at the exact version the editor is written against) is imported only
+under `opc/control/src/lib/pages/gateway-detail/flows/canvas/`:  by `flow-canvas.ts`, which `flow-editor.ts` imports dynamically
+once its tab is shown, as `marked` is by the help page, and by `flow-node-view.ts`, which only the canvas imports.  Never import it
+statically from a file a page's chunk reaches, where every tab would preload its 400 kB (`import type` is fine, and
+`flow-canvas-state.ts` has no other). A spec that renders the canvas stubs
+`ResizeObserver`, which jsdom lacks and every node makes. The node types, the fields of their `props` and the deploy's rules,
+mirrored from `libs/flows` and `FlowNodes::Check`, are one catalog, `opc/control/src/lib/model/flow-nodes.ts`:  a type or a prop
+added in C++ is added there, and `flow-nodes.spec.ts` holds the type list against the library's.
+
 ## Libraries
 
 Four libraries plus the `my-workspace` application. Dependencies run one way:

@@ -7,13 +7,14 @@ import { AppService, CalendarList, errorMessage, InstanceTab, InstanceTabs, QLLi
 import { RouteItem } from 'jde-spa';
 import { GatewayService } from '../../services/gateway-service';
 import { Gateway } from '../../services/gateway-service';
+import { GatewayFlowList } from './flows/gateway-flow-list';
 import { GatewayEndpoint } from './gateway-endpoint/gateway-endpoint';
 import { GatewayHistList } from './hist-admin/gateway-hist-list';
 
 @Component( {
 		templateUrl: './gateway-detail.html',
 		host: {class:'main-content my-content'},
-		imports: [RouterModule, MatButtonModule, MatIconModule, CalendarList, InstanceTab, InstanceTabs, QLList, GatewayHistList, GatewayEndpoint]
+		imports: [RouterModule, MatButtonModule, MatIconModule, CalendarList, InstanceTab, InstanceTabs, QLList, GatewayHistList, GatewayFlowList, GatewayEndpoint]
 })
 export class GatewayDetail implements OnInit{
 	#route = inject( ActivatedRoute );
@@ -52,8 +53,8 @@ export class GatewayDetail implements OnInit{
 
 	pageData!:QLListData;
 	//the page's url, apps/gateways/<instance>, by its route's segments as the resolvers read it - decoded, where router.url is
-	//percent-encoded:  the RouteStore key of the Connections tab's rows (GatewayResolver), and with `/templates`, `/groups`, `/machines`,
-	//`/lines` or `/reasons` of the historian's and OEE's tabs', where their detail pages find their siblings (HistAdminResolver).  A signal, as the gateway is.
+	//percent-encoded:  the RouteStore key of the Connections tab's rows (GatewayResolver), and with `/templates`, `/groups`, `/flows`, `/machines`,
+	//`/lines` or `/reasons` of the historian's, the flows' and OEE's tabs', where their detail pages find their siblings (HistAdminResolver).  A signal, as the gateway is.
 	url = signal( '' );
 	tabIndex = persistedTabIndex( 'gateway-detail' );
 	sideNav = model.required<RouteItem>();

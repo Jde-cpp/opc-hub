@@ -1,0 +1,103 @@
+@use '../../status';
+
+/* What a flow's Versions and Context tabs add to the admin pages' shared sheet (hist-admin-shared.scss). */
+h3{
+	margin: 1.25rem 0 .25rem;
+	font: var(--mat-sys-title-small);
+}
+.current{
+	padding: 0 6px;
+	border-radius: 8px;
+	color: var(--mat-sys-on-secondary-container);
+	background: var(--mat-sys-secondary-container);
+	font: var(--mat-sys-label-small);
+}
+.bad{
+	color: var(--mat-sys-error);
+}
+.mat-column-version, .mat-column-run, .mat-column-nodes, .mat-column-mode{
+	flex: 0 0 110px;
+	padding-inline: 5px;
+	font-variant-numeric: tabular-nums;
+}
+.mat-column-deployed, .mat-column-started, .mat-column-userName, .mat-column-scope{
+	flex: 0 1 200px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+.mat-column-comment, .mat-column-range, .mat-column-value, .mat-column-name{
+	flex: 2 1 220px;
+	min-width: 0;
+	padding-inline: 5px;
+	span{
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+}
+.mat-column-value span{
+	font-family: 'Roboto Mono', monospace;
+	font-size: 12px;
+}
+.pickers{
+	display: flex;
+	align-items: center;
+	gap: .75rem;
+	mat-form-field{ width: 240px; max-width: 40%; }
+}
+.changes{
+	margin: .5rem 0 0;
+	padding: 0;
+	list-style: none;
+	li{
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		padding: 4px 0;
+		font: var(--mat-sys-body-medium);
+	}
+	mat-icon{
+		flex: none;
+		@include status.icon-size( 20px );
+		color: var(--mat-sys-on-surface-variant);
+	}
+	.added mat-icon{ color: var(--mat-sys-primary); }
+	.removed mat-icon{ color: var(--mat-sys-error); }
+	.kind{ color: var(--mat-sys-on-surface-variant); }
+	.node{ font-weight: 500; }
+	.type{ color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
+	.detail{ display: block; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
+}
+.moved{
+	margin-top: .5rem;
+}
+.resolution-status{
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	mat-icon{
+		flex: 0 0 auto;
+		@include status.icon-size;
+	}
+	.ok{ color: var(--mat-sys-primary); }
+	.bad{ color: var(--mat-sys-error); }
+	.pending{ color: var(--mat-sys-on-surface-variant); }
+	span{
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+}
+.editor .fields{
+	display: grid;
+	grid-template-columns: repeat( auto-fit, minmax( 220px, 1fr ) );
+	gap: .5rem .75rem;
+	mat-form-field{ width: 100%; }
+	.value{ grid-column: 1 / -1; }
+	textarea{ font-family: 'Roboto Mono', monospace; font-size: 12px; }
+}
+.problem{
+	margin: .25rem 0 0;
+	color: var(--mat-sys-error);
+}

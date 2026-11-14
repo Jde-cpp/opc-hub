@@ -1,0 +1,94 @@
+@for( f of fields(); track f.key ){
+	@switch( f.kind ){
+		@case( 'flag' ){
+			<mat-checkbox [checked]="checked(f)" (change)="setFlag(f, $event.checked)">{{ f.label }}</mat-checkbox>
+		}
+		@case( 'choice' ){
+			<mat-form-field subscriptSizing="dynamic">
+				<mat-label>{{ f.label }}</mat-label>
+				<mat-select [value]="choice(f)" (selectionChange)="setChoice(f, $event.value)" [required]="!!f.required">
+					@if( unset(f); as none ){ <mat-option value="">{{ none }}</mat-option> }
+					@for( option of f.options; track option ){
+						<mat-option [value]="option">{{ label(f, option) }}</mat-option>
+					}
+				</mat-select>
+				@if( f.hint ){ <mat-hint>{{ f.hint }}</mat-hint> }
+			</mat-form-field>
+		}
+		@case( 'code' ){
+			<mat-form-field subscriptSizing="dynamic" class="code">
+				<mat-label>{{ f.label }}</mat-label>
+				<textarea matInput [rows]="f.key=='code' ? 14 : 4" spellcheck="false" autocapitalize="off" autocomplete="off" [value]="text(f)" (change)="setText(f, $any($event.target).value)" (keydown)="onCodeKey($event)" [required]="!!f.required"></textarea>
+				<mat-hint>{{ f.hint }}  Tab indents;  Esc, then Tab, leaves.</mat-hint>
+			</mat-form-field>
+		}
+		@case( 'json' ){
+			<mat-form-field subscriptSizing="dynamic" class="code">
+				<mat-label>{{ f.label }}</mat-label>
+				<textarea matInput [rows]="f.key=='message' ? 4 : 1" spellcheck="false" autocapitalize="off" [value]="text(f)" (change)="setText(f, $any($event.target).value)" [required]="!!f.required"></textarea>
+				<mat-hint>{{ f.hint ?? 'A json value;  what is no json is taken as text.' }}</mat-hint>
+			</mat-form-field>
+		}
+		@case( 'list' ){
+			@if( f.options ){
+				<mat-form-field subscriptSizing="dynamic">
+					<mat-label>{{ f.label }}</mat-label>
+					<mat-select multiple [value]="list(f)" (selectionChange)="setList(f, $event.value)">
+						@for( option of f.options; track option ){
+							<mat-option [value]="option">{{ label(f, option) }}</mat-option>
+						}
+					</mat-select>
+					@if( f.hint ){ <mat-hint>{{ f.hint }}</mat-hint> }
+				</mat-form-field>
+			}
+			@else{
+				<mat-form-field subscriptSizing="dynamic">
+					<mat-label>{{ f.label }}</mat-label>
+					<textarea matInput rows="2" spellcheck="false" [value]="text(f)" (change)="setText(f, $any($event.target).value)"></textarea>
+					@if( f.hint ){ <mat-hint>{{ f.hint }}</mat-hint> }
+				</mat-form-field>
+			}
+		}
+		@case( 'scope' ){
+			<mat-form-field subscriptSizing="dynamic">
+				<mat-label>{{ f.label }}</mat-label>
+				<mat-select multiple [value]="list(f)" (selectionChange)="setList(f, $event.value)" [required]="!!f.required">
+					@for( node of nodes(); track node.id ){
+						<mat-option [value]="node.id">{{ node.name || node.type }} <span class="id">{{ node.id }}</span></mat-option>
+					}
+				</mat-select>
+				@if( f.hint ){ <mat-hint>{{ f.hint }}</mat-hint> }
+			</mat-form-field>
+		}
+		@case( 'group' ){
+			<fieldset class="group">
+				<legend>{{ f.label }}</legend>
+				<flow-fields [fields]="f.fields!(group(f))" [value]="group(f)" [graph]="graph()" [self]="self()" (valueChange)="setGroup(f, $event)"/>
+			</fieldset>
+		}
+		@case( 'rules' ){
+			<fieldset class="group rules">
+				<legend>{{ f.label }}</legend>
+				@for( rule of rules(f); track $index ){
+					<div class="rule">
+						<div class="rule-bar">
+							<span class="number">{{ $index+1 }}</span>
+							<button matIconButton type="button" (click)="moveRule(f, $index, -1)" [disabled]="$first" [attr.aria-label]="'Move rule ' + ($index+1) + ' up'" matTooltip="Up"><mat-icon>arrow_upward</mat-icon></button>
+							<button matIconButton type="button" (click)="moveRule(f, $index, 1)" [disabled]="$last" [attr.aria-label]="'Move rule ' + ($index+1) + ' down'" matTooltip="Down"><mat-icon>arrow_downward</mat-icon></button>
+							<button matIconButton type="button" (click)="removeRule(f, $index)" [attr.aria-label]="'Remove rule ' + ($index+1)" matTooltip="Remove"><mat-icon>close</mat-icon></button>
+						</div>
+						<flow-fields [fields]="f.fields!(rule)" [value]="rule" [graph]="graph()" [self]="self()" (valueChange)="setRule(f, $index, $event)"/>
+					</div>
+				}
+				<button matButton type="button" (click)="addRule(f)"><mat-icon>add</mat-icon>Add a rule</button>
+			</fieldset>
+		}
+		@default{<!--text, path, wait, number, count and node:  one line-->
+			<mat-form-field subscriptSizing="dynamic" [floatLabel]="placeholder(f) ? 'always' : 'auto'">
+				<mat-label>{{ f.label }}</mat-label>
+				<input matInput type="text" spellcheck="false" autocapitalize="off" autocomplete="off" [attr.inputmode]="f.kind=='number' || f.kind=='count' ? 'decimal' : null" [value]="text(f)" (change)="setText(f, $any($event.target).value)" [placeholder]="placeholder(f)" [required]="!!f.required">
+				@if( f.hint ){ <mat-hint>{{ f.hint }}</mat-hint> }
+			</mat-form-field>
+		}
+	}
+}

@@ -1,0 +1,46 @@
+<h2 mat-dialog-title>{{ data.import ? 'Import a flow' : 'Create a flow' }}</h2>
+<mat-dialog-content>
+	@if( data.import ){
+		<div class="file">
+			<button matButton="tonal" type="button" (click)="file.click()"><mat-icon>upload_file</mat-icon>Choose a file</button>
+			<input #file type="file" accept=".json,application/json" aria-label="A flow's json file" (change)="onFile(file)">
+			<span>or paste its json below.</span>
+		</div>
+		<div class="fields">
+			<mat-form-field subscriptSizing="dynamic">
+				<mat-label>Json</mat-label>
+				<textarea matInput rows="6" spellcheck="false" [value]="text()" (input)="setText($any($event.target).value)" placeholder='{ "nodes": [ … ] }'></textarea>
+			</mat-form-field>
+		</div>
+		@if( read().error; as e ){
+			<p class="read problem" role="alert">{{ e }}</p>
+		}
+		@else if( read().graph; as graph ){
+			<p class="read" role="status">{{ graph.nodes.length }} {{ graph.nodes.length==1 ? 'node' : 'nodes' }}, opened in the editor undeployed.
+				@if( fault(); as f ){ As it stands the gateway would refuse it:  {{ f }}  The editor marks the node. }
+			</p>
+		}
+		@else{
+			<p class="read">A flow exported from this editor, or a graph.</p>
+		}
+	}
+	<div class="fields">
+		<mat-form-field>
+			<mat-label>Name</mat-label>
+			<input matInput cdkFocusInitial required [value]="name()" (input)="setName($any($event.target).value)">
+		</mat-form-field>
+		<mat-form-field>
+			<mat-label>Slug</mat-label>
+			<input matInput required spellcheck="false" [value]="slug()" (input)="setSlug($any($event.target).value)">
+			<mat-hint [class.problem]="!!slugError()">{{ slugError() ?? "The flow's url segment and its trace's directory:  it never changes." }}</mat-hint>
+		</mat-form-field>
+		<mat-form-field>
+			<mat-label>Description</mat-label>
+			<input matInput [value]="description()" (input)="setDescription($any($event.target).value)">
+		</mat-form-field>
+	</div>
+</mat-dialog-content>
+<mat-dialog-actions>
+	<button matButton="outlined" type="button" (click)="dialogRef.close()">Cancel</button>
+	<button matButton="filled" type="button" (click)="apply()" [disabled]="!valid()">{{ data.import ? 'Import' : 'Create' }}</button>
+</mat-dialog-actions>

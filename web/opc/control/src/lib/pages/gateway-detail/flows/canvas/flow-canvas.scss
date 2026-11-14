@@ -1,0 +1,159 @@
+/* The canvas's own sheet, on Material's tokens:  the library's default theme is 40 kB of its own palette (#446). */
+.flow-canvas{
+	display: flex;
+	flex-direction: column;
+	flex: 1;/* in the editor's slot, a flex row */
+	min-width: 0;
+	min-height: 0;
+
+	.bar{
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 2px;
+		padding: 2px 8px;
+		border-bottom: 1px solid var(--mat-sys-outline-variant);
+		.gap{ width: 12px; }
+	}
+	.figures{
+		margin-left: auto;
+		padding-right: 8px;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+	.body{
+		display: flex;
+		flex: 1;
+		min-height: 0;
+	}
+	.palette{
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		flex: none;
+		width: 148px;
+		padding: 8px 10px 12px;
+		border-right: 1px solid var(--mat-sys-outline-variant);
+		overflow-y: auto;
+		scrollbar-width: thin;
+		scrollbar-color: var(--mat-sys-outline-variant) transparent;
+		h3{
+			margin: 6px 0 0;
+			color: var(--mat-sys-on-surface-variant);
+			font: var(--mat-sys-label-medium);
+		}
+	}
+	.item, flow-node-view{
+		box-sizing: border-box;
+		color: var(--mat-sys-on-surface);
+		background: var(--mat-sys-surface-container-high);
+		border: 1px solid var(--mat-sys-outline-variant);
+		border-left: 4px solid var(--mat-sys-secondary);
+		border-radius: 6px;
+		font: var(--mat-sys-label-large);
+		cursor: grab;
+		mat-icon{ flex: none; font-size: 18px; width: 18px; height: 18px; color: var(--mat-sys-on-surface-variant); }
+		&.source{ border-left-color: var(--mat-sys-primary); }
+		&.sink{ border-left-color: var(--mat-sys-tertiary); }
+		&:focus-visible{ outline: 2px solid var(--mat-sys-primary); outline-offset: 2px; }
+	}
+	.item{
+		flex: none;
+		height: 32px;
+		padding: 0 8px;
+		font: var(--mat-sys-label-medium);
+		.face{ display: flex; align-items: center; gap: 6px; height: 100%; white-space: nowrap; }
+	}
+
+	f-flow{
+		flex: 1;
+		min-width: 0;
+		background: var(--mat-sys-surface);
+	}
+	.f-background circle{ fill: var(--mat-sys-outline-variant); }
+	flow-node-view{
+		position: absolute;/* a node is placed by its transform */
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 176px;
+		height: 40px;
+		padding: 0 12px 0 10px;
+		&.tall{ height: calc( var(--flow-ports) * 18px + 8px ); }
+		.label{ display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.15; }
+		.name, .type{ overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+		.type{ color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-label-small); }
+		&.f-selected{ border-color: var(--mat-sys-primary); box-shadow: var(--mat-sys-level2); }
+		&.unknown{ border-style: dashed; }
+		.fault{ color: var(--mat-sys-error); }
+		&.refused{
+			border-color: var(--mat-sys-error);
+			background: var(--mat-sys-error-container);
+			color: var(--mat-sys-on-error-container);
+		}
+		.inject{
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			flex: none;
+			width: 24px;
+			height: 24px;
+			padding: 0;
+			color: var(--mat-sys-on-primary);
+			background: var(--mat-sys-primary);
+			border: 0;
+			border-radius: 50%;
+			cursor: pointer;
+			mat-icon{ color: inherit; }
+			&:disabled{ color: var(--mat-sys-on-surface-variant); background: var(--mat-sys-surface-container-highest); cursor: default; }
+			&:focus-visible{ outline: 2px solid var(--mat-sys-primary); outline-offset: 2px; }
+		}
+	}
+	.port{
+		position: absolute;
+		top: 50%;
+		width: 12px;
+		height: 12px;
+		box-sizing: border-box;
+		background: var(--mat-sys-surface);
+		border: 2px solid var(--mat-sys-outline);
+		border-radius: 50%;
+		transform: translateY( -50% );
+		cursor: crosshair;
+		&.in{ left: -8px; }
+		&.f-connector-connected{ background: var(--mat-sys-outline); }
+		&.f-connector-connectable{ border-color: var(--mat-sys-primary); }
+	}
+	.outs{
+		position: absolute;
+		top: 0;
+		right: -7px;
+		display: flex;
+		flex-direction: column;
+		justify-content: space-evenly;
+		height: 100%;
+		.port{ position: static; transform: none; }
+	}
+
+	.f-connection-path{ fill: none; stroke: var(--mat-sys-outline); stroke-width: 2; }
+	.f-connection-selection{ fill: none; stroke: transparent; stroke-width: 14; }/* what a click on a wire hits */
+	.f-connection:hover .f-connection-selection{ stroke: color-mix( in srgb, var(--mat-sys-primary) 16%, transparent ); }
+	.f-connection.f-selected .f-connection-path{ stroke: var(--mat-sys-primary); stroke-width: 3; }
+	.f-connection-drag-handle{ fill: transparent; stroke: transparent; cursor: move; }
+	.f-selection-area{
+		background: color-mix( in srgb, var(--mat-sys-primary) 12%, transparent );
+		border: 1px solid var(--mat-sys-primary);
+	}
+	.f-minimap{
+		right: 12px;
+		bottom: 12px;
+		width: 160px;
+		height: 104px;
+		background: var(--mat-sys-surface-container);
+		border: 1px solid var(--mat-sys-outline-variant);
+		border-radius: 6px;
+		.f-minimap-node{ fill: var(--mat-sys-outline); }
+		.f-minimap-node.f-selected{ fill: var(--mat-sys-primary); }
+		.f-minimap-view{ fill: color-mix( in srgb, var(--mat-sys-primary) 14%, transparent ); stroke: var(--mat-sys-primary); stroke-width: 1; }
+	}
+}

@@ -1,0 +1,85 @@
+<div class="tab-body">
+	<p class="hint">What the flow's nodes keep between messages:  a node's own values, the flow's, which its nodes share, and the gateway's, which every flow shares.  A value set here reaches a running flow at its next get;  one that is not running loads it at its start.</p>
+	<div class="tab-toolbar">
+		<button matButton="tonal" type="button" (click)="add()" [disabled]="busy() || !!editing()"><mat-icon>add</mat-icon>Add a value</button>
+		<button matIconButton type="button" (click)="load()" [disabled]="loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+		<span class="count">{{ rows().length }} {{ rows().length==1 ? 'value' : 'values' }}</span>
+	</div>
+	<mat-progress-bar class="refresh-bar" [mode]="loading() || busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the values"></mat-progress-bar>
+	<mat-table [dataSource]="rows()" class="mat-elevation-z2 jde-dense">
+		<ng-container matColumnDef="scope">
+			<mat-header-cell *matHeaderCellDef>Scope</mat-header-cell>
+			<mat-cell *matCellDef="let r"><span tabindex="0" [matTooltip]="scopeDetail(r)">{{ scopeText(r) }}</span></mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="name">
+			<mat-header-cell *matHeaderCellDef>Name</mat-header-cell>
+			<mat-cell *matCellDef="let r"><span>{{ r.name }}</span></mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="value">
+			<mat-header-cell *matHeaderCellDef>Value</mat-header-cell>
+			<mat-cell *matCellDef="let r"><span tabindex="0" [matTooltip]="r.value">{{ r.value }}</span></mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="actions">
+			<mat-header-cell *matHeaderCellDef></mat-header-cell>
+			<mat-cell *matCellDef="let r">
+				<button matIconButton type="button" (click)="edit(r)" [disabled]="busy()" [attr.aria-label]="'Edit ' + r.name" matTooltip="Edit"><mat-icon>edit</mat-icon></button>
+				<button matIconButton type="button" (click)="remove(r)" [disabled]="busy()" [attr.aria-label]="'Remove ' + r.name" matTooltip="Remove"><mat-icon>delete</mat-icon></button>
+			</mat-cell>
+		</ng-container>
+		<mat-header-row *matHeaderRowDef="columns"></mat-header-row>
+		<mat-row *matRowDef="let row; columns: columns"></mat-row>
+	</mat-table>
+	@if( !loading() && !rows().length && !error() ){
+		<p class="empty" role="status">No context values.  A Function body's context.set, flow.set and global.set make them, as does a group in node's mark.</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+	@if( editing(); as e ){
+		<section class="editor" aria-label="A context value">
+			<h3>{{ e.isNew ? 'Add a value' : 'Edit ' + e.name }}</h3>
+			<div class="fields">
+				@if( e.isNew ){
+					<mat-form-field subscriptSizing="dynamic">
+						<mat-label>Scope</mat-label>
+						<mat-select [value]="e.scope" (selectionChange)="set('scope', $event.value)">
+							<mat-option value="flow">The flow</mat-option>
+							<mat-option value="node">A node</mat-option>
+							<mat-option value="global">The gateway, every flow's</mat-option>
+						</mat-select>
+					</mat-form-field>
+					@if( e.scope=='node' ){
+						<mat-form-field subscriptSizing="dynamic">
+							<mat-label>Node</mat-label>
+							<mat-select [value]="e.nodeId" (selectionChange)="set('nodeId', $event.value)" required>
+								@for( node of nodes(); track node.id ){
+									<mat-option [value]="node.id">{{ node.name || node.type }}</mat-option>
+								}
+							</mat-select>
+						</mat-form-field>
+					}
+				}
+				@else{
+					<mat-form-field subscriptSizing="dynamic" class="readonly">
+						<mat-label>Scope</mat-label>
+						<input matInput type="text" [value]="scopeText({flowId: e.scope=='global' ? undefined : flow().id, nodeId: e.nodeId})" readonly>
+					</mat-form-field>
+				}
+				<mat-form-field subscriptSizing="dynamic">
+					<mat-label>Name</mat-label>
+					<input matInput type="text" spellcheck="false" autocomplete="off" [value]="e.name" (input)="set('name', $any($event.target).value)" [readonly]="!e.isNew" required>
+				</mat-form-field>
+				<mat-form-field subscriptSizing="dynamic" class="value">
+					<mat-label>Value</mat-label>
+					<textarea matInput rows="3" spellcheck="false" [value]="e.text" (input)="set('text', $any($event.target).value)" required></textarea>
+					<mat-hint>Json.</mat-hint>
+				</mat-form-field>
+			</div>
+			@if( problem(); as p ){ <p class="problem" role="status">{{ p }}</p> }
+			<div class="editor-actions">
+				<button matButton="outlined" type="button" (click)="editing.set(undefined)">Cancel</button>
+				<button matButton="filled" type="button" (click)="save()" [disabled]="!!problem() || busy()">Save</button>
+			</div>
+		</section>
+	}
+</div>

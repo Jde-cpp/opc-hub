@@ -77,8 +77,9 @@ namespace Jde::Opc::Gateway{
 		if( auto e = FileSlugError(slug, sl); e )
 			return e;
 		//the web's routes under a gateway, apps/gateways/<instance>/<segment>, would shadow the connection's page:  the watch list
-		//(419-watch #12), the historian's lists (#337), the calendars (#391), OEE's lists (#404, #409) and its dashboard (#406).  As ServerCnnctn.fieldError.
-		constexpr std::array reserved{ "watch"sv, "templates"sv, "groups"sv, "calendars"sv, "machines"sv, "lines"sv, "reasons"sv, "oee"sv };
+		//(419-watch #12), the historian's lists (#337), the calendars (#391), OEE's lists (#404, #409), its dashboard (#406) and the
+		//flows (#455).  As ServerCnnctn.fieldError.
+		constexpr std::array reserved{ "watch"sv, "templates"sv, "groups"sv, "calendars"sv, "machines"sv, "lines"sv, "reasons"sv, "oee"sv, "flows"sv };
 		return std::ranges::contains( reserved, slug ) ? mu<Exception>( Ƒ("Slug '{}' is not valid:  it is the url segment of a list on the gateway's page.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl ) : nullptr;
 	}
 	α ServerCnnctn::SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>{

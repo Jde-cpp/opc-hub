@@ -1,0 +1,136 @@
+<div class="tab-body">
+	<p class="hint">Each deploy is a version, kept with who deployed it and why.  The flow runs its current one, under its deployer's rights.  Open puts a version's graph back on the canvas, where Deploy makes it the next.</p>
+	<div class="tab-toolbar">
+		<button matButton="tonal" type="button" (click)="replay()" [disabled]="busy() || !flow().version" matTooltip="Run the current version over its sources' history (needs Update on the flow)"><mat-icon>replay</mat-icon>Replay</button>
+		<button matIconButton type="button" (click)="onRefresh()" [disabled]="loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+		<span class="count">{{ versions().length }} {{ versions().length==1 ? 'version' : 'versions' }}</span>
+	</div>
+	<mat-progress-bar class="refresh-bar" [mode]="loading() || busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the versions"></mat-progress-bar>
+	<mat-table [dataSource]="versions()" class="mat-elevation-z2 jde-dense">
+		<ng-container matColumnDef="version">
+			<mat-header-cell *matHeaderCellDef>Version</mat-header-cell>
+			<mat-cell *matCellDef="let v">{{ v.version }}@if( v.version==flow().version ){&ngsp;<span class="current">current</span>}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="deployed">
+			<mat-header-cell *matHeaderCellDef>Deployed</mat-header-cell>
+			<mat-cell *matCellDef="let v">{{ v.deployed | date:'medium' }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="userName">
+			<mat-header-cell *matHeaderCellDef>By</mat-header-cell>
+			<mat-cell *matCellDef="let v">{{ v.userName }}</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="comment">
+			<mat-header-cell *matHeaderCellDef>Comment</mat-header-cell>
+			<mat-cell *matCellDef="let v"><span [class.inherits]="!v.comment">{{ v.comment || 'none' }}</span></mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="nodes">
+			<mat-header-cell *matHeaderCellDef>Nodes</mat-header-cell>
+			<mat-cell *matCellDef="let v">@if( v.unread ){ <span class="bad" [matTooltip]="v.unread" tabindex="0">unread</span> } @else{ {{ v.graph.nodes.length }} }</mat-cell>
+		</ng-container>
+		<ng-container matColumnDef="actions">
+			<mat-header-cell *matHeaderCellDef></mat-header-cell>
+			<mat-cell *matCellDef="let v">
+				<button matIconButton type="button" (click)="open.emit(v)" [disabled]="!!v.unread" [attr.aria-label]="'Open version ' + v.version + ' in the editor'" matTooltip="Open in the editor"><mat-icon>edit</mat-icon></button>
+				<button matIconButton type="button" (click)="copy(v)" [disabled]="!!v.unread" [attr.aria-label]="'Copy version ' + v.version + ' as json'" matTooltip="Copy as json"><mat-icon>content_copy</mat-icon></button>
+			</mat-cell>
+		</ng-container>
+		<mat-header-row *matHeaderRowDef="columns"></mat-header-row>
+		<mat-row *matRowDef="let row; columns: columns"></mat-row>
+	</mat-table>
+	@if( !loading() && !versions().length ){
+		<p class="empty" role="status">Not deployed yet.  Deploy, on the Editor tab, stores the first version.</p>
+	}
+
+	@if( versions().length>1 ){
+		<section class="compare" aria-label="Compare two versions">
+			<h3>Compare</h3>
+			<div class="pickers">
+				<mat-form-field subscriptSizing="dynamic">
+					<mat-label>Version</mat-label>
+					<mat-select [value]="from()" (selectionChange)="from.set($event.value)">
+						@for( v of versions(); track v.version ){ <mat-option [value]="v.version">{{ v.version }}@if( v.comment ){ - {{ v.comment }} }</mat-option> }
+					</mat-select>
+				</mat-form-field>
+				<span>with</span>
+				<mat-form-field subscriptSizing="dynamic">
+					<mat-label>Version</mat-label>
+					<mat-select [value]="to()" (selectionChange)="to.set($event.value)">
+						@for( v of versions(); track v.version ){ <mat-option [value]="v.version">{{ v.version }}@if( v.comment ){ - {{ v.comment }} }</mat-option> }
+					</mat-select>
+				</mat-form-field>
+			</div>
+			@if( changes().length ){
+				<ul class="changes">
+					@for( c of changes(); track c.id ){
+						<li [class]="c.kind">
+							<mat-icon aria-hidden="true">{{ changeIcon(c) }}</mat-icon>
+							<span class="what"><span class="kind">{{ c.kind }}</span>&ngsp;<span class="node">{{ c.name || c.type }}</span>@if( c.name ){&ngsp;<span class="type">{{ c.type }}</span>}
+								@if( c.what.length ){ <span class="detail">{{ c.what.join( ';  ' ) }}</span> }
+							</span>
+						</li>
+					}
+				</ul>
+			}
+			@else{
+				<p class="empty" role="status">{{ from()==to() ? 'A version against itself.' : 'No node added, removed or changed.' }}</p>
+			}
+			@if( moved() ){ <p class="hint moved">{{ moved() }} {{ moved()==1 ? 'node' : 'nodes' }} moved on the canvas.</p> }
+		</section>
+	}
+
+	<section class="runs" aria-label="Replays">
+		<h3>Replays</h3>
+		<p class="hint">A replay runs the current version over its sources' history, beside the live flow:  dry, every sink captured into the trace, or committed, its variables written into history.</p>
+		<mat-table [dataSource]="runs()" class="mat-elevation-z2 jde-dense">
+			<ng-container matColumnDef="run">
+				<mat-header-cell *matHeaderCellDef>Run</mat-header-cell>
+				<mat-cell *matCellDef="let r">{{ r.id }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="version">
+				<mat-header-cell *matHeaderCellDef>Version</mat-header-cell>
+				<mat-cell *matCellDef="let r">{{ r.version }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="range">
+				<mat-header-cell *matHeaderCellDef>Range</mat-header-cell>
+				<mat-cell *matCellDef="let r">{{ r.start | date:'short' }} to {{ r.finish | date:'short' }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="mode">
+				<mat-header-cell *matHeaderCellDef>Mode</mat-header-cell>
+				<mat-cell *matCellDef="let r">{{ r.mode }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="started">
+				<mat-header-cell *matHeaderCellDef>Started</mat-header-cell>
+				<mat-cell *matCellDef="let r">{{ r.started | date:'medium' }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="userName">
+				<mat-header-cell *matHeaderCellDef>By</mat-header-cell>
+				<mat-cell *matCellDef="let r">{{ r.userName }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="status">
+				<mat-header-cell *matHeaderCellDef>Status</mat-header-cell>
+				<mat-cell *matCellDef="let r">
+					<div class="resolution-status" [matTooltip]="r.status ?? 'Under way'">
+						<mat-icon [class]="runState(r)" aria-hidden="true">{{ runState(r)=='ok' ? 'check_circle' : runState(r)=='bad' ? 'error' : 'pending' }}</mat-icon>
+						<span>{{ r.status ?? 'under way' }}</span>
+					</div>
+				</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="actions">
+				<mat-header-cell *matHeaderCellDef></mat-header-cell>
+				<mat-cell *matCellDef="let r">
+					@if( !r.status ){
+						<button matIconButton type="button" (click)="cancel(r)" [disabled]="busy()" [attr.aria-label]="'Cancel replay ' + r.id" matTooltip="Cancel"><mat-icon>cancel</mat-icon></button>
+					}
+				</mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="runColumns"></mat-header-row>
+			<mat-row *matRowDef="let row; columns: runColumns"></mat-row>
+		</mat-table>
+		@if( runsError(); as e ){
+			<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+		}
+		@else if( !runs().length ){
+			<p class="empty" role="status">No replays yet.</p>
+		}
+	</section>
+</div>

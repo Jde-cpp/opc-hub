@@ -3,7 +3,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { provideRouter } from '@angular/router';
 import { Rights } from 'jde-access';
 import { AppService, SnackbarService } from 'jde-framework';
-import { HistGroupAccess, histGroupResourceName } from './hist-group-access';
+import { AccessSubject, HistGroupAccess, histGroupResourceName } from './hist-group-access';
 import { flush } from 'jde-spa/testing';
 import { dialogStub, snackbarStub } from 'jde-framework/testing';
 
@@ -14,7 +14,7 @@ const unenforced = ( r:any )=>({...r, deleted: '2026-10-15T00:00:00Z'});
 const ops = { id: 7, name: 'ops' };
 //The tab over stubs:  the hub's access schema answers the resource rows and the roles, by query - `calls` - and takes what the tab
 //sends - `mutations`;  the dialog answers the confirmation.
-const create = async ( rows:any[], roles:any[]=[ops], tableRoles:any[]=[] )=>{
+const create = async ( rows:any[], roles:any[]=[ops], tableRoles:any[]=[], subject?:AccessSubject )=>{
 	const state = { rows, roles, tableRoles };
 	const appService = {
 		queryArray: vi.fn( async ( ql:string, _vars:any )=>ql.startsWith( 'resources' ) ? state.rows : ql.includes( 'criteria:null' ) ? state.tableRoles : state.roles ),
@@ -32,12 +32,29 @@ const create = async ( rows:any[], roles:any[]=[ops], tableRoles:any[]=[] )=>{
 	]});
 	const fixture = TestBed.createComponent( HistGroupAccess );
 	fixture.componentRef.setInput( 'group', {id: 5, guid, name: 'Pumps'} );
+	if( subject )
+		fixture.componentRef.setInput( 'subject', subject );
 	fixture.detectChanges();//runs the effect that loads
 	await flush( 3 );
 	return { page: fixture.componentInstance, fixture, appService, calls, mutations, snackbar, dialog, state };
 };
 
 describe( 'HistGroupAccess', ()=>{
+	//#455:  the tab on a flow's row - the flows table's resource, the flow's guid its criteria, and the texts the flow's
+	it( "grants on another table's row where it is given one", async ()=>{
+		const d = await create( [own, unenforced( table )], [ops], [], {
+			key: {schemaName: 'gateway', slug: 'flows'}, table: 'flows', noun: 'flow', rights: {0: 'None', 2: 'Read'}, hint: 'Who may see the flow.',
+			open: name=>`Anyone signed in reads ${name} and deploys it`, held: name=>`read ${name}`, stopped: 'anyone signed in reads the flow'
+		} );
+		expect( d.calls().map( c=>c.vars ) ).toEqual( [{schemaName: 'gateway', slug: 'flows'}, {schemaName: 'gateway', slug: 'flows', criteria: guid}, {schemaName: 'gateway', slug: 'flows'}] );
+		expect( d.page.status().detail ).toContain( "Anyone signed in reads Pumps and deploys it:  the flows table's resource isn't enforced" );
+		expect( d.page.status().detail ).toContain( "The flow's own resource is enforced already" );
+		expect( (<HTMLElement>d.fixture.nativeElement).querySelector( '.hint' )!.textContent ).toBe( 'Who may see the flow.' );
+		d.page.onToggle( {role: d.page.grants.roles()[0], rights: Rights.Read} );
+		expect( d.page.grants.mutations()[0].toString() ).toContain( 'schemaName:"gateway", slug:"flows"' );
+		await d.page.setEnforced( false );
+		expect( (<{message:string}>d.dialog.open.mock.lastCall![1]!.data).message ).toBe( "Pumps goes back under the flows table's resource:  its grants apply where it is enforced;  where it isn't, anyone signed in reads the flow." );
+	} );
 	//the rows are asked under the gateway schema's histGroups slug, the roles with the group's guid as the criteria - never its id, which a
 	//second gateway's group shares and a recreated database hands out again (#357) - and an enforced row of the group's own governs it under
 	//the table's
@@ -94,6 +111,17 @@ describe( 'HistGroupAccess', ()=>{
 		d.state.rows = [own, table];
 		await d.page.load();
 		expect( d.page.status().detail ).toContain( 'only those granted Administer here change these grants' );
+	} );
+	//a page that hands the tab a new object of the same row - a flow's deploy, enable or disable - keeps the ticks not saved
+	//(reviews-issue/455-flows-web-editor.md #4)
+	it( 'keeps the ticks not saved over a new object of the same row', async ()=>{
+		const d = await create( [table] );
+		const reads = d.calls().length;
+		d.page.onToggle( {role: d.page.grants.roles()[0], rights: Rights.Read} );
+		d.fixture.componentRef.setInput( 'group', {id: 5, guid, name: 'Pumps'} );
+		d.fixture.detectChanges();
+		await flush( 3 );
+		expect( [d.page.grants.mutations().length, d.calls().length] ).toEqual( [1, reads] );
 	} );
 	//#3:  the row is named for the group, whose name runs to 256 characters, and access_resources.name to 64 - MySQL refused the first grant
 	//and Make own resource outright.  Cut in code points, as the column counts:  a slice of UTF-16 units would split the emoji below.
