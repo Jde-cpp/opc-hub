@@ -18,8 +18,8 @@ import { FlowReplayDialog } from './flow-replay-dialog';
 
 //A flow's Versions tab (#455, docs/flows/spec.md *Web*):  its deploys, newest first, each with who deployed it, when and why;  two
 //of them compared by node, what the later added, removed and changed;  a version put back on the canvas, to deploy again;  and the
-//replays of the current version (#453), started here, listed with how each ended, and cancelled.  A run is opened in History, which
-//is phase 10's.
+//replays of the current version (#453), started here, listed with how each ended, and cancelled.  A run is opened in History
+//(#456), its trace over its range.
 @Component({
 	selector: 'flow-versions',
 	templateUrl: './flow-versions.html',
@@ -32,6 +32,7 @@ export class FlowVersions{
 	versions = input.required<FlowVersion[]>();//newest first
 	loading = input( false );
 	open = output<FlowVersion>();//onto the canvas
+	openRun = output<FlowRun>();//in History
 	refresh = output<void>();
 	readonly columns = ['version', 'deployed', 'userName', 'comment', 'nodes', 'actions'];
 	readonly runColumns = ['run', 'version', 'range', 'mode', 'started', 'userName', 'status', 'actions'];

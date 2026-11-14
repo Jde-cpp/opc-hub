@@ -7,6 +7,7 @@ import * as FromServer from 'jde-proto/Opc.FromServer';
 import { Attribute } from '../lib/model/attribute';
 import { HistTime, HistValue } from '../lib/model/hist';
 import { OeeLiveEvent } from '../lib/model/oee-live';
+import { FlowLiveEvent } from '../lib/model/flow-live';
 import { CallResult } from '../lib/model/method';
 import { UaNode, Variable } from '../lib/model/node';
 import { NodeId, NodeKey } from '../lib/model/node-id';
@@ -74,9 +75,11 @@ export class Feed<T, A=unknown>{
 //else a test needs.
 export function fakeGateway( slug:string, answers:Record<string,unknown>={}, tree=new Map<NodeKey,UaNode[]>() ){
 	const values = new Feed<SubscriptionResult, NodeId[]>(), histEvents = new Feed<HistEvent, HistSubscribeArgs>(), events = new Feed<EventPush, {node:NodeId; select:string[]}>(), oeeEvents = new Feed<OeeLiveEvent, number>();
+	const flowEvents = new Feed<FlowLiveEvent, {flow:number; hops:boolean}>();
 	return {
-		slug, name: slug, values, histEvents, events, oeeEvents,
+		slug, name: slug, values, histEvents, events, oeeEvents, flowEvents,
 		oeeSubscribe: vi.fn( ( machine:number )=>oeeEvents.open( machine ) ),
+		flowSubscribe: vi.fn( ( flow:number, hops=false )=>flowEvents.open( {flow, hops} ) ),
 		oeeSubscribeLine: vi.fn( ( line:number )=>oeeEvents.open( -line ) ),//a line's feed is under its id negated
 		subscribeEvents: vi.fn( ( _opc:string, node:NodeId, select:string[], _owner?:string )=>events.open( {node, select} ) ),
 		historyEvents: vi.fn( async ( _opc:string, _node:NodeId, _args:HistEventsArgs ):Promise<HistEventsPage>=>({ status: 0, events: [] }) ),

@@ -26,10 +26,11 @@ const create = async ( answer?:FlowReplayAsked )=>{
 	fixture.componentRef.setInput( 'gateway', gateway );
 	fixture.componentRef.setInput( 'flow', new Flow( {id: 7, name: 'Pump', slug: 'pump', version: 3} ) );
 	fixture.componentRef.setInput( 'versions', versions );
-	const opened:FlowVersion[] = [];
+	const opened:FlowVersion[] = [], openedRuns:FlowRun[] = [];
 	tab.open.subscribe( v=>opened.push( v ) );
+	tab.openRun.subscribe( r=>openedRuns.push( r ) );
 	await stable( fixture );
-	return { fixture, tab, element: <HTMLElement>fixture.nativeElement, flows, dialog, snackbar, clipboard, gateway, opened };
+	return { fixture, tab, element: <HTMLElement>fixture.nativeElement, flows, dialog, snackbar, clipboard, gateway, opened, openedRuns };
 };
 
 describe( 'FlowVersions', ()=>{
@@ -64,7 +65,7 @@ describe( 'FlowVersions', ()=>{
 	} );
 	it( "lists the flow's replays, starts one and cancels one", async ()=>{
 		const asked = { from: new Date( '2026-11-14T08:00:00Z' ), to: new Date( '2026-11-14T09:00:00Z' ), mode: <const>'commit' };
-		const { tab, flows, gateway, dialog, snackbar } = await create( asked );
+		const { tab, element, flows, gateway, dialog, snackbar, openedRuns } = await create( asked );
 		expect( flows.runs ).toHaveBeenCalledWith( gateway, 7 );
 		expect( tab.runs().map( r=>[r.id, tab.runState( r )] ) ).toEqual( [[2, 'pending'], [1, 'ok']] );
 		expect( tab.runState( run( 4, 'failed:  a value its group refused' ) ) ).toBe( 'bad' );
@@ -74,6 +75,8 @@ describe( 'FlowVersions', ()=>{
 		expect( snackbar.info ).toHaveBeenCalledWith( 'Replay 3 started.' );
 		await tab.cancel( tab.runs()[0] );
 		expect( flows.cancelRun ).toHaveBeenCalledWith( gateway, 2 );
+		(<HTMLButtonElement>element.querySelector( '.runs mat-row button[aria-label="Open replay 2 in History"]' )).click();
+		expect( openedRuns.map( r=>r.id ) ).toEqual( [2] );
 		expect( flows.runs ).toHaveBeenCalledTimes( 3 );//read again after each
 		flows.replay.mockRejectedValue( new Error( 'A run is under way.' ) );
 		await tab.replay();

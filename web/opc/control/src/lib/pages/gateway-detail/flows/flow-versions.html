@@ -118,6 +118,7 @@
 			<ng-container matColumnDef="actions">
 				<mat-header-cell *matHeaderCellDef></mat-header-cell>
 				<mat-cell *matCellDef="let r">
+					<button matIconButton type="button" (click)="openRun.emit(r)" [attr.aria-label]="'Open replay ' + r.id + ' in History'" matTooltip="Its trace, in History"><mat-icon>history</mat-icon></button>
 					@if( !r.status ){
 						<button matIconButton type="button" (click)="cancel(r)" [disabled]="busy()" [attr.aria-label]="'Cancel replay ' + r.id" matTooltip="Cancel"><mat-icon>cancel</mat-icon></button>
 					}

@@ -7,15 +7,17 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { DetailActions, DetailPage, errorMessage, Properties } from 'jde-framework';
 import { Latest } from 'jde-spa';
-import { Flow, FlowDeployed, FlowGraph, FlowNode, FlowProps, FlowVersion } from '../../../model/flow';
+import { Flow, FlowDeployed, FlowGraph, FlowNode, FlowProps, FlowRun, FlowVersion } from '../../../model/flow';
 import { FlowService } from '../../../services/flow-service';
 import { Gateway } from '../../../services/gateway-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { AccessSubject, HistGroupAccess } from '../hist-admin/hist-group-access';
+import { FlowActivity } from './activity/flow-activity';
 import { FlowEditor, FlowEditorSource } from './editor/flow-editor';
 import { FlowContext } from './flow-context';
 import { FlowDrafts } from './flow-drafts';
 import { FlowVersions } from './flow-versions';
+import { FlowHistory, FlowHistoryRequest } from './history/flow-history';
 
 //A flow's own resource (docs/flows/spec.md *Rights*), as the gateway tests it:  Acl()->Test( "gateway", "flows", <flow guid>, … )
 //(FlowMAwait), governed as a group's is, so the group's tab on the flow's row.
@@ -32,17 +34,19 @@ const excluded = ['guid', 'enabled', 'version'];
 const tracePicks = { trace: [ {value: null, label: "The gateway's level"}, {value: 'off', label: 'Off:  nothing written'}, {value: 'counts', label: "Counts:  a minute's figures a node"}, {value: 'errors', label: 'Errors:  the path of a message that fails'}, {value: 'hops', label: 'Hops:  every message at every node'} ] };
 
 //A flow's page (#455, docs/flows/spec.md *Web*), under the gateway's Flows tab.  Editor:  the canvas, its palette and the
-//selected node's form, with Deploy, Enable, Disable and Inject.  Versions:  the deploys, a diff of two, and the replays.
-//Context:  the values its nodes keep.  Access:  the group's tab, on the flow's row.  Properties, last:  the row's name,
-//description and trace level, saved as a group's is, with Delete, Restore and Purge;  the slug names the trace's directory and
-//never changes.  Activity and History are phase 10's.  The row and its gateway are HistAdminResolver's;  a flow is made by the
-//tab's Create and Import, so the page never holds a new one.
+//selected node's form, with Deploy, Enable, Disable and Inject.  Activity (#456):  the canvas live under FlowSubscribe, with
+//the debug panel, subscribed while the tab is shown.  History (#456):  the canvas over a range of the trace, the live one's or
+//a replay's, with the message list, a message's path and Play.  Versions:  the deploys, a diff of two, and the replays, one
+//opened in History.  Context:  the values its nodes keep.  Access:  the group's tab, on the flow's row.  Properties, last:  the
+//row's name, description and trace level, saved as a group's is, with Delete, Restore and Purge;  the slug names the trace's
+//directory and never changes.  The row and its gateway are HistAdminResolver's;  a flow is made by the tab's Create and Import,
+//so the page never holds a new one.
 @Component({
 	templateUrl: './flow-detail.html',
 	styleUrls: ['../hist-admin/hist-admin-shared.scss', './flow-detail.scss'],
 	//the trailing class is load-bearing, as HistGroupDetail's is (NG0912)
 	host: {class: 'main-content my-content flow-detail'},
-	imports: [CdkCopyToClipboard, DetailActions, MatButtonModule, MatIconModule, MatProgressBarModule, MatTabsModule, MatTooltipModule, Properties, FlowContext, FlowEditor, FlowVersions, HistGroupAccess]
+	imports: [CdkCopyToClipboard, DetailActions, MatButtonModule, MatIconModule, MatProgressBarModule, MatTabsModule, MatTooltipModule, Properties, FlowActivity, FlowContext, FlowEditor, FlowHistory, FlowVersions, HistGroupAccess]
 })
 export class FlowDetail extends DetailPage<Flow>{
 	constructor(){ super( 'flow-detail' ); }
@@ -130,6 +134,13 @@ export class FlowDetail extends DetailPage<Flow>{
 			this.snackbar.info( 'Guid copied.' );
 		else
 			this.snackbar.error( 'Could not copy the guid.' );
+	}
+	//a replay opened from Versions:  History's range and trace, on its tab
+	static readonly historyTab = 2;
+	historyRequest = signal<FlowHistoryRequest|undefined>( undefined );
+	openRun( run:FlowRun ):void{
+		this.historyRequest.set( { run, n: (this.historyRequest()?.n ?? 0)+1 } );
+		this.tabIndex.set( FlowDetail.historyTab );
 	}
 	editor = viewChild( FlowEditor );
 	#flows = inject( FlowService );

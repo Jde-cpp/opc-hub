@@ -1,11 +1,11 @@
-import { Component, computed, effect, input, output, untracked, viewChild, ViewEncapsulation } from '@angular/core';
+import { Component, computed, effect, ElementRef, inject, input, output, untracked, viewChild, ViewEncapsulation } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { FCanvasComponent, FCreateConnectionEvent, FCreateNodeEvent, FFlowComponent, FFlowModule, FSelectionChangeEvent, FZoomDirective, injectFlowState, provideFFlow, withA11y, withFlowState } from '@foblex/flow';
 import { FlowGraph } from '../../../../model/flow';
 import { flowCategories, FlowNodePatch, flowNodeTypes, flowOutputs, newFlowNode } from '../../../../model/flow-nodes';
-import { canvasRecord, CanvasNode, CanvasWire, inNode, outPort, toCanvas, toGraph, wire, wireId } from './flow-canvas-state';
+import { canvasRecord, CanvasNode, CanvasWire, FlowCanvasDecor, FlowWireDecor, inNode, noDecor, outPort, toCanvas, toGraph, wire, wireId, wireKey, wireWidth } from './flow-canvas-state';
 import { FlowNodeView } from './flow-node-view';
 
 const canvasNode = ( type:string, x:number, y:number ):CanvasNode=>canvasRecord( newFlowNode( type, x, y ) );
@@ -15,12 +15,15 @@ const canvasNode = ( type:string, x:number, y:number ):CanvasNode=>canvasRecord(
 //graph and back (flow-canvas-state.ts).  Selection and the view are kept out of the history.  It is the one file that imports the
 //library, and the editor imports it once its tab is shown, so the library is in neither main nor the page's chunk.  The sheet is
 //the editor's own on Material's tokens, unencapsulated:  a wire's path and the minimap are the library's elements.
+//Read-only (#456), the Activity and History tabs' view:  no palette, no undo, nothing dragged or wired, the link edges drawn
+//dashed, and `decor` over the graph - a node's status badge, its errors and drops, a wire's rate as its width and dash, its
+//label and its last message, and the path lit.  A wire selected is said, for the view to show its message.
 @Component({
 	selector: 'flow-canvas',
 	templateUrl: './flow-canvas.html',
-	styleUrl: './flow-canvas.scss',
+	styleUrls: ['./flow-canvas.scss', './flow-canvas-live.scss'],
 	encapsulation: ViewEncapsulation.None,
-	host: {class: 'flow-canvas'},
+	host: {class: 'flow-canvas', '[class.readonly]': 'readonly()'},
 	providers: [ provideFFlow(
 		withFlowState( {
 			selectionInHistory: false, canvasTransformInHistory: false,
@@ -37,19 +40,31 @@ export class FlowCanvas{
 	flow = viewChild.required( FFlowComponent );
 	canvas = viewChild.required( FCanvasComponent );
 	zoom = viewChild.required( FZoomDirective );
+	readonly = input( false );
 	faults = input<Map<string,string>>( new Map() );//by node, what is wrong with it
 	refused = input<string>();//the node a deploy's refusal names
 	injectable = input<Set<string>>( new Set() );//the inject nodes the running flow has
+	decor = input<FlowCanvasDecor>( noDecor() );
 	graphChange = output<FlowGraph>();
 	selectedChange = output<string|undefined>();//the one node selected, for the side form
+	wireSelected = output<string|undefined>();//the one wire selected, by its key, for the view's message panel
 	inject = output<string>();
 	readonly palette = flowCategories.map( c=>({ ...c, types: flowNodeTypes.filter( t=>t.category==c.category ) }) );
 	graph = computed<FlowGraph>( ()=>toGraph( {nodes: this.state.nodes(), connections: this.state.connections()} ) );
 	selection = computed( ()=>this.state.selection().nodeIds.length+this.state.selection().connectionIds.length );
+	//each wire's decoration by its connection id, looked up once a change rather than a wire a draw
+	wires = computed( ()=>new Map<string,FlowWireDecor|undefined>( this.state.connections().map( c=>[c.id, this.decor().wires.get( wireKey( c ) )] ) ) );
 	#rendered = false;
 	#loads = 0;
+	#host:HTMLElement = inject( ElementRef ).nativeElement;
 
 	constructor(){
+		//Read-only, Delete and Backspace go no further:  the library's keyboard layer, on the f-flow below, would take the selection
+		//out of the state, and its config is the component's, not the input's.  A capture, so it runs ahead of the layer.
+		this.#host.addEventListener( 'keydown', ( e:KeyboardEvent )=>{
+			if( this.readonly() && (e.key=='Delete' || e.key=='Backspace') )
+				e.stopPropagation();
+		}, {capture: true} );
 		effect( ()=>{
 			const graph = this.graph();
 			untracked( ()=>this.graphChange.emit( graph ) );
@@ -57,20 +72,24 @@ export class FlowCanvas{
 		effect( ()=>{
 			const {nodeIds, connectionIds} = this.state.selection();
 			const id = nodeIds.length==1 && !connectionIds.length ? nodeIds[0] : undefined;
-			untracked( ()=>this.selectedChange.emit( id ) );
+			const connection = connectionIds.length==1 && !nodeIds.length ? this.state.getConnection( connectionIds[0] ) : undefined;
+			untracked( ()=>{
+				this.selectedChange.emit( id );
+				this.wireSelected.emit( connection ? wireKey( connection ) : undefined );
+			} );
 		} );
 	}
 
 	//another graph on the canvas, its history begun again
 	load( graph:FlowGraph ):void{
-		this.state.load( toCanvas( graph ) );
+		this.state.load( toCanvas( graph, this.readonly() ) );
 		this.state.clearHistory();
 		++this.#loads;
 		if( this.#rendered )
 			this.#fitWhenDrawn( this.#loads, 120 );
 	}
 	//fFullRendered comes for the flow's first render and again when an undo empties the history, never for a load:  the first
-	//fits the view, and a later load fits once every wire has its path.
+	//fits the view, and a later load fits once every wire has its path.  Its own paths:  another tab's canvas is alive beside it.
 	onFullRendered():void{
 		if( this.#rendered )
 			return;
@@ -80,7 +99,7 @@ export class FlowCanvas{
 	#fitWhenDrawn( load:number, frames:number ):void{
 		if( load!=this.#loads )
 			return;
-		const paths = Array.from( document.querySelectorAll( '.flow-canvas f-connection path.f-connection-path' ) );
+		const paths = Array.from( this.#host.querySelectorAll( 'f-connection path.f-connection-path' ) );
 		if( frames<=0 || (paths.length>=this.state.connections().length && paths.every( x=>x.getAttribute( 'd' ) )) )
 			this.fit( false );
 		else
@@ -132,4 +151,5 @@ export class FlowCanvas{
 				this.state.addConnections( ...drawn.values() );
 		} );
 	}
+	width( d:FlowWireDecor|undefined ):number{ return wireWidth( d?.rate ); }
 }

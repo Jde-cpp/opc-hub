@@ -1,0 +1,151 @@
+@use '../../../status';
+
+/* the view takes what the window has under the page's header and tabs, as the editor does */
+:host{
+	display: flex;
+	flex-direction: column;
+	height: max( 520px, calc(100dvh - 190px) );
+}
+.actions{
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 8px 16px;
+	.state{
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-medium);
+		mat-icon{ @include status.icon-size( 20px ); }
+		&.bad{ color: var(--mat-sys-error); }
+		&.warn{ color: var(--mat-sys-tertiary); }
+	}
+	.figures{
+		margin-left: auto;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+		font-variant-numeric: tabular-nums;
+	}
+}
+.refresh-bar{
+	flex: none;
+	--mat-progress-bar-track-height: 2px;
+	--mat-progress-bar-active-indicator-height: 2px;
+}
+.work{
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	border-top: 1px solid var(--mat-sys-outline-variant);
+}
+.canvas{
+	position: relative;
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	.overlay{
+		position: absolute;
+		top: 48px;
+		left: 16px;
+		margin: 0;
+		padding: 4px 10px;
+		border-radius: 8px;
+		background: var(--mat-sys-surface-container);
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+}
+.panel{
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	flex: none;
+	width: min( 420px, 45% );
+	min-height: 0;
+	border-left: 1px solid var(--mat-sys-outline-variant);
+	background: var(--mat-sys-surface-container-lowest);
+}
+.selection{
+	flex: none;
+	max-height: 40%;
+	padding: 10px 14px 6px;
+	overflow: auto;
+	border-bottom: 1px solid var(--mat-sys-outline-variant);
+	h3{ margin: 0 0 4px; font: var(--mat-sys-title-small); }
+}
+.hint{
+	margin: 0 0 4px;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}
+.error{
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: 4px 0;
+	color: var(--mat-sys-error);
+	font: var(--mat-sys-body-small);
+	mat-icon{ @include status.icon-size; }
+}
+.json{
+	margin: 4px 0 0;
+	max-height: 240px;
+	overflow: auto;
+	font: 12px/1.35 'Roboto Mono', monospace;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.panel-bar{
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px 8px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--mat-sys-outline-variant);
+	.filter{ width: 130px; }
+}
+.dropped{ padding: 4px 14px 0; }
+.hops{
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	scrollbar-width: thin;
+	scrollbar-color: var(--mat-sys-outline-variant) transparent;
+	list-style: none;
+	li{
+		border-bottom: 1px solid var(--mat-sys-outline-variant);
+		&.error .row mat-icon, &.drop .row mat-icon{ color: var(--mat-sys-error); }
+		&.birth .row mat-icon{ color: var(--mat-sys-primary); }
+		&.open{ background: var(--mat-sys-surface-container-low); }
+	}
+	.empty{
+		padding: 12px 14px;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+	.row{
+		display: grid;
+		grid-template-columns: 20px 86px minmax( 60px, 1fr ) 56px minmax( 0, 2fr );
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 4px 10px;
+		border: 0;
+		background: transparent;
+		color: var(--mat-sys-on-surface);
+		font: var(--mat-sys-body-small);
+		text-align: left;
+		cursor: pointer;
+		mat-icon{ @include status.icon-size; color: var(--mat-sys-on-surface-variant); }
+		.time{ font-variant-numeric: tabular-nums; color: var(--mat-sys-on-surface-variant); }
+		.node, .summary{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.kind{ color: var(--mat-sys-on-surface-variant); }
+		.summary{ font-family: 'Roboto Mono', monospace; font-size: 11px; }
+		&:focus-visible{ outline: 2px solid var(--mat-sys-primary); outline-offset: -2px; }
+	}
+	.detail{ padding: 0 14px 8px 36px; }
+}

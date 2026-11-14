@@ -24,6 +24,7 @@ import { ExtensionObject, Reading, shortestFloat, Structure, toReading, toValue,
 import { Enum } from '../model/enum';
 import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound, qlTime } from '../model/hist';
 import { OeeLiveEvent, toOeeLiveStatus } from '../model/oee-live';
+import { FlowLiveEvent, toFlowLiveActivity, toFlowLiveNode } from '../model/flow-live';
 import { Revised, WatchParameters } from '../model/watch';
 import { baseEventFields, EventFields } from '../model/event';
 import { isBad } from '../model/status-code';
@@ -123,6 +124,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		subjects.forEach( s=>s.error(e) );
 		this.#hist.dropped();//the socket carried the historian subscriptions too:  each subscribes again once the gateway is back
 		this.#oee.dropped();//and OEE's, as the historian's
+		this.#flows.dropped();//and the flows', the same
 		for( const [owner, live] of [...this.#events] ){//and the event subscriptions, whose streams end:  the tab subscribes again (spec *Events*)
 			this.#events.delete( owner );
 			live.subscriber.error( e );
@@ -161,6 +163,10 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#oeeStatus( requestId, message.oeeSubscribeAck.status );
 				else if( message.oeeStatus )
 					this.#oeeStatus( requestId, message.oeeStatus );
+				else if( message.flowSubscribeAck )
+					this.#flowAck( requestId, message.flowSubscribeAck );
+				else if( message.flowActivity )
+					this.#flowActivity( requestId, message.flowActivity );
 				else if( message.monitoredItemModified )
 					this.#itemModified( message.monitoredItemModified );
 				else if( message.eventValues )
@@ -169,7 +175,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.#eventsRestored( message.eventsRestored );
 				else if( message.exception ){
 					const e = message.exception;
-					if( !this.processError( e, requestId ) && !this.#hist.exception( requestId, e ) && !this.#oee.exception( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
+					if( !this.processError( e, requestId ) && !this.#hist.exception( requestId, e ) && !this.#oee.exception( requestId, e ) && !this.#flows.exception( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
 						throw e;
 				}
 				else
@@ -613,6 +619,26 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		this.#oee.acked( requestId )?.subscriber.next( {kind: 'status', status: toOeeLiveStatus( status )} );
 	}
 
+	//A flow's live activity (flows spec *Live*, #456):  FlowSubscribe on this socket, its lifecycle LiveSubscriptions' as OEE's is.
+	//The stream delivers the ack, the running version with each node's status and figures since the flow started, again for
+	//each run a deploy or a restart puts in its place, then each FlowActivity the gateway pushes, every /gateway/flows/live at
+	//most while anything changed:  the nodes' figures since the push before, the wires with a count and their first message,
+	//and with `hops` the trace's records since, for the debug panel.  After `dropped` the ack follows the subscribe again.  An
+	//exception under the id ends it:  the flow stopped, purged or refused at a re-check, the flows stopping, or a refusal of the
+	//subscribe itself - a flow that is not running is refused with its fault.
+	flowSubscribe( flow:number, hops=false ):Observable<FlowLiveEvent>{
+		return new Observable<FlowLiveEvent>( subscriber=>this.#flows.open( {flow, hops, subscriber, requestId: 0, down: false} ) );
+	}
+	#flows = new LiveSubscriptions<FlowLive,FlowLiveEvent>( ()=>this.getRequestId(),
+		( live, requestId )=>this.sendWithId( {flowSubscribe: <FromClient.FlowSubscribe>{flow: live.flow, hops: live.hops}}, requestId, `flowSubscribe flow: ${live.flow}${live.hops ? ', hops' : ''}` ),
+		subscription=>this.sendPromise<void>( {flowUnsubscribe: <FromClient.FlowUnsubscribe>{subscription}}, `flowUnsubscribe ${subscription}` ).catch( e=>console.warn( `flowUnsubscribe ${subscription} - ${errorText(e)}` ) ) );
+	#flowAck( requestId:number, ack:FromServer.FlowSubscribeAck ){
+		this.#flows.acked( requestId )?.subscriber.next( {kind: 'ack', version: ack.version, nodes: ack.nodes.map( toFlowLiveNode )} );
+	}
+	#flowActivity( requestId:number, activity:FromServer.FlowActivity ){
+		this.#flows.find( requestId )?.subscriber.next( {kind: 'activity', activity: toFlowLiveActivity( activity )} );
+	}
+
 	private static toGuid( proto:Uint8Array ):Guid{ let guid = new Guid(); guid.value = proto; return guid; }
 	private static toValue( proto:Common.Value ):Value{
 		//protobufjs exposed a virtual `of` getter naming the set oneof field; ts-proto emits plain optionals, so each arm
@@ -885,6 +911,7 @@ export type HistEvent =
 type SocketLive<TEvent> = { subscriber:Subscriber<TEvent>; requestId:number; down:boolean; retry?:ReturnType<typeof setTimeout> };
 type HistLive = SocketLive<HistEvent> & { args:HistSubscribeArgs; latest:Map<number,Date> };//latest:  by slot
 type OeeLive = SocketLive<OeeLiveEvent> & { machine:number; line:number };//one of the two, the other 0
+type FlowLive = SocketLive<FlowLiveEvent> & { flow:number; hops:boolean };
 //A live subscription's lifecycle on the gateway's socket, the historian's and OEE's.  Its request id names it on the wire.  The
 //teardown forgets it as it unsubscribes, so what is still on the wire for it finds no subscription and is dropped:  the ids
 //aren't reused, so one unknown is an ended subscription's.  The socket's drop says `dropped` once an outage, from its first drop

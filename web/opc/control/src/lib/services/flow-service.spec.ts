@@ -65,6 +65,27 @@ describe( 'FlowService', ()=>{
 		await service.setContext( g, {name: 'site'}, undefined );
 		expect( g.postQL.mock.lastCall![1] ).toEqual( {flow: null, node: null, name: 'site', value: null} );
 	} );
+	//the three reads, each given the arguments it has, a time as ISO text (#456)
+	it( 'reads the trace, a message and the counts', async ()=>{
+		const g = stub( {
+			flowTrace: {continuation: 'abc', records: [{time: '2026-11-14T08:00:00Z', msgId: {low: 5, high: 0, unsigned: true}, parentId: null, runId: 0, node: 'in', kind: 'birth', ports: [0], json: {payload: 1}, cut: false, error: null, status: null, blocks: []}]},
+			flowMessage: {more: true, records: [{time: '2026-11-14T08:00:00Z', msgId: 5, parentId: null, runId: 0, node: 'in', kind: 'birth', ports: [], json: null, cut: false, error: null, status: null, blocks: []}]},
+			flowCounts: {continuation: null, counts: [{time: '2026-11-14T08:00:00Z', node: 'in', received: 0, sent: [3], drops: 0, errors: 0}]}
+		} );
+		const start = new Date( '2026-11-14T08:00:00Z' ), end = new Date( '2026-11-14T09:00:00Z' );
+		const trace = await service.trace( g, {flow: 7, start, end, node: 'in', kind: 'birth', limit: 200} );
+		expect( trace.continuation ).toBe( 'abc' );
+		expect( trace.records[0] ).toMatchObject( {msgId: '5', node: 'in', kind: 'birth', ports: [0], json: {payload: 1}} );
+		expect( g.query ).toHaveBeenLastCalledWith( 'flowTrace( flow: $flow, start: $start, end: $end, node: $node, kind: $kind, limit: $limit ){ continuation records{ time msgId parentId runId node kind ports json cut error status{ fill shape text } blocks } }', {flow: 7, start: '2026-11-14T08:00:00.000Z', end: '2026-11-14T09:00:00.000Z', node: 'in', kind: 'birth', limit: 200} );
+		await service.trace( g, {flow: 7, end, msg: '5', run: 3, continuation: 'abc'} );
+		expect( g.query.mock.lastCall![1] ).toEqual( {flow: 7, end: '2026-11-14T09:00:00.000Z', msg: '5', run: 3, continuation: 'abc'} );
+		const lineage = await service.message( g, {flow: 7, id: '5', start} );
+		expect( [lineage.more, lineage.records[0].msgId] ).toEqual( [true, '5'] );
+		expect( g.query ).toHaveBeenLastCalledWith( 'flowMessage( flow: $flow, id: $id, start: $start ){ more records{ time msgId parentId runId node kind ports json cut error status{ fill shape text } blocks } }', {flow: 7, id: '5', start: '2026-11-14T08:00:00.000Z'} );
+		const counts = await service.counts( g, {flow: 7, start, end, by: 'PT1M'} );
+		expect( [counts.continuation, counts.counts[0].counts.sent] ).toEqual( [undefined, [3]] );
+		expect( g.query ).toHaveBeenLastCalledWith( 'flowCounts( flow: $flow, start: $start, end: $end, by: $by ){ continuation counts{ time node received sent drops errors } }', {flow: 7, start: '2026-11-14T08:00:00.000Z', end: '2026-11-14T09:00:00.000Z', by: 'PT1M'} );
+	} );
 	it( 'replays the current version, lists the runs and cancels one', async ()=>{
 		const g = stub( {replayFlow: {id: 5, version: 3, start: '2026-11-14T08:00:00Z', finish: '2026-11-14T09:00:00Z', mode: 'dry', started: '2026-11-14T10:00:00Z', userName: 'ann', status: null}, flowRuns: [{id: 4, version: 2, mode: 'commit', status: 'completed'}, {id: 5, version: 3, mode: 'dry', status: null}]} );
 		const run = await service.replay( g, 7, new Date( '2026-11-14T08:00:00Z' ), new Date( '2026-11-14T09:00:00Z' ), 'dry' );
