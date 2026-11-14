@@ -1,14 +1,16 @@
-import { afterNextRender, Component, ComponentRef, computed, effect, inject, input, output, signal, untracked, viewChild, ViewContainerRef } from '@angular/core';
+import { afterNextRender, Component, ComponentRef, computed, effect, ElementRef, inject, Injector, input, output, signal, untracked, viewChild, ViewContainerRef } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { confirm, errorMessage, SnackbarService } from 'jde-framework';
-import { exportFlow, Flow, FlowDeployed, FlowFault, flowFaultText, FlowGraph, sameFlowGraph, toFlowFault } from '../../../../model/flow';
+import { exportFlow, Flow, FlowDeployed, FlowFault, flowFaultText, FlowGraph, FlowNode, sameFlowGraph, toFlowFault } from '../../../../model/flow';
 import { flowGraphFault, flowNodeFaults, FlowNodePatch, normalizeFlowGraph } from '../../../../model/flow-nodes';
 import { FlowService } from '../../../../services/flow-service';
 import { HistPoster } from '../../../../services/history-service';
+import type { FlowBlockEditor } from '../blocks/flow-block-editor';
+import { FlowBlocksLoader } from '../blocks/flow-blocks-loader';
 import type { FlowCanvas } from '../canvas/flow-canvas';
 import { FlowDeployDialog } from './flow-deploy-dialog';
 import { FlowNodeForm } from './flow-node-form';
@@ -21,7 +23,9 @@ export type FlowEditorSource = { deployed:FlowGraph; draft?:FlowGraph };
 //flow's own actions - Deploy with a comment, which stores the graph as the next version and marks the node a refusal names,
 //Revert to the version deployed, Enable and Disable, an inject node's button, and Export.  The canvas and its library are
 //imported once the tab is shown (FlowCanvas), as marked is by the help page:  behind the page's loader alone they would sit in
-//its chunk, which every tab preloads.
+//its chunk, which every tab preloads.  A Function node's block editor (#458) loads the same way once its form asks for it, and
+//takes the canvas's room and the form's until its Done or Cancel:  the node's props are one step of the canvas's history at
+//Done, and a deploy waits for it, since what the blocks hold is not yet the graph's.
 @Component({
 	selector: 'flow-editor',
 	templateUrl: './flow-editor.html',
@@ -35,6 +39,7 @@ export class FlowEditor{
 	deployed = output<FlowDeployed>();
 	enabledChange = output<boolean>();
 	slot = viewChild.required( 'slot', {read: ViewContainerRef} );
+	blocksSlot = viewChild.required( 'blocksSlot', {read: ViewContainerRef} );
 
 	graph = signal<FlowGraph>( {nodes: []} );//what the canvas holds
 	base = signal<FlowGraph>( {nodes: []} );//what is deployed
@@ -43,13 +48,18 @@ export class FlowEditor{
 	busy = signal( false );
 	loadError = signal<string|undefined>( undefined );//the canvas could not be imported
 	ready = signal( false );
+	blocksOf = signal<string|undefined>( undefined );//the node whose block editor is open
 	dirty = computed( ()=>!sameFlowGraph( this.graph(), this.base() ) );
 	faults = computed( ()=>flowNodeFaults( this.graph() ) );
 	selectedNode = computed( ()=>this.graph().nodes.find( n=>n.id==this.selected() ) );
 	//the inject nodes of the version running:  one drawn since is not there to send
 	injectable = computed( ()=>new Set( this.flow().enabled && this.flow().version ? this.base().nodes.filter( n=>n.type=='inject' ).map( n=>n.id ) : [] ) );
-	canDeploy = computed( ()=>this.ready() && !this.busy() && (this.dirty() || !this.flow().version) );
+	canDeploy = computed( ()=>this.ready() && !this.busy() && !this.blocksOf() && (this.dirty() || !this.flow().version) );
 	#canvas?:ComponentRef<FlowCanvas>;
+	#blocks?:ComponentRef<FlowBlockEditor>;
+	#blocksLoader = inject( FlowBlocksLoader );
+	#element = inject<ElementRef<HTMLElement>>( ElementRef );
+	#injector = inject( Injector );
 	#flows = inject( FlowService );
 	#dialog = inject( MatDialog );
 	#snackbar = inject( SnackbarService );
@@ -91,12 +101,48 @@ export class FlowEditor{
 		this.refusal.set( undefined );
 	}
 	#load( graph:FlowGraph ):void{
+		this.closeBlocks();
 		this.graph.set( graph );
 		this.selected.set( undefined );
 		this.#canvas?.instance.load( graph );
 	}
 
 	patch( id:string, patch:FlowNodePatch ):void{ this.#canvas?.instance.patch( id, patch ); }
+	//The block editor of a Function node's body, over the canvas and the form:  its Done is the node's `blocks` and the `code`
+	//they wrote, together.
+	async openBlocks( node:FlowNode ):Promise<void>{
+		if( this.blocksOf() )
+			return;
+		this.blocksOf.set( node.id );
+		try{
+			const view = await this.#blocksLoader.load( this.blocksSlot() );
+			if( this.blocksOf()!=node.id )//let go while it loaded
+				return view.destroy();
+			view.setInput( 'title', node.name || node.type );
+			view.setInput( 'blocks', node.props['blocks'] );
+			view.instance.done.subscribe( y=>{
+				const now = this.graph().nodes.find( n=>n.id==node.id );
+				if( now )
+					this.patch( node.id, {props: {...now.props, blocks: y.blocks, code: y.code}} );
+				this.closeBlocks();
+			} );
+			view.instance.closed.subscribe( ()=>this.closeBlocks() );
+			this.#blocks = view;
+		}
+		catch( e ){
+			this.blocksOf.set( undefined );
+			this.#snackbar.exception( 'Could not load the block editor.', e );
+		}
+	}
+	//the editor gone, and the keyboard back at the form's button for it
+	closeBlocks():void{
+		if( !this.blocksOf() )
+			return;
+		this.#blocks?.destroy();
+		this.#blocks = undefined;
+		this.blocksOf.set( undefined );
+		afterNextRender( ()=>this.#element.nativeElement.querySelector<HTMLElement>( '.form .edit-blocks' )?.focus(), {injector: this.#injector} );
+	}
 	show( id:string ):void{ this.#canvas?.instance.select( id ); }
 	//Whether what is on the canvas may go, asked where it is not what is deployed:  a load begins the history again, so no Undo
 	//brings it back.
@@ -104,7 +150,7 @@ export class FlowEditor{
 		return !this.dirty() || confirm( this.#dialog, {title, message: "What is on the canvas isn't deployed, and Undo won't bring it back.", confirm: 'Replace', destructive: true} );
 	}
 	async revert():Promise<void>{
-		if( !await this.mayReplace( 'Revert to the version deployed?' ) )
+		if( this.blocksOf() || !await this.mayReplace( 'Revert to the version deployed?' ) )
 			return;
 		this.#load( this.base() );
 		this.refusal.set( undefined );

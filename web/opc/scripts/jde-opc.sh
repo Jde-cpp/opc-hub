@@ -13,3 +13,13 @@ fi;
 if [ "$(jq -r '.dependencies."@foblex/flow" // empty' package.json)" != "19.4.0" ]; then
 	npm --silent install --save-exact @foblex/flow@19.4.0 || { echo `pwd`; echo npm install @foblex/flow failed; exit 1; };
 fi;
+#the Function node's block editor (#458):  Blockly, Apache 2.0, bundled, at the version its blocks, its toolbox and its sheet are
+#written against, in a chunk of its own that loads once a body's blocks are asked for (web/CLAUDE.md, "The block editor").
+if [ "$(jq -r '.dependencies.blockly // empty' package.json)" != "13.4.0" ]; then
+	npm --silent install --save-exact blockly@13.4.0 || { echo `pwd`; echo npm install blockly failed; exit 1; };
+fi;
+#Blockly's media - its cursors, and the sprites of the trash can and the zoom controls - from the package to
+#assets/jde-opc/blockly/, where the editor points it:  left to itself Blockly fetches them from a site of Google's, which a plant's
+#network may not reach.  Its sounds are switched off, and stay behind.  Re-applied every run, as create-workspace.sh's entries are.
+source $JDE_BASH/build/common.sh;
+jqEdit angular.json ".projects.\"$(basename `pwd`)\".architect.build.options.assets |= ((. // []) | map(select((type==\"object\" and .input==\"node_modules/blockly/media\") | not)) + [{\"glob\":\"**/*\",\"input\":\"node_modules/blockly/media\",\"output\":\"assets/jde-opc/blockly\",\"ignore\":[\"*.mp3\",\"*.ogg\",\"*.wav\"]}])";

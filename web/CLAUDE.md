@@ -76,6 +76,24 @@ statically from a file a page's chunk reaches, where every tab would preload its
 mirrored from `libs/flows` and `FlowNodes::Check`, are one catalog, `opc/control/src/lib/model/flow-nodes.ts`:  a type or a prop
 added in C++ is added there, and `flow-nodes.spec.ts` holds the type list against the library's.
 
+## The block editor
+
+Blockly (Apache 2.0, bundled; `jde-opc.sh` installs it at the exact version the blocks, the toolbox and the sheet are written
+against) is imported only under `opc/control/src/lib/pages/gateway-detail/flows/blocks/`:  by `flow-blocks.ts`, the flow's own
+blocks, their generators and the toolbox, and through it by `flow-block-editor.ts`, the component.  Everything else reaches
+them through `flow-blocks-loader.ts`'s `FlowBlocksLoader`, a service whose `load` is a dynamic import, once a Function node's
+blocks are asked for - by the Editor tab's form or the History tab's lineage - so its 830 kB sit in a chunk of their own, in
+neither `main` nor the page's.
+Never import either file statically from a file a page's chunk reaches (`import type` is fine).  Blockly's media, the cursors
+and the sprites of its trash can and zoom controls, ship from the package as `assets/jde-opc/blockly/`, an `angular.json` entry
+`jde-opc.sh` writes, since Blockly otherwise fetches them from a site of Google's;  its sounds are off.  The component's sheet is
+not encapsulated, since the blocks are Blockly's own elements, so every rule in it sits under `flow-block-editor`.  A Function
+body's code is the body of `async function( msg, node, __block )`:  the generator begins each statement with `__block( id )`,
+and a block added to the toolbox needs a generator in `flow-blocks.ts`, which `flow-blocks.spec.ts` checks for every entry.
+The blocks' own specs run Blockly for real under jsdom, which has no canvas and says so each time a text is measured, so
+`flow-block-editor.spec.ts` stubs `HTMLCanvasElement.prototype.getContext`;  a page's spec provides `flowBlocksLoader()` of
+`jde-opc/testing` for the loader, whose stub component stands in for the editor, and never loads Blockly.
+
 ## Libraries
 
 Four libraries plus the `my-workspace` application. Dependencies run one way:

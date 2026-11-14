@@ -430,6 +430,10 @@ namespace Jde::Opc::Flows{
 			if( Entered() && _trace )
 				_trace->Capture( slot.Def, id, serialize(what) );
 		}
+		α Block( Slot& slot, MessageId id, sv block )ι->void{
+			if( Entered() && _trace )
+				_trace->Block( slot.Def, id, block );
+		}
 		α Cancel( Slot& slot, INode::TimerId id )ι->bool{
 			let p = Entered() ? slot.Timers.find( id ) : slot.Timers.end();
 			if( p==slot.Timers.end() )
@@ -1000,6 +1004,7 @@ namespace Jde::Opc::Flows{
 	α INode::Error( string error )ι->void{ _slot->Flow.Error( *_slot, move(error) ); }
 	α INode::Capture( MessageId id, const jvalue& what )ι->void{ _slot->Flow.Capture( *_slot, id, what ); }
 	α INode::Replaying()Ι->bool{ return _slot->Flow.Replaying(); }
+	α INode::Block( MessageId id, sv block )ι->void{ _slot->Flow.Block( *_slot, id, block ); }
 	α INode::SetStatus( NodeStatus status )ι->void{ _slot->Flow.SetStatus( *_slot, move(status) ); }
 	α INode::Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, after, std::move(f) ); }
 	α INode::Schedule( TimePoint due, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, due, std::move(f) ); }

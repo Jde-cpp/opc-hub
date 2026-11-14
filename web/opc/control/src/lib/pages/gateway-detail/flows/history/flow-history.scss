@@ -43,10 +43,19 @@
 	border-top: 1px solid var(--mat-sys-outline-variant);
 }
 .view{
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	flex: 1;
 	min-width: 0;
+}
+/* a Function node's blocks, over the canvas and the scrubber */
+.blocks{
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	display: flex;
+	&[hidden]{ display: none; }
 }
 .canvas{
 	display: flex;
@@ -146,6 +155,7 @@
 		.time{ color: var(--mat-sys-on-surface-variant); font-variant-numeric: tabular-nums; }
 		.kind{ color: var(--mat-sys-on-surface-variant); }
 		.error, .json{ grid-column: 1 / -1; padding: 0; }
+		.passed{ grid-column: 1 / -1; justify-self: start; }
 		&.error .kind{ color: var(--mat-sys-error); }
 	}
 }

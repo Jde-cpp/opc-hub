@@ -7,7 +7,7 @@ import { FlowNodePatch, flowNodeType } from '../../../../model/flow-nodes';
 import { FlowFields } from './flow-fields';
 
 //The side form of the node selected (#455), typed by the node's type:  its name, and its props as the type's fields
-//(FlowFields), a Function node's body among them, in a plain editor.  What is wrong with it as it stands is said above the
+//(FlowFields), a Function node's body among them, in a plain editor or built from blocks, whose editor it asks of the tab.  What is wrong with it as it stands is said above the
 //fields.  A switch's ports are its rules, so a change of its rules says where each port was, and its wires follow.
 @Component({
 	selector: 'flow-node-form',
@@ -26,7 +26,7 @@ import { FlowFields } from './flow-fields';
 			<mat-label>Name</mat-label>
 			<input matInput type="text" autocomplete="off" [value]="node().name" (change)="patch.emit( {name: $any($event.target).value.trim()} )" [placeholder]="node().type">
 		</mat-form-field>
-		<flow-fields [fields]="fields()" [value]="node().props" [graph]="graph()" [self]="node().id" (valueChange)="setProps($event)"/>
+		<flow-fields [fields]="fields()" [value]="node().props" [graph]="graph()" [self]="node().id" (valueChange)="setProps($event)" (blocks)="blocks.emit()"/>
 		<p class="id">Id <span>{{ node().id }}</span></p>`,
 	styles: `
 		:host{ display: flex; flex-direction: column; gap: 10px; }
@@ -53,6 +53,7 @@ export class FlowNodeForm{
 	graph = input.required<FlowGraph>();
 	fault = input<string>();
 	patch = output<FlowNodePatch>();
+	blocks = output<void>();//the block editor asked for the node's body
 	type = computed( ()=>flowNodeType( this.node().type ) );
 	fields = computed( ()=>this.type()?.fields( this.node().props ) ?? [] );
 

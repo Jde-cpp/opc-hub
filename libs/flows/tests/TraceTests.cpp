@@ -488,6 +488,28 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( *records[0].Status, status );
 	}
 
+	//Phase 12:  a hop keeps the blocks its body passed, each once in the order first passed, and they read back from the day's
+	//file;  a block of a message the node does not have, or one longer than an id is, is no hop's.
+	TEST_F( FileTraceTests, AHopsBlocksReadBack ){
+		auto trace = Store->Trace( "flow", ETraceLevel::Hops, Time );
+		const NodeDef f{ .Id="f", .Type=ENodeType::Function };
+		const string lone{ "\xED\xA0\x80" };//not UTF-8, as a body may pass it.
+		Message m{ jobject{{"_id", 5}, {"payload", 1}} };
+		trace->Block( f, 5, "early" );
+		trace->Receive( f, m );
+		for( sv block : {"a", "b", "a", "", "c"} )
+			trace->Block( f, 5, block );
+		trace->Block( f, 5, lone );
+		trace->Block( f, 5, string(65, 'x') );
+		trace->Block( f, 6, "another message's" );
+		trace->Complete( f, 5 );
+		trace->Block( f, 5, "late" );
+		Flush();
+		let records = Read();
+		ASSERT_EQ( records.size(), 1u );
+		EXPECT_EQ( records[0].Blocks, (vector<string>{"a", "b", "c", lone}) );
+	}
+
 	//#451 review #3:  a healthy flow's buffer past its cap is flushed then, with nothing dropped.
 	TEST_F( FileTraceTests, ABufferPastItsCapIsFlushedNotDropped ){
 		Open( []( TraceSettings& s ){ s.ValueLimit = 1<<14; } );

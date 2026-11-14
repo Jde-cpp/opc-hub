@@ -1,5 +1,6 @@
 //Spec helpers, imported as `jde-opc/testing` - see jde-spa/testing.
 import { HttpClient } from '@angular/common/http';
+import { Component, input, output, ViewContainerRef } from '@angular/core';
 import { Observable, Subscriber } from 'rxjs';
 import { ETransport } from 'jde-framework';
 import { anonymousAuthStore, qlAnswering } from 'jde-framework/testing';
@@ -17,6 +18,7 @@ import { Value } from '../lib/model/value';
 import { EventPush, Gateway, HistEvent, HistEventsArgs, HistEventsPage, HistSubscribeArgs, SubscriptionResult } from '../lib/services/gateway-service';
 import { OpcStore } from '../lib/services/opc-store';
 import { HighchartsLoader } from '../lib/pages/node-detail/node-history/highcharts-loader';
+import type { FlowBlocksResult } from '../lib/pages/gateway-detail/flows/blocks/flow-blocks-loader';
 
 export const nodeA = new NodeId( {ns:2, i:1} ), nodeB = new NodeId( {ns:2, i:2} );
 //The trend's add-on, which the installed site serves by URL, here the package itself:  bundled into the test alone.  jsdom lays out
@@ -143,3 +145,17 @@ export class TestGateway extends Gateway{
 		return Promise.resolve( (this.acked ?? this.statusCodes.map( statusCode=>({statusCode}) )) as T );
 	}
 }
+
+//The block editor a page's spec opens, in the place of the one Blockly draws, which flow-block-editor.spec.ts has:  what the
+//page gave it, and its outputs for the spec to emit.  `flowBlocksLoader()` is the FlowBlocksLoader that makes it.
+@Component({ selector: 'flow-block-editor', template: '' })
+export class FlowBlocksStub{
+	title = input.required<string>();
+	blocks = input<unknown>( undefined );
+	code = input( '' );
+	readonly = input( false );
+	lit = input<string[]>( [] );
+	done = output<FlowBlocksResult>();
+	closed = output<void>();
+}
+export const flowBlocksLoader = ()=>({ load: vi.fn( async ( slot:ViewContainerRef )=>slot.createComponent( FlowBlocksStub ) ) });

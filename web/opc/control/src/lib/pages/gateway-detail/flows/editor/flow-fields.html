@@ -16,11 +16,29 @@
 			</mat-form-field>
 		}
 		@case( 'code' ){
-			<mat-form-field subscriptSizing="dynamic" class="code">
-				<mat-label>{{ f.label }}</mat-label>
-				<textarea matInput [rows]="f.key=='code' ? 14 : 4" spellcheck="false" autocapitalize="off" autocomplete="off" [value]="text(f)" (change)="setText(f, $any($event.target).value)" (keydown)="onCodeKey($event)" [required]="!!f.required"></textarea>
-				<mat-hint>{{ f.hint }}  Tab indents;  Esc, then Tab, leaves.</mat-hint>
-			</mat-form-field>
+			@if( built(f) ){
+				<mat-form-field subscriptSizing="dynamic" class="code">
+					<mat-label>{{ f.label }}</mat-label>
+					<textarea matInput readonly rows="14" spellcheck="false" [value]="text(f)"></textarea>
+					<mat-hint>Written by the node's blocks, and read-only while it has them.</mat-hint>
+				</mat-form-field>
+				<div class="blocks-bar">
+					<button matButton="outlined" type="button" class="edit-blocks" (click)="editBlocks(f)"><mat-icon>extension</mat-icon>Edit blocks</button>
+					<button matButton type="button" (click)="editAsCode(f)" matTooltip="Keep the code, and let the blocks go">Edit as code</button>
+				</div>
+			}
+			@else{
+				<mat-form-field subscriptSizing="dynamic" class="code">
+					<mat-label>{{ f.label }}</mat-label>
+					<textarea matInput [rows]="f.key=='code' ? 14 : 4" spellcheck="false" autocapitalize="off" autocomplete="off" [value]="text(f)" (change)="setText(f, $any($event.target).value)" (keydown)="onCodeKey($event)" [required]="!!f.required"></textarea>
+					<mat-hint>{{ f.hint }}  Tab indents;  Esc, then Tab, leaves.</mat-hint>
+				</mat-form-field>
+				@if( f.blocks ){
+					<div class="blocks-bar">
+						<button matButton type="button" class="edit-blocks" (click)="editBlocks(f)" matTooltip="Build the body from blocks, which write its code"><mat-icon>extension</mat-icon>Build from blocks</button>
+					</div>
+				}
+			}
 		}
 		@case( 'json' ){
 			<mat-form-field subscriptSizing="dynamic" class="code">

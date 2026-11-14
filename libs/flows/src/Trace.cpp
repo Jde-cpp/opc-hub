@@ -147,6 +147,17 @@ namespace Jde::Opc::Flows{
 		_impl->Release( id );
 		Write( _impl->Record(node, id, parent, ERecordKind::Drop) );
 	}
+	//On the node's open record of the message, at `Errors` too, where the hop is written if the message ends in an error:  each
+	//id once, so a loop's blocks cost the record nothing more, `most` of them, and none longer than a block's id is.
+	α HopTrace::Block( const NodeDef& node, MessageId id, sv block )ι->void{
+		constexpr uint most{ 1000 }, longest{ 64 };
+		let p = block.empty() || block.size()>longest ? _impl->Opened.end() : _impl->Opened.find( Impl::Key{&node, id} );
+		if( p==_impl->Opened.end() )
+			return;
+		auto& blocks = p->second.Record.Blocks;
+		if( blocks.size()<most && find(blocks, block)==blocks.end() )
+			blocks.emplace_back( block );
+	}
 	α HopTrace::Capture( const NodeDef& node, MessageId id, sv json )ι->void{
 		if( !_impl->Writes() )
 			return;

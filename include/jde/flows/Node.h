@@ -50,6 +50,7 @@ namespace Jde::Opc::Flows{
 		//kind `captured` in the trace.
 		α Capture( MessageId id, const jvalue& what )ι->void;
 		α Replaying()Ι->bool;//a replay's node:  what it would log is its capture.  Any thread.
+		α Block( MessageId id, sv block )ι->void;//a block a block-built body passed with a message the node has:  on its hop in the trace.
 		α SetStatus( NodeStatus status )ι->void;
 		//`f` on the strand, once, on the flow's clock:  never after Stop.  0 once the flow has stopped.
 		α Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId;

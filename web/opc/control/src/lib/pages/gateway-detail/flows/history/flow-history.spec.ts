@@ -1,17 +1,30 @@
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
+import { flowBlocksLoader, FlowBlocksStub } from 'jde-opc/testing';
 import { stable } from 'jde-spa/testing';
 import { Flow, FlowGraph, FlowRun, FlowVersion } from '../../../../model/flow';
 import { normalizeFlowGraph } from '../../../../model/flow-nodes';
 import { FlowTraceRecord } from '../../../../model/flow-trace';
 import { FlowService, FlowTraceArgs } from '../../../../services/flow-service';
+import { FlowBlocksLoader } from '../blocks/flow-blocks-loader';
 import { FlowCanvas } from '../canvas/flow-canvas';//here ahead of the tab's own import of it, which then waits for nothing
 import { localInput } from '../flow-replay-dialog';
 import { flowFiredFor, FlowHistory, historyInput, flowPlayPage, flowPlayTick, rangeProblem } from './flow-history';
 
 const t = ( s:string )=>new Date( `2026-11-14T${s}Z` );
 const node = ( id:string, type:string, more:object={} )=>({ id, type, name: '', x: 0, y: 0, props: {}, wires: <string[][]>[], ...more });
-const graph = ():FlowGraph=>normalizeFlowGraph( {nodes: [node( 'in', 'inject', {wires: [['fn']]} ), node( 'fn', 'function', {name: 'Scale', x: 220, props: {code: 'return msg;'}, wires: [['out']]} ), node( 'out', 'debug', {x: 440} )]} );
+//the Function node's body typed, or built from `built`, a workspace
+const graph = ( built?:object ):FlowGraph=>normalizeFlowGraph( {nodes: [node( 'in', 'inject', {wires: [['fn']]} ), node( 'fn', 'function', {name: 'Scale', x: 220, props: {code: 'return msg;', ...(built ? {blocks: built} : {})}, wires: [['out']]} ), node( 'out', 'debug', {x: 440} )]} );
+//a branch on a constant, each arm setting the topic, and the return
+const workspace = { blocks: { languageVersion: 0, blocks: [{
+	type: 'controls_if', id: 'if', x: 24, y: 24, extraState: {hasElse: true},
+	inputs: {
+		IF0: {block: {type: 'logic_boolean', id: 'yes', fields: {BOOL: 'TRUE'}}},
+		DO0: {block: {type: 'flow_msg_set', id: 'high', fields: {PATH: 'topic'}}},
+		ELSE: {block: {type: 'flow_msg_set', id: 'low', fields: {PATH: 'topic'}}}
+	},
+	next: {block: {type: 'flow_return', id: 'ret'}}
+}] } };
 const version = ( n:number, deployed:string, g:FlowGraph=graph() ):FlowVersion=>({ id: n, version: n, graph: g, identityId: 1, userName: 'ann', deployed: t( deployed ) });
 const start = t( '08:00:00' ), end = t( '09:00:00' );//the range read
 const row = new Flow( {id: 7, name: 'Pump', slug: 'pump', guid: 'g', enabled: true, version: 2} );
@@ -19,20 +32,21 @@ const record = ( time:string, node:string, msgId:string|undefined, more:Partial<
 const counts = ( time:string, node:string, received:number, sent:number[] )=>({ time: t( time ), node, counts: {received, sent, drops: 0, errors: 0} });
 const run:FlowRun = { id: 5, version: 2, mode: 'dry', userName: 'ann', status: 'completed', start: t( '06:00:00' ), finish: t( '06:30:00' ) };
 
-const create = async ()=>{
-	const records = [record( '08:01:01', 'in', '1', {kind: 'birth', json: {payload: 1}} ), record( '08:01:01.010', 'fn', '1', {json: {payload: 2}} ), record( '08:01:01.020', 'out', '1', {ports: []} ), record( '08:01:05', 'in', '2', {kind: 'birth'} )];
+//`blocks`:  the ids the Function node's hop holds, and `built`, the workspace version 2's node was built from
+const create = async ( {blocks=[], built}:{blocks?:string[]; built?:object}={} )=>{
+	const records = [record( '08:01:01', 'in', '1', {kind: 'birth', json: {payload: 1}} ), record( '08:01:01.010', 'fn', '1', {json: {payload: 2}, blocks} ), record( '08:01:01.020', 'out', '1', {ports: []} ), record( '08:01:05', 'in', '2', {kind: 'birth'} )];
 	const flows = {
 		runs: vi.fn( async ( ..._args:unknown[] )=>[run] ),
 		counts: vi.fn( async ( ..._args:unknown[] )=>({ counts: [counts( '08:00:00', 'in', 0, [2] ), counts( '08:00:00', 'fn', 2, [2] ), counts( '08:01:00', 'fn', 1, [1] )] }) ),
 		trace: vi.fn( async ( _g:unknown, args:FlowTraceArgs )=>({ records: records.filter( r=>(!args.node || r.node==args.node) && r.time>=args.start && r.time<=args.end ), continuation: args.continuation ? undefined : args.limit==200 ? 'more' : undefined }) ),
 		message: vi.fn( async ( ..._args:unknown[] )=>({ records: records.slice( 0, 3 ), more: false }) )
 	};
-	TestBed.configureTestingModule( {providers: [{ provide: FlowService, useValue: flows }]} );
+	TestBed.configureTestingModule( {providers: [{ provide: FlowService, useValue: flows }, { provide: FlowBlocksLoader, useValue: flowBlocksLoader() }]} );
 	const gateway = { query: vi.fn() };
 	const fixture = TestBed.createComponent( FlowHistory ), tab = fixture.componentInstance;
 	fixture.componentRef.setInput( 'gateway', gateway );
 	fixture.componentRef.setInput( 'flow', row );
-	fixture.componentRef.setInput( 'versions', [version( 2, '08:00:30' ), version( 1, '07:00:00', {nodes: [node( 'in', 'inject', {wires: [[]]} )]} )] );
+	fixture.componentRef.setInput( 'versions', [version( 2, '08:00:30', graph( built ) ), version( 1, '07:00:00', {nodes: [node( 'in', 'inject', {wires: [[]]} )]} )] );
 	tab.from.set( localInput( start ) );//typed as the input holds it, local:  what the tab's first read, on its flow, takes
 	tab.to.set( localInput( end ) );
 	for( let i=0; i<100 && !tab.ready(); ++i )
@@ -105,6 +119,40 @@ describe( 'FlowHistory', ()=>{
 		(<HTMLButtonElement>element.querySelectorAll( '.list .row' )[1]).click();//again:  unselected
 		await stable( fixture );
 		expect( [tab.selected(), element.querySelectorAll( 'flow-node-view.own' ).length] ).toEqual( [undefined, 0] );
+	} );
+	//A hop at a Function node built from blocks (#458):  the node's workspace as its version has it, over the canvas, to be
+	//read alone, with the blocks the message passed for the editor to light
+	it( 'lights the blocks a message passed in its node', async ()=>{
+		const { tab, fixture, element } = await create( {blocks: ['if', 'high', 'ret'], built: workspace} );
+		const blocks = ()=>fixture.debugElement.query( By.directive( FlowBlocksStub ) ), layer = <HTMLElement>element.querySelector( '.view > .blocks' );
+		(<HTMLButtonElement>element.querySelectorAll( '.list .row' )[1]).click();
+		await stable( fixture );
+		const passed = [...element.querySelectorAll<HTMLButtonElement>( '.lineage .steps .passed' )];
+		expect( passed.map( b=>b.textContent!.replace( /\s+/g, ' ' ).trim() ) ).toEqual( ['extension3 blocks passed'] );//the Function node's hop alone
+		expect( [blocks(), layer.hidden] ).toEqual( [null, true] );
+		passed[0].click();
+		await stable( fixture );
+		const view = <FlowBlocksStub>blocks().componentInstance;
+		expect( [view.title(), view.readonly(), view.lit(), view.code(), view.blocks()] ).toEqual( ['Scale · message 1', true, ['if', 'high', 'ret'], 'return msg;', workspace] );
+		expect( [layer.hidden, passed[0].getAttribute( 'aria-pressed' )] ).toEqual( [false, 'true'] );
+		view.closed.emit();
+		await stable( fixture );
+		expect( [blocks(), tab.blocksOf(), layer.hidden] ).toEqual( [null, undefined, true] );
+		passed[0].click();
+		await stable( fixture );
+		expect( blocks() ).not.toBeNull();
+		tab.seek( t( '08:00:10' ).getTime() );//another version drawn:  the workspace was version 2's
+		await stable( fixture );
+		expect( [blocks(), tab.blocksOf()] ).toEqual( [null, undefined] );
+	} );
+	//a typed body may call __block itself:  its ids are no workspace's
+	it( 'offers no blocks for a body typed', async ()=>{
+		const { fixture, element, tab, records } = await create( {blocks: ['mine']} );
+		(<HTMLButtonElement>element.querySelectorAll( '.list .row' )[1]).click();
+		await stable( fixture );
+		expect( element.querySelectorAll( '.lineage .steps li' ).length ).toBe( 3 );
+		expect( element.querySelector( '.lineage .steps .passed' ) ).toBeNull();
+		expect( tab.blocksNode( records[1] ) ).toBeUndefined();
 	} );
 	//Play on fake timers:  the records read ahead, stepped at the speed, each lighting its node and wire for a moment, the
 	//scrubber following, and the player stopping at the range's end

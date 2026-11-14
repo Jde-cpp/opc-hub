@@ -1,20 +1,25 @@
-import { Component, input, output } from '@angular/core';
+import { Component, inject, input, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatDialog } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { confirm } from 'jde-framework';
 import { FlowGraph } from '../../../../model/flow';
-import { FlowField, flowFieldText, flowFieldValue, flowPruneRule, flowWithField } from '../../../../model/flow-nodes';
+import { FlowField, flowFieldText, flowFieldValue, flowPruneRule, flowWithField, isFlowBlocks } from '../../../../model/flow-nodes';
 
 type Props = Record<string,unknown>;
 
 //A node's props as a form (#455), from its type's fields (flow-nodes.ts):  each field an input of its kind, a group its own
 //fields under a legend and a rule list a card a rule, each this component again.  A field left blank takes its key away, so the
 //node takes its default, which the placeholder names;  the gateway refuses an empty text where a key is present.  A change is
-//told as the whole object, a new one, once its input is left, so the canvas takes an edit as one step of its history.
+//told as the whole object, a new one, once its input is left, so the canvas takes an edit as one step of its history.  A
+//Function body is typed, or built from blocks (#458), its workspace kept beside its code:  built, the code is the blocks' and
+//read-only, and the block editor is asked of whatever holds the form, which has the room for it;  typed again, the code stays
+//and the blocks go, once the form has said so.
 @Component({
 	selector: 'flow-fields',
 	templateUrl: './flow-fields.html',
@@ -27,6 +32,8 @@ export class FlowFields{
 	graph = input.required<FlowGraph>();
 	self = input<string>();//the node the form is of, which a scope does not offer
 	valueChange = output<Props>();
+	blocks = output<FlowField>();//the block editor asked for a code field
+	#dialog = inject( MatDialog );
 
 	text( f:FlowField ):string{ return flowFieldText( f, this.value()[f.key] ); }
 	placeholder( f:FlowField ):string{ return f.dflt===undefined ? '' : typeof f.dflt=='string' ? f.dflt : JSON.stringify( f.dflt ); }
@@ -60,6 +67,21 @@ export class FlowFields{
 		this.#set( f.key, rules );
 	}
 	#set( key:string, value:unknown ):void{ this.valueChange.emit( flowWithField( this.value(), key, value ) ); }
+
+	//whether the field's code was built from blocks
+	built( f:FlowField ):boolean{ return !!f.blocks && isFlowBlocks( this.value()[f.blocks] ); }
+	//The block editor, which writes the code at its Done:  asked first where that would replace a body typed, a new node's aside.
+	async editBlocks( f:FlowField ):Promise<void>{
+		const typed = this.text( f ).trim();
+		if( this.built( f ) || !typed || typed=='return msg;'
+			|| await confirm( this.#dialog, {title: 'Build the body from blocks?', message: "The blocks start as a new body's, and at Done their code takes the place of the code typed.", confirm: 'Build from blocks', destructive: true} ) )
+			this.blocks.emit( f );
+	}
+	//Blockly turns no code back into blocks, so the code typed over is the blocks' no longer:  they go, and the form says so first.
+	async editAsCode( f:FlowField ):Promise<void>{
+		if( await confirm( this.#dialog, {title: 'Edit the body as code?', message: 'The code stays as the blocks wrote it, and the blocks go:  code is not turned back into blocks.', confirm: 'Edit as code', destructive: true} ) )
+			this.#set( f.blocks!, undefined );
+	}
 
 	//Tab indents in a body, as an editor's does;  Escape first lets the next Tab leave the field, so the keyboard is never held.
 	#leaving = false;

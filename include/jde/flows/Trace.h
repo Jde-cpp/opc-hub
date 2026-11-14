@@ -29,6 +29,7 @@ namespace Jde::Opc::Flows{
 		β Error( const NodeDef& node, MessageId id, sv error )ι->void=0;//the node's error with the message, which ends at it.
 		β Status( const NodeDef& node, const NodeStatus& status )ι->void=0;
 		β Drop( const NodeDef& node, MessageId id )ι->void=0;//off the node's queue, or held by it when the flow stopped.
+		β Block( const NodeDef& node, MessageId id, sv block )ι->void=0;//a block a block-built Function body passed with the message the node has:  kept on its hop.
 		β Capture( const NodeDef& node, MessageId id, sv json )ι->void=0;//what a sink of a replay would have sent with the message it holds, in place of sending it (spec *Replay*).
 		//A minute that ended with a figure, on the flow's clock, as the engine's own timer, a count in a later minute, a
 		//TakeMinutes or the flow's stop ends it, whichever first:  from any thread.  A flow stopped and started again within a
@@ -55,7 +56,7 @@ namespace Jde::Opc::Flows{
 		optional<NodeStatus> Status;
 		uint32 Run{};//0 live, a replay's otherwise.
 		bool Cut{};//Json is cut at the store's valueLimit:  read back from a file alone.
-		vector<string> Blocks;//the ids of the blocks a block-built Function body passed with the message, in order.
+		vector<string> Blocks;//the ids of the blocks a block-built Function body passed with the message, each once, in the order it first passed them.
 	};
 
 	//The fold:  a hop is made at Receive, takes its ports and its json at Send, and is written at Complete;  a birth the same
@@ -75,6 +76,7 @@ namespace Jde::Opc::Flows{
 		α Error( const NodeDef& node, MessageId id, sv error )ι->void final;
 		α Status( const NodeDef& node, const NodeStatus& status )ι->void final;
 		α Drop( const NodeDef& node, MessageId id )ι->void final;
+		α Block( const NodeDef& node, MessageId id, sv block )ι->void final;
 		α Capture( const NodeDef& node, MessageId id, sv json )ι->void final;
 		α Minute( const MinuteCounts& minute )ι->void final;
 	protected:

@@ -28,6 +28,7 @@ export interface FlowField{
 	orNumber?:boolean;//text, or a row's id
 	orObject?:boolean;//text, or an object
 	item?:'node'|'time';//what a list's texts are
+	blocks?:string;//the key beside a code's that holds the workspace it was built from, where it may be built from blocks
 	fields?:( value:Props )=>FlowField[];//a group's, and a rule's by what it holds
 }
 export interface FlowNodeType{
@@ -46,6 +47,8 @@ const absent = ( v:unknown )=>v===undefined || v===null;
 const noRules = '`rules` must be a list of rules, one at least.';
 const isObject = ( v:unknown ):v is Props=>!!v && typeof v=='object' && !Array.isArray( v );
 const fail = ( message:string ):never=>{ throw new Error( message ); };
+//the workspace a Function body was built from, Blockly's own json, where the node has one:  its code is the generator's then
+export const isFlowBlocks = ( v:unknown ):v is object=>isObject( v );
 
 //An ISO 8601 duration in seconds, as Chrono::TryToDuration reads one;  none for text that is not one.
 export function flowWaitSeconds( text:unknown ):number|undefined{
@@ -493,7 +496,7 @@ export const flowNodeTypes:FlowNodeType[] = [
 		type: 'function', category: 'node', icon: 'code', about: "JavaScript on the message, Node-RED's Function API.", input: true,
 		outputs: props=>{ const n = props['outputs']; return absent( n ) ? 1 : Number.isInteger( n ) && <number>n>=0 && <number>n<=100 ? <number>n : 1; },
 		fields: ()=>[
-			{ key: 'code', label: 'On message', kind: 'code', required: '`code` must be text, the body.', hint: 'The body of an async function of msg:  return msg, an array an output, or null.' },
+			{ key: 'code', label: 'On message', kind: 'code', required: '`code` must be text, the body.', hint: 'The body of an async function of msg:  return msg, an array an output, or null.', blocks: 'blocks' },
 			{ key: 'outputs', label: 'Outputs', kind: 'number', dflt: 1 },
 			{ key: 'onStart', label: 'On start', kind: 'code', hint: 'Run when the flow starts.' },
 			{ key: 'onStop', label: 'On stop', kind: 'code', hint: 'Run when the flow stops.' }
@@ -503,6 +506,8 @@ export const flowNodeTypes:FlowNodeType[] = [
 			const n = props['outputs'];
 			if( !absent( n ) && (!Number.isInteger( n ) || <number>n<0 || <number>n>100) )
 				fail( '`outputs` must be a whole number, 100 at most.' );
+			if( !absent( props['blocks'] ) && !isFlowBlocks( props['blocks'] ) )
+				fail( '`blocks` must be an object, the workspace the body was built from.' );
 		}
 	},
 	{

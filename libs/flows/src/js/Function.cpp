@@ -16,7 +16,9 @@ namespace Jde::Opc::Flows::Js{
 		//whose `now`, whose no-argument constructor and whose plain call take the flow's clock:  the intrinsic, which reads
 		//the wall clock, is no longer reachable.  `Error.prepareStackTrace` and `Error.stackTraceLimit` go first:
 		//quickjs-ng calls a function set in one and the `valueOf` of an object set in the other while it builds an error's
-		//backtrace, and drops what they throw, the interrupt among them.
+		//backtrace, and drops what they throw, the interrupt among them.  `__block` is what a block-built body calls at each
+		//block (spec *The Function node*):  a body's own is its call's, a parameter beside `msg` and `node`, and the global is
+		//for what has no message, On Start and On Stop, where it records nothing.
 		constexpr sv _preamble{ R"js((function( native ){
 	delete Error.prepareStackTrace;
 	delete Error.stackTraceLimit;
@@ -124,6 +126,8 @@ namespace Jde::Opc::Flows::Js{
 				THROW_IF( !code, "`code` must be text, the body." );
 				let onStart = source( def.Props, "onStart" );
 				let onStop = source( def.Props, "onStop" );
+				let blocks = Prop::Find( def.Props, "blocks" );
+				THROW_IF( blocks && !blocks->is_object(), "`blocks` must be an object, the workspace the body was built from." );
 				_usesDone = callsDone( *code );
 				try{
 					_ctx = JS_NewContextRaw( _rt->Rt );
@@ -134,7 +138,7 @@ namespace Jde::Opc::Flows::Js{
 					JS_SetContextOpaque( _ctx, this );
 					Runtime::Entry entry{ *_rt };
 					Install();
-					_body = Compile( "code", *code, "msg,node" );
+					_body = Compile( "code", *code, "msg,node,__block" );
 					if( onStart )
 						_onStart = Compile( "onStart", *onStart, "node" );
 					if( onStop )
@@ -178,11 +182,13 @@ namespace Jde::Opc::Flows::Js{
 				_calls.push_back( Call{seq, m.Id(), move(m)} );
 				auto ran = Run( [&]()->optional<string>{
 					auto& call = _calls.back();
-					JSValue argv[2]{ ToJs(_ctx, call.Msg.Json), JS_UNDEFINED };
+					JSValue argv[3]{ ToJs(_ctx, call.Msg.Json), JS_UNDEFINED, JS_UNDEFINED };
 					argv[1] = JS_IsException( argv[0] ) ? JS_EXCEPTION : NewNode( seq );
-					JSValue y = JS_IsException( argv[1] ) ? JS_EXCEPTION : JS_Call( _ctx, _body, JS_UNDEFINED, 2, argv );
-					JS_FreeValue( _ctx, argv[0] );
-					JS_FreeValue( _ctx, argv[1] );
+					JSValue of = JS_NewUint32( _ctx, seq );
+					argv[2] = JS_IsException( argv[1] ) ? JS_EXCEPTION : JS_NewCFunctionData( _ctx, &Function::NativeBlock, 1, 0, 1, &of );
+					JSValue y = JS_IsException( argv[2] ) ? JS_EXCEPTION : JS_Call( _ctx, _body, JS_UNDEFINED, 3, argv );
+					for( auto arg : argv )
+						JS_FreeValue( _ctx, arg );
 					if( JS_IsException(y) )
 						return _rt->TakeError( _ctx );
 					call.Promise = y;
@@ -573,6 +579,18 @@ namespace Jde::Opc::Flows::Js{
 				catch( const std::exception& e ){
 					return JS_ThrowPlainError( ctx, "%s", e.what() );
 				}
+			}
+			//( id ), a call's own `__block`, its call what the function was made with:  a block's id onto the hop of the call's
+			//message while the node has it, in the trace;  what is no text is no block's id.
+			Ω NativeBlock( JSContext* ctx, JSValueConst, int, JSValueConst* argv, int, JSValueConst* call )ι->JSValue{
+				auto& self = Of( ctx );
+				if( let held = JS_IsString(argv[0]) ? self.CallOf( call[0] ) : nullptr; held && held->Open ){
+					let id = text( ctx, argv[0] );
+					if( !id )
+						return JS_EXCEPTION;
+					self.Block( held->Id, *id );
+				}
+				return JS_UNDEFINED;
 			}
 			α CallOf( JSValueConst seq )ι->Call*{
 				uint32_t y{};

@@ -669,4 +669,74 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( Took("done"), "1" ) << "and once";
 		EXPECT_EQ( Id("out", 1, "_parent"), Id("done", 0, "_parent") ) << "what it returned is a message of its own, the finished one its parent";
 	}
+
+	//Phase 12:  what a block-built body calls at each block, `__block( id )`, is on its message's hop, each block once in the
+	//order first passed, so the record tells the branch that fired;  what is no text is no block.
+	TEST_F( FunctionTests, TheBlocksABodyPassedAreOnItsHop ){
+		Body( R"(
+			__block( "top" );
+			if( msg.payload > 5 ){
+				__block( "high" );
+				msg.topic = "high";
+			}
+			else{
+				__block( "low" );
+				msg.topic = "low";
+			}
+			for( let i=0; i<3; ++i )
+				__block( "each" );
+			__block( 7 );
+			__block( "" );
+			__block( "end" );
+			return msg;
+		)" );
+		Inject( 7 );
+		Inject( 1 );
+		EXPECT_EQ( Took("out", "topic"), R"("high" "low")" );
+		vector<vector<string>> blocks;
+		for( let& record : Trace->Records() ){
+			if( record.Node=="f" && record.Kind==ERecordKind::Hop )
+				blocks.push_back( record.Blocks );
+			else
+				EXPECT_TRUE( record.Blocks.empty() ) << ToString( record.Kind ) << ' ' << record.Node;
+		}
+		EXPECT_EQ( blocks, (vector<vector<string>>{{"top", "high", "each", "end"}, {"top", "low", "each", "end"}}) );
+	}
+
+	//A call's `__block` is its own, as its `node` is:  a block passed after an await is on the hop of the message that
+	//awaited, whichever message the node took since.
+	TEST_F( FunctionTests, ABlockPassedAfterAnAwaitIsItsOwnMessages ){
+		Body( R"(
+			__block( "before" );
+			await new Promise( wake => setTimeout( wake, msg.payload ) );
+			__block( `after ${msg.payload}` );
+			return msg;
+		)" );
+		Inject( 2000 );
+		Inject( 1000 );
+		Advance( 2s );
+		EXPECT_EQ( Took(), "1000 2000" );
+		vector<vector<string>> blocks;
+		for( let& record : Trace->Records() ){
+			if( record.Node=="f" && record.Kind==ERecordKind::Hop )
+				blocks.push_back( record.Blocks );
+		}
+		EXPECT_EQ( blocks, (vector<vector<string>>{{"before", "after 1000"}, {"before", "after 2000"}}) );
+	}
+
+	//At `errors` a hop is written when its message ends in an error, with the blocks it passed on the way to it.
+	TEST_F( FunctionTests, AtErrorsAFailedMessagesHopHasItsBlocks ){
+		Host = ms<TestHost>();
+		Run( Nodes({Node("in", "inject", "{}", {{"f"}}), Node("out", "log"),
+			Node("f", "function", R"js({"code":"__block( 'a' );\nif( msg.payload )\n\tthrow new Error( 'no' );\n__block( 'b' );\nreturn msg;"})js", {{"out"}})}), ETraceLevel::Errors );
+		Inject( 0 );
+		Inject( 1 );
+		EXPECT_EQ( Took(), "0" );
+		vector<vector<string>> blocks;
+		for( let& record : Trace->Records() ){
+			if( record.Node=="f" && record.Kind==ERecordKind::Hop )
+				blocks.push_back( record.Blocks );
+		}
+		EXPECT_EQ( blocks, (vector<vector<string>>{{"a"}}) ) << "the message that passed has no record, and the one that failed has the block before the throw";
+	}
 }

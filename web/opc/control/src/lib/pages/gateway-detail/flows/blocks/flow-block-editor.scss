@@ -1,0 +1,90 @@
+/* not encapsulated:  the blocks are Blockly's elements, and its menus and editors are the document's */
+flow-block-editor{
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	background: var(--mat-sys-surface);
+	.bar{
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 12px 6px 16px;
+		border-bottom: 1px solid var(--mat-sys-outline-variant);
+		> mat-icon{ flex: none; color: var(--mat-sys-on-surface-variant); }
+		h3{ margin: 0; font: var(--mat-sys-title-small); }
+		.hint{
+			flex: 1;
+			min-width: 0;
+			color: var(--mat-sys-on-surface-variant);
+			font: var(--mat-sys-body-small);
+		}
+	}
+	.fault{
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 0;
+		padding: 6px 16px;
+		color: var(--mat-sys-on-error-container);
+		background: var(--mat-sys-error-container);
+		font: var(--mat-sys-body-medium);
+	}
+	.panes{
+		display: flex;
+		flex: 1;
+		min-height: 0;
+	}
+	.blocks{
+		position: relative;
+		flex: 1;
+		min-width: 0;
+		> .injectionDiv{ position: absolute; inset: 0; }
+	}
+	.code{
+		display: flex;
+		flex-direction: column;
+		box-sizing: border-box;
+		flex: none;
+		width: min( 380px, 40% );
+		border-left: 1px solid var(--mat-sys-outline-variant);
+		background: var(--mat-sys-surface-container-lowest);
+		h4{
+			margin: 0;
+			padding: 8px 12px 4px;
+			color: var(--mat-sys-on-surface-variant);
+			font: var(--mat-sys-label-medium);
+		}
+		pre{
+			flex: 1;
+			margin: 0;
+			padding: 4px 12px 12px;
+			overflow: auto;
+			font: 12px/1.45 'Roboto Mono', monospace;
+			tab-size: 2;
+		}
+	}
+	.blocklyToolboxCategoryLabel{ font: var(--mat-sys-label-large); }
+	/* the blocks a message passed keep their colour under a ring, in place of Blockly's wash, and the rest go dim:  a block's own
+	   shape and fields, not the blocks inside it */
+	.lit .blocklyBlock:not(.blocklyHighlighted) > :not(.blocklyBlock){ opacity: .28; }
+	.lit .blocklyHighlighted > .blocklyPath{
+		filter: none;
+		stroke: var(--mat-sys-on-surface);
+		stroke-width: 2px;
+	}
+}
+/* a field's dropdown is the workspace's, and Blockly's context menu and tooltip the document's:  each in the page's colours */
+flow-block-editor .blocklyDropDownDiv, .blocklyWidgetDiv .blocklyMenu, .blocklyTooltipDiv{
+	color: var(--mat-sys-on-surface);
+	background: var(--mat-sys-surface-container-high);
+	border: 1px solid var(--mat-sys-outline-variant);
+	border-radius: 4px;
+	box-shadow: var(--mat-sys-level2);
+	font: var(--mat-sys-body-medium);
+}
+flow-block-editor .blocklyDropDownArrow{ background: inherit; border-color: var(--mat-sys-outline-variant); }
+.blocklyMenuItem.blocklyMenuItem{ color: inherit; }
+.blocklyMenuItemHighlight.blocklyMenuItemHighlight{ background: var(--mat-sys-surface-container-highest); }
+.blocklyTooltipDiv{ padding: 4px 8px; opacity: 1; font: var(--mat-sys-body-small); }

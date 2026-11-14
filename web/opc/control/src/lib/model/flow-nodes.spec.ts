@@ -110,6 +110,8 @@ describe( 'flow node props', ()=>{
 		expect( fault( 'function', {} ) ).toBe( '`code` must be text, the body.' );
 		expect( fault( 'function', {code: '', outputs: 101} ) ).toBe( '`outputs` must be a whole number, 100 at most.' );
 		expect( fault( 'function', {code: 'return msg;', onStart: 3} ) ).toBe( '`onStart` must be text.' );
+		expect( fault( 'function', {code: 'return msg;', blocks: '<xml/>'} ) ).toBe( '`blocks` must be an object, the workspace the body was built from.' );
+		expect( fault( 'function', {code: 'return msg;', blocks: {blocks: {languageVersion: 0, blocks: []}}} ) ).toBeUndefined();
 		expect( fault( 'debug', {level: 'Loud'} ) ).toContain( '`level` must be one of Trace' );
 		expect( fault( 'debug', {} ) ).toBeUndefined();
 		expect( fault( 'inject', {message: 5} ) ).toBe( '`message` must be an object, the message the node sends.' );

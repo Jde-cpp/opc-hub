@@ -1,5 +1,8 @@
 import { TestBed } from '@angular/core/testing';
+import { MatDialog } from '@angular/material/dialog';
 import { By } from '@angular/platform-browser';
+import { ConfirmDialog } from 'jde-framework';
+import { dialogStub } from 'jde-framework/testing';
 import { stable } from 'jde-spa/testing';
 import { FlowGraph, FlowNode } from '../../../../model/flow';
 import { FlowNodePatch, flowNodeTypes, newFlowNode } from '../../../../model/flow-nodes';
@@ -12,8 +15,9 @@ const create = async ( of:FlowNode, others:FlowNode[]=[] )=>{
 	const graph:FlowGraph = { nodes: [of, ...others] };
 	fixture.componentRef.setInput( 'node', of );
 	fixture.componentRef.setInput( 'graph', graph );
-	const patches:FlowNodePatch[] = [];
+	const patches:FlowNodePatch[] = [], blocks:void[] = [];
 	fixture.componentInstance.patch.subscribe( p=>patches.push( p ) );
+	fixture.componentInstance.blocks.subscribe( b=>blocks.push( b ) );
 	await stable( fixture );
 	const element = <HTMLElement>fixture.nativeElement;
 	//the field under a label, typed into and left, as a user does
@@ -25,7 +29,18 @@ const create = async ( of:FlowNode, others:FlowNode[]=[] )=>{
 	};
 	const fields = ()=>fixture.debugElement.queryAll( By.directive( FlowFields ) ).map( d=><FlowFields>d.componentInstance );
 	const labels = ()=>[...element.querySelectorAll( 'mat-label, mat-checkbox label, legend' )].map( l=>l.textContent!.trim() );
-	return { fixture, element, patches, type, fields, labels };
+	const press = async ( label:string )=>{
+		[...element.querySelectorAll( 'button' )].find( b=>b.textContent!.trim().endsWith( label ) )!.click();
+		await stable( fixture );
+	};
+	return { fixture, element, patches, blocks, type, fields, labels, press };
+};
+//the form over a dialog that answers the form's question as told
+const asking = ( answer:boolean )=>{
+	const dialog = dialogStub();
+	dialog.answers.set( ConfirmDialog, answer );
+	TestBed.configureTestingModule( {providers: [{ provide: MatDialog, useValue: dialog }]} );
+	return dialog;
 };
 
 //The side form of each node type (#455):  the fields its type has, and the props an edit makes of them.
@@ -97,6 +112,40 @@ describe( 'FlowNodeForm', ()=>{
 		expect( [key( 'Tab' ), area.value] ).toEqual( [true, 'a\tb'] );
 		expect( [key( 'Escape' ), key( 'Tab' ), area.value] ).toEqual( [false, false, 'a\tb'] );
 		expect( key( 'Tab' ) ).toBe( true );
+	} );
+	//Built from blocks (#458), a body's code is the blocks':  read-only, and typed again only once the form has said the blocks
+	//go, since no code is turned back into blocks.
+	it( "shows a body built from blocks read-only, and lets its blocks go once it has said so", async ()=>{
+		const dialog = asking( false ), built = {blocks: {languageVersion: 0, blocks: []}};
+		const { element, patches, blocks, press } = await create( node( 'function', {code: "__block('a');\nreturn msg;", blocks: built, onStop: 'x'} ) );
+		const area = <HTMLTextAreaElement>element.querySelector( '.code textarea' );
+		expect( [area.readOnly, area.value] ).toEqual( [true, "__block('a');\nreturn msg;"] );
+		expect( element.querySelector( '.code mat-hint' )!.textContent ).toContain( 'read-only' );
+		await press( 'Edit blocks' );
+		expect( [blocks.length, dialog.open.mock.calls.length] ).toEqual( [1, 0] );//its blocks are there to edit:  nothing to ask
+		await press( 'Edit as code' );
+		expect( (<{title:string; message:string}>dialog.open.mock.lastCall![1]!.data) ).toMatchObject( {title: 'Edit the body as code?', message: expect.stringContaining( 'the blocks go' )} );
+		expect( patches ).toEqual( [] );//refused:  the blocks stay
+		dialog.answers.set( ConfirmDialog, true );
+		await press( 'Edit as code' );
+		expect( patches ).toEqual( [{props: {code: "__block('a');\nreturn msg;", onStop: 'x'}}] );//the code as the blocks wrote it
+	} );
+	it( 'asks before blocks replace a body typed, and not for a new one', async ()=>{
+		const dialog = asking( false );
+		const typed = await create( node( 'function', {code: 'msg.payload *= 2;\nreturn msg;'} ) );
+		expect( (<HTMLTextAreaElement>typed.element.querySelector( '.code textarea' )).readOnly ).toBe( false );
+		await typed.press( 'Build from blocks' );
+		expect( (<{title:string}>dialog.open.mock.lastCall![1]!.data).title ).toBe( 'Build the body from blocks?' );
+		expect( typed.blocks.length ).toBe( 0 );
+		dialog.answers.set( ConfirmDialog, true );
+		await typed.press( 'Build from blocks' );
+		expect( typed.blocks.length ).toBe( 1 );
+		dialog.open.mockClear();
+		typed.fixture.componentRef.setInput( 'node', node( 'function', {code: 'return msg;'} ) );//as a new node's is
+		await stable( typed.fixture );
+		await typed.press( 'Build from blocks' );
+		expect( [typed.blocks.length, dialog.open.mock.calls.length] ).toEqual( [2, 0] );
+		expect( typed.patches ).toEqual( [] );//the editor's Done is what writes the node
 	} );
 	//a change rule's fields follow its `t`, and what another `t` left behind goes
 	it( "edits a change node's rules", async ()=>{
