@@ -58,6 +58,8 @@ namespace Jde::Opc::Flows{
 		vector<vector<Went>> Sends;//per output port, a wire's since the take, by its place in Wires.
 	};
 
+	//The flow as its lines name it:  a replay's with its run.
+	Ω label( const Flow::Config& config )ι->string{ return config.Run ? Ƒ( "{} run {}", config.Name, *config.Run ) : config.Name; }
 	//The runtime a graph's Function nodes share:  none for a graph without one, and for one that could not be made, whose
 	//nodes then refuse.
 	Ω sandbox( const Graph& graph, const Flow::Config& config )ι->sp<Js::Runtime>{
@@ -67,7 +69,7 @@ namespace Jde::Opc::Flows{
 			return MakeSandbox( config.Function, config.Name, config.Env );
 		}
 		catch( const std::exception& e ){
-			ERR( "[{}]{}", config.Name, e.what() );
+			ERR( "[{}]{}", label(config), e.what() );
 			return nullptr;
 		}
 	}
@@ -77,6 +79,7 @@ namespace Jde::Opc::Flows{
 		Engine( Graph&& graph, Flow::Config&& config )ι:
 			_graph{ move(graph) },
 			_config{ move(config) },
+			_label{ label(_config) },
 			_clock{ _config.Clock ? _config.Clock : Hist::SystemClock() },
 			_ids{ _config.Ids ? _config.Ids : ms<MessageIds>(_clock->Now()) },
 			_global{ _config.Global ? _config.Global : ms<GlobalStore>() },
@@ -108,7 +111,7 @@ namespace Jde::Opc::Flows{
 			return made;
 		}
 		α Stop( optional<Flows::Fault> why, absl::AnyInvocable<void()> stopped )ι->void{
-			let prior = End();
+			let prior = End( &stopped );
 			Slot* refused{};
 			if( why && prior!=EState::Stopped ){
 				if( let index = _graph.IndexOf(why->NodeId) ){
@@ -116,7 +119,7 @@ namespace Jde::Opc::Flows{
 					Refuse( *refused, move(why->Message) );
 				}
 				else{
-					ERR( "[{}]The flow is stopped:  {}", _config.Name, why->Message );
+					ERR( "[{}]The flow is stopped:  {}", _label, why->Message );
 					lg _{ _stateMutex };
 					_fault = move( *why );
 				}
@@ -134,7 +137,7 @@ namespace Jde::Opc::Flows{
 			}
 			else if( stopped && prior==EState::Stopped )//behind a teardown still on its way.
 				boost::asio::post( _strand, [stopped=std::move(stopped)]()mutable{ stopped(); } );
-			else if( stopped )
+			else if( stopped )//one that never started;  one starting took it, for once its nodes are made.
 				stopped();
 		}
 		α Running()Ι->bool{ lg _{ _queueMutex }; return _state==EState::Running; }
@@ -253,6 +256,7 @@ namespace Jde::Opc::Flows{
 		//What a node reaches the flow through.
 		α Now()Ι->TimePoint{ return _clock->Now(); }
 		α Limit()Ι->uint{ return _config.Queue; }
+		α Replaying()Ι->bool{ return _config.Run.has_value(); }
 		α Global()ι->GlobalStore&{ return *_global; }
 		α FlowContext()ι->Store&{ return _flowContext; }
 		α NewMessage( MessageId parent )ι->Message{
@@ -295,6 +299,8 @@ namespace Jde::Opc::Flows{
 			if( !Entered() || !id )
 				return;
 			let born = slot.Opened( id )==slot.Open.end();
+			if( born )//a replay's source sends after its step has moved the clock:  its figures are its message's minute's.
+				_tick = _clock->Now();
 			if( born && _trace )
 				_trace->Birth( slot.Def, m );
 			Fan( slot, m, {&port, 1} );
@@ -321,7 +327,7 @@ namespace Jde::Opc::Flows{
 		α Error( Slot& slot, string&& error )ι->void{
 			if( !Entered() )
 				return;
-			ERR( "[{}.{}]{}", _config.Name, slot.Def.Label(), error );
+			ERR( "[{}.{}]{}", _label, slot.Def.Label(), error );
 			Errored( slot, move(error) );
 		}
 		α Fail( Slot& slot, MessageId id, Message&& m, string&& error )ι->void{
@@ -336,7 +342,7 @@ namespace Jde::Opc::Flows{
 			if( let source = Json::FindObject(m.Json, "error/source"); source && Json::FindDefaultSV(*source, "id")==slot.Def.Id )
 				count += Json::FindNumber<uint>( *source, "count" ).value_or( 0 );
 			if( count>_loopGuard ){
-				ERR( "[{}.{}]A message is dropped after {} errors in a loop:  {}", _config.Name, slot.Def.Label(), _loopGuard, error );
+				ERR( "[{}.{}]A message is dropped after {} errors in a loop:  {}", _label, slot.Def.Label(), _loopGuard, error );
 				Dropped( slot, id );
 				return;
 			}
@@ -357,7 +363,7 @@ namespace Jde::Opc::Flows{
 			}
 			if( caught )
 				return;
-			ERR( "[{}.{}]{}", _config.Name, slot.Def.Label(), error );
+			ERR( "[{}.{}]{}", _label, slot.Def.Label(), error );
 			++slot.Unhandled;
 			slot.LastError = move( error );
 			Stale( slot );
@@ -458,8 +464,14 @@ namespace Jde::Opc::Flows{
 				}
 				catch( const std::exception& e ){
 					Refuse( *slot, e.what() );
-					lg _{ _queueMutex };
-					_state = EState::Stopped;
+					absl::AnyInvocable<void()> stopped;
+					{
+						lg _{ _queueMutex };
+						_state = EState::Stopped;
+						stopped = std::exchange( _made, {} );
+					}
+					if( stopped )
+						stopped();
 					return false;
 				}
 			}
@@ -467,11 +479,18 @@ namespace Jde::Opc::Flows{
 				lg _{ _stateMutex };
 				_minute = floor<minutes>( _clock->Now() );
 			}
-			lg _{ _queueMutex };
-			if( _state!=EState::Starting )//stopped while its nodes were made.
-				return false;
-			_state = EState::Running;
-			return true;
+			absl::AnyInvocable<void()> stopped;
+			{
+				lg _{ _queueMutex };
+				if( _state==EState::Starting ){
+					_state = EState::Running;
+					return true;
+				}
+				stopped = std::exchange( _made, {} );//stopped while its nodes were made.
+			}
+			if( stopped )
+				stopped();
+			return false;
 		}
 		α Changed( string nodeId )ι->Store::Changed{
 			if( !_config.ContextChanged )
@@ -523,7 +542,7 @@ namespace Jde::Opc::Flows{
 		}
 		//The flow does not start:  its fault, and the node's status, say why.
 		α Refuse( Slot& slot, string message )ι->void{
-			ERR( "[{}.{}]The flow is stopped:  {}", _config.Name, slot.Def.Label(), message );
+			ERR( "[{}.{}]The flow is stopped:  {}", _label, slot.Def.Label(), message );
 			lg _{ _stateMutex };
 			slot.Status = { "red", "ring", message };
 			_fault = Flows::Fault{ slot.Def.Id, move(message) };
@@ -544,10 +563,13 @@ namespace Jde::Opc::Flows{
 				}
 			}
 		}
-		α End()ι->EState{//the state it had.
+		//The state it had.  `stopped`:  a Stop's, which a flow whose nodes are being made takes, to run once they are.
+		α End( absl::AnyInvocable<void()>* stopped=nullptr )ι->EState{
 			lg _{ _queueMutex };
 			if( _js )
 				Halt( *_js );
+			if( stopped && *stopped && _state==EState::Starting )//the first stop's alone:  it ends the state.
+				_made = std::move( *stopped );
 			return std::exchange( _state, EState::Stopped );
 		}
 		α Teardown()ι->void{
@@ -622,7 +644,7 @@ namespace Jde::Opc::Flows{
 				f();
 			}
 			catch( const std::exception& e ){
-				ERR( "[{}.{}]{}", _config.Name, slot ? slot->Def.Label() : string{}, e.what() );
+				ERR( "[{}.{}]{}", _label, slot ? slot->Def.Label() : string{}, e.what() );
 				if( slot )
 					Errored( *slot, e.what() );
 			}
@@ -892,6 +914,7 @@ namespace Jde::Opc::Flows{
 
 		const Graph _graph;
 		Flow::Config _config;
+		const string _label;
 		const sp<Hist::IClock> _clock;
 		const sp<MessageIds> _ids;
 		const sp<GlobalStore> _global;
@@ -907,13 +930,14 @@ namespace Jde::Opc::Flows{
 		bool _draining{};
 		Slot* _receiving{};
 		bool _held{};
-		TimePoint _tick;//the clock, as the entry or the message in hand began.
+		TimePoint _tick;//the clock, as the entry or the message in hand began, or as a message was born.
 		INode::TimerId _nextTimer{};
 		vector<Slot*> _stale;
 		vector<std::pair<Slot*,absl::AnyInvocable<void()>>> _idle;//what waits for the queues to empty, and for what is held.
 		vector<absl::AnyInvocable<void()>> _quiet;//what waits for the queues alone.
 		mutable mutex _queueMutex;
 		EState _state{ EState::Idle };
+		absl::AnyInvocable<void()> _made;//a Stop's while the nodes were made, for once they are.
 		sp<Js::Runtime> _js;//the Function nodes' runtime, when the graph has one, made as they are:  set under _queueMutex.
 		std::deque<uint32> _arrival;//a node's index for each message queued, in the order they came.
 		vector<std::pair<uint32,MessageId>> _dropped;//off a queue, for the strand to count.
@@ -974,6 +998,7 @@ namespace Jde::Opc::Flows{
 	α INode::Drop( MessageId id )ι->void{ _slot->Flow.Drop( *_slot, id ); }
 	α INode::Error( string error )ι->void{ _slot->Flow.Error( *_slot, move(error) ); }
 	α INode::Capture( MessageId id, const jvalue& what )ι->void{ _slot->Flow.Capture( *_slot, id, what ); }
+	α INode::Replaying()Ι->bool{ return _slot->Flow.Replaying(); }
 	α INode::SetStatus( NodeStatus status )ι->void{ _slot->Flow.SetStatus( *_slot, move(status) ); }
 	α INode::Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, after, std::move(f) ); }
 	α INode::Schedule( TimePoint due, absl::AnyInvocable<void()> f )ι->TimerId{ return _slot->Flow.Schedule( *_slot, due, std::move(f) ); }

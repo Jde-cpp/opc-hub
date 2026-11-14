@@ -25,16 +25,17 @@ namespace Jde::Opc::Flows{
 		TimePoint _now;
 		TimerId _nextId{};
 		std::map<std::pair<TimePoint,TimerId>,absl::AnyInvocable<void()>> _timers;
+		flat_map<TimerId,TimePoint> _due;//each timer's, so a cancel finds it at once.
 	};
 
 	//A source's record in a run:  when it was, by its source, and the fields of the message its node sends for it live,
 	//`topic`, `payload` and a data change's.  Its `_id` and its `_time`, the clock's, are the run's to give.
 	struct StreamRecord final{ TimePoint Time; jobject Fields; };
-	//One source node's records over a run's range, oldest first, a page at a time:  no record is the end.  On the run's
-	//strand, and what it throws fails the run.
+	//One source node's records over a run's range, oldest first, a page at a time, which may hold none:  no page is the
+	//end.  On the run's strand, one read a call, so a cancel waits for one page at the most, and what it throws fails the run.
 	struct IStream{
 		virtual ~IStream()=default;
-		β Next()ε->vector<StreamRecord> =0;
+		β Next()ε->optional<vector<StreamRecord>> =0;
 	};
 	//A run's host:  a flow's (IHost), and the records.
 	//  Stream:  an `opc in`'s and a `group in`'s records over the range, which the run delivers in the node's place;  what
@@ -65,11 +66,13 @@ namespace Jde::Opc::Flows{
 			//could not be made.  `why`:  a failure's, a node's refusal, a start that threw or a page that could not be read.
 			function<void( ERunEnd end, string why )> Ended;
 			//Between two steps, once what the last sent is through the flow:  the run goes on when `next` is called, from
-			//any thread.  How a host holds a run back while its trace is written.  None:  at once.
-			function<void( absl::AnyInvocable<void()> next )> Pace;
+			//any thread, and fails with `failed` when that isn't empty.  How a host holds a run back while its trace is
+			//written, and ends one whose trace can't be.  None:  at once.
+			function<void( absl::AnyInvocable<void( string failed )> next )> Pace;
 		};
 		//`flow`:  what the graph runs with, its queue, its sandbox's limits, its trace and its context, a scratch copy.  Its
-		//Clock and Host are the run's own, and its ids, without any, count from From, so two runs of a range have the same.
+		//Clock and Host are the run's own, its ids, without any, count from From, so two runs of a range have the same, and
+		//its Run is set, 0 without one, so what a node would log is its capture.
 		Run( Graph graph, Flow::Config flow, Config config )ι;
 		~Run();//cancels it.
 		Run( Run&& )ι=default;
@@ -77,7 +80,7 @@ namespace Jde::Opc::Flows{
 		α Start()ι->bool;
 		α Cancel()ι->void;//any thread:  the flow stops, and Ended tells Cancelled, unless it was ending already.
 		α Delivered()Ι->uint;//the records delivered.
-		α Pages()Ι->uint;//the pages its streams answered, the empty last ones aside.
+		α Pages()Ι->uint;//the pages its streams answered, those with no record among them.
 		α Counts()Ι->vector<NodeCounts>;//the flow's.
 		α Fault()Ι->optional<Flows::Fault>;
 	private:

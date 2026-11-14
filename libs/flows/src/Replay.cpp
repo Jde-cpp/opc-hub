@@ -12,20 +12,23 @@ namespace Jde::Opc::Flows{
 		lg _{ _mutex };
 		let id = ++_nextId;
 		_timers.emplace( std::pair{due, id}, std::move(f) );
+		_due.emplace( id, due );
 		return id;
 	}
 	α StreamClock::Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId{
 		lg _{ _mutex };
 		let id = ++_nextId;
 		_timers.emplace( std::pair{_now+after, id}, std::move(f) );
+		_due.emplace( id, _now+after );
 		return id;
 	}
 	α StreamClock::Cancel( TimerId id )ι->bool{
 		lg _{ _mutex };
-		let p = find_if( _timers, [id]( let& timer ){ return timer.first.second==id; } );
-		if( p==_timers.end() )
+		let due = _due.find( id );
+		if( due==_due.end() )
 			return false;
-		_timers.erase( p );
+		_timers.erase( std::pair{due->second, id} );
+		_due.erase( due );
 		return true;
 	}
 	α StreamClock::AdvanceTo( TimePoint to, uint most )ι->bool{
@@ -40,6 +43,7 @@ namespace Jde::Opc::Flows{
 				if( ran==most )
 					return false;
 				auto timer = _timers.extract( _timers.begin() );
+				_due.erase( timer.key().second );
 				_now = std::max( _now, timer.key().first );
 				f = std::move( timer.mapped() );
 			}
@@ -91,6 +95,8 @@ namespace Jde::Opc::Flows{
 			flow.Clock = run._config.Clock;
 			flow.Host = run._config.Host ? ms<Nodes>( run ) : nullptr;
 			flow.Active = {};
+			if( !flow.Run )
+				flow.Run = 0;
 			return move( flow );
 		}
 		Impl( Graph&& graph, Flow::Config&& flow, Config&& config )ι:
@@ -133,17 +139,23 @@ namespace Jde::Opc::Flows{
 		}
 		α Post()ι->void{ _flow.Post( [self=shared_from_this()]{ self->Step(); } ); }
 		//The reader whose next record is the earliest, a tie the first's, and that record's time;  none at the streams' end.
-		//A record past To is its stream's end.
-		α Peek()ε->optional<std::pair<uint,TimePoint>>{
-			optional<std::pair<uint,TimePoint>> y;
+		//A record past To is its stream's end.  Pending:  a reader whose page held no record, which reads again next step.
+		struct Peeked final{ optional<std::pair<uint,TimePoint>> Next; bool Pending{}; };
+		α Peek()ε->Peeked{
+			Peeked y;
 			for( uint i=0; i<_readers.size(); ++i ){
 				auto& reader = _readers[i];
-				while( !reader.Done && reader.Next==reader.Page.size() ){
-					reader.Page = reader.Stream->Next();
+				if( !reader.Done && reader.Next==reader.Page.size() ){
+					auto page = reader.Stream->Next();
 					reader.Next = 0;
-					reader.Done = reader.Page.empty();
-					if( !reader.Done )
+					reader.Done = !page;
+					reader.Page = page ? move( *page ) : vector<StreamRecord>{};
+					if( page )
 						++_pages;
+					if( page && reader.Page.empty() ){
+						y.Pending = true;
+						continue;
+					}
 				}
 				if( !reader.Done && reader.Page[reader.Next].Time>_config.To ){
 					reader.Done = true;
@@ -151,8 +163,8 @@ namespace Jde::Opc::Flows{
 				}
 				if( reader.Done )
 					continue;
-				if( let time = reader.Page[reader.Next].Time; !y || time<y->second )
-					y = { i, time };
+				if( let time = reader.Page[reader.Next].Time; !y.Next || time<y.Next->second )
+					y.Next = { i, time };
 			}
 			return y;
 		}
@@ -162,7 +174,12 @@ namespace Jde::Opc::Flows{
 			if( _finishing )
 				return;
 			try{
-				let next = Peek();
+				let peeked = Peek();
+				if( peeked.Pending ){//the strand's other work has its turn between two reads.
+					Post();
+					return;
+				}
+				let& next = peeked.Next;
 				let reached = _config.Clock->AdvanceTo( next ? next->second : _config.To, _slice );//short of it with more timers due:  the step after's.
 				if( reached && !next ){
 					Finish( ERunEnd::Completed, {} );
@@ -181,7 +198,12 @@ namespace Jde::Opc::Flows{
 		}
 		α Paced()ι->void{
 			if( _config.Pace )
-				_config.Pace( [self=shared_from_this()]{ self->Post(); } );
+				_config.Pace( [self=shared_from_this()]( string failed ){
+					if( failed.empty() )
+						self->Post();
+					else
+						self->Finish( ERunEnd::Failed, move(failed) );
+				} );
 			else
 				Post();
 		}

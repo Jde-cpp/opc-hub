@@ -6,8 +6,9 @@
 namespace Jde::Opc::Gateway{
 	struct FlowHost;
 	//What a run's hosted nodes are made from:  the flow, its deployer, whose rights a link's delivery asks, and each
-	//`group in` node's group, and the group that holds each `opc in`'s node, as the run's admission found it, by the node's id.
-	struct FlowRun final{ FlowPK Flow; string Slug; UserPK Deployer; flat_map<string,HistGroupPK> Groups; };
+	//`group in` node's group, the group that holds each `opc in`'s node, and an index-form node's spelling (HistNodeText),
+	//as the run's admission found them, by the node's id.
+	struct FlowRun final{ FlowPK Flow; string Slug; UserPK Deployer; flat_map<string,HistGroupPK> Groups; flat_map<string,string> Nodes; };
 	//A replay's range, each bound inside it, whether it commits, and the most records a page of a source's holds,
 	//`/gateway/flows/readLimit`, 0 for the historian's own.
 	struct FlowReplay final{ TimePoint From; TimePoint To; bool Commit; uint ReadLimit; };
@@ -28,7 +29,7 @@ namespace Jde::Opc::Gateway{
 	//  `link out` to another flow:  a clone to each running flow that holds the `link in`, under the deployer's Update on it.
 	//A `variable` waits for the flow server, and is refused.
 	//A replay's (spec *Replay*, Flows::IReplayHost), made with its range:  a `group in`'s records, and those of the group that
-	//holds an `opc in`'s node, read from the group a page at a time over the range, each a message as the node sends it
+	//holds an `opc in`'s node, found by the node as its admission spelled it, read from the group a page a call over the range, each a message as the node sends it
 	//live, a heartbeat left out and no modification a message of its own;  a `timer` and a `calendar` as they are, on the
 	//run's clock;  and every sink a capture, the value an `opc out` would have written, a `log`'s line, an `http request`'s
 	//method, url and body, its host asked of the allow list as at a send, and the message a link would have delivered:

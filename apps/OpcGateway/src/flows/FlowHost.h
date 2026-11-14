@@ -86,14 +86,16 @@ namespace Jde::Opc::Gateway{
 		//for a node that is not an inject of it.
 		α Inject( FlowPK id, sv node, const jobject* message, SRCE )ε->void;
 		//replayFlow's (spec *Replay*):  Update on the flow, whose current version is read and admitted for its deployer as a
-		//start admits it, enabled or not, each `opc in` a node a group holds, since a replay has no other records of one:  a
+		//start admits it, enabled or not, each `opc in` a node a group holds, since a replay has no other records of one, each
+		//source's records found, and Read for the caller on each group a source reads, which is history it would read:  a
 		//refusal is thrown with its node, and writes nothing.  The run's row is then written and the run started over
-		//`from` to `to`, each inside the range, on a strand, a sandbox and a clock of its own, with a copy of the flow's
+		//`from` to `to`, each inside the range and `to` no later than now, on a strand, a sandbox and a clock of its own, with a copy of the flow's
 		//context as its rows and what is still to write stand, and of the gateway's, of which it writes none back.  Its
 		//trace is the flow's, each record under the run's id at the stream's time, at the flow's level or `errors` when
 		//that is below it, so the captures are always written.  Every sink is captured, in either mode:  what `commit`
 		//writes, a `variable`, comes with the flow server.  Answered as the run starts:  how it ends is its row's `status`,
-		//`completed`, `cancelled` or `failed:  <why>`, null while it is under way, written once its records are on file.
+		//`completed`, `cancelled` or `failed:  <why>`, null while it is under way, written once its records are on file, and
+		//`failed` for a run whose trace could not be, which is ended at the first flush that fails.
 		//One run at a time per flow:  a second is refused, Conflict.  A deploy meanwhile leaves the run on its version.
 		struct Replayed final{ FlowRunPK Id; uint32 Version; TimePoint Started; string UserName; };
 		struct ReplayAwait final : AnyAwait<Replayed>{
@@ -125,7 +127,7 @@ namespace Jde::Opc::Gateway{
 		};
 		α CancelRun( FlowRunPK run, UserPK by, SRCE )ι->CancelAwait{ return { *this, run, by, sl }; }
 		α ReplayOf( FlowPK id )Ι->optional<FlowRunPK>;//the flow's run under way.
-		static constexpr uint ReplayBuffer{ 4<<20 };//the bytes of trace a replay lets wait before it stops for their flush, a quarter of the buffer's cap, so it drops no record of its own or of the live flow's.
+		static constexpr uint ReplayBuffer{ Flows::TraceStore::MaxBuffer/4 };//the bytes of trace a replay lets wait before it stops for their flush, so it drops no record of its own or of the live flow's.
 		//setFlowContext's (spec *Context*), the Context tab's edit:  a value of the gateway's scope with no flow, of the flow's
 		//with no node, else of that node's, a null one taking the key away.  Set in the store of a flow that is running, so
 		//it is there at the flow's next get, and its row written before this ends, where a flow's own change waits

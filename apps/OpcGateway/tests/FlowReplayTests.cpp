@@ -1,9 +1,9 @@
 //Flows 7 (#453):  a replay (docs/flows/spec.md *Replay*) - replayFlow over records written into a group through its edit, a
 //dry run capturing an `opc out`'s values under its run's id with nothing written, its flow_runs row, a run paged past a
 //small readLimit, a second run refused while one is under way, cancelFlowRun, an `opc in` taking its group's records and
-//one no group holds refusing the run by its node, and the reads' `run`.  The cases replay seconds and minutes:  the days
-//are the library's, on the stream's clock (libs/flows/tests/ReplayTests.cpp).
-#include <jde/opc/uatypes/DateTime.h>
+//one no group holds refusing the run by its node, a caller who may not read a source's group and a member that is none
+//of it refused with no row, a `to` after now refused, and the reads' `run`.  The cases replay seconds and minutes:  the
+//days are the library's, on the stream's clock (libs/flows/tests/ReplayTests.cpp).
 #include "utils/FlowFixture.h"
 
 namespace Jde::Opc::Gateway::Tests{
@@ -13,6 +13,18 @@ namespace Jde::Opc::Gateway::Tests{
 			return Mutate( "replayFlow( flow:$flow, from:$from, to:$to, mode:$mode ){ id flow version start finish mode started userName status }", {{"flow", flow}, {"from", ToIsoString(from)}, {"to", ToIsoString(to)}, {"mode", mode}} ).as_object();
 		}
 		Ω RunId( const jobject& replayed )ε->uint32{ return Json::AsNumber<uint32>( replayed, "id" ); }
+		//Another user than the suite's, with no role:  Update on a flow while flows is unenforced, and no Read on an
+		//enforced group.  Created the first time, as the suites share one db in a run.
+		Ω Stranger()ε->UserPK{
+			auto app = AppClient();
+			auto user = app->QuerySync( "user( slug:$slug, deleted:null ){ id }", {{"slug", "flowReplayStranger"}} );
+			if( user.empty() )
+				user = app->QuerySync<jobject>( "createUser( slug:$slug, name:$name ){ id }", {{"slug", "flowReplayStranger"}, {"name", "A replay's stranger"}} );
+			return UserPK{ Json::AsNumber<UserPK::Type>(user, "id") };
+		}
+		Ω ReplayAs( UserPK user, uint32 flow, TimePoint from, TimePoint to )ε->jvalue{
+			return BlockAwait( QL::QLAwait<jvalue>{"replayFlow( flow:$flow, from:$from, to:$to ){ id }", {{"flow", flow}, {"from", ToIsoString(from)}, {"to", ToIsoString(to)}}, user, QLPtr()} );
+		}
 		Ω Cancel( uint32 run )ε->jobject{ return Mutate( "cancelFlowRun( id:$id ){ id status finished }", {{"id", run}} ).as_object(); }
 		Ω Runs( uint32 flow )ε->jarray{ return QL().QuerySync<jarray>( "flowRuns( flowId:$flow ){ id version start finish mode started finished identityId userName status }", {{"flow", flow}}, User() ); }
 		Ω Row( uint32 flow, uint32 run )ε->jobject{
@@ -28,9 +40,19 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_TRUE( WaitUntil([&]{ row = Row( flow, run ); return !row.at("status").is_null(); }, 30s) ) << "run " << run << " did not end";
 			return row;
 		}
-		//The run's captures in the range, oldest first.
+		//The run's captures in the range, oldest first, every page of them.
 		Ω Captured( uint32 flow, uint32 run, TimePoint from, TimePoint to )ε->jarray{
-			return Json::AsArray( Trace({{"flow", flow}, {"start", ToIsoString(from)}, {"end", ToIsoString(to)}, {"run", run}, {"kind", "captured"}}), "records" );
+			jarray y;
+			jobject args{ {"flow", flow}, {"start", ToIsoString(from)}, {"end", ToIsoString(to)}, {"run", run}, {"kind", "captured"} };
+			for( ;; ){
+				let page = Trace( args );
+				for( let& record : Json::AsArray(page, "records") )
+					y.push_back( record );
+				let next = page.if_contains( "continuation" );
+				if( !next || !next->is_string() )
+					return y;
+				args["continuation"] = *next;
+			}
 		}
 		//RpmManual's value a second from `t0`, 1000 on, written into the group through its edit.
 		Ω Record( uint32 group, TimePoint t0, uint count=60 )ε->void{
@@ -103,8 +125,24 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( counts(run), 60u );
 		EXPECT_EQ( counts(nullptr), 0u );
 
-		absl::Cleanup restore = []{ try{ Settings::Set( "/gateway/flows/readLimit", Hist::Settings::DefaultReadLimit ); }catch( const std::exception& ){} };
+		let denied = Refused( [&]{ ReplayAs( Stranger(), flow, from, to ); } );
+		EXPECT_EQ( denied.Status, EHttpStatus::Forbidden ) << denied.What;
+		EXPECT_TRUE( denied.What.starts_with("Node 'src':  ") && Has(denied.What, "which needs Read for who runs it") ) << denied.What;
+		EXPECT_EQ( Runs(flow).size(), 1u ) << "a caller who may not read the group the run reads is refused, with no row";
+
+		absl::Cleanup restore = []{
+			try{
+				Settings::Set( "/gateway/flows/readLimit", Hist::Settings::DefaultReadLimit );
+				Flows().Stop();
+				Flows().Start();
+			}
+			catch( const std::exception& e ){
+				ADD_FAILURE() << "readLimit wasn't put back:  " << e.what();
+			}
+		};
 		Settings::Set( "/gateway/flows/readLimit", 7 );
+		Flows().Stop();//the host reads it as it starts, for the runs' pages and the trace's.
+		Flows().Start();
 		let paged = RunId( Replay(flow, from, to) );
 		EXPECT_EQ( Ended(flow, paged).at("status"), "completed" );
 		EXPECT_TRUE( Has(EndLine(capture, paged), "60 records in 9 pages") ) << EndLine( capture, paged );
@@ -148,7 +186,10 @@ namespace Jde::Opc::Gateway::Tests{
 
 		let next = RunId( Replay(flow, to-1s, to) );
 		EXPECT_EQ( Ended(flow, next).at("status"), "completed" ) << "another, once the first has ended";
-		EXPECT_EQ( Runs(flow).size(), 2u );
+		let ahead = Refused( [&]{ Replay( flow, to, Clock::now()+1h ); } );
+		EXPECT_EQ( ahead.Status, EHttpStatus::BadRequest ) << ahead.What;
+		EXPECT_TRUE( Has(ahead.What, "is after now") ) << ahead.What;
+		EXPECT_EQ( Runs(flow).size(), 2u ) << "no row for a refusal";
 		EXPECT_EQ( Refused([&]{ Replay( flow, to, from ); }).Status, EHttpStatus::BadRequest ) << "from before to";
 		EXPECT_EQ( Refused([&]{ Replay( flow, from, to, "wet" ); }).Status, EHttpStatus::BadRequest );
 		EXPECT_EQ( Refused([&]{ Replay( flow+1000, from, to ); }).Status, EHttpStatus::NotFound );
@@ -174,6 +215,13 @@ namespace Jde::Opc::Gateway::Tests{
 		let [group, rpm, host, _] = OneNodeGroup{ "replay-reads", RpmManual };
 		auto open = EnforcedHistGroups();
 		Record( group, from, 10 );
+		let members = CreateFlow( "replay-members", false );
+		absl::Cleanup purgeMembers = [=]{ PurgeFlow( members ); };
+		ASSERT_EQ( Deploy(members, Graph({N("src", "group in", serialize(jobject{{"group", group}, {"members", jarray{Ex(Rpm4)}}}), {{"line"}}), Line("{{payload}}")})).at("running"), false );
+		let none = Refused( [&]{ Replay( members, from, to ); } );
+		EXPECT_EQ( none.Status, EHttpStatus::BadRequest ) << none.What;
+		EXPECT_TRUE( none.What.starts_with("Node 'src':  ") && Has(none.What, "is no member of its group") ) << none.What;
+		EXPECT_TRUE( Runs(members).empty() ) << "a stream's refusal writes no run";
 		Logging::Capture capture{ ELogTags::Flow, ELogLevel::Information };
 		let run = RunId( Replay(flow, from, to) );
 		EXPECT_EQ( Ended(flow, run).at("status"), "completed" );

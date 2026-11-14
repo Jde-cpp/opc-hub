@@ -74,7 +74,9 @@ namespace Jde::Opc::Flows{
 		//The flow's buffer written now, rather than at Delay:  `done` once it is, or at once when there is nothing to write;
 		//for a write that fails, once the records are back in the buffer.
 		α Flush( sv slug, absl::AnyInvocable<void()> done={} )ι->void;
-		α Buffered( sv slug )Ι->uint;//the bytes of the flow's buffer:  what a replay holds itself back by, flushing past a share of the buffer's cap.
+		α Buffered( sv slug )Ι->uint;//the bytes of the flow's buffer:  what a replay holds itself back by, flushing past a share of MaxBuffer.
+		α Failing( sv slug )Ι->optional<string>;//why the flow's last write failed, until one succeeds.
+		static constexpr uint MaxBuffer{ 16u<<20 };//bytes a flow's buffer holds:  past it a healthy file's flush comes now, and while the file is unwritable or behind the oldest go.
 		α Roll()ι->void;//the daily roll, now:  the midnight roll Start set is left as it is.
 		α Purge( sv slug )ι->void;//the flow's directory and what is known of its files;  its buffer dropped.
 		//A flow's directory under `root` with no store, a purge's after the store stopped:  a slug that is no directory name

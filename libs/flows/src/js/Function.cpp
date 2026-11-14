@@ -617,11 +617,16 @@ namespace Jde::Opc::Flows::Js{
 				Fail( move(m), move(*error) );
 				return JS_UNDEFINED;
 			}
-			α NativeLog( JSValueConst* argv )ε->JSValue{//( level, text ):  0 `node.log`, 1 `node.warn`.
+			α NativeLog( JSValueConst* argv )ε->JSValue{//( level, text ):  0 `node.log`, 1 `node.warn`;  a replay's, its capture.
 				let line = text( _ctx, argv[1] );
 				if( !line )
 					return JS_EXCEPTION;
-				LOG( JS_ToBool(_ctx, argv[0])>0 ? ELogLevel::Warning : ELogLevel::Information, _tags, "[{}.{}]{}", _rt->Flow, Label(), *line );
+				if( Replaying() ){
+					let call = Find( _current );
+					Capture( call ? call->Id : 0, jvalue{*line} );
+				}
+				else
+					LOG( JS_ToBool(_ctx, argv[0])>0 ? ELogLevel::Warning : ELogLevel::Information, _tags, "[{}.{}]{}", _rt->Flow, Label(), *line );
 				return JS_UNDEFINED;
 			}
 			α NativeStatus( JSValueConst* argv )ε->JSValue{//( { fill, shape, text } ), or its text alone.

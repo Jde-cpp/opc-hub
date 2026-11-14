@@ -306,6 +306,47 @@ namespace Jde::Opc::Gateway{
 		bool Now{};//`from`:  now, whatever the mark.
 		vector<ExNodeId> Wanted;//`members`:  none, every member.
 	};
+	//A group's member as a `group in`'s message names it:  its node, and its path, the message's `topic`, else the node.
+	struct GroupMember final{ string Node; string Path; };
+	using GroupMembers = flat_map<Hist::NodeIndex,GroupMember>;
+	//The members a `group in` takes:  `members`, else every one, a node that is none of the group's refused.
+	Ω groupMembers( HistGroupHost& host, const GroupInProps& props )ε->GroupMembers{
+		GroupMembers y;
+		let all = host.HistMembers();
+		let add = [&]( const HistMember& member ){
+			let text = member.Node.ToString();
+			y.emplace( member.Index, GroupMember{text, member.Attributes.Path ? HistPathText(*member.Attributes.Path) : text} );
+		};
+		if( props.Wanted.empty() )
+			std::ranges::for_each( all, add );
+		for( let& node : props.Wanted ){
+			let index = host.Index( node );
+			let member = index ? std::ranges::find( all, *index, &HistMember::Index ) : all.end();
+			THROW_IF( member==all.end(), "'{}' is no member of its group.", node.ToString() );
+			add( *member );
+		}
+		return y;
+	}
+	//The member a record is a message of:  none for a heartbeat, which repeats a value, and for a node not taken.
+	Ω recorded( const GroupMembers& members, const Hist::Proto::DataValue& value )ι->const GroupMember*{
+		if( value.has_heartbeat() )
+			return nullptr;
+		let member = members.find( value.node_index() );
+		return member==members.end() ? nullptr : &member->second;
+	}
+	//The record as its member's message, `m`'s data change and topic, live or in a replay:  false for a value that does
+	//not read, which is logged.
+	Ω dataChange( Message& m, sv slug, const GroupMember& member, const Hist::Proto::DataValue& value, const ITypes* types )ι->bool{
+		try{
+			m.SetDataChange( slug, member.Node, Hist::ToUA(value), types );
+		}
+		catch( const std::exception& e ){
+			WARN( "A record of '{}' does not read, and is left out:  {}", member.Node, e.what() );
+			return false;
+		}
+		m.Json["topic"] = member.Path;
+		return true;
+	}
 
 	constexpr std::array<sv,5> _updateTypes{ "unspecified", "insert", "replace", "update", "delete" };
 	struct GroupIn final : Flows::ISource{
@@ -434,7 +475,6 @@ namespace Jde::Opc::Gateway{
 			Pump();
 		}
 	private:
-		struct Member final{ string Node; string Path; };
 		α Retry( string why )ι->void{
 			SetStatus( {"red", "ring", move(why)} );
 			if( !_retry )
@@ -447,21 +487,10 @@ namespace Jde::Opc::Gateway{
 			_subscription = nullptr;
 			_slug = host.Slug();
 			_members.clear();
+			_members = groupMembers( host, _props );
 			vector<Hist::NodeIndex> nodes;
-			let add = [&]( const HistMember& member ){
-				nodes.push_back( member.Index );
-				let text = member.Node.ToString();
-				_members.emplace( member.Index, Member{text, member.Attributes.Path ? HistPathText(*member.Attributes.Path) : text} );
-			};
-			let members = host.HistMembers();
-			if( _props.Wanted.empty() )
-				std::ranges::for_each( members, add );
-			for( let& node : _props.Wanted ){
-				let index = host.Index( node );
-				let member = index ? std::ranges::find( members, *index, &HistMember::Index ) : members.end();
-				THROW_IF( member==members.end(), "'{}' is no member of its group.", node.ToString() );
-				add( *member );
-			}
+			for( let& [index, _] : _members )
+				nodes.push_back( index );
 			if( nodes.empty() ){
 				SetStatus( {"grey", "ring", "Its group has no members."} );
 				return;
@@ -476,10 +505,8 @@ namespace Jde::Opc::Gateway{
 		//A record as a message, but a heartbeat, which repeats a value, a snapshot's bound from before its time, the value
 		//the node had then, and one at or before the last of its node the flow finished, which a restart's lookback reads again.
 		α Deliver( const Hist::Proto::DataValue& value, const ITypes* types, bool bound=false )ι->void{
-			if( value.has_heartbeat() )
-				return;
-			let member = _members.find( value.node_index() );
-			if( member==_members.end() )
+			let member = recorded( _members, value );
+			if( !member )
 				return;
 			let ticks = value.has_source_ts() ? optional<UA_DateTime>{ value.source_ts() } : value.has_server_ts() ? optional<UA_DateTime>{ value.server_ts() } : nullopt;
 			if( bound && (!ticks || *ticks<_from) )
@@ -488,14 +515,8 @@ namespace Jde::Opc::Gateway{
 			if( ticks && high!=_high.end() && *ticks<=high->second )
 				return;
 			auto m = Make();
-			try{
-				m.SetDataChange( _slug, member->second.Node, Hist::ToUA(value), types );
-			}
-			catch( const std::exception& e ){
-				WARN( "A record of '{}' does not read, and is left out:  {}", member->second.Node, e.what() );
+			if( !dataChange(m, _slug, *member, value, types) )
 				return;
-			}
-			m.Json["topic"] = member->second.Path;
 			Send( move(m) );
 			if( ticks ){
 				_high[value.node_index()] = *ticks;
@@ -545,7 +566,7 @@ namespace Jde::Opc::Gateway{
 		//The strand's.
 		Duration _lateness{};//the props', else the group's heartbeat gap.
 		ServerCnnctnNK _slug;
-		flat_map<Hist::NodeIndex,Member> _members;
+		GroupMembers _members;
 		sp<GroupFeed> _feed;
 		up<Hist::Subscription> _subscription;
 		bool _paging{};
@@ -1092,10 +1113,10 @@ namespace Jde::Opc::Gateway{
 	};
 
 	//A replay's records of a group (spec *Replay*):  its members' over the range, through the group's raw read, a page of
-	//`readLimit` at a time, the edits applied, each as its node sends it live.  A heartbeat, which repeats a value, is none.
+	//`readLimit` a call, the edits applied, each as its node sends it live.  A heartbeat, which repeats a value, is none,
+	//so a page of them answers no record.
 	struct GroupStream final : Flows::IStream{
-		struct Member final{ string Node; string Topic; };//as the message names the node, and its `topic`.
-		GroupStream( sp<Opc::Hist::Group> group, ServerCnnctnNK slug, flat_map<Hist::NodeIndex,Member> members, const FlowReplay& range )ι:
+		GroupStream( sp<Opc::Hist::Group> group, ServerCnnctnNK slug, GroupMembers members, const FlowReplay& range )ι:
 			_group{ move(group) }, _slug{ move(slug) }, _members{ move(members) }, _last{ range.From }, _done{ _members.empty() }{
 			for( let& member : _members )
 				_request.Nodes.push_back( member.first );
@@ -1103,38 +1124,30 @@ namespace Jde::Opc::Gateway{
 			_request.End = UADateTime{ range.To }.UA();
 			_request.Limit = range.ReadLimit;
 		}
-		α Next()ε->vector<Flows::StreamRecord> override{
+		α Next()ε->optional<vector<Flows::StreamRecord>> override{
+			if( _done )
+				return nullopt;
+			let page = _group->Read( _request );
+			_request.Continuation = page.Continuation;
+			_done = page.Continuation.empty();
+			let types = UAClient::FindTypes( _slug );
 			vector<Flows::StreamRecord> y;
-			while( y.empty() && !_done ){
-				let page = _group->Read( _request );
-				_request.Continuation = page.Continuation;
-				_done = page.Continuation.empty();
-				let types = UAClient::FindTypes( _slug );
-				for( let& read : page.Values ){
-					let& value = read.Value;
-					let member = _members.find( value.node_index() );
-					if( value.has_heartbeat() || member==_members.end() )
-						continue;
-					Message m;
-					try{
-						m.SetDataChange( _slug, member->second.Node, Hist::ToUA(value), types.get() );
-					}
-					catch( const std::exception& e ){
-						WARN( "A record of '{}' does not read, and is left out:  {}", member->second.Node, e.what() );
-						continue;
-					}
-					m.Json["topic"] = member->second.Topic;
-					if( value.has_source_ts() || value.has_server_ts() )
-						_last = UADateTime{ (UA_DateTime)(value.has_source_ts() ? value.source_ts() : value.server_ts()) }.Time();
-					y.emplace_back( _last, move(m.Json) );
-				}
+			for( let& read : page.Values ){
+				let& value = read.Value;
+				let member = recorded( _members, value );
+				Message m;
+				if( !member || !dataChange(m, _slug, *member, value, types.get()) )
+					continue;
+				if( value.has_source_ts() || value.has_server_ts() )
+					_last = UADateTime{ (UA_DateTime)(value.has_source_ts() ? value.source_ts() : value.server_ts()) }.Time();
+				y.emplace_back( _last, move(m.Json) );
 			}
 			return y;
 		}
 	private:
 		const sp<Opc::Hist::Group> _group;
 		const ServerCnnctnNK _slug;
-		const flat_map<Hist::NodeIndex,Member> _members;
+		const GroupMembers _members;
 		Hist::ReadRequest _request;
 		TimePoint _last;//the time of the last record, which one with none takes.
 		bool _done;
@@ -1175,32 +1188,20 @@ namespace Jde::Opc::Gateway{
 		THROW_IF( !_replay, "A '{}' has its records in a replay alone.", Flows::ToString(node.Type) );
 		let held = _run.Groups.find( node.Id );
 		let host = held==_run.Groups.end() ? nullptr : HistHost::Instance().Find( held->second );
-		flat_map<Hist::NodeIndex,GroupStream::Member> members;
+		GroupMembers members;
 		if( node.Type==ENodeType::OpcIn ){
 			let to = target( node.Props, sl );
 			THROW_IF( held==_run.Groups.end(), "'{}' on '{}' is in no group:  a replay has no records of it.", to.Text, to.Slug );
 			THROW_IF( !host, "Its group isn't one this gateway historizes." );
-			let index = host->Index( to.Node );
+			let spelled = to.Node.namespaceUri.length ? _run.Nodes.end() : _run.Nodes.find( node.Id );//by its URI, which needs no server's namespaces.
+			let index = host->Index( spelled==_run.Nodes.end() ? to.Node : ParseHistNode(spelled->second, sl) );
 			THROW_IF( !index, "'{}' is no member of group '{}'.", to.Text, host->Name() );
-			members.emplace( *index, GroupStream::Member{to.Text, to.Text} );
+			members.emplace( *index, GroupMember{to.Text, to.Text} );
 		}
 		else{
 			THROW_IF( node.Type!=ENodeType::GroupIn, "A '{}' has no records.", Flows::ToString(node.Type) );
 			THROW_IF( !host, "Its group isn't one this gateway historizes." );
-			const GroupInProps props{ node.Props, sl };
-			let all = host->HistMembers();
-			let add = [&]( const HistMember& member ){
-				let text = member.Node.ToString();
-				members.emplace( member.Index, GroupStream::Member{text, member.Attributes.Path ? HistPathText(*member.Attributes.Path) : text} );
-			};
-			if( props.Wanted.empty() )
-				std::ranges::for_each( all, add );
-			for( let& wanted : props.Wanted ){
-				let index = host->Index( wanted );
-				let member = index ? std::ranges::find( all, *index, &HistMember::Index ) : all.end();
-				THROW_IF( member==all.end(), "'{}' is no member of its group.", wanted.ToString() );
-				add( *member );
-			}
+			members = groupMembers( *host, GroupInProps{node.Props, sl} );
 		}
 		return mu<GroupStream>( host->Group(), host->Slug(), move(members), *_replay );
 	}

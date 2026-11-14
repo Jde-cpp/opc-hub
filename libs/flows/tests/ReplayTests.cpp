@@ -1,7 +1,12 @@
 //The replay (docs/flows/spec.md *Replay*):  a graph run over scripted records on the stream's clock, which takes no
 //wall-clock time, so a week is replayed here;  the same records giving the same trace twice, the timed nodes and a body's
-//timer firing at stream times in order, the sources that tick and those that are silent, a cancel mid-run, a page that
-//cannot be read, the captures, and a run's records apart from the live trace's in the flow's files.
+//timer firing at stream times in order, the sources that tick and those that are silent, a cancel mid-run and one as the
+//nodes are made, a page that cannot be read and one with no record, the captures, a `debug`'s and a body's log among them,
+//a trace that cannot be written, a source's figures at its record's minute, and a run's records apart from the live
+//trace's in the flow's files.
+#include <fstream>
+#include <future>
+#include <jde/tests/Capture.h>
 #include <jde/flows/FileTrace.h>
 #include <jde/flows/Replay.h>
 #include "helpers.h"
@@ -10,22 +15,30 @@
 namespace Jde::Opc::Flows::Tests{
 	//A run's host, as a gateway's:  an `opc in`'s and a `group in`'s records scripted by the node's id, `Page` at a time;  a
 	//`timer` that ticks every `every` seconds of its props on the run's clock;  and sinks that capture the payload they
-	//would have sent, kept here as `node@seconds payload`, the seconds the run's clock since `From`.
+	//would have sent, kept here as `node@seconds payload`, the seconds the run's clock since `From`.  `Empty` pages with no
+	//record go before each of a stream's, as a stretch of heartbeats reads, and Read hears each read.
 	struct ReplayHost final : IReplayHost{
 		struct Scripted final : IStream{
-			Scripted( vector<StreamRecord> records, uint page, optional<uint> failAt )ι:_records{ move(records) }, _page{ page }, _failAt{ failAt }{}
-			α Next()ε->vector<StreamRecord> override{
-				THROW_IF( _failAt && _pages++==*_failAt, "The group's file could not be read." );
+			Scripted( ReplayHost& host, vector<StreamRecord> records )ι:_host{ host }, _records{ move(records) }{}
+			α Next()ε->optional<vector<StreamRecord>> override{
+				let read = _reads++;
+				if( _host.Read )
+					_host.Read( read );
+				THROW_IF( _host.FailAt && read==*_host.FailAt, "The group's file could not be read." );
+				if( _next==_records.size() )
+					return nullopt;
+				if( _empty++<_host.Empty )
+					return vector<StreamRecord>{};
+				_empty = 0;
 				vector<StreamRecord> y;
-				for( ; _next<_records.size() && y.size()<_page; ++_next )
+				for( ; _next<_records.size() && y.size()<_host.Page; ++_next )
 					y.push_back( move(_records[_next]) );
 				return y;
 			}
 		private:
+			ReplayHost& _host;
 			vector<StreamRecord> _records;
-			const uint _page;
-			const optional<uint> _failAt;
-			uint _next{}, _pages{};
+			uint _next{}, _reads{}, _empty{};
 		};
 		struct Ticker final : ISource{
 			α Start()ε->void override{ Arm(); }
@@ -51,8 +64,10 @@ namespace Jde::Opc::Flows::Tests{
 		};
 		α Stream( const NodeDef& node )ε->up<IStream> override{
 			let records = Records.find( node.Id );
+			if( Making )
+				Making();
 			THROW_IF( records==Records.end(), "'ns=2;s=Count' on 'plc1' is in no group:  a replay has no records of it." );
-			return mu<Scripted>( records->second, Page, FailAt );
+			return mu<Scripted>( *this, records->second );
 		}
 		α Source( const NodeDef& node )ε->up<ISource> override{
 			Made.push_back( string{ToString(node.Type)} );
@@ -66,7 +81,10 @@ namespace Jde::Opc::Flows::Tests{
 		TimePoint From{ At(6) };
 		flat_map<string,vector<StreamRecord>> Records;
 		uint Page{ 3 };
-		optional<uint> FailAt;//the page a stream throws at.
+		optional<uint> FailAt;//the read a stream throws at.
+		uint Empty{};
+		function<void( uint read )> Read;
+		function<void()> Making;//as Stream is asked for a node.
 		vector<string> Made;//the types Source was asked for.
 	private:
 		mutable mutex _mutex;
@@ -98,8 +116,9 @@ namespace Jde::Opc::Flows::Tests{
 			Clock = clock ? move( clock ) : ms<StreamClock>( Host->From );
 			Trace = ms<MemoryTrace>( level, Clock );
 			_ended = std::promise<Ending>{};
+			Told = false;
 			Running = ms<Flows::Run>( move(*read), Flow::Config{.Name="test", .Trace=trace ? move(trace) : sp<ITrace>{Trace}, .Queue=Queue},
-				Flows::Run::Config{ .Clock=Clock, .Host=Host, .From=Host->From, .To=Host->From+span, .Ended=[this]( ERunEnd end, string why ){ _ended.set_value( {end, move(why)} ); }, .Pace=Pace } );
+				Flows::Run::Config{ .Clock=Clock, .Host=Host, .From=Host->From, .To=Host->From+span, .Ended=[this]( ERunEnd end, string why ){ Told = true; _ended.set_value( {end, move(why)} ); }, .Pace=Pace } );
 			return Running;
 		}
 		α Wait()->Ending{
@@ -130,8 +149,9 @@ namespace Jde::Opc::Flows::Tests{
 		sp<StreamClock> Clock;
 		sp<MemoryTrace> Trace;
 		sp<Flows::Run> Running;
-		function<void( absl::AnyInvocable<void()> )> Pace;
+		function<void( absl::AnyInvocable<void(string)> )> Pace;
 		uint Queue{ 1000 };
+		std::atomic<bool> Told{};//Ended has been.
 	private:
 		std::promise<Ending> _ended;
 	};
@@ -145,10 +165,11 @@ namespace Jde::Opc::Flows::Tests{
 			note( "a" );
 			clock.Schedule( Duration{1s}, [&]{ note( "inside" ); } );
 		} );
-		clock.Schedule( At(6, 0, 1), [&]{ note( "b" ); } );
+		let b = clock.Schedule( At(6, 0, 1), [&]{ note( "b" ); } );
 		let cancelled = clock.Schedule( At(6, 0, 2), [&]{ note( "cancelled" ); } );
 		EXPECT_TRUE( clock.Cancel(cancelled) );
 		EXPECT_FALSE( clock.Cancel(cancelled) );
+		EXPECT_FALSE( clock.Cancel(cancelled+100) ) << "one never scheduled";
 		EXPECT_EQ( clock.Now(), At(6) ) << "it stands until it is moved";
 		EXPECT_FALSE( clock.AdvanceTo(At(6, 0, 5), 1) ) << "more are due";
 		EXPECT_EQ( ran, vector<string>{"a@1"} );
@@ -157,6 +178,7 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( ran, (vector<string>{"a@1", "b@1", "inside@2", "c@3"}) ) << "in due order, a tie in the order scheduled, one a callback schedules among them";
 		EXPECT_EQ( clock.Now(), At(6, 0, 5) );
 		EXPECT_EQ( clock.Pending(), 0u );
+		EXPECT_FALSE( clock.Cancel(b) ) << "one that ran";
 		clock.Schedule( At(6), [&]{ note( "late" ); } );
 		EXPECT_TRUE( clock.AdvanceTo(At(6, 0, 4)) ) << "it never goes back";
 		EXPECT_EQ( ran.back(), "late@5" );
@@ -313,15 +335,15 @@ namespace Jde::Opc::Flows::Tests{
 		for( uint i=0; i<100; ++i )
 			Host->Add( "src", seconds{i}, i );
 		std::promise<void> reached;
-		absl::AnyInvocable<void()> held;
+		absl::AnyInvocable<void(string)> held;
 		uint steps{};
-		Pace = [&]( absl::AnyInvocable<void()> next ){
+		Pace = [&]( absl::AnyInvocable<void(string)> next ){
 			if( ++steps==4 ){
 				held = std::move( next );
 				reached.set_value();
 			}
 			else
-				next();
+				next( {} );
 		};
 		auto run = Begin( Nodes({Node("src", "opc in", "{}", {{"d"}}), Node("d", "delay", R"({"duration":"PT1H"})", {{"out"}}), Node("out", "log")}), 1h );
 		ASSERT_TRUE( run->Start() );
@@ -330,7 +352,7 @@ namespace Jde::Opc::Flows::Tests{
 		run->Cancel();
 		let ended = Wait();
 		EXPECT_EQ( ended.End, ERunEnd::Cancelled ) << ended.Why;
-		held();
+		held( {} );
 		run->Cancel();
 		EXPECT_EQ( run->Delivered(), 4u ) << "nothing more is delivered";
 		EXPECT_TRUE( Host->Took().empty() );
@@ -432,6 +454,131 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_EQ( runCounts[0].Counts.Node, "src" );
 		EXPECT_EQ( runCounts[0].Counts.Sent, vector<uint>{2} );
 		EXPECT_EQ( runCounts[1].Counts.Received, 2u );
+		store->Stop();
+		fs::remove_all( dir );
+	}
+
+	//A source's figures are its record's minute's, however far its step moved the clock, past a minute's end, to reach it.
+	TEST_F( ReplayTests, ASourcesFiguresAreItsRecordsMinutes ){
+		Host->Add( "src", 30s, 1 );
+		Host->Add( "src", 310s, 2 );
+		let ended = Replay( Nodes({Node("src", "opc in", "{}", {{"out"}}), Node("out", "log")}), 10min, ETraceLevel::Counts );
+		EXPECT_EQ( ended.End, ERunEnd::Completed ) << ended.Why;
+		vector<string> figures;
+		for( let& minute : Trace->Minutes() ){
+			for( let& node : minute.Nodes )
+				figures.push_back( Ƒ("{}@{} sent {} received {}", node.Node, duration_cast<minutes>(minute.Minute-Host->From).count(), node.Sent.empty() ? 0 : node.Sent[0], node.Received) );
+		}
+		EXPECT_EQ( figures, (vector<string>{"src@0 sent 1 received 0", "out@0 sent 0 received 1", "src@5 sent 1 received 0", "out@5 sent 0 received 1"}) );
+	}
+
+	//A cancel while the nodes are made, as a gateway's stop or a cancelFlowRun can come, ends the run once they are made:
+	//until then nothing is told and the run's readers are its start's.
+	TEST_F( ReplayTests, ACancelAsTheNodesAreMadeEndsTheRunOnceTheyAre ){
+		Host->Add( "src", 1s, 1 );
+		std::promise<void> entered, release;
+		auto released = release.get_future().share();
+		Host->Making = [&]{
+			entered.set_value();
+			released.wait();
+		};
+		auto run = Begin( Nodes({Node("src", "opc in", "{}", {{"out"}}), Node("out", "log")}), 1min );
+		auto started = std::async( std::launch::async, [run]{ return run->Start(); } );
+		ASSERT_EQ( entered.get_future().wait_for(10s), std::future_status::ready );
+		run->Cancel();
+		EXPECT_FALSE( Told ) << "not while the nodes are made";
+		release.set_value();
+		EXPECT_FALSE( started.get() ) << "a stop while the nodes were made";
+		EXPECT_TRUE( Told ) << "before Start answered";
+		let ended = Wait();
+		EXPECT_EQ( ended.End, ERunEnd::Cancelled ) << ended.Why;
+		EXPECT_EQ( run->Delivered(), 0u );
+	}
+
+	//Pages with no record, as a stretch of heartbeats reads, are no end, and each is a step's:  a cancel among them waits for
+	//one read at the most.
+	TEST_F( ReplayTests, APageWithNoRecordIsNoEndAndACancelWaitsForOneRead ){
+		for( uint i=0; i<6; ++i )
+			Host->Add( "src", seconds{i}, i );
+		Host->Empty = 2;
+		let graph = Nodes( {Node("src", "group in", "{}", {{"out"}}), Node("out", "log")} );
+		let ended = Replay( graph, 1min );
+		EXPECT_EQ( ended.End, ERunEnd::Completed ) << ended.Why;
+		EXPECT_EQ( Host->Took().size(), 6u );
+		EXPECT_EQ( Running->Pages(), 6u ) << "two pages of three, each behind two with none";
+
+		Host = ms<ReplayHost>();
+		Host->Add( "src", 1s, 1 );
+		Host->Empty = 1000;
+		uint reads{};
+		Host->Read = [&]( uint read ){
+			reads = read+1;
+			if( read==3 )
+				Running->Cancel();
+		};
+		let cancelled = Replay( graph, 1min );
+		EXPECT_EQ( cancelled.End, ERunEnd::Cancelled ) << cancelled.Why;
+		EXPECT_EQ( reads, 4u ) << "none after the cancel's";
+		EXPECT_TRUE( Host->Took().empty() );
+	}
+
+	//What a `debug` with a level and a body's `node.log` and `node.warn` would write to the log is a run's capture, and
+	//the flow's own line for an error names the run.
+	TEST_F( ReplayTests, WhatANodeWouldLogIsItsCapture ){
+		Logging::Capture capture{ ELogLevel::Information };
+		Host->Add( "src", 1s, 7 );
+		let ended = Replay( Nodes({
+			Node( "src", "opc in", "{}", {{"d", "f"}} ), Node( "d", "debug", R"({"level":"Information"})" ),
+			Node( "f", "function", R"({"code":"node.log( `seen ${msg.payload}` ); node.warn( 'warned' ); throw new Error( 'thrown' );"})" )
+		}), 1min, ETraceLevel::Errors );
+		EXPECT_EQ( ended.End, ERunEnd::Completed ) << ended.Why;
+		vector<string> captured;
+		for( let& record : Trace->Records() ){
+			if( record.Kind==ERecordKind::Captured )
+				captured.push_back( Ƒ("{} {}", record.Node, record.Json.value_or("-")) );
+		}
+		ASSERT_EQ( captured.size(), 3u );
+		EXPECT_TRUE( captured[0].starts_with("d {") && Has(captured[0], R"("payload":7)") ) << captured[0];
+		EXPECT_EQ( captured[1], R"(f "seen 7")" );
+		EXPECT_EQ( captured[2], R"(f "warned")" );
+		let logged = capture.Find( []( const Logging::Entry& e ){ return Has( e.Message(), "seen 7" ) || Has( e.Message(), "warned" ) || Has( e.Message(), R"("payload":7)" ); } );
+		EXPECT_TRUE( logged.empty() ) << logged.front().Message();
+		EXPECT_FALSE( capture.Find([]( const Logging::Entry& e ){ return e.Message().starts_with( "[test run 0.f]" ) && Has( e.Message(), "thrown" ); }).empty() ) << "the error's line, by its run";
+	}
+
+	//A pace that fails, as a host's whose trace can't be written, fails the run with why.
+	TEST_F( ReplayTests, APaceThatFailsFailsTheRun ){
+		for( uint i=0; i<10; ++i )
+			Host->Add( "src", seconds{i}, i );
+		uint steps{};
+		Pace = [&]( absl::AnyInvocable<void(string)> next ){ next( ++steps==3 ? "The trace could not be written." : string{} ); };
+		let ended = Replay( Nodes({Node("src", "opc in", "{}", {{"out"}}), Node("out", "log")}), 1min );
+		EXPECT_EQ( ended.End, ERunEnd::Failed );
+		EXPECT_EQ( ended.Why, "The trace could not be written." );
+		EXPECT_EQ( Running->Delivered(), 3u );
+	}
+
+	//A store whose files can't be written says why, until a write succeeds, so a run paced by it fails rather than going on.
+	TEST_F( ReplayTests, AStoreSaysWhyItsTraceCannotBeWritten ){
+		let dir = Jde::Tests::TestsDir( "flowReplayUnwritable", true );
+		fs::remove_all( dir );
+		fs::create_directories( dir.parent_path() );
+		std::ofstream{ dir } << "a file where the trace's directory would be";
+		auto store = ms<TraceStore>( TraceSettings{.Root=dir, .Delay=1min, .Zone=std::chrono::locate_zone("UTC")}, ms<ManualClock>(At(12)) );
+		Pace = [&]( absl::AnyInvocable<void(string)> next ){
+			store->Flush( "flow", [&, next=std::move(next)]()mutable{
+				let failing = store->Failing( "flow" );
+				next( failing ? Ƒ("The trace could not be written:  {}", *failing) : string{} );
+			} );
+		};
+		Host->Add( "src", 1s, 1 );
+		Host->Add( "src", 2s, 2 );
+		auto clock = ms<StreamClock>( At(6) );
+		let ended = Replay( Nodes({Node("src", "opc in", "{}", {{"out"}}), Node("out", "log")}), 1min, ETraceLevel::Hops, store->Trace("flow", ETraceLevel::Hops, clock, {}, 7), clock );
+		EXPECT_EQ( ended.End, ERunEnd::Failed );
+		EXPECT_TRUE( ended.Why.starts_with("The trace could not be written:  ") ) << ended.Why;
+		EXPECT_EQ( Running->Delivered(), 1u );
+		EXPECT_TRUE( store->Failing("flow").has_value() );
 		store->Stop();
 		fs::remove_all( dir );
 	}

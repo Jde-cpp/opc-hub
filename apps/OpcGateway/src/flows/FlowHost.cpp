@@ -212,7 +212,6 @@ namespace Jde::Opc::Gateway{
 			_live = live;
 			_valueLimit = trace.ValueLimit;
 			_feeds.clear();
-			_replays.clear();
 			_queue = queue;
 			_function = function;
 			_env = env ? *env : jobject{};
@@ -621,7 +620,7 @@ namespace Jde::Opc::Gateway{
 				config.Trace = _store->Trace( row.Slug, row.Trace, _clock, [feed=held, serial]( const Flows::TraceRecord& record ){ feed->OnRecord( serial, record ); } );
 		}
 		config.ContextChanged = [this, id]( sv node, sv key, const jvalue* value ){ ContextChanged( id, node, key, value ); };
-		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups} );
+		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups, spelled.Nodes} );
 		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
 		run->Trace = row.Trace;
 		run->Serial = serial;
@@ -950,6 +949,7 @@ namespace Jde::Opc::Gateway{
 			auto row = move( rows.front() );
 			REFUSE_IF( row.Deleted, "Flow '{}' is deleted:  restore it before it is replayed.", row.Name );
 			REFUSE_IF( !row.Version, "Flow '{}' has no version to replay:  deploy it first.", row.Name );
+			REFUSE_IF( await.To>Time()->Now(), "to, {}, is after now:  a replay reads the history there is, the same records each time.", ToIsoString(await.To) );
 			if( let under = ReplayOf(row.Id); under )
 				throw Exception{ sl, ExceptionArgs{EHttpStatus::Conflict}, "Flow '{}' has run {} under way:  one run at a time, which cancelFlowRun ends.", row.Name, *under };
 			auto versions = co_await Any( SelectFlowVersion(row.Id, *row.Version) );
@@ -967,9 +967,24 @@ namespace Jde::Opc::Gateway{
 			Resolved spelled;
 			if( let refusal = co_await Admit(row.Id, *graph, version.Deployer, nullptr, false, spelled, sl); refusal )
 				throw refused( *refusal, sl );
-			for( let& node : graph->Nodes ){//a node no group holds has no records:  the run is refused by its name.
-				if( node.Type==ENodeType::OpcIn && !spelled.Groups.contains(node.Id) )
-					throw refused( {{node.Id, Ƒ("'{}' on '{}' is in no group:  a replay has no records of it.", ParseHistNode(node.Props.at("node"), sl).ToString(), Json::FindDefaultSV(node.Props, "connection"))}}, sl );
+			auto nodes = ms<FlowNodes>( *this, FlowRun{row.Id, row.Slug, version.Deployer, spelled.Groups, spelled.Nodes}, FlowReplay{await.From, await.To, await.Commit, ReadLimit()} );
+			let acl = AppClient()->Acl();
+			flat_set<HistGroupPK> read;
+			for( let& node : graph->Nodes ){//a source's refusals before the row, which a refusal doesn't write:  its stream's, a node no group holds by its name, and a group the caller may not read.
+				if( node.Type!=ENodeType::OpcIn && node.Type!=ENodeType::GroupIn )
+					continue;
+				try{
+					nodes->Stream( node );
+				}
+				catch( const std::exception& e ){
+					throw refused( {{node.Id, e.what()}}, sl );
+				}
+				if( let group = spelled.Groups.find(node.Id); group!=spelled.Groups.end() && read.insert(group->second).second ){
+					auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)group->second}}) );
+					let allowed = groups.empty() ? std::expected<void,Access::AccessException>{} : acl->Check( "gateway", "histGroups", groups.front().Guid, Access::ERights::Read, by, sl );
+					if( !allowed )
+						throw refused( {{node.Id, Ƒ("A replay reads group '{}', which needs Read for who runs it:  {}", groups.front().Name, allowed.error().what())}, allowed.error().HttpStatus()}, sl );
+				}
 			}
 			auto contexts = co_await Any( SelectFlowContexts(row.Id) );
 			let writer = HistHost::Instance().Writer( by );
@@ -979,6 +994,7 @@ namespace Jde::Opc::Gateway{
 
 			auto clock = ms<Flows::StreamClock>( await.From );
 			Flows::Flow::Config config{ .Name=row.Slug };
+			config.Run = run;
 			Loaded( row.Id, row.Slug, move(contexts), config );
 			sp<Flows::TraceStore> store;
 			sp<Flows::GlobalStore> global;
@@ -1001,15 +1017,17 @@ namespace Jde::Opc::Gateway{
 			replay->Flow = row.Id;
 			replay->Slug = row.Slug;
 			replay->Name = row.Name;
-			let readLimit = Settings::FindNumber<uint>( "/gateway/flows/readLimit" ).value_or( Hist::Settings::DefaultReadLimit );
 			replay->Run = ms<Flows::Run>( move(*graph), move(config), Flows::Run::Config{
-				.Clock=clock, .Host=ms<FlowNodes>( *this, FlowRun{row.Id, row.Slug, version.Deployer, spelled.Groups}, FlowReplay{await.From, await.To, await.Commit, readLimit} ), .From=await.From, .To=await.To,
+				.Clock=clock, .Host=move(nodes), .From=await.From, .To=await.To,
 				.Ended=[this, replay]( Flows::ERunEnd end, string why ){ Ending( replay, end, move(why) ); },
-				.Pace=[store, slug=row.Slug]( absl::AnyInvocable<void()> next ){
+				.Pace=[store, slug=row.Slug]( absl::AnyInvocable<void( string )> next ){
 					if( !store || store->Buffered(slug)<ReplayBuffer )
-						next();
+						next( {} );
 					else
-						store->Flush( slug, std::move(next) );
+						store->Flush( slug, [store, slug, next=std::move(next)]()mutable{//a trace that can't be written fails the run, which would otherwise flush at each record.
+							let failing = store->Failing( slug );
+							next( failing ? Ƒ("The trace could not be written:  {}", *failing) : string{} );
+						} );
 				}
 			} );
 			bool stopped;
@@ -1034,8 +1052,13 @@ namespace Jde::Opc::Gateway{
 	}
 	α FlowHost::Ending( sp<ReplayRun> replay, Flows::ERunEnd end, string why )ι->VoidTask{
 		let records = replay->Run->Delivered(), pages = replay->Run->Pages();
-		if( let store = Store(); store )
+		if( let store = Store(); store ){
 			co_await FlushAwait{ store, replay->Slug };
+			if( let failing = store->Failing(replay->Slug); failing && end!=Flows::ERunEnd::Failed ){//its records are not on file.
+				end = Flows::ERunEnd::Failed;
+				why = Ƒ( "The trace could not be written:  {}", *failing );
+			}
+		}
 		auto status = end==Flows::ERunEnd::Failed ? Ƒ( "failed:  {}", why ) : string{ ToString(end) };
 		status.resize( Flows::CutJson(status, 2048).size() );//the column's, on a character's boundary.
 		let finished = Time()->Now();
