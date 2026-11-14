@@ -1,0 +1,73 @@
+/* What the view of a flow's activity or history adds to the canvas's sheet (#456):  a node's status badge, its figures and the
+   error colour, a wire's width and dash by its rate, a wire's label, the link edge, and the path lit.  Unencapsulated with
+   the canvas's own sheet, since a wire's path is the library's element. */
+.flow-canvas{
+	&.readonly flow-node-view, &.readonly .port{ cursor: default; }
+	flow-node-view{
+		.erred{ color: var(--mat-sys-error); }
+		&.erred{ border-color: var(--mat-sys-error); }
+		&.own{ border-color: var(--mat-sys-primary); box-shadow: 0 0 0 2px var(--mat-sys-primary); }
+		&.kin{ border-color: var(--mat-sys-primary); border-style: dashed; }
+		&.fired{ background: var(--mat-sys-primary-container); color: var(--mat-sys-on-primary-container); }
+		.badge{
+			position: absolute;
+			top: 100%;
+			left: 6px;
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			max-width: calc( 100% - 12px );
+			margin-top: 3px;
+			font: var(--mat-sys-label-small);
+			color: var(--mat-sys-on-surface-variant);
+			white-space: nowrap;
+			cursor: default;
+			.text{ overflow: hidden; text-overflow: ellipsis; }
+		}
+		/* Node-RED's fills:  red, green, yellow, blue and grey, a dot or a ring */
+		.status{
+			flex: none;
+			width: 8px;
+			height: 8px;
+			box-sizing: border-box;
+			border-radius: 50%;
+			background: var(--mat-sys-outline);
+			&.ring{ background: transparent; border: 2px solid var(--mat-sys-outline); }
+			&.red{ background: var(--mat-sys-error); &.ring{ background: transparent; border-color: var(--mat-sys-error); } }
+			&.green{ background: #2e7d32; &.ring{ background: transparent; border-color: #2e7d32; } }
+			&.yellow{ background: #f9a825; &.ring{ background: transparent; border-color: #f9a825; } }
+			&.blue{ background: var(--mat-sys-primary); &.ring{ background: transparent; border-color: var(--mat-sys-primary); } }
+			&.grey, &.gray{ background: var(--mat-sys-outline); &.ring{ background: transparent; border-color: var(--mat-sys-outline); } }
+		}
+		.figure{ padding: 0 5px; border-radius: 6px; background: var(--mat-sys-surface-container-highest); }
+		.drops{ color: var(--mat-sys-tertiary); }
+		.errors{ color: var(--mat-sys-error); }
+	}
+	.port.link{ border-style: dashed; }
+	.f-connection.link .f-connection-path{ stroke-dasharray: 5 5; }
+	.f-connection .f-connection-path{ stroke-width: var(--flow-width, 2px); transition: stroke-width .3s; }
+	.f-connection.busy .f-connection-path{
+		stroke: var(--mat-sys-primary);
+		stroke-dasharray: 6 8;
+		animation: flow-wire-run .6s linear infinite;
+	}
+	.f-connection.fired .f-connection-path{ stroke: var(--mat-sys-primary); stroke-width: 4; }
+	.f-connection.own .f-connection-path{ stroke: var(--mat-sys-primary); stroke-width: 4; }
+	.f-connection.kin .f-connection-path{ stroke: var(--mat-sys-primary); stroke-dasharray: 4 6; }
+	.wire-label{
+		padding: 0 6px;
+		border: 1px solid var(--mat-sys-outline-variant);
+		border-radius: 8px;
+		background: var(--mat-sys-surface-container);
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-label-small);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+		cursor: default;
+		&.has-message{ cursor: help; }
+	}
+}
+@keyframes flow-wire-run{ to{ stroke-dashoffset: -14; } }
+@media ( prefers-reduced-motion: reduce ){
+	.flow-canvas .f-connection.busy .f-connection-path{ animation: none; }
+}

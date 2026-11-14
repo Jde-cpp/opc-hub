@@ -1,0 +1,81 @@
+<div class="actions" role="toolbar" aria-label="Activity">
+	<span class="state" role="status" [class.bad]="status().kind=='ended'" [class.warn]="status().kind=='dropped'">
+		<mat-icon aria-hidden="true">{{ status().kind=='live' ? 'sensors' : status().kind=='ended' ? 'error' : status().kind=='dropped' ? 'cloud_off' : 'sensors_off' }}</mat-icon>{{ statusText() }}
+	</span>
+	@if( status().kind=='ended' ){
+		<button matButton="outlined" type="button" (click)="again()" matTooltip="Subscribe to the flow again"><mat-icon>refresh</mat-icon>Subscribe again</button>
+	}
+	<span class="figures" [matTooltip]="'Since the flow started:  what its nodes received and sent, dropped and failed'">{{ totals().received }} received · {{ totals().sent }} sent · {{ totals().drops }} dropped · {{ totals().errors }} {{ totals().errors==1 ? 'error' : 'errors' }}</span>
+</div>
+<mat-progress-bar class="refresh-bar" [mode]="status().kind=='connecting' || !ready() && !loadError() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Working"></mat-progress-bar>
+@if( loadError(); as e ){
+	<div class="jde-empty" role="alert"><mat-icon aria-hidden="true">error_outline</mat-icon><p class="title">Could not load the canvas.</p><p class="detail">{{ e }}</p></div>
+}
+<div class="work">
+	<div class="canvas">
+		<ng-container #slot/>
+		@if( ready() && !graph() && state().version!=undefined ){
+			<p class="overlay" role="status">Reading version {{ state().version }}'s graph…</p>
+		}
+	</div>
+	<aside class="panel" aria-label="Debug">
+		@if( wire(); as w ){
+			<section class="selection" aria-label="The wire's last message">
+				<h3>{{ wireText( selectedWire()! ) }}</h3>
+				<p class="hint">{{ w.count }} {{ w.count==1 ? 'message' : 'messages' }} since the subscription@if( w.time ){, the last at {{ w.time | date:'mediumTime' }}}@if( w.cut ){, its json cut}.</p>
+				@if( w.msgId ){ <pre class="json">{{ json( w.json ) }}</pre> }
+			</section>
+		}
+		@else if( node(); as n ){
+			<section class="selection" aria-label="The node's figures">
+				<h3>{{ nodeName( selectedNode()! ) }}</h3>
+				<p class="hint">{{ n.counts.received }} received, {{ n.counts.sent.length ? n.counts.sent.join( ' / ' ) : 0 }} sent, {{ n.counts.drops }} dropped, {{ n.counts.errors }} {{ n.counts.errors==1 ? 'error' : 'errors' }}@if( n.status?.text ){;  status {{ n.status!.text }}}.</p>
+				@if( n.error ){ <p class="error" role="status"><mat-icon aria-hidden="true">error</mat-icon>{{ n.error }}</p> }
+			</section>
+		}
+		<div class="panel-bar" role="toolbar" aria-label="Debug panel">
+			<mat-slide-toggle [checked]="hops()" (change)="setHops($event.checked)" matTooltip="Ask the gateway for the trace's records as the flow makes them:  all of them at the hops level, a failing message's path at errors, none at counts or off">Hops</mat-slide-toggle>
+			<button matIconButton type="button" (click)="pause(!paused())" [attr.aria-label]="paused() ? 'Resume' : 'Pause'" [matTooltip]="paused() ? 'Resume:  the list follows the pushes again' : 'Pause:  the list stands while the pushes go on'"><mat-icon>{{ paused() ? 'play_arrow' : 'pause' }}</mat-icon></button>
+			<button matIconButton type="button" (click)="clear()" aria-label="Clear" matTooltip="Clear the list"><mat-icon>delete_sweep</mat-icon></button>
+			<mat-form-field subscriptSizing="dynamic" class="filter">
+				<mat-label>Node</mat-label>
+				<mat-select [value]="filterNode() ?? ''" (selectionChange)="filterNode.set($event.value || undefined)">
+					<mat-option value="">All</mat-option>
+					@for( n of nodes(); track n.id ){ <mat-option [value]="n.id">{{ n.name || n.type }}</mat-option> }
+				</mat-select>
+			</mat-form-field>
+			<mat-form-field subscriptSizing="dynamic" class="filter">
+				<mat-label>Kind</mat-label>
+				<mat-select [value]="filterKind() ?? ''" (selectionChange)="filterKind.set($event.value || undefined)">
+					<mat-option value="">All</mat-option>
+					@for( k of kinds; track k ){ <mat-option [value]="k">{{ k }}</mat-option> }
+				</mat-select>
+			</mat-form-field>
+		</div>
+		@if( state().dropped ){ <p class="hint dropped" role="status">{{ state().dropped }} older records left out.</p> }
+		<ol class="hops" aria-label="The trace's records, newest first">
+			@for( hop of hopsShown(); track hop ){
+				<li [class]="hop.kind" [class.open]="expanded().has(hop)">
+					<button type="button" class="row" (click)="toggle(hop)" [attr.aria-expanded]="expanded().has(hop)">
+						<mat-icon aria-hidden="true">{{ hopKindIcon( hop.kind ) }}</mat-icon>
+						<span class="time">{{ hop.time | date:'HH:mm:ss.SSS' }}</span>
+						<span class="node">{{ nodeName( hop.node ) }}</span>
+						<span class="kind">{{ hop.kind }}</span>
+						<span class="summary">{{ summary( hop ) }}</span>
+					</button>
+					@if( expanded().has(hop) ){
+						<div class="detail">
+							<p class="hint">@if( hop.msgId ){Message {{ hop.msgId }}}@else{No message}@if( hop.parentId ){, from {{ hop.parentId }}}@if( hop.ports.length ){, sent on {{ hop.ports.length==1 ? 'output' : 'outputs' }} {{ hop.ports.join( ', ' ) }}}@if( hop.cut ){, its json cut}.</p>
+							@if( hop.error ){ <p class="error">{{ hop.error }}</p> }
+							@if( hop.status ){ <p class="hint">Status {{ hop.status.fill }} {{ hop.status.shape }}:  {{ hop.status.text }}</p> }
+							@if( hop.json!==undefined ){ <pre class="json">{{ json( hop.json ) }}</pre> }
+						</div>
+					}
+				</li>
+			}
+			@empty{
+				<li class="empty">{{ hops() ? paused() ? 'Nothing was listed when the list was paused.' : "No records yet.  A flow at the counts or off level sends none;  a flow at errors sends a failing message's path." : 'Hops are off:  switch them on to list the records.' }}</li>
+			}
+		</ol>
+	</aside>
+</div>

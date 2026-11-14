@@ -1,0 +1,114 @@
+<div class="actions" role="toolbar" aria-label="Range">
+	<mat-form-field subscriptSizing="dynamic" class="time">
+		<mat-label>From</mat-label>
+		<input matInput type="datetime-local" [value]="from()" (input)="from.set($any($event.target).value)" (change)="read()">
+	</mat-form-field>
+	<mat-form-field subscriptSizing="dynamic" class="time">
+		<mat-label>To</mat-label>
+		<input matInput type="datetime-local" [value]="to()" (input)="to.set($any($event.target).value)" (change)="read()">
+	</mat-form-field>
+	<button matButton type="button" (click)="preset(3_600_000)" matTooltip="The last hour of the live trace">Hour</button>
+	<button matButton type="button" (click)="preset(86_400_000)" matTooltip="The last day">Day</button>
+	<button matButton type="button" (click)="preset(604_800_000)" matTooltip="The last week">Week</button>
+	<mat-form-field subscriptSizing="dynamic" class="run">
+		<mat-label>Trace</mat-label>
+		<mat-select [value]="run()?.id ?? 0" (selectionChange)="pickRun($event.value || undefined)">
+			<mat-option [value]="0">The live flow</mat-option>
+			@for( r of runs(); track r.id ){ <mat-option [value]="r.id">{{ runText(r) }}</mat-option> }
+		</mat-select>
+	</mat-form-field>
+	<button matIconButton type="button" (click)="read()" [disabled]="!!problem() || !!loading()" aria-label="Read the range" matTooltip="Read the range"><mat-icon>refresh</mat-icon></button>
+	@if( problem(); as p ){ <span class="problem" role="alert">{{ p }}</span> }
+	<span class="figures" [matTooltip]="'Over the range, by ' + stepText() + ':  what the nodes received, dropped and failed'">{{ total().received }} received · {{ total().drops }} dropped · {{ total().errors }} {{ total().errors==1 ? 'error' : 'errors' }}</span>
+</div>
+<mat-progress-bar class="refresh-bar" [mode]="loading() || !ready() && !loadError() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Reading"></mat-progress-bar>
+@if( countsError(); as e ){ <p class="refused" role="alert"><mat-icon aria-hidden="true">error</mat-icon>{{ e }}</p> }
+@if( loadError(); as e ){
+	<div class="jde-empty" role="alert"><mat-icon aria-hidden="true">error_outline</mat-icon><p class="title">Could not load the canvas.</p><p class="detail">{{ e }}</p></div>
+}
+<div class="work">
+	<div class="view">
+		<div class="canvas"><ng-container #slot/></div>
+		@if( range(); as r ){
+			<div class="scrubber" role="group" aria-label="Time">
+				<button matIconButton type="button" (click)="playing() ? pause() : play()" [attr.aria-label]="playing() ? 'Pause' : 'Play'" [matTooltip]="playing() ? 'Pause' : 'Play the range\'s records through the canvas'"><mat-icon>{{ playing() ? 'pause' : 'play_arrow' }}</mat-icon></button>
+				<mat-button-toggle-group class="speed" hideSingleSelectionIndicator aria-label="Speed" [value]="speed()" (change)="setSpeed($event.value)">
+					@for( s of speeds; track s ){ <mat-button-toggle [value]="s">{{ s }}×</mat-button-toggle> }
+				</mat-button-toggle-group>
+				<div class="track">
+					<input type="range" [min]="r.start.getTime()" [max]="r.end.getTime()" step="1000" [value]="at()" (input)="seek(+$any($event.target).value)" aria-label="The time shown">
+					<div class="marks" aria-hidden="true">
+						@for( m of marks(); track m.version.version ){
+							<span class="mark" [style.left.%]="m.at*100" [matTooltip]="'Version ' + m.version.version + ' deployed ' + (m.version.deployed | date:'medium')"></span>
+						}
+					</div>
+				</div>
+				<span class="at" role="status">{{ at() | date:'medium' }}@if( version(); as v ){&ngsp;· version {{ v.version }}}</span>
+				@if( playError(); as e ){ <span class="problem" role="alert">{{ e }}</span> }
+			</div>
+		}
+	</div>
+	<aside class="panel" aria-label="Messages">
+		@if( selected(); as s ){
+			<section class="lineage" aria-label="The message's path">
+				<h3>Message {{ s.msgId ?? 'none' }}</h3>
+				@if( lineageError(); as e ){ <p class="error" role="alert"><mat-icon aria-hidden="true">error</mat-icon>{{ e }}</p> }
+				@else if( !s.msgId ){ <p class="hint">A status change is no message's.</p> }
+				@else if( !lineage() ){ <p class="hint">Reading its path…</p> }
+				@else{
+					<p class="hint">{{ own().length }} {{ own().length==1 ? 'record' : 'records' }} of its own@if( kin() ){, {{ kin() }} of its ancestors' and descendants'}@if( lineage()!.more ){, cut short by the gateway's page}.</p>
+					<ol class="steps">
+						@for( r of own(); track $index ){
+							<li [class]="r.kind">
+								<span class="time">{{ r.time | date:'HH:mm:ss.SSS' }}</span>
+								<span class="node">{{ nodeName( r.node ) }}</span>
+								<span class="kind">{{ r.kind }}@if( r.ports.length ){ → {{ r.ports.join( ', ' ) }}}</span>
+								@if( r.error ){ <p class="error">{{ r.error }}</p> }
+								@if( r.json!==undefined ){ <pre class="json">{{ json( r.json ) }}</pre> }
+							</li>
+						}
+					</ol>
+				}
+			</section>
+		}
+		<div class="panel-bar" role="toolbar" aria-label="Message list">
+			<mat-form-field subscriptSizing="dynamic" class="filter">
+				<mat-label>Node</mat-label>
+				<mat-select [value]="filterNode() ?? ''" (selectionChange)="filterNode.set($event.value || undefined); filter()">
+					<mat-option value="">All</mat-option>
+					@for( n of nodes(); track n.id ){ <mat-option [value]="n.id">{{ n.name }}</mat-option> }
+				</mat-select>
+			</mat-form-field>
+			<mat-form-field subscriptSizing="dynamic" class="filter">
+				<mat-label>Kind</mat-label>
+				<mat-select [value]="filterKind() ?? ''" (selectionChange)="filterKind.set($event.value || undefined); filter()">
+					<mat-option value="">All</mat-option>
+					@for( k of kinds; track k ){ <mat-option [value]="k">{{ k }}</mat-option> }
+				</mat-select>
+			</mat-form-field>
+			<mat-form-field subscriptSizing="dynamic" class="filter msg">
+				<mat-label>Message</mat-label>
+				<input matInput [value]="filterMsg()" (input)="filterMsg.set($any($event.target).value)" (change)="filter()" placeholder="id">
+			</mat-form-field>
+		</div>
+		<ol class="list" aria-label="The trace's records, oldest first">
+			@for( r of records(); track r ){
+				<li [class]="r.kind" [class.selected]="selected()==r">
+					<button type="button" class="row" (click)="select(r)" [attr.aria-pressed]="selected()==r">
+						<span class="time">{{ r.time | date:'HH:mm:ss.SSS' }}</span>
+						<span class="node">{{ nodeName( r.node ) }}</span>
+						<span class="kind">{{ r.kind }}</span>
+						<span class="summary">{{ summary( r ) }}</span>
+					</button>
+				</li>
+			}
+			@empty{
+				<li class="empty">{{ loading() ? 'Reading…' : listError() ? '' : 'No records in the range.' }}</li>
+			}
+		</ol>
+		@if( listError(); as e ){ <p class="error" role="alert"><mat-icon aria-hidden="true">error</mat-icon>{{ e }}</p> }
+		@if( continuation() ){
+			<div class="more"><button matButton type="button" (click)="more()" [disabled]="!!loading()"><mat-icon>expand_more</mat-icon>Load more</button></div>
+		}
+	</aside>
+</div>

@@ -20,10 +20,22 @@
 			}
 		</ng-template>
 	</mat-tab>
+	<mat-tab><!--live while it is the tab shown:  a push comes every /gateway/flows/live-->
+		<ng-template mat-tab-label>Activity</ng-template>
+		<ng-template matTabContent>
+			<flow-activity [gateway]="gateway" [flow]="row" [versions]="versions()" [active]="tabIndex()==1" (refresh)="refreshVersions()"></flow-activity>
+		</ng-template>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>History</ng-template>
+		<ng-template matTabContent>
+			<flow-history [gateway]="gateway" [flow]="row" [versions]="versions()" [request]="historyRequest()"></flow-history>
+		</ng-template>
+	</mat-tab>
 	<mat-tab>
 		<ng-template mat-tab-label>Versions</ng-template>
 		<ng-template matTabContent>
-			<flow-versions [gateway]="gateway" [flow]="row" [versions]="versions()" [loading]="versionsLoading()" (open)="openVersion($event)" (refresh)="refreshVersions()"></flow-versions>
+			<flow-versions [gateway]="gateway" [flow]="row" [versions]="versions()" [loading]="versionsLoading()" (open)="openVersion($event)" (openRun)="openRun($event)" (refresh)="refreshVersions()"></flow-versions>
 		</ng-template>
 	</mat-tab>
 	<mat-tab>

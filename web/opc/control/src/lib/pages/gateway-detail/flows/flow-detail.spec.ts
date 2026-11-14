@@ -5,26 +5,39 @@ import { By } from '@angular/platform-browser';
 import { Mutation, Properties } from 'jde-framework';
 import { configureDetailPage, dialogStub } from 'jde-framework/testing';
 import { flush, stable } from 'jde-spa/testing';
-import { Flow, FlowGraph, FlowVersion } from '../../../model/flow';
+import { Flow, FlowGraph, FlowRun, FlowVersion } from '../../../model/flow';
 import { FlowService } from '../../../services/flow-service';
 import { HistGroupAccess } from '../hist-admin/hist-group-access';
+import { FlowActivity } from './activity/flow-activity';
 import { FlowEditor } from './editor/flow-editor';
 import { FlowContext } from './flow-context';
 import { flowAccessSubject, FlowDetail } from './flow-detail';
 import { FlowDrafts } from './flow-drafts';
 import { FlowVersions } from './flow-versions';
+import { FlowHistory } from './history/flow-history';
 
 //the tabs' components, standing in for the real ones:  the page is what gives each its inputs.  The editor's is the page's query
 //of the editor, which asks it whether the canvas may be replaced.
 @Component( {selector: 'flow-editor', template: '', providers: [{ provide: FlowEditor, useExisting: forwardRef( ()=>EditorStub ) }]} )
 class EditorStub{ gateway = input<unknown>(); flow = input<unknown>(); source = input<unknown>(); deployed = output<unknown>(); enabledChange = output<boolean>(); mayReplace = vi.fn( async ( _title:string )=>true ); }
+@Component( {selector: 'flow-activity', template: ''} )
+class ActivityStub{ gateway = input<unknown>(); flow = input<unknown>(); versions = input<unknown>(); active = input<boolean>(); refresh = output<void>(); }
+@Component( {selector: 'flow-history', template: ''} )
+class HistoryStub{ gateway = input<unknown>(); flow = input<unknown>(); versions = input<unknown>(); request = input<unknown>(); }
 @Component( {selector: 'flow-versions', template: ''} )
-class VersionsStub{ gateway = input<unknown>(); flow = input<unknown>(); versions = input<unknown>(); loading = input<boolean>(); open = output<unknown>(); refresh = output<void>(); }
+class VersionsStub{ gateway = input<unknown>(); flow = input<unknown>(); versions = input<unknown>(); loading = input<boolean>(); open = output<unknown>(); openRun = output<FlowRun>(); refresh = output<void>(); }
 @Component( {selector: 'flow-context', template: ''} )
 class ContextStub{ gateway = input<unknown>(); flow = input<unknown>(); nodes = input<unknown>(); }
 @Component( {selector: 'hist-group-access', template: ''} )
 class AccessStub{ group = input<unknown>(); subject = input<unknown>(); }
 
+//a tab switched to:  its content is made as the bodies' slide starts and ends, which jsdom never says, so each is told it did
+const shown = async ( fixture:{ detectChanges():void; whenStable():Promise<unknown>; nativeElement:HTMLElement } )=>{
+	await stable( fixture );
+	for( const type of ['transitionstart', 'transitionend'] )
+		fixture.nativeElement.querySelectorAll( '.mat-mdc-tab-body-content' ).forEach( e=>e.dispatchEvent( new Event( type, {bubbles: true} ) ) );
+	await stable( fixture );
+};
 const graph = ( ...ids:string[] ):FlowGraph=>({ nodes: ids.map( id=>({id, type: 'debug', name: '', x: 0, y: 0, props: {}, wires: []}) ) });
 const version = ( n:number, g:FlowGraph ):FlowVersion=>({ id: n, version: n, graph: g, identityId: 1, userName: 'ann' });
 const row = { id: 7, name: 'Pump', slug: 'pump', guid: 'g-7', enabled: true, version: 2, trace: 'counts' };
@@ -35,7 +48,7 @@ const create = async ( pageRow:object=row, {versions=[version( 2, graph( 'a', 'b
 	const dialog = dialogStub( true );//a delete's confirmation
 	const {data, snackbar, router} = configureDetailPage( pageRow, {gateway, providers: [{ provide: FlowService, useValue: flows }, { provide: MatDialog, useValue: dialog }]} );
 	TestBed.overrideComponent( Properties, {set: {template: '', imports: []}} );//the form reads a whole schema
-	TestBed.overrideComponent( FlowDetail, {remove: {imports: [FlowEditor, FlowVersions, FlowContext, HistGroupAccess]}, add: {imports: [EditorStub, VersionsStub, ContextStub, AccessStub]}} );
+	TestBed.overrideComponent( FlowDetail, {remove: {imports: [FlowEditor, FlowActivity, FlowHistory, FlowVersions, FlowContext, HistGroupAccess]}, add: {imports: [EditorStub, ActivityStub, HistoryStub, VersionsStub, ContextStub, AccessStub]}} );
 	if( draft )
 		TestBed.inject( FlowDrafts ).put( (<{guid:string}>pageRow).guid, draft );
 	const fixture = TestBed.createComponent( FlowDetail ), page = fixture.componentInstance;
@@ -140,6 +153,24 @@ describe( 'FlowDetail', ()=>{
 		editor.mayReplace.mockResolvedValue( true );
 		await d.page.openVersion( d.page.versions()[1] );
 		expect( d.page.source() ).toEqual( {deployed: graph( 'a', 'b' ), draft: graph( 'a' )} );
+	} );
+	//the Activity tab is live while it is the one shown;  a replay opened from Versions goes to History with it (#456)
+	it( 'subscribes the Activity tab while shown, and opens a replay in History', async ()=>{
+		const d = await create();
+		await stable( d.fixture );
+		expect( d.fixture.debugElement.query( By.directive( ActivityStub ) ) ).toBeNull();//a tab's content is made once it is shown
+		d.page.tabIndex.set( 1 );
+		await shown( d.fixture );
+		const activity = <ActivityStub>d.fixture.debugElement.query( By.directive( ActivityStub ) ).componentInstance;
+		expect( activity.active() ).toBe( true );
+		const run:FlowRun = { id: 5, version: 2, mode: 'dry', userName: 'ann', status: 'completed' };
+		d.page.openRun( run );
+		await shown( d.fixture );
+		expect( [d.page.tabIndex(), activity.active()] ).toEqual( [FlowDetail.historyTab, false] );
+		const history = <HistoryStub>d.fixture.debugElement.query( By.directive( HistoryStub ) ).componentInstance;
+		expect( history.request() ).toEqual( {run, n: 1} );
+		d.page.openRun( run );
+		expect( d.page.historyRequest() ).toEqual( {run, n: 2} );//the same run asked twice is taken twice
 	} );
 	//the row's own form:  its name, description and trace level.  A save, a cancel and a delete go to the list, `<page>/flows`,
 	//which redirects to the gateway's page

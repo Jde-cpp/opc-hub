@@ -1,9 +1,10 @@
 import { TestBed } from '@angular/core/testing';
+import { FSelectionChangeEvent } from '@foblex/flow';
 import { stable } from 'jde-spa/testing';
 import { FlowGraph } from '../../../../model/flow';
 import { normalizeFlowGraph } from '../../../../model/flow-nodes';
 import { FlowCanvas } from './flow-canvas';
-import { outPort, toCanvas, toGraph } from './flow-canvas-state';
+import { outPort, toCanvas, toGraph, wireKey, wireWidth } from './flow-canvas-state';
 
 const node = ( id:string, type:string, more:object={} )=>({ id, type, name: '', x: 0, y: 0, props: {}, wires: <string[][]>[], ...more });
 //an inject into a switch of three rules, each to a sink of its own
@@ -13,14 +14,16 @@ const graph = ():FlowGraph=>normalizeFlowGraph( { nodes: [
 	node( 'a', 'debug', {x: 440, y: -70} ), node( 'b', 'debug', {x: 440} ), node( 'c', 'log', {x: 440, y: 70} )
 ] } );
 
-const create = async ( loaded:FlowGraph=graph() )=>{
+const create = async ( loaded:FlowGraph=graph(), readonly=false )=>{
 	const fixture = TestBed.createComponent( FlowCanvas ), canvas = fixture.componentInstance;
-	const graphs:FlowGraph[] = [], selections:(string|undefined)[] = [];
+	fixture.componentRef.setInput( 'readonly', readonly );
+	const graphs:FlowGraph[] = [], selections:(string|undefined)[] = [], wires:(string|undefined)[] = [];
 	canvas.graphChange.subscribe( g=>graphs.push( g ) );
 	canvas.selectedChange.subscribe( id=>selections.push( id ) );
+	canvas.wireSelected.subscribe( key=>wires.push( key ) );
 	canvas.load( loaded );
 	await stable( fixture );
-	return { fixture, canvas, element: <HTMLElement>fixture.nativeElement, graphs, selections };
+	return { fixture, canvas, element: <HTMLElement>fixture.nativeElement, graphs, selections, wireKeys: wires };
 };
 const wires = ( canvas:FlowCanvas, id:string )=>canvas.graph().nodes.find( n=>n.id==id )!.wires;
 
@@ -114,5 +117,45 @@ describe( 'FlowCanvas', ()=>{
 		await stable( fixture );
 		button.click();
 		expect( injected ).toEqual( ['in'] );
+	} );
+	//the view of a flow's activity or history (#456):  no palette, no undo, nothing dragged or wired, the link edges dashed, and
+	//the decoration over the graph
+	it( 'draws read-only, with the link edges and the decoration', async ()=>{
+		const linked = normalizeFlowGraph( {nodes: [...graph().nodes, node( 'lo', 'link out', {y: 200, props: {name: 'k'}} ), node( 'li', 'link in', {x: 220, y: 200, props: {name: 'k'}} ), node( 'lx', 'link in', {x: 220, y: 260, props: {name: 'other'}} )]} );
+		const { canvas, fixture, element, wireKeys } = await create( linked, true );
+		expect( element.querySelector( '.palette' ) ).toBeNull();
+		expect( element.querySelector( '.bar button[aria-label="Undo"]' ) ).toBeNull();
+		expect( element.querySelector( 'f-connection-for-create' ) ).toBeNull();
+		expect( element.querySelectorAll( 'f-connection' ).length ).toBe( 6 );//five wires and the link's edge, to the link in of its name alone
+		expect( element.querySelectorAll( 'f-connection.link' ).length ).toBe( 1 );
+		expect( element.querySelector( '[data-f-node-id="lo"] .port.out.link' ) ).not.toBeNull();
+		expect( element.querySelector( '[data-f-node-id="li"] .port.in.link' ) ).not.toBeNull();
+		expect( canvas.graph() ).toEqual( linked );//the edge is no wire of the graph's
+		expect( toCanvas( linked ).connections!.length ).toBe( 5 );
+		expect( wireKey( {sourceId: 'out:1:sw', targetId: 'in:b'} ) ).toBe( 'sw:1>b' );
+		expect( [wireWidth( undefined ), wireWidth( 0 ), wireWidth( 9 ), wireWidth( 1e6 )] ).toEqual( [2, 2, 4, 8] );
+		fixture.componentRef.setInput( 'decor', { nodes: new Map( [['sw', {status: {fill: 'red', shape: 'ring', text: 'down'}, counts: {received: 5, sent: [3, 1, 1], drops: 2, errors: 1}, error: 'boom', lit: 'own'}], ['a', {lit: 'kin'}]] ), wires: new Map( [['in:0>sw', {rate: 9, label: '9/s', message: '{ "payload": 1 }', lit: 'own'}], ['sw:0>a', {label: '3'}], ['sw:2>c', {lit: 'fired'}]] ) } );
+		await stable( fixture );
+		const sw = element.querySelector( '[data-f-node-id="sw"]' )!;
+		expect( sw.className ).toMatch( /erred/ );
+		expect( sw.className ).toMatch( /\bown\b/ );
+		expect( [...sw.querySelector( '.badge .status' )!.classList].sort() ).toEqual( ['red', 'ring', 'status'] );
+		expect( [...sw.querySelector( '.badge' )!.children].map( c=>c.textContent ) ).toEqual( ['', 'down', '2 dropped', '1 error'] );
+		expect( sw.getAttribute( 'aria-label' ) ).toBe( 'Route, switch.  down.  boom' );
+		expect( element.querySelector( '[data-f-node-id="a"]' )!.className ).toMatch( /\bkin\b/ );
+		const busy = element.querySelector( 'f-connection#out\\:0\\:in\\>in\\:sw' )!;
+		expect( busy.className ).toMatch( /\bbusy\b.*\bown\b|\bown\b.*\bbusy\b/ );
+		expect( (<HTMLElement>busy).style.getPropertyValue( '--flow-width' ) ).toBe( '4px' );
+		expect( busy.querySelector( '.wire-label' )!.textContent ).toBe( '9/s' );
+		expect( element.querySelector( 'f-connection#out\\:0\\:sw\\>in\\:a .wire-label' )!.textContent ).toBe( '3' );
+		expect( element.querySelector( 'f-connection#out\\:2\\:sw\\>in\\:c' )!.className ).toMatch( /\bfired\b/ );
+		//a wire selected is said by its key
+		canvas.flow().select( [], ['out:0:in>in:sw'], false );
+		canvas.state.applySelectionChange( new FSelectionChangeEvent( [], [], ['out:0:in>in:sw'] ) );
+		await stable( fixture );
+		expect( wireKeys.at( -1 ) ).toBe( 'in:0>sw' );
+		canvas.select( undefined );
+		await stable( fixture );
+		expect( wireKeys.at( -1 ) ).toBeUndefined();
 	} );
 } );

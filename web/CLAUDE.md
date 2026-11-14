@@ -68,7 +68,8 @@ and `fetch` stubbed for the absent and failed cases. A component that only reads
 
 `@foblex/flow` (MIT, bundled; `jde-opc.sh` installs it at the exact version the editor is written against) is imported only
 under `opc/control/src/lib/pages/gateway-detail/flows/canvas/`:  by `flow-canvas.ts`, which `flow-editor.ts` imports dynamically
-once its tab is shown, as `marked` is by the help page, and by `flow-node-view.ts`, which only the canvas imports.  Never import it
+once its tab is shown, as `marked` is by the help page, and the Activity and History tabs through `flow-view.ts` the same way,
+read-only, and by `flow-node-view.ts`, which only the canvas imports.  Never import it
 statically from a file a page's chunk reaches, where every tab would preload its 400 kB (`import type` is fine, and
 `flow-canvas-state.ts` has no other). A spec that renders the canvas stubs
 `ResizeObserver`, which jsdom lacks and every node makes. The node types, the fields of their `props` and the deploy's rules,
