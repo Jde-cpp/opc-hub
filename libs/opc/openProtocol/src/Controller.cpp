@@ -46,7 +46,8 @@ namespace Jde::Opc::OpenProtocol{
 		α Edit( const function<void( Script& )>& edit )ι->void{ edit( _script ); }
 		α Rundown( Mid0061&& result, bool here, uint32_t stationId, string&& stationName )ι->void;
 		Τ α Select( optional<T>& kept, T&& selected )ι->void{ kept = move( selected ); PushAll( *kept ); }
-		α Choose( Mid0015&& pset )ι->void;//the parameter set selected:  kept, pushed, and Selected()'s.
+		α Keep( const Mid0015& pset )ι->void{ ul _{ _mutex }; _selected = pset; }//ahead of any reply that announces it.
+		α Choose( const Mid0015& pset )ι->void{ Keep( pset ); PushAll( pset ); }
 		α Selected()Ι->optional<Mid0015>{ rl _{ _mutex }; return _selected; }
 		α Raise( Mid0071&& alarm )ι->void{ Select( Alarm, move(alarm) ); }
 		α AcknowledgeAlarm()ι->void;
@@ -58,7 +59,6 @@ namespace Jde::Opc::OpenProtocol{
 		α SkipSequence()ι->void;
 		α Frames()Ι->vector<Received>{ rl _{ _mutex }; return _frames; }
 
-		optional<Mid0015> Pset;
 		optional<Mid0035> Job;
 		optional<Mid0052> Vin;
 		optional<Mid0071> Alarm;
@@ -139,7 +139,7 @@ namespace Jde::Opc::OpenProtocol{
 		vector<sp<boost::asio::steady_timer>> _held;//the delayed replies' timers.
 		mutable absl::Mutex _mutex;
 		vector<Received> _frames ABSL_GUARDED_BY(_mutex);
-		optional<Mid0015> _selected ABSL_GUARDED_BY(_mutex);//Pset, for any thread.
+		optional<Mid0015> _selected ABSL_GUARDED_BY(_mutex);//the strand's and any other thread's.
 	};
 
 	Controller::Impl::Impl( boost::asio::io_context& context, uint16_t port, Script&& script, sv address )ε:
@@ -303,8 +303,8 @@ namespace Jde::Opc::OpenProtocol{
 		Accept( c, h.Mid );
 		if( !_script.PushOnSubscribe )
 			return;
-		if( h.Mid==Mid0014::Id && Pset )
-			Push( c, *Pset );
+		if( let pset = h.Mid==Mid0014::Id ? Selected() : nullopt )
+			Push( c, *pset );
 		else if( h.Mid==Mid0034::Id && Job )
 			Push( c, *Job );
 		else if( h.Mid==Mid0051::Id && Vin )
@@ -342,7 +342,7 @@ namespace Jde::Opc::OpenProtocol{
 	α Controller::Impl::On( Client& c, const Header& h, const Mid0018& m )ι->void{
 		if( !Commanded(c, h.Mid) )
 			return;
-		auto pset = Pset.value_or( Mid0015{} );
+		auto pset = Selected().value_or( Mid0015{} );
 		if( _script.Psets.empty() )
 			pset.Pset = m.Pset;
 		else if( let has = _script.Psets.find(m.Pset.value_or(0)); has!=_script.Psets.end() ){
@@ -354,15 +354,9 @@ namespace Jde::Opc::OpenProtocol{
 			Refuse( c, h.Mid, 3 );
 			return;
 		}
+		Keep( pset );
 		Accept( c, h.Mid );
-		Choose( move(pset) );
-	}
-	α Controller::Impl::Choose( Mid0015&& pset )ι->void{
-		{
-			ul _{ _mutex };
-			_selected = pset;
-		}
-		Select( Pset, move(pset) );
+		PushAll( pset );
 	}
 	α Controller::Impl::On( Client& c, const Header& h, const Mid0038& m )ι->void{
 		if( !Commanded(c, h.Mid) || !Answers(c, h) )
@@ -535,7 +529,7 @@ namespace Jde::Opc::OpenProtocol{
 		} );
 	}
 	α Controller::Select( Mid0015 pset )ι->void{
-		boost::asio::post( _impl->Executor(), [impl=_impl, pset=move(pset)]()mutable{ impl->Choose( move(pset) ); } );
+		boost::asio::post( _impl->Executor(), [impl=_impl, pset=move(pset)]{ impl->Choose( pset ); } );
 	}
 	α Controller::Select( Mid0035 job )ι->void{
 		boost::asio::post( _impl->Executor(), [impl=_impl, job=move(job)]()mutable{ impl->Select( impl->Job, move(job) ); } );

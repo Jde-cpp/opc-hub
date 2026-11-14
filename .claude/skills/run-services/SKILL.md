@@ -222,7 +222,7 @@ command by hand: `ask 127.0.0.1 4545 18 1 002` selects set 2, `42 1` and `43 1` 
 enable the tool, the emulator logging each as `[tightening]… (external)` at its next period.
 The simulator of the next section takes 4545 too, and the emulator exits at startup where the
 port is held: run one of them, or move one (`--tcp-port`, or an overlay's
-`emulator+:{ tightening+:{ port: 4547 } }`). A restarted emulator starts its tightening ids
+`emulator+:{ tightening+:{ port::: 4547 } }`, `:::` over the hidden default). A restarted emulator starts its tightening ids
 at 1 again, so the row's next recovery counts one in `_Op.LostResults`.
 
 Notes: the PubSub url is multicast (`224.0.0.22`) — a box without a multicast route

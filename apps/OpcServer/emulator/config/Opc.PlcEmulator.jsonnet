@@ -82,7 +82,7 @@ local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 		//of `psets`, DisableTool and EnableTool stop and start the rundowns, and SelectJob and DownloadVin are refused.  Without
 		//the block there is no station.  A `::` key is its default, shown hidden.
 		tightening:{
-			port: 4545,
+			port:: 4545, //Open Protocol's own
 			address:: "127.0.0.1", //the interface it listens on:  loopback;  "" every interface, for a gateway on another box
 			cycle: production.cycle, //PT1S where left out, as a production tag's
 			jitter: production.jitter, //none where left out
@@ -93,7 +93,7 @@ local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 				{ id: 2, name: "M10 bracket", target: 48, min: 45, max: 51, batchSize: 6 }
 			],
 			keep:: 10000, //the results kept for MID 0064, the oldest let go past it
-			log:: false //every frame in and out at Trace under the openProtocol tag, which /logging/spd/tags sets to Trace
+			log:: false //every frame in and out at Trace under the openProtocol tag, which /logging/spd/tags must set to Trace
 		},
 		period: "PT1S",
 		statusPeriod: "PT1M",
