@@ -27,7 +27,7 @@ namespace Jde::Opc::Flows{
 	α ToMemory( Proto::FlowRecord& r, int64_t& last )ι->void;
 	//A record as the file holds it:  its json cut at valueLimit on a UTF-8 boundary, and the record flagged.
 	α ToProto( const TraceRecord& r, uint valueLimit )ι->Proto::FlowRecord;
-	α ToProto( TimePoint minute, const NodeCounts& node )ι->Proto::FlowRecord;
+	α ToProto( TimePoint minute, const NodeCounts& node, uint32 run=0 )ι->Proto::FlowRecord;
 	α FromProto( const Proto::Hop& hop )ι->TraceRecord;
 	α FromProto( const Proto::Counts& counts )ι->CountRow;
 }

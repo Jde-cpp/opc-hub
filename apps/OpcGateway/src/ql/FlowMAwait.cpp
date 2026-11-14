@@ -5,6 +5,7 @@
 #include <jde/access/Authorize.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ops/MutationAwait.h>
+#include <jde/opc/uatypes/DateTime.h>
 #include "../GatewayAppClient.h"
 #include "../flows/FlowHost.h"
 #include "../types/ServerCnnctn.h"
@@ -18,7 +19,7 @@ namespace Jde::Opc::Gateway{
 
 	α FlowMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
 		using enum EMutationQL;
-		if( m.CommandName==DeployCommand || m.CommandName==InjectCommand || m.CommandName==ContextCommand )
+		if( m.CommandName==DeployCommand || m.CommandName==InjectCommand || m.CommandName==ContextCommand || m.CommandName==ReplayCommand || m.CommandName==CancelRunCommand )
 			return true;
 		let table = m.TableName();
 		if( table==Versions || table==Contexts || table==Runs )
@@ -102,6 +103,39 @@ namespace Jde::Opc::Gateway{
 				acl->Test( "gateway", "flows", state ? state->Row.Guid : string{}, Access::ERights::Update, UserPK(), sl );//the table's for the gateway's scope, and for a flow that isn't there.
 				co_await host.SetContext( flow, node, string{*name}, jvalue{*value}, sl );
 				jobject y{ {"flow", flow ? jvalue{*flow} : jvalue{}}, {"node", node.empty() ? jvalue{} : jvalue{node}}, {"name", *name}, {"value", value->is_null() ? jvalue{} : jvalue{serialize(*value)}} };
+				Resume( _query.ResultRequest ? jvalue{_query.ResultRequest->TrimColumns(y)} : jvalue{} );
+				co_return;
+			}
+			if( _query.CommandName==ReplayCommand ){
+				_query.CheckVariables( sl );
+				let flow = flowArgument( _query, sl );
+				let time = [&]( sv name )ε->TimePoint{
+					let p = _query.FindPtr( name );
+					REFUSE_IF( !p || p->is_null(), "replayFlow needs {}, a time.", name );
+					try{
+						return UADateTime{ *p, sl }.Time();
+					}
+					catch( const Exception& e ){
+						REFUSE( "{} is not a time:  {}", name, e.what() );
+					}
+				};
+				let from = time( "from" ), to = time( "to" );
+				REFUSE_IF( from>=to, "from, {}, is not before to, {}.", ToIsoString(from), ToIsoString(to) );
+				let asked = _query.FindPtr( "mode" );
+				REFUSE_IF( asked && !asked->is_null() && !asked->is_string(), "mode is dry or commit, not {}.", serialize(*asked) );
+				const string mode{ asked && asked->is_string() ? sv{asked->get_string()} : "dry"sv };
+				REFUSE_IF( mode!="dry" && mode!="commit", "mode is dry or commit, not '{}'.", mode );
+				let replayed = co_await host.Replay( flow, from, to, mode=="commit", QL::Creds{_creds}, sl );
+				jobject y{ {"id", replayed.Id}, {"flow", flow}, {"version", replayed.Version}, {"start", ToIsoString(from)}, {"finish", ToIsoString(to)}, {"mode", mode}, {"started", ToIsoString(replayed.Started)}, {"userName", replayed.UserName}, {"status", nullptr} };
+				Resume( _query.ResultRequest ? jvalue{_query.ResultRequest->TrimColumns(y)} : jvalue{} );
+				co_return;
+			}
+			if( _query.CommandName==CancelRunCommand ){
+				_query.CheckVariables( sl );
+				let run = _query.TryNumber<FlowRunPK>( "id" );
+				REFUSE_IF( !run, "cancelFlowRun needs id, a flow_runs id." );
+				let ended = co_await host.CancelRun( *run, UserPK(), sl );
+				jobject y{ {"id", *run}, {"status", ended.Status}, {"finished", ToIsoString(ended.Finished)} };
 				Resume( _query.ResultRequest ? jvalue{_query.ResultRequest->TrimColumns(y)} : jvalue{} );
 				co_return;
 			}

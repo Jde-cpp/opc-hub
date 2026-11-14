@@ -8,7 +8,8 @@ namespace Jde::Opc::Flows{
 
 	//The ids of one run of the gateway, or of one replay:  the run's start in seconds in the high half and a counter in the
 	//low, so none repeats across restarts.  A counter past its half carries into the seconds, which a run's own length
-	//keeps ahead of.
+	//keeps ahead of.  A replay's count from the start of its range, so two replays of a range give the same ids, which are
+	//then unique within the replay's trace alone (Replay.h).
 	struct MessageIds final{
 		explicit MessageIds( TimePoint start )ι;
 		α Next()ι->MessageId{ return _next.fetch_add( 1, std::memory_order_relaxed ); }

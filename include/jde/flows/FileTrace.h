@@ -25,13 +25,14 @@ namespace Jde::Opc::Flows{
 	//counting those its query matches in file order, so a page that ends inside a tie takes up where it left.
 	struct TraceCursor final{ TimePoint Time; uint32 Skip{}; };
 	//flowTrace's (spec *History*):  the records in a range, oldest first from Start, or newest first back from End with no
-	//Start, or in their order with both;  each bound inclusive;  narrowed to a node, a message, a kind or a run.
+	//Start, or in their order with both;  each bound inclusive;  the live trace's or one replay's, narrowed to a node, a
+	//message or a kind.
 	struct TraceQuery final{
 		optional<TimePoint> Start, End;
 		optional<string> Node;
 		optional<MessageId> Msg;//the records of the message itself.
 		optional<ERecordKind> Kind;
-		optional<uint32> Run;
+		uint32 Run{};//0, the live trace;  a replay's, by its id.
 		uint Limit{ 10'000 };//the most records a page holds.
 		optional<TraceCursor> From;//the page before's end.
 		α Reverse()Ι->bool{ return Start && End ? *Start>*End : !Start; }
@@ -66,12 +67,16 @@ namespace Jde::Opc::Flows{
 		α Stop( Duration wait=std::chrono::seconds{10} )ι->void;
 		//A flow's trace, at `level`, or Level when the row names none:  what its Flow::Config takes.  `clock`:  the flow's,
 		//which the records' times are on.  `tap`:  given each record as the trace makes it, whole, on the flow's strand,
-		//before it goes to the buffer:  the live feed's (spec *Live*).
+		//before it goes to the buffer:  the live feed's (spec *Live*).  `run`:  a replay's id, on each record and each
+		//minute's figures it writes, into the flow's files at the stream's times (spec *Replay*);  0 live.
 		using Tap = function<void( const TraceRecord& )>;
-		α Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock, Tap tap={} )ι->sp<FileTrace>;
+		α Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock, Tap tap={}, uint32 run=0 )ι->sp<FileTrace>;
 		//The flow's buffer written now, rather than at Delay:  `done` once it is, or at once when there is nothing to write;
 		//for a write that fails, once the records are back in the buffer.
 		α Flush( sv slug, absl::AnyInvocable<void()> done={} )ι->void;
+		α Buffered( sv slug )Ι->uint;//the bytes of the flow's buffer:  what a replay holds itself back by, flushing past a share of MaxBuffer.
+		α Failing( sv slug )Ι->optional<string>;//why the flow's last write failed, until one succeeds.
+		static constexpr uint MaxBuffer{ 16u<<20 };//bytes a flow's buffer holds:  past it a healthy file's flush comes now, and while the file is unwritable or behind the oldest go.
 		α Roll()ι->void;//the daily roll, now:  the midnight roll Start set is left as it is.
 		α Purge( sv slug )ι->void;//the flow's directory and what is known of its files;  its buffer dropped.
 		//A flow's directory under `root` with no store, a purge's after the store stopped:  a slug that is no directory name
@@ -79,15 +84,16 @@ namespace Jde::Opc::Flows{
 		Ω Remove( const fs::path& root, sv slug )ι->void;
 		α Days( sv slug, SRCE )ε->vector<Day>;//the days that hold a file of the flow, oldest first.
 		α Read( sv slug, const TraceQuery& query, SRCE )ε->TracePage;
-		//The message's lineage over the days from `start`, or the day of the gateway's start the id carries, to `end`, or the
-		//present:  at most `limit` records, oldest first.  A message's descendants come out of one pass over the days, each
-		//born after its parent's record of it;  each ancestor costs a pass of its own, which ends at the first record of the
-		//message made from it:  what the ancestor did after is a sibling's path.
-		α Lineage( sv slug, MessageId id, optional<TimePoint> start, optional<TimePoint> end, uint limit, SRCE )ε->TraceLineage;
+		//The message's lineage over the days from `start`, or the day of the start its id carries, the gateway's or a
+		//replay's range's, to `end`, or the present:  at most `limit` records, oldest first.  A message's descendants come
+		//out of one pass over the days, each born after its parent's record of it;  each ancestor costs a pass of its own,
+		//which ends at the first record of the message made from it:  what the ancestor did after is a sibling's path.
+		//`run`:  the trace the message is of, the live one or a replay's, whose ids are its own.
+		α Lineage( sv slug, MessageId id, optional<TimePoint> start, optional<TimePoint> end, uint limit, uint32 run=0, SRCE )ε->TraceLineage;
 		//The minute records from `start`, or a page's `from`, to before `end`, summed per node into buckets `by` wide from
 		//`start`, a minute at least:  rows by bucket, then by the node's first appearance in it.  A page holds whole buckets,
-		//at most `limit` rows unless its one bucket has more;  0 for no limit.
-		α Counts( sv slug, TimePoint start, TimePoint end, Duration by, uint limit=0, optional<TimePoint> from={}, SRCE )ε->CountPage;
+		//at most `limit` rows unless its one bucket has more;  0 for no limit.  `run`:  the live trace's figures, or a replay's.
+		α Counts( sv slug, TimePoint start, TimePoint end, Duration by, uint limit=0, optional<TimePoint> from={}, uint32 run=0, SRCE )ε->CountPage;
 		α Settings()Ι->const TraceSettings&;
 		α Zone()Ι->const std::chrono::time_zone&;
 		struct Files;//one flow's, the implementation's:  its buffer and what is known of its files.
@@ -100,7 +106,7 @@ namespace Jde::Opc::Flows{
 
 	//A flow's trace over its store:  HopTrace's fold, each record into the flow's buffer.  Made by TraceStore::Trace.
 	struct FileTrace final : HopTrace{
-		FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock, TraceStore::Tap tap={} )ι;
+		FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock, TraceStore::Tap tap={}, uint32 run=0 )ι;
 		~FileTrace();
 	protected:
 		α Write( TraceRecord&& record )ι->void override;
@@ -109,5 +115,6 @@ namespace Jde::Opc::Flows{
 		sp<TraceStore> _store;
 		sp<TraceStore::Files> _files;
 		TraceStore::Tap _tap;
+		const uint32 _run;
 	};
 }

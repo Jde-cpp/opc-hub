@@ -48,6 +48,9 @@ namespace Jde::Opc::Flows{
 			flat_map<string,jobject> NodeContext;//each node scope's, by node id.
 			function<void( sv nodeId, sv key, const jvalue* value )> ContextChanged;//a flow or node scope's change, on the strand:  no node id for the flow's, a null value for a key that went.
 			function<void()> Active;//a watched flow has something for TakeActivity and had nothing:  once a take, on the strand, under no lock of the flow's.
+			//A replay's (Replay.h), its id, 0 for a run with none:  what a `debug` or a body would log is its capture, and the
+			//flow's own lines name the run.  None live.
+			optional<uint32> Run;
 		};
 		Flow( Graph graph, Config config )ι;
 		~Flow();//stops it.
@@ -62,7 +65,8 @@ namespace Jde::Opc::Flows{
 		α Start( absl::AnyInvocable<void()> started={} )ι->bool;
 		//Nothing more is queued or taken.  On the strand the timers are cancelled, each node's Stop is called and what was
 		//queued or held is dropped and counted;  `stopped` runs after, there.  For a flow that has stopped already it runs there
-		//too, behind the teardown, and for one that never started it runs here.
+		//too, behind the teardown, for one that never started it runs here, and for one whose nodes are being made it runs on
+		//Start's thread once they are, before Start answers false.
 		α Stop( absl::AnyInvocable<void()> stopped={} )ι->void;
 		//Stopped by its host for a node, whose admission went:  as Stop, with `why` as its Fault and the node's status saying
 		//it, as a refusal at Start leaves them.  For a flow that never started too;  one that has stopped keeps the fault it has.
@@ -80,6 +84,10 @@ namespace Jde::Opc::Flows{
 		//false, here, for a flow that is not running and for a node that is not its.
 		α SetContext( sv nodeId, sv key, jvalue value, absl::AnyInvocable<void( bool )> set={} )ι->void;
 		α Post( absl::AnyInvocable<void()> f )ι->void;//`f` on the strand, from any thread;  dropped unless the flow is running.
+		//From the strand, a Post's `f`:  `f` there, once, when no message waits at any node's input, whatever a node holds,
+		//so what was sent before it is through the flow as far as it goes with no wait.  How a replay keeps its clock
+		//behind its messages (Replay.h).  Dropped unless the flow is running.
+		α Quiet( absl::AnyInvocable<void()> f )ι->void;
 		α Status( sv nodeId )Ι->NodeStatus;
 		α Counts()Ι->vector<NodeCounts>;//since the start, a row per node in the graph's order.
 		//The minutes that have ended and were not taken, oldest first, each with the nodes that had a figure in it;  at most an

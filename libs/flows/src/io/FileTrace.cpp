@@ -12,7 +12,6 @@ namespace Jde::Opc::Flows{
 	using namespace std::chrono;
 	using IO::Records::DayDirectory;
 	constexpr ELogTags _tags{ ELogTags::IO };
-	constexpr uint _maxBuffer{ 16u<<20 };//bytes a flow's buffer holds:  past it a healthy file's flush comes now, and while the file is unwritable or behind the oldest go.
 	constexpr uint _maxAncestors{ 16 };//how far up a lineage walks:  each ancestor is a pass over the days.
 
 	//A day's file as the process knows it:  the record layer's state, from its first-open scan and the appends since.
@@ -43,6 +42,7 @@ namespace Jde::Opc::Flows{
 		bool Flushing{};
 		bool Again{};//a Flush asked for while one ran.
 		bool Failing{};//the last write failed, said once until one succeeds.
+		string Error;//the first failure's, while Failing.
 		bool Dropping{};//the buffer passed its cap while failing, said once.
 		bool Purged{};
 		bool Early{};//Timer is set for now:  the buffer passed its cap.
@@ -267,7 +267,7 @@ namespace Jde::Opc::Flows{
 	}
 	Ω matches( const TraceQuery& query, const Proto::Hop& hop )ι->bool{
 		return ( !query.Node || hop.node_id()==*query.Node ) && ( !query.Msg || hop.msg_id()==*query.Msg )
-			&& ( !query.Kind || (uint8)hop.kind()==(uint8)*query.Kind ) && ( !query.Run || hop.run_id()==*query.Run );
+			&& ( !query.Kind || (uint8)hop.kind()==(uint8)*query.Kind ) && hop.run_id()==query.Run;
 	}
 
 	TraceStore::TraceStore( TraceSettings settings, sp<Hist::IClock> clock )ι:
@@ -327,9 +327,23 @@ namespace Jde::Opc::Flows{
 		if( !left->Done.wait_for(l, wait, [&]{ return !left->Left; }) )
 			WARN( "{} flows' traces had not been written after {}.", left->Left, Chrono::ToString(wait) );
 	}
-	α TraceStore::Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock, Tap tap )ι->sp<FileTrace>{
+	α TraceStore::Trace( sv slug, optional<ETraceLevel> level, sp<Hist::IClock> clock, Tap tap, uint32 run )ι->sp<FileTrace>{
 		auto files = _impl->Find( slug, true );
-		return ms<FileTrace>( shared_from_this(), move(files), level.value_or(_impl->Settings.Level), move(clock), move(tap) );
+		return ms<FileTrace>( shared_from_this(), move(files), level.value_or(_impl->Settings.Level), move(clock), move(tap), run );
+	}
+	α TraceStore::Buffered( sv slug )Ι->uint{
+		let files = _impl->Find( slug, false );
+		if( !files )
+			return 0;
+		lg _{ files->Mutex };
+		return files->BufferBytes;
+	}
+	α TraceStore::Failing( sv slug )Ι->optional<string>{
+		let files = _impl->Find( slug, false );
+		if( !files )
+			return nullopt;
+		lg _{ files->Mutex };
+		return files->Failing ? optional<string>{ files->Error } : nullopt;
 	}
 
 	//The flow's flush, `after` from now, under f.Mutex.
@@ -390,9 +404,12 @@ namespace Jde::Opc::Flows{
 					f.Buffer.insert( f.Buffer.begin(), std::make_move_iterator(kept.begin()), std::make_move_iterator(kept.end()) );
 					f.BufferBytes += bytes;
 					first = !std::exchange( f.Failing, true );
+					if( first )
+						f.Error = error;
 				}
 				else if( batch.size() ){
 					recovered = std::exchange( f.Failing, false );
+					f.Error.clear();
 					f.Dropping = false;
 				}
 				end = kept.size() || !f.Again;
@@ -648,7 +665,7 @@ namespace Jde::Opc::Flows{
 		return y;
 	}
 
-	α TraceStore::Lineage( sv slug, MessageId id, optional<TimePoint> start, optional<TimePoint> end, uint limit, SL sl )ε->TraceLineage{
+	α TraceStore::Lineage( sv slug, MessageId id, optional<TimePoint> start, optional<TimePoint> end, uint limit, uint32 run, SL sl )ε->TraceLineage{
 		TraceLineage y;
 		auto files = _impl->Find( slug, true );
 		if( !files || !id )
@@ -677,6 +694,8 @@ namespace Jde::Opc::Flows{
 						return true;
 					++ordinal;
 					let& hop = r.hop();
+					if( hop.run_id()!=run )
+						return true;
 					if( until && FromNs(hop.time())>*until ){
 						past = true;
 						return false;
@@ -730,7 +749,7 @@ namespace Jde::Opc::Flows{
 		return y;
 	}
 
-	α TraceStore::Counts( sv slug, TimePoint start, TimePoint end, Duration by, uint limit, optional<TimePoint> from, SL sl )ε->CountPage{
+	α TraceStore::Counts( sv slug, TimePoint start, TimePoint end, Duration by, uint limit, optional<TimePoint> from, uint32 run, SL sl )ε->CountPage{
 		CountPage y;
 		auto files = _impl->Find( slug, true );
 		if( !files || end<=start )
@@ -762,7 +781,7 @@ namespace Jde::Opc::Flows{
 			if( !served )
 				continue;
 			each( move(*served), *_impl, sl, [&]( Proto::FlowRecord& r ){
-				if( !r.has_counts() )
+				if( !r.has_counts() || r.counts().run_id()!=run )
 					return true;
 				let t = FromNs( r.counts().time() );
 				if( t<lower )
@@ -807,11 +826,11 @@ namespace Jde::Opc::Flows{
 				return;
 			files.BufferBytes += (uint)r.ByteSizeLong();
 			files.Buffer.push_back( move(r) );
-			if( files.BufferBytes>_maxBuffer ){
+			if( files.BufferBytes>TraceStore::MaxBuffer ){
 				if( files.Failing || files.Flushing || impl.Stopped ){
 					uint dropped{};
 					auto p = files.Buffer.begin();
-					for( ; p!=files.Buffer.end() && files.BufferBytes-dropped>_maxBuffer/2; ++p )
+					for( ; p!=files.Buffer.end() && files.BufferBytes-dropped>TraceStore::MaxBuffer/2; ++p )
 						dropped += (uint)p->ByteSizeLong();
 					files.Buffer.erase( files.Buffer.begin(), p );
 					files.BufferBytes -= dropped;
@@ -828,17 +847,19 @@ namespace Jde::Opc::Flows{
 				scheduleFlush( store.weak_from_this(), impl, files, impl.Settings.Delay );
 		}
 		if( dropping )
-			WARN( "[{}]The trace's buffer passed its {} byte cap while its file was unwritable or behind:  the oldest records are dropped.", files.Slug, _maxBuffer );
+			WARN( "[{}]The trace's buffer passed its {} byte cap while its file was unwritable or behind:  the oldest records are dropped.", files.Slug, TraceStore::MaxBuffer );
 	}
 
-	FileTrace::FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock, TraceStore::Tap tap )ι:
+	FileTrace::FileTrace( sp<TraceStore> store, sp<TraceStore::Files> files, ETraceLevel level, sp<Hist::IClock> clock, TraceStore::Tap tap, uint32 run )ι:
 		HopTrace{ level, move(clock) },
 		_store{ move(store) },
 		_files{ move(files) },
-		_tap{ move(tap) }
+		_tap{ move(tap) },
+		_run{ run }
 	{}
 	FileTrace::~FileTrace()=default;
 	α FileTrace::Write( TraceRecord&& record )ι->void{
+		record.Run = _run;
 		if( _tap )
 			_tap( record );
 		if( _files )
@@ -848,7 +869,7 @@ namespace Jde::Opc::Flows{
 		if( !_files )
 			return;
 		for( let& node : minute.Nodes )
-			add( *_store, *_store->_impl, *_files, ToProto(minute.Minute, node) );
+			add( *_store, *_store->_impl, *_files, ToProto(minute.Minute, node, _run) );
 	}
 
 	Ω convert( Proto::FlowRecord& r, int64_t& last, bool toDisk )ι->void{
@@ -917,7 +938,7 @@ namespace Jde::Opc{
 			hop.add_blocks( block );
 		return y;
 	}
-	α Flows::ToProto( TimePoint minute, const NodeCounts& node )ι->Proto::FlowRecord{
+	α Flows::ToProto( TimePoint minute, const NodeCounts& node, uint32 run )ι->Proto::FlowRecord{
 		Proto::FlowRecord y;
 		auto& counts = *y.mutable_counts();
 		counts.set_time( Ns(minute) );
@@ -927,6 +948,7 @@ namespace Jde::Opc{
 			counts.add_sent( (uint32_t)sent );
 		counts.set_drops( (uint32_t)node.Drops );
 		counts.set_errors( (uint32_t)node.Errors );
+		counts.set_run_id( (uint32_t)run );
 		return y;
 	}
 	α Flows::FromProto( const Proto::Hop& hop )ι->TraceRecord{

@@ -9,7 +9,7 @@ namespace Jde::Opc::Gateway{
 	using Flows::TraceRecord;
 	using Kind = Flows::ERecordKind;
 	static_assert( (int)Kind::Hop==FromServer::FlowRecordHop && (int)Kind::Birth==FromServer::FlowRecordBirth && (int)Kind::Clone==FromServer::FlowRecordClone
-		&& (int)Kind::Error==FromServer::FlowRecordError && (int)Kind::Status==FromServer::FlowRecordStatus && (int)Kind::Drop==FromServer::FlowRecordDrop );
+		&& (int)Kind::Error==FromServer::FlowRecordError && (int)Kind::Status==FromServer::FlowRecordStatus && (int)Kind::Drop==FromServer::FlowRecordDrop && (int)Kind::Captured==FromServer::FlowRecordCaptured );
 
 	Ω stamp( TimePoint t )ι->google::protobuf::Timestamp{ return UADateTime{ t }.ToProto(); }
 	Ω toProto( const Flows::NodeStatus& status )ι->FromServer::FlowStatus{

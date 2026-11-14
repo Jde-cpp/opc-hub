@@ -36,7 +36,7 @@ namespace Jde::Opc::Flows{
 
 		constexpr std::array<sv,5> _levels{ "Trace", "Debug", "Information", "Warning", "Error" };
 		//A point whose messages the debug panel shows:  the trace has them, as it has every hop.  With `level` each goes to
-		//the log too, unless `active` is false.
+		//the log too, unless `active` is false, and in a replay is its capture instead.
 		struct Debug final : INode{
 			Debug( const jobject& props )ε:
 				_active{ Prop::Flag(props, "active", true) }{
@@ -44,7 +44,11 @@ namespace Jde::Opc::Flows{
 					_level = (ELogLevel)Prop::Choice( props, "level", _levels );
 			}
 			α Receive( Message& m )ε->void override{
-				if( _level && _active )
+				if( !_level || !_active )
+					return;
+				if( Replaying() )
+					Capture( m.Id(), m.Json );
+				else
 					LOG( *_level, _tags, "[{}]{}", Def().Label(), serialize(m.Json) );
 			}
 		private:

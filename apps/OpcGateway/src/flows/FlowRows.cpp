@@ -24,6 +24,12 @@ namespace Jde::Opc::Gateway{
 	Ω contextRow( DB::Row&& r )->FlowContextRow{
 		return { .Flow=r.GetOpt<uint32>(0), .Node=r.TakeString(1), .Name=r.TakeString(2), .Value=r.TakeString(3) };
 	}
+	Ω runRow( DB::Row&& r )->FlowRunRow{
+		FlowRunRow y{ .Id=r.Get<uint32>(0), .Flow=r.Get<uint32>(1), .Status=nullopt };
+		if( !r.IsNull(2) )
+			y.Status = r.TakeString( 2 );
+		return y;
+	}
 	//The scope's two columns as a where clause's text, and the flow's parameter when it has one.
 	Ω scope( optional<FlowPK> flow, vector<DB::Value>& params )ι->sv{
 		if( flow )
@@ -58,6 +64,13 @@ namespace Jde::Opc{
 		return { select(FlowTable::Contexts, {"flow_id", "node_id", "name", "value"}, move(where), sl), contextRow, sl };
 	}
 
+	α Gateway::SelectFlowRun( FlowRunPK run, SL sl )ι->HistRowsAwait<FlowRunRow>{
+		let view = GetViewPtr( FlowTable::Runs );
+		DB::WhereClause where;
+		where.Add( view->GetColumnPtr("flow_run_id"), (uint)run );
+		return { select(FlowTable::Runs, {"flow_run_id", "flow_id", "status"}, move(where), sl), runRow, sl };
+	}
+
 	α Gateway::FlowSql::LastVersion( FlowPK flow )ε->DB::Sql{
 		return { Ƒ("select max(version) from {} where flow_id=?", name(FlowTable::Versions)), {DB::Value{(uint)flow}} };
 	}
@@ -81,5 +94,15 @@ namespace Jde::Opc{
 	α Gateway::FlowSql::InsertContext( optional<FlowPK> flow, sv node, sv name_, sv value )ε->DB::Sql{
 		return { Ƒ("insert into {}( flow_id, node_id, name, value ) values( ?, ?, ?, ? )", name(FlowTable::Contexts)),
 			{flow ? DB::Value{(uint)*flow} : DB::Value{}, DB::Value{string{node}}, DB::Value{string{name_}}, DB::Value{string{value}}} };
+	}
+	α Gateway::FlowSql::InsertRun( FlowPK flow, uint32 version, TimePoint start, TimePoint finish, sv mode, TimePoint started, UserPK by, sv userName )ε->DB::InsertClause{
+		return { GetViewPtr(FlowTable::Runs)->InsertProcName(),
+			{DB::Value{(uint)flow}, DB::Value{(uint)version}, DB::Value{DB::DBTimePoint{start}}, DB::Value{DB::DBTimePoint{finish}}, DB::Value{string{mode}}, DB::Value{DB::DBTimePoint{started}}, DB::Value{}, DB::Value{std::min<uint>(by.Value, _systemIdentity)}, DB::Value{string{userName}}, DB::Value{}} };
+	}
+	α Gateway::FlowSql::EndRun( FlowRunPK run, TimePoint finished, sv status )ε->DB::Sql{
+		return { Ƒ("update {} set finished=?, status=? where flow_run_id=?", name(FlowTable::Runs)), {DB::Value{DB::DBTimePoint{finished}}, DB::Value{string{status}}, DB::Value{(uint)run}} };
+	}
+	α Gateway::FlowSql::EndRuns( TimePoint finished, sv status )ε->DB::Sql{
+		return { Ƒ("update {} set finished=?, status=? where status is null", name(FlowTable::Runs)), {DB::Value{DB::DBTimePoint{finished}}, DB::Value{string{status}}} };
 	}
 }

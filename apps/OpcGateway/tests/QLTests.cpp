@@ -432,6 +432,12 @@ namespace Jde::Opc::Gateway::Tests{
 		let contextFields = Fields( "setFlowContext" );
 		for( sv name : {"flow"sv, "node"sv, "name"sv, "value"sv} )
 			EXPECT_NE( FindRow(contextFields, "name", name), contextFields.end() ) << name << ": " << serialize( contextFields );
+		//Flows 7 (#453):  the replay's two.
+		for( let& [typeName,columns] : vector<std::pair<sv,vector<sv>>>{ {"replayFlow", {"id", "flow", "version", "start", "finish", "mode", "started", "userName", "status"}}, {"cancelFlowRun", {"id", "status", "finished"}} } ){
+			let fields = Fields( typeName );
+			for( let column : columns )
+				EXPECT_NE( FindRow(fields, "name", column), fields.end() ) << typeName << "." << column << ": " << serialize( fields );
+		}
 		//Flows 5 (#451):  the trace's reads.
 		for( let& [typeName,column] : vector<std::pair<sv,sv>>{ {"flowTrace", "continuation"}, {"flowMessage", "more"}, {"flowCounts", "counts"}, {"flowCounts", "continuation"}, {"FlowTraceRecord", "msgId"}, {"FlowCount", "sent"}, {"FlowNodeStatus", "fill"} } ){
 			let fields = Fields( typeName );

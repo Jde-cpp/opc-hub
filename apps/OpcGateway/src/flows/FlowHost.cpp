@@ -1,5 +1,4 @@
 #include "FlowHost.h"
-#include <condition_variable>
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/exceptions/refuse.h>
@@ -66,6 +65,36 @@ namespace Jde::Opc::Gateway{
 		sp<Run> _run;
 		sv _node, _key;
 		jvalue _value;
+	};
+
+	struct FlowHost::EndAwait final : AnyAwait<RunEnd>{
+		EndAwait( sp<ReplayRun> replay, SRCE )ι:AnyAwait<RunEnd>{ sl }, _replay{ move(replay) }{}
+	protected:
+		α Suspend()ι->void override{
+			auto replay = _replay;//the resume may end this await.
+			{
+				lg _{ replay->Mutex };
+				if( !replay->End ){
+					replay->Waiting.push_back( [this, replay]{ Resume( RunEnd{*replay->End} ); } );
+					return;
+				}
+			}
+			Resume( RunEnd{*replay->End} );
+		}
+	private:
+		sp<ReplayRun> _replay;
+	};
+	//The flow's trace written now, a replay's records with it.
+	struct FlushAwait final : AnyVoidAwait{
+		FlushAwait( sp<Flows::TraceStore> store, string slug, SRCE )ι:AnyVoidAwait{ sl }, _store{ move(store) }, _slug{ move(slug) }{}
+	protected:
+		α Suspend()ι->void override{
+			auto store = _store;//the resume may end this await.
+			store->Flush( _slug, [this]{ Resume(); } );
+		}
+	private:
+		sp<Flows::TraceStore> _store;
+		string _slug;
 	};
 
 	Ω drops( const vector<Flows::NodeCounts>& counts )ι->uint{
@@ -250,6 +279,19 @@ namespace Jde::Opc::Gateway{
 			feed->Ended( EHttpStatus::ServiceUnavailable, "The gateway's flows have stopped." );
 		if( !configured )
 			return;
+		{//each replay's cancel, and its row, which its end writes behind the trace's flush:  before the store stops.
+			vector<sp<Flows::Run>> replays;
+			{
+				lg _{ _mutex };
+				for( let& [_,replay] : _replays )
+					replays.push_back( replay->Run );
+			}
+			for( let& replay : replays )
+				replay->Cancel();
+			std::unique_lock l{ _mutex };
+			if( !_replayEnded.wait_for(l, 10s, [&]{ return _replays.empty(); }) )
+				WARN( "{} replays had not ended after 10 s.", _replays.size() );
+		}
 		sp<Flows::TraceStore> store;
 		{
 			lg _{ _mutex };
@@ -320,6 +362,11 @@ namespace Jde::Opc::Gateway{
 		}
 		return live ? live->Flow.Counts() : vector<Flows::NodeCounts>{};
 	}
+	α FlowHost::ReplayOf( FlowPK id )Ι->optional<FlowRunPK>{
+		lg _{ _mutex };
+		let p = _replays.find( id );
+		return p==_replays.end() ? nullopt : optional{ p->second->Id };
+	}
 	α FlowHost::Feed( FlowPK id )Ι->sp<FlowFeed>{
 		lg _{ _mutex };
 		let p = _feeds.find( id );
@@ -377,6 +424,12 @@ namespace Jde::Opc::Gateway{
 		bool resumed{};
 		try{
 			auto lock = co_await _edits.Lock();
+			try{//a run with no status is one a gateway stopped under, with no word:  none runs now.
+				co_await Any( DS()->Execute(FlowSql::EndRuns(Time()->Now(), "failed:  the gateway stopped before the run ended")) );
+			}
+			catch( const std::exception& e ){
+				WARN( "The runs a gateway stopped under could not be ended:  {}", e.what() );
+			}
 			auto [rows, contexts, graphs] = co_await All( SelectFlows({.IncludeDeleted=true}), SelectFlowContexts(nullopt), DS()->SelectAsync(FlowSql::CurrentGraphs()) );
 			ContextValues values;
 			for( auto& row : contexts )
@@ -548,11 +601,8 @@ namespace Jde::Opc::Gateway{
 			Refused( row, move(graph), version, deployer, unstarted(failed), true );
 			co_return;
 		}
-		ContextValues values;
-		for( auto& context : rows )
-			values[{move(context.Node), move(context.Name)}] = move( context.Value );
-		Unwritten( id, values );
 		Flows::Flow::Config config{ .Name=row.Slug };
+		Loaded( id, row.Slug, move(rows), config );
 		let serial = ++_serials;
 		{
 			lg _{ _mutex };
@@ -569,23 +619,8 @@ namespace Jde::Opc::Gateway{
 			if( _store )
 				config.Trace = _store->Trace( row.Slug, row.Trace, _clock, [feed=held, serial]( const Flows::TraceRecord& record ){ feed->OnRecord( serial, record ); } );
 		}
-		for( auto&& [key, text] : values ){
-			let& [node, name] = key;
-			try{
-				if( !text )
-					continue;
-				auto value = Json::ParseValue( *text );
-				if( node.empty() )
-					config.Context[name] = move( value );
-				else
-					config.NodeContext[node][name] = move( value );
-			}
-			catch( const std::exception& e ){
-				WARN( "[{}]The context's '{}' does not read, and is left out:  {}", row.Slug, name, e.what() );
-			}
-		}
 		config.ContextChanged = [this, id]( sv node, sv key, const jvalue* value ){ ContextChanged( id, node, key, value ); };
-		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups} );
+		config.Host = ms<FlowNodes>( *this, FlowRun{id, row.Slug, deployer, spelled.Groups, spelled.Nodes} );
 		auto run = ms<Run>( move(graph), move(config), version, deployer, move(spelled) );
 		run->Trace = row.Trace;
 		run->Serial = serial;
@@ -615,6 +650,28 @@ namespace Jde::Opc::Gateway{
 		if( started )
 			INFO( "[{}]Flow '{}' started from version {}.", row.Slug, row.Name, version );
 		Tell( id );
+	}
+
+	α FlowHost::Loaded( FlowPK flow, str slug, vector<FlowContextRow>&& rows, Flows::Flow::Config& config )Ι->void{
+		ContextValues values;
+		for( auto& context : rows )
+			values[{move(context.Node), move(context.Name)}] = move( context.Value );
+		Unwritten( flow, values );
+		for( auto&& [key, text] : values ){
+			let& [node, name] = key;
+			try{
+				if( !text )
+					continue;
+				auto value = Json::ParseValue( *text );
+				if( node.empty() )
+					config.Context[name] = move( value );
+				else
+					config.NodeContext[node][name] = move( value );
+			}
+			catch( const std::exception& e ){
+				WARN( "[{}]The context's '{}' does not read, and is left out:  {}", slug, name, e.what() );
+			}
+		}
 	}
 
 	α FlowHost::Admitting( AdmitAwait& await )ι->VoidTask{
@@ -657,6 +714,7 @@ namespace Jde::Opc::Gateway{
 						else if( groups.size() ){
 							if( let allowed = acl->Check("gateway", "histGroups", groups.front().Guid, Access::ERights::Read, await.Deployer, sl); !allowed )
 								throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "{} is group '{}'s, which needs Read:  {}", what, groups.front().Name, allowed.error().what() };
+							await.Spelled.Groups.insert_or_assign( node.Id, groups.front().Id );//whose records a replay reads in the node's place.
 						}
 						else if( await.Deploying ){//the server's own answer, under the deployer's session:  the read a page of theirs would make.
 							REFUSE_IF( !await.Session, "{} is in no group, so its server admits it:  the deploy reads it once under the deployer's own session, and this deploy has none.", what );
@@ -878,6 +936,183 @@ namespace Jde::Opc::Gateway{
 		co_await WriteContext();
 	}
 
+	α FlowHost::Replaying( ReplayAwait& await )ι->VoidTask{
+		let sl = await.Source();
+		try{
+			let by = await.By.UserPK();
+			auto lock = co_await _edits.Lock();
+			auto rows = co_await Any( SelectFlows({.Key=DB::Key{(uint)await.Flow}, .IncludeDeleted=true}) );
+			AppClient()->Acl()->Test( "gateway", "flows", rows.empty() ? string{} : rows.front().Guid, Access::ERights::Update, by, sl );//the table's for a flow that isn't there, before a caller learns of an id.
+			TestEnabled( sl );
+			if( rows.empty() )
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Flow {} not found.", await.Flow };
+			auto row = move( rows.front() );
+			REFUSE_IF( row.Deleted, "Flow '{}' is deleted:  restore it before it is replayed.", row.Name );
+			REFUSE_IF( !row.Version, "Flow '{}' has no version to replay:  deploy it first.", row.Name );
+			REFUSE_IF( await.To>Time()->Now(), "to, {}, is after now:  a replay reads the history there is, the same records each time.", ToIsoString(await.To) );
+			if( let under = ReplayOf(row.Id); under )
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::Conflict}, "Flow '{}' has run {} under way:  one run at a time, which cancelFlowRun ends.", row.Name, *under };
+			auto versions = co_await Any( SelectFlowVersion(row.Id, *row.Version) );
+			REFUSE_IF( versions.empty(), "Version {} has no flow_versions row.", *row.Version );
+			auto& version = versions.front();
+			std::expected<Flows::Graph,Flows::Fault> graph{ std::unexpect };
+			try{
+				graph = Flows::Graph::Read( Json::ParseValue(version.Graph), true, Function() );
+			}
+			catch( const std::exception& e ){
+				graph = std::unexpected{ Flows::Fault{{}, Ƒ("Version {}'s graph does not read:  {}", *row.Version, e.what())} };
+			}
+			if( !graph )
+				throw refused( {move(graph.error())}, sl );
+			Resolved spelled;
+			if( let refusal = co_await Admit(row.Id, *graph, version.Deployer, nullptr, false, spelled, sl); refusal )
+				throw refused( *refusal, sl );
+			auto nodes = ms<FlowNodes>( *this, FlowRun{row.Id, row.Slug, version.Deployer, spelled.Groups, spelled.Nodes}, FlowReplay{await.From, await.To, await.Commit, ReadLimit()} );
+			let acl = AppClient()->Acl();
+			flat_set<HistGroupPK> read;
+			for( let& node : graph->Nodes ){//a source's refusals before the row, which a refusal doesn't write:  its stream's, a node no group holds by its name, and a group the caller may not read.
+				if( node.Type!=ENodeType::OpcIn && node.Type!=ENodeType::GroupIn )
+					continue;
+				try{
+					nodes->Stream( node );
+				}
+				catch( const std::exception& e ){
+					throw refused( {{node.Id, e.what()}}, sl );
+				}
+				if( let group = spelled.Groups.find(node.Id); group!=spelled.Groups.end() && read.insert(group->second).second ){
+					auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)group->second}}) );
+					let allowed = groups.empty() ? std::expected<void,Access::AccessException>{} : acl->Check( "gateway", "histGroups", groups.front().Guid, Access::ERights::Read, by, sl );
+					if( !allowed )
+						throw refused( {{node.Id, Ƒ("A replay reads group '{}', which needs Read for who runs it:  {}", groups.front().Name, allowed.error().what())}, allowed.error().HttpStatus()}, sl );
+				}
+			}
+			auto contexts = co_await Any( SelectFlowContexts(row.Id) );
+			let writer = HistHost::Instance().Writer( by );
+			let started = Time()->Now();
+			let mode = await.Commit ? "commit"sv : "dry"sv;
+			let run = co_await Any( DS()->InsertSeq<FlowRunPK>(FlowSql::InsertRun(row.Id, *row.Version, await.From, await.To, mode, started, by, writer.UserName)) );
+
+			auto clock = ms<Flows::StreamClock>( await.From );
+			Flows::Flow::Config config{ .Name=row.Slug };
+			config.Run = run;
+			Loaded( row.Id, row.Slug, move(contexts), config );
+			sp<Flows::TraceStore> store;
+			sp<Flows::GlobalStore> global;
+			{
+				lg _{ _mutex };
+				config.Queue = _queue;
+				config.Function = _function;
+				config.Env = _env;
+				store = _store;
+				global = _global;
+			}
+			jobject scratch;//the gateway's scope as it stands, the run's own from here.
+			for( let& key : global ? global->Keys() : vector<string>{} )
+				scratch[key] = global->Get( key );
+			config.Global = ms<Flows::GlobalStore>( move(scratch) );
+			if( store )
+				config.Trace = store->Trace( row.Slug, std::max(row.Trace.value_or(store->Settings().Level), Flows::ETraceLevel::Errors), clock, {}, run );
+			auto replay = ms<ReplayRun>();
+			replay->Id = run;
+			replay->Flow = row.Id;
+			replay->Slug = row.Slug;
+			replay->Name = row.Name;
+			replay->Run = ms<Flows::Run>( move(*graph), move(config), Flows::Run::Config{
+				.Clock=clock, .Host=move(nodes), .From=await.From, .To=await.To,
+				.Ended=[this, replay]( Flows::ERunEnd end, string why ){ Ending( replay, end, move(why) ); },
+				.Pace=[store, slug=row.Slug]( absl::AnyInvocable<void( string )> next ){
+					if( !store || store->Buffered(slug)<ReplayBuffer )
+						next( {} );
+					else
+						store->Flush( slug, [store, slug, next=std::move(next)]()mutable{//a trace that can't be written fails the run, which would otherwise flush at each record.
+							let failing = store->Failing( slug );
+							next( failing ? Ƒ("The trace could not be written:  {}", *failing) : string{} );
+						} );
+				}
+			} );
+			bool stopped;
+			{
+				lg _{ _mutex };
+				stopped = _stopped;
+				if( !stopped )
+					_replays.emplace( row.Id, replay );
+			}
+			if( stopped ){//the gateway's end came meanwhile:  the run's end writes its row, cancelled.
+				replay->Run->Cancel();
+				TestEnabled( sl );
+			}
+			INFO( "[{}]Run {} of flow '{}', version {}, started by '{}':  {} to {}, {}.", row.Slug, run, row.Name, *row.Version, writer.UserName, ToIsoString(await.From), ToIsoString(await.To), mode );
+			replay->Run->Start();//one that cannot is told by its end, as one that fails later is.
+			lock.unlock();
+			await.Resume( Replayed{run, *row.Version, started, writer.UserName} );
+		}
+		catch( runtime_error& e ){
+			await.ResumeExp( move(e) );
+		}
+	}
+	α FlowHost::Ending( sp<ReplayRun> replay, Flows::ERunEnd end, string why )ι->VoidTask{
+		let records = replay->Run->Delivered(), pages = replay->Run->Pages();
+		if( let store = Store(); store ){
+			co_await FlushAwait{ store, replay->Slug };
+			if( let failing = store->Failing(replay->Slug); failing && end!=Flows::ERunEnd::Failed ){//its records are not on file.
+				end = Flows::ERunEnd::Failed;
+				why = Ƒ( "The trace could not be written:  {}", *failing );
+			}
+		}
+		auto status = end==Flows::ERunEnd::Failed ? Ƒ( "failed:  {}", why ) : string{ ToString(end) };
+		status.resize( Flows::CutJson(status, 2048).size() );//the column's, on a character's boundary.
+		let finished = Time()->Now();
+		string failed;
+		try{
+			co_await Any( DS()->Execute(FlowSql::EndRun(replay->Id, finished, status)) );
+		}
+		catch( const std::exception& e ){
+			failed = e.what();
+		}
+		if( failed.size() )
+			ERR( "[{}]Run {}'s row could not be written, and says it is under way until the gateway starts again:  {}", replay->Slug, replay->Id, failed );
+		LOG( end==Flows::ERunEnd::Failed ? ELogLevel::Warning : ELogLevel::Information, ELogTags::Flow, "[{}]Run {} of flow '{}' {}, after {} records in {} pages.", replay->Slug, replay->Id, replay->Name, status, records, pages );
+		{
+			lg _{ _mutex };
+			if( let p = _replays.find(replay->Flow); p!=_replays.end() && p->second==replay )
+				_replays.erase( p );
+		}
+		_replayEnded.notify_all();
+		vector<absl::AnyInvocable<void()>> waiting;
+		{
+			lg _{ replay->Mutex };
+			replay->End = RunEnd{ move(status), finished };
+			waiting = std::move( replay->Waiting );
+		}
+		for( auto& resume : waiting )
+			resume();
+	}
+	α FlowHost::Cancelling( CancelAwait& await )ι->VoidTask{
+		let sl = await.Source();
+		try{
+			auto runs = co_await Any( SelectFlowRun(await.Run) );
+			let state = runs.empty() ? nullopt : Find( runs.front().Flow );
+			AppClient()->Acl()->Test( "gateway", "flows", state ? state->Row.Guid : string{}, Access::ERights::Update, await.By, sl );//the table's for a run that isn't there, before a caller learns of an id.
+			TestEnabled( sl );
+			if( runs.empty() )
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Run {} not found.", await.Run };
+			sp<ReplayRun> replay;
+			{
+				lg _{ _mutex };
+				if( let p = _replays.find(runs.front().Flow); p!=_replays.end() && p->second->Id==await.Run )
+					replay = p->second;
+			}
+			if( !replay )
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::Conflict}, "Run {} is not under way{}.", await.Run, runs.front().Status ? Ƒ(":  it {}", *runs.front().Status) : string{} };
+			replay->Run->Cancel();
+			auto ended = co_await EndAwait{ replay, sl };
+			await.Resume( move(ended) );
+		}
+		catch( runtime_error& e ){
+			await.ResumeExp( move(e) );
+		}
+	}
+
 	α FlowHost::Link( FlowPK from, UserPK deployer, sv name, const Flows::Message& m, SL sl )ε->uint{
 		struct Receiver final{ string Guid; string Name; sp<Run> Live; };
 		vector<Receiver> to;//those running, which a flow that is not would take nothing from, nor be asked about.
@@ -957,6 +1192,16 @@ namespace Jde::Opc::Gateway{
 		if( live && live->Flow.Running() )
 			co_await HaltAwait{ live };
 		Tell( id );
+		sp<ReplayRun> replay;
+		{
+			lg _{ _mutex };
+			if( let p = _replays.find(id); p!=_replays.end() )
+				replay = p->second;
+		}
+		if( replay ){//its row goes with the flow's, and its records with the directory.
+			replay->Run->Cancel();
+			co_await EndAwait{ replay };
+		}
 		co_await WriteContext();
 	}
 	α FlowHost::Purged( FlowRow row )ι->AnyVoidTask{

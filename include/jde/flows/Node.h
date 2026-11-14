@@ -46,6 +46,10 @@ namespace Jde::Opc::Flows{
 		α Fail( Message&& m, string error )ι->void;//the node's error with a held message:  the catch nodes take it.
 		α Drop( MessageId id )ι->void;//a held message the node gives up, counted and traced as a queue's are.
 		α Error( string error )ι->void;//the node's error with no message, as what escapes a timer's callback is:  logged, counted, traced and in its status.
+		//A replay's sink, in place of its work (spec *Replay*):  `what` it would have sent with the message it holds, a record of
+		//kind `captured` in the trace.
+		α Capture( MessageId id, const jvalue& what )ι->void;
+		α Replaying()Ι->bool;//a replay's node:  what it would log is its capture.  Any thread.
 		α SetStatus( NodeStatus status )ι->void;
 		//`f` on the strand, once, on the flow's clock:  never after Stop.  0 once the flow has stopped.
 		α Schedule( Duration after, absl::AnyInvocable<void()> f )ι->TimerId;

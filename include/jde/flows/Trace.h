@@ -29,6 +29,7 @@ namespace Jde::Opc::Flows{
 		β Error( const NodeDef& node, MessageId id, sv error )ι->void=0;//the node's error with the message, which ends at it.
 		β Status( const NodeDef& node, const NodeStatus& status )ι->void=0;
 		β Drop( const NodeDef& node, MessageId id )ι->void=0;//off the node's queue, or held by it when the flow stopped.
+		β Capture( const NodeDef& node, MessageId id, sv json )ι->void=0;//what a sink of a replay would have sent with the message it holds, in place of sending it (spec *Replay*).
 		//A minute that ended with a figure, on the flow's clock, as the engine's own timer, a count in a later minute, a
 		//TakeMinutes or the flow's stop ends it, whichever first:  from any thread.  A flow stopped and started again within a
 		//minute gives that minute twice, each run's part.
@@ -39,8 +40,8 @@ namespace Jde::Opc::Flows{
 	α ToString( ETraceLevel level )ι->sv;
 	α ToTraceLevel( sv name )ι->optional<ETraceLevel>;
 
-	enum class ERecordKind : uint8{ Hop, Birth, Clone, Error, Status, Drop };
-	α ToString( ERecordKind kind )ι->sv;//"hop", "birth", "clone", "error", "status", "drop".
+	enum class ERecordKind : uint8{ Hop, Birth, Clone, Error, Status, Drop, Captured };
+	α ToString( ERecordKind kind )ι->sv;//"hop", "birth", "clone", "error", "status", "drop", "captured".
 	α ToRecordKind( sv name )ι->optional<ERecordKind>;
 	struct TraceRecord final{
 		TimePoint Time;//the flow's clock:  a hop's, when the node received the message.
@@ -49,7 +50,7 @@ namespace Jde::Opc::Flows{
 		string Node;
 		ERecordKind Kind{};
 		vector<uint> Ports;//the output ports it was sent on:  a clone's, the one it left by.
-		optional<string> Json;//a birth's message, and a hop's as sent where the node changed it.
+		optional<string> Json;//a birth's message, a hop's as sent where the node changed it, and what a capture's sink would have sent.
 		string Error;
 		optional<NodeStatus> Status;
 		uint32 Run{};//0 live, a replay's otherwise.
@@ -58,10 +59,10 @@ namespace Jde::Opc::Flows{
 	};
 
 	//The fold:  a hop is made at Receive, takes its ports and its json at Send, and is written at Complete;  a birth the same
-	//from Birth;  a clone, an error, a status change and a drop are records of their own.  By level:  `Off` writes nothing;
-	//`Counts` the minute figures alone;  `Hops` everything;  `Errors` the minute figures, the errors, drops and status
-	//changes, and the hops, births and clones of a message kept while it or a message made from it is in flight, written
-	//when one ends in an error.  One per flow, called on its strand alone, but Minute.
+	//from Birth;  a clone, an error, a status change, a drop and a capture are records of their own.  By level:  `Off`
+	//writes nothing;  `Counts` the minute figures alone;  `Hops` everything;  `Errors` the minute figures, the errors, drops,
+	//status changes and captures, and the hops, births and clones of a message kept while it or a message made from it is in
+	//flight, written when one ends in an error.  One per flow, called on its strand alone, but Minute.
 	struct HopTrace : ITrace{
 		HopTrace( ETraceLevel level, sp<Hist::IClock> clock )ι;
 		~HopTrace();
@@ -74,6 +75,7 @@ namespace Jde::Opc::Flows{
 		α Error( const NodeDef& node, MessageId id, sv error )ι->void final;
 		α Status( const NodeDef& node, const NodeStatus& status )ι->void final;
 		α Drop( const NodeDef& node, MessageId id )ι->void final;
+		α Capture( const NodeDef& node, MessageId id, sv json )ι->void final;
 		α Minute( const MinuteCounts& minute )ι->void final;
 	protected:
 		β Write( TraceRecord&& record )ι->void=0;

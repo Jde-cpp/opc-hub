@@ -306,6 +306,47 @@ namespace Jde::Opc::Gateway{
 		bool Now{};//`from`:  now, whatever the mark.
 		vector<ExNodeId> Wanted;//`members`:  none, every member.
 	};
+	//A group's member as a `group in`'s message names it:  its node, and its path, the message's `topic`, else the node.
+	struct GroupMember final{ string Node; string Path; };
+	using GroupMembers = flat_map<Hist::NodeIndex,GroupMember>;
+	//The members a `group in` takes:  `members`, else every one, a node that is none of the group's refused.
+	Ω groupMembers( HistGroupHost& host, const GroupInProps& props )ε->GroupMembers{
+		GroupMembers y;
+		let all = host.HistMembers();
+		let add = [&]( const HistMember& member ){
+			let text = member.Node.ToString();
+			y.emplace( member.Index, GroupMember{text, member.Attributes.Path ? HistPathText(*member.Attributes.Path) : text} );
+		};
+		if( props.Wanted.empty() )
+			std::ranges::for_each( all, add );
+		for( let& node : props.Wanted ){
+			let index = host.Index( node );
+			let member = index ? std::ranges::find( all, *index, &HistMember::Index ) : all.end();
+			THROW_IF( member==all.end(), "'{}' is no member of its group.", node.ToString() );
+			add( *member );
+		}
+		return y;
+	}
+	//The member a record is a message of:  none for a heartbeat, which repeats a value, and for a node not taken.
+	Ω recorded( const GroupMembers& members, const Hist::Proto::DataValue& value )ι->const GroupMember*{
+		if( value.has_heartbeat() )
+			return nullptr;
+		let member = members.find( value.node_index() );
+		return member==members.end() ? nullptr : &member->second;
+	}
+	//The record as its member's message, `m`'s data change and topic, live or in a replay:  false for a value that does
+	//not read, which is logged.
+	Ω dataChange( Message& m, sv slug, const GroupMember& member, const Hist::Proto::DataValue& value, const ITypes* types )ι->bool{
+		try{
+			m.SetDataChange( slug, member.Node, Hist::ToUA(value), types );
+		}
+		catch( const std::exception& e ){
+			WARN( "A record of '{}' does not read, and is left out:  {}", member.Node, e.what() );
+			return false;
+		}
+		m.Json["topic"] = member.Path;
+		return true;
+	}
 
 	constexpr std::array<sv,5> _updateTypes{ "unspecified", "insert", "replace", "update", "delete" };
 	struct GroupIn final : Flows::ISource{
@@ -434,7 +475,6 @@ namespace Jde::Opc::Gateway{
 			Pump();
 		}
 	private:
-		struct Member final{ string Node; string Path; };
 		α Retry( string why )ι->void{
 			SetStatus( {"red", "ring", move(why)} );
 			if( !_retry )
@@ -447,21 +487,10 @@ namespace Jde::Opc::Gateway{
 			_subscription = nullptr;
 			_slug = host.Slug();
 			_members.clear();
+			_members = groupMembers( host, _props );
 			vector<Hist::NodeIndex> nodes;
-			let add = [&]( const HistMember& member ){
-				nodes.push_back( member.Index );
-				let text = member.Node.ToString();
-				_members.emplace( member.Index, Member{text, member.Attributes.Path ? HistPathText(*member.Attributes.Path) : text} );
-			};
-			let members = host.HistMembers();
-			if( _props.Wanted.empty() )
-				std::ranges::for_each( members, add );
-			for( let& node : _props.Wanted ){
-				let index = host.Index( node );
-				let member = index ? std::ranges::find( members, *index, &HistMember::Index ) : members.end();
-				THROW_IF( member==members.end(), "'{}' is no member of its group.", node.ToString() );
-				add( *member );
-			}
+			for( let& [index, _] : _members )
+				nodes.push_back( index );
 			if( nodes.empty() ){
 				SetStatus( {"grey", "ring", "Its group has no members."} );
 				return;
@@ -476,10 +505,8 @@ namespace Jde::Opc::Gateway{
 		//A record as a message, but a heartbeat, which repeats a value, a snapshot's bound from before its time, the value
 		//the node had then, and one at or before the last of its node the flow finished, which a restart's lookback reads again.
 		α Deliver( const Hist::Proto::DataValue& value, const ITypes* types, bool bound=false )ι->void{
-			if( value.has_heartbeat() )
-				return;
-			let member = _members.find( value.node_index() );
-			if( member==_members.end() )
+			let member = recorded( _members, value );
+			if( !member )
 				return;
 			let ticks = value.has_source_ts() ? optional<UA_DateTime>{ value.source_ts() } : value.has_server_ts() ? optional<UA_DateTime>{ value.server_ts() } : nullopt;
 			if( bound && (!ticks || *ticks<_from) )
@@ -488,14 +515,8 @@ namespace Jde::Opc::Gateway{
 			if( ticks && high!=_high.end() && *ticks<=high->second )
 				return;
 			auto m = Make();
-			try{
-				m.SetDataChange( _slug, member->second.Node, Hist::ToUA(value), types );
-			}
-			catch( const std::exception& e ){
-				WARN( "A record of '{}' does not read, and is left out:  {}", member->second.Node, e.what() );
+			if( !dataChange(m, _slug, *member, value, types) )
 				return;
-			}
-			m.Json["topic"] = member->second.Path;
 			Send( move(m) );
 			if( ticks ){
 				_high[value.node_index()] = *ticks;
@@ -545,7 +566,7 @@ namespace Jde::Opc::Gateway{
 		//The strand's.
 		Duration _lateness{};//the props', else the group's heartbeat gap.
 		ServerCnnctnNK _slug;
-		flat_map<Hist::NodeIndex,Member> _members;
+		GroupMembers _members;
 		sp<GroupFeed> _feed;
 		up<Hist::Subscription> _subscription;
 		bool _paging{};
@@ -808,20 +829,26 @@ namespace Jde::Opc::Gateway{
 
 	//`opc out`.
 	struct OpcOut final : Flows::ISink{
-		OpcOut( const NodeDef& def, str flow, SL sl )ε:
+		OpcOut( const NodeDef& def, str flow, bool captured, SL sl )ε:
 			_target{ target(def.Props, sl) },
 			_property{ Prop::Text(def.Props, "property", "payload") },
 			_collector{ HistHost::Instance().Collector(_target.Slug) },
 			_label{ Ƒ("{}.{}", flow, def.Id) },
+			_captured{ captured },
 			_self{ ms<Tether<OpcOut>>(*this) }
 		{}
 		~OpcOut(){ _self->Cut(); }
 		α Stop()ι->void override{ _self->Cut(); }
 		α OnStrand( absl::AnyInvocable<void()> f )ι->void{ Post( std::move(f) ); }
 		//One write is out at a time, so a node's values reach its server in the order they came:  the rest wait here, the
-		//oldest dropped past the flow's queue.
+		//oldest dropped past the flow's queue.  A replay's writes none:  the value is its capture.
 		α Receive( Message& m )ε->void override{
-			THROW_IF( !_property.Find(m.Json), "The message has no `{}` to write.", _property.Text() );
+			let value = _property.Find( m.Json );
+			THROW_IF( !value, "The message has no `{}` to write.", _property.Text() );
+			if( _captured ){
+				Capture( m.Id(), *value );
+				return;
+			}
 			Hold();
 			_waiting.push_back( move(m) );
 			if( _waiting.size()>QueueLimit()+1 ){
@@ -878,6 +905,7 @@ namespace Jde::Opc::Gateway{
 		const Flows::Path _property;
 		const Credential _collector;
 		const string _label;
+		const bool _captured;
 		sp<Tether<OpcOut>> _self;
 		std::deque<Message> _waiting;//the first is out, the rest held behind it.
 	};
@@ -885,18 +913,24 @@ namespace Jde::Opc::Gateway{
 	//`log`.
 	constexpr std::array<sv,5> _levels{ "Trace", "Debug", "Information", "Warning", "Error" };//the `debug` node's.
 	struct LogOut final : Flows::ISink{
-		LogOut( const NodeDef& def, str flow )ε:
+		LogOut( const NodeDef& def, str flow, bool captured=false )ε:
 			_template{ Prop::Text(def.Props, "template", "{{payload}}") },
 			_flow{ flow },
-			_level{ (ELogLevel)Prop::Choice(def.Props, "level", _levels, (uint)ELogLevel::Information) }
+			_level{ (ELogLevel)Prop::Choice(def.Props, "level", _levels, (uint)ELogLevel::Information) },
+			_captured{ captured }
 		{}
 		α Receive( Message& m )ε->void override{
-			LOG( _level, _tags, "[{}.{}]{}", _flow, Def().Label(), _template.Render(m, FlowContext(), Global(), false) );
+			let line = _template.Render( m, FlowContext(), Global(), false );
+			if( _captured )//a replay's:  the line, in its trace and not the log.
+				Capture( m.Id(), jvalue{line} );
+			else
+				LOG( _level, _tags, "[{}.{}]{}", _flow, Def().Label(), line );
 		}
 	private:
 		Flows::Mustache _template;
 		const string _flow;
 		const ELogLevel _level;
+		const bool _captured;
 	};
 
 	//`http request`.
@@ -927,9 +961,10 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 	struct HttpOut final : Flows::ISink{
-		HttpOut( const NodeDef& def )ε:
+		HttpOut( const NodeDef& def, bool captured=false )ε:
 			_contentType{ Prop::FindText(def.Props, "contentType") },
 			_json{ Prop::Choice(def.Props, "output", _outputs, 0)==1 },
+			_captured{ captured },
 			_self{ ms<Tether<HttpOut>>(*this) }{
 			if( let url = Prop::FindText(def.Props, "url") )
 				_url = parseUrl( *url );
@@ -942,7 +977,7 @@ namespace Jde::Opc::Gateway{
 		α Url()Ι->const optional<HttpSend>&{ return _url; }
 		//The props' url, method and content type, else the message's `url` and `method`, with its payload the body of a
 		//method that has one.  The host is checked here, at the send, whatever a deploy saw.  MaxRequests are out at once:
-		//the rest wait here, the oldest dropped past the flow's queue.
+		//the rest wait here, the oldest dropped past the flow's queue.  A replay's sends none:  the request is its capture.
 		α Receive( Message& m )ε->void override{
 			let named = Json::FindSV( m.Json, "url" );
 			THROW_IF( !_url && !named, "The node has no `url`, and the message none." );
@@ -954,6 +989,16 @@ namespace Jde::Opc::Gateway{
 				let& payload = m.Payload();
 				send.Body = payload.is_string() ? string{ payload.get_string() } : payload.is_null() ? string{} : serialize( payload );
 				send.ContentType = _contentType ? *_contentType : payload.is_string() ? "text/plain" : "application/json";
+			}
+			if( _captured ){
+				let port = send.Port==(send.Ssl ? 443 : 80) ? string{} : Ƒ( ":{}", send.Port );
+				jobject request{ {"method", http::to_string(send.Verb)}, {"url", Ƒ("{}://{}{}{}", send.Ssl ? "https" : "http", send.Host.contains(':') ? Ƒ("[{}]", send.Host) : send.Host, port, send.Target)} };
+				if( send.ContentType.size() ){
+					request["contentType"] = send.ContentType;
+					request["body"] = send.Body;
+				}
+				Capture( m.Id(), request );
+				return;
 			}
 			Hold();
 			_waiting.emplace_back( move(m), move(send) );
@@ -1040,6 +1085,7 @@ namespace Jde::Opc::Gateway{
 		optional<http::verb> _verb;
 		const optional<string> _contentType;
 		const bool _json;
+		const bool _captured;
 		sp<Tether<HttpOut>> _self;
 		std::deque<std::pair<Message,HttpSend>> _waiting;
 		uint _out{};//requests out.
@@ -1047,10 +1093,14 @@ namespace Jde::Opc::Gateway{
 
 	//A `link out` whose `link in` another flow holds.
 	struct LinkOut final : Flows::ISink{
-		LinkOut( const NodeDef& def, FlowHost& host, const FlowRun& run )ι:
-			_name{ Json::FindDefaultSV(def.Props, "name") }, _host{ host }, _flow{ run.Flow }, _deployer{ run.Deployer }
+		LinkOut( const NodeDef& def, FlowHost& host, const FlowRun& run, bool captured )ι:
+			_name{ Json::FindDefaultSV(def.Props, "name") }, _host{ host }, _flow{ run.Flow }, _deployer{ run.Deployer }, _captured{ captured }
 		{}
 		α Receive( Message& m )ε->void override{
+			if( _captured ){//a replay's reaches no running flow:  the message is its capture.
+				Capture( m.Id(), m.Json );
+				return;
+			}
 			let taken = _host.Link( _flow, _deployer, _name, m );
 			SetStatus( taken ? NodeStatus{"green", "dot", Ƒ("{} {}", taken, taken==1 ? "flow" : "flows")} : NodeStatus{"grey", "ring", "No running flow holds its `link in`."} );
 		}
@@ -1059,6 +1109,48 @@ namespace Jde::Opc::Gateway{
 		FlowHost& _host;
 		const FlowPK _flow;
 		const UserPK _deployer;
+		const bool _captured;
+	};
+
+	//A replay's records of a group (spec *Replay*):  its members' over the range, through the group's raw read, a page of
+	//`readLimit` a call, the edits applied, each as its node sends it live.  A heartbeat, which repeats a value, is none,
+	//so a page of them answers no record.
+	struct GroupStream final : Flows::IStream{
+		GroupStream( sp<Opc::Hist::Group> group, ServerCnnctnNK slug, GroupMembers members, const FlowReplay& range )ι:
+			_group{ move(group) }, _slug{ move(slug) }, _members{ move(members) }, _last{ range.From }, _done{ _members.empty() }{
+			for( let& member : _members )
+				_request.Nodes.push_back( member.first );
+			_request.Start = UADateTime{ range.From }.UA();
+			_request.End = UADateTime{ range.To }.UA();
+			_request.Limit = range.ReadLimit;
+		}
+		α Next()ε->optional<vector<Flows::StreamRecord>> override{
+			if( _done )
+				return nullopt;
+			let page = _group->Read( _request );
+			_request.Continuation = page.Continuation;
+			_done = page.Continuation.empty();
+			let types = UAClient::FindTypes( _slug );
+			vector<Flows::StreamRecord> y;
+			for( let& read : page.Values ){
+				let& value = read.Value;
+				let member = recorded( _members, value );
+				Message m;
+				if( !member || !dataChange(m, _slug, *member, value, types.get()) )
+					continue;
+				if( value.has_source_ts() || value.has_server_ts() )
+					_last = UADateTime{ (UA_DateTime)(value.has_source_ts() ? value.source_ts() : value.server_ts()) }.Time();
+				y.emplace_back( _last, move(m.Json) );
+			}
+			return y;
+		}
+	private:
+		const sp<Opc::Hist::Group> _group;
+		const ServerCnnctnNK _slug;
+		const GroupMembers _members;
+		Hist::ReadRequest _request;
+		TimePoint _last;//the time of the last record, which one with none takes.
+		bool _done;
 	};
 
 	Ω unbuilt( const NodeDef& node )ε->void{
@@ -1082,13 +1174,36 @@ namespace Jde::Opc::Gateway{
 	α FlowNodes::Sink( const NodeDef& node )ε->up<Flows::ISink>{
 		let sl = SRCE_CUR;
 		unbuilt( node );
+		let captured = _replay.has_value();
 		switch( node.Type ){
-		case ENodeType::OpcOut: return mu<OpcOut>( node, _run.Slug, sl );
-		case ENodeType::Log: return mu<LogOut>( node, _run.Slug );
-		case ENodeType::HttpRequest: return mu<HttpOut>( node );
-		case ENodeType::LinkOut: return mu<LinkOut>( node, _host, _run );
+		case ENodeType::OpcOut: return mu<OpcOut>( node, _run.Slug, captured, sl );
+		case ENodeType::Log: return mu<LogOut>( node, _run.Slug, captured );
+		case ENodeType::HttpRequest: return mu<HttpOut>( node, captured );
+		case ENodeType::LinkOut: return mu<LinkOut>( node, _host, _run, captured );
 		default: THROW( "A '{}' is no sink the gateway makes.", Flows::ToString(node.Type) );
 		}
+	}
+	α FlowNodes::Stream( const NodeDef& node )ε->up<Flows::IStream>{
+		let sl = SRCE_CUR;
+		THROW_IF( !_replay, "A '{}' has its records in a replay alone.", Flows::ToString(node.Type) );
+		let held = _run.Groups.find( node.Id );
+		let host = held==_run.Groups.end() ? nullptr : HistHost::Instance().Find( held->second );
+		GroupMembers members;
+		if( node.Type==ENodeType::OpcIn ){
+			let to = target( node.Props, sl );
+			THROW_IF( held==_run.Groups.end(), "'{}' on '{}' is in no group:  a replay has no records of it.", to.Text, to.Slug );
+			THROW_IF( !host, "Its group isn't one this gateway historizes." );
+			let spelled = to.Node.namespaceUri.length ? _run.Nodes.end() : _run.Nodes.find( node.Id );//by its URI, which needs no server's namespaces.
+			let index = host->Index( spelled==_run.Nodes.end() ? to.Node : ParseHistNode(spelled->second, sl) );
+			THROW_IF( !index, "'{}' is no member of group '{}'.", to.Text, host->Name() );
+			members.emplace( *index, GroupMember{to.Text, to.Text} );
+		}
+		else{
+			THROW_IF( node.Type!=ENodeType::GroupIn, "A '{}' has no records.", Flows::ToString(node.Type) );
+			THROW_IF( !host, "Its group isn't one this gateway historizes." );
+			members = groupMembers( *host, GroupInProps{node.Props, sl} );
+		}
+		return mu<GroupStream>( host->Group(), host->Slug(), move(members), *_replay );
 	}
 	α FlowNodes::Check( const NodeDef& node, SL sl )ε->void{
 		unbuilt( node );
