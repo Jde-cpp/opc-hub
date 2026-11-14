@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadFlowDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
@@ -196,6 +196,18 @@ export const routes: Routes = [
 				providers: [ HistAdminResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "OEE stop reason", kind: "reasons" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			//A flow's page (#455), under the Flows tab's list.  No bare `flows` redirect, as the lists above have:  `flows` is the flow
+			//server's connection, the one row the gateway makes itself, and ':connection' serves its page, so a flow's page goes back to
+			//the gateway's own (gatewayListLink).
+			{
+				path: 'flows/:slug',
+				loadComponent: loadFlowDetail,
+				providers: [ HistAdminResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "Flow", kind: "flows" },
 				resolve: { pageData: HistAdminResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},

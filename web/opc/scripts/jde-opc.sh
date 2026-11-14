@@ -8,3 +8,8 @@ if [ ! -d node_modules ]; then echo must run from angular dir; exit 1; fi;
 if ! jq -e '.devDependencies.highcharts' package.json > /dev/null; then
 	npm --silent install --save-dev highcharts@^13.1.1 || { echo `pwd`; echo npm install highcharts failed; exit 1; };
 fi;
+#the flow editor's canvas (#455):  @foblex/flow, MIT, bundled, at the version the spike walked (#446, docs/flows/plan.md 0.4), which
+#the editor's records and sheet are written against.  A dependency, not a devDependency:  the page imports it, once its tab is shown.
+if [ "$(jq -r '.dependencies."@foblex/flow" // empty' package.json)" != "19.4.0" ]; then
+	npm --silent install --save-exact @foblex/flow@19.4.0 || { echo `pwd`; echo npm install @foblex/flow failed; exit 1; };
+fi;

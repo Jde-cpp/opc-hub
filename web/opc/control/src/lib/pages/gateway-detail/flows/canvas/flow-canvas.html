@@ -1,0 +1,39 @@
+<div class="bar" role="toolbar" aria-label="Canvas">
+	<button matIconButton type="button" aria-label="Undo" matTooltip="Undo" [disabled]="!state.canUndo()" (click)="state.undo()"><mat-icon aria-hidden="true">undo</mat-icon></button>
+	<button matIconButton type="button" aria-label="Redo" matTooltip="Redo" [disabled]="!state.canRedo()" (click)="state.redo()"><mat-icon aria-hidden="true">redo</mat-icon></button>
+	<button matIconButton type="button" aria-label="Delete the selection" matTooltip="Delete the selection" [disabled]="!selection()" (click)="remove()"><mat-icon aria-hidden="true">delete</mat-icon></button>
+	<span class="gap"></span>
+	<button matIconButton type="button" aria-label="Zoom in" matTooltip="Zoom in" (click)="zoom().zoomIn()"><mat-icon aria-hidden="true">zoom_in</mat-icon></button>
+	<button matIconButton type="button" aria-label="Zoom out" matTooltip="Zoom out" (click)="zoom().zoomOut()"><mat-icon aria-hidden="true">zoom_out</mat-icon></button>
+	<button matIconButton type="button" aria-label="Fit the flow to the view" matTooltip="Fit" (click)="fit()"><mat-icon aria-hidden="true">fit_screen</mat-icon></button>
+	<span class="figures">{{ state.nodes().length }} {{ state.nodes().length==1 ? 'node' : 'nodes' }}, {{ state.connections().length }} {{ state.connections().length==1 ? 'wire' : 'wires' }}</span>
+</div>
+<div class="body">
+	<div class="palette" role="group" aria-label="Palette">
+		@for( group of palette; track group.category ){
+			<h3>{{ group.label }}</h3>
+			@for( type of group.types; track type.type ){
+				<!--an item is a block:  the library leaves it an inline `display: block` after its drag-->
+				<div fExternalItem [fData]="{type: type.type}" class="item" [class]="group.category" role="button" tabindex="0" [matTooltip]="type.about" matTooltipPosition="right"
+					[attr.aria-label]="'Add ' + type.type + ':  ' + type.about" (keydown.enter)="add(type.type)" (keydown.space)="add(type.type); $event.preventDefault()" (dblclick)="add(type.type)">
+					<span class="face"><mat-icon aria-hidden="true">{{ type.icon }}</mat-icon>{{ type.type }}</span>
+				</div>
+			}
+		}
+	</div>
+	<f-flow fDraggable fInitialView (fFullRendered)="onFullRendered()">
+		<f-background><f-circle-pattern/></f-background>
+		<f-selection-area/>
+		<f-canvas fZoom>
+			<f-connection-for-create fBehavior="fixed" fType="bezier"/>
+			@for( wire of state.connections(); track wire.id ){
+				<f-connection [fConnectionId]="wire.id" [fSourceId]="wire.sourceId" [fTargetId]="wire.targetId" fBehavior="fixed" fType="bezier"/>
+			}
+			@for( node of state.nodes(); track node.id ){
+				<flow-node-view fNode fDragHandle [fNodeId]="node.id" [fNodePosition]="node.position" [node]="node"
+					[fault]="faults().get(node.id)" [refused]="refused()==node.id" [injectable]="injectable().has(node.id)" (inject)="inject.emit(node.id)"/>
+			}
+		</f-canvas>
+		<f-minimap/>
+	</f-flow>
+</div>

@@ -11,3 +11,4 @@ export const loadOeeLineDetail = ()=>import( './gateway-detail/oee-admin/oee-lin
 export const loadOeeReasonDetail = ()=>import( './gateway-detail/oee-admin/oee-reason-detail' ).then( m=>m.OeeReasonDetail );
 export const loadOeeDashboard = ()=>import( './gateway-detail/oee/oee-dashboard' ).then( m=>m.OeeDashboard );
 export const loadOeeMachinePage = ()=>import( './gateway-detail/oee/oee-machine-page' ).then( m=>m.OeeMachinePage );
+export const loadFlowDetail = ()=>import( './gateway-detail/flows/flow-detail' ).then( m=>m.FlowDetail );

@@ -17,6 +17,11 @@
 					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
+			<ng-template instanceTab="Flows"><!--the flows the gateway runs (#455):  their list, with Create and Import-->
+				@for( g of [gateway()]; track g ){
+					<gateway-flow-list [gateway]=g! [url]=url()></gateway-flow-list>
+				}
+			</ng-template>
 			<ng-template instanceTab="Machines" instanceTabHelp="oee-machines-and-reasons"><!--OEE's machines and reasons (#404), lists as the historian's two are-->
 				<div><a matButton [routerLink]="['./oee']"><mat-icon>monitoring</mat-icon>OEE dashboard</a></div><!--the machines live (#406), a page of its own under this one-->
 				@for( g of [gateway()]; track g ){

@@ -1,0 +1,58 @@
+/* the canvas takes what the window has under the page's header and tabs, and no less than a palette's worth */
+:host{
+	display: flex;
+	flex-direction: column;
+	height: max( 520px, calc(100dvh - 190px) );
+}
+.actions{
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 8px 16px;
+	.state{
+		margin-left: auto;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-medium);
+	}
+	.dirty{ color: var(--mat-sys-primary); }
+}
+.refresh-bar{
+	flex: none;
+	--mat-progress-bar-track-height: 2px;
+	--mat-progress-bar-active-indicator-height: 2px;
+}
+.refusal{
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	padding: 4px 8px 4px 16px;
+	color: var(--mat-sys-on-error-container);
+	background: var(--mat-sys-error-container);
+	font: var(--mat-sys-body-medium);
+	span{ flex: 1; min-width: 0; }
+	mat-icon{ flex: none; }
+}
+.work{
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	border-top: 1px solid var(--mat-sys-outline-variant);
+}
+.canvas{
+	display: flex;
+	flex: 1;
+	min-width: 0;
+}
+.form{
+	box-sizing: border-box;
+	flex: none;
+	width: min( 380px, 45% );
+	padding: 12px 14px 16px;
+	overflow-y: auto;
+	scrollbar-width: thin;
+	scrollbar-color: var(--mat-sys-outline-variant) transparent;
+	border-left: 1px solid var(--mat-sys-outline-variant);
+	background: var(--mat-sys-surface-container-lowest);
+}

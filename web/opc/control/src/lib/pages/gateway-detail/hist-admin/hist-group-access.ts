@@ -25,8 +25,8 @@ export type HistGroupAccessStatus = { kind:HistGroupGovernor; icon:string; title
 //A role's permission on the table's row, as tableRolesQuery answers it:  allowed and denied are [Right] name arrays
 export type HistGroupHeldRow = { id:number; permissionRight?:{ allowed:string[]; denied:string[] } };
 //what a role holds through the table's row, as the Inherited column's tooltip says it
-export const histGroupHeldText = ( held:{ allowed:string[]; denied:string[] } ):string=>
-	[held.allowed.join( ', ' ), held.denied.length ? `denied ${held.denied.join( ', ' )}` : ''].filter( x=>x ).join( ';  ' )+", through the hist_groups table's resource";
+export const histGroupHeldText = ( held:{ allowed:string[]; denied:string[] }, table='hist_groups' ):string=>
+	[held.allowed.join( ', ' ), held.denied.length ? `denied ${held.denied.join( ', ' )}` : ''].filter( x=>x ).join( ';  ' )+`, through the ${table} table's resource`;
 //the hist_groups table's resource, as the gateway tests it:  Acl()->Test( "gateway", "histGroups", <group guid>, … ) (HistHost::Gate),
 //the schema shared by every gateway instance - which is why the criteria is the guid, never the id a second gateway's group shares
 export const histGroupResourceKey = { schemaName: 'gateway', slug: 'histGroups' };
@@ -45,6 +45,26 @@ export const histGroupResourceName = ( name:string ):string=>Array.from( name ).
 //its own row does, Administer there is what changes these grants - and no other page grants on that row;  None clears a row, as the
 //node grid's does
 export const histGroupRights = { 0: 'None', 2: 'Read', 4: 'Update', 8: 'Delete', 32: 'Administer' };
+//What the tab grants on:  a table of the gateway's schema whose rows are each a resource of their own by guid - the historian's
+//groups, the tab's first, and the flows (#455), whose row is governed the same way (docs/flows/spec.md *Rights*).  The texts name
+//the table and say what its rights open.
+export type AccessSubject = {
+	key:{ schemaName:string; slug:string };//the table's resource, as the gateway tests it
+	table:string;//the table as the texts name it
+	noun:string;//one of its rows
+	rights:Record<number,string>;//the rights the gate asks for, by their bit
+	hint:string;//the tab's first paragraph
+	open:( name:string )=>string;//what anyone signed in may do while nothing enforces it
+	held:( name:string )=>string;//what only the roles granted do once its own row governs it
+	stopped:string;//the same as Stop enforcing says it, of a table's row that isn't enforced
+};
+export const histGroupSubject:AccessSubject = {
+	key: histGroupResourceKey, table: 'hist_groups', noun: 'group', rights: histGroupRights,
+	hint: "Who may read the group's history and edit it:  Read for the trend, the table and a live subscription, Update for inserts, replacements and corrections and for Resolve, Delete for purges, and Administer to change these grants once the group's own resource governs it.  The hist_groups table's resource, switched on the Resources page, turns checking on;  under it the group answers to its own resource once it has one that is enforced, else to the table's.",
+	open: name=>`Anyone signed in reads ${name}'s history and may Resolve it, and every history edit - an insert, a replacement, a correction or a purge - is refused`,
+	held: name=>`read ${name}'s history, update it or delete it`,
+	stopped: 'anyone signed in reads the history and may Resolve it, and every history edit is refused'
+};
 
 //A group's Access tab (#339):  the node page's grid of roles against rights on the group's own access_resources row, criteria its guid, with
 //which row governs it - the hist_groups table's row is the slug's switch, then the group's own where it has one enforced, else the
@@ -66,12 +86,12 @@ export class HistGroupAccess{
 		} );
 	}
 	group = input.required<HistGroupRef>();
-	readonly rights = histGroupRights;
+	subject = input<AccessSubject>( histGroupSubject );//the group's, unless the tab is on another table's row
 	own = signal<HistGroupResource|undefined>( undefined );
 	table = signal<HistGroupResource|undefined>( undefined );
 	//By key, never by id:  access_role_add finds the row by it whether or not the authorizer's cache holds the row, and makes it,
 	//enforced and named for the group, where there is none.
-	grants = new RoleGrants( role=>({ ...histGroupResourceKey, criteria: role.criteria, name: histGroupResourceName( this.group().name ) }) );
+	grants = new RoleGrants( role=>({ ...this.subject().key, criteria: role.criteria, name: histGroupResourceName( this.group().name ) }) );
 	loading = signal( false );
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );
@@ -101,11 +121,11 @@ export class HistGroupAccess{
 		this.loading.set( true );
 		this.error.set( undefined );
 		try{
-			const criteria = histGroupCriteria( group );
+			const criteria = histGroupCriteria( group ), key = this.subject().key;
 			const [rows, roles, tableRoles] = await Promise.all( [
-				this.appService.queryArray<HistGroupResourceRow>( HistGroupAccess.resourcesQuery, histGroupResourceKey ),
-				this.appService.queryArray<RolePermissionRow>( rolePermissionsQuery, {...histGroupResourceKey, criteria} ),
-				this.appService.queryArray<HistGroupHeldRow>( HistGroupAccess.tableRolesQuery, histGroupResourceKey )
+				this.appService.queryArray<HistGroupResourceRow>( HistGroupAccess.resourcesQuery, key ),
+				this.appService.queryArray<RolePermissionRow>( rolePermissionsQuery, {...key, criteria} ),
+				this.appService.queryArray<HistGroupHeldRow>( HistGroupAccess.tableRolesQuery, key )
 			] );
 			if( !this.#reads.is(read) )//of this group or another
 				return;
@@ -114,7 +134,7 @@ export class HistGroupAccess{
 			this.own.set( own );
 			this.table.set( table );
 			//while the table's row governs the group, what each role holds there is what it holds on the group:  the grid's Inherited column
-			const inherited = new Map( table?.enforced && !own?.enforced ? tableRoles.flatMap( r=>r.permissionRight ? [[Number( r.id ), histGroupHeldText( r.permissionRight )] as const] : [] ) : [] );
+			const inherited = new Map( table?.enforced && !own?.enforced ? tableRoles.flatMap( r=>r.permissionRight ? [[Number( r.id ), histGroupHeldText( r.permissionRight, this.subject().table )] as const] : [] ) : [] );
 			const permissions:RolePermission[] = toRolePermissions( roles, criteria ).map( r=>({...r, inherited: inherited.get( Number( r.roleId ) )}) );//a permission only where the role holds one on this group's own row
 			this.grants.reset( permissions );
 			this.shown.set( criteria );
@@ -132,19 +152,19 @@ export class HistGroupAccess{
 	//consulted first - while it is unenforced no criteria row of the slug is looked at, whatever its own state - then the group's own row
 	//where it has one enforced, else the table's;  and what a grant here does about it.
 	status = computed<HistGroupAccessStatus>( ()=>{
-		const own = this.own(), table = this.table(), name = this.group().name;
+		const own = this.own(), table = this.table(), name = this.group().name, {noun, table: tableName, open, held} = this.subject();
 		if( !table?.enforced ){
 			const next = own
-				? own.enforced ? "The group's own resource is enforced already, so the grants here apply the moment the table's is." : "The group's own resource isn't enforced;  once both are, the grants here apply."
-				: "A grant saved here makes the group's own resource, enforced, so the grants here apply the moment the table's is;  Make own resource makes one that isn't enforced yet.";
-			return { kind: 'none', icon: 'remove_moderator', title: 'Nothing enforces it.', detail: `Anyone signed in reads ${name}'s history and may Resolve it, and every history edit - an insert, a replacement, a correction or a purge - is refused:  the hist_groups table's resource isn't enforced, and its switch, on the Resources page, is what turns checking on for the groups' own rows too.  ${next}` };
+				? own.enforced ? `The ${noun}'s own resource is enforced already, so the grants here apply the moment the table's is.` : `The ${noun}'s own resource isn't enforced;  once both are, the grants here apply.`
+				: `A grant saved here makes the ${noun}'s own resource, enforced, so the grants here apply the moment the table's is;  Make own resource makes one that isn't enforced yet.`;
+			return { kind: 'none', icon: 'remove_moderator', title: 'Nothing enforces it.', detail: `${open( name )}:  the ${tableName} table's resource isn't enforced, and its switch, on the Resources page, is what turns checking on for the ${noun}s' own rows too.  ${next}` };
 		}
 		if( own?.enforced )
-			return { kind: 'own', icon: 'verified_user', title: 'Governed by its own resource, enforced.', detail: `Only the roles granted here read ${name}'s history, update it or delete it, whatever they hold on the hist_groups table, and only those granted Administer here change these grants.` };
+			return { kind: 'own', icon: 'verified_user', title: 'Governed by its own resource, enforced.', detail: `Only the roles granted here ${held( name )}, whatever they hold on the ${tableName} table, and only those granted Administer here change these grants.` };
 		const next = own
-			? "The group's own resource isn't enforced yet:  Enforce it and the grants here take over, changed from then on only by the roles with Administer here."
-			: "A grant saved here makes the group's own resource, enforced, and the grants here take over:  tick Administer for a role you hold in the same save, or they can't be changed again until it stops being enforced.  Make own resource makes one that isn't enforced yet.";
-		return { kind: 'table', icon: 'shield', title: "Governed by the hist_groups table's resource, enforced.", detail: `The table's grants apply to every group without an enforced row of its own;  the Inherited column shows what each role holds there.  ${next}` };
+			? `The ${noun}'s own resource isn't enforced yet:  Enforce it and the grants here take over, changed from then on only by the roles with Administer here.`
+			: `A grant saved here makes the ${noun}'s own resource, enforced, and the grants here take over:  tick Administer for a role you hold in the same save, or they can't be changed again until it stops being enforced.  Make own resource makes one that isn't enforced yet.`;
+		return { kind: 'table', icon: 'shield', title: `Governed by the ${tableName} table's resource, enforced.`, detail: `The table's grants apply to every ${noun} without an enforced row of its own;  the Inherited column shows what each role holds there.  ${next}` };
 	} );
 
 	onToggle( event:{ role:RolePermission; rights:number } ):void{
@@ -159,7 +179,7 @@ export class HistGroupAccess{
 			await this.grants.send( this.appService );
 		}
 		catch( e ){
-			this.snackbar.exception( "Could not save the group's access.", e );//the batch stays, so Save retries it
+			this.snackbar.exception( `Could not save the ${this.subject().noun}'s access.`, e );//the batch stays, so Save retries it
 			return;
 		}
 		finally{
@@ -175,11 +195,11 @@ export class HistGroupAccess{
 			return;
 		this.busy.set( true );
 		try{
-			await this.appService.mutate( new Mutation( 'Resource', 0, {...histGroupResourceKey, criteria: histGroupCriteria( group ), name: histGroupResourceName( group.name )}, MutationType.Create, ['id'] ) );
+			await this.appService.mutate( new Mutation( 'Resource', 0, {...this.subject().key, criteria: histGroupCriteria( group ), name: histGroupResourceName( group.name )}, MutationType.Create, ['id'] ) );
 			this.snackbar.info( `${group.name} has a resource of its own, not enforced yet.` );
 		}
 		catch( e ){
-			this.snackbar.exception( "Could not make the group's resource.", e );
+			this.snackbar.exception( `Could not make the ${this.subject().noun}'s resource.`, e );
 		}
 		finally{
 			this.busy.set( false );
@@ -192,12 +212,12 @@ export class HistGroupAccess{
 		const own = this.own();
 		if( !own || !this.ready() )
 			return;
-		const name = this.group().name;
+		const name = this.group().name, {table, held, stopped} = this.subject();
 		const verb = enforce ? 'Enforce' : 'Stop enforcing';
-		const pending = this.table()?.enforced ? '' : "  Nothing is checked until the hist_groups table's resource is enforced as well, on the Resources page.";
+		const pending = this.table()?.enforced ? '' : `  Nothing is checked until the ${table} table's resource is enforced as well, on the Resources page.`;
 		const message = enforce
-			? `Only the roles granted here will read ${name}'s history, update it or delete it, whatever they hold on the hist_groups table, and only those with Administer here will change these grants.  Grant a role you hold Read and Administer first, or you may lose your own access.${pending}`
-			: `${name} goes back under the hist_groups table's resource:  its grants apply where it is enforced;  where it isn't, anyone signed in reads the history and may Resolve it, and every history edit is refused.`;
+			? `Only the roles granted here will ${held( name )}, whatever they hold on the ${table} table, and only those with Administer here will change these grants.  Grant a role you hold Read and Administer first, or you may lose your own access.${pending}`
+			: `${name} goes back under the ${table} table's resource:  its grants apply where it is enforced;  where it isn't, ${stopped}.`;
 		if( !await confirm( this.dialog, {title: `${verb} ${name}?`, message, confirm: verb} ) || this.own()!==own || !this.ready() )
 			return;//declined, or the group or its row changed while the dialog was open
 		this.busy.set( true );
