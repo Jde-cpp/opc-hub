@@ -7,10 +7,11 @@
 
 namespace Jde::Opc::Gateway{
 	//The Open Protocol driver (docs/open-protocol/spec.md *The driver server*, *Address space*, *Results*, *Backfill*,
-	//*Commands*):  a row's session with its controller on the row's strand of the executor, its settings the
+	//*Commands*, *Events*):  a row's session with its controller on the row's strand of the executor, its settings the
 	///gateway/drivers/openProtocol block's and the zone and the ceilings of the row's `driver`, and, in the row's namespace,
 	//`Result`, `Counters`, `Selected`, `Alarm` and `_Op`, each variable a stored value the strand posts to the server's own thread
-	//as the session reports, and `Commands`, whose methods the strand sends the controller.
+	//as the session reports, `Commands`, whose methods the strand sends the controller, and `TighteningResultEventType`, the
+	//type of the event each result raises.
 	//`Result` is a variable per field of MID 0061 (TighteningResult.h), subscribed to by MID 0060 at each connect.  Each reads
 	//Bad_WaitingForInitialData until the first result, and Bad_NotSupported where the revision the results come at, or the
 	//result last written, does not carry it, set when the subscription is accepted and by a result that lacks it.  A result is
@@ -20,6 +21,12 @@ namespace Jde::Opc::Gateway{
 	//`Counters` are Total, Ok and Nok since the driver started:  every result below revision 3, and from 3 a result of type 1, a
 	//tightening, or of no type, Ok and Nok by the tightening status.  Both keep their last value and status through a loss of the
 	//link.
+	//Each result written is an event too, raised in its post behind its writes:  a TighteningResultEventType, BaseEventType's
+	//subtype with an optional property per variable of `Result`, from `Result`, whose EventNotifier says so, and so from the
+	//Server object.  Its fields are the values the result wrote, under their variables' names in the row's namespace, a field
+	//the result has no value for left empty;  its Time the result's source timestamp, its Severity 100 for OK and 500 for
+	//anything else, and its Message `OK` or `NOK`, or `No status` where the result sent none, with the parameter set where it
+	//names one.
 	//A link that returns once a result has been written is filled:  the results pushed from the subscription on are held, and
 	//after the clock's read MID 0064 walks back, from the oldest held id less one, or from id 0, the latest, where none is held,
 	//then from each id it is answered less one.  The walk ends at the last id written, or at a lower id timed no later than the
@@ -102,7 +109,10 @@ namespace Jde::Opc::Gateway{
 		template<class T> α Record( const T& result, uint16_t revision, TimePoint seen )ι->void;
 		//Bad_NotSupported for each of `Result`'s variables `revision` does not carry, where it does not read so already.
 		α SetRevision( uint16_t revision, UA_DateTime at, Writes& writes )ι->void;
-		α Post( Writes&& writes )ι->void;//in order, in one call on the server's thread.
+		//A result's event, raised once its post has written:  for each of TighteningResult::Variables, which of the post's
+		//writes holds its value, the event's field of its name, and none where the result has no value for it.
+		struct Event{ UA_DateTime Time; UA_UInt16 Severity; string Message; vector<optional<uint8_t>> Fields; };
+		α Post( Writes&& writes, optional<Event>&& event={} )ι->void;//in order, then the event, in one call on the server's thread.
 		α Write( sv name, const void* scalar, const UA_DataType& type, UA_StatusCode status=UA_STATUSCODE_GOOD )ι->void;//`_Op`'s `name`.
 		α WriteText( sv name, sv text )ι->void;
 		α WriteNoSkew( UA_StatusCode why )ι->void;
