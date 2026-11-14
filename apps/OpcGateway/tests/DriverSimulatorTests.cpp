@@ -145,7 +145,7 @@ namespace Jde::Opc::Gateway::Tests{
 			for( let limit : {"AngleMin", "AngleMax", "AngleFinalTarget"} )
 				EXPECT_EQ( number(limit), optional<double>{TargetAngle} ) << limit;
 			EXPECT_NEAR( number("Torque").value_or(0), Target, Target/2 );
-			EXPECT_EQ( Of(read, "Result.Status").Get<UA_Boolean>(0), ok );
+			EXPECT_EQ( OpFlag(Of(read, "Result.Status")), optional<bool>{ok} );
 			EXPECT_EQ( number("Pset"), optional<double>{state.at("current_pset_id").to_number<double>()} );
 			EXPECT_EQ( text("Vin"), optional<string>{state.at("vehicle_id").is_string() ? string{state.at("vehicle_id").get_string()} : string{}} );
 			let id = ResultId( read );
@@ -224,7 +224,8 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitExecutable(row, true) ) << "the grant reaches the gateway's authorizer";
 
 		uint pset{};
-		for( let& known : Api(verb::get, "/psets").as_array() ){
+		let psets = Api( verb::get, "/psets" );
+		for( let& known : psets.as_array() ){
 			if( let id = Json::AsNumber<uint>(known.as_object(), "id"); id!=was.at("current_pset_id").to_number<uint>() )
 				pset = id;
 		}
@@ -237,6 +238,15 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( State().at("current_pset_id").to_number<uint>(), pset );
 
 		EXPECT_EQ( Call(row, "DisableTool"), Good );
+		absl::Cleanup tool = [&]{//through the row, before it goes:  the simulator has no HTTP route for its tool.
+			try{
+				if( let found = was.at( "tool_enabled" ); State().at("tool_enabled")!=found && Call(row, found==jvalue{true} ? "EnableTool" : "DisableTool")!=Good )
+					ADD_FAILURE() << "the simulator's tool is not as it was.";
+			}
+			catch( const std::exception& e ){
+				ADD_FAILURE() << "the simulator's tool is not as it was:  " << e.what();
+			}
+		};
 		EXPECT_EQ( State().at("tool_enabled"), jvalue{false} );
 		EXPECT_THROW( Tighten(true), Web::Client::ClientHttpResException ) << "a locked tool makes no tightening";
 		EXPECT_EQ( Call(row, "EnableTool"), Good );
