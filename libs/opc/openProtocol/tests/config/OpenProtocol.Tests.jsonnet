@@ -7,7 +7,9 @@ local logsDir = std.extVar("logsDir");
 {
 	testing:{
 		tests:: "*",
-		corpus: "$(REPO_SOURCE_DIR)/libs/opc/openProtocol/tests/corpus" //the fuzz target's, which CorpusTests replays.
+		corpus: "$(REPO_SOURCE_DIR)/libs/opc/openProtocol/tests/corpus", //the fuzz target's, which CorpusTests replays.
+		fixtures: "$(REPO_SOURCE_DIR)/libs/opc/openProtocol/tests/fixtures", //frames captured from a controller, which FixtureTests reads.
+		standIn:: { ports: [14545, 14546], serve: "PT5M" } //StandInTests.DISABLED_Serves:  the bench controller's stand-in on these two ports for this long, for the bench client's own check.
 	},
 	instanceName: "OpenProtocolTests",
 	logging:{

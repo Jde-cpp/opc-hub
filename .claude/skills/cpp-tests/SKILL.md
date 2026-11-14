@@ -23,6 +23,8 @@ The five db-backed ctest suites — `libs/ql/tests` (its own `qlTests` schema, `
 
 `apps/OpcGateway/tests` has four cases no runner runs, `DriverSimulatorTests`: the Open Protocol driver against Jarrekstar's simulator, a hand check, each skipped unless `/testing/openProtocolSimulator` names the simulator's ports. The run-services skill's *Open Protocol simulator* has the simulator's build and the run line.
 
+It has four more, `DriverControllerTests`: the driver against the bench controller, a PF6000 with two virtual stations, each skipped unless `/testing/openProtocolController` names the controller, a case asking on the console for the hand at it, or says `standIn: true`, the library's stand-in for one, which is the cases' own check. `libs/opc/openProtocol/tests` has `StandInTests` for that stand-in, whose `DISABLED_Serves` serves it on two ports for the bench client, and `FixtureTests`, which reads every frame under `fixtures/`, none until one is captured from the controller. The run-services skill's *Open Protocol bench controller* has the run lines.
+
 The two workflows use **different working directories**, so they keep separate logs/db files:
 
 - **ctest**: `addJdeTest()` (`build/functions.cmake`) registers each suite with `WORKING_DIRECTORY $buildDir/Testing` (ctest creates it) and sets the `REPO_SOURCE_DIR`/`REPO_BUILD_DIR` env vars the configs expand via `$(…)` — output lands in `$buildDir/Testing/{logs,sqlite-tests.db}`.

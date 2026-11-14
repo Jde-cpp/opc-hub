@@ -1,4 +1,3 @@
-#include <fstream>
 #include "helpers.h"
 #include "Harness.h"
 
@@ -7,10 +6,6 @@
 //the fuzzer.
 namespace Jde::Opc::OpenProtocol::Tests{
 	Ω corpus()ι->fs::path{ return Settings::FindPath( "/testing/corpus" ).value_or( fs::path{} ); }
-	Ω read( const fs::path& file )ι->string{
-		std::ifstream is{ file, std::ios::binary };
-		return { std::istreambuf_iterator<char>{is}, {} };
-	}
 	//The suite's frames by their files:  each MID at each revision, the specification's examples, the simulator's, and a
 	//frame refused each way, for the fuzzer to start from.
 	Ω seeds()ι->vector<std::pair<string,string>>{
@@ -40,7 +35,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 			if( !entry.is_regular_file() )
 				continue;
 			++files;
-			EXPECT_EQ( Exercise(read(entry.path())), "" ) << entry.path().filename().string();
+			EXPECT_EQ( Exercise(ReadFile(entry.path())), "" ) << entry.path().filename().string();
 		}
 		EXPECT_GE( files, seeds().size() );
 	}
@@ -49,7 +44,7 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	//`--gtest_also_run_disabled_tests --gtest_filter=CorpusTests.DISABLED_WritesSeeds` writes the files.
 	TEST( CorpusTests, HoldsTheSuitesFrames ){
 		for( let& [file, frame] : seeds() )
-			EXPECT_EQ( read(corpus()/file), frame ) << file;
+			EXPECT_EQ( ReadFile(corpus()/file), frame ) << file;
 	}
 
 	TEST( CorpusTests, DISABLED_WritesSeeds ){

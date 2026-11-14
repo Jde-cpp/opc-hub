@@ -1,4 +1,5 @@
 #pragma once
+#include <fstream>
 #include <jde/opc/openProtocol/Codec.h>
 #define let const auto
 
@@ -65,6 +66,11 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	//Each MID with a type and its last revision.
 	Ξ Revisions()ι->vector<std::pair<uint16_t,uint16_t>>{ return Revisions( std::type_identity<Body>{} ); }
 
+	//A file's bytes as they are:  a frame of the fuzz corpus's or of fixtures/.
+	Ξ ReadFile( const fs::path& file )ι->string{
+		std::ifstream is{ file, std::ios::binary };
+		return { std::istreambuf_iterator<char>{is}, {} };
+	}
 	//What refused `frame`, or nullopt where it decoded.
 	Ξ Refused( sv frame )ι->optional<ERefusal>{
 		let y = Decode( frame );
