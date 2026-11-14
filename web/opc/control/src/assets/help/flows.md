@@ -136,6 +136,30 @@ A body has no `import` and no `require`, and reaches no file, socket or process.
 
 A number too large for JavaScript to hold exactly crosses as a `BigInt`.
 
+### Blocks
+
+A body can be built from blocks instead of typed. **Build from blocks** on the node's form opens the block editor over the canvas.
+
+Drag blocks from the toolbox and snap them together. The code they write is shown beside them, read-only.
+
+The toolbox has the flow's own blocks:
+
+- **Message** - read and set a property of the message by its path, such as `payload` or `payload.mean`, with `return` and `send`
+- **Context** - read and set a key of the node's, the flow's or the gateway's context
+- **Node** - `status`, `error`, `warn`, `log` and `env`
+
+Below them are Blockly's logic, maths, text, lists and variables.
+
+**Done** gives the node its blocks and the code they wrote. **Cancel** leaves the node as it was. Nothing deploys while the block editor is open.
+
+The gateway runs the code, as it runs a typed body.
+
+A node built from blocks shows its code read-only, with **Edit blocks** under it.
+
+**Edit as code** keeps the code and lets the blocks go. Code is not turned back into blocks, so the form asks first.
+
+The trace records the blocks each message passed. See [History](#history).
+
 ### Limits
 
 A flow's Function nodes share one sandbox, with the limits under `gateway.flows.function` in the settings:
@@ -204,6 +228,8 @@ The message list reads the range's records, oldest first, by node, kind or messa
 
 Select a record to light its message's path on the canvas, with its ancestors' and descendants' dashed. The panel lists the message at each node where a node changed it.
 
+At a **function** node built from blocks, the panel has **blocks passed**. It opens the node's blocks as that version had them, with the blocks the message passed lit and the rest dimmed, so the branch it took shows.
+
 **Play** steps the range's records through the canvas from the scrubber's time, at 1, 10 or 100 times.
 
 ### Versions
@@ -257,7 +283,7 @@ Each flow has a level, **Trace** on its Properties tab. Blank takes the gateway'
 - `off` - nothing is written. The Activity tab still counts.
 - `counts` - a minute's counts for each node
 - `errors` - the counts, and the whole path of each message that ends in an error
-- `hops` - everything: a record for each node a message passes, with the message where a node changed it
+- `hops` - everything: a record for each node a message passes, with the message where a node changed it, and the blocks it passed in a **function** node built from them
 
 Changing the level restarts the flow.
 

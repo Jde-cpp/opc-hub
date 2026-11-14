@@ -28,9 +28,10 @@
 }
 <div class="work">
 	<div class="view">
-		<div class="canvas"><ng-container #slot/></div>
+		<div class="blocks" [hidden]="!blocksOf()"><ng-container #blocksSlot/></div>
+		<div class="canvas" [inert]="!!blocksOf()"><ng-container #slot/></div>
 		@if( range(); as r ){
-			<div class="scrubber" role="group" aria-label="Time">
+			<div class="scrubber" role="group" aria-label="Time" [inert]="!!blocksOf()">
 				<button matIconButton type="button" (click)="playing() ? pause() : play()" [attr.aria-label]="playing() ? 'Pause' : 'Play'" [matTooltip]="playing() ? 'Pause' : 'Play the range\'s records through the canvas'"><mat-icon>{{ playing() ? 'pause' : 'play_arrow' }}</mat-icon></button>
 				<mat-button-toggle-group class="speed" hideSingleSelectionIndicator aria-label="Speed" [value]="speed()" (change)="setSpeed($event.value)">
 					@for( s of speeds; track s ){ <mat-button-toggle [value]="s">{{ s }}×</mat-button-toggle> }
@@ -64,10 +65,16 @@
 								<span class="node">{{ nodeName( r.node ) }}</span>
 								<span class="kind">{{ r.kind }}@if( r.ports.length ){ → {{ r.ports.join( ', ' ) }}}</span>
 								@if( r.error ){ <p class="error">{{ r.error }}</p> }
+								@if( blocksNode( r ) ){
+									<button matButton type="button" class="passed" (click)="showBlocks(r)" [attr.aria-pressed]="blocksOf()==r" matTooltip="The node's blocks, with those the message passed lit">
+										<mat-icon>extension</mat-icon>{{ r.blocks.length }} {{ r.blocks.length==1 ? 'block' : 'blocks' }} passed
+									</button>
+								}
 								@if( r.json!==undefined ){ <pre class="json">{{ json( r.json ) }}</pre> }
 							</li>
 						}
 					</ol>
+					@if( blocksError(); as e ){ <p class="error" role="alert"><mat-icon aria-hidden="true">error</mat-icon>{{ e }}</p> }
 				}
 			</section>
 		}

@@ -10,11 +10,14 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { DateUtils, errorMessage } from 'jde-framework';
 import { Latest } from 'jde-spa';
-import { Flow, FlowGraph, FlowRun, FlowVersion } from '../../../../model/flow';
+import { Flow, FlowGraph, FlowNode, FlowRun, FlowVersion } from '../../../../model/flow';
+import { isFlowBlocks } from '../../../../model/flow-nodes';
 import { FlowCountRow, FlowRecordKind, flowRecordKinds, FlowTraceRecord, flowWireKey } from '../../../../model/flow-trace';
 import { flowCountStep, flowDeployMarks, flowGraphCounts, flowJsonText, flowLineagePath, flowOwnRecords, FlowPlayer, flowRecordSummary, flowVersionAt } from '../../../../model/flow-trace-view';
 import { FlowService } from '../../../../services/flow-service';
 import { HistReader } from '../../../../services/history-service';
+import type { FlowBlockEditor } from '../blocks/flow-block-editor';
+import { FlowBlocksLoader } from '../blocks/flow-blocks-loader';
 import type { FlowCanvas } from '../canvas/flow-canvas';
 import { FlowCanvasDecor, FlowLit, FlowNodeDecor, FlowWireDecor } from '../canvas/flow-canvas-state';
 import { loadFlowView } from '../flow-view';
@@ -47,6 +50,8 @@ const noFired = ():FlowFired=>({ nodes: new Map(), wires: new Map() });
 //flowTrace by node, kind or message, a message selected lighting its path from flowMessage, its own records listed with its
 //json at each node where it changed, its ancestors' and descendants' paths dashed, and Play stepping the range's records
 //through the canvas at one, ten or a hundred times, the scrubber following.  A run opened from Versions is a range of its own.
+//A record of the message's at a Function node built from blocks offers the blocks it passed (#458):  the node's workspace as
+//the version drawn has it, over the canvas, read alone, with those blocks lit.
 @Component({
 	selector: 'flow-history',
 	templateUrl: './flow-history.html',
@@ -59,6 +64,7 @@ export class FlowHistory implements OnDestroy{
 	versions = input<FlowVersion[]>( [] );
 	request = input<FlowHistoryRequest|undefined>( undefined );
 	slot = viewChild.required( 'slot', {read: ViewContainerRef} );
+	blocksSlot = viewChild.required( 'blocksSlot', {read: ViewContainerRef} );
 	readonly kinds = flowRecordKinds;
 	readonly speeds = [1, 10, 100];
 
@@ -89,7 +95,11 @@ export class FlowHistory implements OnDestroy{
 	fired = signal<FlowFired>( noFired() );
 	ready = signal( false );
 	loadError = signal<string|undefined>( undefined );
+	blocksOf = signal<FlowTraceRecord|undefined>( undefined );//the record whose blocks are shown
+	blocksError = signal<string|undefined>( undefined );
 	#canvas?:ComponentRef<FlowCanvas>;
+	#blocks?:ComponentRef<FlowBlockEditor>;
+	#blocksLoader = inject( FlowBlocksLoader );
 	#countReads = new Latest();//the counts and the list apart, so a filter's read of the list leaves the counts' alone
 	#listReads = new Latest();
 	#lineageReads = new Latest();
@@ -184,7 +194,10 @@ export class FlowHistory implements OnDestroy{
 				untracked( ()=>this.#canvas!.setInput( 'decor', decor ) );
 		} );
 	}
-	ngOnDestroy(){ this.stop(); }
+	ngOnDestroy(){
+		this.stop();
+		this.closeBlocks();
+	}
 	async #import():Promise<void>{
 		try{
 			const canvas = await loadFlowView( this.slot() );
@@ -198,6 +211,7 @@ export class FlowHistory implements OnDestroy{
 		}
 	}
 	#load( graph:FlowGraph|undefined ):void{
+		this.closeBlocks();//the node's workspace is the version's
 		this.#loaded = graph;
 		this.#canvas?.instance.load( graph ?? {nodes: []} );
 	}
@@ -237,6 +251,7 @@ export class FlowHistory implements OnDestroy{
 	//and keeps nothing of the last, whose trace may not be the one now picked;  the problem says why.
 	async read():Promise<void>{
 		this.stop();
+		this.closeBlocks();
 		this.#player = undefined;
 		this.selected.set( undefined );
 		this.lineage.set( undefined );
@@ -313,6 +328,7 @@ export class FlowHistory implements OnDestroy{
 	}
 	//a record picked:  its message's lineage, the path lit and the scrubber at its time
 	async select( record:FlowTraceRecord ):Promise<void>{
+		this.closeBlocks();
 		if( this.selected()==record ){
 			this.selected.set( undefined );
 			this.lineage.set( undefined );
@@ -435,6 +451,42 @@ export class FlowHistory implements OnDestroy{
 		finally{
 			player.reading = false;
 		}
+	}
+	//The node of the version drawn that a record's blocks are of:  a Function node built from blocks, where the record has
+	//any.  None for a typed body, whose `__block` calls are its own.
+	blocksNode( r:FlowTraceRecord ):FlowNode|undefined{
+		const node = r.blocks.length ? this.graph()?.nodes.find( n=>n.id==r.node ) : undefined;
+		return node && isFlowBlocks( node.props['blocks'] ) ? node : undefined;
+	}
+	//the node's workspace over the canvas, the blocks the message passed lit;  pressed again, it goes
+	async showBlocks( r:FlowTraceRecord ):Promise<void>{
+		const node = this.blocksNode( r ), was = this.blocksOf();
+		this.closeBlocks();
+		if( !node || was==r )
+			return;
+		this.blocksOf.set( r );
+		this.blocksError.set( undefined );
+		try{
+			const view = await this.#blocksLoader.load( this.blocksSlot() );
+			if( this.blocksOf()!=r )//let go while it loaded
+				return view.destroy();
+			view.setInput( 'title', `${node.name || node.type} · message ${r.msgId}` );
+			view.setInput( 'blocks', node.props['blocks'] );
+			view.setInput( 'code', typeof node.props['code']=='string' ? node.props['code'] : '' );
+			view.setInput( 'readonly', true );
+			view.setInput( 'lit', r.blocks );
+			view.instance.closed.subscribe( ()=>this.closeBlocks() );
+			this.#blocks = view;
+		}
+		catch( e ){
+			this.blocksOf.set( undefined );
+			this.blocksError.set( errorMessage( e, 'Could not load the blocks.' ) );
+		}
+	}
+	closeBlocks():void{
+		this.#blocks?.destroy();
+		this.#blocks = undefined;
+		this.blocksOf.set( undefined );
 	}
 	nodeName( id:string ):string{
 		const node = this.graph()?.nodes.find( n=>n.id==id );

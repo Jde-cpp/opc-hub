@@ -7,7 +7,9 @@ import { ConfirmDialog } from 'jde-framework';
 import { stable } from 'jde-spa/testing';
 import { Flow, FlowDeployed, FlowGraph } from '../../../../model/flow';
 import { normalizeFlowGraph } from '../../../../model/flow-nodes';
+import { flowBlocksLoader, FlowBlocksStub } from 'jde-opc/testing';
 import { FlowService } from '../../../../services/flow-service';
+import { FlowBlocksLoader } from '../blocks/flow-blocks-loader';
 import { FlowCanvas } from '../canvas/flow-canvas';//here ahead of the editor's own import of it, which then waits for nothing
 import { FlowDeployDialog } from './flow-deploy-dialog';
 import { FlowEditor, FlowEditorSource } from './flow-editor';
@@ -21,7 +23,7 @@ const create = async ( {flow=row(), source={deployed: deployed()}}:{flow?:Flow; 
 	const flows = { deploy: vi.fn( async ( ..._args:unknown[] )=>answer ), setEnabled: vi.fn( async ( ..._args:unknown[] )=>{} ), inject: vi.fn( async ( ..._args:unknown[] )=>{} ) };
 	const dialog = dialogStub( 'the comment' ), snackbar = snackbarStub(), gateway = { postQL: vi.fn() };
 	dialog.answers.set( ConfirmDialog, true );//what the canvas holds may go
-	TestBed.configureTestingModule( {providers: [{ provide: FlowService, useValue: flows }, { provide: MatDialog, useValue: dialog }, { provide: SnackbarService, useValue: snackbar }]} );
+	TestBed.configureTestingModule( {providers: [{ provide: FlowService, useValue: flows }, { provide: MatDialog, useValue: dialog }, { provide: SnackbarService, useValue: snackbar }, { provide: FlowBlocksLoader, useValue: flowBlocksLoader() }]} );
 	const fixture = TestBed.createComponent( FlowEditor ), editor = fixture.componentInstance;
 	fixture.componentRef.setInput( 'gateway', gateway );
 	fixture.componentRef.setInput( 'flow', flow );
@@ -94,6 +96,43 @@ describe( 'FlowEditor', ()=>{
 		expect( [...editor.faults()] ).toEqual( [['fn', '`outputs` must be a whole number, 100 at most.']] );
 		expect( element.querySelector( 'flow-node-form .fault' )!.textContent ).toContain( '100 at most' );
 		expect( element.querySelector( '[data-f-node-id="fn"]' )!.classList.contains( 'faulty' ) ).toBe( true );
+	} );
+	//A Function node's block editor (#458) takes the canvas's room and the form's:  its Done is the node's blocks and the code
+	//they wrote, one step of the canvas's history, and until then nothing deploys.
+	it( "builds a Function node's body from blocks", async ()=>{
+		const { editor, element, fixture } = await create();
+		editor.show( 'fn' );
+		await stable( fixture );
+		const blocks = ()=>fixture.debugElement.query( By.directive( FlowBlocksStub ) ), layer = <HTMLElement>element.querySelector( '.work > .blocks' );
+		expect( [blocks(), layer.hidden] ).toEqual( [null, true] );
+		(<HTMLButtonElement>element.querySelector( '.form .edit-blocks' )).click();//a new node's body:  nothing to ask
+		await stable( fixture );
+		expect( [editor.blocksOf(), layer.hidden, (<HTMLElement>element.querySelector( '.canvas' )).inert] ).toEqual( ['fn', false, true] );
+		expect( (<FlowBlocksStub>blocks().componentInstance).title() ).toBe( 'Scale' );
+		editor.patch( 'fn', {name: 'x'} );
+		await stable( fixture );
+		expect( [editor.dirty(), editor.canDeploy()] ).toEqual( [true, false] );//what the blocks hold is not yet the graph's
+		(<FlowBlocksStub>blocks().componentInstance).closed.emit();//Cancel
+		await stable( fixture );
+		expect( [blocks(), editor.blocksOf(), editor.canDeploy(), editor.selectedNode()!.props] ).toEqual( [null, undefined, true, {code: 'return msg;'}] );
+		expect( document.activeElement ).toBe( element.querySelector( '.form .edit-blocks' ) );
+		await editor.openBlocks( editor.selectedNode()! );
+		await stable( fixture );
+		const built = {blocks: {languageVersion: 0, blocks: [{type: 'flow_return', id: 'r'}]}};
+		(<FlowBlocksStub>blocks().componentInstance).done.emit( {blocks: built, code: "__block('r');\nreturn null;"} );
+		await stable( fixture );
+		expect( editor.selectedNode()!.props ).toEqual( {code: "__block('r');\nreturn null;", blocks: built} );
+		expect( [blocks(), layer.hidden] ).toEqual( [null, true] );
+		expect( (<HTMLTextAreaElement>element.querySelector( '.form .code textarea' )).readOnly ).toBe( true );
+		expect( element.querySelector( '.form .edit-blocks' )!.textContent ).toContain( 'Edit blocks' );
+		await editor.openBlocks( editor.selectedNode()! );//the workspace it kept
+		await stable( fixture );
+		expect( (<FlowBlocksStub>blocks().componentInstance).blocks() ).toEqual( built );
+		await editor.revert();//not while the blocks are open
+		expect( editor.blocksOf() ).toBe( 'fn' );
+		fixture.componentRef.setInput( 'source', {deployed: deployed()} );//another graph on the canvas:  the editor goes with the node
+		await stable( fixture );
+		expect( [blocks(), editor.blocksOf()] ).toEqual( [null, undefined] );
 	} );
 	it( 'deploys the canvas with the comment given', async ()=>{
 		const { editor, flows, dialog, deploys, snackbar, gateway, asked, fixture } = await create();

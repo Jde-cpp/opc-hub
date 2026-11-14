@@ -35,10 +35,19 @@
 	mat-icon{ flex: none; }
 }
 .work{
+	position: relative;
 	display: flex;
 	flex: 1;
 	min-height: 0;
 	border-top: 1px solid var(--mat-sys-outline-variant);
+}
+/* a Function node's block editor, over the canvas and the form */
+.blocks{
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	display: flex;
+	&[hidden]{ display: none; }
 }
 .canvas{
 	display: flex;

@@ -104,6 +104,8 @@ namespace Jde::Opc::Flows::Tests{
 		EXPECT_FAULT( RefusedProps("template", R"({"template":"{{payload"})"), "n", "a tag that does not close" );
 		EXPECT_EQ( RefusedProps("function", R"({"code":"return msg;","onStart":"context.set( 'n', 0 );","onStop":""})"), "" );
 		EXPECT_FAULT( RefusedProps("function", "{}"), "n", "`code` must be text, the body" );
+		EXPECT_EQ( RefusedProps("function", R"({"code":"return msg;","blocks":{"blocks":{"languageVersion":0,"blocks":[]}}})"), "" ) << "the workspace a body was built from, which the editor keeps beside it";
+		EXPECT_FAULT( RefusedProps("function", R"({"code":"return msg;","blocks":"<xml/>"})"), "n", "`blocks` must be an object" );
 		EXPECT_FAULT( RefusedProps("function", R"({"code":"return msg;","onStart":5})"), "n", "`onStart` must be text" );
 		EXPECT_FAULT( RefusedProps("function", R"({"code":"const a = 1;\nreturn msg +;"})"), "n", "`code`:  SyntaxError" );
 		EXPECT_FAULT( RefusedProps("function", R"({"code":"const a = 1;\nreturn msg +;"})"), "n", "code:2" );

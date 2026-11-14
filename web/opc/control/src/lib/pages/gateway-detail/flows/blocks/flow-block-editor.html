@@ -1,0 +1,22 @@
+<div class="bar" role="toolbar" [attr.aria-label]="readonly() ? 'The blocks a message passed' : 'Block editor'">
+	<mat-icon aria-hidden="true">extension</mat-icon>
+	<h3>{{ title() }}</h3>
+	<span class="hint" role="status">{{ hint() }}</span>
+	@if( readonly() ){
+		<button #first matButton type="button" (click)="closed.emit()"><mat-icon>close</mat-icon>Close</button>
+	}
+	@else{
+		<button #first matButton type="button" (click)="closed.emit()">Cancel</button>
+		<button matButton="filled" type="button" (click)="finish()" [disabled]="!!fault()">Done</button>
+	}
+</div>
+@if( fault(); as f ){
+	<p class="fault" role="alert"><mat-icon aria-hidden="true">error</mat-icon><span>{{ f }}</span></p>
+}
+<div class="panes">
+	<div #host class="blocks" [class.lit]="readonly() && !!lit().length"></div>
+	<section class="code" [attr.aria-label]="readonly() ? 'The body\'s code' : 'The code the blocks write'">
+		<h4>{{ readonly() ? 'Code' : 'Generated code' }}</h4>
+		<pre tabindex="0">{{ shown() }}</pre>
+	</section>
+</div>
