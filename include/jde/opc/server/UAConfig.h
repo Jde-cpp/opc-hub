@@ -13,8 +13,9 @@ namespace Jde::Opc::Server {
 		UAConfig( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, UAHistory* history=nullptr )ε;
 		α Trust()ι->UATrust&{ return _trust; }
 		//Told of each async operation open62541 cancels - a timeout, a shutdown - with the pointer that keyed it, the value a callback
-		//source's write was handed:  its result is not to be set, since the memory is freed and the address may key another operation
-		//next.  Called under the service lock, as the write was.  Set before Run, by the host that answers writes asynchronously.
+		//source's write was handed or the outputs a method's call was:  its result is not to be set, since the memory is freed and the
+		//address may key another operation next.  Called under the service lock, as the write or the call was.  Set before Run, by the
+		//host that answers writes or calls asynchronously.
 		using AsyncCancel = function<void(const void*)>;
 		α OnAsyncCancel( AsyncCancel f )ι->void{ _asyncCancel = move(f); }
 	private:

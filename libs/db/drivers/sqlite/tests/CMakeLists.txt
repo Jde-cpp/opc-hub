@@ -38,7 +38,7 @@ endif()
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/Sqlite.Tests.jsonnet )
 
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+testPch( ${targetName} Jde.DB ) #the library it links: Jde.DB.Sqlite compiles -fvisibility=hidden, which its PCH records.
 
 if( WIN32 )
 	#copyLibDlls, not copyCommonDlls: this exe links into bin/ alongside Jde/Jde.DB, so staging those would copy them onto

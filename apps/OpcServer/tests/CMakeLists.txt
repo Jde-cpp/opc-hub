@@ -38,4 +38,4 @@ if( WIN32 )
 	)
 endif()
 
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+testPch( ${targetName} Jde.Opc.ServerLib )

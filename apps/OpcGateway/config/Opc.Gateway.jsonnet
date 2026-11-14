@@ -146,9 +146,9 @@ function( sync=false )
 			//An Open Protocol row's link to its controller (src/drivers/openProtocol/OpenProtocolDriver.h).  The durations are ISO 8601.
 			openProtocol:{
 				keepAlive:: "PT10S", //MID 9999 after this long without a message either way;  a controller drops a link silent for 15 s
-				replyTimeout:: "PT10S", //a connection, a request or an ack unanswered this long is a lost link
-				callTimeout:: "PT30S", //how long a method call holds, the server's asyncOperationTimeout
-				maxAsyncOperations:: 0, //the server's async queue, maxAsyncOperationQueueSize:  0 unlimited, as open62541's own
+				replyTimeout:: "PT10S", //a connection, a request, a command or an ack unanswered this long is a lost link
+				callTimeout:: "PT30S", //how long a method call holds for the controller's answer, the server's asyncOperationTimeout:  past it the caller is answered Bad_Timeout, and the answer, when it comes, is logged and not set
+				maxAsyncOperations:: 0, //the calls the server holds at once, maxAsyncOperationQueueSize:  one past it is answered Bad_TooManyOperations and not sent;  0 unlimited, as open62541's own
 				reconnectMin:: "PT1S", //the wait between connection attempts, doubling to reconnectMax
 				reconnectMax:: "PT1M",
 				maxBackfill:: 2000, //MID 0064 requests one recovery may send;  twice it is the deepest queue the row's server gives an item, where that is past open62541's 100

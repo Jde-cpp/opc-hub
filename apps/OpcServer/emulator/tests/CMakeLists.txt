@@ -31,4 +31,4 @@ linkAppRuntime( ${targetName} NOMINMAX LIBXML2 )
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/Opc.PlcEmulator.Tests.jsonnet )
 
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+testPch( ${targetName} Jde.Opc.UAServer ) #Jde.Opc.PlcEmulatorLib's, which is Jde.Opc.UAServer's.

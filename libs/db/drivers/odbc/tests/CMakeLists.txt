@@ -23,4 +23,4 @@ copyCommonDlls() #WIN32-only target: the root CMakeLists adds this directory ins
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/Odbc.Tests.jsonnet )
 
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+testPch( ${targetName} Jde.DB )

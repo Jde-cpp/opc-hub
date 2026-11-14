@@ -37,7 +37,7 @@ target_include_directories( ${targetName} PRIVATE ${jdeGeneratedIncludeDir} ${pr
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/Framework.Tests.jsonnet )
 
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+testPch( ${targetName} Jde )
 if( WIN32 )
 	set_target_properties( ${targetName} PROPERTIES
 		VS_DEBUGGER_COMMAND_ARGUMENTS "-tests -settings=${CMAKE_CURRENT_SOURCE_DIR}/config/Framework.Tests.jsonnet"

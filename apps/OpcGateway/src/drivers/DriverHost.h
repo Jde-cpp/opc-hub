@@ -2,6 +2,7 @@
 #include <jde/db/Key.h>
 #include <jde/opc/server/UAAccess.h>
 #include <jde/opc/server/UAServer.h>
+#include "DriverCalls.h"
 #include "IDriver.h"
 #include "../types/ServerCnnctn.h"
 
@@ -11,6 +12,14 @@ namespace Jde::Opc::Gateway{
 	///gateway/drivers/portBase plus the row's id, on a thread of its own;  its sessions are UAAccess's over the gateway's
 	//appClient, and its nodes are open to browse and read by every session and writable by none.  The row's one namespace is
 	//urn:jde:<slug>:<kind>, index 2, where its driver builds.
+	//A method of the row's namespace is its driver's, and the right to call one is the host's (spec *Commands*):  Execute on the
+	//enforced access row of a group that holds a variable of the row, the group's own by its guid else the hist_groups table's,
+	//as HistHost::Gate resolves it.  The groups are HistHost's as they are when the Call service asks, and the rights one
+	//lookup each (Authorize::ScopedRights), never a wait under the service lock.  A row no group holds, and a group whose row
+	//nothing enforces or that grants no Execute, has the call refused Bad_UserAccessDenied before its callback runs, with why
+	//in the log, since a Call's result carries a status alone.  A call a method answers later is held by the host
+	//(DriverCalls.h) until the driver answers, open62541 cancels it or the server goes;  the driver outlives its server, whose
+	//thread runs its methods.
 	//The hosts start with the gateway, after the access snapshot and before the groups load, whose first subscribes find them
 	//listening, and stop with it, after its clients.  Between the two they follow their rows, told by ServerCnnctnMAwait once a row
 	//is written:  a row made or restored gets its host, an edit of its url, kind or `driver` stops the host and starts one on the
@@ -42,15 +51,17 @@ namespace Jde::Opc::Gateway{
 		α Slug()Ι->const ServerCnnctnNK&{ return _slug; }
 		α Port()Ι->PortType{ return _port; }
 		α Sessions()Ι->vector<Opc::Server::UAAccess::Session>{ return _sessions->List(); }//the sessions its server holds, none once it has stopped.
+		α Calls()Ι->uint{ return _calls->Size(); }//the method calls its server holds for the driver's answer, none once it has stopped.
 	private:
 		//The drivers stop, each as its protocol closes its link;  then, with `wait`, the sessions open as the stop began are waited
-		//for, which their clients are closing;  then the servers go.
+		//for, which their clients are closing;  then the servers go, and each driver after its server.
 		Ω Stop( std::span<const sp<DriverHost>> hosts, bool wait )ι->void;
 		const ServerCnnctnPK _id;
 		const ServerCnnctnNK _slug;
 		PortType _port{};
-		up<Opc::Server::UAServer> _server;//before _driver, which goes first.
-		up<IDriver> _driver;
+		const sp<DriverCalls> _calls;
+		up<IDriver> _driver;//before _server, which goes first:  its methods' callbacks run on the server's thread until it has.
+		up<Opc::Server::UAServer> _server;
 		sp<Opc::Server::UAAccess::SessionList> _sessions;
 		friend struct DriverHosts;
 	};

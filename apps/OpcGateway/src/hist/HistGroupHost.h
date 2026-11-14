@@ -78,6 +78,7 @@ namespace Jde::Opc::Gateway{
 		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
 		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
+		α Size()Ι->uint;//its members.
 		//Each member as the endpoint serves it (GatewayServer::GroupLoaded):  its node, resolved thresholds and attributes, in one look.
 		α HistMembers()Ι->vector<HistMember>;
 		α NamespaceUris()Ι->vector<string>;//the connection's NamespaceArray as the collector last read it, empty before its first read.

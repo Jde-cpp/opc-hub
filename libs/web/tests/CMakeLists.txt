@@ -56,9 +56,7 @@ else()
 	endif()
 endif()
 
-target_precompile_headers( ${targetName} PRIVATE
-	pc.h
-)
+testPch( ${targetName} Jde.Web.Server )
 
 #Out-of-source - see the note in libs/app/shared/CMakeLists.txt.  PROTOC_OUT_DIR is the root, not the proto dir: the
 #output keeps the .proto's own relative path, so test.proto lands in ${CMAKE_CURRENT_BINARY_DIR}/proto.

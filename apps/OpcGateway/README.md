@@ -34,9 +34,13 @@ installed.
   (`DriverHost`), started with the gateway and with the row, restarted when its url, kind or `driver` is edited and
   stopped when it is deleted.  It presents the process's `/http/ssl` certificate, takes Sign & Encrypt alone, and admits
   the gateway's own clients and no other: a web session by its issued token, a group's collector as the gateway's own
-  user.  Every node is readable by any session and none is writable.  Behind it sits the kind's `IDriver`.  The Open
+  user.  Every node is readable by any session and none is writable.  A method is called under Execute on the enforced
+  access row of a group that holds a variable of the row, the group's own or `histGroups`'; a refused call is
+  `Bad_UserAccessDenied` and a line in the log with why.  A call a method answers later is held by the host
+  (`DriverCalls`) until the driver answers or open62541 cancels it, and each is logged at Information with the hub
+  user, the method, its arguments and the answer.  Behind the server sits the kind's `IDriver`.  The Open
   Protocol one (`src/drivers/openProtocol/`) keeps a session with the controller under the
-  `/gateway/drivers/openProtocol` settings and serves five objects.  `Result` has a variable per field of the
+  `/gateway/drivers/openProtocol` settings and serves six objects.  `Result` has a variable per field of the
   controller's last tightening result, MID 0061 at revisions 1 to 7: each result's fields carry one source timestamp,
   the controller's time read in the row's zone and kept distinct and increasing, and a field the controller's revision
   lacks reads `Bad_NotSupported`.  `Counters` are `Total`, `Ok` and `Nok`, the tightenings since the driver started.
@@ -51,6 +55,11 @@ installed.
   alarm, `Code`, `Active` and `Time`, each from the subscription the driver opens for it at every connect.  They read
   `Bad_WaitingForInitialData` until the controller's first report, `Bad_NotSupported` where it gives none, and
   `Bad_NoCommunication` over their last values from a loss of the link until each one's next report.
+  `Commands` holds the methods a user commands the controller by: `SelectPset( pset )`, `SelectJob( job )`,
+  `DisableTool()`, `EnableTool()` and `DownloadVin( vin )`, MIDs 0018, 0038, 0042, 0043 and 0050.  A call is held for
+  the controller's answer, `callTimeout` at most: Good on MID 0005, `Bad_InvalidState` on MID 0004 with its code in
+  `_Op.LastError`, `Bad_Timeout` where the controller is silent for `replyTimeout`, `Bad_NoCommunication` while the
+  link is down, and `Bad_OutOfRange`, with nothing sent, for a value its field does not hold.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.
@@ -173,6 +182,11 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
   a job, a VIN and an alarm followed as they are pushed, `Bad_NoCommunication` over the last values through a loss
   of the link, a controller that pushes nothing as it is subscribed to, a group recording the changes and the
   status, and what a controller lacks.
+- `DriverCommandTests`: `Commands` (the plan's *Phase 8*), against the same controller, through the QL's `call` -
+  each of the five methods and what the controller then reports, a value out of range and a job stepped down to two
+  digits, a refused command, a silent controller and a link that is down, Execute on an enforced group and its
+  absence, a call past `callTimeout` and one past `maxAsyncOperations`, a call that outlives its session, and a stop
+  with calls held.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.

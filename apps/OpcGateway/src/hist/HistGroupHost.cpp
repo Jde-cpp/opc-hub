@@ -152,6 +152,10 @@ namespace Jde::Opc::Gateway{
 			y.emplace_back( index, node.Ex );
 		return y;
 	}
+	α HistGroupHost::Size()Ι->uint{
+		rl _{ _mutex };
+		return _nodes.size();
+	}
 	α HistGroupHost::Index( const ExNodeId& node )Ι->optional<HistGroupNodePK>{
 		if( node.namespaceUri.length )
 			return _group->Find( node );

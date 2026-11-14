@@ -48,6 +48,4 @@ if( WIN32 )
 		RUNTIME_OUTPUT_DIRECTORY "${appOutDir}"
 	)
 endif()
-target_precompile_headers( ${targetName} PRIVATE
-	pc.h
-)
+testPch( ${targetName} Jde.Opc.GatewayLib )

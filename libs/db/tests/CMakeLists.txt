@@ -35,4 +35,4 @@ endif()
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/DB.Tests.jsonnet )
 
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+testPch( ${targetName} Jde.DB )

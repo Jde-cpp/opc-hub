@@ -1,10 +1,12 @@
 #include "OpenProtocolDriver.h"
+#include <boost/asio/post.hpp>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/UAString.h>
+#include <jde/opc/server/UAAccess.h>
 #include <jde/opc/server/UAServer.h>
 #include <jde/opc/openProtocol/logTags.h>
 #include "../../types/OpenProtocolRow.h"
@@ -26,8 +28,7 @@ namespace Jde::Opc::Gateway{
 		WARNT( ELogTags::Settings, "'{}' of {} is not allowed:  it must be positive.  Using {}.", path, Chrono::ToString(value), Chrono::ToString(dflt) );
 		return dflt;
 	}
-	//The block as a session's settings, with the row's ceilings.  callTimeout is the commands' (plan Phase 8), and maxBackfill
-	//the driver's own.
+	//The block as a session's settings, with the row's ceilings.  callTimeout, maxBackfill and maxSkew are the driver's own.
 	Ω sessionSettings( const OpenProtocolRow& row )ι->Session::Settings{
 		return {
 			.KeepAlive = blockDuration( "keepAlive", 10s ),
@@ -75,6 +76,26 @@ namespace Jde::Opc::Gateway{
 		const UA_Boolean ua{ value };
 		return TighteningResult::Scalar( &ua, UA_TYPES[UA_TYPES_BOOLEAN] );
 	}
+	//`Commands`' methods (spec *Commands*), each the MID of its purpose (§4.5) and the one argument it takes, none for the tool's two.
+	struct CommandMethod{ sv Name; uint16_t Mid; sv Argument; uint16_t Type; };
+	constexpr array<CommandMethod,5> _commands{{
+		{"SelectPset", Mid0018::Id, "pset", UA_TYPES_UINT16}, {"SelectJob", Mid0038::Id, "job", UA_TYPES_UINT16}, {"DisableTool", Mid0042::Id, {}, 0},
+		{"EnableTool", Mid0043::Id, {}, 0}, {"DownloadVin", Mid0050::Id, "vin", UA_TYPES_STRING}
+	}};
+	constexpr sv _commandsObject{ "Commands" };
+	//MID 0050's 25 characters at two UTF-8 bytes each, the most a Latin-1 character takes:  a VIN past it is refused by its length.
+	constexpr uint _vinBytes{ 50 };
+	//A method's request and its argument as the call's line has it, from the one input open62541 has typed:  a VIN quoted with its
+	//control characters escaped, so a client's text cannot end the line.
+	Ω commandRequest( uint16_t mid, const UA_Variant* input )ι->std::pair<Body,string>{
+		switch( mid ){
+			case Mid0018::Id:{ let pset = *(const UA_UInt16*)input->data; return { Mid0018{.Pset=pset}, std::to_string(pset) }; }
+			case Mid0038::Id:{ let job = *(const UA_UInt16*)input->data; return { Mid0038{.JobId=job}, std::to_string(job) }; }
+			case Mid0050::Id:{ auto vin = ToString( *(const UA_String*)input->data ); auto text = Ƒ( "{:?}", vin ); return { Mid0050{.Vin=move(vin)}, move(text) }; }
+			case Mid0042::Id: return { Mid0042{}, {} };
+			default: return { Mid0043{}, {} };
+		}
+	}
 
 	//How long the posts held the server's thread, counted there alone and said when the last has run, the driver gone:  a fill is
 	//a post a result, a burst of them (plan *Risks*).
@@ -92,14 +113,17 @@ namespace Jde::Opc::Gateway{
 		_slug{ row.Slug },
 		_url{ row.Url },
 		_maxSkew{ blockDuration("maxSkew", 5min) },
+		_callTimeout{ blockDuration("callTimeout", 30s) },
 		_maxAsyncOperations{ Settings::FindNumber<uint>(Ƒ("{}/maxAsyncOperations", _block)) },
 		_maxBackfill{ Settings::FindNumber<uint>(Ƒ("{}/maxBackfill", _block)).value_or(2000) },
+		_strand{ boost::asio::make_strand(*Executor()) },
 		_posts{ ms<Posts>(_slug) },
 		_lacked( TighteningResult::Variables().size() )
 	{
 		const OpenProtocolRow controller{ row, sl };
 		_zone = controller.TimeZone ? controller.TimeZone : std::chrono::current_zone();
-		_session.emplace( boost::asio::make_strand(*Executor()), controller.Host, controller.Port, sessionSettings(controller), Session::Events{
+		_ceilings = controller.Revisions;
+		_session.emplace( _strand, controller.Host, controller.Port, sessionSettings(controller), Session::Events{
 			[this]( Session::Connection&& connection ){ OnConnected( move(connection) ); },
 			[this]( const Failure& why ){ OnLost( why ); },
 			[this]( Message&& pushed ){ OnPushed( move(pushed) ); }
@@ -110,6 +134,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α OpenProtocolDriver::Configure( Opc::Server::UASettings& settings )ε->void{
 		settings.Limit.MaxAsyncOperations = _maxAsyncOperations;
+		settings.AsyncTimeout = _callTimeout;
 		settings.Limit.MaxQueueSize = 2*_maxBackfill;//the held count is not known here:  as many as the walk may find (spec *Backfill*).
 	}
 
@@ -130,9 +155,10 @@ namespace Jde::Opc::Gateway{
 		if( let sc = UA_Server_writeDataValue(&server, nodeId(ns, path), value); sc )
 			WARN( "({}) could not write {}:  {}", slug, path, UAException::Message(sc) );
 	}
-	α OpenProtocolDriver::Build( UA_Server& server, UA_UInt16 ns )ε->void{
+	α OpenProtocolDriver::Build( UA_Server& server, UA_UInt16 ns, sp<DriverCalls> calls )ε->void{
 		_server = &server;
 		_ns = ns;
+		_calls = move( calls );
 		let addObject = [&]( sv name ){
 			UA_ObjectAttributes object = UA_ObjectAttributes_default;
 			object.displayName = UA_LocalizedText{ {}, ToUV(name) };
@@ -173,6 +199,33 @@ namespace Jde::Opc::Gateway{
 				write( server, ns, _slug, statePath(i), waiting );
 			}
 		}
+		//Each method's context is this driver, which its host keeps until the server has gone.  Its InputArguments property is
+		//added here, under its path as every node is:  open62541 adds one by a string id and leaks its copy of the id
+		//(UA_Server_addMethodNodeEx_finish, v1.5.10), and gives one it names itself a number in namespace 1.
+		addObject( _commandsObject );
+		for( let& command : _commands ){
+			UA_MethodAttributes attributes = UA_MethodAttributes_default;
+			attributes.displayName = UA_LocalizedText{ {}, ToUV(command.Name) };
+			attributes.executable = attributes.userExecutable = true;
+			let path = Ƒ( "{}.{}", _commandsObject, command.Name );
+			UAε( UA_Server_addMethodNode(&server, nodeId(ns, path), nodeId(ns, _commandsObject), UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QualifiedName{ns, ToUV(command.Name)}, attributes, &OnCall, 0, nullptr, 0, nullptr, this, nullptr) );
+			if( command.Argument.empty() )
+				continue;
+			UA_Argument argument; UA_Argument_init( &argument );
+			argument.name = ToUV( command.Argument );
+			argument.dataType = UA_TYPES[command.Type].typeId;
+			argument.valueRank = UA_VALUERANK_SCALAR;
+			UA_UInt32 count{ 1 };
+			UA_VariableAttributes inputs = UA_VariableAttributes_default;
+			inputs.displayName = UA_LocalizedText{ {}, ToUV("InputArguments") };
+			inputs.dataType = UA_TYPES[UA_TYPES_ARGUMENT].typeId;
+			inputs.valueRank = UA_VALUERANK_ONE_DIMENSION;
+			inputs.arrayDimensions = &count;
+			inputs.arrayDimensionsSize = 1;
+			inputs.accessLevel = UA_ACCESSLEVELMASK_READ;
+			UA_Variant_setArray( &inputs.value, &argument, 1, &UA_TYPES[UA_TYPES_ARGUMENT] );
+			UAε( UA_Server_addVariableNode(&server, nodeId(ns, Ƒ("{}.InputArguments", path)), nodeId(ns, path), UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), UA_QualifiedName{0, ToUV("InputArguments")}, UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), inputs, nullptr, nullptr) );
+		}
 		addObject( "_Op" );
 		let add = [&]( sv name, const UA_DataType& type, const void* initial ){ addVariable( "_Op", name, type, initial ); };
 		const UA_Boolean no{};
@@ -196,7 +249,100 @@ namespace Jde::Opc::Gateway{
 		write( server, ns, _slug, "_Op.Skew", opValue(&skew, UA_TYPES[UA_TYPES_DOUBLE], UA_STATUSCODE_BADWAITINGFORINITIALDATA) );//no clock read yet.
 	}
 	α OpenProtocolDriver::Start()ι->void{ _session->Start(); }
-	α OpenProtocolDriver::Stop( absl::AnyInvocable<void()> stopped )ι->void{ _session->Stop( std::move(stopped) ); }
+	α OpenProtocolDriver::Stop( absl::AnyInvocable<void()> stopped )ι->void{
+		_stopping = true;
+		_session->Stop( [gone=_stopped, stopped=std::move(stopped)]()mutable{ *gone = true; stopped(); } );
+	}
+
+	//The Call service has typed the input by the method's InputArguments and asked the host for Execute (spec *Commands*).  A
+	//call with no session's context is the server's own, UA_Server_call, with no user to answer for it.
+	α OpenProtocolDriver::OnCall( UA_Server*, const UA_NodeId*, void* sessionContext, const UA_NodeId* methodId, void* methodContext, const UA_NodeId*, void*, size_t inputSize, const UA_Variant* input, size_t, UA_Variant* output )ι->UA_StatusCode{
+		let driver = static_cast<OpenProtocolDriver*>( methodContext );
+		if( !driver || !methodId || !output )
+			return UA_STATUSCODE_BADINTERNALERROR;
+		let session = static_cast<const Opc::Server::UAAccess::SessionContext*>( sessionContext );
+		if( !session )
+			return UA_STATUSCODE_BADUSERACCESSDENIED;
+		let id = methodId->identifierType==UA_NODEIDTYPE_STRING ? ToSV( methodId->identifier.string ) : sv{};
+		let command = std::ranges::find_if( _commands, [&]( let& c ){ return id==Ƒ( "{}.{}", _commandsObject, c.Name ); } );
+		if( command==_commands.end() )
+			return UA_STATUSCODE_BADMETHODINVALID;
+		if( command->Argument.size() && (inputSize!=1 || !UA_Variant_hasScalarType(input, &UA_TYPES[command->Type])) )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		//Neither the line nor the codec's refusal, which quotes the value, carries a VIN of any length.
+		if( let bytes = command->Mid==Mid0050::Id ? static_cast<const UA_String*>(input->data)->length : 0; bytes>_vinBytes ){
+			driver->_calls->Refused( session->UserPK, Ƒ("{}( {} bytes )", command->Name, bytes), UA_STATUSCODE_BADOUTOFRANGE, Ƒ("A VIN is at most 25 characters, {} bytes.", _vinBytes) );
+			return UA_STATUSCODE_BADOUTOFRANGE;
+		}
+		auto [request, argument] = commandRequest( command->Mid, input );
+		return driver->Command( move(request), Ƒ("{}({})", command->Name, argument.empty() ? string{} : Ƒ(" {} ", argument)), session->UserPK, output );
+	}
+	//What no revision the row may ask carries is refused here, with nothing sent;  what the revision the controller settles does
+	//not carry, by the session as it encodes the request (EFailure::Value).  The strand has the call through a post to the server's
+	//thread, which runs once this service has returned:  open62541 cancels a call past maxAsyncOperations after its callback
+	//(persistAsyncResponseOperation), and Send's Held must find that.  The driver may have stopped, and gone, by the time the strand
+	//runs.
+	α OpenProtocolDriver::Command( Body&& request, string&& text, UserPK user, const UA_Variant* output )ι->UA_StatusCode{
+		if( _stopping ){
+			_calls->Refused( user, text, UA_STATUSCODE_BADSHUTDOWN, "The driver is stopping." );
+			return UA_STATUSCODE_BADSHUTDOWN;
+		}
+		let mid = MidOf( request );
+		let ceiling = _ceilings.find( mid );
+		let revision = ceiling==_ceilings.end() || !ceiling->second ? MaxRevision( mid ) : std::min( MaxRevision(mid), ceiling->second );
+		if( let frame = Encode({.Revision=revision}, request); !frame ){
+			_calls->Refused( user, text, UA_STATUSCODE_BADOUTOFRANGE, frame.error().What );
+			return UA_STATUSCODE_BADOUTOFRANGE;
+		}
+		auto send = [this, stopped=_stopped, calls=_calls, call=_calls->Hold(output, user, text), request=move(request)]()mutable{
+			if( *stopped )
+				calls->Dropped( call, "The driver has stopped." );
+			else
+				Send( move(call), move(request) );
+		};
+		Opc::Server::UAServer::Post( *_server, [strand=_strand, send=move(send)]( UA_Server& )mutable{ boost::asio::post( strand, move(send) ); } );
+		return UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
+	}
+	//Behind whatever is outstanding (§3.2.1).  A call open62541 cancelled before this - the queue's limit after its callback
+	//returned, a client's Cancel - has its client answered, and is not sent.  A request the session takes after its stop has
+	//ended is answered at once, unsent, on a strand the driver may have left.
+	α OpenProtocolDriver::Send( DriverCalls::Call&& call, Body&& request )ι->void{
+		if( !_calls->Held(call) ){
+			_calls->Dropped( call, "open62541 cancelled it first - a client's Cancel, the queue's limit or a timeout." );
+			return;
+		}
+		let mid = MidOf( request );
+		_session->Request( move(request), [this, mid, stopped=_stopped, calls=_calls, call=move(call)]( Session::Reply&& reply )mutable{
+			if( *stopped )
+				calls->Dropped( call, "The driver stopped first." );
+			else
+				OnCommanded( move(call), mid, move(reply) );
+		} );
+	}
+	//MID 0005 is Good.  MID 0004 is the controller's refusal, a Viewer's 92 and a second Actor's 35 among its codes;  a
+	//controller silent for replyTimeout has lost its link by it;  a link that is down, or goes while the request waits, sent
+	//nothing or has no answer to give.  A driver whose session stopped for a controller it does not take has no link either.
+	α OpenProtocolDriver::OnCommanded( DriverCalls::Call&& call, uint16_t mid, Session::Reply&& reply )ι->void{
+		UA_StatusCode result{ UA_STATUSCODE_GOOD };
+		string detail;
+		if( reply )
+			ShowRevision( mid, _session->Revision(mid) );
+		else{
+			let& why = reply.error();
+			detail = why.What;
+			switch( why.Kind ){
+				case EFailure::Refused:
+					result = UA_STATUSCODE_BADINVALIDSTATE;
+					WriteText( "LastError", why.What );
+					break;
+				case EFailure::Timeout: result = UA_STATUSCODE_BADTIMEOUT; break;
+				case EFailure::Value: result = UA_STATUSCODE_BADOUTOFRANGE; break;
+				case EFailure::Stopped: result = _stopping ? UA_STATUSCODE_BADSHUTDOWN : UA_STATUSCODE_BADNOCOMMUNICATION; break;
+				default: result = UA_STATUSCODE_BADNOCOMMUNICATION;
+			}
+		}
+		_calls->Answer( *_server, move(call), result, move(detail) );
+	}
 
 	//On the server's own thread, not the strand's executor thread, which the service lock's wait would hold (UAServer::Post).
 	α OpenProtocolDriver::Post( Writes&& writes )ι->void{
