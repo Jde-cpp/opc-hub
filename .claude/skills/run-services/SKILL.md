@@ -1,6 +1,6 @@
 ---
 name: run-services
-description: Build, launch, and drive the Jde C++ services — AppServer (1967), OpcGateway (1968), OpcServer (1970), or the hub Jde.Opc.Hub (AppServer + OpcGateway in one process on 1967) — the PLC emulator that feeds the OpcServer, and the Open Protocol simulator the driver's hand checks run against. Use when asked to run, start, stop, or smoke-test a service, to send it a GraphQL query or mutation, to read a running service's live log levels, or to confirm a change works in the real app rather than in the test suite.
+description: Build, launch, and drive the Jde C++ services — AppServer (1967), OpcGateway (1968), OpcServer (1970), or the hub Jde.Opc.Hub (AppServer + OpcGateway in one process on 1967) — the PLC emulator that feeds the OpcServer, and the Open Protocol simulator and bench controller the driver's hand checks run against. Use when asked to run, start, stop, or smoke-test a service, to send it a GraphQL query or mutation, to read a running service's live log levels, or to confirm a change works in the real app rather than in the test suite.
 ---
 
 # Running the Jde C++ services
@@ -287,7 +287,139 @@ Gotchas:
   `/jobs/{id}/select` the selections, `/config/failure` latency, loss and corruption.
 - **It has no** MID 0064, 0070 to 0077, 0080, 9997 or 9998, and its MID 0002 at 6 says no
   sequence numbers, so link level is off: backfill, alarms, the clock and link level are
-  the bench controller's (10b).
+  the bench controller's (10b, *Open Protocol bench controller* below).
+
+## Open Protocol bench controller
+
+The hand checks of the Open Protocol plan's Phase 10b (`docs/open-protocol/plan.md`, *Phase 10*):
+a Power Focus 6000 with two virtual stations, each on its own port, the tool at the first.
+Three tools, in this order, and what each cannot see the next does.  Until the controller is
+there every one of them runs against the library's stand-in for it (`StandIn.h`), which is
+how they were checked; a pass there says the tool works, not what the controller does.
+
+**The controller**, per station in its *Protocols* menu: *Open Protocol* On, *Server port
+number* 4545 and 4546, *Communication timeout* 15 s, *Disconnect* None, *PLC Index* 1 and 2,
+and both ports open in its firewall.  Note its firmware release: it goes in every label
+below.  A command takes more (PF6000 appendix §2.5, §2.7): MID 0018 a *Source Tightening*
+task, and its number is that task's *Identifier number*, not the set's index, which is what
+MID 0015 and a result carry; MID 0038 a *Source Batch* with numbers.
+
+**1. The bench client**, `open-protocol-bench.py`, speaks the protocol raw, reads it by the
+specification's tables and never through the codec, so it shows what the controller sends
+whatever the codec makes of it, and makes the checks the driver cannot: a withheld
+acknowledgement, a number out of order.  Every frame in is printed, logged to
+`<out>/<label>.log` and kept as a file, up to `--per` (4) of each MID and revision.  A mode
+a check, each station in turn (`-h` lists them):
+
+```bash
+P=$JDE_DIR/.claude/skills/run-services/open-protocol-bench.py
+H=192.168.0.10; O=~/pf6000-capture; L=pf6000-3.10-s1     # the controller, where the capture goes, what sent it
+python3 $P identify $H 4545 --out $O --label $L   # MID 0002 field by field:  sequence number support, the station id
+python3 $P ladder   $H 4545 --out $O --label $L   # the step-down:  each request from the driver's revision, the refusals on the way
+python3 $P link     $H 4545 --out $O --label $L   # link level:  a request acknowledged, the same again;  --break adds a number out of order
+python3 $P clock    $H 4545 --out $O --label $L   # MID 0081 against this box's clock
+python3 $P first    $H 4545 --out $O --label $L   # what follows each subscription's MID 0005 with nothing changed
+python3 $P results  $H 4545 --out $O --label $L   # make 3 tightenings:  each MID 0061 by its fields, a name's bytes past ASCII in hex
+python3 $P walk     $H 4545 --out $O --label $L   # MID 0064 back from the latest:  ids, times, stations
+python3 $P alarms   $H 4545 --out $O --label $L   # raise an alarm, acknowledge it:  MID 0071, 0074, 0076
+python3 $P hold     $H 4545 --out $O --label $L   # make 3 tightenings:  what comes while MID 0062 is withheld, and after it
+python3 $P hold     $H 4545 --out $O --label $L --level link   # the same with MID 9997 withheld
+python3 $P ask      $H 4545 60 9 --out $O --label $L           # anything else:  a MID, a revision, its data
+```
+
+What the appendix's Table 1 has `ladder` print for a PF6000: MID 0060 answered at 7, MID 0014
+at 1 behind refusals at 3 and 2, MID 0034 at 4 behind 6 and 5, MID 0051 at 2, MID 0070 at 3,
+MID 0064 at 7 and MID 0080 at 1.  A `!!` line is where a frame leaves its table, the byte
+and the parameter named.  `--spaces` writes a header's unused fields blank, as the
+specification's examples, where the default is the digits the driver's encoder writes: a
+controller that answers one and not the other is a finding.
+
+**2. The driver's cases**, four of `Jde.Opc.Tests`, `DriverControllerTests`, skipped unless
+`/testing/openProtocolController` names the controller: the step-down, link level, the
+identity and the clock of each station; a result landing in its station's row alone; an
+alarm raised and acknowledged; and an outage filled by the walk across both stations, the
+link cut by a relay of the case's own.  A case asks on the console for what it needs of the
+hand at the controller, `>>>>>>>>>> At the controller:  make 2 tightening(s) at station 1`,
+waits `handTimeout` (10 min) for it, and prints under `NOTE` what the specification leaves
+open.  The last one has the tool moved to station 2 and leaves it there.  The key and the
+filter are hidden in the suite's config, so a scratch config beside it sets both with `:::`;
+`log` and the tag put every frame in the suite's log, and `maxBackfill` is the suite's 6
+raised for a controller with a history:
+
+```bash
+C=$JDE_DIR/apps/OpcGateway/tests/config/bench.jsonnet
+echo "(import 'Opc.Tests.jsonnet') + { testing+:{ tests::: 'DriverControllerTests.*', openProtocolController::: { host: '$H', stations: [4545, 4546] } }, gateway+:{ drivers+:{ openProtocol+:{ log: true, maxBackfill: 2000 } } }, logging+:{ spd+:{ tags+:{ openProtocol: 'Trace' } } } }" > $C
+cd $buildDir/runtime
+REPO_SOURCE_DIR=$JDE_DIR REPO_BUILD_DIR=$(dirname $buildDir) $buildDir/apps/OpcGateway/tests/Jde.Opc.Tests -tests -settings=$C -include=args/sqlite -arg path=:memory: 2>&1 | tee $O/cases.log
+rm $C
+```
+
+`timeZone: 'Europe/Stockholm'` beside `host` is the zone the controller's clock keeps where
+it is not this box's, and `psetName: 'Größe M8'` the name its results are to carry, a set
+named outside ASCII at the controller first.  `openProtocolController::: { standIn: true }`
+in place of the host runs the four against the stand-in, about 30 s, the cases' own check.
+A case that fails against the controller is a difference from the specification's account:
+settle it against the tables, fix the codec or the driver where they are wrong, and fold
+what the controller does into `docs/open-protocol/spec.md`.
+
+**3. The hub**, for what takes a day or a hand on the HMI.  A dev database made before the
+row had its `kind` stops the hub at `Unknown column 'kind'`: sync its schema, `-sync` on one
+start, or run the hub on a scratch sqlite file, `-include=args/sqlite -arg path=<file> -sync`,
+which is how these lines were checked.  A row a station and a group a row, which no page
+makes yet; a mutation refused for want of rights takes a browser session's `JDE_SESSION`:
+
+```bash
+$D start hub && $D login
+$D ql hub 'mutation createServerConnection( slug:"pf6000-s1", name:"PF6000 station 1", isDefault:false, url:"open-protocol://192.168.0.10:4545", kind:"open-protocol" ){id}'
+$D ql hub 'mutation createHistGroup( name:"PF6000 station 1", slug:"pf6000-s1", serverConnectionId:<id> ){id}'
+$D ql hub 'mutation createHistGroupNode( histGroupId:<group>, node:"{\"nsu\":\"urn:jde:pf6000-s1:open-protocol\",\"s\":\"Result.TighteningId\"}" ){id}'   # and Counters.Total, Result.Torque
+$D ql hub 'nodes(opc:"pf6000-s1", id:[{ns:2,s:"_Op.Connected"},{ns:2,s:"_Op.Revisions"},{ns:2,s:"_Op.Results"},{ns:2,s:"_Op.LostResults"},{ns:2,s:"_Op.Reconnects"},{ns:2,s:"_Op.LastError"}]){ id value }'
+$D ql hub 'history( group:<group>, nodes:[{nsu:"urn:jde:pf6000-s1:open-protocol",s:"Result.TighteningId"}], start:"2026-11-14T00:00:00Z", end:"2026-11-15T00:00:00Z", limit:1000 ){ continuation values{ source status value } }'
+```
+
+A row whose controller keeps another zone takes `driver:"{\"timeZone\":\"Europe/Stockholm\"}"`.
+`/gateway/drivers/openProtocol/log: true` with the `openProtocol` tag at Trace, set in a
+config beside `Opc.Hub.jsonnet`, puts every frame in `Opc.Hub.log`.
+
+- **The Disconnect action.**  At the HMI set station 1's *Disconnect* to lock the tool, then
+  `$D stop hub`: try the trigger, and write down what the HMI shows, whether the second
+  station's tool is locked too, and what frees it, the hub's return or a hand at the HMI.
+  Set it back to None.  The help's warning is written from this.
+- **The soak.**  A day of tightenings at both stations with the hub up, a cable pulled once
+  or twice.  At its end each row's `_Op.Results` is its group's count of `Result.TighteningId`
+  over the day, `_Op.LostResults` is 0, `_Op.Reconnects` the cables pulled, and the bench
+  client's `walk --steps 50` at each station names the ids the group holds, in its order.
+
+**The captures** become the codec's vectors: `python3 $P frames $buildDir/runtime/logs/Opc.Hub.log --out $O --label $L`
+takes the frames a log holds, as the client kept its own; a few of each MID and revision go
+into `libs/opc/openProtocol/tests/fixtures/` (its `README.md` says which), and
+`Jde.Opc.OpenProtocol.Tests`' `FixtureTests` then reads each.
+
+**Before the controller**, the stand-in in place of it.  The client's modes against
+`StandInTests.DISABLED_Serves`, which serves its two stations on 14545 and 14546 for five
+minutes (`/testing/standIn`), a rundown a second, an alarm every twenty:
+
+```bash
+cd $buildDir/runtime
+REPO_SOURCE_DIR=$JDE_DIR REPO_BUILD_DIR=$(dirname $buildDir) $buildDir/libs/opc/openProtocol/tests/Jde.Opc.OpenProtocol.Tests -tests -settings=$JDE_DIR/libs/opc/openProtocol/tests/config/OpenProtocol.Tests.jsonnet --gtest_also_run_disabled_tests --gtest_filter=StandInTests.DISABLED_Serves &
+python3 $P walk 127.0.0.1 14545 --out /tmp/capture --label standin-s1
+```
+
+Gotchas:
+
+- **The stand-in is the appendix, not the controller.**  It numbers its messages, pushes
+  what is selected as a subscription is accepted and has the revisions of Table 1.  Whether
+  a PF6000 does the first two is what the bench is for: Table 1 has no row for MID 9997 or
+  9998 and marks MID 0002 partly supported at revision 6.
+- **The appendix on ServAid is release 2.8's**, valid from 2.8.14.  A controller on a later
+  release may answer higher revisions than its table, which the step-down's check then shows.
+- **A loosening is a result.**  A bolt loosened between two tightenings comes as MID 0061 too,
+  result type 2: it counts in `_Op.Results` and a watcher's ids, and not in `Counters`.
+- **A second client.**  The outage's case holds a session of its own at each station beside
+  the row's.  A station that refuses or drops it has no slot for one, which is the finding,
+  and the case cannot run there.
+- **The served stand-in's results are loosenings** at both stations at once, so against it
+  by `host` the result case fails on its counters and on the other row, and the rest pass.
 
 ## Test
 

@@ -9,7 +9,8 @@ local logsDir = args.logsDir;
 		embeddedAppServer:: true,
 		embeddedOpcServer:: true,
 		openProtocolPort:: 4645, //the test controller's (DriverRowTests, DriverHostTests):  a controller's 4545 plus 100, as the ports below are.
-		openProtocolSimulator:: { host: "127.0.0.1" } //Jarrekstar's simulator, run by hand (docs/open-protocol/plan.md *Phase 10*):  { port: 4545, httpPort: 8081 }, its two ports, with a `host` where it is not this box's loopback, runs DriverSimulatorTests against it;  with no ports they are skipped.
+		openProtocolSimulator:: { host: "127.0.0.1" }, //Jarrekstar's simulator, run by hand (docs/open-protocol/plan.md *Phase 10*):  { port: 4545, httpPort: 8081 }, its two ports, with a `host` where it is not this box's loopback, runs DriverSimulatorTests against it;  with no ports they are skipped.
+		openProtocolController:: { stations: [4545, 4546], handTimeout: "PT10M", standIn: false } //the bench controller, a PF6000's two virtual stations (docs/open-protocol/plan.md *Phase 10*, 10b):  a `host` runs DriverControllerTests against it, the station that has the tool first, each waiting handTimeout for the hand at the controller;  `timeZone` is the zone its clock keeps where that is not this box's, and `psetName` the name its results are to carry.  standIn: true runs them against the library's stand-in for one, on ports of its own.  With neither they are skipped.
 	},
 	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://127.0.0.1:4940", users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{

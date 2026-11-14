@@ -198,6 +198,11 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
   hand check no runner runs, skipped unless `/testing/openProtocolSimulator` names the simulator's ports - the
   step-down to the revisions the simulator has, a result of each revision of MID 0061, the five commands and the
   simulator's own account after each, and a group recording a run of its automatic tightenings.
+- `DriverControllerTests`: the driver against the bench controller, a Power Focus 6000 with two virtual stations (the
+  plan's *Phase 10*, 10b), a hand check no runner runs, skipped unless `/testing/openProtocolController` names the
+  controller, or the library's stand-in for one - each station's step-down, link level, identity and clock, a result
+  in its station's row alone, an alarm raised and acknowledged, and an outage filled by the walk across both stations'
+  results.  A case asks on the console for the hand at the controller.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.
