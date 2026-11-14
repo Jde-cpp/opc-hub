@@ -1,16 +1,25 @@
-import { Component, computed, input, output } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { Component, computed, inject, input, LOCALE_ID, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
 import { modeName, policyName } from '../../../../model/gateway-endpoint';
+import { identityFields, OpDiagnostics, OpenProtocolIdentity, OpName, OpReading, scBadNoCommunication, scBadNotSupported, scBadWaitingForInitialData } from '../../../../model/open-protocol';
+import { countText, dateText } from '../../../../model/reading';
 import { ClientCertificate, RejectedCertificate, Server } from '../../../../model/server';
+import { statusText } from '../../../../model/status-code';
 
 /** A row of the description list:  a label and the server's value for it, empty when the server left the field blank;
- * `title` carries the full value when the one shown is an abbreviation of it. */
-export type ServerField = { label: string; value: string; title?: string };
+ * `title` carries the full value when the one shown is an abbreviation of it;  `status` is what a variable reads in place of a value. */
+export type ServerField = { label: string; value: string; title?: string; status?: string };
 
 //the abbreviated row keeps the full value in its title, so a hover still shows what the server actually sent
 const abbreviated = ( label:string, value:string, shown:string ):ServerField=>( shown==value ? {label, value} : {label, value: shown, title: value} );
+//a `_Op` variable's status in place of a value (docs/open-protocol/spec.md *Address space*):  the two it reads before a value comes, the
+//link's loss, else the app's status text
+export const opStatusText = ( sc:number|undefined ):string=>sc==scBadWaitingForInitialData ? "waiting for the first read" : sc==scBadNotSupported ? "not supported by the controller" : sc==scBadNoCommunication ? "no communication" : statusText( sc );
+//the controller's clock less the gateway's, in seconds, signed
+export const skewText = ( v:unknown ):string=>typeof v=='number' ? `${v>0 ? "+" : ""}${v.toFixed( 1 )} s` : v==null ? "" : String( v );
 
 @Component( {
 	selector: 'server-properties',
@@ -30,6 +39,16 @@ export class ServerProperties{
 	connecting = input<string|undefined>();
 	//the settings the result was for, when the form has changed since:  the result is marked, not cleared, since it may be the saved row's own describe.
 	staleFor = input<string|undefined>();
+	//An Open Protocol row (docs/open-protocol/spec.md *Web*):  the form's kind, so the untested state says what the test asks;  the
+	//controller's identity a Test Connection answered in place of a server's description;  and a saved row's `_Op`, its driver's
+	//diagnostics read by id, shown in place of the driver server's description, which says nothing of the controller - the
+	//diagnostics, or why they could not be read, or that they are being read.
+	openProtocol = input( false );
+	identity = input<OpenProtocolIdentity|undefined>();
+	op = input<OpDiagnostics|undefined>();
+	opError = input<string|undefined>();
+	opReading = input( false );
+	readonly showOp = computed( ()=>!!this.op() || !!this.opError() || this.opReading() );
 	//Not a form:  nothing here is editable - the gateway reports what the server told it - and a disabled input dims the
 	//text and will not let it be selected, when the URIs and the policy are exactly what gets copied out of this page.
 	//Read order:  what the server is, then how this gateway talks to it, then how it was found - the discovery URLs list
@@ -47,6 +66,47 @@ export class ServerProperties{
 			{ label: "Discovery Profile URI", value: s.discoveryProfileUri }
 		];
 	} );
+	//MID 0002's fields as the test answered them, a row per field whether or not the controller's revision carried it
+	readonly identityRows = computed<ServerField[]>( ()=>{ const id = this.identity(); return id ? identityFields( id ) : []; } );
+	//`_Op` in the spec's order, but for the identity, whose json text is spelled out as the test's answer is, where the link stands:
+	//what is read before a value comes is its status, in words
+	readonly opFields = computed<ServerField[]>( ()=>{
+		const op = this.op();
+		if( !op )
+			return [];
+		const row = ( label:string, name:OpName, text:( v:unknown )=>string ):ServerField=>{
+			const r:OpReading|undefined = op[name];
+			if( !r )
+				return { label, value: "", status: "not answered" };
+			return r.value===undefined ? { label, value: "", status: opStatusText( r.sc ) } : { label, value: text( r.value ) };
+		};
+		const yesNo = ( v:unknown )=>v===true ? "yes" : v===false ? "no" : v==null ? "" : String( v );
+		const str = ( v:unknown )=>v==null ? "" : String( v );
+		const identity = op.Identity;
+		let identityRows:ServerField[];
+		if( identity?.value===undefined )
+			identityRows = [{ label: "Controller", value: "", status: identity ? opStatusText( identity.sc ) : "not answered" }];
+		else{
+			let parsed:OpenProtocolIdentity|undefined;
+			try{ parsed = typeof identity.value=='string' && identity.value.trim() ? JSON.parse( identity.value ) : undefined; }
+			catch{ parsed = undefined; }
+			identityRows = parsed ? identityFields( parsed ) : [{ label: "Controller", value: typeof identity.value=='string' ? identity.value : "" }];
+		}
+		return [
+			row( "Connected", "Connected", yesNo ),
+			row( "Since", "Since", v=>dateText( v, this.#date ) ),
+			row( "Last Error", "LastError", str ),
+			row( "Reconnects", "Reconnects", countText ),
+			row( "URL", "Url", str ),
+			...identityRows,
+			row( "Link Level", "LinkLevel", yesNo ),
+			row( "Revisions", "Revisions", str ),
+			row( "Clock Skew", "Skew", skewText ),
+			row( "Results", "Results", countText ),
+			row( "Lost Results", "LostResults", countText )
+		];
+	} );
+	#date = new DatePipe( inject(LOCALE_ID) );//the viewer's locale, for `Since`
 
 	//the server certificate the gateway rejected for this connection (docs/clients/spec.md *Trust*, #415):  shown under the
 	//Not connected reason, with Trust for an admin.  Null when there is none.

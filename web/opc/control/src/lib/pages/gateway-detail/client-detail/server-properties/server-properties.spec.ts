@@ -209,3 +209,81 @@ describe( 'ServerProperties certificate panels', ()=>{
 		expect( root.querySelector('.certificate') ).toBeNull();
 	} );
 } );
+//docs/open-protocol/spec.md *Web* (#475):  an Open Protocol row's two sections in place of a server's description - the controller a
+//Test Connection reached, MID 0002's fields, and a saved row's `_Op`, its driver's diagnostics, a variable that reads a status in place
+//of a value saying so in words.
+describe( 'ServerProperties for an Open Protocol row', ()=>{
+	const identity = { controllerName: "PF6000-1", supplierCode: "ACT", openProtocolVersion: "2.20.1", controllerSoftwareVersion: "3.8.0", toolSoftwareVersion: null, controllerSerialNumber: "SN1", systemType: 3, systemSubtype: 1, stationId: 2, stationName: "Station A" };
+	const op = {
+		Connected: {value: true}, Since: {value: {seconds: 1760000000, nanos: 0}}, Url: {value: "open-protocol://plc:4545"}, LastError: {value: ""}, Reconnects: {value: 2},
+		Identity: {value: JSON.stringify(identity)}, Revisions: {value: "0001:6 0061:7"}, LinkLevel: {value: false}, Results: {value: {low: 5, high: 1, unsigned: true}}, LostResults: {value: 0},
+		Skew: {sc: 0x80320000}
+	};
+	const render = ( inputs:Record<string,unknown> )=>{
+		TestBed.resetTestingModule();//a test may render twice
+		TestBed.configureTestingModule({});
+		const fixture = TestBed.createComponent( ServerProperties );
+		for( const [name, value] of Object.entries(inputs) )
+			fixture.componentRef.setInput( name, value );
+		fixture.detectChanges();
+		return fixture.nativeElement as HTMLElement;
+	};
+	const rows = ( root:HTMLElement, section:string )=>Array.from( root.querySelectorAll(`section.${section} dl.fields dt`) ).map( (dt, i)=>[dt.textContent!.trim(), root.querySelectorAll(`section.${section} dl.fields dd`)[i].textContent!.trim()] );
+
+	it( 'shows the controller a test reached in place of a description, a blank field marked', ()=>{
+		const root = render( {identity} );
+		expect( root.querySelector('section.identity h3')!.textContent ).toBe( "Controller" );
+		expect( rows(root, "identity") ).toEqual( [
+			["Controller", "PF6000-1"], ["System", "Power Focus 6000, subtype 1"], ["Supplier Code", "ACT"], ["Open Protocol Version", "2.20.1"], ["Controller Software", "3.8.0"],
+			["Tool Software", "none"], ["Serial Number", "SN1"], ["Station", "Station A (2)"]
+		] );
+		expect( root.querySelector('.not-connected') ).toBeNull();
+		expect( root.querySelector('.untested') ).toBeNull();
+	} );
+	it( 'shows a saved row\'s _Op in place of the driver server\'s description, the identity spelled out and a status in words', ()=>{
+		const root = render( {server: new Server(props()), op, openProtocol: true} );
+		expect( root.querySelector('table.list') ).toBeNull();//no discovery urls, no namespaces:  the driver server's say nothing of the controller
+		expect( root.querySelector('section.op h3')!.textContent ).toBe( "Driver" );
+		const shown = rows( root, "op" );
+		expect( shown.map( ([label])=>label ) ).toEqual( [
+			"Connected", "Since", "Last Error", "Reconnects", "URL", "Controller", "System", "Supplier Code", "Open Protocol Version", "Controller Software", "Tool Software", "Serial Number", "Station",
+			"Link Level", "Revisions", "Clock Skew", "Results", "Lost Results"
+		] );
+		const value = ( label:string )=>shown.find( ([l])=>l==label )![1];
+		expect( value("Connected") ).toBe( "yes" );
+		expect( value("Link Level") ).toBe( "no" );
+		expect( value("Since") ).not.toBe( "none" );
+		expect( value("Last Error") ).toBe( "none" );
+		expect( value("Reconnects") ).toBe( "2" );
+		expect( value("Controller") ).toBe( "PF6000-1" );
+		expect( value("Results") ).toBe( String(5 + 2**32) );//a UInt64 in the Long form
+		expect( value("Lost Results") ).toBe( "0" );
+		expect( value("Clock Skew") ).toBe( "waiting for the first read" );
+		expect( root.querySelector('section.op .status')!.textContent ).toBe( "waiting for the first read" );
+	} );
+	it( 'says what a variable reads where the controller gives none, and that a row was not answered', ()=>{
+		const root = render( {server: new Server(props()), openProtocol: true, op: {...op, Skew: {sc: 0x803D0000}, Connected: {value: false}, Identity: {value: ""}, Results: undefined}} );
+		const shown = rows( root, "op" );
+		const value = ( label:string )=>shown.find( ([l])=>l==label )![1];
+		expect( value("Clock Skew") ).toBe( "not supported by the controller" );
+		expect( value("Connected") ).toBe( "no" );
+		expect( value("Controller") ).toBe( "none" );//no identity yet:  one row for it
+		expect( shown.filter( ([l])=>l=="System" ) ).toEqual( [] );
+		expect( value("Results") ).toBe( "not answered" );
+	} );
+	it( 'says the diagnostics are being read, or why they could not be', ()=>{
+		expect( render({server: new Server(props()), openProtocol: true, opReading: true}).querySelector('section.op p.op-reading')!.textContent ).toContain( "Reading" );
+		expect( render({server: new Server(props()), openProtocol: true, opError: "(403) no session"}).querySelector('section.op p.op-error')!.textContent ).toBe( "(403) no session" );
+		expect( render({server: new Server(props()), openProtocol: true}).querySelector('dl.fields') ).not.toBeNull();//a UA row's description, until a read is under way:  the form's kind alone decides nothing
+	} );
+	it( 'shows the identity above a saved row\'s _Op after a test', ()=>{
+		const root = render( {server: new Server(props()), identity, op, openProtocol: true} );
+		const sections = Array.from( root.querySelectorAll('section') ).map( s=>s.className );
+		expect( sections ).toEqual( ["identity", "op"] );
+	} );
+	it( 'tells a new Open Protocol connection what the test asks', ()=>{
+		const root = render( {untested: true, openProtocol: true} );
+		expect( root.querySelector('.untested .detail')!.textContent ).toContain( "asks the controller" );
+		expect( render({untested: true}).querySelector('.untested .detail')!.textContent ).toContain( "URL and Certificate URI" );
+	} );
+} );

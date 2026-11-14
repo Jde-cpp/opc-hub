@@ -1,4 +1,5 @@
-import { Component, effect, input, ElementRef, computed, viewChildren, model, inject } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { Component, effect, input, ElementRef, computed, viewChildren, model, inject, TemplateRef } from '@angular/core';
 import { MatFormFieldModule, MatLabel } from '@angular/material/form-field';
 import { ComponentPageTitle } from 'jde-spa';
 import { EnumValue } from '../../../services/graphql';
@@ -17,7 +18,7 @@ import { MatButtonModule } from '@angular/material/button';
     //so the cap is still the fields' width.
     //the readonly select look (mat-form-field.readonly) is in _general.scss - key-properties sets the same class.
     styles: ":host{ display: block; box-sizing: content-box; max-width: var(--jde-form-max-width); padding: 16px 24px 0; }",
-    imports: [MatButtonModule, MatInputModule, MatFormFieldModule, MatLabel, MatSelectModule]
+    imports: [MatButtonModule, MatInputModule, MatFormFieldModule, MatLabel, MatSelectModule, NgTemplateOutlet]
 })
 export class Properties{
 	#componentPageTitle = inject( ComponentPageTitle );
@@ -68,6 +69,9 @@ export class Properties{
 	units = input<Record<string,string>>( {} );
 	//A hint by field name, shown under the field where there is no error to show:  what an empty field means ("The gateway's setting").
 	hints = input<Record<string,string>>( {} );
+	//A page's own controls by field name, rendered right after that field, among the schema's:  a template of the page's, so its
+	//controls edit the page's record as this form's do (client-detail's Open Protocol fields after the Kind pick).
+	slots = input<Record<string,TemplateRef<unknown>>>( {} );
 	isReadonly( field:PropertyField ){ return this.readonlyFields().includes( field.name ); }
 	fieldError( field:PropertyField ):string|undefined{ return this.record()?.fieldError?.( field.name ); }//ISlugRow.fieldError - a plain record has none
 	record = model.required<any>();

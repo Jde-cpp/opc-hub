@@ -198,3 +198,87 @@ describe( 'ServerCnnctn connection settings', ()=>{
 		expect( ServerCnnctn.settings(new ServerCnnctn(props({securityMode: "Sign", requestTimeout: "2000" as any}))) ).toEqual( {securityMode: "Sign", securityPolicy: null, sessionTimeout: null, requestTimeout: 2000, pingInterval: null, ttl: null, locale: null} );
 	} );
 } );
+
+//docs/open-protocol/spec.md *The row* (#475):  `kind` and `driver` on the row, null for a UA row, and the Open Protocol form's fields -
+//host, port, time zone, ceilings - which the row reads off the two columns and composes them from.  A kind whose server is the
+//gateway's own stores none of the four the gateway fixes, and the mutation sends none of them for it.
+describe( 'ServerCnnctn kind and driver', ()=>{
+	const blank = ()=>new ServerCnnctn( {} as ServerCnnctnProps );
+	const op = ( overrides:Partial<ServerCnnctnProps>={} )=>new ServerCnnctn( props({kind: "open-protocol", url: "open-protocol://plc:4546", certificateUri: undefined as any, defaultBrowseNs: undefined, driver: '{"timeZone":"UTC","revisions":{"0061":3}}', ...overrides}) );
+	it( 'reads a null kind as ua, and the Open Protocol fields off the columns', ()=>{
+		expect( new ServerCnnctn(props()).kind ).toBe( "ua" );
+		expect( new ServerCnnctn(props({kind: null})).kind ).toBe( "ua" );
+		expect( new ServerCnnctn(props({kind: " ua "})).isOpenProtocol ).toBe( false );
+		const row = op();
+		expect( row.isOpenProtocol ).toBe( true );
+		expect( [row.host, row.port, row.timeZone, row.revisions] ).toEqual( ["plc", "4546", "UTC", "0061:3"] );
+		expect( row.effectiveUrl ).toBe( "open-protocol://plc:4546" );
+		expect( row.effectiveDriver ).toBe( '{"timeZone":"UTC","revisions":{"0061":3}}' );
+		const ua = new ServerCnnctn( props() );
+		expect( [ua.host, ua.port, ua.timeZone, ua.revisions] ).toEqual( ["", "4545", "", ""] );//a row switched to the kind starts blank
+		expect( ua.effectiveDriver ).toBeNull();
+	} );
+	it( 'keeps the form fields on an edited copy, and composes the url and the driver from them', ()=>{
+		const edited = new ServerCnnctn( {...op(), host: " station-2 ", port: "", timeZone: "Europe/Stockholm", revisions: "0001:6 0061:3"} as ServerCnnctnProps );
+		expect( edited.effectiveUrl ).toBe( "open-protocol://station-2:4545" );
+		expect( edited.effectiveDriver ).toBe( '{"timeZone":"Europe/Stockholm","revisions":{"0001":6,"0061":3}}' );
+		expect( edited.url ).toBe( "open-protocol://plc:4546" );//the column as stored, until the save
+	} );
+	it( 'states the kind on a create, and sends none of the four a driver kind fixes', ()=>{
+		const created = new ServerCnnctn( props({id: undefined as any, kind: "open-protocol", url: "", certificateUri: "urn:x", securityMode: "Sign", host: "plc", port: "", timeZone: "UTC", revisions: "0061:3"}) );
+		expect( created.canSave ).toBe( true );
+		const [mutation] = created.mutation( blank() );
+		expect( mutation.type ).toBe( MutationType.Create );
+		expect( mutation.args.kind ).toBe( "open-protocol" );
+		expect( mutation.args.url ).toBe( "open-protocol://plc:4545" );
+		expect( mutation.args.driver ).toBe( '{"timeZone":"UTC","revisions":{"0061":3}}' );
+		for( const fixed of ["certificateUri", "defaultBrowseNs", "securityMode", "securityPolicy"] )
+			expect( fixed in mutation.args ).toBe( false );
+		const ua = new ServerCnnctn( props({id: undefined as any}) ).mutation( blank() )[0];
+		expect( ua.args.kind ).toBe( "ua" );
+		expect( ua.args.defaultBrowseNs ).toBe( 1 );
+		expect( "driver" in ua.args ).toBe( false );
+	} );
+	it( 'sends a change of host, port, zone or ceilings as the url and the driver, and nothing for whitespace', ()=>{
+		const original = op();
+		expect( new ServerCnnctn({...original, host: "plc ", revisions: " 0061:3"} as ServerCnnctnProps).mutation( original ) ).toEqual( [] );
+		const moved = new ServerCnnctn( {...original, host: "plc2", port: "4547"} as ServerCnnctnProps );
+		expect( moved.equals(original) ).toBe( false );
+		expect( moved.mutation(original)[0].args ).toEqual( {url: "open-protocol://plc2:4547"} );
+		const retimed = new ServerCnnctn( {...original, timeZone: "", revisions: ""} as ServerCnnctnProps );
+		expect( retimed.mutation(original)[0].args ).toEqual( {driver: null} );
+		const handWritten = new ServerCnnctn( props({kind: "open-protocol", url: "open-protocol://plc:4546", driver: '{"revisions": {"0061": 3}, "timeZone": "UTC"}'}) );
+		expect( new ServerCnnctn({...handWritten} as ServerCnnctnProps).mutation( handWritten ) ).toEqual( [] );//compared in the canonical form, not as text
+		const portless = new ServerCnnctn( props({kind: "open-protocol", url: "open-protocol://plc", driver: null}) );//written by hand:  the gateway takes host alone
+		expect( new ServerCnnctn({...portless, description: "line 2"} as ServerCnnctnProps).mutation( portless )[0].args ).toEqual( {description: "line 2"} );//no url, which would restart the driver
+	} );
+	it( 'changes a UA row to Open Protocol with the kind and the composed url alone', ()=>{
+		const original = new ServerCnnctn( props({securityMode: "Sign", sessionTimeout: 60000}) );
+		const edited = new ServerCnnctn( {...original, kind: "open-protocol", host: "plc", port: "4545"} as ServerCnnctnProps );
+		expect( edited.canSave ).toBe( true );//the Sign left on the record from its UA days says nothing
+		expect( edited.fieldError("securityMode") ).toBeUndefined();
+		expect( edited.mutation(original)[0].args ).toEqual( {kind: "open-protocol", url: "open-protocol://plc:4545"} );
+		expect( ServerCnnctn.settings(edited).securityMode ).toBeNull();
+		expect( ServerCnnctn.settings(edited).sessionTimeout ).toBe( 60000 );
+	} );
+	it( 'changes an Open Protocol row back to UA with the url it needs, a null driver and the namespace stated again', ()=>{
+		const original = op();
+		const edited = new ServerCnnctn( {...original, kind: "ua", url: "opc.tcp://plc:4840", certificateUri: ""} as ServerCnnctnProps );
+		expect( edited.canSave ).toBe( true );
+		expect( edited.mutation(original)[0].args ).toEqual( {kind: "ua", url: "opc.tcp://plc:4840", driver: null, certificateUri: "", defaultBrowseNs: 1} );
+	} );
+	it( 'will not save an Open Protocol row with no host or a field the gateway would refuse', ()=>{
+		expect( new ServerCnnctn({...op(), host: ""} as ServerCnnctnProps).canSave ).toBe( false );
+		expect( new ServerCnnctn({...op(), host: "plc 1"} as ServerCnnctnProps).canSave ).toBe( false );
+		expect( new ServerCnnctn({...op(), port: "70000"} as ServerCnnctnProps).canSave ).toBe( false );
+		expect( new ServerCnnctn({...op(), timeZone: "Mars/Olympus"} as ServerCnnctnProps).canSave ).toBe( false );
+		expect( new ServerCnnctn({...op(), revisions: "61:3"} as ServerCnnctnProps).canSave ).toBe( false );
+		expect( op().canSave ).toBe( true );
+	} );
+	it( 'refuses an Open Protocol url on a UA row, under the url', ()=>{
+		const row = new ServerCnnctn( props({url: "open-protocol://plc:4545"}) );
+		expect( row.fieldError("url") ).toContain( "Open Protocol" );
+		expect( row.canSave ).toBe( false );
+		expect( op().fieldError("url") ).toBeUndefined();
+	} );
+} );

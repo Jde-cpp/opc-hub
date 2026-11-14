@@ -46,6 +46,27 @@
 	overflow-wrap: anywhere;
 }
 
+/* an Open Protocol row's two sections (docs/open-protocol/spec.md *Web*):  the controller a test reached and a saved row's driver
+   diagnostics, each a heading over its rows, the heading as the lists' captions - the field labels' size at title weight */
+section.identity h3, section.op h3{
+	margin: 0 0 .25rem;
+	padding: 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-title-small);
+}
+section.identity + section.op{
+	margin-block-start: 1.5rem;
+}
+/* a variable that reads a status in place of a value, in words:  marked as the empty values are, so a reader tells it from a value */
+.op .status{
+	font-style: italic;
+	color: var(--mat-sys-on-surface-variant);
+}
+.op p.empty{
+	padding: .5rem 1rem;
+	margin: 0;
+}
+
 /* #415:  the two certificate panels - the rejected server certificate with Trust, and the gateway's own with a PEM download.
    On the same inset as the rows and states above, a heading with an icon, the fields, then the action. */
 .certificate{

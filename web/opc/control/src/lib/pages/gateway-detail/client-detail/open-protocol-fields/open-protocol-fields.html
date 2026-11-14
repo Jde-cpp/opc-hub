@@ -1,0 +1,36 @@
+<!--the form's own shape (properties.html):  a filled field the form's width, the error or the hint under it;  required on the host alone,
+	whose asterisk is the one hint for why Save waits-->
+<mat-form-field style="width: 100%;" appearance="fill">
+	<mat-label>Host</mat-label>
+	<input matInput type="text" required autocomplete="off" [value]="record().host ?? ''" (input)="onChange( 'host', $any($event.target).value )">
+	@if( fieldError('host'); as error ){ <mat-hint style="color: var(--mat-sys-error)">{{error}}</mat-hint> }
+	@else { <mat-hint>{{hints.host}}</mat-hint> }
+</mat-form-field>
+<mat-form-field style="width: 100%;" appearance="fill"><!--not while half typed, as the form's number inputs (properties.html)-->
+	<mat-label>Port</mat-label>
+	<input matInput type="number" min="1" max="65535" step="1" [placeholder]="defaultPortText" [value]="record().port ?? ''" (input)="$any($event.target).validity.badInput || onChange( 'port', $any($event.target).value )">
+	@if( fieldError('port'); as error ){ <mat-hint style="color: var(--mat-sys-error)">{{error}}</mat-hint> }
+	@else { <mat-hint>{{hints.port}}</mat-hint> }
+</mat-form-field>
+<mat-form-field style="width: 100%;" appearance="fill"><!--the zone database's names as suggestions:  what the gateway resolves is its spelling-->
+	<mat-label>Time Zone</mat-label>
+	<input matInput type="text" autocomplete="off" [matAutocomplete]="zones" [value]="record().timeZone ?? ''" (input)="onChange( 'timeZone', $any($event.target).value )">
+	<mat-autocomplete #zones="matAutocomplete" (optionSelected)="onChange( 'timeZone', $event.option.value )">
+		@for( zone of zoneOptions(); track zone ){
+			<mat-option [value]="zone">{{zone}}</mat-option>
+		}
+	</mat-autocomplete>
+	@if( fieldError('timeZone'); as error ){ <mat-hint style="color: var(--mat-sys-error)">{{error}}</mat-hint> }
+	@else { <mat-hint>{{hints.timeZone}}</mat-hint> }
+</mat-form-field>
+<!--a knob for a controller that answers a revision badly, which most rows never touch:  behind a disclosure, open where the row has one.
+	The summary says the ceilings are wrong, since they hold Save closed or open;  an [open] tied to the error would fight the user's toggle-->
+<details class="disclosure" [open]="ceilingsOpen()" (toggle)="onToggle( $any($event.target).open )">
+	<summary>Revision ceilings@if( fieldError('revisions') ){<span class="error">: not valid</span>}</summary>
+	<mat-form-field style="width: 100%;" appearance="fill">
+		<mat-label>Revision Ceilings</mat-label>
+		<input matInput type="text" autocomplete="off" placeholder="0061:3 0001:6" [value]="record().revisions ?? ''" (input)="onChange( 'revisions', $any($event.target).value )">
+		@if( fieldError('revisions'); as error ){ <mat-hint style="color: var(--mat-sys-error)">{{error}}</mat-hint> }
+		@else { <mat-hint>{{hints.revisions}}</mat-hint> }
+	</mat-form-field>
+</details>

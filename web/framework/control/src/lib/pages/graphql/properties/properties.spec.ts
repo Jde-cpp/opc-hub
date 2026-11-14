@@ -1,3 +1,4 @@
+import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
@@ -183,5 +184,36 @@ describe( 'Properties picks, units and hints', ()=>{
 	it( 'shows the hint under a field without an error, and nothing under the rest', ()=>{
 		const root = render( new Widget({name: "w"}) ).nativeElement as HTMLElement;
 		expect( [...root.querySelectorAll('mat-hint')].map( (h:Element)=>h.textContent!.trim() ) ).toEqual( ["Comma-separated", "Empty:  the gateway's setting"] );//in field order:  locale, ttl
+	} );
+} );
+
+//`slots` input (#475):  a page's own controls, a template of its own, rendered right after the named field among the schema's - the
+//Open Protocol fields after client-detail's Kind pick - so they edit the page's record where the form's fields do.
+@Component({
+	template: `<ng-template #after><span class="slotted">after name</span></ng-template>
+		<properties [ctor]="Widget" [schema]="schema" type="widget" [(record)]="record" [slots]="{name: after}"></properties>`,
+	imports: [Properties]
+})
+class SlotHost{
+	Widget = Widget;
+	schema = schemaOf( "Widget", required("name"), scalar("description"), scalar("url") );
+	record = signal( new Widget({name: "w"}) );
+}
+describe( 'Properties slots', ()=>{
+	it( 'renders the page\'s template after the named field, and nowhere else', ()=>{
+		TestBed.configureTestingModule({ providers: [
+			provideRoute(),
+			{ provide: Router, useValue: routerStub() },
+			pageTitleStub,
+			{ provide: SnackbarService, useValue: snackbarStub() },
+			{ provide: IGRAPHQL, useValue: {} }
+		]});
+		const fixture = TestBed.createComponent( SlotHost );
+		fixture.detectChanges();
+		const root = fixture.nativeElement as HTMLElement;
+		const children = Array.from( root.querySelector('properties > div')!.children );
+		const labels = children.map( c=>c.tagName=='MAT-FORM-FIELD' ? c.querySelector('mat-label')!.textContent!.trim() : c.className );
+		expect( labels ).toEqual( ["Name", "slotted", "Description", "Url"] );
+		expect( root.querySelectorAll('.slotted').length ).toBe( 1 );
 	} );
 } );

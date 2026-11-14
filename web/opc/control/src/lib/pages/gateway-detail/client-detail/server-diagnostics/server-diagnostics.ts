@@ -5,9 +5,10 @@ import { MatIcon } from '@angular/material/icon';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
-import { IGraphQL, ProtoUtils, SnackbarService, Timestamp, errorMessage, isRefusal } from 'jde-framework';
-import { ClientDiagnostics, clientDiagnosticsQuery, serverDiagnosticsIds, serverDiagnosticsQuery, ServerDiagnosticsRow, serverDiagnosticsSummaryId, serverStatusId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId, UaStructure } from '../../../../model/server';
+import { IGraphQL, SnackbarService, errorMessage, isRefusal } from 'jde-framework';
+import { ClientDiagnostics, clientDiagnosticsQuery, reading, serverDiagnosticsIds, serverDiagnosticsQuery, ServerDiagnosticsRow, serverDiagnosticsSummaryId, serverStatusId, sessionDiagnosticsArrayId, subscriptionDiagnosticsArrayId, UaStructure } from '../../../../model/server';
 import { NodeId } from '../../../../model/node-id';
+import { countText, dateText } from '../../../../model/reading';
 import { nameKey, statusText } from '../../../../model/status-code';
 
 export const refusedClientText = "You may not read the gateway's session telemetry.";
@@ -43,25 +44,12 @@ export const nodeIdText = ( v:unknown ):string=>{
 	const prefix = typeof idType=='number' ? ["i", "s", "g", "b"][idType] ?? "i" : typeof id=='number' ? "i" : "s";
 	return `${ns ? `ns=${ns};` : ""}${prefix}=${id}`;
 };
-//a count shown as text, blank for a member the server left out
-export const countText = ( v:unknown ):string=>v==null ? "" : String( v );
 //a `PascalCase` member name as a label:  "CumulatedSessionCount" → "Cumulated session count"
 export const memberLabel = ( name:string ):string=>name.replace( /([a-z])([A-Z])/g, "$1 $2" ).replace( /([A-Z]+)([A-Z][a-z])/g, "$1 $2" ).toLowerCase().replace( /^./, c=>c.toUpperCase() );
 //whole seconds as "1 h 2 m 3 s"
 export const ageText = ( seconds:number ):string=>{
 	const h = Math.floor( seconds/3600 ), m = Math.floor( seconds%3600/60 ), s = seconds%60;
 	return [h ? `${h} h` : "", h || m ? `${m} m` : "", `${s} s`].filter( x=>x ).join( " " );
-};
-//a read's value:  the reading, unwrapped from an Uncertain {v, sc}, or undefined with the status for a Bad read ({sc} alone)
-export const reading = ( value:unknown ):{ value?:unknown; sc?:number }=>{
-	if( value && typeof value=='object' && !Array.isArray(value) ){
-		const o = value as UaStructure;
-		if( o.hasOwnProperty('v') )
-			return { value: o['v'], sc: o['sc'] as number|undefined };
-		if( o.hasOwnProperty('sc') )
-			return { sc: o['sc'] as number };
-	}
-	return { value };
 };
 export type DiagnosticField = { label:string; value:string; hint?:string };//hint:  shown under the value, not on hover
 type ClientAnswer = { serverConnection:{ clientDiagnostics:ClientDiagnostics|null }|null };
@@ -229,16 +217,7 @@ export class ServerDiagnostics{
 	} );
 	//a DateTime member as the viewer's locale shows it - the Endpoint tab's `date:'medium'`, applied here since the rows are computed
 	//- from the gateway's {seconds, nanos} or an ISO string;  blank for none, the text as it came for one that is no date
-	#time( v:unknown ):string{
-		if( v && typeof v=='object' && typeof (v as {seconds?:unknown}).seconds=='number' ){
-			const d = ProtoUtils.toDate( { nanos: 0, ...v } as Timestamp );
-			return d ? this.#date.transform( d, 'medium' ) ?? "" : "";
-		}
-		if( typeof v!='string' || !v )
-			return "";
-		const d = new Date( v );
-		return isNaN( d.getTime() ) ? v : this.#date.transform( d, 'medium' ) ?? v;
-	}
+	#time( v:unknown ):string{ return dateText( v, this.#date ); }
 	#date = new DatePipe( inject(LOCALE_ID) );
 	//the sessions table's cells, in the SessionDiagnosticsDataType's own order
 	sessionName( s:UaStructure ):string{ return String( member(s, "SessionName") ?? "" ); }
