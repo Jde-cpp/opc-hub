@@ -82,7 +82,7 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 			return (slug ? ServerCnnctn.fileSlugError( slug ) : undefined)
 				?? (ServerCnnctn.reservedSlugs.includes( slug ) ? "Taken by a list on the gateway's page, whose url segment it is." : undefined);
 		if( field=="url" )
-			return !this.ownServer && this.url?.trim().startsWith( openProtocolScheme ) ? "An Open Protocol controller's url:  set the Kind to Open Protocol." : undefined;
+			return !this.ownServer && this.url?.trim().startsWith( openProtocolScheme ) ? "An Open Protocol controller's url:  set the Kind to Open Protocol, and give its host and port there." : undefined;
 		if( field=="host" )
 			return hostError( this.host ?? "" );
 		if( field=="port" )
@@ -118,7 +118,7 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	get effectiveMode():SecurityMode{ return ServerCnnctn.toText( this.securityMode ) as SecurityMode || (this.certificateUri?.trim() ? "SignAndEncrypt" : "None"); }
 	get isOpenProtocol():boolean{ return this.kind==kindOpenProtocol; }
 	//a kind whose server is the gateway's own (ServerCnnctn::OwnServer):  the form shows no url, certificate URI, namespace, mode or policy
-	get ownServer():boolean{ return this.kind==kindOpenProtocol || this.kind==kindFlow; }
+	get ownServer():boolean{ return ServerCnnctn.ownServerKind( this.kind ); }
 	//The url the gateway stores:  an Open Protocol row's composed from the form's host and port, any other's as typed, trimmed.
 	get effectiveUrl():string{ return this.isOpenProtocol ? composeOpenProtocolUrl( this.host ?? "", this.port ) : this.url?.trim() ?? ""; }
 	//The `driver` the gateway stores:  an Open Protocol row's zone and ceilings as one canonical json text, null with neither;  null for
@@ -143,8 +143,10 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 		if( !original?.id || kindChanged )
 			args["kind"] = this.kind;
 		//trimmed, as Test Connection sends them:  `urn:plc ` passed the test and was saved as is, which the gateway's endpoint filter reads as urn:plc%20.
+		//Against the stored url as the row composes it, as equals() compares:  one written by hand may leave off the port, and a url sent
+		//restarts the row's driver.
 		const url = this.effectiveUrl, certificateUri = this.certificateUri?.trim();
-		if( url!=original?.url?.trim() )
+		if( url!=original?.effectiveUrl )
 			args["url"] = url;
 		//the stored text may not be canonical - one written by hand - so the comparison is over the canonical form of both
 		const driver = this.effectiveDriver;

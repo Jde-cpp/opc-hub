@@ -83,7 +83,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	openProtocolFields = viewChild<TemplateRef<unknown>>( 'openProtocolFields' );
 	readonly slots = computed<Record<string,TemplateRef<unknown>>>( ()=>{
 		const template = this.openProtocolFields();
-		return template && this.formKind()==kindOpenProtocol ? {kind: template} : {};
+		return template && this.formOpenProtocol() ? {kind: template} : {};
 	} );
 	//The kind, mode and policy picks, the unset option labelled with what unset means to the gateway:  the floor the Certificate URI sets
 	//for the mode, and for the policy the strongest the two sides share.  The policies are the ones the gateway carries;  it refuses
@@ -151,22 +151,21 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 			this.snackbar.exception( "Test Connection was refused.", refused );
 			return;
 		}
-		//a controller's identity sits above a saved row's `_Op`, whose session with the driver server the test does not touch;  a failure
-		//replaces both, as a UA row's does its description
-		if( !identity )
-			this.server.set( server );
+		//the answer of the kind tested replaces the last:  a UA server's description, or a controller's identity, which sits above a saved
+		//Open Protocol row's `_Op`, read again since the test does not touch the driver's session;  a failure says why, above `_Op` where shown
+		this.server.set( server );
 		this.identity.set( identity );
 		this.serverError.set( error );
 		this.#resultFor.set( settings );
 		this.#announcer.announce( server ? `Connected to ${server.applicationName || settings.url}.` : identity ? `Connected to ${identity.controllerName || settings.url}.` : `Not connected:  ${error}` );
-		await Promise.all( [this.#loadCertificates(), this.#loadOp()] );//the test connects under the slug, so a rejection records the server's certificate as a scheduled connect's does:  the Trust panel follows the test, without a reload;  and a saved Open Protocol row's diagnostics are read again
+		await Promise.all( [this.#loadCertificates(), this.#loadOp( settings.kind==kindOpenProtocol )] );//the test connects under the slug, so a rejection records the server's certificate as a scheduled connect's does:  the Trust panel follows the test, without a reload;  and `_Op` follows the kind tested
 	}
 	//Discover (docs/clients/spec.md *Discovery*):  the servers the gateway finds at the form's url and the endpoints of the one
 	//picked, in a dialog, and the endpoint chosen fills the form - the url, the Certificate URI with the server's applicationUri,
 	//and the mode and policy - on the Properties tab, where it can be read before Test Connection or Save.  Nothing is saved.
 	//Needs only a url:  the gateway's discovery client presents no certificate, so no slug names one.  A UA row's:  an Open Protocol
-	//controller answers no discovery.
-	readonly canDiscover = computed( ()=>!this.testing() && this.formKind()!=kindOpenProtocol && !!(this.properties() as Partial<ServerCnnctn>|null)?.url?.trim() );
+	//controller answers no discovery, and the flow server's row has none of the fields a pick fills - the form hides them for both kinds.
+	readonly canDiscover = computed( ()=>!this.testing() && !ServerCnnctn.ownServerKind( this.formKind() ) && !!(this.properties() as Partial<ServerCnnctn>|null)?.url?.trim() );
 	async onDiscoverClick(){
 		if( !this.canDiscover() )
 			return;//disabledInteractive, as Test Connection
@@ -244,26 +243,29 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	//A saved Open Protocol row's `_Op` (docs/open-protocol/spec.md *Address space*), the eleven variables of its driver server read by id
 	//through this session's client of the row, as the Server tab reads a server's diagnostics:  the Connection tab shows them in place of
 	//the driver server's description, which says nothing of the controller.  A failure is said in their place;  the row still loads.
-	async #loadOp(){
+	//`read` false clears them, for a test of another kind, whose answer they are not.  Of two reads out at once, the later is shown.
+	async #loadOp( read = true ){
 		const row = this.row;
+		const opLoad = this.#opLoads.next();
 		this.op.set( undefined );
 		this.opError.set( undefined );
-		if( !row?.slug || this.isNew || !row.isOpenProtocol ){
+		if( !read || !row?.slug || this.isNew || !row.isOpenProtocol ){
 			this.opReading.set( false );
 			return;
 		}
 		const rowLoad = this.#rowLoads.current;
+		const current = ()=>this.#rowLoads.is( rowLoad ) && this.#opLoads.is( opLoad );
 		this.opReading.set( true );
 		try{
 			const data = await this.gateway.query<{nodes:OpRow[]}>( opQuery, {opc: row.slug, id: opIds} );
-			if( this.#rowLoads.is(rowLoad) )
+			if( current() )
 				this.op.set( readOp(data.nodes) );
 		}
 		catch( e ){
-			if( this.#rowLoads.is(rowLoad) )
+			if( current() )
 				this.opError.set( errorMessage(e) );
 		}
-		if( this.#rowLoads.is(rowLoad) )
+		if( current() )
 			this.opReading.set( false );
 	}
 	//a mutation, POSTed:  it connects the gateway to the form's url and issues the slug's certificate, which a GET must not do.  The
@@ -307,6 +309,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	} );
 	#resultFor = signal<ConnectSettings|undefined>( undefined );
 	#rowLoads = new Latest();//onRow's:  a test answers only for the row it started on.
+	#opLoads = new Latest();//#loadOp's:  onRow's read and a test's can be out at once
 	#opcStore = inject( OpcStore );
 	//the test's start and end, for a screen reader:  a region inserted with its text may go unannounced, and the tab's content -
 	//a live region there included - is created with its text when the press switches to it.

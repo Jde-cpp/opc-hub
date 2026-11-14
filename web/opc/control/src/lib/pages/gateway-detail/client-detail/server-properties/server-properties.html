@@ -32,8 +32,17 @@ inserted with its text, a region may go unannounced - ClientDetail announces the
 		</dl>
 	</section>
 	}
-	@if( server(); as s ){
-		@if( showOp() ){
+	@if( showOp() ){
+		@if( error(); as reason ){
+		<!--a saved Open Protocol row whose test, or whose describe, failed:  the reason, above the driver's `_Op`, which says how its link stands-->
+		<div class="state not-connected">
+			<mat-icon aria-hidden="true">link_off</mat-icon>
+			<div>
+				<p class="title">Not connected</p>
+				<p class="detail">{{reason}}</p>
+			</div>
+		</div>
+		}
 		<!--a saved Open Protocol row:  its driver's `_Op` in place of the driver server's description, which says nothing of the controller.
 		A variable that reads a status in place of a value says it in words-->
 		<section class="op">
@@ -53,8 +62,7 @@ inserted with its text, a region may go unannounced - ClientDetail announces the
 				<p class="empty op-reading">Reading the driver's diagnostics…</p>
 			}
 		</section>
-		}
-		@else {
+	} @else if( server(); as s ){
 		<!--the server's ApplicationDescription plus the endpoint this gateway negotiated;  a blank value is shown, not skipped,
 		so the reader can tell a field the server left empty from one this page does not report-->
 		<dl class="fields">
@@ -86,9 +94,8 @@ inserted with its text, a region may go unannounced - ClientDetail announces the
 				}
 			</tbody>
 		</table>
-		}
 	} @else if( identity() ){
-	<!--a new connection whose test reached its controller:  the identity above is the whole answer-->
+	<!--a connection whose test reached its controller, and no `_Op` to show:  the identity above is the whole answer-->
 	} @else if( untested() ){
 	<!--a new connection never tried:  not a failure, so not the error icon and Not connected - what the button does instead-->
 	<div class="state untested">

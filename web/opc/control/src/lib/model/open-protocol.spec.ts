@@ -23,9 +23,13 @@ describe( 'Open Protocol url', ()=>{
 		expect( hostError("") ).toBeUndefined();//the required marker covers it
 		expect( hostError("plc.plant.local") ).toBeUndefined();
 		expect( hostError("[fe80::1]") ).toBeUndefined();
-		expect( hostError("plc 1") ).toContain( "no space" );
-		expect( hostError("plc/station") ).toContain( "slash" );
+		expect( hostError("[fe80::1%eth0]") ).toBeUndefined();//a link-local address with its zone, which readUrl takes
+		expect( hostError("plc_1") ).toBeUndefined();
+		for( const bad of ["plc 1", "plc/station", "plc#1", "plc@x", "plc?", "plc%"] )
+			expect( hostError(bad) ).toContain( "letters, digits" );
 		expect( hostError("fe80::1") ).toContain( "brackets" );
+		for( const bad of ["[plc", "[]", "[::1]x", "[::1 ]"] )
+			expect( hostError(bad) ).toContain( "[fe80::1%eth0]" );
 		expect( portError("") ).toBeUndefined();//4545
 		expect( portError("4545") ).toBeUndefined();
 		expect( portError("65535") ).toBeUndefined();
@@ -68,12 +72,16 @@ describe( 'Open Protocol driver settings', ()=>{
 		expect( ceilingsError("0061:3") ).toBeUndefined();
 		expect( ceilingsError("") ).toBeUndefined();
 	} );
-	it( 'takes a zone the database names in its own spelling, and nothing else', ()=>{
+	it( 'takes a zone the database names, in its own case, and nothing else', ()=>{
 		expect( timeZoneError("") ).toBeUndefined();//the gateway's own
 		expect( timeZoneError("Europe/Stockholm") ).toBeUndefined();
 		expect( timeZoneError("UTC") ).toBeUndefined();
 		expect( timeZoneError("Mars/Olympus") ).toContain( "Not a zone" );
 		expect( timeZoneError("europe/stockholm") ).toContain( "Europe/Stockholm" );//resolved to the database's spelling, which the gateway wants
+	} );
+	it( 'takes a renamed zone by either name, as the gateway\'s database links them', ()=>{
+		for( const zone of ["Asia/Kolkata", "Asia/Calcutta", "Europe/Kyiv", "Europe/Kiev", "Asia/Ho_Chi_Minh", "Etc/UTC"] )
+			expect( timeZoneError(zone) ).toBeUndefined();//V8 resolves the current names to CLDR's older ones, Asia/Kolkata to Asia/Calcutta
 	} );
 } );
 

@@ -588,6 +588,7 @@ describe( 'ClientDetail Open Protocol', ()=>{
 		const flow = await create( {id: 3, slug: "flow-server", name: "Flows", kind: "flow", url: "opc.tcp://127.0.0.1:4860"} );
 		expect( flow.page.picks().kind.map( o=>o.value ) ).toEqual( ["ua", "open-protocol", "flow"] );
 		expect( flow.page.readonlyFields() ).toEqual( ["slug", "kind"] );
+		expect( flow.page.canDiscover() ).toBe( false );//the form hides every field a pick fills, as for Open Protocol
 		flow.fixture.destroy();
 	} );
 	it( 'swaps the form with the kind:  the url and the four the gateway fixes go, the driver column never shows', async ()=>{
@@ -657,7 +658,7 @@ describe( 'ClientDetail Open Protocol', ()=>{
 		expect( page.untested ).toBe( false );
 		fixture.destroy();
 	} );
-	it( 'reads a saved row\'s _Op from its driver server, by the eleven ids, and keeps its describe under a test\'s identity', async ()=>{
+	it( 'reads a saved row\'s _Op from its driver server, by the eleven ids, and shows it under a test\'s identity', async ()=>{
 		const { fixture, page, query } = await create( {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", server: described("Jde-Cpp open-protocol pf")} );
 		expect( query.mock.calls.filter( ([ql])=>ql==opQuery ).map( ([, vars])=>vars ) ).toEqual( [{opc: "pf", id: opIds}] );
 		expect( page.op()?.Connected ).toEqual( {value: true} );
@@ -669,10 +670,74 @@ describe( 'ClientDetail Open Protocol', ()=>{
 		expect( Array.from(root.querySelectorAll('server-properties section.op dt')).map( d=>d.textContent ) ).toContain( "Clock Skew" );
 		await page.onTestClick();
 		expect( page.identity()?.controllerName ).toBe( "PF6000-1" );
-		expect( page.server()?.applicationName ).toBe( "Jde-Cpp open-protocol pf" );//the driver server's session is not the test's to drop
+		expect( page.server() ).toBeUndefined();//an Open Protocol test's answer is the identity
 		expect( query.mock.calls.filter( ([ql])=>ql==opQuery ).length ).toBe( 2 );//read again after the test
 		await flush( 2 );
 		expect( Array.from(root.querySelectorAll('server-properties section')).map( s=>s.className ) ).toEqual( ["identity", "op"] );
+		fixture.destroy();
+	} );
+	//review 475-open-web.md #2 to #4:  the tab shows the answer of the kind tested, and `_Op` whether or not a server is described
+	const sections = ( fixture:{nativeElement:unknown} )=>Array.from( (fixture.nativeElement as HTMLElement).querySelectorAll('server-properties section, server-properties .state, server-properties table.list') ).map( e=>e.className.split( " " ).at( -1 ) );
+	it( 'shows a UA test\'s description on a saved Open Protocol row, not the row\'s _Op', async ()=>{
+		const ua = { applicationUri: "urn:plc", productUri: "", applicationName: "PLC 1", applicationType: "Server", gatewayServerUri: "", discoveryProfileUri: "", discoveryUrls: ["opc.tcp://plc:4840"], securityPolicyUri: "http://opcfoundation.org/UA/SecurityPolicy#None", securityMode: "None", namespaces: [] };
+		const { fixture, page, query } = await create( {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", server: described("Jde-Cpp open-protocol pf")}, async ()=>ua );
+		expect( page.op() ).toBeDefined();
+		edit( page, {kind: "ua", url: "opc.tcp://plc:4840"} );
+		await page.onTestClick();
+		expect( page.server()?.applicationName ).toBe( "PLC 1" );
+		expect( page.op() ).toBeUndefined();
+		expect( page.opReading() ).toBe( false );
+		expect( query.mock.calls.filter( ([ql])=>ql==opQuery ).length ).toBe( 1 );//onRow's alone
+		await flush( 2 );
+		expect( sections(fixture) ).toEqual( ["list", "namespaces"] );//the description's tables, no Driver
+		fixture.destroy();
+	} );
+	it( 'drops a UA description under an Open Protocol test\'s identity', async ()=>{
+		const { fixture, page } = await create( {id: 7, slug: "plc", name: "PLC", url: "opc.tcp://plc:4840", server: described("PLC")} );
+		edit( page, {kind: "open-protocol", host: "plc"} );
+		await page.onTestClick();
+		expect( page.identity()?.controllerName ).toBe( "PF6000-1" );
+		expect( page.server() ).toBeUndefined();
+		await flush( 2 );
+		expect( sections(fixture) ).toEqual( ["identity"] );
+		fixture.destroy();
+	} );
+	it( 'shows a saved row\'s _Op after a failed test, under the reason, and under the identity of a good one after it', async ()=>{
+		const send = vi.fn( async ( _ql:string, _vars:any ):Promise<unknown>=>{ throw new Error( "(504)'plc:4545' did not answer MID 0001 within 10 s" ); } );
+		const { fixture, page } = await create( {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", server: described("Jde-Cpp open-protocol pf")}, send );
+		await page.onTestClick();
+		await flush( 2 );
+		expect( page.server() ).toBeUndefined();
+		expect( sections(fixture) ).toEqual( ["not-connected", "op"] );
+		expect( (fixture.nativeElement as HTMLElement).querySelector('server-properties .not-connected .detail')!.textContent ).toContain( "MID 0001" );
+		send.mockImplementation( async ()=>identity );
+		await page.onTestClick();
+		await flush( 2 );
+		expect( sections(fixture) ).toEqual( ["identity", "op"] );
+		fixture.destroy();
+	} );
+	it( 'shows the later of two _Op reads out at once', async ()=>{
+		const answers:Array<{ resolve:( r:unknown )=>void; reject:( e:unknown )=>void }> = [];
+		const query = vi.fn( ( ql:string, _vars:any )=>ql.startsWith( "nodes(" ) ? new Promise( (resolve, reject)=>{ answers.push( {resolve, reject} ); } ) : Promise.resolve( {serverConnection: {rejectedCertificate: null, clientCertificate: null}} ) );
+		const gateway = { slug: "g", query, postQL: async ()=>({ testConnection: identity }) };
+		const pf = {id: 7, slug: "pf", name: "PF", kind: "open-protocol", url: "open-protocol://plc:4545", server: described("Jde-Cpp open-protocol pf")};
+		configureDetailPage( pf, {gateway, data: new BehaviorSubject<any>( pageData(pf, gateway) ), providers: [
+			{ provide: LiveAnnouncer, useValue: {announce: async ()=>{}} },
+			{ provide: OpcStore, useValue: {forget: ()=>{}} }
+		]} );
+		const fixture = TestBed.createComponent( ClientDetail );
+		const page = fixture.componentInstance;
+		fixture.detectChanges();
+		const tested = page.onTestClick();
+		await flush( 2 );
+		expect( answers.length ).toBe( 2 );//onRow's, still out, and the test's
+		answers[1].resolve( {nodes: [{id: {ns: 2, s: "_Op.Connected"}, value: true}]} );
+		await tested;
+		answers[0].reject( new Error("(504) the driver server did not answer") );//onRow's, late
+		await flush( 2 );
+		expect( page.op()?.Connected ).toEqual( {value: true} );
+		expect( page.opError() ).toBeUndefined();
+		expect( page.opReading() ).toBe( false );
 		fixture.destroy();
 	} );
 	it( 'reads no _Op for a UA row or a new one, and says why one could not be read', async ()=>{

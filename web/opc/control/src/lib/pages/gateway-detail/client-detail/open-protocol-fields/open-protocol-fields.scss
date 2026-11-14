@@ -16,6 +16,9 @@
 	outline: 2px solid var(--mat-sys-primary);
 	outline-offset: -2px;
 }
+.disclosure summary .error{
+	color: var(--mat-sys-error);
+}
 .disclosure[open] summary{
 	margin-block-end: .25rem;
 }

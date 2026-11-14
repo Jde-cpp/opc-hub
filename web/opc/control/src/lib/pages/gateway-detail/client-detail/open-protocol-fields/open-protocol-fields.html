@@ -23,9 +23,10 @@
 	@if( fieldError('timeZone'); as error ){ <mat-hint style="color: var(--mat-sys-error)">{{error}}</mat-hint> }
 	@else { <mat-hint>{{hints.timeZone}}</mat-hint> }
 </mat-form-field>
-<!--a knob for a controller that answers a revision badly, which most rows never touch:  behind a disclosure, open where the row has one-->
+<!--a knob for a controller that answers a revision badly, which most rows never touch:  behind a disclosure, open where the row has one.
+	The summary says the ceilings are wrong, since they hold Save closed or open;  an [open] tied to the error would fight the user's toggle-->
 <details class="disclosure" [open]="ceilingsOpen()" (toggle)="onToggle( $any($event.target).open )">
-	<summary>Revision ceilings</summary>
+	<summary>Revision ceilings@if( fieldError('revisions') ){<span class="error">: not valid</span>}</summary>
 	<mat-form-field style="width: 100%;" appearance="fill">
 		<mat-label>Revision Ceilings</mat-label>
 		<input matInput type="text" autocomplete="off" placeholder="0061:3 0001:6" [value]="record().revisions ?? ''" (input)="onChange( 'revisions', $any($event.target).value )">

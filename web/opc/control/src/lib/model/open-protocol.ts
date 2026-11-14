@@ -20,17 +20,18 @@ export const composeOpenProtocolUrl = ( host:string, port:string|number|null|und
 	const p = String( port ?? "" ).trim();
 	return `${openProtocolScheme}${host.trim()}:${p || openProtocolDefaultPort}`;
 };
-//The gateway's rule (OpenProtocolRow):  a name, an address or an IPv6 address in brackets, so no slash, no space and no colon outside
-//the brackets.  Empty says nothing - the required marker covers it - and will not save.
+//The gateway's rule (OpenProtocolRow's readUrl):  a name or an address of letters, digits, '.', '-' and '_', or an IPv6 address in
+//brackets, which may hold ':' and a zone's '%' besides, with nothing after the ']'.  Empty says nothing - the required marker covers
+//it - and will not save.
 export const hostError = ( host:string ):string|undefined=>{
 	const h = host.trim();
 	if( !h )
 		return undefined;
-	if( /[\s/]/.test(h) )
-		return "A host name or address, with no space or slash.";
-	if( h.includes(":") && !/^\[[0-9A-Fa-f:.]+\]$/.test(h) )
-		return "An IPv6 address goes in brackets, [::1].";
-	return undefined;
+	if( h.startsWith("[") )
+		return /^\[[A-Za-z0-9._:%-]+\]$/.test( h ) ? undefined : "An IPv6 address in brackets, [::1] or [fe80::1%eth0].";
+	if( /^[A-Za-z0-9._-]+$/.test(h) )
+		return undefined;
+	return h.includes(":") ? "An IPv6 address goes in brackets, [::1]." : "A host name or address:  letters, digits, '.', '-' and '_'.";
 };
 export const portError = ( port:string|number|null|undefined ):string|undefined=>{
 	const p = String( port ?? "" ).trim();
@@ -93,15 +94,17 @@ export const parseCeilings = ( text:string|null|undefined ):Record<string,number
 export const ceilingsText = ( revisions:Record<string,number> ):string=>Object.keys( revisions ).sort().map( m=>`${m}:${revisions[m]}` ).join( " " );
 export const ceilingsError = ( text:string|null|undefined ):string|undefined=>parseCeilings( text ) ? undefined : "MID:revision pairs separated by spaces, 0061:3 - a four-digit MID and a revision from 1 to 999.";
 
-//An IANA zone name as the gateway resolves it (std::chrono::locate_zone), which takes the database's own spelling:  the browser knows
-//the same database, and resolves a name it takes to that spelling, so one it changes is misspelt.  Empty is the gateway's own zone.
+//An IANA zone name as the gateway resolves it (std::chrono::locate_zone), which is case-sensitive:  a name the browser takes in another
+//case is refused with the database's spelling.  The browser resolves a renamed zone to CLDR's older name, Asia/Kolkata to Asia/Calcutta,
+//and the gateway's database links the two, so a name that resolves to another passes, and the gateway's refusal is the final word on it,
+//as the calendar page has it.  Empty is the gateway's own zone.
 export const timeZoneError = ( zone:string|null|undefined ):string|undefined=>{
 	const z = zone?.trim();
 	if( !z )
 		return undefined;
 	try{
 		const resolved = new Intl.DateTimeFormat( undefined, {timeZone: z} ).resolvedOptions().timeZone;
-		return resolved==z ? undefined : `Not a zone name:  the database spells it ${resolved}.`;
+		return resolved!=z && resolved.toLowerCase()==z.toLowerCase() ? `Not a zone name:  the database spells it ${resolved}.` : undefined;
 	}
 	catch{
 		return "Not a zone the time zone database names, such as Europe/Stockholm.";

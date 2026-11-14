@@ -3,10 +3,9 @@ import { Component, computed, inject, input, LOCALE_ID, output } from '@angular/
 import { MatButtonModule } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
-import Long from 'long';
-import { ProtoUtils, Timestamp } from 'jde-framework';
 import { modeName, policyName } from '../../../../model/gateway-endpoint';
 import { identityFields, OpDiagnostics, OpenProtocolIdentity, OpName, OpReading, scBadNoCommunication, scBadNotSupported, scBadWaitingForInitialData } from '../../../../model/open-protocol';
+import { countText, dateText } from '../../../../model/reading';
 import { ClientCertificate, RejectedCertificate, Server } from '../../../../model/server';
 import { statusText } from '../../../../model/status-code';
 
@@ -19,14 +18,6 @@ const abbreviated = ( label:string, value:string, shown:string ):ServerField=>( 
 //a `_Op` variable's status in place of a value (docs/open-protocol/spec.md *Address space*):  the two it reads before a value comes, the
 //link's loss, else the app's status text
 export const opStatusText = ( sc:number|undefined ):string=>sc==scBadWaitingForInitialData ? "waiting for the first read" : sc==scBadNotSupported ? "not supported by the controller" : sc==scBadNoCommunication ? "no communication" : statusText( sc );
-//a UInt64 as the gateway writes it, a number or the Long form {low, high, unsigned}
-export const countText = ( v:unknown ):string=>{
-	if( typeof v=='number' )
-		return String( v );
-	if( v && typeof v=='object' && 'low' in v && 'high' in v )
-		return new Long( Number((v as any).low), Number((v as any).high), !!(v as any).unsigned ).toString();
-	return v==null ? "" : String( v );
-};
 //the controller's clock less the gateway's, in seconds, signed
 export const skewText = ( v:unknown ):string=>typeof v=='number' ? `${v>0 ? "+" : ""}${v.toFixed( 1 )} s` : v==null ? "" : String( v );
 
@@ -103,7 +94,7 @@ export class ServerProperties{
 		}
 		return [
 			row( "Connected", "Connected", yesNo ),
-			row( "Since", "Since", v=>this.#time( v ) ),
+			row( "Since", "Since", v=>dateText( v, this.#date ) ),
 			row( "Last Error", "LastError", str ),
 			row( "Reconnects", "Reconnects", countText ),
 			row( "URL", "Url", str ),
@@ -115,19 +106,7 @@ export class ServerProperties{
 			row( "Lost Results", "LostResults", countText )
 		];
 	} );
-	//a DateTime as the gateway writes it, {seconds, nanos}, in the viewer's locale - the Server tab's form;  blank for none, the text
-	//as it came for one that is no date
-	#time( v:unknown ):string{
-		if( v && typeof v=='object' && typeof (v as {seconds?:unknown}).seconds=='number' ){
-			const d = ProtoUtils.toDate( { nanos: 0, ...v } as Timestamp );
-			return d ? this.#date.transform( d, 'medium' ) ?? "" : "";
-		}
-		if( typeof v!='string' || !v )
-			return "";
-		const d = new Date( v );
-		return isNaN( d.getTime() ) ? v : this.#date.transform( d, 'medium' ) ?? v;
-	}
-	#date = new DatePipe( inject(LOCALE_ID) );
+	#date = new DatePipe( inject(LOCALE_ID) );//the viewer's locale, for `Since`
 
 	//the server certificate the gateway rejected for this connection (docs/clients/spec.md *Trust*, #415):  shown under the
 	//Not connected reason, with Trust for an admin.  Null when there is none.

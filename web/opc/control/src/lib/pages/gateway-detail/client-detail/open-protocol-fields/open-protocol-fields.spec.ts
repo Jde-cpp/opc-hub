@@ -50,7 +50,7 @@ describe( 'OpenProtocolFields', ()=>{
 		const { type, hint, record } = render( row() );
 		expect( record().canSave ).toBe( true );
 		type( "Host", "plc 1" );
-		expect( hint("Host") ).toContain( "no space" );
+		expect( hint("Host") ).toContain( "letters, digits" );
 		expect( record().canSave ).toBe( false );
 		type( "Host", "plc" );
 		type( "Port", "70000" );
@@ -72,7 +72,7 @@ describe( 'OpenProtocolFields', ()=>{
 		const { type, hint, record } = render( row() );
 		type( "Host", "" );
 		expect( record().canSave ).toBe( false );
-		expect( hint("Host") ).not.toContain( "no space" );
+		expect( hint("Host") ).not.toContain( "letters, digits" );
 	} );
 	it( 'keeps the ceilings behind a disclosure, closed for a row with none and open for one with some', ()=>{
 		const closed = render( row() ).root.querySelector( 'details' ) as HTMLDetailsElement;
@@ -82,6 +82,16 @@ describe( 'OpenProtocolFields', ()=>{
 		const open = render( row({driver: '{"revisions":{"0061":3}}'}) );
 		expect( (open.root.querySelector('details') as HTMLDetailsElement).open ).toBe( true );
 		expect( open.input("Revision Ceilings").value ).toBe( "0061:3" );
+	} );
+	it( 'says a bad ceiling on the disclosure\'s summary, so a closed one still says why Save waits', ()=>{
+		const { root, type, record } = render( row({driver: '{"revisions":{"0061":3}}'}) );
+		const summary = ()=>root.querySelector( 'details summary' )!.textContent!.trim();
+		type( "Revision Ceilings", "61:3" );
+		expect( record().canSave ).toBe( false );
+		expect( summary() ).toBe( "Revision ceilings: not valid" );
+		expect( root.querySelector('details summary .error') ).not.toBeNull();
+		type( "Revision Ceilings", "0061:3" );
+		expect( summary() ).toBe( "Revision ceilings" );
 	} );
 	it( 'suggests the zones the browser names once something is typed, by the typed text', ()=>{
 		const { fixture, type } = render( row() );

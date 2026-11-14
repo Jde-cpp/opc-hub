@@ -249,6 +249,8 @@ describe( 'ServerCnnctn kind and driver', ()=>{
 		expect( retimed.mutation(original)[0].args ).toEqual( {driver: null} );
 		const handWritten = new ServerCnnctn( props({kind: "open-protocol", url: "open-protocol://plc:4546", driver: '{"revisions": {"0061": 3}, "timeZone": "UTC"}'}) );
 		expect( new ServerCnnctn({...handWritten} as ServerCnnctnProps).mutation( handWritten ) ).toEqual( [] );//compared in the canonical form, not as text
+		const portless = new ServerCnnctn( props({kind: "open-protocol", url: "open-protocol://plc", driver: null}) );//written by hand:  the gateway takes host alone
+		expect( new ServerCnnctn({...portless, description: "line 2"} as ServerCnnctnProps).mutation( portless )[0].args ).toEqual( {description: "line 2"} );//no url, which would restart the driver
 	} );
 	it( 'changes a UA row to Open Protocol with the kind and the composed url alone', ()=>{
 		const original = new ServerCnnctn( props({securityMode: "Sign", sessionTimeout: 60000}) );
