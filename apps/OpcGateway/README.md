@@ -60,6 +60,10 @@ installed.
   the controller's answer, `callTimeout` at most: Good on MID 0005, `Bad_InvalidState` on MID 0004 with its code in
   `_Op.LastError`, `Bad_Timeout` where the controller is silent for `replyTimeout`, `Bad_NoCommunication` while the
   link is down, and `Bad_OutOfRange`, with nothing sent, for a value its field does not hold.
+  Each result is an event too, a `TighteningResultEventType` from `Result`, which an event item there or at the
+  Server object hears: its Time the result's source timestamp, its Severity 100 for OK and 500 otherwise, its Message
+  `OK` or `NOK` with the parameter set, and a field per `Result` variable the result has a value for, selected as
+  `2:Torque`.
 - **OPC sessions** (`src/UAClient.*`, `src/auth/`): one client per connection and credential.  Each is pinged every
   `/gateway/pingInterval` and dropped after `/gateway/ttl` idle.  A web session reaches a server in one of three ways:
   - As an issued token.  The token is the hub session id, which a Jde OpcServer resolves to the web user.
@@ -187,6 +191,9 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
   digits, a refused command, a silent controller and a link that is down, Execute on an enforced group and its
   absence, a call past `callTimeout` and one past `maxAsyncOperations`, a call that outlives its session, and a stop
   with calls held.
+- `DriverEventTests`: a result's event (the plan's *Phase 9*), against the same controller, through the socket's
+  `SubscribeEvents` - an OK and a NOK heard at `Result` and at the Server object with their fields, the event's type
+  as a client browses it, what an event leaves out of a result that lacks it, and a fill's event per result written.
 - `CalendarClientTests`: the cache of the AppServer's shift calendars
   ([spec](../../docs/calendar/spec.md) *The client*) - a calendar created, a shift updated and a delete each followed,
   a refused read leaving nothing held, and a reconnect of the app socket bringing the edit made while it was down.

@@ -11,6 +11,7 @@
 #include <jde/opc/openProtocol/logTags.h>
 #include "../../types/OpenProtocolRow.h"
 #include "../../types/ServerCnnctn.h"
+#include "../../uatypes/EventFilter.h"
 #include "TighteningResult.h"
 
 #define let const auto
@@ -83,6 +84,11 @@ namespace Jde::Opc::Gateway{
 		{"EnableTool", Mid0043::Id, {}, 0}, {"DownloadVin", Mid0050::Id, "vin", UA_TYPES_STRING}
 	}};
 	constexpr sv _commandsObject{ "Commands" };
+	//A result's event (spec *Events*):  its source, its type, a property of which is each of `Result`'s variables, and its
+	//severity by the tightening status.
+	constexpr sv _resultObject{ "Result" };
+	constexpr sv _eventType{ "TighteningResultEventType" };
+	constexpr UA_UInt16 _okSeverity{ 100 }, _nokSeverity{ 500 };
 	//MID 0050's 25 characters at two UTF-8 bytes each, the most a Latin-1 character takes:  a VIN past it is refused by its length.
 	constexpr uint _vinBytes{ 50 };
 	//A method's request and its argument as the call's line has it, from the one input open62541 has typed:  a VIN quoted with its
@@ -97,14 +103,19 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	//How long the posts held the server's thread, counted there alone and said when the last has run, the driver gone:  a fill is
-	//a post a result, a burst of them (plan *Risks*).
+	//What the posts have of the driver, which may have gone.  How long they held the server's thread, counted there alone and
+	//said when the last has run:  a fill is a post a result, a burst of them (plan *Risks*).  And the keys a result's event
+	//gives its fields under, Build's.
 	struct OpenProtocolDriver::Posts final{
 		~Posts(){
 			if( Count )
 				INFO( "({}) {} posts held its server's thread {} µs in all, the longest {} µs.", Slug, Count, duration_cast<microseconds>(Total).count(), duration_cast<microseconds>(Longest).count() );
 		}
+		α Raise( UA_Server& server, UA_UInt16 ns, const Writes& writes, const Event& event )Ι->void;
 		const ServerCnnctnNK Slug;
+		//TighteningResult::Variables' each as a select clause names it, by its name alone, `/2:Torque`, and on the event's type,
+		//each as open62541 prints the clause (EventClause::Key).
+		vector<array<string,2>> Keys;
 		uint Count{};
 		steady_clock::duration Total{}, Longest{};
 	};
@@ -159,28 +170,41 @@ namespace Jde::Opc::Gateway{
 		_server = &server;
 		_ns = ns;
 		_calls = move( calls );
-		let addObject = [&]( sv name ){
+		let addObject = [&]( sv name, UA_Byte eventNotifier=0 ){
 			UA_ObjectAttributes object = UA_ObjectAttributes_default;
 			object.displayName = UA_LocalizedText{ {}, ToUV(name) };
+			object.eventNotifier = eventNotifier;
 			UAε( UA_Server_addObjectNode(&server, nodeId(ns, name), NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QualifiedName{ns, ToUV(name)}, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), object, nullptr, nullptr) );
 		};
 		//AccessLevel CurrentRead, and the defaults:  WriteMask 0, MinimumSamplingInterval 0, so an item at 0 hears each write.
-		let addVariable = [&]( sv object, sv name, const UA_DataType& type, const void* initial ){
+		//An object's variable is its component, and a type's its property.
+		let addVariable = [&]( sv parent, sv name, const UA_DataType& type, const void* initial, bool property=false ){
 			UA_VariableAttributes attributes = UA_VariableAttributes_default;
 			attributes.displayName = UA_LocalizedText{ {}, ToUV(name) };
 			attributes.dataType = type.typeId;
 			attributes.valueRank = UA_VALUERANK_SCALAR;
 			attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
 			UA_Variant_setScalar( &attributes.value, const_cast<void*>(initial), &type );
-			UAε( UA_Server_addVariableNode(&server, nodeId(ns, Ƒ("{}.{}", object, name)), nodeId(ns, object), UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_QualifiedName{ns, ToUV(name)}, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
+			UAε( UA_Server_addVariableNode(&server, nodeId(ns, Ƒ("{}.{}", parent, name)), nodeId(ns, parent), UA_NODEID_NUMERIC(0, property ? UA_NS0ID_HASPROPERTY : UA_NS0ID_HASCOMPONENT), UA_QualifiedName{ns, ToUV(name)}, UA_NODEID_NUMERIC(0, property ? UA_NS0ID_PROPERTYTYPE : UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
 		};
 		//These written here, before Run, with no lock to wait for:  a post would wait for a loop that may never run.
 		let started = UA_DateTime_now();
-		addObject( "Result" );
+		addObject( _resultObject, UA_EVENTNOTIFIER_SUBSCRIBE_TO_EVENT );//its results' events are subscribed to here, and at the Server object.
 		for( let& variable : TighteningResult::Variables() ){
 			let waiting = stamped( TighteningResult::Unset(*variable.Type, UA_STATUSCODE_BADWAITINGFORINITIALDATA), started );
-			addVariable( "Result", variable.Name, *variable.Type, waiting.value.data );
+			addVariable( _resultObject, variable.Name, *variable.Type, waiting.value.data );
 			write( server, ns, _slug, Ƒ("Result.{}", variable.Name), waiting );
+		}
+		//The event's type (spec *Events*):  a property per variable of `Result`, under its name and of its type, so a client that
+		//browses the type finds each field, and a select clause on the type names one.  Each is optional:  an event carries what
+		//its result does.  No instance is made of the type:  an event's fields go with it (Posts::Raise), under the keys made here.
+		UA_ObjectTypeAttributes eventType = UA_ObjectTypeAttributes_default;
+		eventType.displayName = UA_LocalizedText{ {}, ToUV(_eventType) };
+		UAε( UA_Server_addObjectTypeNode(&server, nodeId(ns, _eventType), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE), UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE), UA_QualifiedName{ns, ToUV(_eventType)}, eventType, nullptr, nullptr) );
+		for( let& variable : TighteningResult::Variables() ){
+			addVariable( _eventType, variable.Name, *variable.Type, TighteningResult::Unset(*variable.Type, UA_STATUSCODE_GOOD).value.data, true );
+			UAε( UA_Server_addReference(&server, nodeId(ns, Ƒ("{}.{}", _eventType, variable.Name)), UA_NODEID_NUMERIC(0, UA_NS0ID_HASMODELLINGRULE), UA_EXPANDEDNODEID_NUMERIC(0, UA_NS0ID_MODELLINGRULE_OPTIONAL), true) );
+			_posts->Keys.push_back( {EventClause::Parse(Ƒ("{}:{}", ns, variable.Name)).Key, EventClause::Parse(Ƒ("ns={0};s={1}/{0}:{2}", ns, _eventType, variable.Name)).Key} );
 		}
 		addObject( "Counters" );
 		for( let name : {"Total"sv, "Ok"sv, "Nok"sv} ){
@@ -344,14 +368,50 @@ namespace Jde::Opc::Gateway{
 		_calls->Answer( *_server, move(call), result, move(detail) );
 	}
 
+	//A result's event (spec *Events*), from `Result` and so from the Server object, which emits every event.  Every field a
+	//client may select is given here, under the key open62541 prints its clause as, so each resolves at the server's first
+	//lookup:  one it does not find there it looks for by parsing every key given, a clause at a time
+	//(ua_subscription_event.c resolveSAO), on the server's thread, for each item, which a fill pays a result at a time.  So
+	//the base fields are given and not left to their defaults, and each variable of `Result` twice, as a clause on
+	//BaseEventType and as one on the event's type name it, with the value the result wrote, or empty where it wrote none, which
+	//is what a field the event lacks answers.  The EventId is the server's.  The values are borrowed from the writes.
+	α OpenProtocolDriver::Posts::Raise( UA_Server& server, UA_UInt16 ns, const Writes& writes, const Event& event )Ι->void{
+		vector<UA_KeyValuePair> fields;
+		fields.reserve( 7+2*Keys.size() );
+		let add = [&]( sv key, const void* scalar, uint16_t dataType ){
+			fields.push_back( {{0, ToUV(key)}, {}} );
+			UA_Variant_setScalar( &fields.back().value, const_cast<void*>(scalar), &UA_TYPES[dataType] );
+		};
+		let source = nodeId( ns, _resultObject ), type = nodeId( ns, _eventType );
+		let sourceName = ToUV( _resultObject );//its DisplayName.
+		const UA_LocalizedText message{ {}, ToUV(event.Message) };
+		let received = UA_DateTime_now();
+		add( "/EventType", &type, UA_TYPES_NODEID );
+		add( "/SourceNode", &source, UA_TYPES_NODEID );
+		add( "/SourceName", &sourceName, UA_TYPES_STRING );
+		add( "/Time", &event.Time, UA_TYPES_DATETIME );
+		add( "/ReceiveTime", &received, UA_TYPES_DATETIME );
+		add( "/Message", &message, UA_TYPES_LOCALIZEDTEXT );
+		add( "/Severity", &event.Severity, UA_TYPES_UINT16 );
+		for( uint form=0; form<2; ++form ){//by name first, as the gateway's own clients select.
+			for( uint i=0; i<Keys.size(); ++i )
+				fields.push_back( {{0, ToUV(Keys[i][form])}, event.Fields[i] ? writes[*event.Fields[i]].second.value : UA_Variant{}} );
+		}
+		const UA_KeyValueMap map{ fields.size(), fields.data() };
+		const UA_EventDescription description{ .sourceNode=source, .eventType=type, .severity=event.Severity, .message=message, .eventFields=&map };
+		if( let sc = UA_Server_createEventEx(&server, &description, nullptr); sc )
+			WARN( "({}) could not raise a result's event:  {}", Slug, UAException::Message(sc) );
+	}
 	//On the server's own thread, not the strand's executor thread, which the service lock's wait would hold (UAServer::Post).
-	α OpenProtocolDriver::Post( Writes&& writes )ι->void{
+	α OpenProtocolDriver::Post( Writes&& writes, optional<Event>&& event )ι->void{
 		if( writes.empty() )
 			return;
-		Opc::Server::UAServer::Post( *_server, [ns=_ns, posts=_posts, writes=move(writes)]( UA_Server& server ){
+		Opc::Server::UAServer::Post( *_server, [ns=_ns, posts=_posts, writes=move(writes), event=move(event)]( UA_Server& server ){
 			let start = steady_clock::now();
 			for( let& [path, value] : writes )
 				write( server, ns, posts->Slug, path, value );
+			if( event )
+				posts->Raise( server, ns, writes, *event );
 			let held = steady_clock::now()-start;
 			++posts->Count;
 			posts->Total += held;
@@ -542,10 +602,19 @@ namespace Jde::Opc::Gateway{
 		Writes writes;
 		auto values = TighteningResult::Values( result, revision, *_zone, seen );
 		let& variables = TighteningResult::Variables();
+		//The result as an event (spec *Events*), raised behind its writes:  a field for each variable it writes a value to.  OK
+		//is the tightening status's 1;  anything else, a result that sent no status included, is no OK.
+		let ok = result.Status==1;
+		Event event{ source, ok ? _okSeverity : _nokSeverity, string{ok ? "OK"sv : result.Status ? "NOK"sv : "No status"sv}, vector<optional<uint8_t>>(variables.size()) };
+		if( result.Pset )
+			event.Message += Ƒ( ", parameter set {}", *result.Pset );
 		for( uint i=0; i<variables.size(); ++i ){
 			let lacked = !values[i];
-			if( !lacked )
+			if( !lacked ){
+				if( !values[i]->status )
+					event.Fields[i] = (uint8_t)writes.size();
 				writes.emplace_back( Ƒ("Result.{}", variables[i].Name), stamped(move(*values[i]), source) );
+			}
 			else if( !_lacked[i] )
 				writes.emplace_back( Ƒ("Result.{}", variables[i].Name), stamped(TighteningResult::Unset(*variables[i].Type, UA_STATUSCODE_BADNOTSUPPORTED), source) );
 			_lacked[i] = lacked;
@@ -564,7 +633,7 @@ namespace Jde::Opc::Gateway{
 		if( result.TighteningId.value_or(0) )//0 is no id, as MID 0064 has it:  a walk could never reach it.
 			_lastId = result.TighteningId;
 		TRACE( "({}) result {} at revision {} of MID {:04}, sourced {}.", _slug, result.TighteningId.value_or(0), revision, T::Id, ToIsoString(at) );
-		Post( move(writes) );
+		Post( move(writes), move(event) );
 	}
 	α OpenProtocolDriver::OnResult( uint16_t revision, const Mid0061& result )ι->void{
 		if( _recovery )
