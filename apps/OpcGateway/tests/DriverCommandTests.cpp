@@ -186,8 +186,9 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//A value no revision carries is refused Bad_OutOfRange by the method itself, with nothing sent:  a parameter set past 999, a
-	//job past 9999 and a VIN past 25 characters, each to its last value taken.  A controller with MID 0038 at revision 1 alone is
-	//asked at 2 and then at 1, two digits;  the revision settled, a job past 99 is refused with nothing sent at all.
+	//job past 9999 and a VIN past 25 characters, each to its last value taken.  A VIN's control character is escaped in its line,
+	//and a VIN past 50 bytes is refused by its length, the line naming the length alone.  A controller with MID 0038 at revision 1
+	//alone is asked at 2 and then at 1, two digits;  the revision settled, a job past 99 is refused with nothing sent at all.
 	TEST_F( DriverCommandTests, AValuePastItsFieldIsOutOfRange ){
 		auto script = Station();
 		script.Revisions[38] = 1;
@@ -203,8 +204,14 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Call(row, "SelectPset", {1000}), OutOfRange );
 		EXPECT_EQ( Call(row, "SelectJob", {10000}), OutOfRange );
 		EXPECT_EQ( Call(row, "DownloadVin", {jvalue{string(26, 'V')}}), OutOfRange );
+		EXPECT_EQ( Call(row, "DownloadVin", {jvalue{"VIN\n0"}}), OutOfRange ) << "a control character, which the codec refuses";
+		EXPECT_EQ( Call(row, "DownloadVin", {jvalue{string(51, 'V')}}), OutOfRange );
 		EXPECT_EQ( Commands(station, from), vector<uint16_t>{} ) << "nothing sent";
 		EXPECT_EQ( Lines(lines, row.Slug, "SelectPset( 1000 )"), vector<string>{":  BadOutOfRange - MID 0018 revision 1, byte 21:  1000 does not fit 3 digits."} );
+		EXPECT_EQ( Lines(lines, row.Slug, "DownloadVin( \"VIN\\n0\" )").size(), 1u ) << "escaped in its line";
+		EXPECT_EQ( Lines(lines, row.Slug, "DownloadVin( 51 bytes )"), vector<string>{":  BadOutOfRange - A VIN is at most 25 characters, 50 bytes."} );
+		let raw = lines.Find( []( const Logging::Entry& e ){ let m = e.Message(); return m.contains( "DownloadVin" ) && (m.contains( '\n' ) || m.contains( string(51, 'V') )); } );
+		EXPECT_TRUE( raw.empty() ) << "no line carries the newline or the long VIN:  " << (raw.empty() ? string{} : raw.front().Message());
 
 		EXPECT_EQ( Call(row, "SelectPset", {999}), Good );
 		EXPECT_EQ( Call(row, "DownloadVin", {jvalue{string(25, 'V')}}), Good );
@@ -365,8 +372,8 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//A call open62541 cancels before the strand has it is not sent:  past the block's maxAsyncOperations the Call is answered
-	//Bad_TooManyOperations as its method returns, with the request already posted.  The executor is held meanwhile, so the
-	//strand finds the call cancelled whichever came first.  The call held before it is answered as ever.
+	//Bad_TooManyOperations once its method has returned, and the request reaches the strand through the server's thread only
+	//after the service, so the strand finds the call cancelled, the executor free.  The call held before it is answered as ever.
 	TEST_F( DriverCommandTests, ACallPastTheQueuesLimitIsNotSent ){
 		const BlockSetting limit{ "maxAsyncOperations", 1, 0 };
 		Controller station{ *Executor(), ControllerPort(), Station() };
@@ -385,15 +392,11 @@ namespace Jde::Opc::Gateway::Tests{
 		station.Delay( 2s );
 		Send( *client, "SelectPset", &set );
 		ASSERT_TRUE( WaitUntil([&]{ UA_Client_run_iterate( *client, 10 ); return host->Calls()==1 && Commands( station, from ).size()==1; }) ) << "held, and with the controller";
-		{
-			const ExecutorHold hold;
-			ASSERT_TRUE( hold.Held() );
-			size_t outputs{};
-			UA_Variant* output{};
-			EXPECT_EQ( UA_Client_call(*client, DriverNode("Commands"), Method("DisableTool"), 0, nullptr, &outputs, &output), UA_STATUSCODE_BADTOOMANYOPERATIONS );
-			UA_Array_delete( output, outputs, &UA_TYPES[UA_TYPES_VARIANT] );
-			EXPECT_EQ( host->Calls(), 1u ) << "the one before it";
-		}
+		size_t outputs{};
+		UA_Variant* output{};
+		EXPECT_EQ( UA_Client_call(*client, DriverNode("Commands"), Method("DisableTool"), 0, nullptr, &outputs, &output), UA_STATUSCODE_BADTOOMANYOPERATIONS );
+		UA_Array_delete( output, outputs, &UA_TYPES[UA_TYPES_VARIANT] );
+		EXPECT_EQ( host->Calls(), 1u ) << "the one before it";
 		EXPECT_TRUE( WaitLine(lines, row.Slug, "DisableTool()", " never sent:  open62541 cancelled it first - a client's Cancel, the queue's limit or a timeout.") );
 		EXPECT_TRUE( WaitLine(lines, row.Slug, "SelectPset( 7 )", ":  Good.") );
 		EXPECT_EQ( Commands(station, from), vector<uint16_t>{18} );

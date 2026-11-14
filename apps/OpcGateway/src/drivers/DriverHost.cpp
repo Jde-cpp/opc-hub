@@ -27,9 +27,10 @@ namespace Jde::Opc::Gateway{
 	//every session, #237's posture, nothing writable or edited, and a method of the row's namespace called under Execute on the
 	//enforced access row of a group that holds a variable of the row.  The groups are HistHost's live ones on the row's
 	//connection with a member, as they are when asked, and each one's rights a lookup under the acl's lock
-	//(Authorize::ScopedRights):  UAAccess asks under open62541's service lock, so nothing here waits or throws.  Every node of
-	//the row's namespace answers Execute with its Read where a call would pass, which a method's UserExecutable reads;  only a
-	//method has a use for it.  A method of the server's own, namespace 0's, is called by no one, as before the drivers had
+	//(Authorize::ScopedRights):  UAAccess asks under open62541's service lock, so nothing here throws, and it waits only for locks
+	//held over work in memory - HistHost's, a group's while it takes a value, whose store's flush is scheduled, and the acl's.
+	//Every node of the row's namespace answers Execute with its Read where a call would pass, which a method's UserExecutable
+	//reads;  only a method has a use for it.  A method of the server's own, namespace 0's, is called by no one, as before the drivers had
 	//methods.  The Call service's refusal is a line at Information with why, the message #237 gave history edits
 	//(Authorize::CheckEnforced), since its client hears Bad_UserAccessDenied alone.
 	struct DriverNodeAccess final : Opc::Server::INodeAccess{

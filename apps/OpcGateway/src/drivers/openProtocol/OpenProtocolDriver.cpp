@@ -83,12 +83,15 @@ namespace Jde::Opc::Gateway{
 		{"EnableTool", Mid0043::Id, {}, 0}, {"DownloadVin", Mid0050::Id, "vin", UA_TYPES_STRING}
 	}};
 	constexpr sv _commandsObject{ "Commands" };
-	//A method's request and its argument as the call's line has it, from the one input open62541 has typed.
+	//MID 0050's 25 characters at two UTF-8 bytes each, the most a Latin-1 character takes:  a VIN past it is refused by its length.
+	constexpr uint _vinBytes{ 50 };
+	//A method's request and its argument as the call's line has it, from the one input open62541 has typed:  a VIN quoted with its
+	//control characters escaped, so a client's text cannot end the line.
 	Ω commandRequest( uint16_t mid, const UA_Variant* input )ι->std::pair<Body,string>{
 		switch( mid ){
 			case Mid0018::Id:{ let pset = *(const UA_UInt16*)input->data; return { Mid0018{.Pset=pset}, std::to_string(pset) }; }
 			case Mid0038::Id:{ let job = *(const UA_UInt16*)input->data; return { Mid0038{.JobId=job}, std::to_string(job) }; }
-			case Mid0050::Id:{ auto vin = ToString( *(const UA_String*)input->data ); auto text = Ƒ( "\"{}\"", vin ); return { Mid0050{.Vin=move(vin)}, move(text) }; }
+			case Mid0050::Id:{ auto vin = ToString( *(const UA_String*)input->data ); auto text = Ƒ( "{:?}", vin ); return { Mid0050{.Vin=move(vin)}, move(text) }; }
 			case Mid0042::Id: return { Mid0042{}, {} };
 			default: return { Mid0043{}, {} };
 		}
@@ -266,12 +269,19 @@ namespace Jde::Opc::Gateway{
 			return UA_STATUSCODE_BADMETHODINVALID;
 		if( command->Argument.size() && (inputSize!=1 || !UA_Variant_hasScalarType(input, &UA_TYPES[command->Type])) )
 			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		//Neither the line nor the codec's refusal, which quotes the value, carries a VIN of any length.
+		if( let bytes = command->Mid==Mid0050::Id ? static_cast<const UA_String*>(input->data)->length : 0; bytes>_vinBytes ){
+			driver->_calls->Refused( session->UserPK, Ƒ("{}( {} bytes )", command->Name, bytes), UA_STATUSCODE_BADOUTOFRANGE, Ƒ("A VIN is at most 25 characters, {} bytes.", _vinBytes) );
+			return UA_STATUSCODE_BADOUTOFRANGE;
+		}
 		auto [request, argument] = commandRequest( command->Mid, input );
 		return driver->Command( move(request), Ƒ("{}({})", command->Name, argument.empty() ? string{} : Ƒ(" {} ", argument)), session->UserPK, output );
 	}
 	//What no revision the row may ask carries is refused here, with nothing sent;  what the revision the controller settles does
-	//not carry, by the session as it encodes the request (EFailure::Value).  The strand has the call from here:  the driver may
-	//have stopped, and gone, by the time it runs.
+	//not carry, by the session as it encodes the request (EFailure::Value).  The strand has the call through a post to the server's
+	//thread, which runs once this service has returned:  open62541 cancels a call past maxAsyncOperations after its callback
+	//(persistAsyncResponseOperation), and Send's Held must find that.  The driver may have stopped, and gone, by the time the strand
+	//runs.
 	α OpenProtocolDriver::Command( Body&& request, string&& text, UserPK user, const UA_Variant* output )ι->UA_StatusCode{
 		if( _stopping ){
 			_calls->Refused( user, text, UA_STATUSCODE_BADSHUTDOWN, "The driver is stopping." );
@@ -284,15 +294,16 @@ namespace Jde::Opc::Gateway{
 			_calls->Refused( user, text, UA_STATUSCODE_BADOUTOFRANGE, frame.error().What );
 			return UA_STATUSCODE_BADOUTOFRANGE;
 		}
-		boost::asio::post( _strand, [this, stopped=_stopped, calls=_calls, call=_calls->Hold(output, user, text), request=move(request)]()mutable{
+		auto send = [this, stopped=_stopped, calls=_calls, call=_calls->Hold(output, user, text), request=move(request)]()mutable{
 			if( *stopped )
 				calls->Dropped( call, "The driver has stopped." );
 			else
 				Send( move(call), move(request) );
-		} );
+		};
+		Opc::Server::UAServer::Post( *_server, [strand=_strand, send=move(send)]( UA_Server& )mutable{ boost::asio::post( strand, move(send) ); } );
 		return UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
 	}
-	//Behind whatever is outstanding (§3.2.1).  A call open62541 cancelled before this - the queue's limit as its callback
+	//Behind whatever is outstanding (§3.2.1).  A call open62541 cancelled before this - the queue's limit after its callback
 	//returned, a client's Cancel - has its client answered, and is not sent.  A request the session takes after its stop has
 	//ended is answered at once, unsent, on a strand the driver may have left.
 	α OpenProtocolDriver::Send( DriverCalls::Call&& call, Body&& request )ι->void{

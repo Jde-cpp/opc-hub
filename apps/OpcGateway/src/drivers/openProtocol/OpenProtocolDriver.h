@@ -79,7 +79,7 @@ namespace Jde::Opc::Gateway{
 			TimePoint By;//the time of the last result the walk reached, and before the first the controller's clock.
 		};
 		//A method of `Commands` called, open62541's callback on the server's thread under the service lock, and the request it
-		//makes, held with the host and posted to the strand, or refused there.
+		//makes, held with the host and posted to the strand through the server's thread, or refused there.
 		Ω OnCall( UA_Server* server, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId* methodId, void* methodContext, const UA_NodeId* objectId, void* objectContext, size_t inputSize, const UA_Variant* input, size_t outputSize, UA_Variant* output )ι->UA_StatusCode;
 		α Command( OpenProtocol::Body&& request, string&& text, UserPK user, const UA_Variant* output )ι->UA_StatusCode;
 		//These on the strand.

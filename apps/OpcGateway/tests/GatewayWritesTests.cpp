@@ -2,9 +2,10 @@
 //source's answer (spec *Writes*).  A write under an enforced Update grant lands at the OpcServer before the client is answered and the
 //served value follows from the source;  a structure and a NodeId go back into the source's namespaces, and one the endpoint can't map
 //back is refused;  a client's status and source timestamp go to the source as given;  a variable read-only at the source is read-only
-//here;  a Write with an IndexRange is refused;  a write cancelled before it's sent never is, and one out when the endpoint stops is
-//logged, not posted;  a write on the unenforced group as it ships, and on an enforced one granted Read alone, is refused;  and a write
-//whose connection is down, its source never having given the node's id, is answered Bad_NoCommunication, not Good.
+//here;  a Write with an IndexRange is refused;  a write cancelled before it's sent never is, by a client or the queue's limit, and one
+//out when the endpoint stops is logged, not posted;  a write on the unenforced group as it ships, and on an enforced one granted Read
+//alone, is refused;  and a write whose connection is down, its source never having given the node's id, is answered
+//Bad_NoCommunication, not Good.
 #include <absl/cleanup/cleanup.h>
 #include <jde/tests/Capture.h>
 #include <jde/opc/uatypes/DateTime.h>
@@ -274,6 +275,52 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( client->Write(node, &third, UA_TYPES[UA_TYPES_DOUBLE]), UA_STATUSCODE_GOOD );
 		lg _{ source.Mutex };
 		EXPECT_EQ( source.Written, (vector<double>{first, third}) ) << "the second dropped:  cancelled before it was sent";
+	}
+
+	//A write past the endpoint's maxAsyncOperations is never sent (spec *Writes*):  open62541 cancels it once the value source has
+	//returned, and its forward reaches the executor through the server's thread only after the service.  Under a limit of one, a
+	//write the source holds is the one, and a write to another served node is answered Bad_TooManyOperations, dropped, and the source
+	//never sees it.  The limit is open62541's, set on the running endpoint and put back:  a restart would leave the cases after a
+	//fresh endpoint, whose first served node of the pumps' namespace can't be the held one.
+	TEST_F( GatewayWritesTests, AWritePastTheQueuesLimitIsNeverSent ){
+		let limit = []( size_t value )->size_t{
+			auto endpoint = GatewayServer::Instance();
+			auto ua = endpoint ? endpoint->Server() : nullptr;
+			THROW_IF( !ua, "The endpoint isn't running." );
+			auto was = ms<std::atomic<size_t>>( std::numeric_limits<size_t>::max() );
+			Opc::Server::UAServer::Post( *ua->Ptr(), [value, was]( UA_Server& server ){ *was = std::exchange( UA_Server_getConfig(&server)->maxAsyncOperationQueueSize, value ); } );
+			THROW_IF( !WaitUntil([&]{ return *was!=std::numeric_limits<size_t>::max(); }), "The endpoint's thread didn't take the limit." );
+			return *was;
+		};
+		size_t shipped{};
+		ASSERT_NO_THROW( shipped = limit(1) );
+		absl::Cleanup unlimit = [&]{ try{ limit( shipped ); }catch( const std::exception& e ){ ADD_FAILURE() << e.what(); } };
+		Logging::Capture lines{ ELogLevel::Information };
+		AddHeldVariable();
+		const OneNodeGroup rpm{ "gatewayWritesLimitRpm", RpmManual };
+		WaitPath( rpm.Host, rpm.Index );
+		let itemsBefore = Items();//rpm's item among them:  the held group's purge waits for these.
+		Answered answered;
+		auto client = Client();
+		let [groupId, held] = ServeHeld( *client, "gatewayWritesLimit" );
+		absl::Cleanup purge = [&]{ Purge( groupId, itemsBefore ); };
+		optional<NodeId> node;
+		ASSERT_TRUE( WaitUntil([&]{ node = Served( *client, "pumpManual", "motorRpm" ); return node.has_value(); }) );
+		auto open = EnforcedHistGroups();
+		ASSERT_TRUE( WaitWritable(*client, held) && WaitWritable(*client, *node) ) << "the grant reaches the gateway's authorizer";
+		absl::Cleanup unhold = Release;
+		Hold();
+		SendWrites( *client, held, {31}, answered );
+		ASSERT_TRUE( WaitUntil(Holding) ) << "the source holds it:  the endpoint's one operation";
+		let before = Current( RpmManual ).AsNumber<double>();
+		const double value{ before+1000 };
+		EXPECT_EQ( client->Write(*node, &value, UA_TYPES[UA_TYPES_DOUBLE]), UA_STATUSCODE_BADTOOMANYOPERATIONS );
+		let dropped = [&]{ return lines.Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.contains( node->ToString() ) && m.contains( "dropped:  cancelled before it was sent" ); } ).size(); };
+		EXPECT_TRUE( WaitUntil([&]{ return dropped()==1; }) ) << "its forward found it cancelled";
+		Release();
+		ASSERT_TRUE( WaitUntil([&]{ UA_Client_run_iterate( *client, 10 ); return answered.Done; }) );
+		EXPECT_EQ( answered.Service, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( answered.Service );
+		EXPECT_EQ( Current(RpmManual).AsNumber<double>(), before ) << "never sent";
 	}
 
 	//A forward still out when the endpoint stops is answered after its server is gone (spec *Writes*):  the source holds the write

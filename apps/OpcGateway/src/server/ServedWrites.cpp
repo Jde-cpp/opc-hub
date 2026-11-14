@@ -1,6 +1,7 @@
 #include "ServedWrites.h"
 #include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
+#include <jde/opc/server/UAServer.h>
 #include "../async/ConnectAwait.h"
 #include "../async/WriteAwait.h"
 #include "../GatewayAppClient.h"
@@ -16,7 +17,7 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω answered( UA_StatusCode result, sv detail )ι->string{ return Ƒ( "{}{}", result ? UAException::Message(result) : string{"Good"}, detail.empty() ? string{} : Ƒ(" - {}", detail) ); }
 
-	α ServedWrites::Write( const UA_NodeId& node, UserPK user, const UA_NumericRange* range, const UA_DataValue& value )ι->UA_StatusCode{
+	α ServedWrites::Write( UA_Server& server, const UA_NodeId& node, UserPK user, const UA_NumericRange* range, const UA_DataValue& value )ι->UA_StatusCode{
 		if( range )
 			return UA_STATUSCODE_BADWRITENOTSUPPORTED;
 		Value written{ value };
@@ -35,7 +36,7 @@ namespace Jde::Opc::Gateway{
 			_keys.insert_or_assign( &value, &queue.emplace_back(Queued{&value, move(written), user, serving->Group, serving->Index, serving->Slug}) );
 		}
 		if( first )
-			Post( [self=shared_from_this(), id=NodeId{node}]{ self->Forward( id ); } );
+			Opc::Server::UAServer::Post( server, [self=shared_from_this(), id=NodeId{node}]( UA_Server& )mutable{ Jde::Post( [self=move(self), id=move(id)]{ self->Forward( id ); } ); } );
 		return UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
 	}
 	α ServedWrites::Start( UA_Server& server )ι->void{

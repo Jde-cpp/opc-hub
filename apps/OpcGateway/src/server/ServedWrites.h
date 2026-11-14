@@ -16,7 +16,9 @@ namespace Jde::Opc::Gateway{
 	//open62541 cancels and frees operations on, so none comes between the key's read and the set (spec *Writes*).  open62541 holds the client's
 	//Write until then, or writeTimeout, when it answers Bad_Timeout and cancels the operation, which this hears (Cancelled):  the late
 	//answer is logged and never set, since the address keys another operation next, and a write cancelled before it is sent - behind
-	//a slow forward, past the queue's limit, by a client's Cancel - is dropped, never sent.  One forward at a time per node, in the
+	//a slow forward, past the queue's limit, by a client's Cancel - is dropped, never sent.  A node's first forward reaches the executor
+	//through a post to the server's thread, which runs once the Write service has returned:  open62541 cancels a write past the queue's
+	//limit after the callback (persistAsyncResponseOperation), and the forward must find that.  One forward at a time per node, in the
 	//order the writes came;  coalescing is the spec's *Later*.  Each is logged at Information with the hub user, the node and the
 	//source's answer:  a user driving a PLC under the gateway's credential.  The served value never changes here:  it changes when the source
 	//reports the new value through the collector's subscription.  Its lock is its own, held for a queue step and never across a
@@ -29,7 +31,8 @@ namespace Jde::Opc::Gateway{
 		//once the value is queued, else the refusal - Bad_WriteNotSupported for an IndexRange, since the forward carries a whole value;
 		//Bad_NodeIdInvalid for an index the endpoint can't take back to the source's (ServedValues::Served);  Bad_NodeIdUnknown for a node
 		//that isn't served;  Bad_Shutdown once stopped.  `value` is the operation's, the key its result is set by;  `user` the session's hub user, the audit line's.
-		α Write( const UA_NodeId& node, UserPK user, const UA_NumericRange* range, const UA_DataValue& value )ι->UA_StatusCode;
+		//`server` the one calling, whose thread a node's first forward is posted through.
+		α Write( UA_Server& server, const UA_NodeId& node, UserPK user, const UA_NumericRange* range, const UA_DataValue& value )ι->UA_StatusCode;
 		//The endpoint is stopping, before its server goes:  no write is queued or sent from here on, and an answer is logged and never
 		//set, those waiting for the server's thread included.  Once it returns, nothing here calls into the server.
 		α Stop()ι->void;

@@ -772,13 +772,13 @@ namespace Jde::Opc::Gateway{
 	}
 	//open62541 has gated the write by the node's AccessLevel and the session's UserAccessLevel (GatewayNodeAccess::UserRights) before
 	//this;  the session's hub user is the audit line's.
-	α GatewayServer::Written( UA_Server*, const UA_NodeId*, void* sessionContext, const UA_NodeId* nodeId, void* nodeContext, const UA_NumericRange* range, const UA_DataValue* value )ι->UA_StatusCode{
-		if( !nodeContext || !nodeId || !value )
+	α GatewayServer::Written( UA_Server* server, const UA_NodeId*, void* sessionContext, const UA_NodeId* nodeId, void* nodeContext, const UA_NumericRange* range, const UA_DataValue* value )ι->UA_StatusCode{
+		if( !server || !nodeContext || !nodeId || !value )
 			return UA_STATUSCODE_BADINTERNALERROR;
 		let session = static_cast<const Opc::Server::UAAccess::SessionContext*>( sessionContext );
 		if( !session )
 			return UA_STATUSCODE_BADUSERACCESSDENIED;
-		return static_cast<GatewayServer*>( nodeContext )->_writes->Write( *nodeId, session->UserPK, range, *value );
+		return static_cast<GatewayServer*>( nodeContext )->_writes->Write( *server, *nodeId, session->UserPK, range, *value );
 	}
 	α GatewayServer::Source()ι->UA_CallbackValueSource{ return UA_CallbackValueSource{ .read=Read, .write=Written }; }
 

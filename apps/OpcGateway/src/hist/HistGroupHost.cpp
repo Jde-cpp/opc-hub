@@ -153,7 +153,7 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 	α HistGroupHost::Size()Ι->uint{
-		ul _{ _mutex };
+		rl _{ _mutex };
 		return _nodes.size();
 	}
 	α HistGroupHost::Index( const ExNodeId& node )Ι->optional<HistGroupNodePK>{
