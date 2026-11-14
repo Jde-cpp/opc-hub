@@ -35,19 +35,10 @@ namespace Jde::Opc::OpenProtocol{
 			.TighteningErrorStatus2=r.TighteningErrorStatus2, .StationId=stationId, .StationName=stationName
 		};
 	}
-	Ω localNow( const std::chrono::time_zone* zone, Duration skew )ι->LocalTime{
-		let now = Clock::now()+skew;
-		try{
-			return std::chrono::floor<std::chrono::seconds>( (zone ? zone : std::chrono::current_zone())->to_local(now) );
-		}
-		catch( const std::exception& ){//no time zone database:  UTC.
-			return LocalTime{ std::chrono::floor<std::chrono::seconds>(now.time_since_epoch()) };
-		}
-	}
 
 	struct Controller::Impl final : std::enable_shared_from_this<Impl>{
 		using Strand = boost::asio::strand<boost::asio::io_context::executor_type>;
-		Impl( boost::asio::io_context& context, uint16_t port, Script&& script )ε;
+		Impl( boost::asio::io_context& context, uint16_t port, Script&& script, sv address )ε;
 		α Executor()Ι->const Strand&{ return _strand; }
 		α Port()Ι->uint16_t{ return _port; }
 		α Listen()ι->void;
@@ -55,6 +46,8 @@ namespace Jde::Opc::OpenProtocol{
 		α Edit( const function<void( Script& )>& edit )ι->void{ edit( _script ); }
 		α Rundown( Mid0061&& result, bool here, uint32_t stationId, string&& stationName )ι->void;
 		Τ α Select( optional<T>& kept, T&& selected )ι->void{ kept = move( selected ); PushAll( *kept ); }
+		α Choose( Mid0015&& pset )ι->void;//the parameter set selected:  kept, pushed, and Selected()'s.
+		α Selected()Ι->optional<Mid0015>{ rl _{ _mutex }; return _selected; }
 		α Raise( Mid0071&& alarm )ι->void{ Select( Alarm, move(alarm) ); }
 		α AcknowledgeAlarm()ι->void;
 		α Drop()ι->void;
@@ -118,7 +111,7 @@ namespace Jde::Opc::OpenProtocol{
 		α On( Client& c, const Header& h, const Mid0064& m )ι->void;
 		α On( Client& c, const Header& h, const Mid0070& )ι->void{ Subscribe( c, h, 11 ); }
 		α On( Client& c, const Header& h, const Mid0073& )ι->void{ Unsubscribe( c, h, Mid0070::Id, 12 ); }
-		α On( Client& c, const Header&, const Mid0080& )ι->void{ Reply( c, Mid0081{.Time=localNow(_script.Zone, _script.Skew)} ); }
+		α On( Client& c, const Header&, const Mid0080& )ι->void{ Reply( c, Mid0081{.Time=LocalNow(_script.Zone, _script.Skew)} ); }
 		α On( Client& c, const Header&, const Mid9999& )ι->void{ Reply( c, Mid9999{} ); }
 		α On( Client& c, const Header& h, const auto& )ι->void{ Refuse( c, h.Mid, 99 ); }//a MID a controller sends, not one it takes.
 
@@ -146,13 +139,16 @@ namespace Jde::Opc::OpenProtocol{
 		vector<sp<boost::asio::steady_timer>> _held;//the delayed replies' timers.
 		mutable absl::Mutex _mutex;
 		vector<Received> _frames ABSL_GUARDED_BY(_mutex);
+		optional<Mid0015> _selected ABSL_GUARDED_BY(_mutex);//Pset, for any thread.
 	};
 
-	Controller::Impl::Impl( boost::asio::io_context& context, uint16_t port, Script&& script )ε:
+	Controller::Impl::Impl( boost::asio::io_context& context, uint16_t port, Script&& script, sv address )ε:
 		_strand{ boost::asio::make_strand(context) }, _acceptor{ _strand }, _script{ move(script) }
 	{
-		let endpoint = Tcp::endpoint{ boost::asio::ip::address_v4::loopback(), port };
 		error_code ec;
+		let host = address.empty() ? boost::asio::ip::address{ boost::asio::ip::address_v4::any() } : boost::asio::ip::make_address( address, ec );
+		THROW_IF( ec, "The controller's address '{}' is no IP address:  {}", address, ec.message() );
+		let endpoint = Tcp::endpoint{ host, port };
 		_acceptor.open( endpoint.protocol(), ec );
 		if( !ec ){
 #ifdef _WIN32
@@ -167,7 +163,7 @@ namespace Jde::Opc::OpenProtocol{
 			_acceptor.listen( boost::asio::socket_base::max_listen_connections, ec );
 		if( !ec )
 			_port = _acceptor.local_endpoint( ec ).port();
-		THROW_IF( ec, "The controller cannot listen on 127.0.0.1:{}:  {}", port, ec.message() );
+		THROW_IF( ec, "The controller cannot listen on {}:{}:  {}", host.to_string(), port, ec.message() );
 	}
 	α Controller::Impl::Listen()ι->void{
 		_acceptor.async_accept( [self=shared_from_this()]( const error_code& ec, Tcp::socket socket ){
@@ -346,11 +342,27 @@ namespace Jde::Opc::OpenProtocol{
 	α Controller::Impl::On( Client& c, const Header& h, const Mid0018& m )ι->void{
 		if( !Commanded(c, h.Mid) )
 			return;
-		if( !Pset )
-			Pset.emplace();
-		Pset->Pset = m.Pset;
+		auto pset = Pset.value_or( Mid0015{} );
+		if( _script.Psets.empty() )
+			pset.Pset = m.Pset;
+		else if( let has = _script.Psets.find(m.Pset.value_or(0)); has!=_script.Psets.end() ){
+			pset = has->second;
+			pset.Pset = has->first;
+			pset.PsetChangeTime = LocalNow( _script.Zone, _script.Skew );
+		}
+		else{
+			Refuse( c, h.Mid, 3 );
+			return;
+		}
 		Accept( c, h.Mid );
-		PushAll( *Pset );
+		Choose( move(pset) );
+	}
+	α Controller::Impl::Choose( Mid0015&& pset )ι->void{
+		{
+			ul _{ _mutex };
+			_selected = pset;
+		}
+		Select( Pset, move(pset) );
 	}
 	α Controller::Impl::On( Client& c, const Header& h, const Mid0038& m )ι->void{
 		if( !Commanded(c, h.Mid) || !Answers(c, h) )
@@ -402,6 +414,8 @@ namespace Jde::Opc::OpenProtocol{
 		_results.insert_or_assign( id, here
 			? Stored{_script.Identity.StationId.value_or(0), _script.Identity.StationName, move(result)}
 			: Stored{stationId, move(stationName), move(result)} );
+		while( _script.KeepResults && _results.size()>_script.KeepResults )
+			_results.erase( _results.begin() );
 	}
 	//The result with `id`, or the last before it where there is none, as the PF6000 appendix's walk asks its way back
 	//through ids that are not consecutive (§2.4);  0 is the latest (Table 121).
@@ -491,8 +505,8 @@ namespace Jde::Opc::OpenProtocol{
 		return true;
 	}
 
-	Controller::Controller( boost::asio::io_context& context, uint16_t port, Script script )ε:
-		_impl{ ms<Impl>(context, port, move(script)) }
+	Controller::Controller( boost::asio::io_context& context, uint16_t port, Script script, sv address )ε:
+		_impl{ ms<Impl>(context, port, move(script), address) }
 	{
 		boost::asio::post( _impl->Executor(), [impl=_impl]{ impl->Listen(); } );
 	}
@@ -521,7 +535,7 @@ namespace Jde::Opc::OpenProtocol{
 		} );
 	}
 	α Controller::Select( Mid0015 pset )ι->void{
-		boost::asio::post( _impl->Executor(), [impl=_impl, pset=move(pset)]()mutable{ impl->Select( impl->Pset, move(pset) ); } );
+		boost::asio::post( _impl->Executor(), [impl=_impl, pset=move(pset)]()mutable{ impl->Choose( move(pset) ); } );
 	}
 	α Controller::Select( Mid0035 job )ι->void{
 		boost::asio::post( _impl->Executor(), [impl=_impl, job=move(job)]()mutable{ impl->Select( impl->Job, move(job) ); } );
@@ -557,4 +571,16 @@ namespace Jde::Opc::OpenProtocol{
 	α Controller::Clients()Ι->uint{ return _impl->Connected; }
 	α Controller::ToolLockAsked()Ι->bool{ return _impl->ToolLockAsked; }
 	α Controller::ToolEnabled()Ι->bool{ return _impl->ToolEnabled; }
+	α Controller::Selected()Ι->optional<Mid0015>{ return _impl->Selected(); }
+}
+namespace Jde::Opc{
+	α OpenProtocol::LocalNow( const std::chrono::time_zone* zone, Duration skew )ι->LocalTime{
+		let now = Clock::now()+skew;
+		try{
+			return std::chrono::floor<std::chrono::seconds>( (zone ? zone : std::chrono::current_zone())->to_local(now) );
+		}
+		catch( const std::exception& ){//no time zone database:  UTC.
+			return LocalTime{ std::chrono::floor<std::chrono::seconds>(now.time_since_epoch()) };
+		}
+	}
 }

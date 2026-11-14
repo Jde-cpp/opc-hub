@@ -38,11 +38,14 @@ value, so pump1 counts nothing while the OpcServer's `status` is unknown.
 The device clock keeps running while the OpcServer session is down.  A PLC does not freeze because a client left, and
 it holds its last command until the session is back.
 
+Beside the PLC, a second device on the same clock: a tightening controller on Open Protocol, for a gateway connection
+of that kind.  See *Tightening station* below.
+
 | | value |
 |---|---|
-| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 71 units, no database or server) |
+| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 82 units, no database or server) |
 | settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
-| ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url |
+| ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url; the tightening station's Open Protocol on loopback 4545 (`tightening.address`) |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
 
 ## Run
@@ -133,6 +136,45 @@ A tag named in the contract (`<device>.<tag>`) is published; `command` tags are 
 so under `pubsub`, pump2's `status` toggle is still a session write.  Under `server` there is no contract and no session:
 every tag is a node of the PLC's own server, resolved once at startup.
 
+## Tightening station
+
+Where the config has an `/emulator/tightening` block, and the stock one does, the emulator is a tightening controller
+too: Open Protocol on loopback 4545, under every transport, for a gateway connection of kind `open-protocol`
+([spec](../../../docs/open-protocol/spec.md#design), *Emulator*).  It is the Open Protocol library's controller
+([`Controller.h`](../../../include/jde/opc/openProtocol/Controller.h)), the one the driver's suites run against, so it
+speaks the driver's own codec: it shows the product at work and says nothing of what a controller on a line does.
+
+- **Who it says it is.**  A Power Focus 6000, system type 3, named `Jde PLC emulator`, station 1.  It numbers its
+  messages (MID 0002 at revision 6), so a driver's link is acknowledged at link level, and it answers every MID at the
+  codec's last revision.  Open Protocol has no login and no TLS: the port is the gate, loopback unless
+  `tightening.address` says otherwise.
+- **Rundowns.**  One every `cycle`, give or take `jitter`, while the tool is enabled: `production`'s keys, and in the
+  stock config the pumps' own figures.  Each is a MID 0061 pushed to the clients subscribed to results and kept for
+  MID 0064, the newest `keep` of them.  Its torque is about the selected set's `target`, inside its `min` and `max`, and
+  OK; a `reject` share of them is NOK by a torque under the `min` or over the `max`.  The batch counts the OK ones up to
+  the set's `batchSize`, says OK on the one that fills it and starts over.  The tightening ids run up from 1.
+- **Commands.**  `SelectPset` takes a set of `psets`: the next result names it, with its name and limits, and its batch
+  starts over; a set the table lacks is refused with MID 0004 code 3, as a PF6000 refuses one.  `DisableTool` stops the
+  rundowns and `EnableTool` starts them again.  `SelectJob` and `DownloadVin` are refused, codes 20 and 8: the station
+  has no jobs and takes no VIN.
+- **The rest** is the library's controller: the selected set pushed to its subscribers with its name, batch size and
+  limits, the job, VIN and alarm subscriptions accepted with nothing to push, MID 0080's clock in this process's zone,
+  the keep-alive, and a client silent for 15 s dropped.
+
+Expect at startup `Tightening station on 127.0.0.1:4545:  a rundown every PT2S, 5% NOK, 2 parameter set(s), 1 selected.`,
+in each status line `tightening[results=34 nok=2 pset=1 tool=true]`, and a command as `[tightening]parameter set <- 2 (external)`
+or `[tightening]tool <- disabled (external)`, at the period after it.  A row against it, on a hub:
+
+```bash
+$D login
+$D ql hub 'mutation createServerConnection( slug:"tightening", name:"Tightening station", isDefault:false, url:"open-protocol://127.0.0.1:4545", kind:"open-protocol" ){id}'
+$D ql hub 'nodes(opc:"tightening", id:[{ns:2,s:"_Op.Connected"},{ns:2,s:"_Op.Results"},{ns:2,s:"Result.Torque"},{ns:2,s:"Result.Status"},{ns:2,s:"Counters.Nok"}]){ id value }'
+```
+
+The hub's log then has `(tightening) connected to 'open-protocol://127.0.0.1:4545':  MID 0002 at revision 6, acknowledged at link level.`
+`tightening.log` with the `openProtocol` tag at Trace puts every frame in the emulator's log.  A gateway on another
+box needs `tightening.address` set, `""` or the interface it dials.
+
 ## Config
 
 [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet): the keys under `/emulator`, and the command-line
@@ -160,6 +202,12 @@ overrides that beat them.
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
 | `namespace` | | the device paths' default namespace; absent = the contract's (`pubsub.dataSet.namespace`), so the write and server transports need no `pubsub` block |
 | `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)) and `stops[]` (`every`, `for`, `code`) |
+| `tightening` | | the tightening station; absent = none |
+| `tightening.port` / `tightening.address` | | its Open Protocol port (4545) and the interface it listens on (absent = loopback, `""` = every interface) |
+| `tightening.cycle` / `tightening.jitter` / `tightening.reject` | | `production`'s: a rundown every `cycle` (`PT1S`), give or take `jitter` (none), a `reject` share of them NOK (0) |
+| `tightening.psets[]` | | the parameter sets, the first selected at the start: `id` (1 to 999), `name` (25 characters at most; none), `target`, `min` and `max`, a torque in Nm to two decimals, and `batchSize` (to 99; 0, no batch) |
+| `tightening.keep` | | the results kept for MID 0064, the oldest let go past it (10000) |
+| `tightening.log` | | every frame in and out at Trace under the `openProtocol` tag (`false`) |
 
 Durations are ISO 8601 (`PT30S`).  A key of the wrong kind - `cycle: "2s"`, `reject: "0.05"` - is refused, not read
 as its default.  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`, a non-positive `step`
@@ -171,6 +219,10 @@ says) and a stops list's `reasonCode` included, and with a `command` tag beside 
 command nothing.
 
 A production count's reject tag takes the count's `quality` windows, one counter's faults, but not its sensor range.
+
+The tightening station is refused at startup with no parameter set, with two of one `id`, with a `target` that is not
+between its `min`, 0 or more, and its `max`, with a `max` that leaves a NOK's torque no room under the field's 9999.99,
+with a `keep` of 0, with `production`'s own refusals of its three keys, and where its port is held.
 
 ## Status codes
 
@@ -280,6 +332,10 @@ a certificate that is a hub user's key, or a `plc.users` name.  Every node is th
 the gate.  Anonymous is off unless `plc.tokenTypes.anonymous` turns it on, which opens the pump tags to anyone who can
 reach the port.
 
+The tightening station's port has no gate but its interface: Open Protocol has no login and no encryption, so any
+client that reaches 4545 reads the results, selects a set and disables the emulated tool.  It listens on loopback
+unless `tightening.address` widens it.
+
 ## Network
 
 Multicast needs a route (a box with a default route has one; a bare container may not).  The unicast form
@@ -295,7 +351,12 @@ generated `status`), `Device::Sample` (a scheduled stop's timing and code, a per
 while `status` is off or before the first command, a held fault reaching the rejects), and `PlcServer` on loopback
 4851 with the writer aimed at a port nothing reads: the `/emulator/plc` block and its defaults, a secured session with
 a `plc.users` login reading and writing its nodes, anonymous, an issued token (there is no hub in the suite) and a
-stranger's certificate refused, and a command write reaching the emulator's queue.  `ctest -R Jde.Opc.PlcEmulator.Tests`.
+stranger's certificate refused, and a command write reaching the emulator's queue; and the tightening station
+(`TighteningSpec`'s defaults and refusals, then a station on a loopback port the system picks under the Open Protocol
+library's `Session`, its clock the case's own: one result in a cycle with its torque inside the set's limits, none with
+the tool disabled, a `SelectPset` changing the set the next result names and starting its batch over, the three
+refusals, a reject's torque outside the limits, the batch counting to its size, and the results kept for MID 0064).
+`ctest -R Jde.Opc.PlcEmulator.Tests`.
 The OpcServer suite's `PubSubTests` covers the reader end with an in-process publisher of the same shape - values, and
 `PublishedStatusLandsInTargetVariable` for a status crossing the wire.  The end to end of `-transport=server`, a hub
 group collecting from the PLC, is checked by hand (*Server transport*) until a gateway test starts the emulator
@@ -313,3 +374,9 @@ in-process.
   `StatusWrite`) and its value is written alone.  A Bad reading always carries its last value: the OpcServer's reader
   skips a field without one.  The source timestamp is not held with a held reading, and the historian bits are not
   emulated.
+- The tightening station keeps nothing across a restart: its tightening ids start again at 1 and the results kept are
+  gone, as on a controller whose store was cleared, so a gateway row that had results from it counts one in
+  `_Op.LostResults` at its next recovery and writes the new run by its time.
+- A tightening result carries its torque alone: no angle, no rundown angle, current, self-tap or prevail torque, which
+  go as blanks, a value not sent.  There is one station, with no job, VIN or alarm of its own.
+- A `SelectPset` or a tool command is seen at the next period, so two selections inside one period are the last one.

@@ -1,5 +1,6 @@
 #include "Emulator.h"
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
@@ -9,6 +10,7 @@
 #include "EmulatorClient.h"
 #include "PlcServer.h"
 #include "Signals.h"
+#include "Tightening.h"
 
 #define let const auto
 namespace Jde::Opc::Emulator{
@@ -46,6 +48,7 @@ namespace Jde::Opc::Emulator{
 		up<PlcServer> _plc;
 		up<EmulatorClient> _client;
 		vector<Device> _devices;
+		up<TighteningStation> _tightening;//where /emulator/tightening is:  a device beside the pumps, on a port of its own under every transport.
 		vector<Tag*> _commandTags;//the command tags Watch keys, by index (-transport=server).
 		//The device clock.  Members rather than Run() locals because Reconnect()'s wait loop advances them too (#7).
 		steady_clock::time_point _lastCycle{}, _nextCycle{}, _nextStatus{};
@@ -125,6 +128,8 @@ namespace Jde::Opc::Emulator{
 				}
 			}
 		}
+		if( let tightening = Settings::FindObject("/emulator/tightening") )
+			_tightening = mu<TighteningStation>( *Executor(), TighteningSpec{*tightening} );
 		if( _plc )
 			_plc->Run();
 		if( _transport!=ETransport::Server )
@@ -207,8 +212,10 @@ namespace Jde::Opc::Emulator{
 	//local PLC node, which the Part 14 writer samples on its own timer, so they keep flowing to the OpcServer through an
 	//outage of the client session.  A session-written tag keeps evolving in memory and lands on the first cycle after
 	//recovery, instead of the whole outage arriving as one `dt` (#7).  Under the server transport every tag goes to the
-	//PLC's own node, and `sessionUp` gates nothing.
+	//PLC's own node, and `sessionUp` gates nothing.  The tightening station's rundowns go to its own clients, whatever the session.
 	α Emulator::Cycle( Duration dt, bool sessionUp )ι->void{
+		if( _tightening )
+			_tightening->Sample( dt );
 		for( auto& device : _devices ){
 			device.Sample( dt );
 			for( auto& tag : device.Tags ){
@@ -338,6 +345,8 @@ namespace Jde::Opc::Emulator{
 			}
 			values.push_back( Ƒ("{}[{}]", device.Name, Str::Join(tags, " ")) );
 		}
+		if( _tightening )
+			values.push_back( _tightening->ToString() );
 		let summary = Ƒ( "cycles={} published={} writes={} writeFailures={} externalChanges={} reconnects={} - {}", _cycles, _published, _writes, _writeFailures, _externalChanges, _reconnects, Str::Join(values, " ") );
 		if( onlyIfChanged && summary==_lastStatus )
 			return;//the deadline landed on a statusPeriod boundary - Tick just wrote this exact line, and it is the record (#12).

@@ -3,6 +3,7 @@
 // pump process values over OPC UA PubSub into the OpcServer (:4840 tcp / the contract's udp url), and keeps a client
 // session on the OpcServer for the run commands the UI writes (-transport=write routes every tag over that session
 // instead and skips the PLC server;  -transport=server keeps the PLC server alone, for a gateway group to collect from).
+// Beside the pumps under every transport, a tightening station on Open Protocol's port, :4545 (/emulator/tightening).
 //
 // The pubsub transport needs the OpcServer started with config/Opc.Server.Emulator.jsonnet (…Emulator.Hub.jsonnet against
 // a hub) - the stock config carries no /opcServer/pubsub, because a DataSetReader writes the address space with no session
@@ -22,6 +23,8 @@ local pubsub = import '../../config/pubsub/pumps.libsonnet';
 // (UAClient::Configuration), so a Jde client claims to BE the server it talks to - this device says who it is.
 local applicationUri = "urn:jde:plc-emulator";
 local serverApplicationUri = "urn:open62541.server.application";
+// production's figures (README, the modes):  the pumps' counts and the tightening station's rundowns run on the one set.
+local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 {
 	//Two layers talk to the AppServer.  The LOGIN is an HTTPS request (ClientHttpAwait is always TLS) presenting the
 	//http.ssl key below - the caFile anchor is for that handshake.  The SESSION it opens is the app socket, and that is
@@ -72,6 +75,26 @@ local serverApplicationUri = "urn:open62541.server.application";
 			limits:: { maxSessions: 100, maxSecureChannels: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }
 		},
 		pubsub: pubsub,
+		//A tightening station on Open Protocol (docs/open-protocol/spec.md *Emulator*):  a Power Focus 6000 named `Jde PLC emulator`,
+		//for a gateway's connection of kind open-protocol, url open-protocol://127.0.0.1:4545.  A rundown every `cycle`, give or take
+		//`jitter`, while its tool is enabled, a `reject` share of them NOK by a torque outside the selected set's limits, the OK
+		//ones counted to the set's `batchSize` and over again, each result pushed and kept for MID 0064.  SelectPset takes a set
+		//of `psets`, DisableTool and EnableTool stop and start the rundowns, and SelectJob and DownloadVin are refused.  Without
+		//the block there is no station.  A `::` key is its default, shown hidden.
+		tightening:{
+			port: 4545,
+			address:: "127.0.0.1", //the interface it listens on:  loopback;  "" every interface, for a gateway on another box
+			cycle: production.cycle, //PT1S where left out, as a production tag's
+			jitter: production.jitter, //none where left out
+			reject: production.reject, //0 where left out
+			//The first is selected at the start.  A torque is in Nm, the target inside its limits;  a batchSize of 0, or none, is no batch.
+			psets:[
+				{ id: 1, name: "M8 flange", target: 25, min: 23, max: 27, batchSize: 4 },
+				{ id: 2, name: "M10 bracket", target: 48, min: 45, max: 51, batchSize: 6 }
+			],
+			keep:: 10000, //the results kept for MID 0064, the oldest let go past it
+			log:: false //every frame in and out at Trace under the openProtocol tag, which /logging/spd/tags sets to Trace
+		},
 		period: "PT1S",
 		statusPeriod: "PT1M",
 		reconnectMin: "PT1S",
@@ -95,12 +118,12 @@ local serverApplicationUri = "urn:open62541.server.application";
 		devices:[
 			{ path: "pump1", tags:[
 				{ name: "motorRpm", mode: "follow", ratedRpm: 1450, tau: "PT3S" },
-				{ name: "totalCount", mode: "production", cycle: "PT2S", jitter: "PT0.5S", reject: 0.05, rejectTag:: "rejectCount" },
+				production + { name: "totalCount", mode: "production", rejectTag:: "rejectCount" },
 				{ name: "status", mode: "command" }
 			] },
 			{ path: "pump2", stops:[ { every: "PT1M", "for": "PT10S", code: 1 } ], tags:[
 				{ name: "motorRpm", mode: "sine", min: 800, max: 1600, period: "PT30S" },
-				{ name: "totalCount", mode: "production", cycle: "PT2S", jitter: "PT0.5S", reject: 0.05, rejectTag:: "rejectCount" },
+				production + { name: "totalCount", mode: "production", rejectTag:: "rejectCount" },
 				{ name: "status", mode: "toggle", period: "PT15S" }
 			] },
 			{ path: "pump3", tags:[ { name: "motorRpm", mode: "ramp", min: 0, max: 1450, period: "PT20S" }, { name: "status", mode: "command" } ] },
