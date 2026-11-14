@@ -1,11 +1,13 @@
 //The PLC emulator's unit suite (emulator-review T2):  Signals - TagSpec parsing and every generator - ParseDevices,
-//and PlcServer, the emulated PLC's own UA server on the library's endpoint.  Nothing here logs into an AppServer or
-//opens a session on an OpcServer; PlcServer binds loopback on a test port with an app client that has no hub, so its
-//logins are the block's username, and its writer sends UADP to a port nothing listens on.
+//PlcServer, the emulated PLC's own UA server on the library's endpoint, and the tightening station under an Open Protocol
+//session.  Nothing here logs into an AppServer or opens a session on an OpcServer; PlcServer binds loopback on a test port
+//with an app client that has no hub, so its logins are the block's username, and its writer sends UADP to a port nothing
+//listens on;  the station takes a loopback port the system picks.
 #include "gtest/gtest.h"
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include <jde/tests/testMain.h>
 
 #define let const auto
@@ -16,6 +18,7 @@ namespace Jde{
 #endif
 	Ω startup( int argc, char **argv )ε->void{
 		Logging::AddTags( Opc::TagNames );//before Startup: the jsonnet names opc tags.
+		Logging::AddTags( Opc::OpenProtocol::TagNames );//the tightening station's controller and the cases' session log under it.
 		Process::Startup( argc, argv, "Tests.Opc.PlcEmulator", "PLC emulator unit tests", true );
 		Logging::Init();
 	}

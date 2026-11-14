@@ -137,6 +137,54 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_TRUE( rig.Ask(Mid0018{.Pset=5}) );
 	}
 
+	//A station with a table of parameter sets selects one of them, as the table has it under the time of its selection, and
+	//refuses an id outside it as a PF6000 does one its Source Tightening lacks (its appendix, §2.5):  the emulator's station.
+	TEST( ControllerTests, SelectsAmongItsParameterSets ){
+		auto script = Unnumbered();
+		script.Psets = { {2, Mid0015{.PsetName="M8 flange", .BatchSize=4, .TorqueMin=23, .TorqueMax=27, .TorqueFinalTarget=25}} };
+		Rig rig{ move(script) };
+		ASSERT_TRUE( rig.Start() );
+		ASSERT_TRUE( rig.Ask(Mid0014{}) );
+		EXPECT_EQ( refusedWith(rig.Ask(Mid0018{.Pset=7})), 3 ) << "Parameter set can not be set";
+		EXPECT_FALSE( rig.Station.Selected() );
+		let before = LocalNow();
+		ASSERT_TRUE( rig.Ask(Mid0018{.Pset=2}) );
+		ASSERT_TRUE( WaitUntil([&]{ return rig.Told.Pushes().size()==1; }) );
+		let pushed = As<Mid0015>( rig.Told.Pushes()[0] );
+		EXPECT_EQ( pushed.Pset, 2 );
+		EXPECT_EQ( pushed.PsetName, "M8 flange" );
+		EXPECT_EQ( pushed.BatchSize, 4 );
+		EXPECT_EQ( pushed.TorqueMin, 23 );
+		EXPECT_EQ( pushed.TorqueMax, 27 );
+		EXPECT_EQ( pushed.TorqueFinalTarget, 25 );
+		ASSERT_TRUE( pushed.PsetChangeTime );
+		EXPECT_GE( *pushed.PsetChangeTime, before );
+		let selected = rig.Station.Selected();
+		ASSERT_TRUE( selected );
+		EXPECT_EQ( selected->Pset, 2 );
+		EXPECT_EQ( selected->PsetChangeTime, pushed.PsetChangeTime );
+		rig.Station.Select( Mid0015{.Pset=9} );//at the station, which no table bounds.
+		EXPECT_TRUE( WaitUntil([&]{ let now = rig.Station.Selected(); return now && now->Pset==9; }) );
+	}
+
+	//A station that keeps so many results lets the oldest go, and MID 0064 for one of them finds nothing at or before it.
+	TEST( ControllerTests, KeepsNoMoreResultsThanScripted ){
+		auto script = Unnumbered();
+		script.KeepResults = 2;
+		Rig rig{ move(script) };
+		ASSERT_TRUE( rig.Start() );
+		for( uint32_t id : {5, 6, 7} )
+			rig.Station.Push( Rundown(id) );
+		let old = [&]( uint32_t id )ι->optional<uint32_t>{
+			let reply = rig.Ask( Mid0064{.TighteningId=id} );
+			EXPECT_TRUE( reply ) << id << ":  " << Why( reply );
+			return reply ? As<Mid0065>( *reply ).TighteningId : nullopt;
+		};
+		EXPECT_EQ( refusedWith(rig.Ask(Mid0064{.TighteningId=5})), 15 ) << "let go";
+		EXPECT_EQ( old(6), 6u );
+		EXPECT_EQ( old(0), 7u );
+	}
+
 	//MID 0081 is the station's clock, local to the script's zone and ahead by its skew.
 	TEST( ControllerTests, ClockSkewed ){
 		auto script = Scripted();
@@ -243,6 +291,18 @@ namespace Jde::Opc::OpenProtocol::Tests{
 	TEST( ControllerTests, PortTaken ){
 		Controller station{ *Executor(), 0, Scripted() };
 		EXPECT_THROW( (Controller{*Executor(), station.Port(), Scripted()}), Exception );
+	}
+
+	//The interface is loopback unless the caller names one, every interface where it names none:  the emulator's station on
+	//a box its gateway is not on.
+	TEST( ControllerTests, ListensOnTheAddressItIsGiven ){
+		Controller station{ *Executor(), 0, Unnumbered(), "" };
+		RawClient client{ station.Port() };
+		client.Send( Frame({.Mid=1, .Revision=6}, {}) );
+		let reply = client.Read();
+		ASSERT_TRUE( reply );
+		EXPECT_EQ( Decode(*reply).value().Head.Mid, 2 );
+		EXPECT_THROW( (Controller{*Executor(), 0, Scripted(), "plc.local"}), Exception ) << "a name is no interface";
 	}
 
 	//A controller's port is free once the controller has gone, though its strand was busy then:  the next takes it at once, as

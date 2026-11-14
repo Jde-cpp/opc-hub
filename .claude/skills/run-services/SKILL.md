@@ -203,6 +203,28 @@ emulator logs `[pump1]status <- false (external)` and `motorRpm` decays with τ=
 `$D stop opcserver-emulator; $D start opcserver-emulator` while it runs → `reconnecting
 (#1) in PT1S`, then the subscribe lines again.
 
+**The tightening station.** The stock config's `/emulator/tightening` block makes the emulator a
+tightening controller too, Open Protocol on loopback 4545 under every transport (the
+README's *Tightening station*): a Power Focus 6000 named `Jde PLC emulator` that numbers its
+messages, a rundown every 2 s, 5% of them NOK, two parameter sets. Expect
+`Tightening station on 127.0.0.1:4545:  a rundown every PT2S, 5% NOK, 2 parameter set(s), 1 selected.`
+and `tightening[results=… nok=… pset=… tool=…]` at the end of each status line. A hub row
+against it and what it reads, after `$D login`:
+
+```bash
+$D ql hub 'mutation createServerConnection( slug:"tightening", name:"Tightening station", isDefault:false, url:"open-protocol://127.0.0.1:4545", kind:"open-protocol" ){id}'
+$D ql hub 'nodes(opc:"tightening", id:[{ns:2,s:"_Op.Connected"},{ns:2,s:"_Op.Results"},{ns:2,s:"Result.Torque"},{ns:2,s:"Result.Status"},{ns:2,s:"Counters.Nok"}]){ id value }'
+```
+
+The bench client of *Open Protocol bench controller* below reads it by the tables
+(`python3 $P results 127.0.0.1 4545 --out /tmp/capture --label emu`), and its `ask` sends a
+command by hand: `ask 127.0.0.1 4545 18 1 002` selects set 2, `42 1` and `43 1` disable and
+enable the tool, the emulator logging each as `[tightening]… (external)` at its next period.
+The simulator of the next section takes 4545 too, and the emulator exits at startup where the
+port is held: run one of them, or move one (`--tcp-port`, or an overlay's
+`emulator+:{ tightening+:{ port::: 4547 } }`, `:::` over the hidden default). A restarted emulator starts its tightening ids
+at 1 again, so the row's next recovery counts one in `_Op.LostResults`.
+
 Notes: the PubSub url is multicast (`224.0.0.22`) — a box without a multicast route
 needs the unicast form `opc.udp://127.0.0.1:<port>/` in *both* configs (the test config
 already uses it). Plaintext UDP: this open62541 build has no SKS. Tags are the nodeset

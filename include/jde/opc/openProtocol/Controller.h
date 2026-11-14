@@ -3,9 +3,13 @@
 #include "Codec.h"
 
 //The controller's side of the codec, for the suites and the emulator (docs/open-protocol/spec.md *Tests*, *Emulator*):
-//an acceptor on a loopback port and a session per client, answering as its script says.  It shares the driver's codec,
-//so it proves the two sides agree and not that either agrees with a controller.
+//an acceptor on a port, loopback's unless told, and a session per client, answering as its script says.  It shares the
+//driver's codec, so it proves the two sides agree and not that either agrees with a controller.
 namespace Jde::Opc::OpenProtocol{
+	//The clock's second as a controller sends it:  local to `zone`, the process's own where null, UTC where there is no time
+	//zone database, and ahead by `skew`.
+	α LocalNow( const std::chrono::time_zone* zone=nullptr, Duration skew={} )ι->LocalTime;
+
 	struct Controller final{
 		//What a case sets before the controller listens, and changes through Edit while it runs.  A MID here is the one a
 		//client sends:  0060 for the results it subscribes to.
@@ -18,6 +22,11 @@ namespace Jde::Opc::OpenProtocol{
 			flat_map<uint16_t,uint16_t> Revisions;
 			flat_set<uint16_t> Lowers;
 			flat_map<uint16_t,uint16_t> Refuses;//a MID answered by MID 0004 with this code, whatever it asks.
+			//The parameter sets the controller has, by id.  Where it names any, MID 0018 selects one of them, as it stands here
+			//under the time of its selection, and an id outside them is refused with code 3, as a PF6000 refuses one its Source
+			//Tightening lacks (its appendix, §2.5).  Where it names none, MID 0018 selects whatever id it asks.
+			flat_map<uint16_t,Mid0015> Psets;
+			uint KeepResults{};//the results kept for MID 0064, the oldest let go past it;  0 keeps every one.
 			bool PushOnSubscribe{ true };//the selected set, job and VIN and an active alarm's status go out as their subscription is accepted.
 			Duration Skew{};//MID 0081's time ahead of the clock's.
 			const std::chrono::time_zone* Zone{};//the zone MID 0081's time is local to, the process's own where null.
@@ -34,7 +43,8 @@ namespace Jde::Opc::OpenProtocol{
 			steady_clock::time_point At;
 		};
 
-		Controller( boost::asio::io_context& context, uint16_t port, Script script )ε;//`port` 0 takes a free one.  Throws where it cannot listen.
+		//`port` 0 takes a free one, and `address` is the interface it listens on, every one where empty.  Throws where it cannot listen.
+		Controller( boost::asio::io_context& context, uint16_t port, Script script, sv address="127.0.0.1" )ε;
 		Controller( const Controller& )=delete;
 		α operator=( const Controller& )->Controller& =delete;
 		~Controller();//closes the acceptor and every client:  the port is free when it returns.
@@ -66,6 +76,7 @@ namespace Jde::Opc::OpenProtocol{
 		α Clients()Ι->uint;//the clients connected now.
 		α ToolLockAsked()Ι->bool;//a MID 0001 at revision 8 asked for the tool lock at disconnection, and was refused as every revision past the codec's is.
 		α ToolEnabled()Ι->bool;//MID 0042 and 0043.
+		α Selected()Ι->optional<Mid0015>;//the parameter set selected, MID 0018's or Select's.
 	private:
 		struct Impl;
 		const sp<Impl> _impl;

@@ -6,6 +6,7 @@
 #include <jde/app/client/IAppClient.h>
 #include <jde/app/client/appClient.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/openProtocol/logTags.h>
 #include "EmulatorAppClient.h"
 #include "Emulator.h"
 
@@ -18,7 +19,8 @@
 //nodeset, which it PUBLISHES over OPC UA PubSub (UADP/UDP) into the OpcServer's matching nodes, plus a client session to
 //the OpcServer for the run commands the UI writes (and, with -transport=write, for writing the process values directly);
 //or, with -transport=server, that server alone on the UA server library's secured endpoint, for a gateway group to
-//collect from as from a PLC, the commands arriving as writes to its own nodes.
+//collect from as from a PLC, the commands arriving as writes to its own nodes.  Beside it under every transport, where
+///emulator/tightening is, a tightening station on Open Protocol's port, for a gateway's open-protocol row.
 //
 //First run:  -createCert (both certs; the UA one must sit in a dir the OpcServer trusts - see /access/trustedCertDirs),
 //then -grant once OpcServer has booted (it registers the nodeIds resource), then RESTART OpcServer so it loads the acl.
@@ -29,6 +31,7 @@
 	using namespace Jde;
 	using namespace Jde::Opc;
 	Logging::AddTags( Opc::TagNames );
+	Logging::AddTags( Opc::OpenProtocol::TagNames );//the tightening station's controller logs under it.
 	int exitCode{ EXIT_FAILURE };
 	try{
 		Process::Startup( argc, argv, "Jde.Opc.PlcEmulator", "PLC emulator for the Jde OpcServer" );
