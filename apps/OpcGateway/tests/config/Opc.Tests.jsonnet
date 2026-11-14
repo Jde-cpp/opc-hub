@@ -81,7 +81,7 @@ local logsDir = args.logsDir;
 		reconnectDelay: "PT0.1S",
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
 		hist:{ path: logsDir + "/hist/opc-gateway-tests" }, //the gateway's own groups (HistGroupTests), which main.cpp empties at the start as it does the server's.
-		flows:{ path: logsDir + "/flows/opc-gateway-tests" }, //FlowTests:  a flow's trace directory, which its purge removes;  main.cpp empties it at the start.
+		flows:{ path: logsDir + "/flows/opc-gateway-tests", server:{ port: 4960 } }, //FlowTests:  a flow's trace directory, which its purge removes;  main.cpp empties it at the start.  The flow server (FlowServerTests) at the spec's test port, clear of the shipped 4860.
 		oee:{ live:: "PT1S", settle: "PT2S" }, //OeeTests:  not the shipped 5 s, so OeeTests.TheSettingsReachTheHost tells the setting from the default;  the suite's clock is its own, so nothing waits on it.
 		//the gateway's own endpoint (GatewayServerTests), beside the embedded OpcServer's 4940:  two UA servers in one process.  No ssl:
 		//the process pair, http.gateway.ssl.  Its client certificates are the test product's one ssl/certs, where that pair is - the suite's

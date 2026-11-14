@@ -11,6 +11,7 @@
 #include "../hist/HistHost.h"
 #include "FlowFeed.h"
 #include "FlowNodes.h"
+#include "FlowServer.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -84,6 +85,17 @@ namespace Jde::Opc::Gateway{
 	private:
 		sp<ReplayRun> _replay;
 	};
+	//A committed replay's values, each answered by its group's edit.
+	struct CommittedAwait final : AnyVoidAwait{
+		CommittedAwait( sp<FlowCommits> commits, SRCE )ι:AnyVoidAwait{ sl }, _commits{ move(commits) }{}
+	protected:
+		α Suspend()ι->void override{
+			auto commits = _commits;//the resume may end this await.
+			commits->Drained( [this]{ Resume(); } );
+		}
+	private:
+		sp<FlowCommits> _commits;
+	};
 	//The flow's trace written now, a replay's records with it.
 	struct FlushAwait final : AnyVoidAwait{
 		FlushAwait( sp<Flows::TraceStore> store, string slug, SRCE )ι:AnyVoidAwait{ sl }, _store{ move(store) }, _slug{ move(slug) }{}
@@ -107,6 +119,15 @@ namespace Jde::Opc::Gateway{
 	Ω refused( const FlowRefusal& refusal, SL sl )ι->Exception{
 		let& fault = refusal.Fault;
 		return Exception{ sl, ExceptionArgs{refusal.Status}, "{}{}", fault.NodeId.empty() ? string{} : Ƒ("Node '{}':  ", fault.NodeId), fault.Message };
+	}
+	//The group that holds `node`, as a group's node column spells it, on `connection`:  none where no group, or only a deleted one, does.
+	Ω holdingGroup( ServerCnnctnPK connection, string node, optional<HistGroupRow>& y )ι->AnyVoidTask{
+		auto members = co_await Any( SelectHistGroupNodes({.Connection=connection, .Node=move(node)}) );
+		if( members.empty() )
+			co_return;
+		auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)members.front().Group}}) );//a deleted group holds nothing.
+		if( groups.size() )
+			y = move( groups.front() );
 	}
 	Ω unstarted( sv why )ι->Flows::Fault{ return { {}, Ƒ("It could not be started:  {}", why) }; }
 
@@ -237,6 +258,11 @@ namespace Jde::Opc::Gateway{
 			FlowHost& _host;
 		};
 		BlockAwait( LoadAwait{*this} );
+		if( !FlowServer::Instance() ){//one that could not listen:  tried again, as the flows that need it are.
+			lg _{ _mutex };
+			if( !_stopped && !_relisten )
+				_relisten = _clock->Schedule( RetryInterval, [this]{ Relisten(); } );
+		}
 	}
 	α FlowHost::Stop()ι->void{
 		vector<sp<Run>> runs;
@@ -249,6 +275,8 @@ namespace Jde::Opc::Gateway{
 			configured = _configured;
 			feeds = std::exchange( _feeds, {} );
 			observer = std::exchange( _observer, nullopt );
+			if( auto timer = std::exchange(_relisten, 0); timer )
+				_clock->Cancel( timer );
 			for( auto&& [_,entry] : _flows ){
 				if( auto timer = std::exchange(entry.Retry, 0); timer )
 					_clock->Cancel( timer );
@@ -361,6 +389,24 @@ namespace Jde::Opc::Gateway{
 				live = p->second.Live;
 		}
 		return live ? live->Flow.Counts() : vector<Flows::NodeCounts>{};
+	}
+	α FlowHost::Totals( FlowPK id )Ι->RunTotals{
+		sp<Run> live;
+		{
+			lg _{ _mutex };
+			if( let p = _flows.find(id); p!=_flows.end() )
+				live = p->second.Live;
+		}
+		RunTotals y;
+		if( !live )
+			return y;
+		let counts = live->Flow.Counts();
+		for( uint i=0; i<counts.size() && i<live->Graph.Nodes.size(); ++i ){
+			y.Errors += counts[i].Errors;
+			if( Flows::IsSource(live->Graph.Nodes[i].Type) )
+				y.Messages += std::reduce( counts[i].Sent.begin(), counts[i].Sent.end(), uint{} );
+		}
+		return y;
 	}
 	α FlowHost::ReplayOf( FlowPK id )Ι->optional<FlowRunPK>{
 		lg _{ _mutex };
@@ -586,6 +632,43 @@ namespace Jde::Opc::Gateway{
 			ERR( "Flow {} could not be started again:  {}", id, e.what() );
 		}
 	}
+	α FlowHost::Relisten()ι->VoidTask{
+		try{
+			auto lock = co_await _edits.Lock();
+			{
+				lg _{ _mutex };
+				_relisten = 0;
+				if( _stopped )
+					co_return;
+			}
+			if( FlowServer::Instance() )
+				co_return;
+			auto rows = co_await Any( SelectFlows({.IncludeDeleted=true}) );
+			auto graphs = co_await Any( DS()->SelectAsync(FlowSql::CurrentGraphs()) );
+			if( FlowServer::Listen(move(rows), move(graphs), true) ){//the flows that wait to start, now rather than at their retry.
+				vector<FlowPK> waiting;
+				{
+					lg _{ _mutex };
+					for( auto&& [id, entry] : _flows ){
+						if( auto timer = std::exchange(entry.Retry, 0); timer ){
+							_clock->Cancel( timer );
+							waiting.push_back( id );
+						}
+					}
+				}
+				lock.unlock();
+				for( let id : waiting )
+					Retry( id );
+				co_return;
+			}
+		}
+		catch( const std::exception& e ){
+			DBG( "The flow server's listen could not be tried again:  {}", e.what() );
+		}
+		lg _{ _mutex };
+		if( !_stopped && !_relisten )
+			_relisten = _clock->Schedule( RetryInterval, [this]{ Relisten(); } );
+	}
 	α FlowHost::Begin( FlowRow row, Flows::Graph graph, uint32 version, UserPK deployer, Resolved spelled )ι->AnyVoidTask{
 		let id = row.Id;
 		co_await WriteContext();//what the run before this one left to write;  what still fails is laid over its row (Unwritten).
@@ -700,21 +783,19 @@ namespace Jde::Opc::Gateway{
 							spelled = co_await SpellAwait{ ExNodeId{ex}, connection, sl };
 							await.Spelled.Nodes.emplace( node.Id, spelled );
 						}
-						auto members = co_await Any( SelectHistGroupNodes({.Connection=connection, .Node=spelled}) );
-						vector<HistGroupRow> groups;
-						if( members.size() )
-							groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)members.front().Group}}) );//a deleted group holds nothing.
+						optional<HistGroupRow> group;
+						co_await holdingGroup( connection, spelled, group );
 						let what = Ƒ( "'{}' on '{}'", ex.ToString(), slug );
 						if( node.Type==ENodeType::OpcOut ){
-							if( groups.empty() )
+							if( !group )
 								throw Exception{ sl, ExceptionArgs{EHttpStatus::Forbidden}, "{} is in no group:  a flow writes a node under Update on the enforced access row of a group that holds it.", what };
-							if( let allowed = acl->CheckEnforced("gateway", "histGroups", groups.front().Guid, Access::ERights::Update, await.Deployer, sl); !allowed )
-								throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "A write to {} needs Update on group '{}':  {}", what, groups.front().Name, allowed.error().what() };
+							if( let allowed = acl->CheckEnforced("gateway", "histGroups", group->Guid, Access::ERights::Update, await.Deployer, sl); !allowed )
+								throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "A write to {} needs Update on group '{}':  {}", what, group->Name, allowed.error().what() };
 						}
-						else if( groups.size() ){
-							if( let allowed = acl->Check("gateway", "histGroups", groups.front().Guid, Access::ERights::Read, await.Deployer, sl); !allowed )
-								throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "{} is group '{}'s, which needs Read:  {}", what, groups.front().Name, allowed.error().what() };
-							await.Spelled.Groups.insert_or_assign( node.Id, groups.front().Id );//whose records a replay reads in the node's place.
+						else if( group ){
+							if( let allowed = acl->Check("gateway", "histGroups", group->Guid, Access::ERights::Read, await.Deployer, sl); !allowed )
+								throw Exception{ sl, ExceptionArgs{allowed.error().HttpStatus()}, "{} is group '{}'s, which needs Read:  {}", what, group->Name, allowed.error().what() };
+							await.Spelled.Groups.insert_or_assign( node.Id, group->Id );//whose records a replay reads in the node's place.
 						}
 						else if( await.Deploying ){//the server's own answer, under the deployer's session:  the read a page of theirs would make.
 							REFUSE_IF( !await.Session, "{} is in no group, so its server admits it:  the deploy reads it once under the deployer's own session, and this deploy has none.", what );
@@ -824,6 +905,9 @@ namespace Jde::Opc::Gateway{
 				if( fault.size() )
 					throw refused( {{node.Id, move(fault)}}, sl );
 			}
+			auto variables = FlowServer::Read( *graph );//each read above:  a name two nodes have.
+			if( !variables )
+				throw refused( {move(variables.error())}, sl );
 			Resolved spelled;
 			if( let refusal = co_await Admit(row.Id, *graph, by, dynamic_pointer_cast<Web::Server::SessionInfo>(await.Deployer.Session()), true, spelled, sl); refusal )
 				throw refused( *refusal, sl );
@@ -851,6 +935,8 @@ namespace Jde::Opc::Gateway{
 				co_await HaltAwait{ live };
 				y.Dropped = drops( live->Flow.Counts() )-before;
 			}
+			if( let server = FlowServer::Instance() )//once the run before has stopped, and before this one's first value:  the folder as the version has it.
+				server->Deployed( row.Id, row.Slug, version, row.Enabled, move(*variables) );
 			if( row.Enabled ){
 				co_await Begin( row, move(*graph), version, by, move(spelled) );//a start that fails leaves its Fault, which the answer carries, and is tried again.
 				if( let state = Find(row.Id); state ){
@@ -967,8 +1053,25 @@ namespace Jde::Opc::Gateway{
 			Resolved spelled;
 			if( let refusal = co_await Admit(row.Id, *graph, version.Deployer, nullptr, false, spelled, sl); refusal )
 				throw refused( *refusal, sl );
-			auto nodes = ms<FlowNodes>( *this, FlowRun{row.Id, row.Slug, version.Deployer, spelled.Groups, spelled.Nodes}, FlowReplay{await.From, await.To, await.Commit, ReadLimit()} );
 			let acl = AppClient()->Acl();
+			if( await.Commit ){//each variable's history, which the run writes as the version's deployer:  the group that holds it, and their Update on its enforced row.
+				let connections = co_await Any( ServerCnnctnAwait{DB::Key{string{ServerCnnctn::FlowSlug}}} );
+				for( let& node : graph->Nodes ){
+					if( node.Type!=ENodeType::Variable )
+						continue;
+					let name = Json::FindDefaultSV( node.Props, "name" );
+					optional<HistGroupRow> group;
+					if( connections.size() )
+						co_await holdingGroup( connections.front().Id, FlowServer::NodeText(row.Slug, name), group );
+					if( !group || !HistHost::Instance().Find(group->Id) )
+						throw refused( {{node.Id, Ƒ("Variable '{}' is in no group this gateway historizes:  a committed run has no history to write it into.", name)}}, sl );
+					if( let allowed = acl->CheckEnforced("gateway", "histGroups", group->Guid, Access::ERights::Update, version.Deployer, sl); !allowed )
+						throw refused( {{node.Id, Ƒ("A committed run writes variable '{}' into group '{}' as the flow's deployer, which needs Update:  {}", name, group->Name, allowed.error().what())}, allowed.error().HttpStatus()}, sl );
+					spelled.Groups.insert_or_assign( node.Id, group->Id );
+				}
+			}
+			auto nodes = ms<FlowNodes>( *this, FlowRun{row.Id, row.Slug, version.Deployer, spelled.Groups, spelled.Nodes}, FlowReplay{await.From, await.To, await.Commit, ReadLimit()} );
+			let commits = nodes->Commits();
 			flat_set<HistGroupPK> read;
 			for( let& node : graph->Nodes ){//a source's refusals before the row, which a refusal doesn't write:  its stream's, a node no group holds by its name, and a group the caller may not read.
 				if( node.Type!=ENodeType::OpcIn && node.Type!=ENodeType::GroupIn )
@@ -1017,17 +1120,24 @@ namespace Jde::Opc::Gateway{
 			replay->Flow = row.Id;
 			replay->Slug = row.Slug;
 			replay->Name = row.Name;
+			replay->Commits = commits;
 			replay->Run = ms<Flows::Run>( move(*graph), move(config), Flows::Run::Config{
 				.Clock=clock, .Host=move(nodes), .From=await.From, .To=await.To,
 				.Ended=[this, replay]( Flows::ERunEnd end, string why ){ Ending( replay, end, move(why) ); },
-				.Pace=[store, slug=row.Slug]( absl::AnyInvocable<void( string )> next ){
-					if( !store || store->Buffered(slug)<ReplayBuffer )
-						next( {} );
+				.Pace=[store, slug=row.Slug, commits]( absl::AnyInvocable<void( string )> next ){
+					auto traced = [store, slug]( absl::AnyInvocable<void( string )> next ){
+						if( !store || store->Buffered(slug)<ReplayBuffer )
+							next( {} );
+						else
+							store->Flush( slug, [store, slug, next=std::move(next)]()mutable{//a trace that can't be written fails the run, which would otherwise flush at each record.
+								let failing = store->Failing( slug );
+								next( failing ? Ƒ("The trace could not be written:  {}", *failing) : string{} );
+							} );
+					};
+					if( commits && commits->Waiting()>=FlowCommits::Buffer )//a committed run's values, which its groups' edits are behind on:  until half are in.
+						commits->Eased( [traced, next=std::move(next)]()mutable{ traced( std::move(next) ); } );
 					else
-						store->Flush( slug, [store, slug, next=std::move(next)]()mutable{//a trace that can't be written fails the run, which would otherwise flush at each record.
-							let failing = store->Failing( slug );
-							next( failing ? Ƒ("The trace could not be written:  {}", *failing) : string{} );
-						} );
+						traced( std::move(next) );
 				}
 			} );
 			bool stopped;
@@ -1052,6 +1162,20 @@ namespace Jde::Opc::Gateway{
 	}
 	α FlowHost::Ending( sp<ReplayRun> replay, Flows::ERunEnd end, string why )ι->VoidTask{
 		let records = replay->Run->Delivered(), pages = replay->Run->Pages();
+		string committed;
+		if( let& commits = replay->Commits; commits ){//the values still out:  the row says how the run ended once each is in its group's files, or refused.
+			if( end==Flows::ERunEnd::Completed )
+				commits->Complete();
+			co_await CommittedAwait{ commits };
+			let result = commits->Result();
+			committed = Ƒ( ", {} values committed", result.Written );
+			if( (result.Failed || result.Uncleared) && end!=Flows::ERunEnd::Failed ){
+				end = Flows::ERunEnd::Failed;
+				why = result.Failed
+					? Ƒ( "{} of {} values were not committed, the first {}", result.Failed, result.Failed+result.Written, result.First )
+					: Ƒ( "the history of {} variable(s) was not cleared over the range, the first {}", result.Uncleared, result.First );
+			}
+		}
 		if( let store = Store(); store ){
 			co_await FlushAwait{ store, replay->Slug };
 			if( let failing = store->Failing(replay->Slug); failing && end!=Flows::ERunEnd::Failed ){//its records are not on file.
@@ -1071,7 +1195,7 @@ namespace Jde::Opc::Gateway{
 		}
 		if( failed.size() )
 			ERR( "[{}]Run {}'s row could not be written, and says it is under way until the gateway starts again:  {}", replay->Slug, replay->Id, failed );
-		LOG( end==Flows::ERunEnd::Failed ? ELogLevel::Warning : ELogLevel::Information, ELogTags::Flow, "[{}]Run {} of flow '{}' {}, after {} records in {} pages.", replay->Slug, replay->Id, replay->Name, status, records, pages );
+		LOG( end==Flows::ERunEnd::Failed ? ELogLevel::Warning : ELogLevel::Information, ELogTags::Flow, "[{}]Run {} of flow '{}' {}, after {} records in {} pages{}.", replay->Slug, replay->Id, replay->Name, status, records, pages, committed );
 		{
 			lg _{ _mutex };
 			if( let p = _replays.find(replay->Flow); p!=_replays.end() && p->second==replay )
@@ -1146,6 +1270,8 @@ namespace Jde::Opc::Gateway{
 			co_return;
 		auto& row = rows.front();
 		let wanted = row.Enabled && !row.Deleted && row.Version;
+		if( let server = FlowServer::Instance() )
+			server->Enabled( row.Slug, row.Enabled && !row.Deleted );
 		sp<Run> live;
 		bool retrace{};//a running flow whose row's trace level changed, which its run's trace was made at.
 		{
@@ -1225,6 +1351,8 @@ namespace Jde::Opc::Gateway{
 				co_await HaltAwait{ live };
 			Tell( row.Id );
 			Forget( row.Id );
+			if( let server = FlowServer::Instance() )//its folder, with its variables:  under _edits, ahead of a deploy of a flow made under its slug.
+				server->Purged( row.Slug );
 		}
 		//Its trace directory;  the slug is held to a file name's characters at its create (FlowMAwait), and the store follows no other out of the directory.
 		if( store )

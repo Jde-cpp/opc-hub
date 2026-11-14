@@ -667,9 +667,9 @@ namespace Jde::Opc::Gateway::Tests{
 		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
 		let refused = [&]( sv type, sv props ){ return Refused( [&]{ Deploy( flow, Graph({N("in", "inject", "{}", {{"n"}}), N("n", type, props)}) ); } ); };
 		let source = [&]( sv type, sv props ){ return Refused( [&]{ Deploy( flow, Graph({N("n", type, props, {{"d"}}), N("d", "debug")}) ); } ); };
-		let variable = refused( "variable", R"({"name":"mean"})" );
+		let variable = refused( "variable", R"({"name":"mean"})" );//the rest of a variable's are FlowServerTests'.
 		EXPECT_EQ( variable.Status, EHttpStatus::BadRequest );
-		EXPECT_TRUE( variable.What.starts_with("Node 'n':  ") && Has(variable.What, "waits for the flow server") ) << variable.What;
+		EXPECT_TRUE( variable.What.starts_with("Node 'n':  ") && Has(variable.What, "`dataType` must be text") ) << variable.What;
 		EXPECT_TRUE( Has(refused("log", R"({"level":"loud"})").What, "`level` must be one of") );
 		EXPECT_TRUE( Has(refused("log", R"({"level":"None"})").What, "`level` must be one of") ) << "reviews-issue/449-flows-sources-sinks.md #8:  no ELogLevel";
 		EXPECT_TRUE( Has(refused("log", R"({"template":"{{#each}}"})").What, "its variables alone") );

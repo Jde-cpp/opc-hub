@@ -14,6 +14,7 @@
 #include "../hist/HistHost.h"
 #include "../UAClient.h"
 #include "FlowHost.h"
+#include "FlowServer.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -1153,9 +1154,249 @@ namespace Jde::Opc::Gateway{
 		bool _done;
 	};
 
-	Ω unbuilt( const NodeDef& node )ε->void{
-		THROW_IF( node.Type==ENodeType::Variable, "A `variable` node waits for the flow server, which is not built yet (docs/flows/plan.md, phase 8)." );
+	//`variable`.
+	//The message as the variable's value (spec *Derived variables*):  its `payload` read toward the type, its `status` or
+	//Good, its `sourceTime` or `_time` the source time, else `now`, the flow's clock's, which is the server time.  A
+	//payload of none is a status alone, which a Bad data change's message is, over the type's zero, since the server takes
+	//a number no other way;  with a Good one there is nothing to write.
+	Ω variableValue( const FlowVariable& variable, const Message& m, TimePoint now )ε->Value{
+		let& payload = m.Payload();
+		let status = Json::FindNumber<StatusCode>( m.Json, "status" ).value_or( UA_STATUSCODE_GOOD );
+		THROW_IF( payload.is_null() && !UA_StatusCode_isBad(status), "The message has no `payload` to write." );
+		Value y = payload.is_null() ? FlowServer::Zero( variable, status ) : Value{ payload, variable.Type };
+		THROW_IF( !payload.is_null() && y.IsScalar()==variable.Array, "`payload` is {}, and variable '{}' is {}.", variable.Array ? "no array" : "an array", variable.Name, variable.TypeName() );
+		y.status = status;
+		y.hasStatus = status!=UA_STATUSCODE_GOOD;
+		auto source = Json::FindTimePoint( m.Json, "sourceTime" );
+		if( !source )
+			source = Json::FindTimePoint( m.Json, "_time" );
+		y.sourceTimestamp = UADateTime{ source.value_or(now) }.UA();
+		y.hasSourceTimestamp = true;
+		y.serverTimestamp = UADateTime{ now }.UA();
+		y.hasServerTimestamp = true;
+		return y;
 	}
+	struct VariableOut final : Flows::ISink{
+		//Live, a replay's with `captured`, and a committed one's with its `commits`, the group that holds the variable and its
+		//member there.
+		VariableOut( const NodeDef& def, str flow, bool captured, sp<FlowCommits> commits, sp<HistGroupHost> group, Hist::NodeIndex member, SL sl )ε:
+			_variable{ def.Props, sl }, _flow{ flow }, _captured{ captured }, _commits{ move(commits) }, _group{ move(group) }, _member{ member }
+		{}
+		α Start()ε->void override{
+			if( _captured )
+				return;
+			_server = FlowServer::Instance();
+			THROW_IF( !_server, "The flow server is not running, so variable '{}' has no node:  the gateway's log says why.", _variable.Name );
+			if( !_target )
+				_target = ms<const FlowServer::Target>( _flow, _variable.Name );
+			SetStatus( {"grey", "ring", _variable.TypeName()} );
+		}
+		α Stop()ι->void override{ _server = nullptr; }
+		α Receive( Message& m )ε->void override{
+			auto value = variableValue( _variable, m, Now() );
+			if( _captured ){//a replay's:  the value, in its trace, and for a committed run in its group's history too.
+				Capture( m.Id(), m.Payload() );
+				if( _commits )
+					_commits->Add( _group, _member, _variable.Name, move(value) );
+			}
+			else
+				_server->Write( _target, move(value) );
+		}
+	private:
+		const FlowVariable _variable;
+		const string _flow;
+		const bool _captured;
+		const sp<FlowCommits> _commits;
+		const sp<HistGroupHost> _group;
+		const Hist::NodeIndex _member;
+		sp<FlowServer> _server;
+		sp<const FlowServer::Target> _target;//made at the first start:  each value's node id.
+	};
+
+	FlowCommits::FlowCommits( Hist::Writer by, TimePoint from, TimePoint to )ι:
+		_by{ move(by) }, _from{ UADateTime{from}.UA() }, _to{ UADateTime{to}.UA() }
+	{}
+	α FlowCommits::Hold( sp<HistGroupHost> group, Hist::NodeIndex node, sv variable )ι->void{
+		lg _{ _mutex };
+		let id = group->Id();
+		_held.try_emplace( std::pair{id, node}, Held{move(group), string{variable}, _from-1} );
+	}
+	α FlowCommits::Fail( uint count, sv variable, sv why )ι->void{
+		if( _totals.First.empty() )
+			_totals.First = Ƒ( "variable '{}':  {}", variable, why );
+		_totals.Failed += count;
+	}
+	α FlowCommits::Add( sp<HistGroupHost> group, Hist::NodeIndex node, sv variable, Value&& value )ι->void{
+		optional<Batch> batch;
+		{
+			lg _{ _mutex };
+			if( let time = value.sourceTimestamp; time<_from || time>_to ){//a body's msg.sourceTime:  history the run doesn't own.
+				Fail( 1, variable, Ƒ("its source time, {}, is outside the run's range", ToIsoString(UADateTime{time}.Time())) );
+				return;
+			}
+			auto& pending = _pending[group->Id()];
+			if( !pending.Group )
+				pending.Group = move( group );
+			auto& values = pending.Nodes[node];
+			if( values.Variable.empty() )
+				values.Variable = variable;
+			values.Values.push_back( move(value) );
+			++pending.Waiting;
+			++_waiting;
+			batch = Send();
+		}
+		Start( move(batch) );
+	}
+	α FlowCommits::Complete()ι->void{
+		optional<Batch> batch;
+		{
+			lg _{ _mutex };
+			if( _totals.Failed || _totals.Uncleared )//a run that fails clears no further than its values went.
+				return;
+			for( let& [key, held] : _held ){
+				if( held.Cleared>=_to )
+					continue;
+				auto& pending = _pending[key.first];
+				if( !pending.Group )
+					pending.Group = held.Group;
+				auto& through = pending.Nodes[key.second];
+				if( through.Variable.empty() )
+					through.Variable = held.Variable;
+				through.Through = _to;
+				++pending.Waiting;
+				++_waiting;
+			}
+			batch = Send();
+		}
+		Start( move(batch) );
+	}
+	α FlowCommits::Send()ι->optional<Batch>{
+		if( _out || _pending.empty() )
+			return nullopt;
+		auto p = _served ? _pending.upper_bound( *_served ) : _pending.begin();
+		if( p==_pending.end() )
+			p = _pending.begin();
+		_served = p->first;
+		_out = true;
+		auto batch = move( p->second );
+		_pending.erase( p );
+		for( auto&& [node, values] : batch.Nodes ){//the range up to its last value cleared, from where the batch before left off.
+			auto& held = _held.try_emplace( std::pair{*_served, node}, Held{batch.Group, values.Variable, _from-1} ).first->second;
+			auto through = values.Through;
+			for( let& v : values.Values )
+				through = std::max( through, v.sourceTimestamp );
+			if( through>held.Cleared ){
+				values.Clear = std::pair{ held.Cleared+1, through };
+				held.Cleared = through;
+			}
+		}
+		return batch;
+	}
+	α FlowCommits::Start( optional<Batch> batch )ι->void{
+		if( batch )
+			boost::asio::post( *Executor(), [self=shared_from_this(), batch=move(*batch)]()mutable{ Editing( move(self), move(batch) ); } );
+	}
+	α FlowCommits::Editing( sp<FlowCommits> self, Batch batch )ι->VoidTask{
+		struct Entry final{ string Variable; uint Count; bool Clear; };//Count:  the values of an update.
+		vector<Entry> entries;
+		vector<Hist::EditDetails> details;
+		for( auto&& [node, values] : batch.Nodes ){//a node's delete before its values, as the group applies an edit's entries in order.
+			if( values.Clear ){
+				entries.push_back( {values.Variable, 0, true} );
+				details.push_back( Hist::DeleteRaw{node, values.Clear->first, values.Clear->second} );
+			}
+			if( values.Values.size() ){
+				entries.push_back( {values.Variable, values.Values.size(), false} );
+				details.push_back( Hist::UpdateData{node, UA_PERFORMUPDATETYPE_UPDATE, move(values.Values)} );
+			}
+		}
+		vector<Hist::EditResult> results;
+		string thrown;
+		if( details.size() ){
+			try{
+				results = co_await batch.Group->Group()->Edit( move(details), self->_by );
+			}
+			catch( const std::exception& e ){
+				thrown = e.what();
+			}
+		}
+		optional<Batch> next;
+		vector<absl::AnyInvocable<void()>> told;
+		{
+			lg _{ self->_mutex };
+			auto& totals = self->_totals;
+			for( uint i=0; i<entries.size(); ++i ){
+				let& entry = entries[i];
+				let why = thrown.size() ? thrown : i>=results.size() ? string{ "its edit had no answer" } : string{};
+				if( entry.Clear ){
+					let status = why.empty() ? results[i].Status : (StatusCode)UA_STATUSCODE_GOOD;
+					if( why.size() || (UA_StatusCode_isBad(status) && status!=UA_STATUSCODE_BADNODATA) ){//Bad_NoData:  a range with nothing in it.
+						if( totals.First.empty() )
+							totals.First = Ƒ( "variable '{}', whose history over the range could not be cleared:  {}", entry.Variable, why.size() ? why : UAException::Message(status) );
+						++totals.Uncleared;
+					}
+				}
+				else if( why.size() )
+					self->Fail( entry.Count, entry.Variable, why );
+				else if( let& result = results[i]; UA_StatusCode_isBad(result.Status) )
+					self->Fail( entry.Count, entry.Variable, UAException::Message(result.Status) );
+				else{
+					for( uint v=0; v<entry.Count; ++v ){
+						if( let sc = v<result.Results.size() ? result.Results[v] : (StatusCode)UA_STATUSCODE_BADUNEXPECTEDERROR; UA_StatusCode_isBad(sc) )
+							self->Fail( 1, entry.Variable, UAException::Message(sc) );
+						else
+							++totals.Written;
+					}
+				}
+			}
+			self->_waiting -= batch.Waiting;
+			self->_out = false;
+			next = self->Send();
+			told = self->Tell();
+		}
+		self->Start( move(next) );
+		for( auto& f : told )
+			f();
+	}
+	α FlowCommits::Tell()ι->vector<absl::AnyInvocable<void()>>{
+		vector<absl::AnyInvocable<void()>> y;
+		if( _waiting<=Buffer/2 ){
+			for( auto& f : _eased )
+				y.push_back( std::move(f) );
+			_eased.clear();
+		}
+		if( !_waiting ){
+			for( auto& f : _drained )
+				y.push_back( std::move(f) );
+			_drained.clear();
+		}
+		return y;
+	}
+	α FlowCommits::Drained( absl::AnyInvocable<void()> f )ι->void{
+		{
+			lg _{ _mutex };
+			if( _waiting ){
+				_drained.push_back( std::move(f) );
+				return;
+			}
+		}
+		f();
+	}
+	α FlowCommits::Eased( absl::AnyInvocable<void()> f )ι->void{
+		{
+			lg _{ _mutex };
+			if( _waiting>Buffer/2 ){
+				_eased.push_back( std::move(f) );
+				return;
+			}
+		}
+		f();
+	}
+
+	FlowNodes::FlowNodes( FlowHost& host, FlowRun run, optional<FlowReplay> replay )ι:
+		_host{ host }, _run{ move(run) }, _replay{ move(replay) },
+		_commits{ _replay && _replay->Commit ? ms<FlowCommits>(HistHost::Instance().Writer(_run.Deployer), _replay->From, _replay->To) : nullptr }
+	{}
 	α FlowNodes::Source( const NodeDef& node )ε->up<Flows::ISource>{
 		let sl = SRCE_CUR;
 		switch( node.Type ){
@@ -1173,9 +1414,21 @@ namespace Jde::Opc::Gateway{
 	}
 	α FlowNodes::Sink( const NodeDef& node )ε->up<Flows::ISink>{
 		let sl = SRCE_CUR;
-		unbuilt( node );
 		let captured = _replay.has_value();
 		switch( node.Type ){
+		case ENodeType::Variable:{
+			sp<HistGroupHost> group; Hist::NodeIndex member{};
+			if( _commits ){//the group the run's start found holding the variable, and its member there.
+				let held = _run.Groups.find( node.Id );
+				group = held==_run.Groups.end() ? nullptr : HistHost::Instance().Find( held->second );
+				THROW_IF( !group, "Its variable is in no group this gateway historizes:  a committed run has no history to write it into." );
+				let index = group->Index( ParseHistNode(FlowServer::NodeText(_run.Slug, Json::FindDefaultSV(node.Props, "name")), sl) );
+				THROW_IF( !index, "Its variable is no member of group '{}'.", group->Name() );
+				member = *index;
+				_commits->Hold( group, member, Json::FindDefaultSV(node.Props, "name") );
+			}
+			return mu<VariableOut>( node, _run.Slug, captured, _commits, move(group), member, sl );
+		}
 		case ENodeType::OpcOut: return mu<OpcOut>( node, _run.Slug, captured, sl );
 		case ENodeType::Log: return mu<LogOut>( node, _run.Slug, captured );
 		case ENodeType::HttpRequest: return mu<HttpOut>( node, captured );
@@ -1206,8 +1459,8 @@ namespace Jde::Opc::Gateway{
 		return mu<GroupStream>( host->Group(), host->Slug(), move(members), *_replay );
 	}
 	α FlowNodes::Check( const NodeDef& node, SL sl )ε->void{
-		unbuilt( node );
 		switch( node.Type ){
+		case ENodeType::Variable: FlowVariable{ node.Props, sl }; break;
 		case ENodeType::OpcIn:
 			target( node.Props, sl );
 			parameters( node.Props );

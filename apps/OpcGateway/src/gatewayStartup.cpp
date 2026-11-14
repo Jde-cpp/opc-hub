@@ -31,6 +31,7 @@
 #include "drivers/DriverHost.h"
 #include "flows/FlowHost.h"
 #include "flows/FlowQLAwait.h"
+#include "flows/FlowServer.h"
 #include "hist/HistHost.h"
 #include "oee/OeeHost.h"
 #include "ql/HistGroupQLAwait.h"
@@ -110,7 +111,7 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool terminate, SL sl){ Calendar::Client::Calendars::Shutdown(terminate, sl); } );//its listener's, as ConnectAccess registered the access listener's.
 		//Registration order is run order (process.cpp):  the endpoint first, so its sessions are gone before the historian and the UA
 		//clients it reports on;  then the historian, before the UA clients go:  the collectors' items are dropped on live clients, and
-		//the groups' last flushes run while the executor still does;  then the driver rows' servers, which the clients read.
+		//the groups' last flushes run while the executor still does;  then the driver rows' servers and the flow server, which the clients read.
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ FlowHost::Instance().Stop(); } );//ahead of the historian's too:  a flow's sources end on groups and clients that still stand.
 		Process::AddShutdownFunction( [](bool, SL){ FlowReadPool::Stop(); } );//after the flows':  their store's stop ends a trace read under way, so the join is short.
@@ -119,10 +120,12 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
 		Process::AddShutdownFunction( [](bool terminate, SL){ DriverHost::Shutdown( terminate ); } );//after the clients':  the collectors have unsubscribed and the clients are closing their sessions, which the driver rows' servers wait for before they go.
+		Process::AddShutdownFunction( [](bool terminate, SL){ FlowServer::Shutdown( terminate ); } );//after the clients' too:  the flows have stopped, so nothing writes it, and the collectors have closed their sessions.
 		Process::AddShutdownFunction( [](bool, SL){ DiscoveryPool::Stop(); } );//last:  its clients are no registered client, so nothing above waits on its join.
 		THROW_IF( !_processSsl, "Connect before Configure." );
 		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.
 		DriverHost::Start();//the driver rows' servers, after the access snapshot, which their sessions' rights read, and before the groups load:  a group's first subscribe finds its row's server listening.
+		FlowServer::Start();//the flows' derived variables, as the driver rows' servers:  its row made where there is none, and every flow's variables there before the groups load, so a group that holds one subscribes to a node that is.
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
 		OeeHost::Instance().Start();//after the historian, whose groups its machines subscribe to, and the calendars.
 		FlowHost::Instance().Start();//after the historian, which a flow's group source needs loaded, and the access snapshot, which admits each flow for its deployer.

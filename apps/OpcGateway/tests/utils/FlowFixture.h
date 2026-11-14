@@ -4,10 +4,11 @@
 #include <jde/tests/Capture.h>
 #include "HistGroupFixture.h"
 #include "../../src/flows/FlowHost.h"
+#include "../../src/flows/FlowServer.h"
 #include "../../../../libs/historian/tests/ManualClock.h"
 
 //FlowTests' fixture, and FlowSubscribeTests':  a graph written out as a test reads it, the flows' mutations, the host's state
-//of a flow, the flows resource enforced and a flow's own row scoped, and the trace's reads.
+//of a flow, the flows resource enforced and a flow's own row scoped, the trace's reads, and the flow server's variables.
 namespace Jde::Opc::Gateway::Tests{
 	using Access::ERights;
 	struct FlowFixture : HistGroupFixture{
@@ -193,6 +194,41 @@ namespace Jde::Opc::Gateway::Tests{
 			for( let& record : Json::AsArray(result, "records") )
 				y.push_back( Ƒ("{} {}", Json::AsSV(record.as_object(), "kind"), Json::AsSV(record.as_object(), "node")) );
 			return y;
+		}
+		//The flow server (#454):  its row;  a variable as a group's rows spell it;  a node of the server as the socket's
+		//session reads it;  and a group over the row with a flow's variable its one member, subscribed.
+		Ω FlowsSlug()ι->string{ return string{ ServerCnnctn::FlowSlug }; }
+		Ω FlowsRow()ε->ServerCnnctn{
+			auto row = SelectServerCnnctn( {FlowsSlug()} );
+			THROW_IF( !row, "The flow server has no connection." );
+			return move( *row );
+		}
+		Ω Variable( sv flow, sv name )ι->jvalue{ return jobject{ {"nsu", FlowServer::NamespaceUri()}, {"s", Ƒ("{}/{}", flow, name)} }; }
+		Ω FlowsNode( const NodeId& id, sv columns )ε->jobject{
+			return Socket().QuerySync( Ƒ("node( opc: $opc, id: $id ){{ {} }}", columns), {{"opc", FlowsSlug()}, {"id", id.ToJson()}} ).as_object();
+		}
+		Ω Served( const NodeId& id )ε->jvalue{ return FlowsNode( id, "value" ).at( "value" ); }
+		Ω Served( sv flow, sv name )ε->jvalue{ return Served( FlowServer::VariableId(flow, name) ); }
+		Ω Children( const NodeId& id )ε->vector<string>{
+			vector<string> y;
+			for( let& child : Json::AsArray(FlowsNode(id, "children{ name nodeClass }"), "children") )
+				y.push_back( Json::AsString(child.as_object(), "name") );
+			std::ranges::sort( y );
+			return y;
+		}
+		struct VariableGroup final{ uint32 Id; uint32 Member; sp<HistGroupHost> Host; };
+		Ω GroupVariable( sv slug, sv flow, sv name )ε->VariableGroup{
+			let group = Id( Mutate("createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection ){ id }", {{"name", Ƒ("Variables {}", slug)}, {"slug", slug}, {"connection", FlowsRow().Id}}) );
+			try{
+				let member = AddNode( group, Variable(flow, name) );
+				auto host = Host( group );
+				WaitSubscribed( host, 1 );
+				return { group, member, move(host) };
+			}
+			catch( ... ){
+				Purge( group, Items() );
+				throw;
+			}
 		}
 		//The flow's records since an hour ago, flushed first:  until there are `count` of them.
 		Ω Traced( uint32 flow, sv slug, uint count )->jobject{

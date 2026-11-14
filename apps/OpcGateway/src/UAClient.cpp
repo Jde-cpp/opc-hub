@@ -523,7 +523,7 @@ namespace Jde::Opc::Gateway{
 			///gateway/trustedCertDirs holds:  anchored by its file beside them, and verified as the loopback url it is dialed at
 			//(docs/open-protocol/spec.md *The driver server*).
 			let driver = _opcServer.HasDriver();
-			let anchors = driver ? DriverServer::Anchors() : vector<fs::path>{};
+			let anchors = _opcServer.OwnServer() ? DriverServer::Anchors() : vector<fs::path>{};//the flow server's too, which the row's own url dials.
 			ClientSecurity::Configure( *config, {.Certificate=settings, .Secure=addSecurity, .ServerUri=serverUri, .TrustRoot="/gateway", .Anchors=anchors}, Handle(), driver ? _opcServer.DriverUrl() : Url() );
 		}
 		catch( UAException& e ){//ConnectAwait's per-waiter copy and HttpRequestAwait's ThrowRest keep only a UAClientException whole.

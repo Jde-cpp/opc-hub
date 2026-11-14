@@ -301,7 +301,7 @@ namespace Jde::Opc::Gateway::Tests{
 				EXPECT_GE( *connectionCount, 1u ) << "a UAClient for the slug is live - the serverDescription above connected it.";
 				EXPECT_EQ( *status, "Connected" ) << serialize( o ); //the same live client the count above sees.
 			}
-			else
+			else if( Json::FindDefaultSV(o, "slug")!=ServerCnnctn::FlowSlug )//the flow server's is connected where a suite before this read it.
 				EXPECT_TRUE( *status=="Idle" || *status=="Error" ) << serialize( o );
 		}
 		EXPECT_TRUE( found ) << serialize( rows );

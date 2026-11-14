@@ -27,16 +27,23 @@ namespace Jde::Opc::Gateway{
 		//policy that contradict - is a trigger per dialect as well (#520, config/sql/<dialect>).
 		Ω SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
 		//docs/open-protocol/spec.md *The row*:  what the row's kind asks of it, checked where SettingsError is.  A kind the gateway
-		//does not know;  `driver` or an Open Protocol url on a UA row;  on an Open Protocol row, a url or a `driver` OpenProtocolRow refuses.  Null for a row
-		//its kind takes.
+		//does not know;  `driver` or an Open Protocol url on a UA row;  on an Open Protocol row, a url or a `driver` OpenProtocolRow refuses.
+		//A flow row (docs/flows/spec.md *Derived variables*) is the flow server's alone:  the kind on another slug than FlowSlug, or
+		//that slug under another kind, `driver`, and a url that is not the flow server's (FlowUrl).  Null for a row its kind takes.
 		Ω KindError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
-		static constexpr sv KindUa{ "ua" }, KindOpenProtocol{ "open-protocol" };//what `kind` holds.
-		static constexpr NsIndex DriverBrowseNs{ 2 };//a driver server's one namespace, after UA's and the server's own.
+		static constexpr sv KindUa{ "ua" }, KindOpenProtocol{ "open-protocol" }, KindFlow{ "flow" };//what `kind` holds.
+		static constexpr NsIndex DriverBrowseNs{ 2 };//the one namespace of a server the gateway runs for itself, after UA's and the server's own.
 		//A kind the gateway serves through a driver's own UA server (drivers/DriverHost.h), one that registers an IDriver, which the
-		//row's clients dial in place of the url (DriverUrl).  The row stores no certificate URI or default browse namespace for it:
+		//row's clients dial in place of the url (DriverUrl).
+		α HasDriver()Ι->bool;
+		//A kind whose server is the gateway's own on loopback:  a driver's, or the flow server's (flows/FlowServer.h), which
+		//registers none and is dialed at the row's url.  The row stores no certificate URI or default browse namespace for it:
 		//the constructors supply the server's, the gateway's own applicationUri - the uri in the SAN of the process's pair,
 		///http/ssl, which that server presents - and DriverBrowseNs.
-		α HasDriver()Ι->bool;
+		α OwnServer()Ι->bool{ return Kind==KindFlow || HasDriver(); }
+		static constexpr sv FlowSlug{ "flows" };//the flow server's row, the one of KindFlow.
+		Ω FlowPort()ι->PortType;///gateway/flows/server/port, 4860 where the block names none.
+		Ω FlowUrl()ι->string{ return Ƒ( "opc.tcp://127.0.0.1:{}", FlowPort() ); }//what the flow row's url holds, and its clients dial.
 		//Where a driver row's server listens:  loopback, at /gateway/drivers/portBase plus the row's id.  Throws past port 65535.
 		α DriverPort( SRCE )Ε->PortType;
 		α DriverUrl( SRCE )Ε->string{ return Ƒ( "opc.tcp://127.0.0.1:{}", DriverPort(sl) ); }
@@ -65,9 +72,10 @@ namespace Jde::Opc::Gateway{
 		optional<uint32> PingInterval;//milliseconds, over /gateway/pingInterval;  0 turns the keep-alive off.
 		optional<uint32> Ttl;//milliseconds, over /gateway/ttl.
 		string Locale;//comma-separated locale ids, "en-US,de".
-		string Kind;//KindUa or KindOpenProtocol;  empty, the column's null, is KindUa.
+		string Kind;//KindUa, KindOpenProtocol or KindFlow;  empty, the column's null, is KindUa.
 		string Driver;//the kind's own settings, a json object's text (OpenProtocolRow);  empty for none.
-	private:
+		//What an OwnServer row is supplied, the certificate URI and DriverBrowseNs, as the constructors supply a saved row's;
+		//testConnection's too, whose row is the url's alone until its kind is merged.  Nothing for another kind.
 		α SupplyDriver()ι->void;
 	};
 

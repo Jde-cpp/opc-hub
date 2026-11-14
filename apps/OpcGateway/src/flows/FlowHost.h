@@ -8,7 +8,7 @@
 
 namespace Jde::Web::Server{ struct SessionInfo; }
 namespace Jde::Opc::Gateway{
-	struct FlowFeed;
+	struct FlowCommits; struct FlowFeed;
 	//Why a graph may not run for its deployer (docs/flows/spec.md *Rights*), by the node the editor marks.  Unknown:  it
 	//could not be checked - a server out of reach, a statement that failed - and may pass later.
 	struct FlowRefusal final{ Flows::Fault Fault; EHttpStatus Status{ EHttpStatus::BadRequest }; bool Unknown{}; };
@@ -51,6 +51,10 @@ namespace Jde::Opc::Gateway{
 		α Find( FlowPK id )Ι->optional<State>;
 		α Status( FlowPK id, sv node )Ι->Flows::NodeStatus;//of the flow's run, running or stopped;  empty with none.
 		α Counts( FlowPK id )Ι->vector<Flows::NodeCounts>;
+		//What the flow server's `_Flow` shows of the flow's run (FlowServer.h):  the messages its sources have sent and its
+		//nodes' errors since it started;  none with no run.  A lookup, which the server asks under its service lock.
+		struct RunTotals final{ uint Messages{}; uint Errors{}; };
+		α Totals( FlowPK id )Ι->RunTotals;
 		α Global()Ι->sp<Flows::GlobalStore>{ lg _{ _mutex }; return _global; }
 		//The trace's files (spec *Trace*, *History*):  under /gateway/flows/path, each flow's at its row's level else the
 		//block's `trace`, flushed at `delay`, cut at `valueLimit`, rolled daily past `retention` and `maxSize`, and read by
@@ -92,10 +96,13 @@ namespace Jde::Opc::Gateway{
 		//`from` to `to`, each inside the range and `to` no later than now, on a strand, a sandbox and a clock of its own, with a copy of the flow's
 		//context as its rows and what is still to write stand, and of the gateway's, of which it writes none back.  Its
 		//trace is the flow's, each record under the run's id at the stream's time, at the flow's level or `errors` when
-		//that is below it, so the captures are always written.  Every sink is captured, in either mode:  what `commit`
-		//writes, a `variable`, comes with the flow server.  Answered as the run starts:  how it ends is its row's `status`,
-		//`completed`, `cancelled` or `failed:  <why>`, null while it is under way, written once its records are on file, and
-		//`failed` for a run whose trace could not be, which is ended at the first flush that fails.
+		//that is below it, so the captures are always written.  Every sink is captured, in either mode, and `commit` writes
+		//one besides:  a `variable`'s values, into the history of the group that holds the variable, through the group's edit
+		//as Update, by the version's deployer under their Update on the group's enforced access row, asked before the row is
+		//written, as a `variable` no group holds refuses a committed run by its node (FlowCommits).  Answered as the run
+		//starts:  how it ends is its row's `status`, `completed`, `cancelled` or `failed:  <why>`, null while it is under way,
+		//written once its records are on file and its values in their groups' files, and `failed` for a run whose trace could
+		//not be, which is ended at the first flush that fails, and for one a group refused a value of.
 		//One run at a time per flow:  a second is refused, Conflict.  A deploy meanwhile leaves the run on its version.
 		struct Replayed final{ FlowRunPK Id; uint32 Version; TimePoint Started; string UserName; };
 		struct ReplayAwait final : AnyAwait<Replayed>{
@@ -211,7 +218,7 @@ namespace Jde::Opc::Gateway{
 		struct SetAwait;//a context value set on a run's strand.
 		//A replay under way, from its row's insert until its row says how it ended.  Waiting:  what awaits that, under Mutex.
 		struct ReplayRun final{
-			FlowRunPK Id; FlowPK Flow; string Slug; string Name; sp<Flows::Run> Run;
+			FlowRunPK Id; FlowPK Flow; string Slug; string Name; sp<Flows::Run> Run; sp<FlowCommits> Commits;
 			std::mutex Mutex; optional<RunEnd> End; vector<absl::AnyInvocable<void()>> Waiting;
 		};
 		struct EndAwait;//a replay's end, its row written.
@@ -223,6 +230,10 @@ namespace Jde::Opc::Gateway{
 		//A flow's context for a run, from the scope's rows with what is still to write laid over them.
 		α Loaded( FlowPK flow, str slug, vector<FlowContextRow>&& rows, Flows::Flow::Config& config )Ι->void;
 		α Retry( FlowPK id )ι->VoidTask;//the retry timer's.
+		//The flow server's listen tried again, RetryInterval on from a start that found none listening (FlowServer::Listen),
+		//under _edits, so no deploy falls between its read of the flows and the server it makes;  again each RetryInterval
+		//until it listens.  The flows that wait to start are then started, each as its retry would.
+		α Relisten()ι->VoidTask;
 		//The flow's subscribers hear what its run is now, under _edits:  the ack of a run that started since they last heard,
 		//or with none running their end, saying why.  After each start and each stop, by hand:  a deploy and a restart at
 		//another trace level halt a run and keep its subscriptions, which a stop that told the feed itself could not tell from
@@ -250,6 +261,7 @@ namespace Jde::Opc::Gateway{
 		mutable std::mutex _mutex;
 		flat_map<FlowPK,Entry> _flows;
 		sp<Hist::IClock> _clock;
+		Hist::IClock::TimerId _relisten{};//Relisten's timer.
 		sp<Flows::MessageIds> _ids;
 		sp<Flows::GlobalStore> _global;
 		sp<Flows::TraceStore> _store;//the trace's files, a directory per flow by its slug.
