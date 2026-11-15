@@ -99,8 +99,9 @@ namespace Jde::Opc::Emulator{
 			_batch = 0;
 			INFO( "[tightening]parameter set <- {} (external)", *_pset.Pset );
 		}
-		let made = (uint)_production.Count->Next( dt, _enabled );
-		let rejects = (uint)_production.Rejects->Next( dt, _enabled );
+		let rate = _enabled ? 1 : 0;
+		let made = (uint)_production.Count->Next( dt, rate );
+		let rejects = (uint)_production.Rejects->Next( dt, rate );
 		for( ; _made<made; ++_made ){
 			let reject = _rejects<rejects;
 			if( reject )

@@ -19,10 +19,12 @@ namespace Jde::Opc::Emulator{
 		Period = duration( "period", Period ); Tau = duration( "tau", Tau ); Cycle = duration( "cycle", Cycle ); Jitter = duration( "jitter", Jitter );
 		Reject = number( "reject", Reject );
 		RejectTag = FindKey<string>( o, "rejectTag", owner, sl ).value_or( RejectTag );
+		Follows = FindKey<string>( o, "follows", owner, sl ).value_or( Follows );
 		SensorMin = FindKey<double>( o, "sensorMin", owner, sl );
 		SensorMax = FindKey<double>( o, "sensorMax", owner, sl );
 		THROW_IFSL( Max<=Min && !IsBool() && Mode!=EMode::Follow && Mode!=EMode::Production, "Tag '{}': max ({}) must exceed min ({}).", Name, Max, Min );
 		THROW_IFSL( Period<=Duration::zero() || Tau<=Duration::zero(), "Tag '{}': period and tau must be positive.", Name );
+		THROW_IFSL( Follows.size() && Mode!=EMode::Follow, "Tag '{}': `follows` is the follow mode's - mode '{}' lags towards nothing.", Name, ToString(Mode) );
 		//randomWalk draws from [-Step,Step), which is empty unless Step>0 - absl::Uniform then returns -Step every time - and
 		//counter wraps on `>Max`, so a non-positive step walks down from Min forever.  A config typo either way - it must fail like one.
 		THROW_IFSL( Step<=0 && (Mode==EMode::RandomWalk || Mode==EMode::Counter), "Tag '{}': step ({}) must be positive for mode '{}'.", Name, Step, ToString(Mode) );
@@ -48,53 +50,50 @@ namespace Jde::Opc::Emulator{
 
 	struct Sine final : IGenerator{
 		Sine( const TagSpec& s )ι:_mid{ (s.Min+s.Max)/2 }, _amp{ (s.Max-s.Min)/2 }, _period{ seconds(s.Period) }{}
-		α Next( Duration dt, bool )ι->double override{ _t += seconds(dt); return _mid + _amp*std::sin( 2*std::numbers::pi*_t/_period ); }
+		α Next( Duration dt, double )ι->double override{ _t += seconds(dt); return _mid + _amp*std::sin( 2*std::numbers::pi*_t/_period ); }
 		double _mid, _amp, _period, _t{};
 	};
 	struct Ramp final : IGenerator{//sawtooth Min->Max over Period
 		Ramp( const TagSpec& s )ι:_min{ s.Min }, _span{ s.Max-s.Min }, _period{ seconds(s.Period) }{}
-		α Next( Duration dt, bool )ι->double override{ _t = std::fmod( _t+seconds(dt), _period ); return _min + _span*_t/_period; }
+		α Next( Duration dt, double )ι->double override{ _t = std::fmod( _t+seconds(dt), _period ); return _min + _span*_t/_period; }
 		double _min, _span, _period, _t{};
 	};
 	struct RandomWalk final : IGenerator{
 		RandomWalk( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _value{ (s.Min+s.Max)/2 }, _step{ s.Step }{}
-		α Next( Duration, bool )ι->double override{ _value = std::clamp( _value+absl::Uniform<double>( Math::BitGen(), -_step, _step ), _min, _max ); return _value; }
+		α Next( Duration, double )ι->double override{ _value = std::clamp( _value+absl::Uniform<double>( Math::BitGen(), -_step, _step ), _min, _max ); return _value; }
 		double _min, _max, _value, _step;
 	};
 	struct Counter final : IGenerator{//the soak's mode: +Step per cycle, wrapping at Max.
 		Counter( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _step{ s.Step }, _value{ s.Min }{}
-		α Next( Duration, bool )ι->double override{ _value += _step; if( _value>_max ) _value = _min; return _value; }
+		α Next( Duration, double )ι->double override{ _value += _step; if( _value>_max ) _value = _min; return _value; }
 		double _min, _max, _step, _value;
 	};
 	struct Toggle final : IGenerator{//bool flipping every Period
 		Toggle( const TagSpec& s )ι:_period{ seconds(s.Period) }{}
-		α Next( Duration dt, bool )ι->double override{ _t += seconds(dt); if( _t>=_period ){ _t = std::fmod(_t, _period); _on = !_on; } return _on ? 1 : 0; }
+		α Next( Duration dt, double )ι->double override{ _t += seconds(dt); if( _t>=_period ){ _t = std::fmod(_t, _period); _on = !_on; } return _on ? 1 : 0; }
 		double _period, _t{}; bool _on{ true };
 	};
-	struct Follow final : IGenerator{//a drive: first-order lag towards RatedRpm while commanded on, towards 0 when off.
+	struct Follow final : IGenerator{//a drive: first-order lag towards RatedRpm at the device's rate - 0 when off, less in a slow period.
 		Follow( const TagSpec& s )ι:_rated{ s.RatedRpm }, _tau{ seconds(s.Tau) }{}
-		α Next( Duration dt, bool on )ι->double override{
-			let target = on ? _rated : 0.0;
-			_value += ( target-_value )*( 1-std::exp(-seconds(dt)/_tau) );
+		α Next( Duration dt, double rate )ι->double override{
+			_value += ( _rated*rate-_value )*( 1-std::exp(-seconds(dt)/_tau) );
 			return _value;
 		}
 		double _rated, _tau, _value{};
 	};
 
 	struct Units{ uint Count{}, Rejects{}; };
-	struct ProductionCount final : IGenerator{//a unit every cycle, give or take the jitter, while on;  off, the unit in hand waits where it is.
+	struct ProductionCount final : IGenerator{//a unit every cycle, give or take the jitter, at the device's rate;  off, the unit in hand waits where it is.
 		ProductionCount( const TagSpec& s, sp<Units> units )ι:_cycle{ seconds(s.Cycle) }, _jitter{ seconds(s.Jitter) }, _reject{ s.Reject }, _units{ move(units) }, _left{ Draw() }{}
-		α Next( Duration dt, bool on )ι->double override{
-			if( on ){
-				auto t = seconds( dt );
-				for( ; t>=_left; _left = Draw() ){
-					t -= _left;
-					++_units->Count;
-					if( _reject>0 && absl::Bernoulli(Math::BitGen(), _reject) )
-						++_units->Rejects;
-				}
-				_left -= t;
+		α Next( Duration dt, double rate )ι->double override{
+			auto t = seconds( dt )*rate;//the time worked at the cycle's pace.
+			for( ; t>=_left; _left = Draw() ){
+				t -= _left;
+				++_units->Count;
+				if( _reject>0 && absl::Bernoulli(Math::BitGen(), _reject) )
+					++_units->Rejects;
 			}
+			_left -= t;
 			return (double)_units->Count;
 		}
 		α Draw()ι->double{ return _jitter>0 ? _cycle+absl::Uniform<double>( Math::BitGen(), -_jitter, _jitter ) : _cycle; }
@@ -102,7 +101,7 @@ namespace Jde::Opc::Emulator{
 	};
 	struct ProductionRejects final : IGenerator{
 		ProductionRejects( sp<Units> units )ι:_units{ move(units) }{}
-		α Next( Duration, bool )ι->double override{ return (double)_units->Rejects; }
+		α Next( Duration, double )ι->double override{ return (double)_units->Rejects; }
 		sp<Units> _units;
 	};
 }

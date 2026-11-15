@@ -17,7 +17,9 @@ device does, in one process:
 The process values are generated (`Signals`).  The modes are:
 
 - `sine`, `ramp`, `randomWalk`, `counter`, `toggle`;
-- `follow`: a motor lagging towards `ratedRpm` while the device's `status` is on, and towards 0 when it is not;
+- `follow`: a motor lagging towards `ratedRpm` while the device's `status` is on, and towards 0 when it is not; with
+  `follows` naming a `production` tag of the device, towards that count's pace in units a minute, where `ratedRpm`
+  would be;
 - `production`: a count that advances by one every `cycle`, give or take `jitter`, while the device's `status` is on,
   and a `reject` share of those units counted on a second tag too, `rejectTag`;
 - `command`: not generated, subscribed from the OpcServer.
@@ -25,12 +27,32 @@ The process values are generated (`Signals`).  The modes are:
 Which tag does what is `/emulator/devices` in the config.
 
 A device's `status` is its bool tag of that name: the run command where it is a `command`, its own value where it is
-a `toggle`.  A device's `stops` list, `{every, for, code}`, holds a generated `status` off from each `every` of the
-device's clock for `for`, the first at `every`, not at 0, and writes `code` to `reasonCode` meanwhile, 0 otherwise.  A
-period that crosses a stop's start or end is cut there, so the counts hold to the stop whatever `period` is; `status`
-and `reasonCode` are still published once a period, and a stop or the run between two that isn't longer than the
-period is warned of at startup.  The stock config counts on pump1 and pump2, and stops pump2 for ten seconds a minute
-with code 1 ([OEE's rig](../../../docs/oee/spec.md#design)).
+a `toggle`.  A device's `stops` list holds a generated `status` off through each stop and writes the stop's `code` to
+`reasonCode` meanwhile, 0 otherwise.  A stop with no `code` is one with no reason: `reasonCode` reads 0 through it.
+
+A stop has one of three shapes:
+
+- `{every, for}`: from each `every` of the device's clock for `for`, the first at `every`, not at 0.
+- `{mean, min, max}`: a random stop.  It starts after a gap from the last one's end, drawn about `mean`, exponential,
+  and lasts a length drawn from `min` to `max`.
+- `{at, for}`: from a time of day, `06:00` or `06:00:00`, in the emulator's `zone`, for `for`.  One under way when the
+  emulator starts is in force from the start.  A time the clocks skip is the instant they jump to, and one they
+  repeat is its first.
+
+A device's `slow` list has the same three shapes, each with a `factor` where a stop has its `code`: a performance loss
+with `status` left on.  Through it the device runs at 1/`factor` of its pace: a `production` count's cycle takes
+`factor` times as long, and a `follow` tag lags towards that share of its target.
+
+The random stops and slow periods draw from an engine of the device's own.  A device's `seed` fixes it, so the same
+ones come in every run; without one it is seeded from the start time.
+
+A period that crosses a stop's or a slow period's start or end is cut there, so the counts hold to it whatever `period`
+is.  `status` and `reasonCode` are still published once a period, and a stop, or an `{every, for}` stop's run between
+two, that isn't longer than the period is warned of at startup.
+
+The stock config counts on pump1 and pump2, and stops pump2 for ten seconds a minute with code 1
+([OEE's rig](../../../docs/oee/spec.md#design)).  The random and timed stops and the slow periods are the demo's
+([its spec](../../../docs/demo/spec.md#design), *Production*), which the pumps leave out.
 
 A device with a `command` tag is off until the first notification of it, or under `-transport=server` its node's
 value, so pump1 counts nothing while the OpcServer's `status` is unknown.
@@ -43,7 +65,7 @@ of that kind.  See *Tightening station* below.
 
 | | value |
 |---|---|
-| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 82 units, no database or server) |
+| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 93 units, no database or server) |
 | settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url; the tightening station's Open Protocol on loopback 4545 (`tightening.address`) |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
@@ -185,6 +207,7 @@ overrides that beat them.
 | `transport` | `-transport=` | `pubsub` \| `write` \| `server` |
 | `url` | `-url=` | the OpcServer endpoint |
 | `period` | `-period=` | the device cycle - every generator advances once per period |
+| `zone` | | the IANA time zone an `at` is a time of day in (`UTC`) |
 | `statusPeriod` | `-statusPeriod=` | the summary line's cadence (the final line at exit is skipped when the timed one just said it) |
 | `duration` | `-duration=` | bounded run; unset = until Ctrl-C |
 | `reconnectMin` / `reconnectMax` | `-reconnectMin=` / `-reconnectMax=` | the reconnect back-off's first delay and its cap |
@@ -201,7 +224,7 @@ overrides that beat them.
 | `pubsub` | | the contract - `import` the shared file, never a copy |
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
 | `namespace` | | the device paths' default namespace; absent = the contract's (`pubsub.dataSet.namespace`), so the write and server transports need no `pubsub` block |
-| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)) and `stops[]` (`every`, `for`, `code`) |
+| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `seed` (the random stops' and slow periods' engine; absent = from the start time), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, for `follow` `follows` (none), and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)), `stops[]` (`every` and `for`, `mean`, `min` and `max`, or `at` and `for`, each with `code` (0)) and `slow[]` (the stops' shapes, each with `factor`, over 1) |
 | `tightening` | | the tightening station; absent = none |
 | `tightening.port` / `tightening.address` | | its Open Protocol port (4545) and the interface it listens on (absent = loopback, `""` = every interface) |
 | `tightening.cycle` / `tightening.jitter` / `tightening.reject` | | `production`'s: a rundown every `cycle` (`PT1S`), give or take `jitter` (none), a `reject` share of them NOK (0) |
@@ -212,11 +235,17 @@ overrides that beat them.
 Durations are ISO 8601 (`PT30S`).  A key of the wrong kind - `cycle: "2s"`, `reject: "0.05"` - is refused, not read
 as its default.  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`, a non-positive `step`
 for `randomWalk`/`counter`, and for `production` a `cycle` that is not positive, a `jitter` of the `cycle` or more and a
-`reject` outside 0 to 1, at startup, naming the tag.  A stop is refused with a `for` that is not shorter than its
-`every`, with a `code` of 0, and on a device whose `status` is a `command` or missing - the UI's command is not the
-emulator's to hold off.  A device is refused with two tags of one name, a reject tag (`rejectCount` unless `rejectTag`
-says) and a stops list's `reasonCode` included, and with a `command` tag beside a generated `status`, which would
-command nothing.
+`reject` outside 0 to 1, at startup, naming the tag.  A `follows` is refused on a mode other than `follow`, and where
+it names no `production` tag of its device.
+
+A stop or a slow period is refused with no shape or with two, with a `for` that is not positive or not shorter than
+its `every`, or than a day beside an `at`, with a `mean` or a `min` that is not positive, with a `max` below its `min`,
+and with an `at` that is not a time of day.  A slow period is refused with a `factor` that is not over 1, and on a
+device with no `production` tag.  A stop is refused on a device whose `status` is a `command` or missing - the UI's
+command is not the emulator's to hold off.  A `zone` the time zone database lacks is refused.
+
+A device is refused with two tags of one name, a reject tag (`rejectCount` unless `rejectTag` says) and a stops
+list's `reasonCode` included, and with a `command` tag beside a generated `status`, which would command nothing.
 
 A production count's reject tag takes the count's `quality` windows, one counter's faults, but not its sensor range.
 
@@ -345,10 +374,14 @@ each side; the test configs use it.
 ## Tests
 
 `Jde.Opc.PlcEmulator.Tests` (`tests/`): `Signals` (parsing, every refusal, each generator's shape, `production`'s
-advance, jitter bounds and reject share, a key of the wrong kind), `Quality` (the status names, the §7.38 bit layout,
-the windows and their edges, hold and the sensor range), `ParseDevices` (two tags of one name, a command beside a
-generated `status`), `Device::Sample` (a scheduled stop's timing and code, a period cut at its edges, nothing counted
-while `status` is off or before the first command, a held fault reaching the rejects), and `PlcServer` on loopback
+advance, jitter bounds and reject share, a rate under 1, a key of the wrong kind), `Quality` (the status names, the
+§7.38 bit layout, the windows and their edges, hold and the sensor range), `ParseDevices` (two tags of one name, a
+command beside a generated `status`, a `follows` tag's pace, the stops' and slow periods' refusals), `Device::Sample`
+on the device clock alone (a scheduled stop's timing and code, a thousand random stops' gaps and lengths over a
+`seed`, a seed's stops repeating and another's differing, an `at` stop on the days New York's clocks change, a slow
+period's count and a `follows` tag's lag towards it and back, an uncoded stop after a coded one, a period cut at its
+edges, nothing counted while `status` is off or before the first command, a held fault reaching the rejects), and
+`PlcServer` on loopback
 4851 with the writer aimed at a port nothing reads: the `/emulator/plc` block and its defaults, a secured session with
 a `plc.users` login reading and writing its nodes, anonymous, an issued token (there is no hub in the suite) and a
 stranger's certificate refused, and a command write reaching the emulator's queue; and the tightening station

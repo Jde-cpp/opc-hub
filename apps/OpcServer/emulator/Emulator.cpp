@@ -93,7 +93,8 @@ namespace Jde::Opc::Emulator{
 			//pubsub transport's writer samples the contract's nodes, the server transport has no contract.
 			_plc = mu<PlcServer>( PlcServer::ReadSettings(opc), _app, *nodeset, move(contract) );
 		}
-		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, SRCE_CUR );
+		let& zone = ParseZone( Settings::FindString("/emulator/zone").value_or("UTC") );
+		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, zone, Clock::now(), SRCE_CUR );
 		for( auto& device : _devices ){//the vectors are final: ParseDevices returned them.
 			for( auto& tag : device.Tags ){
 				tag.Self = this;
@@ -101,8 +102,9 @@ namespace Jde::Opc::Emulator{
 					tag.Type = _plc->Contract()->Fields[*tag.Field].Type;
 			}
 			for( let& stop : device.Stops ){
-				if( stop.Length<=_period || *stop.Every-stop.Length<=_period )
-					WARN( "[{}]a stop of {} every {} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop or the run after it - the counts still hold to it.", device.Name, Chrono::ToString(stop.Length), Chrono::ToString(*stop.Every), Chrono::ToString(_period) );
+				let every = stop.Shape==Recurrence::EShape::Every;
+				if( stop.Shortest()<=_period || (every && stop.Every-stop.Length<=_period) )
+					WARN( "[{}]a stop of {}{} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop{} - the counts still hold to it.", device.Name, Chrono::ToString(stop.Shortest()), every ? Ƒ(" every {}", Chrono::ToString(stop.Every)) : string{}, Chrono::ToString(_period), every ? " or the run after it" : "" );
 			}
 		}
 		if( _transport==ETransport::Server ){
@@ -364,6 +366,8 @@ namespace Jde::Opc::Emulator{
 			}
 		}
 		let start = steady_clock::now();
+		for( auto& device : _devices )
+			device.Start = Clock::now();//the device clock starts here, a connect after the parse.
 		_lastCycle = start;
 		_nextCycle = start+_period;
 		_nextStatus = start+_statusPeriod;
