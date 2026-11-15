@@ -70,6 +70,28 @@ namespace Jde::Opc::Hist{
 	struct DataValue{ NodeIndex Index; Value Data; optional<UA_DateTime> Heartbeat; bool Unsupported{}; bool Unsourced{}; };
 	using Record = variant<NodeAdded,NodeRemoved,DataValue>;
 
+	//What a UA callback lets one node's read scan, under open62541's service lock (spec *OpcServer*):  every record the
+	//read's streams take counts, parsed or skimmed.  A read that can resume from where it is ends its page soon after Taken
+	//reaches Limit, and one whose budget is spent before it starts returns no values, with a continuation that starts it
+	//on the next call.  A read that can't stop part way holds the budget while it runs, so neither it nor a read nested in
+	//it stops or waits.
+	struct ScanBudget final{
+		ScanBudget( uint limit )ι:Limit{ limit }{}
+		α Exhausted()Ι->bool{ return !_holds && Taken>=Limit; }
+		struct Hold final : noncopyable{
+			Hold( ScanBudget* budget )ι:_budget{ budget }{ if( _budget ){ ++_budget->_holds; _budget->Held = true; } }
+			~Hold(){ if( _budget ) --_budget->_holds; }
+		private:
+			ScanBudget* _budget;
+		};
+		uint Limit;
+		uint Taken{};
+		uint Skimmed{};//of Taken, those passed over unparsed.
+		bool Held{};//a read held it, so Taken is all it read.
+	private:
+		uint _holds{};
+	};
+
 	//A raw read, Part 11's ReadRawModifiedDetails over the group's files and buffer (spec *Reads*).  Times are UA ticks,
 	//as the records' are.  At least one of Start and End:  Start alone reads forward from it, End alone backward from
 	//it, and a Start after End reads the range in reverse, later values first.  With both, each is inside the range.
@@ -91,6 +113,10 @@ namespace Jde::Opc::Hist{
 		//holds, none included:  OpcServer's, whose read runs inside open62541's service lock.  A reverse read then goes
 		//back a day a page, or jumps as it would.  The bounds still look where they must.
 		bool OneDay{};
+		//With a budget, a forward read also ends its page between two times once the budget is spent, after the opening
+		//bounds, none included:  in an archive at a record that has its place, which the next page resumes at.  A reverse
+		//read holds it.
+		ScanBudget* Budget{};
 	};
 	//Part 11's ModificationInfo, as the Modification record stored it:  who made the edit, when, and what it did.
 	struct ModificationInfo{ UA_DateTime Time; Proto::UpdateType Type; string UserName; optional<uint32_t> IdentityId; };
@@ -133,6 +159,9 @@ namespace Jde::Opc::Hist{
 		//Ends the page with the run of times, from its first in the request's order, that fall on that time's day, so a
 		//page reads one day's records:  OpcServer's, as a ReadRequest's OneDay is.  Times out of time order page one by one.
 		bool OneDay{};
+		//With a budget, a page of one day's times in time order also ends once the budget is spent, with the values the
+		//stream has passed, its pass's state in the continuation, so the next page takes it up.  Any other page holds it.
+		ScanBudget* Budget{};
 	};
 	//The aggregates the first cut supports (spec *Reads*):  Part 13's, and Median, the median of an interval's Good raw
 	//values, which Part 13 doesn't define.
@@ -166,8 +195,13 @@ namespace Jde::Opc::Hist{
 		uint Limit{};//as a ReadRequest's, in values:  intervals times nodes.
 		string Continuation;
 		//Ends the page with the intervals stamped on the day its first is stamped on:  OpcServer's, as a ReadRequest's
-		//OneDay is.  An interval longer than a day is still read whole, since its value needs all of its records.
+		//OneDay is.  An interval longer than a day is still read whole, as is a day's, unless a budget stops it.
 		bool OneDay{};
+		//With a budget, the page also ends once the budget is spent, part way through an interval included, with the
+		//intervals the stream has passed and its pass's state, each interval's partial result among it, in the
+		//continuation, so the next page takes the pass up where it stopped.  A Median, and a reverse page of more than one
+		//interval, hold it.
+		ScanBudget* Budget{};
 	};
 	//A UA Duration, in ms, as a Duration, ProcessedRequest's Interval among them:  none for one that is negative, NaN, or
 	//past what a Duration's nanoseconds hold.  The gateway converts processingInterval by it too, so both count alike.

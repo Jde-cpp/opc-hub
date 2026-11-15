@@ -103,6 +103,9 @@ namespace Jde::Opc::Hist{
 		optional<bool> AnyBefore, AnyAfter;
 		bool BeforeUnknown{};//the first record came at the range's start, as its bound, so what lies before is unknown until probed.
 		bool ClosingKnown{};
+		//Whether a record follows LastSeen, as a probe answered while LastSeen was first:  an interval a page returns before
+		//its pass ends asks it, and asks again once a later record comes.
+		optional<std::pair<Ticks,bool>> Probed;
 	};
 
 	//The reads outside the range:  for the first non-Bad records before a time and the first after.  Each reads at
@@ -309,15 +312,21 @@ namespace Jde::Opc::Hist{
 			afterOf( t, *ahead.NonBad );
 	}
 
+	//Where a pass stands between two pages that the scan budget ended part way:  its raw read's continuation, and for each
+	//node whether its opening bound, or a record at a, has come, so a bound after is its closing.
+	struct Resume final{ string Read; vector<bool> Opened; };
 	//One pass over the nodes' raw records in [a, b], read as Read reads them with the bounds, feeding each node's
 	//track, and take with each record inside the range by the node's slot.  Each node is named once:  Read gives a
-	//node named twice its bounds twice.
-	Ω pass( Group& group, uint readLimit, const vector<NodeIndex>& nodes, Ticks a, Ticks b, vector<Track>& tracks, Prober& prober, absl::FunctionRef<void( uint, const Seen& )> take, SL sl )ε->void{
+	//node named twice its bounds twice.  The raw read takes the budget:  once a page of it leaves the budget spent with
+	//more to read, the pass stops, its read's continuation in resume, and is false.  reached is the latest time fed.
+	Ω pass( Group& group, uint readLimit, const vector<NodeIndex>& nodes, Ticks a, Ticks b, vector<Track>& tracks, Prober& prober, absl::FunctionRef<void( uint, const Seen& )> take,
+		Resume& resume, ScanBudget* budget, optional<Ticks>& reached, SL sl )ε->bool{
 		absl::flat_hash_map<NodeIndex,uint> slots;
 		for( uint i=0; i<nodes.size(); ++i )
 			slots.try_emplace( nodes[i], i );
-		vector<bool> opened( nodes.size() );//the node's opening bound, or a record at a, has come:  a bound after is its closing.
-		ReadRequest request{ .Nodes=nodes, .Start=a, .End=b, .Bounds=true, .Limit=readLimit };
+		auto& opened = resume.Opened;
+		opened.resize( nodes.size() );
+		ReadRequest request{ .Nodes=nodes, .Start=a, .End=b, .Bounds=true, .Limit=readLimit, .Continuation=move(resume.Read), .Budget=budget };
 		for( ;; ){
 			auto page = group.Read( request, sl );
 			for( auto& v : page.Values ){
@@ -353,11 +362,16 @@ namespace Jde::Opc::Hist{
 					opened[slot] = true;
 					t.BeforeUnknown = true;
 				}
+				reached = std::max( reached.value_or(time), time );
 				take( slot, s );
 				feed( t, move(s), prober );
 			}
 			if( page.Continuation.empty() )
 				break;
+			if( budget && budget->Exhausted() ){
+				resume.Read = move( page.Continuation );
+				return false;
+			}
 			request.Continuation = move( page.Continuation );
 		}
 		for( auto& t : tracks ){
@@ -365,6 +379,7 @@ namespace Jde::Opc::Hist{
 				t.AnyAfter = false;
 			finish( t, prober );
 		}
+		return true;
 	}
 
 	//A bounding value, or the value at a requested time:  the raw record itself, or one computed, Status
@@ -482,6 +497,23 @@ namespace Jde::Opc::Hist{
 			Next = from.next();
 			for( uint i=0; i<Nodes; ++i )
 				Had[i] = from.counts(i)!=0;
+			if( from.has_pass() )
+				Carried = move( *from.mutable_pass() );
+		}
+		//The page of a read whose budget was spent before it began:  no values, and the request's continuation again, or for
+		//a first page one that starts the read from its first time or interval.
+		α Deferred( sv continuation )Ι->ReadResult{
+			ReadResult y;
+			if( continuation.size() ){
+				y.Continuation = string{ continuation };
+				return y;
+			}
+			Proto::Continuation start;
+			start.set_crc( Crc );
+			for( uint j=0; j<Nodes; ++j )
+				start.add_counts( 0 );
+			y.Continuation = start.SerializeAsString();
+			return y;
 		}
 		//The last time or interval the page reaches, from Next:  where its Limit values end, or the last of count.
 		α Last( uint64_t count )Ι->uint64_t{
@@ -503,28 +535,33 @@ namespace Jde::Opc::Hist{
 			}
 			return last;
 		}
-		//Emits the values of [Next, last] in order, the first's nodes but those had, until the page is full, with the
-		//continuation at the cut, or after last when count goes on.  value gives the node's value at i by slot.
-		α Emit( uint64_t count, uint64_t last, absl::FunctionRef<Proto::DataValue( uint64_t, uint )> value )ε->ReadResult{
+		//Emits the values of [Next, end) in order, the first's nodes but those had, until the page is full, with the
+		//continuation at the cut, or at end while count goes on.  value gives the node's value at i by slot.  A page the scan
+		//budget stopped carries its pass there, which the next page takes up:  a Limit that cuts the page first drops it, and
+		//the next page reads its records again, as one Limit cut always has.
+		α Emit( uint64_t end, uint64_t count, absl::FunctionRef<Proto::DataValue( uint64_t, uint )> value, optional<Proto::Pass>&& pass={} )ε->ReadResult{
 			ReadResult y;
-			let cut = [&]( uint64_t i, const vector<bool>& done ){
+			let cut = [&]( uint64_t i, const vector<bool>& done, optional<Proto::Pass>&& carried ){
 				Proto::Continuation next;
 				next.set_crc( Crc );
 				next.set_next( i );
 				for( uint j=0; j<Nodes; ++j )
 					next.add_counts( done[j] ? 1 : 0 );
+				if( carried )
+					*next.mutable_pass() = move( *carried );
 				y.Continuation = next.SerializeAsString();
 			};
 			uint emitted{};
-			for( uint64_t i=Next; i<=last; ++i ){
-				vector<bool> done( Nodes );
+			vector<bool> done( Nodes );
+			for( uint64_t i=Next; i<end; ++i ){
+				done.assign( Nodes, false );
 				for( uint slot=0; slot<Nodes; ++slot ){
 					if( i==Next && Had[slot] ){
 						done[slot] = true;
 						continue;
 					}
 					if( emitted==Limit ){
-						cut( i, done );
+						cut( i, done, nullopt );
 						return y;
 					}
 					y.Values.push_back( {value(i, slot), false, {}} );
@@ -532,8 +569,8 @@ namespace Jde::Opc::Hist{
 					++emitted;
 				}
 			}
-			if( last+1<count )
-				cut( last+1, vector<bool>(Nodes) );
+			if( end<count )
+				cut( end, end==Next ? Had : vector<bool>(Nodes), move(pass) );
 			return y;
 		}
 		uint Nodes;
@@ -541,6 +578,7 @@ namespace Jde::Opc::Hist{
 		uint32_t Crc;
 		uint64_t Next{};
 		vector<bool> Had;
+		optional<Proto::Pass> Carried;//what a page the budget stopped left of its pass.
 	};
 	//The request's nodes each once, which the pass reads and the values are of, and each requested slot's place among
 	//them:  a node named twice is read once and answered twice.
@@ -611,13 +649,21 @@ namespace Jde::Opc::Hist{
 		return badEnough ? Bad : goodEnough ? Good : SubNormal;
 	}
 
+	using Point = std::pair<Ticks,double>;
 	//An interval's raw records of one node, as its aggregate needs them.
 	struct Bucket final{
 		uint Count{}, GoodCount{}, BadCount{}, UncertainCount{};
 		bool NonNumeric{};//a non-Bad value without a number, which the numeric aggregates can't take.
 		double Sum{}, Mean{}, M2{};//Welford's, over the Good values.
 		vector<double> Values;//Median's Good values.
-		vector<std::pair<Ticks,double>> Points;//TimeAverage's non-Bad values, in time order.
+		//TimeAverage's line, from its start bound through its non-Bad values in time order:  the area under it so far,
+		//summed segment by segment in order, its first and last points, and the values not yet summed, which wait for the
+		//start bound.  Start is that bound once it is known.
+		vector<Point> Points;
+		uint PointCount{};
+		optional<Bound> Start;
+		double Area{};
+		optional<Point> LineFirst, LineLast;
 		optional<Seen> Min, Max;//Minimum's and Maximum's alone, since a copy allocates the value.
 		double MinValue{}, MaxValue{};
 		uint MinCount{}, MaxCount{};
@@ -634,8 +680,10 @@ namespace Jde::Opc::Hist{
 			}
 			let v = number( s.Value );
 			if( aggregate==EAggregate::TimeAverage ){
-				if( v )
+				if( v ){
 					Points.emplace_back( s.Time, *v );
+					++PointCount;
+				}
 				else
 					NonNumeric = true;
 			}
@@ -696,12 +744,22 @@ namespace Jde::Opc::Hist{
 		α DataAfter( const Interval& iv )ε->bool{
 			if( T.LastSeen && (*T.LastSeen>iv.Hi || (!iv.Reverse && *T.LastSeen==iv.Hi)) )
 				return true;
-			if( !T.AnyAfter )
-				T.AnyAfter = T.LastSeen && Probe.Exists( T.Index, *T.LastSeen, false );
-			return *T.AnyAfter;
+			if( T.AnyAfter )//the pass's end says.
+				return *T.AnyAfter;
+			if( !T.LastSeen )
+				return false;
+			if( !T.Probed || T.Probed->first!=*T.LastSeen )
+				T.Probed = { *T.LastSeen, Probe.Exists(T.Index, *T.LastSeen, false) };
+			return T.Probed->second;
 		}
 		//Part 13 §5.3.3.2:  the interval overlaps the beginning or the end of the data, or is the uneven last one.
 		α IsPartial( const Interval& iv, const Bucket& b )ε->bool{ return b.Count && ( !DataBefore(iv) || !DataAfter(iv) || iv.Uneven ); }
+		//Whether the stream has passed the boundary at time and found the first non-Bad record after it, so its bound is
+		//final.
+		α Resolved( Ticks time )Ι->bool{
+			let p = std::ranges::lower_bound( T.Boundaries, time, {}, &Boundary::Time );
+			return p!=T.Boundaries.end() && p->Time==time && (uint)( p-T.Boundaries.begin() )<T.Resolved;
+		}
 		α BoundAt( Ticks time, bool stepped )ε->Bound{
 			auto p = std::ranges::lower_bound( T.Boundaries, time, {}, &Boundary::Time );
 			ASSERT( p!=T.Boundaries.end() && p->Time==time );
@@ -782,6 +840,28 @@ namespace Jde::Opc::Hist{
 			}
 			return noData( index, iv.Ts );
 		}
+		//TimeAverage's points into its area, once its start bound is known:  the line opens at the bound when it is a
+		//number, and its segments are summed in order, as they would be all at once.  final is the interval's end, when the
+		//bound is taken whatever the pass has seen.
+		α Fold( const Interval& iv, Bucket& b, bool final=false )ε->void{
+			if( !b.Start ){
+				if( !final && !Resolved(iv.Lo) )
+					return;
+				b.Start = BoundAt( iv.Lo, false );
+				if( !missing(*b.Start) ){
+					if( let v = number(b.Start->Value) )
+						b.LineFirst = b.LineLast = Point{ iv.Lo, *v };
+				}
+			}
+			for( let& p : b.Points ){
+				if( b.LineLast )
+					b.Area += ( b.LineLast->second+p.second )/2*(double)( p.first-b.LineLast->first );
+				else
+					b.LineFirst = p;
+				b.LineLast = p;
+			}
+			b.Points.clear();
+		}
 		//Part 13 §5.4.3.6:  the area under the line through the start bound, the non-Bad values inside and the end
 		//bound, sloped whatever the node says, over the interval's width, or from its first value when the start bound
 		//is missing, a partial interval.  Uncertain where a bound is, a Bad value was skipped or an Uncertain one used.
@@ -789,51 +869,248 @@ namespace Jde::Opc::Hist{
 			let index = T.Index;
 			if( b.NonNumeric )
 				return invalidInputs( index, iv.Ts );
-			auto start = BoundAt( iv.Lo, false ), end = BoundAt( iv.Hi, false );
-			if( missing(start) && b.Points.empty() )
+			Fold( iv, b, true );
+			let& start = *b.Start;
+			let end = BoundAt( iv.Hi, false );
+			if( missing(start) && !b.PointCount )
 				return noData( index, iv.Ts );//before the start of the data.
-			if( b.Points.empty() && end.Extrapolated )
+			if( !b.PointCount && end.Extrapolated )
 				return noData( index, iv.Ts );//after its end.
 			let startValue = missing(start) ? nullopt : number( start.Value ), endValue = number( end.Value );
 			if( (!missing(start) && !startValue) || !endValue )
 				return invalidInputs( index, iv.Ts );
-			vector<std::pair<Ticks,double>> line;
-			if( startValue )
-				line.emplace_back( iv.Lo, *startValue );
-			for( let& p : b.Points )
-				line.push_back( p );
-			line.emplace_back( iv.Hi, *endValue );
-			double area{};
-			for( uint i=1; i<line.size(); ++i )
-				area += ( line[i-1].second+line[i].second )/2*(double)( line[i].first-line[i-1].first );
-			let from = line.front().first;
+			double area = b.Area;
+			let first = b.LineFirst.value_or( Point{iv.Hi, *endValue} );
+			if( b.LineLast )
+				area += ( b.LineLast->second+*endValue )/2*(double)( iv.Hi-b.LineLast->first );
+			let from = first.first;
 			Proto::DataValue y;
-			y.mutable_value()->set_double_value( iv.Hi>from ? area/(double)(iv.Hi-from) : line.front().second );
+			y.mutable_value()->set_double_value( iv.Hi>from ? area/(double)(iv.Hi-from) : first.second );
 			let unsure = missing(start) || uncertain(start) || uncertain(end) || b.BadCount || b.UncertainCount;
 			let partial = missing(start) || end.Extrapolated || iv.Uneven ? Partial : 0;
 			return result( index, iv.Ts, {move(y), unsure ? SubNormal : Good}, Calculated | partial );
 		}
 	};
 
+	//A pass's state as a page the budget stopped carries it (Proto::Pass), and back:  a Seen's class isn't stored, since
+	//classify gives it again.
+	constexpr uint MaxCarry{ 64*1024 };//a continuation point's bytes past which a page holds its budget and reads on instead.
+	Ω invalid( sv what, SL sl )ε->void{ throw UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, Ƒ("The continuation's pass {}.", what), {ELogLevel::Debug}, sl }; }
+	Ω put( Proto::PassSeen* y, const Seen& s )ι->void{
+		y->set_time( s.Time );
+		*y->mutable_value() = s.Value;
+	}
+	Ω seen( const Proto::PassSeen& s, bool treatUncertainAsBad )ι->Seen{ return { s.time(), s.value(), classify(s.value().status(), treatUncertainAsBad) }; }
+	Ω point( Proto::PassPoint* y, const Point& p )ι->void{
+		y->set_time( p.first );
+		y->set_value( p.second );
+	}
+	Ω carry( const Boundary& b )ι->Proto::PassBoundary{
+		Proto::PassBoundary y;
+		y.set_time( b.Time );
+		if( b.At ) put( y.mutable_at(), *b.At );
+		if( b.AtAny ) put( y.mutable_at_any(), *b.AtAny );
+		y.set_bad_at( b.BadAt );
+		if( b.Before ) put( y.mutable_before(), *b.Before );
+		if( b.Before2 ) put( y.mutable_before2(), *b.Before2 );
+		y.set_before2_unknown( b.Before2Unknown );
+		if( b.BeforeAny ) put( y.mutable_before_any(), *b.BeforeAny );
+		y.set_bad_between_before( b.BadBetweenBefore );
+		if( b.After ) put( y.mutable_after(), *b.After );
+		if( b.AfterAny ) put( y.mutable_after_any(), *b.AfterAny );
+		y.set_bad_between_after( b.BadBetweenAfter );
+		y.set_any_after( b.AnyAfter );
+		return y;
+	}
+	Ω restore( const Proto::PassBoundary& p, Boundary& b, bool tuab )ι->void{
+		if( p.has_at() ) b.At = seen( p.at(), tuab );
+		if( p.has_at_any() ) b.AtAny = seen( p.at_any(), tuab );
+		b.BadAt = p.bad_at();
+		if( p.has_before() ) b.Before = seen( p.before(), tuab );
+		if( p.has_before2() ) b.Before2 = seen( p.before2(), tuab );
+		b.Before2Unknown = p.before2_unknown();
+		if( p.has_before_any() ) b.BeforeAny = seen( p.before_any(), tuab );
+		b.BadBetweenBefore = p.bad_between_before();
+		if( p.has_after() ) b.After = seen( p.after(), tuab );
+		if( p.has_after_any() ) b.AfterAny = seen( p.after_any(), tuab );
+		b.BadBetweenAfter = p.bad_between_after();
+		b.AnyAfter = p.any_after();
+	}
+	Ω carry( const Bucket& b, uint64_t interval )ι->Proto::PassBucket{
+		Proto::PassBucket y;
+		y.set_interval( interval );
+		y.set_count( b.Count );
+		y.set_good( b.GoodCount );
+		y.set_bad( b.BadCount );
+		y.set_uncertain( b.UncertainCount );
+		y.set_non_numeric( b.NonNumeric );
+		y.set_sum( b.Sum );
+		y.set_mean( b.Mean );
+		y.set_m2( b.M2 );
+		if( b.Min ) put( y.mutable_min(), *b.Min );
+		if( b.Max ) put( y.mutable_max(), *b.Max );
+		y.set_min_value( b.MinValue );
+		y.set_max_value( b.MaxValue );
+		y.set_min_count( b.MinCount );
+		y.set_max_count( b.MaxCount );
+		if( b.First ) put( y.mutable_first(), *b.First );
+		if( b.Last ) put( y.mutable_last(), *b.Last );
+		if( b.Start ){
+			auto& start = *y.mutable_start();
+			*start.mutable_value() = b.Start->Value;
+			start.set_status( b.Start->Status );
+			start.set_raw( b.Start->Raw );
+			start.set_extrapolated( b.Start->Extrapolated );
+		}
+		y.set_area( b.Area );
+		if( b.LineFirst ) point( y.mutable_line_first(), *b.LineFirst );
+		if( b.LineLast ) point( y.mutable_line_last(), *b.LineLast );
+		for( let& p : b.Points )
+			point( y.add_points(), p );
+		y.set_point_count( b.PointCount );
+		return y;
+	}
+	//Refused unless it holds what Finish reads of its aggregate's bucket, which Take always leaves:  the extreme of its
+	//Good numbers, and the first or last of its records.
+	Ω restore( const Proto::PassBucket& p, Bucket& b, EAggregate aggregate, bool tuab, SL sl )ε->void{
+		let numbers = p.good() && !p.non_numeric();
+		if( (aggregate==EAggregate::Minimum && numbers && !p.has_min()) || (aggregate==EAggregate::Maximum && numbers && !p.has_max())
+			|| (aggregate==EAggregate::Start && p.count() && !p.has_first()) || (aggregate==EAggregate::End && p.count() && !p.has_last()) )
+			invalid( "holds an interval without what its aggregate reads", sl );
+		b.Count = p.count();
+		b.GoodCount = p.good();
+		b.BadCount = p.bad();
+		b.UncertainCount = p.uncertain();
+		b.NonNumeric = p.non_numeric();
+		b.Sum = p.sum();
+		b.Mean = p.mean();
+		b.M2 = p.m2();
+		if( p.has_min() ) b.Min = seen( p.min(), tuab );
+		if( p.has_max() ) b.Max = seen( p.max(), tuab );
+		b.MinValue = p.min_value();
+		b.MaxValue = p.max_value();
+		b.MinCount = p.min_count();
+		b.MaxCount = p.max_count();
+		if( p.has_first() ) b.First = seen( p.first(), tuab );
+		if( p.has_last() ) b.Last = seen( p.last(), tuab );
+		if( p.has_start() )
+			b.Start = Bound{ p.start().value(), p.start().status(), p.start().raw(), p.start().extrapolated() };
+		b.Area = p.area();
+		if( p.has_line_first() ) b.LineFirst = Point{ p.line_first().time(), p.line_first().value() };
+		if( p.has_line_last() ) b.LineLast = Point{ p.line_last().time(), p.line_last().value() };
+		for( let& point : p.points() )
+			b.Points.emplace_back( point.time(), point.value() );
+		b.PointCount = p.point_count();
+	}
+	//A node's track, its boundaries from `from` on, those of what the page hasn't returned.
+	Ω carry( const Track& t, bool opened, uint from )ι->Proto::PassTrack{
+		Proto::PassTrack y;
+		if( t.CurrentTime ) y.set_current_time( *t.CurrentTime );
+		for( let& s : t.Current )
+			put( y.add_current(), s );
+		if( t.Prev ) put( y.mutable_prev(), *t.Prev );
+		if( t.Prev2 ) put( y.mutable_prev2(), *t.Prev2 );
+		if( t.PrevAny ) put( y.mutable_prev_any(), *t.PrevAny );
+		y.set_prev2_unknown( t.Prev2Unknown );
+		y.set_bad_since_prev( t.BadSincePrev );
+		if( t.FirstSeen ) y.set_first_seen( *t.FirstSeen );
+		if( t.LastSeen ) y.set_last_seen( *t.LastSeen );
+		if( t.AnyBefore ) y.set_any_before( *t.AnyBefore );
+		y.set_before_unknown( t.BeforeUnknown );
+		y.set_opened( opened );
+		if( t.Probed ){
+			y.set_probed_from( t.Probed->first );
+			y.set_probed_any( t.Probed->second );
+		}
+		let relative = [from]( uint count ){ return count>from ? count-from : 0; };
+		y.set_settled( relative(t.Settled) );
+		y.set_resolved( relative(t.Resolved) );
+		y.set_followed( relative(t.Followed) );
+		for( uint i=from; i<t.Settled; ++i )
+			*y.add_boundaries() = carry( t.Boundaries[i] );
+		return y;
+	}
+	//Over the track the page rebuilt, whose boundaries the carried ones lead.  Whether the node's opening bound had come.
+	//Refused unless it holds what the pass reads of a track, as feed and open leave it:  records at its current time,
+	//and a first record where what lies before it is unknown.
+	Ω restore( const Proto::PassTrack& p, Track& t, bool tuab, SL sl )ε->bool{
+		if( p.settled()!=(uint)p.boundaries_size() || p.followed()>p.settled() || p.resolved()>p.followed() || p.settled()>t.Boundaries.size() )
+			invalid( "doesn't count its boundaries", sl );
+		if( p.has_current_time()!=(p.current_size()>0) )
+			invalid( "holds records at no time, or a time with none", sl );
+		if( p.before_unknown() && !p.has_first_seen() )
+			invalid( "has a node's start unknown with no first record", sl );
+		for( uint i=0; i<p.settled(); ++i ){
+			if( p.boundaries(i).time()!=t.Boundaries[i].Time )
+				invalid( "holds a boundary the page has none at", sl );
+			restore( p.boundaries(i), t.Boundaries[i], tuab );
+		}
+		t.Settled = p.settled();
+		t.Resolved = p.resolved();
+		t.Followed = p.followed();
+		if( p.has_current_time() ) t.CurrentTime = p.current_time();
+		for( let& s : p.current() )
+			t.Current.push_back( seen(s, tuab) );
+		if( p.has_prev() ) t.Prev = seen( p.prev(), tuab );
+		if( p.has_prev2() ) t.Prev2 = seen( p.prev2(), tuab );
+		if( p.has_prev_any() ) t.PrevAny = seen( p.prev_any(), tuab );
+		t.Prev2Unknown = p.prev2_unknown();
+		t.BadSincePrev = p.bad_since_prev();
+		if( p.has_first_seen() ) t.FirstSeen = p.first_seen();
+		if( p.has_last_seen() ) t.LastSeen = p.last_seen();
+		if( p.has_any_before() ) t.AnyBefore = p.any_before();
+		t.BeforeUnknown = p.before_unknown();
+		if( p.has_probed_from() ) t.Probed = { p.probed_from(), p.probed_any() };
+		return p.opened();
+	}
+
 	α Group::ReadAtTime( const AtTimeRequest& r, SL sl )ε->ReadResult{
 		THROW_IFSL( r.Times.empty(), "An at-time read names no times." );
 		let readLimit = _store->Config.ReadLimit;
 		Paging paging{ EMode::AtTime, r.Nodes, r.Continuation, crc(r), r.Limit, readLimit, r.Times.size(), sl };
+		if( r.Budget && r.Budget->Exhausted() )
+			return paging.Deferred( r.Continuation );
 		let& tz = *_store->Config.TimeZone;
 		auto last = paging.Last( r.Times.size() );
 		if( r.OneDay )
 			last = paging.OneDay( last, [&]( uint64_t i ){ return r.Times[i]; }, tz );
+		let& carried = paging.Carried;
+		if( carried ){
+			if( carried->last()<paging.Next || carried->last()>=r.Times.size() || carried->last()-paging.Next>=paging.Limit )
+				invalid( "ends outside the read", sl );
+			last = carried->last();
+		}
 		//The page's times, each once, in segments by day:  a segment's pass reads the day's records between its times and
-		//the bounds either side, not the days between segments.
+		//the bounds either side, not the days between segments.  The budget can stop a page of one day's times in time
+		//order, whose values are known as the stream passes them:  any other holds it.
 		vector<Ticks> times{ r.Times.begin()+paging.Next, r.Times.begin()+last+1 };
+		let stoppable = std::ranges::is_sorted( times ) && DayOf( times.front(), tz )==DayOf( times.back(), tz );
 		std::ranges::sort( times );
 		times.erase( std::ranges::unique(times).begin(), times.end() );
+		if( carried && !stoppable )
+			invalid( "is of a page that can't stop", sl );
+		const ScanBudget::Hold hold{ stoppable ? nullptr : r.Budget };
 		Prober prober{ *this, readLimit, r.Configuration.TreatUncertainAsBad, sl };
 		const Distinct nodes{ r.Nodes };
+		if( carried && (uint)carried->tracks_size()!=nodes.Nodes.size() )
+			invalid( "is of other nodes", sl );
 		vector<bool> stepped;
 		for( let index : nodes.Nodes )
 			stepped.push_back( FindThresholds(index).value_or(Thresholds{}).Stepped );
 		absl::flat_hash_map<Ticks,vector<Proto::DataValue>> byTime;
+		let valueAt = [&]( Track& t, uint slot, Boundary& b ){
+			auto bound = r.SimpleBounds ? simple( b, stepped[slot] ) : interpolated( b, stepped[slot], r.Configuration.UseSlopedExtrapolation, [&]( Boundary& x ){
+				auto behind = prober.Back( t.Index, x.Before->Time, 1, true, true );
+				if( !behind.Found.empty() )
+					x.Before2 = move( behind.Found[0] );
+				x.Before2Unknown = false;
+			});
+			auto& at = byTime[b.Time];
+			at.resize( nodes.Nodes.size() );
+			at[slot] = result( t.Index, b.Time, move(bound), Interpolated );
+		};
+		let value = [&]( uint64_t i, uint slot ){ return byTime.at( r.Times[i] )[nodes.Of[slot]]; };
+		optional<ScanBudget::Hold> rest;//a carry past MaxCarry:  the page reads on.
 		for( uint from=0; from<times.size(); ){
 			uint to = from+1;
 			for( let day = DayOf(times[from], tz); to<times.size() && DayOf(times[to], tz)==day; ++to )
@@ -844,24 +1121,53 @@ namespace Jde::Opc::Hist{
 				for( uint i=from; i<to; ++i )
 					tracks[slot].Boundaries.push_back( {.Time=times[i]} );
 			}
-			pass( *this, readLimit, nodes.Nodes, times[from], times[to-1], tracks, prober, []( uint, const Seen& ){}, sl );
-			for( uint slot=0; slot<tracks.size(); ++slot ){
-				auto& t = tracks[slot];
-				for( auto& b : t.Boundaries ){
-					auto bound = r.SimpleBounds ? simple( b, stepped[slot] ) : interpolated( b, stepped[slot], r.Configuration.UseSlopedExtrapolation, [&]( Boundary& x ){
-						auto behind = prober.Back( t.Index, x.Before->Time, 1, true, true );
-						if( !behind.Found.empty() )
-							x.Before2 = move( behind.Found[0] );
-						x.Before2Unknown = false;
-					});
-					auto& at = byTime[b.Time];
-					at.resize( nodes.Nodes.size() );
-					at[slot] = result( t.Index, b.Time, move(bound), Interpolated );
+			Ticks a = times[from], b = times[to-1];
+			Resume resume;
+			if( carried ){//a stoppable page is one segment.
+				if( carried->start()>a || carried->end()!=b || DayOf(carried->start(), tz)!=DayOf(b, tz) )
+					invalid( "reads another range", sl );
+				a = carried->start();
+				resume.Read = carried->read();
+				for( uint slot=0; slot<tracks.size(); ++slot )
+					resume.Opened.push_back( restore(carried->tracks(slot), tracks[slot], r.Configuration.TreatUncertainAsBad, sl) );
+			}
+			optional<Ticks> reached;
+			while( !pass(*this, readLimit, nodes.Nodes, a, b, tracks, prober, []( uint, const Seen& ){}, resume, r.Budget, reached, sl) ){
+				//The times every node's bound is known at, from the first:  each settled, and resolved unless simple.
+				uint known = times.size();
+				for( let& t : tracks )
+					known = std::min( known, (uint)(r.SimpleBounds ? t.Followed : t.Resolved) );
+				if( known==times.size() ){//every value known, which the pass's end returns.
+					rest.emplace( r.Budget );
+					continue;
 				}
+				Proto::Pass pass;
+				pass.set_read( resume.Read );
+				pass.set_start( a );
+				pass.set_end( b );
+				pass.set_last( last );
+				for( uint slot=0; slot<tracks.size(); ++slot )
+					*pass.add_tracks() = carry( tracks[slot], resume.Opened[slot], known );
+				if( pass.ByteSizeLong()>MaxCarry ){//its values, the known ones too, come at the pass's end.
+					rest.emplace( r.Budget );
+					continue;
+				}
+				for( uint slot=0; slot<tracks.size(); ++slot ){
+					for( uint i=0; i<known; ++i )
+						valueAt( tracks[slot], slot, tracks[slot].Boundaries[i] );
+				}
+				auto final = paging.Next;
+				while( final<=last && r.Times[final]<times[known] )
+					++final;
+				return paging.Emit( final, r.Times.size(), value, move(pass) );
+			}
+			for( uint slot=0; slot<tracks.size(); ++slot ){
+				for( auto& bound : tracks[slot].Boundaries )
+					valueAt( tracks[slot], slot, bound );
 			}
 			from = to;
 		}
-		return paging.Emit( r.Times.size(), last, [&]( uint64_t i, uint slot ){ return byTime.at( r.Times[i] )[nodes.Of[slot]]; } );
+		return paging.Emit( last+1, r.Times.size(), value );
 	}
 
 	α ToDuration( double ms )ι->optional<Duration>{
@@ -887,6 +1193,8 @@ namespace Jde::Opc::Hist{
 		const Intervals intervals{ range, r.Interval };
 		let width = intervals.Width, count = intervals.Count;
 		Paging paging{ EMode::Processed, r.Nodes, r.Continuation, crc(r), r.Limit, readLimit, count, sl };
+		if( r.Budget && r.Budget->Exhausted() )
+			return paging.Deferred( r.Continuation );
 		auto last = paging.Last( count );
 		let intervalOf = [&]( uint64_t k ){
 			Interval y{ .Reverse=reverse, .Uneven=k+1==count && intervals.Uneven() };
@@ -905,11 +1213,32 @@ namespace Jde::Opc::Hist{
 		};
 		if( r.OneDay )
 			last = paging.OneDay( last, [&]( uint64_t k ){ return intervalOf( k ).Ts; }, *_store->Config.TimeZone );
+		let& carried = paging.Carried;
+		if( carried ){
+			if( carried->last()<paging.Next || carried->last()>=count || carried->last()-paging.Next>=paging.Limit )
+				invalid( "ends outside the read", sl );
+			last = carried->last();
+		}
 		let first = intervalOf( paging.Next ), lastInterval = intervalOf( last );
-		let a = std::min( first.Lo, lastInterval.Lo ), b = std::max( first.Hi, lastInterval.Hi );
+		auto a = std::min( first.Lo, lastInterval.Lo );
+		let b = std::max( first.Hi, lastInterval.Hi );
+		if( carried ){
+			if( carried->start()>a || carried->end()!=b )
+				invalid( "reads another range", sl );
+			a = carried->start();
+		}
 		let bounds = r.Aggregate==EAggregate::Interpolative || r.Aggregate==EAggregate::TimeAverage;
+		//The budget can stop a page part way through its pass, an interval included, which the next page takes up:  but not
+		//a Median's, whose bucket holds every Good value, nor a reverse page of several intervals, none of which is known
+		//until its pass ends.  Those hold it.
+		let stoppable = r.Aggregate!=EAggregate::Median && ( !reverse || paging.Next==last );
+		if( carried && !stoppable )
+			invalid( "is of a page that can't stop", sl );
+		const ScanBudget::Hold hold{ stoppable ? nullptr : r.Budget };
 		Prober prober{ *this, readLimit, r.Configuration.TreatUncertainAsBad, sl };
 		const Distinct nodes{ r.Nodes };
+		if( carried && (uint)carried->tracks_size()!=nodes.Nodes.size() )
+			invalid( "is of other nodes", sl );
 		vector<Track> tracks( nodes.Nodes.size() );
 		vector<vector<Bucket>> buckets( nodes.Nodes.size() );
 		for( uint slot=0; slot<tracks.size(); ++slot ){
@@ -930,21 +1259,85 @@ namespace Jde::Opc::Hist{
 			std::ranges::sort( boundaries, {}, &Boundary::Time );
 			boundaries.erase( std::ranges::unique(boundaries, {}, &Boundary::Time).begin(), boundaries.end() );
 		}
+		let tuab = r.Configuration.TreatUncertainAsBad;
+		Resume resume;
+		if( carried ){
+			resume.Read = carried->read();
+			for( uint slot=0; slot<tracks.size(); ++slot ){
+				let& p = carried->tracks( slot );
+				resume.Opened.push_back( restore(p, tracks[slot], tuab, sl) );
+				for( let& bucket : p.buckets() ){
+					if( bucket.interval()<paging.Next || bucket.interval()>last )
+						invalid( "holds an interval outside its page", sl );
+					restore( bucket, buckets[slot][bucket.interval()-paging.Next], r.Aggregate, tuab, sl );
+				}
+			}
+		}
+		vector<Finishing> finishing;
+		for( uint slot=0; slot<tracks.size(); ++slot )
+			finishing.push_back( {r, tracks[slot], FindThresholds(nodes.Nodes[slot]).value_or(Thresholds{}).Stepped, prober} );
 		//A record's interval by its time:  none for one at the range's far end, which is a bound alone.
 		let slotOf = [&]( Ticks t )->optional<uint64_t>{
 			let k = reverse ? ( t>r.Start || t<=r.End ? count : ticksBetween(t, r.Start)/width ) : ( t<r.Start || t>=r.End ? count : ticksBetween(r.Start, t)/width );
 			return k>=paging.Next && k<=last ? optional<uint64_t>{ k-paging.Next } : nullopt;
 		};
-		pass( *this, readLimit, nodes.Nodes, a, b, tracks, prober, [&]( uint slot, const Seen& s ){
-			if( let k = slotOf(s.Time) )
-				buckets[slot][*k].Take( s, r.Aggregate );
-		}, sl );
-		vector<Finishing> finishing;
-		for( uint slot=0; slot<tracks.size(); ++slot )
-			finishing.push_back( {r, tracks[slot], FindThresholds(nodes.Nodes[slot]).value_or(Thresholds{}).Stepped, prober} );
-		return paging.Emit( count, last, [&]( uint64_t k, uint slot ){
+		let take = [&]( uint slot, const Seen& s ){
+			let k = slotOf( s.Time );
+			if( !k )
+				return;
+			auto& bucket = buckets[slot][*k];
+			bucket.Take( s, r.Aggregate );
+			if( bucket.Points.size()>=64 )//TimeAverage's line into its area, so its bucket stays small.
+				finishing[slot].Fold( intervalOf(paging.Next+*k), bucket );
+		};
+		let value = [&]( uint64_t k, uint slot ){
 			let node = nodes.Of[slot];
 			return finishing[node].Finish( intervalOf(k), buckets[node][k-paging.Next] );
-		});
+		};
+		//An interval is known once the stream has passed its end, so it holds all of its records, and the bounds it takes are
+		//each resolved.
+		let known = [&]( uint64_t k, const optional<Ticks>& reached ){
+			let iv = intervalOf( k );
+			if( reverse || !reached || *reached<iv.Hi )
+				return false;
+			return !bounds || std::ranges::all_of( finishing, [&]( let& f ){
+				return r.Aggregate==EAggregate::TimeAverage ? f.Resolved( iv.Lo ) && f.Resolved( iv.Hi ) : f.Resolved( iv.Ts );
+			});
+		};
+		optional<ScanBudget::Hold> rest;//a carry past MaxCarry:  the page reads on.
+		optional<Ticks> reached;
+		while( !pass(*this, readLimit, nodes.Nodes, a, b, tracks, prober, take, resume, r.Budget, reached, sl) ){
+			auto final = paging.Next;
+			while( final<=last && known(final, reached) )
+				++final;
+			if( final>last ){//every interval known, which the pass's end returns.
+				rest.emplace( r.Budget );
+				continue;
+			}
+			Proto::Pass pass;
+			pass.set_read( resume.Read );
+			pass.set_start( a );
+			pass.set_end( b );
+			pass.set_last( last );
+			let lo = intervalOf( final ).Lo;
+			for( uint slot=0; slot<tracks.size(); ++slot ){
+				let& boundaries = tracks[slot].Boundaries;
+				let from = reverse ? 0u : (uint)( std::ranges::lower_bound(boundaries, lo, {}, &Boundary::Time)-boundaries.begin() );
+				auto& track = *pass.add_tracks();
+				track = carry( tracks[slot], resume.Opened[slot], from );
+				for( uint64_t k=final; k<=last; ++k ){
+					auto& bucket = buckets[slot][k-paging.Next];
+					if( !bucket.Count )
+						continue;
+					if( r.Aggregate==EAggregate::TimeAverage )
+						finishing[slot].Fold( intervalOf(k), bucket );
+					*track.add_buckets() = carry( bucket, k );
+				}
+			}
+			if( pass.ByteSizeLong()<=MaxCarry )
+				return paging.Emit( final, count, value, move(pass) );
+			rest.emplace( r.Budget );
+		}
+		return paging.Emit( last+1, count, value );
 	}
 }

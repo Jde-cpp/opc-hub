@@ -18,9 +18,10 @@ namespace Jde::Opc::Hist{
 	//order they were made.  An INSERT appends its value after the records at the time, a REPLACE or UPDATE puts its value in
 	//place of the last record of its node there that is its original, or appends it when it has none, and a DELETE removes
 	//that record; one whose original isn't there changes nothing.  A record's place in its file is kept only where no
-	//modification targets its time:  a page resumed at its offset would apply them to part of the time's records.
+	//modification targets its time:  a page resumed at its offset would apply them to part of the time's records.  The
+	//file's frames skip takes are passed over unparsed (IO::Records::Reader).
 	struct Applied final : noncopyable{
-		Applied( sp<IO::OpenFile> file, vector<Run> runs, vector<Proto::HistoryRecord> late, DayMods mods, SL sl )ι;
+		Applied( sp<IO::OpenFile> file, vector<Run> runs, vector<Proto::HistoryRecord> late, DayMods mods, SL sl, IO::Records::ISkip* skip=nullptr )ι;
 		//False at the end.  Throws when a run can't be read through.
 		α Next( Proto::HistoryRecord& r, optional<Merge::Position>& where )ε->bool;
 	private:

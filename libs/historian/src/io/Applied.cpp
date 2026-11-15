@@ -74,8 +74,8 @@ namespace Jde::Opc{
 		}
 	}
 namespace Hist{
-	Applied::Applied( sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl )ι:
-		_merge{ move(file), move(runs), move(late), sl },
+	Applied::Applied( sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl, IO::Records::ISkip* skip )ι:
+		_merge{ move(file), move(runs), move(late), sl, skip },
 		_mods{ move(mods) },
 		_nextMod{ _mods.ByTime.begin() },
 		_sl{ sl }
@@ -103,6 +103,12 @@ namespace Hist{
 				return false;
 			//The records at the earliest time either has, together, then the modifications there.
 			let t = _ahead && modsLeft ? std::min( time(_ahead->Record), _nextMod->first ) : _ahead ? time( _ahead->Record ) : _nextMod->first;
+			if( !modsLeft || _nextMod->first!=t ){//none at t:  the record as it is, and nothing past it read yet, which a read's scan budget counts.
+				r = move( _ahead->Record );
+				where = _ahead->Where;
+				_ahead.reset();
+				return true;
+			}
 			vector<HistoryRecord> at;
 			vector<optional<Merge::Position>> places;
 			while( _ahead && time(_ahead->Record)==t ){

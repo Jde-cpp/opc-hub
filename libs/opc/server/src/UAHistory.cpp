@@ -232,7 +232,8 @@ namespace Jde::Opc::Server{
 	UAHistory::UAHistory( const UASettings& settings, sp<IHistoryHost> host )ε:
 		_host{ move(host) },
 		_historian{ _host ? _host->Historian() : nullptr },
-		_editTimeout{ settings.EditTimeout }
+		_editTimeout{ settings.EditTimeout },
+		_scanLimit{ _historian ? _historian->Config().ScanLimit : Hist::Settings::DefaultScanLimit }
 	{}
 	UAHistory::~UAHistory(){
 		Stop();
@@ -375,7 +376,7 @@ namespace Jde::Opc::Server{
 	Ŧ UAHistory::ReadRawModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, T* const* data )ι->void{
 		Serve( ua, sessionId, sessionContext, release, nodes, results, std::same_as<T,UA_HistoryModifiedData> ? "modified" : "raw",
-			[&]( uint, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return Read( node, details, id, continuation, page ); },
+			[&]( uint, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget ){ return Read( node, details, id, continuation, page, budget ); },
 			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range, {nodes[i].nodeId, *_host} ); } );
 	}
 	template α UAHistory::ReadRawModified( UA_Server&, const UA_NodeId*, void*, const UA_ReadRawModifiedDetails&, UA_TimestampsToReturn, bool,
@@ -383,24 +384,29 @@ namespace Jde::Opc::Server{
 	α UAHistory::ReadAtTime( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadAtTimeDetails& details, UA_TimestampsToReturn timestamps, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
 		Serve( ua, sessionId, sessionContext, release, nodes, results, "at-time",
-			[&]( uint, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return AtTime( node, details, id, continuation, page ); },
+			[&]( uint, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget ){ return AtTime( node, details, id, continuation, page, budget ); },
 			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range, {nodes[i].nodeId, *_host} ); } );
 	}
 	α UAHistory::ReadProcessed( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadProcessedDetails& details, UA_TimestampsToReturn timestamps, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
 		let mismatch = details.aggregateTypeSize!=nodes.size();//one aggregate per node, a node read with two named twice (Part 11 §6.5.4.2).
 		Serve( ua, sessionId, sessionContext, release, nodes, results, "processed",
-			[&]( uint i, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){
-				return mismatch ? UA_STATUSCODE_BADAGGREGATELISTMISMATCH : Processed( node, details, details.aggregateType[i], id, continuation, page );
+			[&]( uint i, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget ){
+				return mismatch ? UA_STATUSCODE_BADAGGREGATELISTMISMATCH : Processed( node, details, details.aggregateType[i], id, continuation, page, budget );
 			},
 			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range, {nodes[i].nodeId, *_host} ); } );
 	}
 	α UAHistory::Serve( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, sv what,
-		absl::FunctionRef<UA_StatusCode( uint, const Node&, const UA_HistoryReadValueId&, UA_ByteString&, Hist::ReadResult& )> read,
+		absl::FunctionRef<UA_StatusCode( uint, const Node&, const UA_HistoryReadValueId&, UA_ByteString&, Hist::ReadResult&, Hist::ScanBudget& )> read,
 		absl::FunctionRef<UA_StatusCode( uint, const Hist::ReadResult&, const UA_NumericRange* )> fill )ι->void{
 		let start = steady_clock::now();
-		uint values{};
+		uint values{}, scanned{};
+		//Each node's share of what the callback may scan:  what is left over the nodes left, and what one doesn't take goes to
+		//the rest.  A page reads on past its share through the records at the time it stops at, which the rest don't pay
+		//for, so every node moves on each call.  A read that held takes what it read, so the nodes after it may have none,
+		//and wait for the next call.
+		uint left = _scanLimit.load( std::memory_order_relaxed );
 		for( uint i=0; i<nodes.size(); ++i ){
 			auto& result = results[i];
 			if( release ){//A continuation point is the read's own state, so releasing one frees nothing.
@@ -412,7 +418,10 @@ namespace Jde::Opc::Server{
 			if( !kept )
 				continue;
 			Hist::ReadResult page;
-			result.statusCode = read( i, *kept, nodes[i], result.continuationPoint, page );
+			Hist::ScanBudget budget{ left/(nodes.size()-i) };
+			result.statusCode = read( i, *kept, nodes[i], result.continuationPoint, page, budget );
+			left -= std::min( left, budget.Held ? budget.Taken : std::min(budget.Taken, budget.Limit) );
+			scanned += budget.Taken;
 			if( UA_StatusCode_isBad(result.statusCode) )
 				continue;
 			if( let sc = fill(i, page, nodes[i].indexRange.length ? &range.Value : nullptr) )
@@ -422,7 +431,7 @@ namespace Jde::Opc::Server{
 		let elapsed = steady_clock::now()-start;
 		_reads.Add( elapsed );
 		_returned.fetch_add( values, std::memory_order_relaxed );
-		LOG( elapsed>=SlowRead ? ELogLevel::Warning : ELogLevel::Trace, _tags, "A history read of {} nodes held the service lock for {} ms, returning {} {} values.", nodes.size(), duration_cast<milliseconds>(elapsed).count(), values, what );
+		LOG( elapsed>=SlowRead ? ELogLevel::Warning : ELogLevel::Trace, _tags, "A history read of {} nodes held the service lock for {} ms, scanning {} records and returning {} {} values.", nodes.size(), duration_cast<milliseconds>(elapsed).count(), scanned, values, what );
 	}
 	α UAHistory::Admit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_HistoryReadValueId& node, UA_NumericRange& range, UA_StatusCode& status )Ι->optional<Node>{
 		status = UA_STATUSCODE_GOOD;
@@ -439,12 +448,12 @@ namespace Jde::Opc::Server{
 		return kept;
 	}
 
-	α UAHistory::Read( const Node& node, const UA_ReadRawModifiedDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode{
+	α UAHistory::Read( const Node& node, const UA_ReadRawModifiedDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget )ι->UA_StatusCode{
 		//DateTime's MinValue, 0 on the wire, is a time that isn't given, and two of the three bound a read (Part 11 §6.5.3).
 		let hasStart = details.startTime>0, hasEnd = details.endTime>0;
 		if( hasStart+hasEnd+(details.numValuesPerNode!=0)<2 )
 			return UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
-		Hist::ReadRequest request{ .Nodes={node.Index}, .Bounds=details.returnBounds, .Modified=details.isReadModified, .Limit=details.numValuesPerNode, .Continuation=ToString(id.continuationPoint), .OneDay=true };
+		Hist::ReadRequest request{ .Nodes={node.Index}, .Bounds=details.returnBounds, .Modified=details.isReadModified, .Limit=details.numValuesPerNode, .Continuation=ToString(id.continuationPoint), .OneDay=true, .Budget=&budget };
 		if( hasStart )
 			request.Start = details.startTime;
 		if( hasEnd ){
@@ -455,14 +464,14 @@ namespace Jde::Opc::Server{
 		}
 		return paged( [&]{ return node.Group->Read( request ); }, continuation, page );
 	}
-	α UAHistory::AtTime( const Node& node, const UA_ReadAtTimeDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode{
+	α UAHistory::AtTime( const Node& node, const UA_ReadAtTimeDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget )ι->UA_StatusCode{
 		if( !details.reqTimesSize )
 			return UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
 		//Every node's AggregateConfiguration is Part 13's defaults, which Historized::Load publishes over the nodeset's.
-		const Hist::AtTimeRequest request{ .Nodes={node.Index}, .Times={details.reqTimes, details.reqTimes+details.reqTimesSize}, .SimpleBounds=details.useSimpleBounds!=0, .Configuration={}, .Continuation=ToString(id.continuationPoint), .OneDay=true };
+		const Hist::AtTimeRequest request{ .Nodes={node.Index}, .Times={details.reqTimes, details.reqTimes+details.reqTimesSize}, .SimpleBounds=details.useSimpleBounds!=0, .Configuration={}, .Continuation=ToString(id.continuationPoint), .OneDay=true, .Budget=&budget };
 		return paged( [&]{ return node.Group->ReadAtTime( request ); }, continuation, page );
 	}
-	α UAHistory::Processed( const Node& node, const UA_ReadProcessedDetails& details, const UA_NodeId& function, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode{
+	α UAHistory::Processed( const Node& node, const UA_ReadProcessedDetails& details, const UA_NodeId& function, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget )ι->UA_StatusCode{
 		let aggregate = Aggregate( function );
 		if( !aggregate )
 			return UA_STATUSCODE_BADAGGREGATENOTSUPPORTED;
@@ -474,7 +483,7 @@ namespace Jde::Opc::Server{
 		let& c = details.aggregateConfiguration;//or, with useServerCapabilitiesDefaults, the node's:  Part 13's, as AtTime's.
 		const Hist::ProcessedRequest request{ .Nodes={node.Index}, .Start=details.startTime, .End=details.endTime, .Interval=*interval,
 			.Aggregate=*aggregate, .Configuration=c.useServerCapabilitiesDefaults ? Hist::AggregateConfiguration{} : Hist::AggregateConfiguration{ c.treatUncertainAsBad!=0, c.percentDataBad, c.percentDataGood, c.useSlopedExtrapolation!=0 },
-			.Continuation=ToString(id.continuationPoint), .OneDay=true };
+			.Continuation=ToString(id.continuationPoint), .OneDay=true, .Budget=&budget };
 		return paged( [&]{ return node.Group->ReadProcessed( request ); }, continuation, page );
 	}
 

@@ -41,13 +41,20 @@ namespace Jde::Opc::Hist::Tests{
 		struct State final{ std::atomic<uint> Running; std::atomic<bool> Released; };
 		sp<State> _state{ ms<State>() };
 	};
-	//Every page of a read, each page's size in pages.
-	Ξ readAll( Group& group, ReadRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{
+	//A read paged as a UA host pages it, each page with a fresh budget of `budget` records when one is given:  its pages'
+	//sizes, and the records each page took.
+	struct Paging final{ vector<uint>* Pages{}; optional<uint> Budget; vector<uint>* Taken{}; };
+	Ŧ readPaged( T request, Paging paging, auto read )ε->vector<ReadValue>{
 		vector<ReadValue> y;
 		for( uint count{}; ; ++count ){
-			auto page = group.Read( request );
-			if( pages )
-				pages->push_back( page.Values.size() );
+			optional<ScanBudget> budget;
+			if( paging.Budget )
+				request.Budget = &budget.emplace( *paging.Budget );
+			auto page = read( request );
+			if( paging.Pages )
+				paging.Pages->push_back( page.Values.size() );
+			if( paging.Taken && budget )
+				paging.Taken->push_back( budget->Taken );
 			std::ranges::move( page.Values, std::back_inserter(y) );
 			if( page.Continuation.empty() )
 				break;
@@ -55,34 +62,32 @@ namespace Jde::Opc::Hist::Tests{
 			request.Continuation = move( page.Continuation );
 		}
 		return y;
+	}
+	//Every page of a read, each page's size in pages.
+	Ξ readAll( Group& group, ReadRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{
+		return readPaged( move(request), {pages}, [&]( const ReadRequest& r ){ return group.Read( r ); } );
+	}
+	Ξ readAll( Group& group, ReadRequest request, Paging paging )ε->vector<ReadValue>{
+		return readPaged( move(request), paging, [&]( const ReadRequest& r ){ return group.Read( r ); } );
 	}
 	//Every page of an at-time or a processed read, the same way.
 	Ξ readAllAtTime( Group& group, AtTimeRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{
-		vector<ReadValue> y;
-		for( uint count{}; ; ++count ){
-			auto page = group.ReadAtTime( request );
-			if( pages )
-				pages->push_back( page.Values.size() );
-			std::ranges::move( page.Values, std::back_inserter(y) );
-			if( page.Continuation.empty() )
-				break;
-			THROW_IF( count>100'000, "A read that never ends." );
-			request.Continuation = move( page.Continuation );
-		}
-		return y;
+		return readPaged( move(request), {pages}, [&]( const AtTimeRequest& r ){ return group.ReadAtTime( r ); } );
+	}
+	Ξ readAllAtTime( Group& group, AtTimeRequest request, Paging paging )ε->vector<ReadValue>{
+		return readPaged( move(request), paging, [&]( const AtTimeRequest& r ){ return group.ReadAtTime( r ); } );
 	}
 	Ξ readAllProcessed( Group& group, ProcessedRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{
-		vector<ReadValue> y;
-		for( uint count{}; ; ++count ){
-			auto page = group.ReadProcessed( request );
-			if( pages )
-				pages->push_back( page.Values.size() );
-			std::ranges::move( page.Values, std::back_inserter(y) );
-			if( page.Continuation.empty() )
-				break;
-			THROW_IF( count>100'000, "A read that never ends." );
-			request.Continuation = move( page.Continuation );
-		}
+		return readPaged( move(request), {pages}, [&]( const ProcessedRequest& r ){ return group.ReadProcessed( r ); } );
+	}
+	Ξ readAllProcessed( Group& group, ProcessedRequest request, Paging paging )ε->vector<ReadValue>{
+		return readPaged( move(request), paging, [&]( const ProcessedRequest& r ){ return group.ReadProcessed( r ); } );
+	}
+	//A read's values as one string each, the bound flag with them:  two reads that return the same agree here.
+	Ξ described( const vector<ReadValue>& values )ι->vector<string>{
+		vector<string> y;
+		for( const auto& v : values )
+			y.push_back( Ƒ("{}{}", v.Bound ? "bound " : "", v.Value.ShortDebugString()) );
 		return y;
 	}
 	//A result's number, whatever numeric type it carries:  an aggregate's Double or Int32, or a raw value's.

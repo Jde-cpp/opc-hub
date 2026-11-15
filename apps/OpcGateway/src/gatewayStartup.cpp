@@ -109,7 +109,7 @@ namespace Jde::Opc{
 		}
 		BlockAwait( Calendar::Client::Calendars::Configure(move(ql), AppClient()->UserPK()) );
 		Process::AddShutdownFunction( [](bool terminate, SL sl){ Calendar::Client::Calendars::Shutdown(terminate, sl); } );//its listener's, as ConnectAccess registered the access listener's.
-		//Registration order is run order (process.cpp):  the endpoint first, so its sessions are gone before the historian and the UA
+		//Registration order is run order (lifecycle.cpp):  the endpoint first, so its sessions are gone before the historian and the UA
 		//clients it reports on;  then the historian, before the UA clients go:  the collectors' items are dropped on live clients, and
 		//the groups' last flushes run while the executor still does;  then the driver rows' servers and the flow server, which the clients read.
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );

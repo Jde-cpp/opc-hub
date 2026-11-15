@@ -109,7 +109,8 @@ function( sync=false )
 		//timeZone "UTC", an IANA name that must not change once `path` holds files;  and OpcServer's own, editTimeout "PT5S",
 		//how long a HistoryUpdate waits, holding the service lock, for the flush that writes it before it answers Bad_Timeout.
 		hist:{
-			path: logsDir + "/hist/opc-server"
+			path: logsDir + "/hist/opc-server",
+			scanLimit:: 100000 //the records one HistoryRead callback's nodes may scan between them while it holds the service lock.
 		},
 		//No `pubsub` key here, deliberately.  A DataSetReader writes its target variables through the server-internal path -
 		//no session, no OpcAuthorize - so any UADP publisher that can reach the url and carries the contract's three ids

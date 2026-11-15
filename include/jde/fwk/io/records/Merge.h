@@ -9,11 +9,12 @@ namespace Jde::IO::Records{
 	//too.  Ties go to the earlier run, and to the file's before late's, so the merge is as stable as a sort.  A run is
 	//opened only when the merge reaches its first time, so memory follows how many runs overlap, not how many there are:  a
 	//window per open run, which the caller fetches (Wants/Feed).  FileStart and checkpoint records are left out.  A record
-	//with no time is filed under its run's last, so it stays where its run put it.
+	//with no time is filed under its run's last, so it stays where its run put it.  Each run's frames skip takes are passed
+	//over unparsed (Reader).
 	template<Record T> struct Merge final : noncopyable{
 		//late is in order too.  file, which the runs are of, is open when there are runs; it is let go at the end, before a
 		//rewrite renames over it, which Windows may refuse while it is open.
-		Merge( sp<OpenFile> file, vector<Run> runs, vector<T> late, SRCE )ι;
+		Merge( sp<OpenFile> file, vector<Run> runs, vector<T> late, SRCE, ISkip* skip=nullptr )ι;
 		//Record:  r.  More:  Wants/Feed first.  End:  the file is let go.  Throws, at Error, when a run can't be read
 		//through:  a run its scan kept no longer reads as it did, so the file changed (Unreadable).
 		α Next( T& r )ε->ENext;
@@ -49,13 +50,15 @@ namespace Jde::IO::Records{
 		optional<Position> _where;
 		bool _unreadable{};
 		SL _sl;
+		ISkip* _skip;
 	};
 
-	template<Record T> Merge<T>::Merge( sp<OpenFile> file, vector<Run> runs, vector<T> late, SL sl )ι:
+	template<Record T> Merge<T>::Merge( sp<OpenFile> file, vector<Run> runs, vector<T> late, SL sl, ISkip* skip )ι:
 		_file{ move(file) },
 		_runs{ move(runs) },
 		_late{ move(late) },
-		_sl{ sl }{
+		_sl{ sl },
+		_skip{ skip }{
 		_order.resize( _runs.size()+(_late.empty() ? 0 : 1) );
 		std::iota( _order.begin(), _order.end(), 0u );
 		std::ranges::stable_sort( _order, {}, [this]( uint index ){ return First(index); } );
@@ -73,7 +76,6 @@ namespace Jde::IO::Records{
 		else{
 			auto& in = *source.In;
 			for( ;; ){
-				source.Where.Start = in.Offset();
 				const auto next = in.Next( r );
 				if( next==ENext::More )
 					return ENext::More;
@@ -84,7 +86,7 @@ namespace Jde::IO::Records{
 					}
 					return ENext::End;
 				}
-				source.Where.End = in.Offset();
+				source.Where = { in.FrameOffset(), in.Offset() };
 				if( in.Field()!=Traits<T>::StartField && in.Field()!=Traits<T>::CheckpointField )
 					break;
 			}
@@ -106,7 +108,7 @@ namespace Jde::IO::Records{
 			}
 			if( _next<_order.size() && (_open.empty() || First(_order[_next])<=_open.front()->At) ){
 				const auto index = _order[_next++];
-				_filling = mu<Source>( index, index<_runs.size() ? mu<Reader<T>>(_runs[index]) : nullptr );
+				_filling = mu<Source>( index, index<_runs.size() ? mu<Reader<T>>(_runs[index], MergeWindowBytes, _skip) : nullptr );
 				continue;
 			}
 			if( _open.empty() ){

@@ -71,7 +71,7 @@ Each item is its own PR, useful without the historian.
   - `StartOfArchive`/`StartOfOnlineArchive`, at start and at each midnight.
 - **node\_index.** Carried forward in an `Issued` record after each value file's `FileStart`. A node the nodesets no longer historize gets a `NodeRemoved`.
 - **Access.** Read callbacks check each node's Read. The two history-update callbacks at [`UAAccess.cpp:475`](../../../libs/opc/server/src/UAAccess.cpp#L475) answer Update and Delete on the node's enforced governing resource and refuse where none governs it, and `HistoryWrite` is left out of an unprotected node's `UserAccessLevel` (the spec's *Authorization*, [#237]).
-- **Bounded callbacks.** Each node's read stops at `maxReturnDataValues` or one day file, then returns a continuation point. Measure how long a callback holds the service lock under emulator load.
+- **Bounded callbacks.** Each node's read stops at `maxReturnDataValues` or one day file, then returns a continuation point. Measure how long a callback holds the service lock under emulator load. The soak measured 112 ms for one interval of 18 h, and [#504](https://github.com/Jde-cpp/opc-hub/issues/504) added a scan budget, `hist.scanLimit`, which stops a page inside a day and inside an interval (spec *OpcServer*).
 - **Config.** A `hist` block in [`Opc.Server.jsonnet`](../../../apps/OpcServer/config/Opc.Server.jsonnet); `path` defaults to `hist/opc-server`.
 - **Test data.** Mark a handful of variables in [`pumps.NodeSet2.xml`](../../../apps/OpcServer/config/nodesets/pumps.NodeSet2.xml) `Historizing`, with HA configurations that cover every deviation format, a `MinTimeInterval` and a heartbeat. The PLC emulator's signals (sine, ramp, random walk, toggle) then exercise compression live; soak with it.
 - **Verification.**
@@ -156,7 +156,7 @@ Slice A is the long one, since it carries all of storage. Its payoff is the chec
 ## Risks
 
 - **Library shaped by its first host.** Mitigated by the host-interface table and a multi-group fixture from Phase 1.
-- **The service lock.** OpcServer's history callbacks run on its one server thread. The one-day-per-callback bound is the guard; measure it under the emulator in Phase 2 rather than assume it.
+- **The service lock.** OpcServer's history callbacks run on its one server thread. The one-day-per-callback bound is the guard; measure it under the emulator in Phase 2 rather than assume it. Measured by #488's soak and replaced by [#504](https://github.com/Jde-cpp/opc-hub/issues/504)'s scan budget.
 - **Pass-through overfetch.** Merging nodes up to a horizon rereads what lies past it (spec *Pass-through*). A 10-node raw read that asks each node for `limit` values fetches up to 10× what it returns. An at-time or aggregate read, whose details have no per-node count, asks for the points that fill `limit` across the nodes ([#314]), so it fetches about what it returns. A raw read's first round's response then holds up to `nodes × limit` values, about 30 MB for 100 dense nodes at the default limit, which a server with a message limit of a few MB refuses whole, failing the call. Each read's merge also rescans what it holds every round: a raw read's pending values, and an at-time or aggregate read's points from the call's first. If that shows, ask a raw read for `limit / nodes` per node, rounded up, and accept more round trips when one node dominates.
 - **Spec drift.** When implementation forces a change, the PR changes `spec.md` with it, so the spec stays the description of what ships.
 

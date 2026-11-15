@@ -738,6 +738,88 @@ namespace Jde::Opc::Server::Tests{
 		}
 	}
 
+	//A callback's reads stop at hist.scanLimit records, its nodes sharing them, and the next call takes each up where it
+	//stopped:  one interval's average over a busy stretch comes in many pages, the value one page gives with no limit, and a
+	//raw read of two nodes moves both on with every call.  Two counters no other test writes.
+	TEST_F( HistoryTests, ScanLimitPagesACallback ){
+		constexpr UA_UInt32 Total1{ 6013 }, Total2{ 6023 };
+		for( UA_UInt32 i=0; i<40; ++i ){
+			Write( Total1, &i, UA_TYPES_UINT32, At(300+i) );
+			const UA_UInt32 other{ 100+i };
+			Write( Total2, &other, UA_TYPES_UINT32, At(300+i) );
+		}
+		ASSERT_TRUE( BlockAwait(Group()->Flush()) );
+		let numbers = []( const Pages& pages ){
+			vector<string> y;
+			for( auto v : all(pages) )
+				y.push_back( Ƒ("{} {:x} {}", v.AsNumber<double>(), v.hasStatus ? v.status : 0, v.sourceTimestamp) );
+			return y;
+		};
+		UA_ReadRawModifiedDetails raw; UA_ReadRawModifiedDetails_init( &raw );
+		raw.startTime = ticks( At(300) );
+		raw.endTime = ticks( At(340) );
+		let whole = Aggregate( Total1, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(300), At(340), 0s );
+		let both = HistoryRead( &raw, UA_TYPES_READRAWMODIFIEDDETAILS, {Node(Total1), Node(Total2)} );
+		ASSERT_EQ( whole.Values.size(), 1u );
+		let limit = History().ScanLimit();
+		History().SetScanLimit( 6 );
+		absl::Cleanup restored = [limit]{ History().SetScanLimit( limit ); };
+		let reads = History().Reads().Count;
+		let paged = Aggregate( Total1, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(300), At(340), 0s );
+		EXPECT_TRUE( UA_StatusCode_isGood(paged.Status) ) << UA_StatusCode_name( paged.Status );
+		EXPECT_GT( paged.Values.size(), 3u );
+		EXPECT_GT( History().Reads().Count, reads+3 );
+		EXPECT_EQ( numbers(paged.Values), numbers(whole.Values) );
+		let shared = HistoryRead( &raw, UA_TYPES_READRAWMODIFIEDDETAILS, {Node(Total1), Node(Total2)} );
+		ASSERT_EQ( shared.size(), 2u );
+		for( uint i=0; i<shared.size(); ++i ){
+			EXPECT_EQ( numbers(shared[i].Values), numbers(both[i].Values) ) << i;
+			ASSERT_GT( shared[i].Values.size(), 1u ) << i;
+			EXPECT_FALSE( shared[i].Values.front().empty() ) << i;//the first call moved both on.
+		}
+	}
+
+	//Every node of a callback moves on with every call, though each page reads past its share through the others' records
+	//at the time it stops at:  a read that didn't hold is charged its share at most.  A read that holds, a reverse one,
+	//is charged all it read, so the nodes after it wait for the next call.  Six counters no other test writes, at the same
+	//times.
+	TEST_F( HistoryTests, ScanLimitMovesEveryNode ){
+		constexpr std::array<UA_UInt32,6> ids{ 6014, 6024, 6033, 6034, 6043, 6044 };
+		for( UA_UInt32 i=0; i<30; ++i ){
+			for( let id : ids ){
+				const UA_UInt32 v{ id+i };
+				Write( id, &v, UA_TYPES_UINT32, At(400+i) );
+			}
+		}
+		ASSERT_TRUE( BlockAwait(Group()->Flush()) );
+		vector<NodeId> nodes;
+		for( let id : ids )
+			nodes.push_back( Node(id) );
+		UA_ReadRawModifiedDetails forward; UA_ReadRawModifiedDetails_init( &forward );
+		forward.startTime = ticks( At(400) );
+		forward.endTime = ticks( At(430) );
+		auto reverse = forward;
+		std::swap( reverse.startTime, reverse.endTime );
+		let whole = HistoryRead( &forward, UA_TYPES_READRAWMODIFIEDDETAILS, nodes );
+		let back = HistoryRead( &reverse, UA_TYPES_READRAWMODIFIEDDETAILS, nodes );
+		let limit = History().ScanLimit();
+		History().SetScanLimit( 12 );
+		absl::Cleanup restored = [limit]{ History().SetScanLimit( limit ); };
+		let shared = HistoryRead( &forward, UA_TYPES_READRAWMODIFIEDDETAILS, nodes );
+		let held = HistoryRead( &reverse, UA_TYPES_READRAWMODIFIEDDETAILS, nodes );
+		for( uint i=0; i<ids.size(); ++i ){
+			SCOPED_TRACE( ids[i] );
+			ASSERT_EQ( all(whole[i].Values).size(), 30u );
+			EXPECT_EQ( numbers(all(shared[i].Values)), numbers(all(whole[i].Values)) );
+			ASSERT_GT( shared[i].Values.size(), 2u );
+			for( uint p=0; p+1<shared[i].Values.size(); ++p )
+				EXPECT_FALSE( shared[i].Values[p].empty() ) << "page " << p;
+			EXPECT_EQ( numbers(all(held[i].Values)), numbers(all(back[i].Values)) );
+		}
+		EXPECT_FALSE( held[0].Values.front().empty() );
+		EXPECT_TRUE( held[1].Values.front().empty() );//the first's hold took the call.
+	}
+
 	//A write with an IndexRange changes part of an array, and open62541 passes setValue only that part:  the history keeps
 	//the array the write made.  A scalar with a range writes one element.
 	TEST_F( HistoryTests, KeepsTheArrayAPartialWriteMakes ){
