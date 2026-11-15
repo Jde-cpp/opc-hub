@@ -255,6 +255,40 @@ namespace Jde::Opc::Emulator::Tests{
 		_plc->Write( 0, 1 );
 		EXPECT_TRUE( _plc->Drain().empty() );
 	}
+	//The demo's nodeset (docs/demo/spec.md *The machines' signals*):  MachineType and one Machine, every variable AccessLevel 1.  A
+	//session reads them and its user level is 1 too, so its write is refused BadNotWritable, while the emulator's own write lands -
+	//the admin session has every right.  A second server on a port of its own, beside the suite's pumps server.  The five are the
+	//file's own nodes, i=6001 to i=6005, not copies of MachineType's children:  a history query names them by id.
+	TEST_F( PlcServerTests, TheDemoNodesetIsReadOnlyToASession ){
+		auto settings = *_settings;
+		settings.Port = 4865;//past the gateway suite's throwaway servers, 4855-4864 (TestUaServer.h EThrowawayPort).
+		PlcServer demo{ settings, appClient(), nodeset().parent_path()/"demo.NodeSet2.xml", nullopt };
+		demo.Run();
+		let ns = demo.Namespace( "urn:jde:demo" );
+		constexpr array<sv,5> names{ "status", "totalCount", "rejectCount", "reasonCode", "speed" };
+		vector<NodeId> nodes;
+		for( uint i=0; i<names.size(); ++i ){
+			nodes.push_back( demo.Resolve(Ƒ("Machine/{}", names[i]), ns) );
+			EXPECT_EQ( nodes.back(), NodeId(ns, 6001+i) ) << names[i] << " " << nodes.back().ToString();
+		}
+		UATestClient c{ Ƒ("opc.tcp://127.0.0.1:{}", demo.Port()), clientSsl(), UATestClient::Username("plc", "plc"), UA_MESSAGESECURITYMODE_SIGNANDENCRYPT };
+		let sc = c.Connect(); ASSERT_EQ( sc, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( sc );
+		for( uint i=0; i<names.size(); ++i ){
+			UA_Byte level{}, userLevel{};
+			UAε( UA_Server_readAccessLevel(demo.Ptr(), nodes[i], &level) );
+			EXPECT_EQ( level, 1 ) << names[i];
+			let read = UA_Client_readUserAccessLevelAttribute( c, nodes[i], &userLevel );
+			EXPECT_EQ( read, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( read );
+			EXPECT_EQ( userLevel, 1 ) << names[i];
+		}
+		UA_Boolean off{ false };
+		let wsc = c.Write( nodes[0], &off, UA_TYPES[UA_TYPES_BOOLEAN] );
+		EXPECT_EQ( wsc, UA_STATUSCODE_BADNOTWRITABLE ) << UA_StatusCode_name( wsc );
+		demo.Write( nodes[0], UA_TYPES[UA_TYPES_BOOLEAN], 0 );
+		let v = ReadValue( *demo.Ptr(), nodes[0] );
+		ASSERT_TRUE( v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_BOOLEAN]) );
+		EXPECT_FALSE( v.Get<UA_Boolean>(0) );
+	}
 	//Watch hands back the node's value, where a command starts under -transport=server, as the first notification is under the
 	//others;  a node has one command tag.
 	TEST_F( PlcServerTests, WatchReturnsTheNodesValue ){

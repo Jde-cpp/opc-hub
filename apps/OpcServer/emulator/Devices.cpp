@@ -228,7 +228,7 @@ namespace Jde::Opc{
 				INFO( "[{}]seed={} - set it as the device's `seed` to draw these random stops again.", device.Name, drawn );
 			if( device.Stops.size() ){
 				//A command `status` is the UI's:  the emulator subscribes it and never writes it, so it has nothing to hold off.
-				THROW_IFSL( !generated, "Device '{}': stops hold a generated `{}` off - a toggle, not a command.", device.Path, _status );
+				THROW_IFSL( !generated, "Device '{}': stops hold a generated `{}` off - a toggle or `on`, not a command.", device.Path, _status );
 				device.ReasonTag = device.Tags.size();
 				add( TagSpec{jobject{{"name", _reasonCode}}, sl}, mu<StopCode>(device), &UA_TYPES[UA_TYPES_INT32] );
 			}
