@@ -36,5 +36,39 @@ namespace Jde::Opc::Oee{
 		//The machines a line reaches, each once, depth first in member order:  the order of its rows on the pages.  Throws
 		//for a line the graph does not hold, or one that reaches itself.
 		α Reach( const Graph& graph, uint32 lineId, SRCE )ε->vector<uint32>;
+		//The lines a line reaches, each once, depth first in member order, itself left out.  Throws as Reach does.
+		α ReachLines( const Graph& graph, uint32 lineId, SRCE )ε->vector<uint32>;
+	}
+
+	//The floor's rules (docs/demo/spec.md *The floor*):  a line's map, with a shape per machine and line it reaches and the fixtures
+	//around them, in metres from the floor's top-left.
+	namespace Floors{
+		enum class EKind : uint8{ Machine, Line, Zone, Wall, Aisle, Label };
+		α ToString( EKind kind )ι->sv;
+		α ToKind( sv name )ι->optional<EKind>;//as ToString spells it, the column's text.
+		struct Point final{ double X{}, Y{}; bool operator==( const Point& )const = default; };
+		//`points`:  the column's json text, or its list, of [x, y] pairs in metres.
+		α ParsePoints( const jvalue& points, SRCE )ε->vector<Point>;
+		α ToJson( std::span<const Point> points )ι->string;//as the column holds them.
+		struct Floor final{ uint32 Id{}; uint32 LineId{}; double Width{}, Height{}, Grid{ 0.5 }; };//an oee_floors row.
+		//An oee_floor_shapes row as a mutation would leave it.  Kind is none for text ToKind doesn't know, and Points empty for
+		//json ParsePoints refuses:  a row the QL never wrote.
+		struct Shape final{
+			uint32 Id{};
+			uint32 FloorId{};
+			optional<EKind> Kind;
+			optional<uint32> MachineId;
+			optional<uint32> MemberLineId;
+			vector<Point> Points;
+		};
+		//Width, height and grid above zero.
+		α ValidateFloor( const Floor& floor, SRCE )ε->void;
+		//Every point of every shape on or inside the floor:  a floor's resize, against the shapes it holds.
+		α ValidateInside( const Floor& floor, std::span<const Shape> shapes, SRCE )ε->void;
+		//A shape against its floor, the floor's other shapes and the graph:  its kind one of the six;  a Machine's machine one the
+		//floor's line reaches, a Line's line one it reaches other than itself, each once on the floor, and neither key on any other
+		//kind;  Machine, Line and Zone closed polygons of three points or more, Wall and Aisle polylines of two or more, a Label
+		//one;  and every point on or inside the floor.  `others`:  the floor's shapes but this one.
+		α ValidateShape( const Lines::Graph& graph, const Floor& floor, const Shape& shape, std::span<const Shape> others, SRCE )ε->void;
 	}
 }

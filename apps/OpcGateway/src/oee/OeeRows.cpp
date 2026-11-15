@@ -59,6 +59,19 @@ namespace Jde::Opc::Gateway{
 	Ω lineMemberRow( DB::Row&& r )->OeeLineMemberRow{
 		return { .Id=r.Get<uint32>(0), .Line=r.Get<uint32>(1), .Machine=r.GetOpt<uint32>(2), .MemberLine=r.GetOpt<uint32>(3), .Sort=r.Get<uint32>(4) };
 	}
+	Ω floorRow( DB::Row&& r )->Oee::Floors::Floor{
+		return { .Id=r.Get<uint32>(0), .LineId=r.Get<uint32>(1), .Width=r.Get<double>(2), .Height=r.Get<double>(3), .Grid=r.Get<double>(4) };
+	}
+	Ω shapeRow( DB::Row&& r )->Oee::Floors::Shape{
+		Oee::Floors::Shape y{ .Id=r.Get<uint32>(0), .FloorId=r.Get<uint32>(1), .Kind=Oee::Floors::ToKind(r.GetString(2)), .MachineId=r.GetOpt<uint32>(3), .MemberLineId=r.GetOpt<uint32>(4), .Points={} };
+		try{
+			y.Points = Oee::Floors::ParsePoints( jvalue{r.GetString(5)} );
+		}
+		catch( const std::exception& e ){
+			WARN( "oee_floor_shapes row {}'s points aren't readable:  {}", y.Id, e.what() );
+		}
+		return y;
+	}
 	Ω ticks( const DB::Row& r, uint i )ι->TimePoint{ return UADateTime{ UA_DateTime{r.Get<int64_t>(i)} }.Time(); }
 	constexpr sv _codingColumns{ "oee_coding_id, start, finish, oee_reason_id, comment, user_name, created, oee_machine_id" };
 	Ω text( sv value )ι->DB::Value{ return value.empty() ? DB::Value{} : DB::Value{ string{value} }; }//the QL engine's rule:  an empty string is null.
@@ -105,6 +118,24 @@ namespace Jde::Opc{
 	}
 	α Gateway::SelectOeeLineMembers( SL sl )ι->HistRowsAwait<OeeLineMemberRow>{
 		return { select(OeeTable::LineMembers, {"oee_line_member_id", "oee_line_id", "oee_machine_id", "member_line_id", "sort"}, {}, sl), lineMemberRow, sl };
+	}
+	α Gateway::SelectOeeFloors( OeeFloorFilter filter, SL sl )ι->HistRowsAwait<Oee::Floors::Floor>{
+		let view = GetViewPtr( OeeTable::Floors );
+		DB::WhereClause where;
+		if( filter.Id )
+			where.Add( view->GetColumnPtr("oee_floor_id"), (uint)*filter.Id );
+		if( filter.Line )
+			where.Add( view->GetColumnPtr("oee_line_id"), (uint)*filter.Line );
+		return { select(OeeTable::Floors, {"oee_floor_id", "oee_line_id", "width", "height", "grid"}, move(where), sl), floorRow, sl };
+	}
+	α Gateway::SelectOeeFloorShapes( OeeFloorShapeFilter filter, SL sl )ι->HistRowsAwait<Oee::Floors::Shape>{
+		let view = GetViewPtr( OeeTable::FloorShapes );
+		DB::WhereClause where;
+		if( filter.Id )
+			where.Add( view->GetColumnPtr("oee_floor_shape_id"), (uint)*filter.Id );
+		if( filter.Floor )
+			where.Add( view->GetColumnPtr("oee_floor_id"), (uint)*filter.Floor );
+		return { select(OeeTable::FloorShapes, {"oee_floor_shape_id", "oee_floor_id", "kind", "oee_machine_id", "member_line_id", "points"}, move(where), sl), shapeRow, sl };
 	}
 	α Gateway::OeeLines::Find( OeeLinePK id )Ι->const OeeLineRow*{
 		let p = std::ranges::find( Lines, id, &OeeLineRow::Id );

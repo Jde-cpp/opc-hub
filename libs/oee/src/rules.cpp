@@ -128,8 +128,9 @@ namespace Jde::Opc{
 				}
 				else if( let member = m.MemberLineId ? find(graph, *m.MemberLineId) : nullptr; member ){
 					REFUSE_IF( std::ranges::contains(path, member->Id), "Line '{}' would reach itself through '{}'.", member->Name, line.Name );
-					y.Under.push_back( member->Id );
-					walk( graph, *member, path, y, sl );
+					if( !std::ranges::contains(y.Under, member->Id) )
+						y.Under.push_back( member->Id );
+					walk( graph, *member, path, y, sl );//again when reached twice:  its machines are, which Twice records.
 				}
 			}
 			path.pop_back();
@@ -170,5 +171,97 @@ namespace Jde::Opc{
 		Walk y;
 		walk( graph, *line, path, y, sl );
 		return move( y.Machines );
+	}
+	α Oee::Lines::ReachLines( const Graph& graph, uint32 lineId, SL sl )ε->vector<uint32>{
+		let line = find( graph, lineId );
+		REFUSE_IF( !line, "Line {} is not one of the gateway's.", lineId );
+		vector<uint32> path;
+		Walk y;
+		walk( graph, *line, path, y, sl );
+		return move( y.Under );
+	}
+
+	constexpr std::array<sv,6> _kinds{ "Machine", "Line", "Zone", "Wall", "Aisle", "Label" };
+	α Oee::Floors::ToString( EKind kind )ι->sv{ return (uint8)kind<_kinds.size() ? _kinds[(uint8)kind] : sv{ "?" }; }
+	α Oee::Floors::ToKind( sv name )ι->optional<EKind>{
+		let p = std::ranges::find( _kinds, name );
+		return p==_kinds.end() ? nullopt : optional<EKind>{ (EKind)(p-_kinds.begin()) };
+	}
+	α Oee::Floors::ParsePoints( const jvalue& points, SL sl )ε->vector<Point>{
+		vector<Point> y;
+		try{
+			jvalue parsed;
+			const jvalue* p = &points;
+			if( points.is_string() ){
+				parsed = Json::ParseValue( points.get_string(), sl );
+				p = &parsed;
+			}
+			for( let& v : Json::AsArray(*p, sl) ){
+				let& pair = Json::AsArray( v, sl );
+				THROW_IF( pair.size()!=2 || !pair[0].is_number() || !pair[1].is_number(), "{} is not an [x, y] pair of numbers", serialize(v) );
+				Point point{ pair[0].to_number<double>(), pair[1].to_number<double>() };
+				THROW_IF( !std::isfinite(point.X) || !std::isfinite(point.Y), "{} is not finite", serialize(v) );
+				y.push_back( point );
+			}
+		}
+		catch( const Jde::Exception& e ){
+			REFUSE( "points must be a json list of [x, y] pairs in metres from the floor's top-left, such as [[3,3],[9,3],[9,7],[3,7]], not {}:  {}", serialize(points), e.what() );
+		}
+		REFUSE_IF( y.empty(), "points lists no point." );
+		return y;
+	}
+	α Oee::Floors::ToJson( std::span<const Point> points )ι->string{//by hand:  Boost.JSON spells a double 3E0.
+		string y{ "[" };
+		for( let& p : points )
+			y += Ƒ( "{}[{},{}]", y.size()>1 ? "," : "", p.X, p.Y );
+		return y+"]";
+	}
+	α Oee::Floors::ValidateFloor( const Floor& floor, SL sl )ε->void{
+		REFUSE_IF( !std::isfinite(floor.Width) || floor.Width<=0, "width must be above zero:  it is the floor's extent in metres from its left." );
+		REFUSE_IF( !std::isfinite(floor.Height) || floor.Height<=0, "height must be above zero:  it is the floor's extent in metres from its top." );
+		REFUSE_IF( !std::isfinite(floor.Grid) || floor.Grid<=0, "grid must be above zero:  it is the editor's snap in metres." );
+	}
+	namespace Oee::Floors{
+		Ω inside( const Floor& floor, std::span<const Point> points, SL sl )ε->void{
+			for( let& p : points )
+				REFUSE_IF( p.X<0 || p.X>floor.Width || p.Y<0 || p.Y>floor.Height, "Point [{}, {}] is outside the floor, {} by {} metres from its top-left.", p.X, p.Y, floor.Width, floor.Height );
+		}
+		Ω lineName( const Lines::Graph& graph, uint32 id )ι->string{
+			let p = std::ranges::find( graph.Lines, id, &Lines::Line::Id );
+			return p==graph.Lines.end() ? Ƒ( "{}", id ) : p->Name;
+		}
+	}
+	α Oee::Floors::ValidateInside( const Floor& floor, std::span<const Shape> shapes, SL sl )ε->void{
+		for( let& shape : shapes )
+			inside( floor, shape.Points, sl );
+	}
+	α Oee::Floors::ValidateShape( const Lines::Graph& graph, const Floor& floor, const Shape& shape, std::span<const Shape> others, SL sl )ε->void{
+		using enum EKind;
+		REFUSE_IF( !shape.Kind, "kind is Machine, Line, Zone, Wall, Aisle or Label." );
+		let kind = *shape.Kind;
+		let name = ToString( kind );
+		if( kind==Machine ){
+			REFUSE_IF( !shape.MachineId, "A Machine shape names its machine:  oeeMachineId is required." );
+			REFUSE_IF( shape.MemberLineId, "A Machine shape names a machine, not a line:  memberLineId is a Line shape's." );
+			let machine = machineName( graph, *shape.MachineId );
+			REFUSE_IF( !std::ranges::contains(Lines::Reach(graph, floor.LineId, sl), *shape.MachineId), "Machine '{}' isn't one line '{}' reaches:  a floor draws the machines of its line.", machine, lineName(graph, floor.LineId) );
+			REFUSE_IF( std::ranges::any_of(others, [&]( const Shape& o ){ return o.Id!=shape.Id && o.MachineId==shape.MachineId; }), "Machine '{}' is on the floor already:  a machine appears once on a floor.", machine );
+		}
+		else if( kind==Line ){
+			REFUSE_IF( !shape.MemberLineId, "A Line shape names its line:  memberLineId is required." );
+			REFUSE_IF( shape.MachineId, "A Line shape names a line, not a machine:  oeeMachineId is a Machine shape's." );
+			let line = lineName( graph, *shape.MemberLineId );
+			REFUSE_IF( *shape.MemberLineId==floor.LineId, "Line '{}' is the floor's own:  a Line shape names a line the floor's line reaches, and the floor is drawn around it.", line );
+			REFUSE_IF( !std::ranges::contains(Lines::ReachLines(graph, floor.LineId, sl), *shape.MemberLineId), "Line '{}' isn't one line '{}' reaches:  a floor draws the lines of its line.", line, lineName(graph, floor.LineId) );
+			REFUSE_IF( std::ranges::any_of(others, [&]( const Shape& o ){ return o.Id!=shape.Id && o.MemberLineId==shape.MemberLineId; }), "Line '{}' is on the floor already:  a line appears once on a floor.", line );
+		}
+		else
+			REFUSE_IF( shape.MachineId || shape.MemberLineId, "A {} shape names no machine or line:  oeeMachineId is a Machine shape's and memberLineId a Line shape's.", name );
+		let count = shape.Points.size();
+		let polygon = kind==Machine || kind==Line || kind==Zone, polyline = kind==Wall || kind==Aisle;
+		REFUSE_IF( polygon && count<3, "A {} shape is a closed polygon of three points or more, not {}.", name, count );
+		REFUSE_IF( polyline && count<2, "A {} is a polyline of two points or more, not {}.", name, count );
+		REFUSE_IF( kind==Label && count!=1, "A Label is one point, not {}.", count );
+		inside( floor, shape.Points, sl );
 	}
 }

@@ -25,7 +25,7 @@ namespace Jde::Opc::Gateway{
 		let table = m.TableName();
 		if( table==Stops || table==Intervals || table==Codings )
 			return true;
-		if( table==Machines || table==Signals || table==Reasons || table==Lines || table==LineMembers )
+		if( table==Machines || table==Signals || table==Reasons || table==Lines || table==LineMembers || table==Floors || table==FloorShapes )
 			return m.Type==Create || m.Type==Update || m.Type==Delete || m.Type==Restore || m.Type==Purge;
 		let& host = OeeHost::Instance();
 		if( table==HistTable::Groups && (m.Type==Delete || m.Type==Purge) ){
@@ -143,6 +143,41 @@ namespace Jde::Opc::Gateway{
 			y.emplace_back( Ƒ("Member {} has an ExceptionDeviation of {}:  a band holds a counter's record back by up to the band, so a count lands in a later interval.  Clear it on the group's Members tab, so every change is stored.", signal.Node, *thresholds->ExceptionDeviation) );
 		if( thresholds->MinTimeInterval>settle )
 			y.emplace_back( Ƒ("Member {} has a MinTimeInterval of {}, past the {} an interval waits for its records (settle):  each value it holds is stored late, and is a rebuild.", signal.Node, Chrono::ToString(thresholds->MinTimeInterval), Chrono::ToString(settle)) );
+		return y;
+	}
+
+	//A floor as its mutation would leave it:  `row`'s, or a create's defaults, under the arguments.
+	Ω wouldFloor( const jobject& args, const Oee::Floors::Floor* row, SL sl )ε->Oee::Floors::Floor{
+		Oee::Floors::Floor y;
+		if( row )
+			y = *row;
+		let metres = [&]( sv name, double& into, bool required ){
+			let p = args.if_contains( name );
+			if( !p && (row || !required) )
+				return;
+			REFUSE_IF( !p || !p->is_number(), "{} is metres, a number above zero{}.", name, p ? Ƒ(", not {}", serialize(*p)) : string{} );
+			into = p->to_number<double>();
+		};
+		metres( "width", y.Width, true );
+		metres( "height", y.Height, true );
+		metres( "grid", y.Grid, false );
+		return y;
+	}
+	//A shape as its mutation would leave it:  `row`'s, or a create's, under the arguments.
+	Ω wouldShape( const jobject& args, const Oee::Floors::Shape* row, SL sl )ε->Oee::Floors::Shape{
+		Oee::Floors::Shape y;
+		if( row )
+			y = *row;
+		if( let p = args.if_contains("kind"); p || !row ){
+			y.Kind = p && p->is_string() ? Oee::Floors::ToKind( p->get_string() ) : nullopt;
+			REFUSE_IF( !y.Kind, "kind is Machine, Line, Zone, Wall, Aisle or Label{}.", p ? Ƒ(", not {}", serialize(*p)) : string{} );
+		}
+		if( args.contains("oeeMachineId") || !row )
+			y.MachineId = optionalId( args, "oeeMachineId", sl );
+		if( args.contains("memberLineId") || !row )
+			y.MemberLineId = optionalId( args, "memberLineId", sl );
+		if( let p = args.if_contains("points"); p || !row )
+			y.Points = Oee::Floors::ParsePoints( p ? *p : jvalue{}, sl );
 		return y;
 	}
 
@@ -274,6 +309,7 @@ namespace Jde::Opc::Gateway{
 				optional<OeeMachinePK> purging;
 				optional<string> recompute;//an engine input changed:  the rows before now were made with the old one.
 				CoGuard lineEdit;//a line's or a member's:  its checks, its write and the host's read of both tables together.
+				CoGuard floorEdit;//a floor's or a shape's, the same lock:  the graph and the floor's rows stand through its checks and its write.
 				if( table==Machines ){
 					if( type==Create ){
 						requireName( args, true, sl );
@@ -405,6 +441,63 @@ namespace Jde::Opc::Gateway{
 					}
 					else if( let id = MutationRowId(_query, sl); !std::ranges::contains(lines.Members, id, &OeeLineMemberRow::Id) )
 						notFound( Ƒ("Member {} not found.", id), sl );
+				}
+				else if( table==Floors ){
+					REFUSE_IF( type==Delete || type==Restore, "A floor has no deleted:  purge it." );
+					floorEdit = co_await host.LineEdits().Lock();
+					if( type==Create ){
+						let lineId = requireId( args, "oeeLineId", sl );
+						let lines = host.Lines();
+						let line = lines.Find( lineId );
+						if( !line )
+							notFound( Ƒ("Line {} not found.", lineId), sl );
+						REFUSE_IF( line->Deleted, "Line '{}' is deleted:  restore it before its floor is made.", line->Name );
+						auto floors = co_await Any( SelectOeeFloors({.Line=lineId}) );
+						REFUSE_IF( floors.size(), "Line '{}' has a floor, {}:  a line has one.", line->Name, floors.front().Id );
+						Oee::Floors::ValidateFloor( wouldFloor(args, nullptr, sl), sl );
+					}
+					else{
+						let id = MutationRowId( _query, sl );
+						auto floors = co_await Any( SelectOeeFloors({.Id=id}) );
+						if( floors.empty() )
+							notFound( Ƒ("Floor {} not found.", id), sl );
+						if( type==Update ){
+							let would = wouldFloor( args, &floors.front(), sl );
+							Oee::Floors::ValidateFloor( would, sl );
+							auto shapes = co_await Any( SelectOeeFloorShapes({.Floor=id}) );
+							Oee::Floors::ValidateInside( would, shapes, sl );
+						}
+					}
+				}
+				else if( table==FloorShapes ){
+					REFUSE_IF( type==Delete || type==Restore, "A shape has no deleted:  purge it." );
+					floorEdit = co_await host.LineEdits().Lock();
+					optional<Oee::Floors::Shape> row;
+					if( type!=Create ){
+						let id = MutationRowId( _query, sl );
+						auto rows = co_await Any( SelectOeeFloorShapes({.Id=id}) );
+						if( rows.empty() )
+							notFound( Ƒ("Shape {} not found.", id), sl );
+						row = move( rows.front() );
+					}
+					if( type!=Purge ){
+						let floorId = row ? row->FloorId : requireId( args, "oeeFloorId", sl );
+						auto floors = co_await Any( SelectOeeFloors({.Id=floorId}) );
+						if( floors.empty() )
+							notFound( Ƒ("Floor {} not found.", floorId), sl );
+						auto others = co_await Any( SelectOeeFloorShapes({.Floor=floorId}) );
+						if( row )
+							std::erase_if( others, [&]( const Oee::Floors::Shape& s ){ return s.Id==row->Id; } );
+						let after = wouldShape( args, row ? &*row : nullptr, sl );
+						if( after.MachineId && !host.Find(*after.MachineId) )
+							notFound( Ƒ("Machine {} not found.", *after.MachineId), sl );
+						let lines = host.Lines();
+						if( after.MemberLineId && !lines.Find(*after.MemberLineId) )
+							notFound( Ƒ("Line {} not found.", *after.MemberLineId), sl );
+						if( let p = args.if_contains("points"); p && !p->is_string() )
+							spelled["points"] = Oee::Floors::ToJson( after.Points );//the column holds text.
+						Oee::Floors::ValidateShape( lines.Graph(host.MachineNames()), floors.front(), after, others, sl );
+					}
 				}
 				else{//a reason.
 					if( type==Create || type==Update )

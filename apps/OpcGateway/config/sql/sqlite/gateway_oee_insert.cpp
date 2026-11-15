@@ -1,6 +1,6 @@
 #include "gatewayProcs.h"
 
-//Twins of the *generated* insert procs of OEE's four admin tables and the lines' two (opcGateway-meta.jsonnet), as gateway_hist_insert.cpp's are:
+//Twins of the *generated* insert procs of OEE's four admin tables, the lines' two and the floor's two (opcGateway-meta.jsonnet), as gateway_hist_insert.cpp's are:
 //insertable columns in `i` order, created=$now, the sequence column out last.  oee_stops and oee_intervals have none:  the
 //engine inserts them itself, and no QL create reaches them.
 namespace Jde::DB::Sqlite{
@@ -29,5 +29,13 @@ namespace Jde::DB::Sqlite{
 	//	params: [0]=_oee_line_id, [1]=_oee_machine_id, [2]=_member_line_id, [3]=_sort; out _oee_line_member_id.
 	α GatewayProcs::RegisterGatewayOeeLineMemberInsert( IProcs& procs )ι->void{
 		RegisterInsertProc( procs, "gateway_oee_line_member_insert", "insert into gateway_oee_line_members( oee_line_id, oee_machine_id, member_line_id, sort ) values( ?, ?, ?, ? )", 4 );
+	}
+	//	params: [0]=_oee_line_id, [1]=_width, [2]=_height, [3]=_grid; out _oee_floor_id.
+	α GatewayProcs::RegisterGatewayOeeFloorInsert( IProcs& procs )ι->void{
+		RegisterInsertProc( procs, "gateway_oee_floor_insert", "insert into gateway_oee_floors( oee_line_id, width, height, grid ) values( ?, ?, ?, ? )", 4 );
+	}
+	//	params: [0]=_oee_floor_id, [1]=_kind, [2]=_oee_machine_id, [3]=_member_line_id, [4]=_points, [5]=_label, [6]=_sort; out _oee_floor_shape_id.
+	α GatewayProcs::RegisterGatewayOeeFloorShapeInsert( IProcs& procs )ι->void{
+		RegisterInsertProc( procs, "gateway_oee_floor_shape_insert", "insert into gateway_oee_floor_shapes( oee_floor_id, kind, oee_machine_id, member_line_id, points, label, sort ) values( ?, ?, ?, ?, ?, ?, ? )", 7 );
 	}
 }

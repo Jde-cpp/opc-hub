@@ -32,6 +32,14 @@ namespace Jde::Opc::Hub::Tests{
 			EXPECT_NE( string{e.what()}.find("no generic query"), string::npos ) << e.what();
 		}
 		EXPECT_TRUE( Gateway::AppClient()->QuerySync<jarray>(R"(oeeLines{ id })", {}).empty() ) << "the lines' tables too (#408)";
+		EXPECT_TRUE( Gateway::AppClient()->QuerySync<jarray>(R"(oeeFloorShapes{ id })", {}).empty() ) << "and the floor's (#480)";
+		try{//a floor's rules run in the hub as in the gateway.
+			Gateway::AppClient()->QuerySync<jobject>( R"(createOeeFloor( oeeLineId:999999, width:0, height:20 ){ id })", {} );
+			FAIL() << "a floor on a line that isn't there was made";
+		}
+		catch( const Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::NotFound ) << e.what();
+		}
 		try{//a line's rules run in the hub as in the gateway.
 			Gateway::AppClient()->QuerySync<jobject>( R"(createOeeLine( name:"hubLine", slug:"hubLine", level:"Plant" ){ id })", {} );
 			FAIL() << "a line at no level was made";

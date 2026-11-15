@@ -257,6 +257,42 @@ namespace Jde::Opc::Gateway::Tests{
 			uint ItemsBefore{};
 		};
 
+		//The lines a test makes, purged as it goes, the last made first:  a line's purge takes its memberships, its floor and its
+		//shapes.  OeeLinesTests' and OeeFloorTests'.
+		struct Lines final{
+			~Lines(){
+				for( let id : Ids | std::views::reverse ){
+					try{
+						Mutate( "purgeOeeLine( id:$id )", {{"id", id}} );
+					}
+					catch( const std::exception& e ){
+						ADD_FAILURE() << "purgeOeeLine(" << id << "):  " << e.what();
+					}
+				}
+			}
+			α Create( sv slug, sv level, jobject args={} )ε->uint32{
+				string ql{ "createOeeLine( name:$name, slug:$slug, level:$level" };
+				jobject vars{ {"name", slug}, {"slug", slug}, {"level", level} };
+				for( let& [key,value] : args ){
+					ql += Ƒ( ", {}:${}", key, key );
+					vars[key] = value;
+				}
+				Ids.push_back( HistGroupFixture::Id(Mutate(ql+" ){ id }", move(vars))) );
+				return Ids.back();
+			}
+			vector<uint32> Ids;
+		};
+		Ω AddMachine( uint32 line, uint32 machine, uint32 sort=0 )ε->uint32{
+			return Id( Mutate("createOeeLineMember( oeeLineId:$line, oeeMachineId:$machine, sort:$sort ){ id }", {{"line", line}, {"machine", machine}, {"sort", sort}}) );
+		}
+		Ω AddLine( uint32 line, uint32 member, uint32 sort=0 )ε->uint32{
+			return Id( Mutate("createOeeLineMember( oeeLineId:$line, memberLineId:$member, sort:$sort ){ id }", {{"line", line}, {"member", member}, {"sort", sort}}) );
+		}
+		Ω Memberships( uint32 line )ε->uint{
+			let rows = DS()->Select( {Ƒ("select count(*) from {} where oee_line_id=? or member_line_id=?", GetViewPtr(OeeTable::LineMembers)->SqlName()), {DB::Value{(uint)line}, DB::Value{(uint)line}}} );
+			return rows.front().Get<uint>( 0 );
+		}
+
 		//A calendar on the AppServer, in UTC, its one shift every day from `start`'s minute for `length`, once the gateway's client
 		//holds it;  one an earlier run left is purged first.  `breaks`:  the shift's, each { start, minutes } from its start.
 		Ω ShiftCalendar( sv slug, TimePoint start, uint length, jarray breaks={} )ε->uint32{

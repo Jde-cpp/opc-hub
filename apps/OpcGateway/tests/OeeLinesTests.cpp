@@ -21,40 +21,6 @@ namespace Jde::Opc::Gateway::Tests{
 	};
 
 	struct OeeLinesTests : OeeFixture{
-		//The lines a test makes, purged as it goes, the last made first:  a line's purge takes its memberships.
-		struct Lines final{
-			~Lines(){
-				for( let id : Ids | std::views::reverse ){
-					try{
-						Mutate( "purgeOeeLine( id:$id )", {{"id", id}} );
-					}
-					catch( const std::exception& e ){
-						ADD_FAILURE() << "purgeOeeLine(" << id << "):  " << e.what();
-					}
-				}
-			}
-			α Create( sv slug, sv level, jobject args={} )ε->uint32{
-				string ql{ "createOeeLine( name:$name, slug:$slug, level:$level" };
-				jobject vars{ {"name", slug}, {"slug", slug}, {"level", level} };
-				for( let& [key,value] : args ){
-					ql += Ƒ( ", {}:${}", key, key );
-					vars[key] = value;
-				}
-				Ids.push_back( HistGroupFixture::Id(Mutate(ql+" ){ id }", move(vars))) );
-				return Ids.back();
-			}
-			vector<uint32> Ids;
-		};
-		Ω AddMachine( uint32 line, uint32 machine, uint32 sort=0 )ε->uint32{
-			return Id( Mutate("createOeeLineMember( oeeLineId:$line, oeeMachineId:$machine, sort:$sort ){ id }", {{"line", line}, {"machine", machine}, {"sort", sort}}) );
-		}
-		Ω AddLine( uint32 line, uint32 member, uint32 sort=0 )ε->uint32{
-			return Id( Mutate("createOeeLineMember( oeeLineId:$line, memberLineId:$member, sort:$sort ){ id }", {{"line", line}, {"member", member}, {"sort", sort}}) );
-		}
-		Ω Memberships( uint32 line )ε->uint{
-			let rows = DS()->Select( {Ƒ("select count(*) from {} where oee_line_id=? or member_line_id=?", GetViewPtr(OeeTable::LineMembers)->SqlName()), {DB::Value{(uint)line}, DB::Value{(uint)line}}} );
-			return rows.front().Get<uint>( 0 );
-		}
 		Ω Subscribe( uint32 line, sp<LineHeard> heard )ε->FromServer::OeeStatus{
 			return BlockAwait<ClientSocketAwait<FromServer::OeeStatus>,FromServer::OeeStatus>( Socket().OeeSubscribeLine(line, move(heard)) );
 		}

@@ -8,7 +8,7 @@
 namespace Jde::Opc::Gateway{
 	using OeeMachinePK = uint32;
 	using OeeSignalPK = uint32;
-	namespace OeeTable{ constexpr sv Machines{ "oee_machines" }, Signals{ "oee_machine_signals" }, Stops{ "oee_stops" }, Intervals{ "oee_intervals" }, Reasons{ "oee_reasons" }, Codings{ "oee_codings" }, Lines{ "oee_lines" }, LineMembers{ "oee_line_members" }; }
+	namespace OeeTable{ constexpr sv Machines{ "oee_machines" }, Signals{ "oee_machine_signals" }, Stops{ "oee_stops" }, Intervals{ "oee_intervals" }, Reasons{ "oee_reasons" }, Codings{ "oee_codings" }, Lines{ "oee_lines" }, LineMembers{ "oee_line_members" }, Floors{ "oee_floors" }, FloorShapes{ "oee_floor_shapes" }; }
 
 	struct OeeMachineRow final{
 		OeeMachinePK Id;
@@ -56,6 +56,13 @@ namespace Jde::Opc::Gateway{
 		//the memberships of deleted lines, which a figure leaves out as it does a deleted machine, until the line's restore.
 		α Graph( flat_map<uint32,string> machines={}, bool standing=false )Ι->Oee::Lines::Graph;
 	};
+
+	//The floor's two tables (docs/demo/spec.md *The floor*), as the library's rules take them:  by row, by line or by floor.
+	using OeeFloorPK = uint32;
+	struct OeeFloorFilter final{ optional<OeeFloorPK> Id; optional<OeeLinePK> Line; };
+	α SelectOeeFloors( OeeFloorFilter filter={}, SRCE )ι->HistRowsAwait<Oee::Floors::Floor>;
+	struct OeeFloorShapeFilter final{ optional<uint32> Id; optional<OeeFloorPK> Floor; };
+	α SelectOeeFloorShapes( OeeFloorShapeFilter filter={}, SRCE )ι->HistRowsAwait<Oee::Floors::Shape>;
 
 	//An oee_codings row:  the coding, whose machine it is, and when it was made.
 	struct OeeCodingRow final{ Oee::Coding Value; OeeMachinePK Machine; TimePoint Created; };
