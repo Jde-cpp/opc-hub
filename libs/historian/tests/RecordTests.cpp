@@ -3,6 +3,7 @@
 #include "hosts.h"
 #include "files.h"
 #include <fstream>
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/fwk/io/crc.h>
 #include <jde/tests/Capture.h>
@@ -131,6 +132,73 @@ namespace Jde::Opc::Hist::Tests{
 		ASSERT_EQ( read.size(), records.size() );
 		for( uint i=0; i<read.size(); ++i )
 			expectEqual( read[i], records[i] );
+	}
+
+	//A value frame skimmed gives its node_index and moves the chain as the full parse would, whatever times and value it
+	//holds, and any frame not as ToDisk writes one, or of another record, is left to the parse.
+	TEST( RecordTests, SkimmedValues ){
+		auto heartbeat = stored( 4, 2, at(70s) );
+		heartbeat.mutable_value()->set_heartbeat( at(10s) );
+		heartbeat.mutable_value()->set_heartbeat_unsourced( true );
+		auto text = stored( 5, 0, at(80s), at(81s) );
+		text.mutable_value()->mutable_value()->set_string_value( "a string value" );
+		text.mutable_value()->set_status( UA_STATUSCODE_UNCERTAIN );
+		text.mutable_value()->set_source_picoseconds( 9 );
+		HistoryRecord none;//a status alone, with no time:  the chain stays.
+		none.mutable_value()->set_node_index( 6 );
+		none.mutable_value()->set_status( UA_STATUSCODE_BADNOTSUPPORTED );
+		const vector<HistoryRecord> values{ stored(1, 11, at(1s), at(1s)+ticks(5ms)), stored(2, 9, at(500ms)), stored(3, 12, {}, at(2s)), heartbeat, text, none, stored(7, 1, at(1s)) };
+		Ticks chain{ Day };
+		for( auto r : values ){
+			let index = r.value().node_index();
+			let from = chain;
+			ToDisk( r, chain );
+			let frame = r.SerializeAsString();
+			IO::Records::Cursor cursor{ frame, 0 };
+			let raw = cursor.Next();
+			ASSERT_TRUE( raw );
+			let skimmed = SkimValue( *raw );
+			ASSERT_TRUE( skimmed ) << r.ShortDebugString();
+			EXPECT_EQ( skimmed->Index, index );
+			EXPECT_EQ( (Ticks)((uint64_t)from+(uint64_t)skimmed->Delta.value_or(0)), chain ) << r.ShortDebugString();
+			Ticks parsed{ from };
+			ToMemory( r, parsed );
+			EXPECT_EQ( parsed, chain );
+		}
+		let frame = []( const string& body ){
+			string y;
+			google::protobuf::io::StringOutputStream out{ &y };
+			google::protobuf::io::CodedOutputStream c{ &out };
+			c.WriteTag( (4<<3) | 2 );
+			c.WriteVarint32( (uint32_t)body.size() );
+			c.WriteRaw( body.data(), (int)body.size() );
+			c.Trim();
+			return y;
+		};
+		let body = []( std::initializer_list<std::pair<uint32_t,uint64_t>> fields ){//varint fields, as given.
+			string y;
+			google::protobuf::io::StringOutputStream out{ &y };
+			google::protobuf::io::CodedOutputStream c{ &out };
+			for( let& [field, v] : fields ){
+				c.WriteTag( field<<3 );
+				c.WriteVarint64( v );
+			}
+			c.Trim();
+			return y;
+		};
+		let skim = [&]( const string& bytes ){
+			IO::Records::Cursor cursor{ bytes, 0 };
+			let raw = cursor.Next();
+			return raw ? SkimValue( *raw ) : nullopt;
+		};
+		EXPECT_TRUE( skim(frame(body({{1, 3}, {2, 4}}))) );//as ToDisk writes it.
+		EXPECT_FALSE( skim(frame(body({{1, 0}, {2, 4}}))) );//node_index 0 written.
+		EXPECT_FALSE( skim(frame(body({{1, 3}, {2, 4}, {2, 6}}))) );//a field twice.
+		EXPECT_FALSE( skim(frame(body({{1, 3}, {12, 1}}))) );//one this build doesn't know.
+		EXPECT_FALSE( skim(frame(body({{1, 3}, {9, 0}}))) );//heartbeat_unsourced false written.
+		EXPECT_FALSE( skim(frame(body({{1, 3}, {7, 2}}))) );//the value as a varint.
+		EXPECT_FALSE( skim(frame(body({{1, 3}})+"\x10") ) );//cut short.
+		EXPECT_FALSE( skim(added(1, "Pump1.Speed", Day).SerializeAsString()) );//not a value.
 	}
 
 	//What a group buffers becomes the file's records:  membership with its writer and the NodeId's namespace URI, and the

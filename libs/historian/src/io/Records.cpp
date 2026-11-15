@@ -1,8 +1,9 @@
 #include "Records.h"
-#include <jde/opc/UAException.h>
-#include <jde/opc/proto/opc.Common.h>
 #include <google/protobuf/util/field_comparator.h>
 #include <google/protobuf/util/message_differencer.h>
+#include <google/protobuf/wire_format_lite.h>
+#include <jde/opc/UAException.h>
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 
@@ -127,6 +128,57 @@ namespace Jde::Opc{
 	}
 	α Hist::PrimaryTime( const Proto::DataValue& v )ι->optional<Ticks>{
 		return v.has_source_ts() ? v.source_ts() : v.has_server_ts() ? optional<Ticks>{ v.server_ts() } : nullopt;
+	}
+	α Hist::SkimValue( const IO::Records::Raw& raw )ι->optional<Skimmed>{
+		using google::protobuf::io::CodedInputStream;
+		using google::protobuf::io::CodedOutputStream;
+		using google::protobuf::internal::WireFormatLite;
+		if( raw.Field!=HistoryRecord::kValue )
+			return nullopt;
+		let size = (int)raw.Body.size();
+		CodedInputStream in{ reinterpret_cast<const uint8_t*>(raw.Body.data()), size };
+		//A varint as the layer writes one:  its shortest form.
+		let varint = [&in]( uint64_t& v ){
+			let start = in.CurrentPosition();
+			return in.ReadVarint64( &v ) && (uint)(in.CurrentPosition()-start)==CodedOutputStream::VarintSize64( v );
+		};
+		Skimmed y{};
+		optional<Ticks> source, server;
+		uint32_t seen{};
+		while( in.CurrentPosition()<size ){
+			uint64_t tag;
+			if( !varint(tag) || tag>std::numeric_limits<uint32_t>::max() )
+				return nullopt;
+			let field = WireFormatLite::GetTagFieldNumber( (uint32_t)tag );
+			let wire = WireFormatLite::GetTagWireType( (uint32_t)tag );
+			if( field<1 || field>9 || (seen & (1u<<field)) )
+				return nullopt;
+			seen |= 1u<<field;
+			uint64_t v;
+			if( field==7 ){//the value, a message:  passed over.
+				if( wire!=WireFormatLite::WIRETYPE_LENGTH_DELIMITED || !varint(v) || v>(uint64_t)(size-in.CurrentPosition()) || !in.Skip((int)v) )
+					return nullopt;
+				continue;
+			}
+			if( wire!=WireFormatLite::WIRETYPE_VARINT || !varint(v) )
+				return nullopt;
+			switch( field ){
+			case 2: source = WireFormatLite::ZigZagDecode64( v ); break;
+			case 4: server = WireFormatLite::ZigZagDecode64( v ); break;
+			case 8: break;//the heartbeat, which may be 0.
+			case 9://heartbeat_unsourced:  written only when true.
+				if( v!=1 )
+					return nullopt;
+				break;
+			default://node_index and the uint32s:  written only when not 0.
+				if( !v || v>std::numeric_limits<uint32_t>::max() )
+					return nullopt;
+				if( field==1 )
+					y.Index = (NodeIndex)v;
+			}
+		}
+		y.Delta = source ? source : server;//Convert::Top's primary.
+		return y;
 	}
 	α Hist::PrimaryTime( const UA_DataValue& v )ι->Ticks{
 		return v.hasSourceTimestamp ? v.sourceTimestamp : v.serverTimestamp;

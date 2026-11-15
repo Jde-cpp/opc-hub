@@ -1,5 +1,6 @@
 syntax = "proto3";
 package Jde.Opc.Hist.Proto;
+import "Hist.Records.proto";
 
 //A read's continuation, which Group::Read, ReadAtTime and ReadProcessed return with a page that stops short and take
 //back for the next:  opaque to the host, which passes it as it is, and stateless, so a restart between pages loses
@@ -26,4 +27,103 @@ message Continuation{
 	//An at-time read's next of the requested times, by its place among them, or a processed read's next interval, by
 	//its place from the start.
 	uint64 next=7;
+	//A raw read's first page, not yet read:  what a read whose scan budget was spent before it began returns, so the next
+	//call starts it, its opening bounds included.
+	bool unstarted=8;
+	//An at-time or a processed page the scan budget stopped part way through its pass, at next.
+	Pass pass=9;
+}
+
+//What an at-time or a processed page's pass over the raw records had made of them when the scan budget stopped it
+//(Aggregate.cpp):  where its raw read stands, and each node's state, which the next page takes up from there.
+message Pass{
+	bytes read=1;//the raw read's continuation.
+	sint64 start=2;//the raw read's range, both ends held.
+	sint64 end=3;
+	uint64 last=4;//the page's last time or interval, by its place.
+	repeated PassTrack tracks=5;//one per node read, each once, in the order the request first names them.
+}
+//A raw record as the pass saw it:  its time, which a bound's need not be.
+message PassSeen{
+	sint64 time=1;
+	DataValue value=2;
+}
+//The records around one time the stream has passed:  a boundary's state.
+message PassBoundary{
+	sint64 time=1;
+	PassSeen at=2;
+	PassSeen at_any=3;
+	bool bad_at=4;
+	PassSeen before=5;
+	PassSeen before2=6;
+	bool before2_unknown=7;
+	PassSeen before_any=8;
+	bool bad_between_before=9;
+	PassSeen after=10;
+	PassSeen after_any=11;
+	bool bad_between_after=12;
+	bool any_after=13;
+}
+//A bounding value computed:  TimeAverage's at its interval's start.
+message PassBound{
+	DataValue value=1;
+	uint32 status=2;
+	bool raw=3;
+	bool extrapolated=4;
+}
+message PassPoint{
+	sint64 time=1;
+	double value=2;
+}
+//An interval's records of one node, as its aggregate needs them, but Median's, which a page never carries.
+message PassBucket{
+	uint64 interval=1;//by its place from the start.
+	uint64 count=2;
+	uint64 good=3;
+	uint64 bad=4;
+	uint64 uncertain=5;
+	bool non_numeric=6;
+	double sum=7;
+	double mean=8;
+	double m2=9;
+	PassSeen min=10;
+	PassSeen max=11;
+	double min_value=12;
+	double max_value=13;
+	uint64 min_count=14;
+	uint64 max_count=15;
+	PassSeen first=16;
+	PassSeen last=17;
+	//TimeAverage's line:  its start bound once known, the area under the segments so far, their first and last points, and
+	//the points not yet in the area.
+	PassBound start=18;
+	double area=19;
+	PassPoint line_first=20;
+	PassPoint line_last=21;
+	repeated PassPoint points=22;
+	uint64 point_count=23;
+}
+//A node as the pass sees it, its boundaries the settled ones of what the page hasn't returned:  settled, resolved and
+//followed count them from the front.
+message PassTrack{
+	optional sint64 current_time=1;
+	repeated PassSeen current=2;
+	PassSeen prev=3;
+	PassSeen prev2=4;
+	PassSeen prev_any=5;
+	bool prev2_unknown=6;
+	bool bad_since_prev=7;
+	optional sint64 first_seen=8;
+	optional sint64 last_seen=9;
+	optional bool any_before=10;
+	bool before_unknown=11;
+	bool opened=12;
+	//A probe's answer to whether a record follows last_seen, while last_seen is probed_from.
+	optional sint64 probed_from=13;
+	bool probed_any=14;
+	uint64 settled=15;
+	uint64 resolved=16;
+	uint64 followed=17;
+	repeated PassBoundary boundaries=18;
+	repeated PassBucket buckets=19;
 }

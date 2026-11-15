@@ -705,7 +705,7 @@ namespace Jde::Opc::Gateway::Soak{
 			let readStart = steady_clock::now();
 			string continuation; uint values{}, pages{};
 			for( ; !Process::ShuttingDown(); ++pages ){
-				if( pages>days+16 ){ WARN( "Pass-through read still paging after {} pages.", pages ); break; }
+				if( pages>16*(days+16) ){ WARN( "Pass-through read still paging after {} pages.", pages ); break; }//a day a page at least, and a busy day several, as the OpcServer's scan budget stops it (#504).
 				let page = _socket->QuerySync(
 					"history( opc: $opc, nodes: $nodes, start: $start, end: $end, interval: $interval, aggregate: $aggregate, continuation: $continuation ){ continuation values{ status } }",
 					jobject{ {"opc", _histLeg->Slug}, {"nodes", _pumpRead->ToJson()}, {"start", UADateTime{start}.ToJson()}, {"end", UADateTime{end}.ToJson()}, {"interval", 86'400'000.0}, {"aggregate", "Average"}, {"continuation", continuation.size() ? jvalue{continuation} : jvalue{}} } );

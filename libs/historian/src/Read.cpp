@@ -77,9 +77,26 @@ namespace Jde::Opc::Hist{
 			return IO::Crc::Calc32c( bytes );
 		}
 
+		//The page of a read whose budget was spent before it began:  no values, and the request's continuation again, or for
+		//a first page one that starts the read on the next call.
+		Ω deferred( const string& continuation, uint32_t crc, uint nodes )ι->ReadResult{
+			ReadResult y;
+			if( continuation.size() ){
+				y.Continuation = continuation;
+				return y;
+			}
+			Proto::Continuation start;
+			start.set_crc( crc );
+			start.set_unstarted( true );
+			for( uint i=0; i<nodes; ++i )
+				start.add_counts( 0 );
+			y.Continuation = start.SerializeAsString();
+			return y;
+		}
+
 		//The read as its request and continuation set it out.
 		struct Plan final{
-			Plan( const ReadRequest& r, uint readLimit, SL sl )ε:Nodes{ r.Nodes }, Bounds{ r.Bounds }, OneDay{ r.OneDay }, Modified{ r.Modified }, Crc{ crc(r) }{
+			Plan( const ReadRequest& r, uint readLimit, SL sl )ε:Nodes{ r.Nodes }, Bounds{ r.Bounds }, OneDay{ r.OneDay }, Modified{ r.Modified }, Crc{ crc(r) }, Budget{ r.Budget }{
 				THROW_IFSL( Nodes.empty(), "A read names no nodes." );
 				THROW_IFSL( !r.Start && !r.End, "A read needs a start or an end." );
 				if( Modified && Bounds )
@@ -104,7 +121,8 @@ namespace Jde::Opc::Hist{
 					throw UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, "The continuation isn't one of the historian's.", {ELogLevel::Debug}, sl };
 				if( from.crc()!=Crc )
 					throw UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, "The continuation is for a read with other arguments.", {ELogLevel::Debug}, sl };
-				From = move( from );
+				if( !from.unstarted() )
+					From = move( from );
 			}
 			α Resume()Ι->optional<Ticks>{ return From ? optional<Ticks>{ From->time() } : nullopt; }
 			//How many of the node's records at time the pages before returned:  those at the resume time.
@@ -120,13 +138,15 @@ namespace Jde::Opc::Hist{
 			bool Full{};//the page ends once it is full, with no file read after to say whether there is more:  the walk back's.
 			uint Limit;
 			uint32_t Crc;
+			ScanBudget* Budget;
 			optional<Proto::Continuation> From;
 		};
 
 		//A day's records in primary-time order, one ahead:  the file's, through the runs that matter, and the buffer's for
 		//the day, merged, with the day's modifications applied; or, for a modified read, the modifications themselves.
 		struct Stream final{
-			Stream( sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl )ε:_applied{ move(file), move(runs), move(late), move(mods), sl }{ Advance(); }
+			Stream( sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl, IO::Records::ISkip* skip=nullptr, ScanBudget* budget=nullptr )ε:
+				_applied{ move(file), move(runs), move(late), move(mods), sl, skip }, _budget{ budget }{ Advance(); }
 			α Peek()Ι->const HistoryRecord*{ return _has ? &_next : nullptr; }
 			α Time()Ι->optional<Ticks>{ return _has ? PrimaryTime( _next ) : nullopt; }
 			α Take( HistoryRecord& r, optional<Merge::Position>& where )ε->bool{
@@ -134,15 +154,42 @@ namespace Jde::Opc::Hist{
 					return false;
 				r = move( _next );
 				where = _where;
+				if( _budget )
+					++_budget->Taken;
 				Advance();
 				return true;
 			}
 		private:
 			α Advance()ε->void{ _has = _applied.Next( _next, _where ); }
 			Applied _applied;
+			ScanBudget* _budget;
 			HistoryRecord _next;
 			optional<Merge::Position> _where;
 			bool _has{};
+		};
+
+		//A read's pass over the value records of the nodes it doesn't name, in its files:  passed over unparsed by their
+		//node_index, the chain moved on by their delta (SkimValue), each counted against the budget.  Every other record is
+		//parsed, as Reading needs them, and so is every record once the budget is spent where the page can stop, so the
+		//reading sees one and stops there.
+		struct Skimmer final : IO::Records::ISkip{
+			Skimmer( const Joined& joined, ScanBudget* budget, const bool& stoppable )ι:_joined{ joined }, _budget{ budget }, _stoppable{ stoppable }{}
+			α Skip( const IO::Records::Raw& raw, IO::Records::State& chain )ι->bool override{
+				if( _budget && _stoppable && _budget->Exhausted() )
+					return false;
+				let skimmed = SkimValue( raw );
+				if( !skimmed || _joined.Slot(skimmed->Index) )
+					return false;
+				if( skimmed->Delta )
+					chain = (Ticks)( (uint64_t)chain+(uint64_t)*skimmed->Delta );//wrapping, as ToMemory adds.
+				if( _budget )
+					++_budget->Taken;
+				return true;
+			}
+		private:
+			const Joined& _joined;
+			ScanBudget* _budget;
+			const bool& _stoppable;
 		};
 
 		//Each node's value at the earlier end of the range, as the records before it say:  its latest, a preamble's start
@@ -292,8 +339,10 @@ namespace Jde::Opc::Hist{
 				_counts.assign( _plan.Nodes.size(), 0 );
 			}
 			α Page()ε->ReadResult{
-				if( _plan.Reverse )
+				if( _plan.Reverse ){
+					const ScanBudget::Hold _{ _plan.Budget };//it reads each day to its end, until #656.
 					Backward();
+				}
 				else
 					Forward();
 				return move( _result );
@@ -335,17 +384,18 @@ namespace Jde::Opc::Hist{
 			}
 
 			//The day's stream.  A resume's archive position narrows the run, and the buffer's records with it; a live file's
-			//runs are those that overlap [from, to], or all of them for a day the bounds look through.
-			α Open( Day day, Ticks from, Ticks to, bool all, const Proto::Continuation* at )ε->up<Stream>{
-				return Open( day, _plan.Modified ? nullopt : _files.Of(day), from, to, all, at );
+			//runs are those that overlap [from, to], with those before from too where the bounds look back through the day,
+			//and those after to where they look on past it.
+			α Open( Day day, Ticks from, Ticks to, bool before, bool after, const Proto::Continuation* at )ε->up<Stream>{
+				return Open( day, _plan.Modified ? nullopt : _files.Of(day), from, to, before, after, at );
 			}
 			//With the day's value file as served:  a modified read serves the modifications instead.
-			α Open( Day day, optional<GroupFiles::Served>&& served, Ticks from, Ticks to, bool all, const Proto::Continuation* at )ε->up<Stream>{
+			α Open( Day day, optional<GroupFiles::Served>&& served, Ticks from, Ticks to, bool before, bool after, const Proto::Continuation* at )ε->up<Stream>{
 				_generation = 0;
 				_atOffset = false;
 				if( _plan.Modified ){//the day's modifications, in target-time order, resumed by time.
 					auto mods = _files.ModsOf( day, _sl );
-					return mods.Empty() ? nullptr : mu<Stream>( nullptr, vector<Run>{}, mods.Records(), DayMods{}, _sl );
+					return mods.Empty() ? nullptr : mu<Stream>( nullptr, vector<Run>{}, mods.Records(), DayMods{}, _sl, nullptr, _plan.Budget );
 				}
 				auto late = _buffered.find( day );
 				vector<HistoryRecord> buffered = late==_buffered.end() ? vector<HistoryRecord>{} : late->second;
@@ -366,11 +416,11 @@ namespace Jde::Opc::Hist{
 				}
 				else if( served ){
 					for( let& run : served->Runs ){
-						if( all || _generation || (run.Last>=from && run.First<=to) )
+						if( _generation || ((before || run.Last>=from) && (after || run.First<=to)) )
 							runs.push_back( run );
 					}
 				}
-				return mu<Stream>( served ? served->File : nullptr, move(runs), move(buffered), _files.ModsOf(day, _sl), _sl );
+				return mu<Stream>( served ? served->File : nullptr, move(runs), move(buffered), _files.ModsOf(day, _sl), _sl, &_skimmer, _plan.Budget );
 			}
 			α Emit( Picked&& picked, bool bound )ι->void{
 				if( !_hasLast || picked.Time!=_last ){
@@ -410,6 +460,21 @@ namespace Jde::Opc::Hist{
 				next.set_no_values( _result.Values.empty() && _plan.Empty() );
 				_result.Continuation = next.SerializeAsString();
 			}
+			//A page the budget ended after its last record taken, at time, which where places in an archive of generation:  the
+			//next resumes after it, at its place when it has one, and by time otherwise.
+			α StopAt( Ticks time, optional<Merge::Position> where, uint32_t generation )ι->void{
+				Proto::Continuation next;
+				next.set_crc( _plan.Crc );
+				next.set_time( time );
+				for( uint i=0; i<_counts.size(); ++i )
+					next.add_counts( (_hasLast && _last==time ? _counts[i] : 0)+_plan.Had(i, time) );
+				if( generation && where ){
+					next.set_generation( generation );
+					next.set_offset( where->End );
+				}
+				next.set_no_values( _result.Values.empty() && _plan.Empty() );
+				_result.Continuation = next.SerializeAsString();
+			}
 			//Opening bounds go before the page's values, which they leave room for.
 			α Opening( vector<ReadValue>&& opening )ι->void{
 				_opened = opening.size();
@@ -439,7 +504,7 @@ namespace Jde::Opc::Hist{
 			α Through( Before& before, Day day, optional<GroupFiles::Served>&& served )ε->void{
 				let generation = _generation;
 				let atOffset = _atOffset;
-				auto stream = Open( day, move(served), Earliest, Latest, true, nullptr );
+				auto stream = Open( day, move(served), Earliest, Latest, true, true, nullptr );
 				HistoryRecord r;
 				optional<Merge::Position> where;
 				while( stream && stream->Take(r, where) )
@@ -522,7 +587,7 @@ namespace Jde::Opc::Hist{
 				if( rest )
 					scan( *rest );
 				for( auto day = std::ranges::upper_bound(_files.OnDisk, lastDay); !need.empty() && day!=_files.OnDisk.end(); ++day ){
-					auto stream = Open( *day, Earliest, Latest, true, nullptr );
+					auto stream = Open( *day, Earliest, Latest, true, true, nullptr );
 					if( !stream )
 						continue;
 					absl::flat_hash_set<NodeIndex> listed;
@@ -560,7 +625,7 @@ namespace Jde::Opc::Hist{
 					}
 					if( !changed.empty() ){//in the day before, whose first past `later` the start value needn't be.
 						if( day!=_files.OnDisk.begin() && *(day-1)>lastDay ){
-							if( auto earlier = Open(*(day-1), later, Latest, true, nullptr) )
+							if( auto earlier = Open(*(day-1), later, Latest, true, true, nullptr) )
 								scan( *earlier );
 						}
 						for( let index : changed )
@@ -643,7 +708,12 @@ namespace Jde::Opc::Hist{
 				let open = [&]{
 					for( ; day!=_days.end() && (!lastDay || *day<=*lastDay); ++day ){
 						let last = lastDay && *day==*lastDay;
-						stream = Open( *day, from, _plan.Later.value_or(Latest), _plan.Bounds && (*day==firstDay || last), *day==firstDay && _plan.From ? &*_plan.From : nullptr );
+						//Only the page that decides the opening bounds looks back through its first day:  a resumed one reads
+						//from the run its resume falls in.  A day that holds nothing of the nodes is passed over unread.
+						auto served = _plan.Modified ? optional<GroupFiles::Served>{} : _files.Of( *day );
+						if( !_plan.Modified && !Holds(*day, served) )
+							continue;
+						stream = Open( *day, move(served), from, _plan.Later.value_or(Latest), opening && *day==firstDay, _plan.Bounds && last, *day==firstDay && _plan.From ? &*_plan.From : nullptr );
 						if( stream ){
 							++day;
 							return true;
@@ -656,6 +726,7 @@ namespace Jde::Opc::Hist{
 					Emit( move(picked), bound );
 				};
 				let decide = [&]{//the opening bounds, then the records at `earlier`.
+					_stoppable = false;//the walk back reads through other days, where the page can't stop.
 					opened = true;
 					absl::flat_hash_set<NodeIndex> served;
 					for( let& picked : held )
@@ -675,7 +746,18 @@ namespace Jde::Opc::Hist{
 				HistoryRecord r;
 				optional<Merge::Position> where;
 				optional<Ticks> nextDay;//where OneDay ended the page.
+				//The last record taken, after which the page stops once the budget is spent and the next record is at a later
+				//time:  past the resume, so every page goes on, and in an archive only at a record that has its place, since a
+				//resume by time would read the archive from its start.  Nor where the stream skimmed from it to the next, as
+				//past a quiet node's last for a while:  the next page would skim it all again.
+				struct Taken{ Ticks Time; optional<Merge::Position> Where; uint32_t Generation; bool Past; bool Skimmed; };
+				optional<Taken> taken, stop;
+				let stops = [&]( Ticks next ){
+					return opened && taken && taken->Past && !taken->Skimmed && next>taken->Time && (!taken->Generation || taken->Where) && _plan.Budget && _plan.Budget->Exhausted();
+				};
+				_stoppable = opened;//a stream reads its first record as it opens:  past a quiet node's, the skim stops with the budget.
 				for( bool have = open(); have && !more; ){
+					_stoppable = opened;
 					let t = stream->Time();
 					if( !t ){
 						if( _plan.OneDay && day!=_days.end() && (!lastDay || *day<=*lastDay) ){
@@ -690,7 +772,13 @@ namespace Jde::Opc::Hist{
 					}
 					if( _plan.Later && *t>*_plan.Later )
 						break;//the range's last day, in order:  nothing after is in range.
-					stream->Take( r, where );
+					if( stops(*t) ){
+						stop = taken;
+						break;
+					}
+					let prior = _plan.Budget ? _plan.Budget->Taken : 0;
+					stream->Take( r, where );//and reads the next, skimming the others' records before it.
+					taken = Taken{ *t, where, _generation, *t>=from && (!resume || _atOffset || *t>*resume), _plan.Budget && _plan.Budget->Taken>prior+1 };
 					if( !opened )
 						before.Take( r, *t );
 					if( !Wants(r) || *t<from )
@@ -716,8 +804,13 @@ namespace Jde::Opc::Hist{
 					}
 					emit( Pick(r, *t, where) );
 				}
+				_stoppable = false;
 				if( !opened )
 					decide();
+				if( stop ){
+					StopAt( stop->Time, stop->Where, stop->Generation );
+					return;
+				}
 				if( more ){
 					//A record at `later` is its node's closing bound when it is the node's last there:  known once the rest at
 					//`later` are seen, which the next page returns again.
@@ -811,7 +904,8 @@ namespace Jde::Opc::Hist{
 					auto served = _files.Of( *day );
 					if( !Holds(*day, served) )
 						continue;
-					auto stream = Open( *day, move(served), _plan.Earlier.value_or(Earliest), to, _plan.Bounds && (day==_days.begin() || (firstDay && *day==*firstDay) || isLast), isLast && _plan.From ? &*_plan.From : nullptr );
+					let all = _plan.Bounds && (day==_days.begin() || (firstDay && *day==*firstDay) || isLast);
+					auto stream = Open( *day, move(served), _plan.Earlier.value_or(Earliest), to, all, all, isLast && _plan.From ? &*_plan.From : nullptr );
 					if( !stream )
 						continue;
 					read = true;
@@ -958,6 +1052,8 @@ namespace Jde::Opc::Hist{
 			const time_zone& _tz;
 			Files _files;
 			Joined _joined;
+			bool _stoppable{};//the page can stop at the record the stream gives next:  the skimmer's to know.
+			Skimmer _skimmer{ _joined, _plan.Budget, _stoppable };
 			SL _sl;
 			std::map<Day,vector<HistoryRecord>> _buffered;
 			vector<Day> _days;//each with a file or buffered records.
@@ -1026,6 +1122,8 @@ namespace Jde::Opc::Hist{
 		let& tz = *_store->Config.TimeZone;
 		Index( sl );
 		const Plan plan{ request, _store->Config.ReadLimit, sl };
+		if( plan.Budget && plan.Budget->Exhausted() )
+			return deferred( request.Continuation, plan.Crc, plan.Nodes.size() );
 		vector<Buffered> snapshot;
 		Files files;
 		optional<Joined> joined;

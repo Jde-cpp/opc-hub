@@ -520,4 +520,44 @@ namespace Jde::Opc::Hist::Tests{
 		ASSERT_EQ( v.size(), 1 );
 		EXPECT_EQ( v[0].Value.status(), bits(0, Calculated) );//not Partial:  March 7 has data, and so does 00:04.
 	}
+
+	//Under a scan budget a page stops part way through its pass, an interval included, and the next takes it up from its
+	//continuation:  every budget's pages make what the read without one returns, the Part 13 examples' values among
+	//them.  Median and a reverse read of several intervals hold the budget, and page as they would without it.
+	TEST_F( Processed, UnderABudget ){
+		Load();
+		vector<ProcessedRequest> requests;
+		for( let& t : Part13::parse(Part13::Processed, Midnight) ){
+			auto r = Request( t.Historian, Part13::aggregateOf(t.Aggregate), t.Interval, t.Config );
+			r.OneDay = true;
+			requests.push_back( move(r) );
+		}
+		requests.push_back( {.Nodes={Nodes[1], Nodes[5]}, .Start=ticks(Noon), .End=ticks(Noon+100s), .Interval=5s, .Aggregate=EAggregate::Average, .Configuration=One(), .Limit=3} );
+		requests.push_back( {.Nodes={Nodes[3], Nodes[1]}, .Start=ticks(Noon+45s), .End=ticks(Noon+50s), .Interval=5s, .Aggregate=EAggregate::Interpolative, .Configuration=One()} );
+		for( let aggregate : {EAggregate::TimeAverage, EAggregate::Interpolative, EAggregate::Count, EAggregate::Start, EAggregate::Minimum} ){
+			auto r = Request( 1, aggregate, 16s, One() );
+			r.Nodes = { Nodes[1], Nodes[3], Nodes[1] };
+			requests.push_back( move(r) );
+		}
+		let whole = requests.size();//one interval over the range:  the page stops inside it.
+		for( let aggregate : {EAggregate::Average, EAggregate::TimeAverage, EAggregate::StandardDeviationSample, EAggregate::End} )
+			requests.push_back( Request(2, aggregate, 0s, One()) );
+		requests.push_back( {.Nodes={Nodes[1]}, .Start=ticks(Noon+100s), .End=ticks(Noon), .Aggregate=EAggregate::TimeAverage, .Configuration=One()} );
+		let held = requests.size();
+		requests.push_back( {.Nodes={Nodes[1]}, .Start=ticks(Noon+100s), .End=ticks(Noon), .Interval=16s, .Aggregate=EAggregate::Count, .Configuration=One()} );
+		requests.push_back( Request(1, EAggregate::Median, 40s, One()) );
+		for( uint i=0; i<requests.size(); ++i ){
+			vector<uint> pages;
+			let expected = described( All(requests[i], &pages) );
+			for( let budget : {1u, 2u, 3u, 7u, 50u} ){
+				SCOPED_TRACE( Ƒ("request {}, budget {}", i, budget) );
+				vector<uint> budgeted;
+				EXPECT_EQ( described(readAllProcessed(*Pump, requests[i], {.Pages=&budgeted, .Budget=budget})), expected );
+				if( i>=held )
+					EXPECT_EQ( budgeted, pages );
+				else if( i>=whole && budget==1 )
+					EXPECT_GT( budgeted.size(), 3u );
+			}
+		}
+	}
 }

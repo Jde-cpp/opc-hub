@@ -197,6 +197,63 @@ namespace Jde::IO::Records::Tests{
 		EXPECT_EQ( reader.Stop(), EStop::End );
 	}
 
+	//A frame the owner's skip takes is passed over unparsed, the skip moving the chain on, across windows the frames cross:
+	//each record returned has its own frame's offset, and the time a full read gives it.
+	TEST_F( LayerTests, SkipsFrames ){
+		struct Samples final : ISkip{
+			α Skip( const Raw& raw, State& chain )ι->bool override{
+				TestRecord r;
+				if( raw.Field!=2 || !r.ParseFromArray(raw.Frame.data(), (int)raw.Frame.size()) || !r.sample().text().starts_with("skip") )
+					return false;
+				chain += r.sample().ts();
+				++Skipped;
+				return true;
+			}
+			uint Skipped{};
+		};
+		string bytes;
+		Appender<TestRecord> appender{ bytes, 0 };
+		appender.Start( fileStart().file_start() );
+		appender.Add( sample(at(1), "a") );
+		appender.Add( sample(at(2), "skip a longer text than a window holds") );
+		appender.Add( sample(at(3), "skip") );
+		appender.Add( sample(at(5), "b") );
+		appender.Add( sample(at(8), "skip") );
+		appender.Seal();
+		let run = Records::Run{ .Offset=0, .End=(uint)bytes.size(), .Chain=0, .First=0, .Last=0 };
+		let read = [&]( ISkip* skip ){
+			Reader<TestRecord> reader{ run, 16, skip };
+			vector<std::tuple<Time,uint,uint>> y;//each sample's time and its frame's ends.
+			TestRecord r;
+			for( ;; ){
+				let start = reader.Offset();
+				let next = reader.Next( r );
+				if( next==ENext::More ){
+					let w = *reader.Wants();
+					reader.Feed( string{sv{bytes}.substr(w.Offset, w.Size)} );
+					continue;
+				}
+				if( next==ENext::End )
+					break;
+				if( !skip )
+					EXPECT_EQ( reader.FrameOffset(), start );
+				if( r.has_sample() )
+					y.emplace_back( r.sample().ts(), reader.FrameOffset(), reader.Offset() );
+			}
+			EXPECT_EQ( reader.Stop(), EStop::End );
+			EXPECT_EQ( reader.Offset(), bytes.size() );
+			return y;
+		};
+		let whole = read( nullptr );
+		ASSERT_EQ( whole.size(), 5u );
+		Samples skip;
+		let skimmed = read( &skip );
+		EXPECT_EQ( skip.Skipped, 3u );
+		ASSERT_EQ( skimmed.size(), 2u );
+		EXPECT_EQ( skimmed[0], whole[0] );
+		EXPECT_EQ( skimmed[1], whole[3] );//b, at(5) again, as its own frame.
+	}
+
 	//A day's live file as its first flushes leave it:  the FileStart and two records at the day's start, a flush, and a
 	//flush with a late record.
 	struct ScanTests : LayerTests{

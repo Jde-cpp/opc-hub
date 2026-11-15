@@ -12,9 +12,10 @@ namespace Jde::Opc::Server{
 	//the host's groups, which it asks IHistoryHost for - the OpcServer's one `server` group of what its nodesets mark
 	//Historizing, collected through open62541's setValue, the gateway's one per served node, stored by its collector -
 	//served through HistoryRead, raw, modified, at times and aggregated, and edited through HistoryUpdate.  open62541
-	//calls the backend inside its service lock, on the server's one thread, so collecting only enqueues and a node's read
-	//ends at maxReturnDataValues values or one day, with a continuation point.  That point is the library's stateless
-	//continuation, so the server holds nothing between calls and has none to release.  An edit is acknowledged once its
+	//calls the backend inside its service lock, on the server's one thread, so collecting only enqueues and a callback's
+	//reads stop at hist.scanLimit records, its nodes sharing them, a node's at maxReturnDataValues values or one day too,
+	//with a continuation point.  That point is the library's stateless continuation, a page stopped inside an interval
+	//included, so the server holds nothing between calls and has none to release.  An edit is acknowledged once its
 	//records are durable, so its callback waits for the flush that writes them, holding the lock for the write and its
 	//fsync, up to UASettings::EditTimeout.
 	struct UAHistory final : noncopyable{
@@ -53,6 +54,9 @@ namespace Jde::Opc::Server{
 		struct Timing final{ uint Count{}; steady_clock::duration Total{}; steady_clock::duration Longest{}; };
 		α Reads()Ι->Timing{ return _reads.Get(); }
 		α Returned()Ι->uint{ return _returned.load(); }//the values the reads returned - for tests and diagnostics.
+		//The records a callback's reads may scan, hist.scanLimit's:  a test's to set, so a small history pages as a busy one.
+		α ScanLimit()Ι->uint{ return _scanLimit.load(); }
+		α SetScanLimit( uint limit )ι->void{ _scanLimit = limit; }
 		α Collections()Ι->Timing{ return _collections.Get(); }
 		α Edits()Ι->Timing{ return _edits.Get(); }
 
@@ -95,16 +99,17 @@ namespace Jde::Opc::Server{
 		//grants it, and a history, which a node has when it is historized:  its group and its index there, from the host.
 		//None with the status that says why.  range is the node's index range, parsed, whose dimensions the caller frees.
 		α Admit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_HistoryReadValueId& node, UA_NumericRange& range, UA_StatusCode& status )Ι->optional<Node>;
-		//Every node's page, each read by read, the mode's own, once Admit lets it, and put into its result by fill:  the
-		//node's position, its page and the part of an array its index range names.  what names the mode in the log.
+		//Every node's page, each read by read, the mode's own, once Admit lets it, under its share of the callback's scan
+		//budget, and put into its result by fill:  the node's position, its page and the part of an array its index range
+		//names.  what names the mode in the log.
 		α Serve( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, bool release,
 			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, sv what,
-			absl::FunctionRef<UA_StatusCode( uint, const Node&, const UA_HistoryReadValueId&, UA_ByteString&, Hist::ReadResult& )> read,
+			absl::FunctionRef<UA_StatusCode( uint, const Node&, const UA_HistoryReadValueId&, UA_ByteString&, Hist::ReadResult&, Hist::ScanBudget& )> read,
 			absl::FunctionRef<UA_StatusCode( uint, const Hist::ReadResult&, const UA_NumericRange* )> fill )ι->void;
 		//One node's page and continuation point in each mode, Good_NoData for a read none of whose pages held a value.
-		α Read( const Node& node, const UA_ReadRawModifiedDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
-		α AtTime( const Node& node, const UA_ReadAtTimeDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
-		α Processed( const Node& node, const UA_ReadProcessedDetails& details, const UA_NodeId& function, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
+		α Read( const Node& node, const UA_ReadRawModifiedDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget )ι->UA_StatusCode;
+		α AtTime( const Node& node, const UA_ReadAtTimeDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget )ι->UA_StatusCode;
+		α Processed( const Node& node, const UA_ReadProcessedDetails& details, const UA_NodeId& function, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page, Hist::ScanBudget& budget )ι->UA_StatusCode;
 		//One entry's edit, once the session's user may write the node's history:  make builds the library's entry from the
 		//node's index, or none to leave result as it set it.  The edit runs in the group's next flush, which this waits for,
 		//up to _editTimeout:  then Bad_Timeout, the edit still queued.  None when result says why:  in its status, or, for
@@ -120,6 +125,7 @@ namespace Jde::Opc::Server{
 		sp<IHistoryHost> _host;
 		sp<Hist::Historian> _historian;//the host's, read once:  null keeps no history.
 		Duration _editTimeout;
+		std::atomic<uint> _scanLimit;
 		bool _started{};
 		absl::flat_hash_set<NodeId,NodeHash,NodeEqual> _typeStepped;//until Start:  open62541 adds a node under its service lock.
 		Timer _reads, _collections, _edits;

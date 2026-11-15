@@ -7,7 +7,7 @@ namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
 
 	TEST( SettingsTests, Defaults ){
-		for( sv hist : {"{}", R"({"path":null,"delay":null,"maxBuffer":null,"timeZone":null,"readLimit":null})"} ){
+		for( sv hist : {"{}", R"({"path":null,"delay":null,"maxBuffer":null,"timeZone":null,"readLimit":null,"scanLimit":null})"} ){
 			SCOPED_TRACE( hist );
 			let settings = Settings{ parse(hist).as_object(), "logs/hist/opc-server" };
 			EXPECT_EQ( settings.Path, fs::current_path()/"logs/hist/opc-server" );
@@ -15,17 +15,20 @@ namespace Jde::Opc::Hist::Tests{
 			EXPECT_EQ( settings.MaxBuffer, 64*1024*1024 );
 			EXPECT_EQ( settings.TimeZone, locate_zone("UTC") );//not the machine's zone, as the log's is.
 			EXPECT_EQ( settings.ReadLimit, 10'000 );
+			EXPECT_EQ( settings.ScanLimit, 100'000 );
 		}
 	}
 
 	TEST( SettingsTests, Parse ){
-		let hist = parse( R"({"path":"/var/hist","delay":"PT30S","maxBuffer":1048576,"timeZone":"America/New_York","readLimit":500})" ).as_object();
+		let hist = parse( R"({"path":"/var/hist","delay":"PT30S","maxBuffer":1048576,"timeZone":"America/New_York","readLimit":500,"scanLimit":2000})" ).as_object();
 		let settings = Settings{ hist, "logs/hist/opc-gateway" };
 		EXPECT_EQ( settings.Path, fs::absolute("/var/hist") );//itself, but on Windows with the current drive.
 		EXPECT_EQ( settings.Delay, 30s );
 		EXPECT_EQ( settings.MaxBuffer, 1048576 );
 		EXPECT_EQ( settings.TimeZone->name(), "America/New_York" );
 		EXPECT_EQ( settings.ReadLimit, 500 );
+		EXPECT_EQ( settings.ScanLimit, 2000 );
+		EXPECT_THROW( (Settings{parse(R"({"scanLimit":0})").as_object(), "x"}), Exception );//every read would wait for a call with room.
 	}
 
 	//A relative path is made absolute against the current directory, once, so the lock, the scans and every write resolve it

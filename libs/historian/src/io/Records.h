@@ -25,6 +25,12 @@ namespace Jde::Opc::Hist{
 	α PrimaryTime( const Proto::DataValue& v )ι->optional<Ticks>;
 	α PrimaryTime( const UA_DataValue& v )ι->Ticks;//Enqueue stamps a server time on one that came with neither.
 	α PrimaryTime( const Record& r )ι->Ticks;
+	//A value frame as a read that doesn't want its node passes over it, from its bytes alone:  its node_index and the
+	//delta its primary time moves the chain by, none for a value stored with neither time.  None for any other frame, and
+	//for one whose fields aren't as ToDisk writes them - unknown, repeated, of the wrong wire type, a default written, a
+	//padded varint - which the full parse then takes.  The value itself is never read, so damage inside it goes unseen.
+	struct Skimmed final{ NodeIndex Index; optional<Ticks> Delta; };
+	α SkimValue( const IO::Records::Raw& raw )ι->optional<Skimmed>;
 
 	//The built-in type id (Part 6 5.1.2) a type's values take on the wire, which a NodeAdded's data_type holds:  an
 	//enumeration's Int32, a structure's ExtensionObject, and a subtype's its base's, as Duration's Double.  0 for none, and

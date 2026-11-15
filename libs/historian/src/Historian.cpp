@@ -72,6 +72,8 @@ namespace Jde::Opc::Hist{
 			MaxBuffer = std::max( positive(*p, "maxBuffer", sl), MinBuffer );//as ProtoLog clamps its own.
 		if( let p = find(hist, "readLimit"); p )
 			ReadLimit = positive( *p, "readLimit", sl );
+		if( let p = find(hist, "scanLimit"); p )
+			ScanLimit = positive( *p, "scanLimit", sl );
 		Path = absolute( Path, sl );
 		THROW_IFSL( Delay<=Duration::zero(), "hist.delay must be positive, not {}.", Chrono::ToString(Delay) );
 	}

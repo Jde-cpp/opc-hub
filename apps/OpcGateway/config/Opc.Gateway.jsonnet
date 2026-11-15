@@ -83,6 +83,7 @@ function( sync=false )
 			maxBuffer:: 67108864, //bytes, every group's buffer together (64 MB):  past it the oldest values are dropped with a gap marker.  At least 1048576.
 			timeZone:: "UTC", //the zone the day directories follow, an IANA name.  It must not change once `path` holds files:  a read opens a day's file by it.
 			readLimit:: 10000, //the most values one history read returns, a page;  a read's own `limit` can only lower it.  The pass-through reads take it too.
+			scanLimit:: 100000, //the records one HistoryRead callback on the endpoint may scan, its nodes sharing them, while it holds the endpoint's service lock:  a page then stops where the next call resumes, an aggregate's interval included;  each node's share must stay well over one flush of its group's records, or a read of many nodes all but stalls.
 			describeBatch:: 64, //the members a group asks its server about at once, at most six operations each, for their types, ranges, attributes and paths.  A server that refuses a request as too many (BadTooManyOperations) halves it for the group.
 			//What the collector logs in to each server with, by connection slug (*Collector contract*):  a user name and password for a
 			//server that takes no certificate token, as in { "<slug>": { user: "collector", password: "$(COLLECTOR_PASSWORD)" } }.  A

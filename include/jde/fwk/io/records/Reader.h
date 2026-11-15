@@ -18,24 +18,35 @@ namespace Jde::IO::Records{
 		return nullopt;
 	}
 
+	//The owner's pass over frames a read doesn't want, before they are parsed:  Skip takes a frame only when it can move
+	//chain on as ToMemory would have, from the frame's bytes alone, and leaves anything else to the full parse.
+	struct ISkip{
+		virtual ~ISkip()=default;
+		β Skip( const Raw& raw, State& chain )ι->bool = 0;
+	};
 	//A run's records, each whole and with its times absolute, from bytes the caller fetches a window at a time:  Next is
-	//More while Wants() names the window to Feed.  A frame longer than a window is read whole, the window grown to it.
+	//More while Wants() names the window to Feed.  A frame longer than a window is read whole, the window grown to it.  A
+	//frame skip takes is passed over unparsed.
 	template<Record T> struct Reader final : noncopyable{
-		Reader( Run run, uint windowBytes=MergeWindowBytes )ι;
+		Reader( Run run, uint windowBytes=MergeWindowBytes, ISkip* skip=nullptr )ι;
 		//Record:  r.  End:  Stop() is End at the run's end, else why it stopped short.
 		α Next( T& r )ι->ENext;
 		α Wants()Ι->optional<Window>{ return _wants; }
 		α Feed( string&& bytes )ι->void;//fewer than wanted is Short:  the file no longer holds them.
 		α Offset()Ι->uint{ return _offset; }//where the next frame starts, or where reading stopped.
+		α FrameOffset()Ι->uint{ return _frame; }//where the last record's frame starts:  frames skipped before it are behind it.
 		α Field()Ι->uint32_t{ return _field; }//the last record's member:  a merge passes over StartField's and CheckpointField's.
 		α Chain()Ι->State{ return _state; }
 		α Stop()Ι->optional<EStop>{ return _stop; }
 	private:
+		α Trim()ι->void;
 		Run _run;
 		uint _windowBytes;
+		ISkip* _skip;
 		string _buffer;//the bytes from _base.
 		uint _base;
 		uint _offset;
+		uint _frame;
 		State _state;
 		optional<Window> _wants;
 		optional<EStop> _stop;
@@ -82,11 +93,13 @@ namespace Jde::IO::Records{
 		State _state{};
 	};
 
-	template<Record T> Reader<T>::Reader( Run run, uint windowBytes )ι:
+	template<Record T> Reader<T>::Reader( Run run, uint windowBytes, ISkip* skip )ι:
 		_run{ run },
 		_windowBytes{ windowBytes },
+		_skip{ skip },
 		_base{ run.Offset },
 		_offset{ run.Offset },
+		_frame{ run.Offset },
 		_state{ run.Chain }{
 		if( run.End>run.Offset )
 			_wants = Window{ run.Offset, std::min<uint>(windowBytes, run.End-run.Offset) };
@@ -100,39 +113,51 @@ namespace Jde::IO::Records{
 			_buffer.append( bytes.data(), _wants->Size );
 		_wants.reset();
 	}
+	template<Record T> α Reader<T>::Trim()ι->void{
+		if( _offset-_base>_windowBytes ){//what is read is let go, a window at a time.
+			_buffer.erase( 0, _offset-_base );
+			_base = _offset;
+		}
+	}
 	template<Record T> α Reader<T>::Next( T& r )ι->ENext{
 		if( _stop )
 			return ENext::End;
 		if( _wants )
 			return ENext::More;
-		if( _offset>=_run.End ){
-			_stop = EStop::End;
-			return ENext::End;
-		}
-		Cursor cursor{ sv{_buffer}.substr(_offset-_base), _offset };
-		if( auto raw = cursor.Next(); raw ){
+		for( ;; ){
+			if( _offset>=_run.End ){
+				_stop = EStop::End;
+				return ENext::End;
+			}
+			Cursor cursor{ sv{_buffer}.substr(_offset-_base), _offset };
+			auto raw = cursor.Next();
+			if( !raw ){
+				const auto stop = *cursor.Stop();
+				const auto have = _base+_buffer.size();//through where the bytes reach.
+				//More of the run to read:  the next window, or what completes a frame cut short, when the run can hold it.
+				if( have<_run.End && (stop==EStop::End || (stop==EStop::Length && _offset+cursor.Needed()<=_run.End)) ){
+					const auto needed = stop==EStop::End ? 1u : _offset+cursor.Needed()-have;
+					_wants = Window{ have, std::min<uint>(std::max(_windowBytes, needed), _run.End-have) };
+					return ENext::More;
+				}
+				_stop = stop;
+				return ENext::End;
+			}
+			if( _skip && _skip->Skip(*raw, _state) ){
+				_offset += raw->Frame.size();
+				Trim();
+				continue;
+			}
 			_field = raw->Field;
 			if( const auto stop = Parse(*raw, r); stop ){
 				_stop = *stop;
 				return ENext::End;
 			}
 			Traits<T>::ToMemory( r, _state );
+			_frame = _offset;
 			_offset += raw->Frame.size();
-			if( _offset-_base>_windowBytes ){//what is read is let go, a window at a time.
-				_buffer.erase( 0, _offset-_base );
-				_base = _offset;
-			}
+			Trim();
 			return ENext::Record;
 		}
-		const auto stop = *cursor.Stop();
-		const auto have = _base+_buffer.size();//through where the bytes reach.
-		//More of the run to read:  the next window, or what completes a frame cut short, when the run can hold it.
-		if( have<_run.End && (stop==EStop::End || (stop==EStop::Length && _offset+cursor.Needed()<=_run.End)) ){
-			const auto needed = stop==EStop::End ? 1u : _offset+cursor.Needed()-have;
-			_wants = Window{ have, std::min<uint>(std::max(_windowBytes, needed), _run.End-have) };
-			return ENext::More;
-		}
-		_stop = stop;
-		return ENext::End;
 	}
 }
