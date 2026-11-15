@@ -72,7 +72,7 @@ of that kind.  See *Tightening station* below.
 | | value |
 |---|---|
 | exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 102 units, no database or server) |
-| settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes; [`Opc.PlcEmulator.Install.jsonnet`](config/Opc.PlcEmulator.Install.jsonnet) installed, with `-include=args/install`; `config/demo/` the demo's five PLCs, *Demo* below) / `Opc.PlcEmulator.log` |
+| settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes; [`Opc.PlcEmulator.Install.jsonnet`](config/Opc.PlcEmulator.Install.jsonnet) installed, the demo PLCs' base, alone the pumps on a dev box with `-include=args/dev`; `config/demo/` the demo's five PLCs, *Demo* below) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url; the tightening station's Open Protocol on loopback 4545 (`tightening.address`) |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
 
@@ -176,8 +176,9 @@ overlays take `-include=../args/<which>`.
 
 Each PLC serves [`demo.NodeSet2.xml`](../config/nodesets/demo.NodeSet2.xml): one `Machine` of a `MachineType` whose five
 variables, `status`, `totalCount`, `rejectCount`, `reasonCode` and `speed` with an `EURange`, are `AccessLevel` 1 - the emulator
-writes them from inside the server, and no session can, a visitor's through the node browser included.  The ids are the same on
-every PLC, so one hub template over `Machine` resolves on each.  An overlay's one device is its machine: `status` in the `on`
+writes them from inside the server, and no session can, a visitor's through the node browser included.  One hub template over
+`Machine` resolves on every PLC by browse name, and the ids are the file's on each, `i=5001` the `Machine` and `i=6001` to
+`i=6005` its five.  An overlay's one device is its machine: `status` in the `on`
 mode, held off by the spec table's stops and slow periods in the plant's zone, `America/New_York`; the count at the table's
 cycle and reject share; `speed` following the count's pace in units a minute.  The figures are the overlay's own, so the soak
 tunes a machine without a build.
@@ -433,8 +434,9 @@ loopback 4851 with the writer aimed at a port nothing reads: the `/emulator/plc`
 session with a `plc.users` login reading and writing its nodes, anonymous, an issued token (there is no hub in the
 suite) and a stranger's certificate refused, a command write reaching the emulator's queue, and the demo's nodeset on a
 second server, every variable `AccessLevel` 1 and a session's `UserAccessLevel` 1, its write refused while the
-emulator's lands); `DemoConfig` (the five demo overlays evaluated over the install args with no ext var: apart in every
-port, uri, product name, CN, log and certificate dir, and each one's machine parsed); and the tightening
+emulator's lands, the five at the file's ids); `DemoConfig` (the five demo overlays evaluated over both args dirs with no ext
+var, in a copy of the tree without the pubsub contract: apart in every port, uri, product name, CN, log, rejected and
+certificate dir, and each one's machine parsed; the Install config alone serving the pumps in the contract's namespace); and the tightening
 station (`TighteningSpec`'s defaults and refusals, then a station on a loopback port the system picks under the Open
 Protocol library's `Session`, its clock the case's own: one result in a cycle with its torque inside the set's limits,
 none with the tool disabled, a `SelectPset` changing the set the next result names and starting its batch over, the

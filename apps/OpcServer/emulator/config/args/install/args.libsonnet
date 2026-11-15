@@ -3,7 +3,7 @@ local paths = import '../../../../../../libs/db/config/paths-common.libsonnet';
 //the company root's PlcEmulator dir, the certificates under each PLC's own product dirs (config/demo).  paths-common only -
 //the service starts without -tests, so no ext vars (which is why sqlite-common is not imported: it binds buildTarget/logsDir/
 //windows/path).  Loaded through Opc.PlcEmulator.Install.jsonnet, which replaces the base config's dev-shaped fields (the
-//ext vars, the source-tree pubsub import, the $(JDE_DIR) nodeset, the split AppServer's login anchor) from here.
+//ext vars, the source-tree pubsub import, the $(JDE_DIR) nodeset) from here.
 paths + {
 	local args = self,
 	local emulatorDir = args.companyDir+"/PlcEmulator", //companyDir is the one spelling of the company root - see paths-common.
@@ -15,5 +15,5 @@ paths + {
 	//The console sink - the journal - without the source locations the dev defaults give it (libs/fwk/src/log/SpdLog.cpp):  a
 	//link to, or the path of, a file on the build machine, which no install has (reviews/install-issues.md #49).
 	logConsole: { pattern: "%^%3!l%$-%H:%M:%S.%e %v" },
-	nodesetsDir: emulatorDir+"/nodesets" //where the tarball puts demo.NodeSet2.xml (demo plan Phase 8); read by Opc.PlcEmulator.Install.jsonnet and config/demo.
+	nodesetsDir: emulatorDir+"/nodesets" //where the tarball puts demo.NodeSet2.xml, the one nodeset it lays (demo plan Phase 8), for config/demo;  the Install config's own pumps.NodeSet2.xml is a dev box's (args/dev).
 }

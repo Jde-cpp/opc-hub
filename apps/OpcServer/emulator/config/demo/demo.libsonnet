@@ -12,17 +12,20 @@ local args = import 'args.libsonnet';
 function( n, machine ) (import '../Opc.PlcEmulator.Install.jsonnet') + {
 	local name = "plc"+n,
 	local uri = "urn:jde:demo:"+name,
+	local product = "PlcEmulator."+name, //the login's product dir, the log's too;  the channel's is product+".opc".
 	instanceName: name, //the PLC server's ApplicationName names it, "Jde-Cpp PlcEmulator [plc1]".
-	http+:{ ssl+:{ productName: "PlcEmulator."+name, certificate+:{ commonName: name } } },
+	http+:{ ssl+:{ productName: product, certificate+:{ commonName: name } } },
 	emulator+:{
-		transport: "server",
 		applicationUri: uri,
 		zone::: "America/New_York", //the plant's, the seed's calendar's (spec *The plant's rows*): the `at` stops' and slow periods' clock.
 		namespace::: "urn:jde:demo", //the device path's, demo.NodeSet2.xml's.
-		ssl+:{ productName: "PlcEmulator."+name+".opc", certificate+:{ commonName: name+".opc", subjectAltName: "URI:"+uri } },
+		ssl+:{ productName: product+".opc", certificate+:{ commonName: name+".opc", subjectAltName: "URI:"+uri } },
 		plc+:{
 			port: 4841+n, //4842 to 4846, on plc.address's loopback default:  only this box's gateway dials them.
 			nodeset: args.nodesetsDir+"/demo.NodeSet2.xml",
+			//beside the channel's certificates, not the process's data root the five share:  a refused certificate is named by its
+			//thumbprint alone, so the dir says which PLC refused it.
+			rejectedCertDir::: args.companyDir+"/"+product+".opc/ssl/rejected",
 			//every visitor on a PLC's node browser holds a session of its own beside the collector's:  above open62541's 100.
 			limits+::: { maxSessions: 200, maxSecureChannels: 250 }
 		},
@@ -41,5 +44,5 @@ function( n, machine ) (import '../Opc.PlcEmulator.Install.jsonnet') + {
 			]
 		} ]
 	},
-	logging+:{ spd+:{ sinks+:{ file+:{ path: args.companyDir+"/PlcEmulator."+name } } } }
+	logging+:{ spd+:{ sinks+:{ file+:{ path: args.companyDir+"/"+product } } } }
 }

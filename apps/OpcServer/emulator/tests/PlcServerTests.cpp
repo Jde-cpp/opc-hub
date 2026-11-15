@@ -257,17 +257,20 @@ namespace Jde::Opc::Emulator::Tests{
 	}
 	//The demo's nodeset (docs/demo/spec.md *The machines' signals*):  MachineType and one Machine, every variable AccessLevel 1.  A
 	//session reads them and its user level is 1 too, so its write is refused BadNotWritable, while the emulator's own write lands -
-	//the admin session has every right.  A second server on a port of its own, beside the suite's pumps server.
+	//the admin session has every right.  A second server on a port of its own, beside the suite's pumps server.  The five are the
+	//file's own nodes, i=6001 to i=6005, not copies of MachineType's children:  a history query names them by id.
 	TEST_F( PlcServerTests, TheDemoNodesetIsReadOnlyToASession ){
 		auto settings = *_settings;
-		settings.Port = 4856;//4855 is the gateway suite's server, 4857 the historian's.
+		settings.Port = 4865;//past the gateway suite's throwaway servers, 4855-4864 (TestUaServer.h EThrowawayPort).
 		PlcServer demo{ settings, appClient(), nodeset().parent_path()/"demo.NodeSet2.xml", nullopt };
 		demo.Run();
 		let ns = demo.Namespace( "urn:jde:demo" );
 		constexpr array<sv,5> names{ "status", "totalCount", "rejectCount", "reasonCode", "speed" };
 		vector<NodeId> nodes;
-		for( let name : names )
-			nodes.push_back( demo.Resolve(Ƒ("Machine/{}", name), ns) );
+		for( uint i=0; i<names.size(); ++i ){
+			nodes.push_back( demo.Resolve(Ƒ("Machine/{}", names[i]), ns) );
+			EXPECT_EQ( nodes.back(), NodeId(ns, 6001+i) ) << names[i] << " " << nodes.back().ToString();
+		}
 		UATestClient c{ Ƒ("opc.tcp://127.0.0.1:{}", demo.Port()), clientSsl(), UATestClient::Username("plc", "plc"), UA_MESSAGESECURITYMODE_SIGNANDENCRYPT };
 		let sc = c.Connect(); ASSERT_EQ( sc, UA_STATUSCODE_GOOD ) << UA_StatusCode_name( sc );
 		for( uint i=0; i<names.size(); ++i ){
