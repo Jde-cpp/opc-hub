@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The demo plant's machine model (docs/demo/spec.md *The machines' signals*), loaded by the five demo PLCs
+  (apps/OpcServer/emulator/config/demo, /emulator/plc/nodeset) and by nothing else:  one MachineType, and one Machine of it under
+  Objects with its five variables declared under it, since NodeSet2 instantiates no type.  Every PLC loads this one file, so a
+  node's id is the same on all five and one hub template over Machine resolves on each.
+    status       Boolean, true while the machine runs:  OEE's State.
+    totalCount   UInt32, the units made:  OEE's Total.
+    rejectCount  UInt32, the units rejected:  OEE's Reject.  A machine with no reject share has no tag for it and reads this file's 0.
+    reasonCode   Int32, the stop's reason code, 0 for none:  OEE's Reason.
+    speed        Double, in units a minute, an AnalogItem whose EURange is 0 to 100 - the filler's 60 a minute is the plant's ceiling.
+  Every variable is AccessLevel 1, CurrentRead alone.  The emulator writes its own nodes inside the server, which the attribute does
+  not stop (open62541's admin session has every right), and no session can write one, a visitor's through the node browser included,
+  whatever the server's access callback would allow:  the counts, the status and the code are the emulator's alone.  No history
+  here:  the PLC keeps none, the hub's historian does.
+-->
+<UANodeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
+  <NamespaceUris>
+    <Uri>urn:jde:demo</Uri>
+  </NamespaceUris>
+  <Models>
+    <Model ModelUri="urn:jde:demo" PublicationDate="2026-11-15T00:00:00Z" Version="1.0.0">
+      <RequiredModel ModelUri="http://opcfoundation.org/UA/" PublicationDate="2022-02-24T00:00:00Z" Version="1.05.01"/>
+    </Model>
+  </Models>
+  <Aliases>
+    <Alias Alias="Boolean">i=1</Alias>
+    <Alias Alias="Int32">i=6</Alias>
+    <Alias Alias="UInt32">i=7</Alias>
+    <Alias Alias="Double">i=11</Alias>
+    <Alias Alias="Range">i=884</Alias>
+    <Alias Alias="Organizes">i=35</Alias>
+    <Alias Alias="HasModellingRule">i=37</Alias>
+    <Alias Alias="HasTypeDefinition">i=40</Alias>
+    <Alias Alias="HasSubtype">i=45</Alias>
+    <Alias Alias="HasProperty">i=46</Alias>
+    <Alias Alias="HasComponent">i=47</Alias>
+  </Aliases>
+  <UAObjectType NodeId="ns=1;i=1001" BrowseName="1:MachineType">
+    <DisplayName>MachineType</DisplayName>
+    <Description Locale="en">A machine of the demo plant: whether it runs, its counts, the reason it stopped and its speed.</Description>
+    <References>
+      <Reference ReferenceType="HasSubtype" IsForward="false">i=58</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1002</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1003</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1004</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1005</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=1006</Reference>
+    </References>
+  </UAObjectType>
+  <UAVariable NodeId="ns=1;i=1002" BrowseName="1:status" ParentNodeId="ns=1;i=1001" DataType="Boolean" AccessLevel="1">
+    <DisplayName>status</DisplayName>
+    <Description Locale="en">True while the machine runs: OEE's State.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:Boolean>true</uax:Boolean>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=1003" BrowseName="1:totalCount" ParentNodeId="ns=1;i=1001" DataType="UInt32" AccessLevel="1">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=1004" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=1001" DataType="UInt32" AccessLevel="1">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=1005" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=1001" DataType="Int32" AccessLevel="1">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the machine is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=1006" BrowseName="1:speed" ParentNodeId="ns=1;i=1001" DataType="Double" AccessLevel="1">
+    <DisplayName>speed</DisplayName>
+    <Description Locale="en">The machine's pace, units a minute.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2368</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=1001</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=1007</Reference>
+    </References>
+    <Value>
+      <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=1007" BrowseName="EURange" ParentNodeId="ns=1;i=1006" DataType="Range" AccessLevel="1">
+    <DisplayName>EURange</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=1006</Reference>
+      <Reference ReferenceType="HasModellingRule">i=78</Reference>
+    </References>
+    <Value>
+      <uax:ExtensionObject>
+        <uax:TypeId>
+          <uax:Identifier>i=885</uax:Identifier>
+        </uax:TypeId>
+        <uax:Body>
+          <uax:Range>
+            <uax:Low>0</uax:Low>
+            <uax:High>100</uax:High>
+          </uax:Range>
+        </uax:Body>
+      </uax:ExtensionObject>
+    </Value>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=5001" BrowseName="1:Machine" ParentNodeId="i=85">
+    <DisplayName>Machine</DisplayName>
+    <Description Locale="en">The machine behind this PLC: read-only, driven by the emulator.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">ns=1;i=1001</Reference>
+      <Reference ReferenceType="Organizes" IsForward="false">i=85</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6001</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6002</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6003</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6004</Reference>
+      <Reference ReferenceType="HasComponent">ns=1;i=6005</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=6001" BrowseName="1:status" ParentNodeId="ns=1;i=5001" DataType="Boolean" AccessLevel="1">
+    <DisplayName>status</DisplayName>
+    <Description Locale="en">True while the machine runs: OEE's State.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+    </References>
+    <Value>
+      <uax:Boolean>true</uax:Boolean>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6002" BrowseName="1:totalCount" ParentNodeId="ns=1;i=5001" DataType="UInt32" AccessLevel="1">
+    <DisplayName>totalCount</DisplayName>
+    <Description Locale="en">Units made, a counter: OEE's Total.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6003" BrowseName="1:rejectCount" ParentNodeId="ns=1;i=5001" DataType="UInt32" AccessLevel="1">
+    <DisplayName>rejectCount</DisplayName>
+    <Description Locale="en">Units rejected, a counter: OEE's Reject.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+    </References>
+    <Value>
+      <uax:UInt32>0</uax:UInt32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6004" BrowseName="1:reasonCode" ParentNodeId="ns=1;i=5001" DataType="Int32" AccessLevel="1">
+    <DisplayName>reasonCode</DisplayName>
+    <Description Locale="en">Why the machine is stopped, a reason's code; 0 for none: OEE's Reason.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6005" BrowseName="1:speed" ParentNodeId="ns=1;i=5001" DataType="Double" AccessLevel="1">
+    <DisplayName>speed</DisplayName>
+    <Description Locale="en">The machine's pace, units a minute.</Description>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2368</Reference>
+      <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=6006</Reference>
+    </References>
+    <Value>
+      <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=6006" BrowseName="EURange" ParentNodeId="ns=1;i=6005" DataType="Range" AccessLevel="1">
+    <DisplayName>EURange</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6005</Reference>
+    </References>
+    <Value>
+      <uax:ExtensionObject>
+        <uax:TypeId>
+          <uax:Identifier>i=885</uax:Identifier>
+        </uax:TypeId>
+        <uax:Body>
+          <uax:Range>
+            <uax:Low>0</uax:Low>
+            <uax:High>100</uax:High>
+          </uax:Range>
+        </uax:Body>
+      </uax:ExtensionObject>
+    </Value>
+  </UAVariable>
+</UANodeSet>

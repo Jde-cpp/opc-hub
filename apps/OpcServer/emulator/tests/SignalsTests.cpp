@@ -7,7 +7,7 @@ namespace Jde::Opc::Emulator::Tests{
 	Ω gen( sv json )ε->up<IGenerator>{ return MakeGenerator( spec(json) ); }
 
 	TEST( ParseModeTests, EveryNameRoundTripsAndNothingElseParses ){
-		for( let name : {"sine", "ramp", "randomWalk", "counter", "toggle", "command", "follow", "production"} )
+		for( let name : {"sine", "ramp", "randomWalk", "counter", "toggle", "on", "command", "follow", "production"} )
 			EXPECT_EQ( ToString(ParseMode(name)), name );
 		EXPECT_THROW( ParseMode("triangle"), Exception );
 	}
@@ -21,8 +21,9 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_EQ( s.Cycle, Duration{1s} ); EXPECT_EQ( s.Jitter, Duration::zero() ); EXPECT_EQ( s.Reject, 0 ); EXPECT_EQ( s.RejectTag, "rejectCount" );
 		EXPECT_FALSE( s.IsBool() );
 	}
-	TEST( TagSpecTests, OnlyToggleAndCommandAreBool ){
+	TEST( TagSpecTests, OnlyToggleOnAndCommandAreBool ){
 		EXPECT_TRUE( spec(R"({"name":"x","mode":"toggle"})").IsBool() );
+		EXPECT_TRUE( spec(R"({"name":"x","mode":"on"})").IsBool() );
 		EXPECT_TRUE( spec(R"({"name":"x","mode":"command"})").IsBool() );
 		EXPECT_FALSE( spec(R"({"name":"x","mode":"sine"})").IsBool() );
 		EXPECT_FALSE( spec(R"({"name":"x","mode":"follow"})").IsBool() );
@@ -103,6 +104,12 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( spec(R"({"name":"speed","mode":"sine","follows":"totalCount"})"), Exception );//it would lag towards nothing
 		EXPECT_THROW( spec(R"({"name":"speed","mode":"follow","follows":"totalCount","ratedRpm":1450})"), Exception );//the count's pace would drop it
 		EXPECT_THROW( spec(R"({"name":"speed","mode":"follow","follows":7})"), Exception );
+	}
+	TEST( GeneratorTests, OnStaysOnWhateverTheStepOrRate ){//the demo machines' `status`:  only the device's stops hold it off (Devices.cpp DeviceOn).
+		let g = gen( R"({"name":"status","mode":"on"})" );
+		EXPECT_EQ( g->Next(1s, 1), 1 );
+		EXPECT_EQ( g->Next(100000h, 0), 1 );
+		EXPECT_EQ( g->Next(1ms, 0.5), 1 );
 	}
 	TEST( GeneratorTests, CommandTagsHaveNoGenerator ){
 		EXPECT_THROW( gen(R"({"name":"status","mode":"command"})"), Exception );

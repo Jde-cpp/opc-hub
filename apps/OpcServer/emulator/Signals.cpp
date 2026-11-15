@@ -5,7 +5,7 @@
 
 #define let const auto
 namespace Jde::Opc::Emulator{
-	constexpr array<sv,8> _modeNames{ "sine", "ramp", "randomWalk", "counter", "toggle", "command", "follow", "production" };
+	constexpr array<sv,9> _modeNames{ "sine", "ramp", "randomWalk", "counter", "toggle", "on", "command", "follow", "production" };
 
 	//A key left out takes the member's default, from the header.
 	TagSpec::TagSpec( const jobject& o, SL sl )ε:
@@ -76,6 +76,9 @@ namespace Jde::Opc::Emulator{
 		α Next( Duration dt, double )ι->double override{ _t += seconds(dt); if( _t>=_period ){ _t = std::fmod(_t, _period); _on = !_on; } return _on ? 1 : 0; }
 		double _period, _t{}; bool _on{ true };
 	};
+	struct On final : IGenerator{//a bool that stays on:  a `status` with nothing but the device's stops to hold it off.
+		α Next( Duration, double )ι->double override{ return 1; }
+	};
 	struct Follow final : IGenerator{//a drive: first-order lag towards RatedRpm at the device's rate - 0 when off, less in a slow period.
 		Follow( const TagSpec& s )ι:_rated{ s.RatedRpm }, _tau{ seconds(s.Tau) }{}
 		α Next( Duration dt, double rate )ι->double override{
@@ -131,6 +134,7 @@ namespace Jde::Opc{
 		case EMode::RandomWalk: return mu<RandomWalk>( spec );
 		case EMode::Counter: return mu<Counter>( spec );
 		case EMode::Toggle: return mu<Toggle>( spec );
+		case EMode::On: return mu<On>();
 		case EMode::Follow: return mu<Follow>( spec );
 		case EMode::Production: return MakeProduction( spec ).Count;
 		case EMode::Command: THROW( "Tag '{}': command tags are subscribed, not generated.", spec.Name );

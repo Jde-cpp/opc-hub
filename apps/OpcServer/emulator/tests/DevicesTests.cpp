@@ -10,7 +10,7 @@ namespace Jde::Opc::Emulator::Tests{
 	}
 	//A machine:  a count, a `status` that stays on but for its stops, and what `rest` adds - "stops":[...], "seed":1.
 	Ω machines( sv rest, TimePoint start=_start, sv zone={} )ε->vector<Device>{
-		return devices( Ƒ(R"([{{ "path":"machine", {}, "tags":[ {{ "name":"speed", "mode":"follow", "follows":"totalCount", "tau":"PT1S" }}, {{ "name":"totalCount", "mode":"production" }}, {{ "name":"status", "mode":"toggle", "period":"PT100000H" }} ] }}])", rest), {}, start, zone );
+		return devices( Ƒ(R"([{{ "path":"machine", {}, "tags":[ {{ "name":"speed", "mode":"follow", "follows":"totalCount", "tau":"PT1S" }}, {{ "name":"totalCount", "mode":"production" }}, {{ "name":"status", "mode":"on" }} ] }}])", rest), {}, start, zone );
 	}
 	using Window = std::pair<Duration,Duration>;
 	//The device's first stop's windows, from the one ParseDevices placed, the clock walked from each one's end to the next's.
@@ -149,7 +149,7 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_EQ( pump.Tags[0].Value, 60-5*3+4 ); EXPECT_EQ( pump.Code, 0 ); EXPECT_TRUE( pump.On );
 	}
 	TEST( DeviceTests, ARandomStopsGapsAverageItsMeanAndItsLengthsStayInside ){
-		auto y = devices( R"([{ "path":"machine", "seed":478, "stops":[ { "mean":"PT40M", "min":"PT2M", "max":"PT6M", "code":3 } ], "tags":[ { "name":"status", "mode":"toggle", "period":"PT100000H" } ] }])" );
+		auto y = devices( R"([{ "path":"machine", "seed":478, "stops":[ { "mean":"PT40M", "min":"PT2M", "max":"PT6M", "code":3 } ], "tags":[ { "name":"status", "mode":"on" } ] }])" );
 		let stops = stopWindows( y[0], 1000 );
 		Duration gaps{}, end{}, shortest{ Duration::max() }, longest{};
 		for( let& [begin, stopEnd] : stops ){

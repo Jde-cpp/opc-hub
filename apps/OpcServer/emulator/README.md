@@ -17,6 +17,7 @@ device does, in one process:
 The process values are generated (`Signals`).  The modes are:
 
 - `sine`, `ramp`, `randomWalk`, `counter`, `toggle`;
+- `on`: a bool that stays on - a `status` with nothing but the device's stops to hold it off, the demo machines';
 - `follow`: a motor lagging towards `ratedRpm` while the device's `status` is on, and towards 0 when it is not; with
   `follows` naming a `production` tag of the device, towards that count's pace in units a minute, where `ratedRpm`
   would be;
@@ -27,7 +28,7 @@ The process values are generated (`Signals`).  The modes are:
 Which tag does what is `/emulator/devices` in the config.
 
 A device's `status` is its bool tag of that name: the run command where it is a `command`, its own value where it is
-a `toggle`.  A device's `stops` list holds a generated `status` off through each stop and writes the stop's `code` to
+a `toggle` or `on`.  A device's `stops` list holds a generated `status` off through each stop and writes the stop's `code` to
 `reasonCode` meanwhile, 0 otherwise.  A stop with no `code` is one with no reason: `reasonCode` reads 0 through it.
 Where stops overlap, any holds `status` off and the first coded one in the list gives `reasonCode`, so an uncoded stop
 never hides a coded one's reason.
@@ -70,8 +71,8 @@ of that kind.  See *Tightening station* below.
 
 | | value |
 |---|---|
-| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 93 units, no database or server) |
-| settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
+| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 102 units, no database or server) |
+| settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes; [`Opc.PlcEmulator.Install.jsonnet`](config/Opc.PlcEmulator.Install.jsonnet) installed, with `-include=args/install`; `config/demo/` the demo's five PLCs, *Demo* below) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url; the tightening station's Open Protocol on loopback 4545 (`tightening.address`) |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
 
@@ -162,6 +163,45 @@ again.
 A tag named in the contract (`<device>.<tag>`) is published; `command` tags are subscribed; everything else is written -
 so under `pubsub`, pump2's `status` toggle is still a session write.  Under `server` there is no contract and no session:
 every tag is a node of the PLC's own server, resolved once at startup.
+
+## Demo
+
+The demo plant's five PLCs ([its spec](../../../docs/demo/spec.md#design), *The PLCs*) are five of these processes on
+`-transport=server`, each with an overlay under `config/demo/`, [`plc1.jsonnet`](config/demo/plc1.jsonnet) to `plc5.jsonnet`, over
+[`demo.libsonnet`](config/demo/demo.libsonnet) and the installed config,
+[`Opc.PlcEmulator.Install.jsonnet`](config/Opc.PlcEmulator.Install.jsonnet), which reads no ext var and takes its paths from an
+args dir: [`args/install`](config/args/install/args.libsonnet) on the box the demo plan's Phase 8 packages, [`args/dev`](config/args/dev/args.libsonnet)
+on a dev box, where the nodeset is read from the source tree.  The `-include` is relative to the settings file's dir, so the
+overlays take `-include=../args/<which>`.
+
+Each PLC serves [`demo.NodeSet2.xml`](../config/nodesets/demo.NodeSet2.xml): one `Machine` of a `MachineType` whose five
+variables, `status`, `totalCount`, `rejectCount`, `reasonCode` and `speed` with an `EURange`, are `AccessLevel` 1 - the emulator
+writes them from inside the server, and no session can, a visitor's through the node browser included.  The ids are the same on
+every PLC, so one hub template over `Machine` resolves on each.  An overlay's one device is its machine: `status` in the `on`
+mode, held off by the spec table's stops and slow periods in the plant's zone, `America/New_York`; the count at the table's
+cycle and reject share; `speed` following the count's pace in units a minute.  The figures are the overlay's own, so the soak
+tunes a machine without a build.
+
+A PLC is `plc<N>`: port 4841+N on loopback, `applicationUri` `urn:jde:demo:plc<N>`, and two certificates in two product dirs,
+since `productName` chooses the dir and the CN the file - the login's under `Jde-Cpp/PlcEmulator.plc<N>` (CN `plc<N>`, the hub
+user it enrolls as) and the channel's under `Jde-Cpp/PlcEmulator.plc<N>.opc` (CN `plc<N>.opc`, SAN the uri; the PLC server's
+pair too).  The hub's `access.trustedCertDirs` lists the five login dirs and its gateway's `trustedCertDirs` the five channel
+dirs, no dir in both; each PLC trusts the hub's own dir, where the collector's per-connection certificates land.  Its log is
+`Opc.PlcEmulator.log` beside its login certificates.  `maxSessions` and `maxSecureChannels` are above open62541's 100: every
+visitor on a PLC's node browser holds a session of its own beside the collector's.
+
+On a dev box, against a hub whose config lists the ten dirs (`$E` from *Run*; no `-tests`, the install chain binds no ext var):
+
+```bash
+D=$JDE_DIR/apps/OpcServer/emulator/config/demo
+cd $REPO_BUILD_DIR/debug/runtime
+for n in 1 2 3 4 5; do $E -c -settings=$D/plc$n.jsonnet -include=../args/dev -createCert; done   # ten certificates, no hub needed
+for n in 1 2 3 4 5; do $E -settings=$D/plc$n.jsonnet -include=../args/dev; done                  # each detaches;  -c runs one in the foreground
+```
+
+Expect `PLC server on 127.0.0.1:484N with 'demo.NodeSet2.xml'` in each PLC's log and its login as `plcN`.  Then five
+`server_connections` rows, `opc.tcp://127.0.0.1:484N` with `certificateUri` `urn:jde:demo:plcN`, a template over `Machine`'s
+five variables and a group per connection - what the demo's seed does on the box (demo plan *Phase 9*).
 
 ## Tightening station
 
@@ -391,7 +431,10 @@ wall clock through a pause, a counter stepping once a period whatever its cuts, 
 counted while `status` is off or before the first command, a held fault reaching the rejects), and `PlcServer` on
 loopback 4851 with the writer aimed at a port nothing reads: the `/emulator/plc` block and its defaults, a secured
 session with a `plc.users` login reading and writing its nodes, anonymous, an issued token (there is no hub in the
-suite) and a stranger's certificate refused, and a command write reaching the emulator's queue; and the tightening
+suite) and a stranger's certificate refused, a command write reaching the emulator's queue, and the demo's nodeset on a
+second server, every variable `AccessLevel` 1 and a session's `UserAccessLevel` 1, its write refused while the
+emulator's lands); `DemoConfig` (the five demo overlays evaluated over the install args with no ext var: apart in every
+port, uri, product name, CN, log and certificate dir, and each one's machine parsed); and the tightening
 station (`TighteningSpec`'s defaults and refusals, then a station on a loopback port the system picks under the Open
 Protocol library's `Session`, its clock the case's own: one result in a cycle with its torque inside the set's limits,
 none with the tool disabled, a `SelectPset` changing the set the next result names and starting its batch over, the
@@ -407,8 +450,9 @@ transport*) until a gateway test starts the emulator in-process.
 - A field or tag is written as a `Boolean`, an integer, an enumeration, a `Float` or a `Double`: a field as the
   contract's type, a node as its DataType, read at startup on the PLC's own server and at each connect over the
   session.  A DataType the client has no encoding for, an abstract one or a nodeset's own, goes as the mode's type: a
-  `production` count `UInt32`, the stop code `Int32`, a `toggle` `Boolean`, any other number `Double`.
-- A scheduled stop needs a generated `status`: pump1's, the web's run command, stops only when the UI stops it.
+  `production` count `UInt32`, the stop code `Int32`, a `toggle` or `on` `Boolean`, any other number `Double`.
+- A scheduled stop needs a generated `status`, a `toggle` or `on`: pump1's, the web's run command, stops only when the UI
+  stops it.
 - Status codes reach the OpcServer over pubsub only - a session-written tag's non-Good status is refused (no
   `StatusWrite`) and its value is written alone.  A Bad reading always carries its last value: the OpcServer's reader
   skips a field without one.  The source timestamp is not held with a held reading, and the historian bits are not

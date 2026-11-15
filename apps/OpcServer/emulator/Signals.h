@@ -2,15 +2,16 @@
 #include "Quality.h"
 
 namespace Jde::Opc::Emulator{
-	//How a tag's value evolves.  Free-running modes ignore the device's rate; Follow and Production track it; Command
-	//tags are never written by the emulator - the UI owns them and the emulator subscribes.
-	enum class EMode : uint8{ Sine, Ramp, RandomWalk, Counter, Toggle, Command, Follow, Production };
+	//How a tag's value evolves.  Free-running modes ignore the device's rate; Follow and Production track it; On is a bool that
+	//stays on, a `status` the device's stops alone hold off; Command tags are never written by the emulator - the UI owns them
+	//and the emulator subscribes.
+	enum class EMode : uint8{ Sine, Ramp, RandomWalk, Counter, Toggle, On, Command, Follow, Production };
 	α ParseMode( sv s, SRCE )ε->EMode;
 	α ToString( EMode mode )ι->sv;
 
 	struct TagSpec{
 		TagSpec( const jobject& o, SRCE )ε;//throws on a key there but of the wrong kind (FindKey), and on the refusals below it.
-		α IsBool()Ι->bool{ return Mode==EMode::Toggle || Mode==EMode::Command; }
+		α IsBool()Ι->bool{ return Mode==EMode::Toggle || Mode==EMode::On || Mode==EMode::Command; }
 		string Name;
 		EMode Mode{ EMode::Counter };
 		double Min{ 0 }, Max{ 100 }, Step{ 1 }, RatedRpm{ 1450 };
