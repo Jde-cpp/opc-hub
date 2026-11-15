@@ -29,6 +29,7 @@ namespace Jde::Opc::Emulator{
 	struct IGenerator{
 		virtual ~IGenerator() = default;
 		β Next( Duration dt, double rate )ι->double = 0;
+		β PerPeriod()Ι->bool{ return false; }//steps once a period, whatever `dt`:  sampled once a period, not once a piece.
 	};
 	α MakeGenerator( const TagSpec& spec )ε->up<IGenerator>;//production:  the count alone.
 	//production's pair:  the count, and the rejects among the units counted so far - sampled after the count.

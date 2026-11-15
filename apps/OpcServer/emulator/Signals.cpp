@@ -25,6 +25,7 @@ namespace Jde::Opc::Emulator{
 		THROW_IFSL( Max<=Min && !IsBool() && Mode!=EMode::Follow && Mode!=EMode::Production, "Tag '{}': max ({}) must exceed min ({}).", Name, Max, Min );
 		THROW_IFSL( Period<=Duration::zero() || Tau<=Duration::zero(), "Tag '{}': period and tau must be positive.", Name );
 		THROW_IFSL( Follows.size() && Mode!=EMode::Follow, "Tag '{}': `follows` is the follow mode's - mode '{}' lags towards nothing.", Name, ToString(Mode) );
+		THROW_IFSL( Follows.size() && o.contains("ratedRpm"), "Tag '{}': `follows` takes its target from `{}`'s pace - `ratedRpm` would be dropped.", Name, Follows );
 		//randomWalk draws from [-Step,Step), which is empty unless Step>0 - absl::Uniform then returns -Step every time - and
 		//counter wraps on `>Max`, so a non-positive step walks down from Min forever.  A config typo either way - it must fail like one.
 		THROW_IFSL( Step<=0 && (Mode==EMode::RandomWalk || Mode==EMode::Counter), "Tag '{}': step ({}) must be positive for mode '{}'.", Name, Step, ToString(Mode) );
@@ -61,11 +62,13 @@ namespace Jde::Opc::Emulator{
 	struct RandomWalk final : IGenerator{
 		RandomWalk( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _value{ (s.Min+s.Max)/2 }, _step{ s.Step }{}
 		α Next( Duration, double )ι->double override{ _value = std::clamp( _value+absl::Uniform<double>( Math::BitGen(), -_step, _step ), _min, _max ); return _value; }
+		α PerPeriod()Ι->bool override{ return true; }
 		double _min, _max, _value, _step;
 	};
 	struct Counter final : IGenerator{//the soak's mode: +Step per cycle, wrapping at Max.
 		Counter( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _step{ s.Step }, _value{ s.Min }{}
 		α Next( Duration, double )ι->double override{ _value += _step; if( _value>_max ) _value = _min; return _value; }
+		α PerPeriod()Ι->bool override{ return true; }
 		double _min, _max, _step, _value;
 	};
 	struct Toggle final : IGenerator{//bool flipping every Period

@@ -101,6 +101,7 @@ namespace Jde::Opc::Emulator::Tests{
 	TEST( TagSpecTests, FollowsIsTheFollowModes ){
 		EXPECT_EQ( spec(R"({"name":"speed","mode":"follow","follows":"totalCount"})").Follows, "totalCount" );
 		EXPECT_THROW( spec(R"({"name":"speed","mode":"sine","follows":"totalCount"})"), Exception );//it would lag towards nothing
+		EXPECT_THROW( spec(R"({"name":"speed","mode":"follow","follows":"totalCount","ratedRpm":1450})"), Exception );//the count's pace would drop it
 		EXPECT_THROW( spec(R"({"name":"speed","mode":"follow","follows":7})"), Exception );
 	}
 	TEST( GeneratorTests, CommandTagsHaveNoGenerator ){

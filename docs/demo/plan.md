@@ -37,10 +37,13 @@ Built 2026-11-15, where it differs from the text above:
 - **A rate, not a switch.** A generator is sampled with the share of its pace the device ran at ([`Signals.h`](../../apps/OpcServer/emulator/Signals.h)): 0 off, 1 on, 1/`factor` in a slow period. `production` works that share of the time and `follow` lags towards that share of its target, so the pumps' `motorRpm` would slow too, had they a `slow` list.
 - **One window per entry.** An entry of `stops` or `slow` holds the window it is in or the next ([`Devices.h`](../../apps/OpcServer/emulator/Devices.h)), and moves on when the device clock reaches its end, in the lists' order, so a seed draws the same windows whatever the period.
 - **A random gap runs from the last one's end**, the first from the start. The length is drawn on the clock's own ticks, so `min` and `max` are both reached.
-- **`at`:** `06:00` or `06:00:00`. An entry under way at the start is in force from it. A time the clocks skip is the instant they jump to and one they repeat its first, as `Chrono::ToTimePoint` reads a local time. `for` is under a day.
-- **No `seed`:** the start time plus the device's place in the list, so two devices of one process differ.
-- **Refused besides:** an entry with no shape or two, a `mean` or `min` that is not positive, a `factor` that is not over 1, and a `slow` list on a device with no `production` tag.
-- **The wall clock is read once**, as the run starts, a connect after the parse. The device clock is the suite's from there.
+- **`at`:** `06:00` or `06:00:00`. An entry under way at the start is in force from it. A time the clocks skip is the instant they jump to and one they repeat its first, as `Chrono::ToTimePoint` reads a local time. `for` is under 23 hours, the shortest day a clock change makes: a longer one would run into the next day's window on the day the clocks go forward.
+- **No `seed`:** the start time plus the device's place in the list, so two devices of one process differ. The seed is logged at startup.
+- **Refused besides:** an entry with no shape or two, a key of another shape's (a `factor` on a stop, a `code` on a slow period), a `mean` or `min` that is not positive, a `factor` that is not over 1, a `slow` list on a device with no `production` tag, and a `ratedRpm` beside `follows`.
+- **The wall clock is read each period.** Each cycle anchors the device's start to it, and the `at` windows move with it, so a pause the steady clock misses, a suspend or a paused VM, doesn't shift them. The other shapes keep the device clock, which is the suite's.
+- **Overlapping stops:** any holds `status` off, and the first coded one gives `reasonCode`, so an uncoded stop never hides a coded one's reason.
+- **`zone` is looked up only when set or for an `at` entry**, so a host without tzdata runs the rest. A name that does not resolve is refused by `Chrono::ToTimeZone` ([`chrono.h`](../../include/jde/fwk/chrono.h)), the historian's lookup too, and tested in `ChronoTests`.
+- **A `counter` and a `randomWalk` step once a period**, though the stops' and slow periods' edges cut it into pieces.
 - **The seed's case pins two stops' times**, to the millisecond, which is what another run means in one process. An abseil that draws a distribution another way moves them.
 - By hand, 100 s under `-transport=server` against a hub on a scratch sqlite database: an `at` stop at its New York second with its code, a coded random stop, `motorRpm` with `follows` at 60 a minute, and at 30 with the count at half its pace through a `factor` of 2.
 

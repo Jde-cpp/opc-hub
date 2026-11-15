@@ -9,20 +9,23 @@ namespace Jde::Opc::Emulator{
 	//three shapes.  {every, for}:  from each `every` of the clock, which starts with the emulator - the first at `every`, not at
 	//0 - for `for`, the shorter.  {mean, min, max}:  after a gap from the last one's end, the first's from 0, drawn about `mean`,
 	//exponential, for a length drawn from [min, max], both from the device's engine.  {at, for}:  from a time of day in the
-	//emulator's zone for `for`, the one under way at the start included;  a time the clocks skip is the instant they jump to,
-	//one they repeat its first.
+	//emulator's zone for `for`, under 23 hours, the shortest day a clock change makes, the one under way at the start included;
+	//a time the clocks skip is the instant they jump to, one they repeat its first.  A key of no shape's but the owner's own
+	//(`own`:  a stop's `code`, a slow period's `factor`) is refused.
 	struct Recurrence{
 		enum class EShape : uint8{ Every, Random, At };
-		Recurrence( const jobject& o, sv owner, SRCE )ε;
+		Recurrence( const jobject& o, sv owner, sv own, SRCE )ε;
 		α IsActive( Duration t )Ι->bool{ return t>=Begin && t<End; }
 		α NextEdge( Duration t )Ι->Duration{ return t<Begin ? Begin : End; }
 		α Advance( Device& device )ι->void;//to the window after this one, once the clock is at its End.
 		α Shortest()Ι->Duration{ return Shape==EShape::Random ? Min : Length; }
+		//The run between two windows:  the shortest an {every} or {at} entry has, a random entry's mean - its gaps are exponential.
+		α Gap()Ι->Duration{ return Shape==EShape::Every ? Every-Length : Shape==EShape::At ? 23h-Length : Mean; }
 		EShape Shape;
 		Duration Every{}, Mean{}, Min{}, Max{};
 		Duration At{};//since the local midnight.
 		Duration Length{};//`for`;  a random entry's, this window's draw.
-		Duration Begin{}, End{};//both 0 until the first Sample advances to the first window.
+		Duration Begin{}, End{};//this window's;  ParseDevices advances each entry to its first.
 	};
 	struct Stop : Recurrence{
 		Stop( const jobject& o, sv device, SRCE )ε;
@@ -56,36 +59,39 @@ namespace Jde::Opc::Emulator{
 		//The last command seen - the run command the UI owns.  Off on a device with a command tag until its first notification, or
 		//under -transport=server its node's value;  through a session outage it holds, as a PLC holds its last command.
 		bool Command{ true };
-		vector<Stop> Stops;//the first active wins.
-		vector<Slow> Slows;//as the stops.
+		vector<Stop> Stops;//any active holds `status` off;  the first active with a code gives `reasonCode`.
+		vector<Slow> Slows;//the first active gives the factor.
 		//A generated `status`'s own generator, which Sample reads before the stops;  the tag itself publishes On.
 		up<IGenerator> StatusSource;
 		bool On{ true };//`status` as of the last Sample:  the command, or StatusSource where `status` is generated, and off through a stop.
-		UA_Int32 Code{};//the active stop's, else 0 - what `reasonCode` publishes.
-		double Factor{ 1 };//the active slow period's, else 1.
+		UA_Int32 Code{};//the first active coded stop's, else 0 - what `reasonCode` publishes.
 		//A period:  the stops' clock, `status`, then every generated tag's Value and Status - a command tag has neither.  The period
-		//is cut at each stop's and slow period's start and end, so each holds for its length whatever the period.
+		//is cut at each stop's and slow period's start and end, so each holds for its length whatever the period;  a counter
+		//and a random walk, which step once a period, are sampled once, after the pieces.
 		α Sample( Duration dt )ι->void;
+		//Moves Start so that Start+Clock is `wall`, and each {at, for} window with it:  their times of day are the wall clock's,
+		//which runs on through a pause the steady clock misses (a suspend, a VM paused).  The other shapes keep the device clock.
+		α Anchor( TimePoint wall )ι->void;
 		optional<uint> StatusTag, ReasonTag;//indexes into Tags:  the bool tag named `status`;  `reasonCode`, which a stops list adds.
 		Duration Clock{};
-		TimePoint Start;//the wall time of Clock 0, which the {at, for} entries read.
-		const std::chrono::time_zone* Zone{};//the emulator's.
-		//The random entries' draws.  Seeded from `seed`, else from Start and the device's place in the list:  a std engine, so a
-		//seed draws the same stops in every run, where a seeded absl::BitGen is salted per process.
+		TimePoint Start;//the wall time of Clock 0, as Anchor last set it, which the {at, for} entries read.
+		const std::chrono::time_zone* Zone{};//the emulator's;  null on a device with no {at, for} entry.
+		//The random entries' draws.  Seeded from `seed`, else from the parse's start time and the device's place in the list,
+		//which ParseDevices logs:  a std engine, so a seed draws the same stops in every run, where a seeded absl::BitGen is
+		//salted per process.
 		std::mt19937_64 Engine;
 	};
 	//Answers whether the contract publishes "<device>.<tag>" - PlcServer::FindField - and its field index when it does.
 	//Empty for the write transport, where nothing is published and every generated tag goes over the session.
 	using FindField = function<optional<uint>(sv name)>;
-	///emulator/zone -> its zone.  Throws on a name the tz database lacks.
-	α ParseZone( sv name, SRCE )ε->const std::chrono::time_zone&;
 	///emulator/devices -> the devices, generators built, published fields mapped, Owner set.  Self is the caller's:
 	//nothing here needs an Emulator, a session or a PLC server, which is what makes it a unit (T2).  A production tag with
-	//a reject share is followed by its reject tag, and a `stops` list adds `reasonCode` as the last.  `start` is the wall time
-	//of each device's Clock 0.  Throws on an empty list, a device without tags, any TagSpec refusal (#9), two tags of one name,
-	//a `follows` that names no production tag of its device, a stop or slow period of no shape or two, stops on a device whose
-	//`status` is not generated, slow periods on one with no production tag, and a command tag beside a generated `status`,
-	//which would command nothing.  Owner and the `status` and `reasonCode` generators point into the vector, which never
-	//grows after.
-	α ParseDevices( const jarray& devices, const FindField& findField, const std::chrono::time_zone& zone, TimePoint start, SRCE )ε->vector<Device>;
+	//a reject share is followed by its reject tag, and a `stops` list adds `reasonCode` as the last.  `zone` is /emulator/zone's,
+	//null where it is left out:  UTC, looked up only for a device with an {at, for} entry, so a host without the tz database
+	//runs the rest.  `start` is the wall time of each device's Clock 0.  Throws on an empty list, a device without tags, any
+	//TagSpec refusal (#9), two tags of one name, a `follows` that names no production tag of its device, a stop or slow period
+	//of no shape or two or with another shape's key, stops on a device whose `status` is not generated, slow periods on one
+	//with no production tag, and a command tag beside a generated `status`, which would command nothing.  Owner and the
+	//`status` and `reasonCode` generators point into the vector, which never grows after.
+	α ParseDevices( const jarray& devices, const FindField& findField, const std::chrono::time_zone* zone, TimePoint start, SRCE )ε->vector<Device>;
 }

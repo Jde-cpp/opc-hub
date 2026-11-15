@@ -21,11 +21,21 @@ namespace Jde::Opc::Emulator{
 		THROW_IFSL( !valid, "{}: `at` is '{}' - it takes a time of day, 06:00 or 06:00:00.", owner, text );
 		return hours{ *h }+minutes{ *m }+seconds{ *s };
 	}
-	Recurrence::Recurrence( const jobject& o, sv owner, SL sl )ε{
+	Ω shapeKeys( Recurrence::EShape shape )ι->std::span<const sv>{
+		static constexpr array<sv,2> every{ "every", "for" }, at{ "at", "for" };
+		static constexpr array<sv,3> random{ "mean", "min", "max" };
+		return shape==Recurrence::EShape::Every ? std::span<const sv>{ every } : shape==Recurrence::EShape::Random ? std::span<const sv>{ random } : std::span<const sv>{ at };
+	}
+	Recurrence::Recurrence( const jobject& o, sv owner, sv own, SL sl )ε{
 		let duration = [&]( sv key ){ return FindKey<Duration>( o, key, owner, sl ); };
 		let every = duration( "every" ); let mean = duration( "mean" ); let at = FindKey<string>( o, "at", owner, sl );
 		THROW_IFSL( (every ? 1 : 0)+(mean ? 1 : 0)+(at ? 1 : 0)!=1, "{} takes one shape:  {{every, for}}, {{mean, min, max}} or {{at, for}}.", owner );
 		Shape = every ? EShape::Every : mean ? EShape::Random : EShape::At;
+		let keys = shapeKeys( Shape );
+		for( let& entry : o ){//a slow period pasted into `stops` must not run as a stop, its `factor` unread.
+			let key = sv{ entry.key() };
+			THROW_IFSL( key!=own && std::ranges::find(keys, key)==keys.end(), "{}: `{}` is no key of {{{}}} - it takes those and `{}`.", owner, key, Str::Join(keys, ", "), own );
+		}
 		if( Shape==EShape::Random ){
 			Mean = *mean; Min = duration( "min" ).value_or( Duration::zero() ); Max = duration( "max" ).value_or( Duration::zero() );
 			THROW_IFSL( Mean<=Duration::zero() || Min<=Duration::zero(), "{}: `mean` and `min` must be positive.", owner );
@@ -39,7 +49,8 @@ namespace Jde::Opc::Emulator{
 		}
 		else{
 			At = timeOfDay( *at, owner, sl );
-			THROW_IFSL( Length<=Duration::zero() || Length>=24h, "{}: `for` must be positive and shorter than a day.", owner );
+			//a longer one would run into the next day's on a day the clocks go forward, and never release.
+			THROW_IFSL( Length<=Duration::zero() || Length>=23h, "{}: `for` must be positive and under 23 hours, the shortest day a clock change makes.", owner );
 		}
 	}
 	α Recurrence::Advance( Device& device )ι->void{
@@ -61,11 +72,11 @@ namespace Jde::Opc::Emulator{
 		End = Begin+Length;
 	}
 	Stop::Stop( const jobject& o, sv device, SL sl )ε:
-		Recurrence{ o, Ƒ("Device '{}' stop", device), sl },
+		Recurrence{ o, Ƒ("Device '{}' stop", device), "code", sl },
 		Code{ FindKey<UA_Int32>(o, "code", Ƒ("Device '{}' stop", device), sl).value_or(0) }
 	{}
 	Slow::Slow( const jobject& o, sv device, SL sl )ε:
-		Recurrence{ o, Ƒ("Device '{}' slow period", device), sl },
+		Recurrence{ o, Ƒ("Device '{}' slow period", device), "factor", sl },
 		Factor{ FindKey<double>(o, "factor", Ƒ("Device '{}' slow period", device), sl).value_or(0) }{
 		THROW_IFSL( !(Factor>1), "Device '{}': a slow period's `factor` must exceed 1 - the cycle takes that many times as long.", device );
 	}
@@ -96,7 +107,8 @@ namespace Jde::Opc::Emulator{
 					slow.Advance( *this );
 			}
 		};
-		advance();//the first Sample's:  to each first window.
+		let period = dt;
+		double rate{};
 		do{
 			auto piece = dt;
 			for( let& stop : Stops )
@@ -104,33 +116,41 @@ namespace Jde::Opc::Emulator{
 			for( let& slow : Slows )
 				piece = std::min( piece, slow.NextEdge(Clock)-Clock );
 			let commanded = StatusSource ? StatusSource->Next( piece, Command ? 1 : 0 )!=0 : Command;
-			let factor = [&]{ let slow = active( Slows ); return slow==Slows.end() ? 1 : slow->Factor; };
-			let rate = commanded && active( Stops )==Stops.end() ? 1/factor() : 0;//through the piece, which no edge cuts.
+			let slow = active( Slows );
+			rate = commanded && active( Stops )==Stops.end() ? 1/( slow==Slows.end() ? 1 : slow->Factor ) : 0;//through the piece, which no edge cuts.
 			Clock += piece;
 			dt -= piece;
 			advance();
-			let stop = active( Stops );
-			Code = stop==Stops.end() ? 0 : stop->Code;
-			On = commanded && stop==Stops.end();//at the piece's end:  what `status` publishes.
-			Factor = factor();
+			let coded = std::ranges::find_if( Stops, [this](let& x){ return x.Code && x.IsActive(Clock); } );//an uncoded stop never hides a coded one's reason.
+			Code = coded==Stops.end() ? 0 : coded->Code;
+			On = commanded && active( Stops )==Stops.end();//at the piece's end:  what `status` publishes.
 			for( auto& tag : Tags ){
-				if( tag.Generator )//sampled even through a fault that holds the reading: the process runs on, the sensor is blind.
+				if( tag.Generator && !tag.Generator->PerPeriod() )//sampled even through a fault that holds the reading: the process runs on, the sensor is blind.
 					tag.Status = tag.Quality.Apply( piece, tag.Generator->Next(piece, rate), tag.Value );
 			}
 		}while( dt>Duration::zero() );
+		for( auto& tag : Tags ){
+			if( tag.Generator && tag.Generator->PerPeriod() )
+				tag.Status = tag.Quality.Apply( period, tag.Generator->Next(period, rate), tag.Value );
+		}
+	}
+	α Device::Anchor( TimePoint wall )ι->void{
+		let drift = wall-( Start+Clock );
+		Start += drift;
+		let shift = [&]( auto& entries ){
+			for( auto& entry : entries ){
+				if( entry.Shape!=Recurrence::EShape::At )
+					continue;
+				entry.Begin -= drift; entry.End -= drift;
+				if( Clock>=entry.End )//the pause ran past it:  on to the next, as Sample would have.
+					entry.Advance( *this );
+			}
+		};
+		shift( Stops ); shift( Slows );
 	}
 }
 namespace Jde::Opc{
-	α Emulator::ParseZone( sv name, SL sl )ε->const std::chrono::time_zone&{
-		try{
-			return *std::chrono::locate_zone( name );
-		}
-		catch( const std::runtime_error& e ){
-			THROWSL( "/emulator/zone '{}' is not a known time zone: {}", name, e.what() );
-		}
-	}
-
-	α Emulator::ParseDevices( const jarray& devices, const FindField& findField, const std::chrono::time_zone& zone, TimePoint start, SL sl )ε->vector<Device>{
+	α Emulator::ParseDevices( const jarray& devices, const FindField& findField, const std::chrono::time_zone* zone, TimePoint start, SL sl )ε->vector<Device>{
 		vector<Device> y;
 		y.reserve( devices.size() );//never grown after:  Owner and the `status` and `reasonCode` generators point into it.
 		for( let& d : devices ){
@@ -139,8 +159,9 @@ namespace Jde::Opc{
 			let lastSegment = device.Path.substr( device.Path.rfind('/')+1 );
 			device.Name = lastSegment.substr( lastSegment.rfind('~')+1 );
 			device.Start = start;
-			device.Zone = &zone;
-			device.Engine.seed( FindKey<uint64_t>(o, "seed", Ƒ("Device '{}'", device.Path), sl).value_or((uint64_t)start.time_since_epoch().count()+y.size()) );
+			let seed = FindKey<uint64_t>( o, "seed", Ƒ("Device '{}'", device.Path), sl );
+			let drawn = seed.value_or( (uint64_t)start.time_since_epoch().count()+y.size() );
+			device.Engine.seed( drawn );
 			auto add = [&]( TagSpec&& spec, up<IGenerator> generator, const UA_DataType* type ){
 				Tag tag{ move(spec), move(generator) };
 				if( tag.Generator ){
@@ -193,6 +214,18 @@ namespace Jde::Opc{
 					device.Slows.emplace_back( Json::AsObject(entry, sl), device.Path, sl );
 			}
 			THROW_IFSL( device.Slows.size() && std::ranges::none_of(device.Tags, [](let& t){ return t.Spec.Mode==EMode::Production; }), "Device '{}': slow periods stretch a production tag's cycle, and it has none.", device.Path );
+			let any = [&]( Recurrence::EShape shape ){
+				let is = [shape]( let& x ){ return x.Shape==shape; };
+				return std::ranges::any_of( device.Stops, is ) || std::ranges::any_of( device.Slows, is );
+			};
+			if( any(Recurrence::EShape::At) )
+				device.Zone = zone ? zone : &Chrono::ToTimeZone( "UTC", "/emulator/zone, UTC where left out,", sl );
+			for( auto& stop : device.Stops )//to each first window, in the lists' order, as Sample moves them on.
+				stop.Advance( device );
+			for( auto& slow : device.Slows )
+				slow.Advance( device );
+			if( !seed && any(Recurrence::EShape::Random) )
+				INFO( "[{}]seed={} - set it as the device's `seed` to draw these random stops again.", device.Name, drawn );
 			if( device.Stops.size() ){
 				//A command `status` is the UI's:  the emulator subscribes it and never writes it, so it has nothing to hold off.
 				THROW_IFSL( !generated, "Device '{}': stops hold a generated `{}` off - a toggle, not a command.", device.Path, _status );

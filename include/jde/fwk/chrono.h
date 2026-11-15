@@ -26,6 +26,9 @@ namespace Jde::Chrono{
 	Φ ToTimePoint( string iso, const time_zone& tz, SRCE )ε->TimePoint;
 	Φ ToTimePoint( uint16_t year, uint8 month, uint8 day, uint8 hour=0, uint8 minute=0, uint8 second=0, Duration subseconds=Duration::zero(), SRCE )ε->TimePoint;
 	Φ ToTimeZone( sv name, const std::chrono::time_zone& dflt, ELogLevel level=ELogLevel::Debug, SRCE )ι->const std::chrono::time_zone&;
+	//As above, but a name the database lacks throws, naming `owner`, the setting it came from - and the database itself where
+	//it is missing, which fails every name, UTC included.
+	Φ ToTimeZone( sv name, sv owner, SRCE )ε->const std::chrono::time_zone&;
 	template<class T=Duration>
 	α ToString( T duration )ι->string;
 	template<class To,class From>

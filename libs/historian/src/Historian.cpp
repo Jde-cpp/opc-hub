@@ -5,16 +5,7 @@
 #define let const auto
 
 namespace Jde::Opc::Hist{
-	//libc++ loads the whole tz database for any zone, UTC included, so a host without it, such as a minimal container,
-	//fails here:  a startup error naming the cause, not a terminate.
-	Ω utc( SL sl )ε->const std::chrono::time_zone&{
-		try{
-			return *std::chrono::locate_zone( "UTC" );
-		}
-		catch( const std::runtime_error& e ){
-			THROWSL( "hist.timeZone defaults to UTC, which the time zone database could not give - is tzdata installed?  {}", e.what() );
-		}
-	}
+	Ω utc( SL sl )ε->const std::chrono::time_zone&{ return Chrono::ToTimeZone( "UTC", "hist.timeZone, UTC where left out,", sl ); }
 
 	//A key that is there has to parse:  a silent default would leave the operator believing the config was applied.
 	Ω find( const jobject& hist, sv key )ι->const jvalue*{
@@ -33,15 +24,7 @@ namespace Jde::Opc::Hist{
 	//No fallback for a zone that isn't found:  fixing the name later would move every day's boundary under existing files.
 	Ω timeZone( const jobject& hist, SL sl )ε->const std::chrono::time_zone&{
 		let p = find( hist, "timeZone" );
-		if( !p )
-			return utc( sl );
-		let name = asString( *p, "timeZone", sl );
-		try{
-			return *std::chrono::locate_zone( name );
-		}
-		catch( const std::runtime_error& e ){
-			THROWSL( "hist.timeZone '{}' is not a known time zone: {}", name, e.what() );
-		}
+		return p ? Chrono::ToTimeZone( asString(*p, "timeZone", sl), "hist.timeZone", sl ) : utc( sl );
 	}
 
 	//Against the current directory, once, so the lock, the directories, the scans and every write resolve it the same way.

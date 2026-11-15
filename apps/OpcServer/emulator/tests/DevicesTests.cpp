@@ -4,18 +4,19 @@
 #define let const auto
 namespace Jde::Opc::Emulator::Tests{
 	constexpr TimePoint _start{ sys_days{2026y/January/1} };//the wall time of the device clock's 0 - never the wall clock's own.
-	Ω devices( sv json, const FindField& findField={}, TimePoint start=_start, sv zone="UTC" )ε->vector<Device>{
-		return ParseDevices( boost::json::parse(string{json}).as_array(), findField, ParseZone(zone), start );
+	//`zone` empty:  /emulator/zone left out.
+	Ω devices( sv json, const FindField& findField={}, TimePoint start=_start, sv zone={} )ε->vector<Device>{
+		return ParseDevices( boost::json::parse(string{json}).as_array(), findField, zone.empty() ? nullptr : &Chrono::ToTimeZone(zone, "zone"), start );
 	}
 	//A machine:  a count, a `status` that stays on but for its stops, and what `rest` adds - "stops":[...], "seed":1.
-	Ω machines( sv rest, TimePoint start=_start, sv zone="UTC" )ε->vector<Device>{
+	Ω machines( sv rest, TimePoint start=_start, sv zone={} )ε->vector<Device>{
 		return devices( Ƒ(R"([{{ "path":"machine", {}, "tags":[ {{ "name":"speed", "mode":"follow", "follows":"totalCount", "tau":"PT1S" }}, {{ "name":"totalCount", "mode":"production" }}, {{ "name":"status", "mode":"toggle", "period":"PT100000H" }} ] }}])", rest), {}, start, zone );
 	}
 	using Window = std::pair<Duration,Duration>;
-	//The device's first stop's windows, the clock walked from each one's end to the next's.
+	//The device's first stop's windows, from the one ParseDevices placed, the clock walked from each one's end to the next's.
 	Ω stopWindows( Device& device, uint count )ι->vector<Window>{
 		vector<Window> y;
-		for( device.Sample(Duration::zero()); y.size()<count; device.Sample(device.Stops[0].End-device.Clock) )
+		for( ; y.size()<count; device.Sample(device.Stops[0].End-device.Clock) )
 			y.emplace_back( device.Stops[0].Begin, device.Stops[0].End );
 		return y;
 	}
@@ -208,7 +209,7 @@ namespace Jde::Opc::Emulator::Tests{
 		stopsAfter( skipped[0], 2h );
 		stopsAfter( skipped[0], 24h-20min-30min );//the next day has its 02:30, 23.5 hours after that 03:00
 		//another zone's 06:00, and the emulator's default, UTC
-		auto utc = machines( changeover, Chrono::ToTimePoint("2026-11-01T04:00:00Z") );
+		auto utc = machines( changeover, Chrono::ToTimePoint("2026-11-01T04:00:00Z") );//left out
 		stopsAfter( utc[0], 2h );
 
 		auto underWay = machines( changeover, Chrono::ToTimePoint("2026-07-01T10:05:00Z"), "America/New_York" );//06:05:  five minutes into it
@@ -224,16 +225,58 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_FALSE( machine.ReasonTag );//no stops, no code
 		machine.Sample( 200s );
 		EXPECT_EQ( count.Value, 200 ); EXPECT_NEAR( speed.Value, 60, 1e-6 );//units a minute at a cycle of a second
-		EXPECT_EQ( machine.Factor, 2 ); EXPECT_TRUE( machine.On );//as of 200
+		EXPECT_TRUE( machine.On );
 		machine.Sample( 1s );
 		EXPECT_NEAR( speed.Value, 30+30*std::exp(-1.0), 1e-6 );
 		machine.Sample( 99s );
 		EXPECT_EQ( count.Value, 250 ); EXPECT_NEAR( speed.Value, 30, 1e-6 );//a unit every two seconds
-		EXPECT_EQ( machine.Factor, 1 ); EXPECT_TRUE( machine.On );
+		EXPECT_TRUE( machine.On );
 		machine.Sample( 1s );
 		EXPECT_NEAR( speed.Value, 60-30*std::exp(-1.0), 1e-6 );
 		machine.Sample( 199s );//one period over the next, whole:  cut at both its edges
-		EXPECT_EQ( count.Value, 251+99+50 ); EXPECT_EQ( machine.Factor, 1 );
+		EXPECT_EQ( count.Value, 251+99+50 );
+	}
+	TEST( DeviceTests, ACounterStepsOnceAPeriodWhateverItsPieces ){
+		auto y = devices( R"([{ "path":"machine", "slow":[ { "every":"PT10S", "for":"PT2S", "factor":2 } ], "tags":[ { "name":"units", "mode":"production" }, { "name":"ticks", "mode":"counter" }, { "name":"walk", "mode":"randomWalk" } ] }])" );
+		auto& machine = y[0];
+		let& ticks = machine.Tags[1]; let& walk = machine.Tags[2];
+		for( uint period=1; period<=20; ++period ){//1.5 s each:  the slow edges at 10, 20 and 22 s cut the periods they fall in
+			let before = walk.Value;
+			machine.Sample( 1500ms );
+			EXPECT_EQ( ticks.Value, period ) << period;
+			if( period>1 )//the first is the walk's start, (min+max)/2
+				EXPECT_LE( std::abs(walk.Value-before), 1 ) << period;//a step of 1 at most
+		}
+	}
+	TEST( DeviceTests, AnUncodedStopNeverHidesACodedOnesReason ){
+		auto y = machines( R"("stops":[ { "every":"PT20S", "for":"PT10S" }, { "every":"PT25S", "for":"PT10S", "code":5 } ])" );//[20,30) with none, [25,35) with its code
+		auto& machine = y[0];
+		for( uint second=1; second<=39; ++second ){
+			machine.Sample( 1s );
+			let uncoded = second>=20 && second<30; let coded = second>=25 && second<35;
+			EXPECT_EQ( machine.On, !uncoded && !coded ) << second;
+			EXPECT_EQ( machine.Code, coded ? 5 : 0 ) << second;
+		}
+	}
+	TEST( DeviceTests, AnAtStopKeepsToTheWallClock ){//through a pause the steady clock missed:  a suspend, a VM paused
+		constexpr sv stops{ R"("stops":[ { "at":"06:00", "for":"PT20M", "code":4 }, { "every":"PT10H", "for":"PT1M", "code":5 } ])" };
+		auto y = machines( stops );//from midnight, UTC
+		auto& machine = y[0];
+		machine.Sample( 1h );
+		machine.Anchor( _start+1h+3min );//the wall clock three minutes on
+		EXPECT_EQ( machine.Stops[1].Begin, 10h );//the device clock's shapes stay where they were
+		machine.Sample( 5h-3min-1s );//05:59:59 on the wall clock
+		EXPECT_TRUE( machine.On );
+		machine.Sample( 1s );
+		EXPECT_FALSE( machine.On ); EXPECT_EQ( machine.Code, 4 );
+
+		auto paused = machines( stops );
+		auto& through = paused[0];
+		through.Sample( 5h );
+		through.Anchor( _start+5h+90min );//06:30:  the pause ran past the stop
+		EXPECT_EQ( through.Stops[0].Begin, 24h+6h-90min );//the next day's, on the device clock
+		through.Sample( 1s );
+		EXPECT_TRUE( through.On ); EXPECT_EQ( through.Code, 0 );
 	}
 	TEST( DeviceTests, AnUncodedStopAfterACodedOneReadsNoCode ){
 		auto y = machines( R"("stops":[ { "every":"PT20S", "for":"PT5S", "code":7 }, { "every":"PT30S", "for":"PT5S" } ])" );//[20,25) with its code, [30,35) with none
@@ -303,14 +346,15 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( stops(R"([{ "at":"06:00", "every":"PT1H", "for":"PT3S" }])"), Exception );
 		EXPECT_THROW( stops(R"([{ "for":"PT3S", "code":7 }])"), Exception );//none
 		EXPECT_THROW( stops(R"([{ "at":"06:00" }])"), Exception );
-		EXPECT_THROW( stops(R"([{ "at":"06:00", "for":"PT24H" }])"), Exception );
+		EXPECT_THROW( stops(R"([{ "at":"06:00", "for":"PT23H" }])"), Exception );//the day the clocks go forward:  it would never release
+		EXPECT_NO_THROW( stops(R"([{ "at":"06:00", "for":"PT22H59M" }])") );
+		EXPECT_THROW( stops(R"([{ "every":"PT1H", "for":"PT10M", "factor":2 }])"), Exception );//a slow period's key:  never a stop unread
+		EXPECT_THROW( stops(R"([{ "mean":"PT10M", "min":"PT2M", "max":"PT6M", "for":"PT3M" }])"), Exception );//another shape's
+		EXPECT_THROW( stops(R"([{ "every":"PT1H", "for":"PT10M", "min":"PT2M" }])"), Exception );
+		EXPECT_THROW( stops(R"([{ "at":"06:00", "for":"PT10M", "cod":4 }])"), Exception );//a typo
 		for( let at : {"6:00", "24:00", "06:60", "06:00:60", "06.00", "0600", "06:00:", "06:00:00Z", "", "6am"} )
 			EXPECT_THROW( stops(Ƒ(R"([{{ "at":"{}", "for":"PT20M" }}])", at)), Exception ) << at;
 		EXPECT_THROW( stops(R"([{ "at":600, "for":"PT20M" }])"), Exception );
-
-		EXPECT_NO_THROW( ParseZone("America/New_York") );
-		EXPECT_THROW( ParseZone("No/Such_Zone"), Exception );
-		EXPECT_THROW( ParseZone(""), Exception );
 
 		EXPECT_NO_THROW( machines(R"("seed":18446744073709551615)") );
 		EXPECT_THROW( machines(R"("seed":"1")"), Exception );
@@ -327,8 +371,20 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( slow(R"([{ "every":"PT1H", "for":"PT30M", "factor":0.8 }])"), Exception );
 		EXPECT_THROW( slow(R"([{ "every":"PT1H", "for":"PT30M", "factor":"1.25" }])"), Exception );
 		EXPECT_THROW( slow(R"([{ "for":"PT30M", "factor":1.25 }])"), Exception );//no shape
+		EXPECT_THROW( slow(R"([{ "every":"PT1H", "for":"PT30M", "factor":1.25, "code":3 }])"), Exception );//a stop's key
 		constexpr sv noCount{ R"([{ "path":"pump1", "slow":[{ "every":"PT1H", "for":"PT30M", "factor":1.25 }], "tags":[ { "name":"motorRpm", "mode":"follow" }, { "name":"status", "mode":"command" } ] }])" };
 		EXPECT_THROW( devices(noCount), Exception );//nothing to slow
+	}
+	TEST( ParseDevicesTests, TheZoneIsLookedUpForAnAtEntryAlone ){//so a host without the tz database runs the rest
+		EXPECT_EQ( machines(R"("stops":[ { "every":"PT1H", "for":"PT10M" } ])")[0].Zone, nullptr );
+		EXPECT_EQ( machines(R"("stops":[ { "at":"06:00", "for":"PT10M" } ])")[0].Zone->name(), std::chrono::locate_zone("UTC")->name() );//left out
+		EXPECT_EQ( machines(R"("slow":[ { "at":"06:00", "for":"PT10M", "factor":2 } ])", _start, "America/New_York")[0].Zone->name(), "America/New_York" );
+	}
+	TEST( ParseDevicesTests, AGapIsTheShortestRunBetweenTwoWindows ){//what the startup warning holds to the period
+		let y = machines( R"("stops":[ { "every":"PT1H", "for":"PT10M" }, { "at":"06:00", "for":"PT22H" }, { "mean":"PT40M", "min":"PT2M", "max":"PT6M" } ])" );
+		EXPECT_EQ( y[0].Stops[0].Gap(), 50min );
+		EXPECT_EQ( y[0].Stops[1].Gap(), 1h );//on the day the clocks go forward
+		EXPECT_EQ( y[0].Stops[2].Gap(), 40min );//the mean:  an exponential gap is most often shorter
 	}
 	TEST( ParseDevicesTests, AFollowsTagTakesItsProductionTagsPace ){
 		auto y = devices( R"([{ "path":"machine", "tags":[ { "name":"speed", "mode":"follow", "follows":"units" }, { "name":"units", "mode":"production", "cycle":"PT24S" }, { "name":"motorRpm", "mode":"follow" } ] }])" );

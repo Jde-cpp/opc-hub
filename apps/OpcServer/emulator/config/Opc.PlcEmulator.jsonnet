@@ -122,12 +122,12 @@ local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 		//a device's `seed` repeats its random stops in every run;  and a follow tag's `follows` names the production tag whose pace it
 		//lags towards, in units a minute, where `ratedRpm` would be.
 		devices:[
-			{ path: "pump1", tags:[
+			{ path: "pump1", slow:: [], tags:[
 				{ name: "motorRpm", mode: "follow", ratedRpm: 1450, tau: "PT3S" },
 				production + { name: "totalCount", mode: "production", rejectTag:: "rejectCount" },
 				{ name: "status", mode: "command" }
 			] },
-			{ path: "pump2", stops:[ { every: "PT1M", "for": "PT10S", code: 1 } ], tags:[
+			{ path: "pump2", stops:[ { every: "PT1M", "for": "PT10S", code: 1 } ], slow:: [], tags:[
 				{ name: "motorRpm", mode: "sine", min: 800, max: 1600, period: "PT30S" },
 				production + { name: "totalCount", mode: "production", rejectTag:: "rejectCount" },
 				{ name: "status", mode: "toggle", period: "PT15S" }

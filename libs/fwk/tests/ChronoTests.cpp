@@ -255,6 +255,18 @@ namespace Jde::Tests{
 		EXPECT_EQ( Chrono::ToTimeZone("UTC", dflt).name(), std::chrono::locate_zone("UTC")->name() ) << "a zone that does exist must not fall back";
 		EXPECT_NE( Chrono::ToTimeZone("UTC", dflt).name(), dflt.name() ) << "found, not the default";
 	}
+	TEST( ChronoTests, ToTimeZoneThrowsNamingItsOwner ){
+		EXPECT_EQ( Chrono::ToTimeZone("America/New_York", "/a/zone").name(), "America/New_York" );
+		for( sv name : {"No/Such_Zone", ""} ){
+			try{
+				Chrono::ToTimeZone( name, "/a/zone" );
+				ADD_FAILURE() << name;
+			}
+			catch( const Exception& e ){
+				EXPECT_TRUE( sv{e.what()}.starts_with(Ƒ("/a/zone '{}' is not a known time zone: ", name)) ) << e.what();
+			}
+		}
+	}
 
 	//IsoStringRoundTrips only ever round-trips a whole second, so the fractional branch of the parse was never fed a
 	//non-zero fraction: a parser that dropped subseconds entirely passed it.
