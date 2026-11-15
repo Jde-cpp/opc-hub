@@ -126,6 +126,117 @@ namespace Jde::Opc::Hist::Tests{
 		}
 	}
 
+	//A live file's runs resume where a page the budget stopped left them, so a page past the first takes about its budget
+	//and the read takes about its records once, however many a run holds:  raw, processed and at-time reads alike.  Late
+	//records put two times in both runs, and the buffer holds the newest minute.
+	TEST_F( ScanBudgets, LiveRunsResumeWhereTheyWereLeft ){
+		Pump = AddGroup();
+		let read = Join( *Pump, "Pump1.Speed" ), other = Join( *Pump, "Pump1.Flow" );
+		vector<NodeIndex> rest;
+		for( uint i=0; i<18; ++i )
+			rest.push_back( Join(*Pump, Ƒ("Pump1.Rest{}", i)) );
+		T0 = Time->Now();
+		constexpr uint seconds = 180;
+		for( uint i=0; i<seconds; ++i ){
+			let at = T0+std::chrono::seconds{i};
+			ASSERT_TRUE( DataChange(*Pump, read, i, at) );
+			ASSERT_TRUE( DataChange(*Pump, other, 100.0+i, at) );
+			for( let node : rest )
+				ASSERT_TRUE( DataChange(*Pump, node, i, at) );
+			if( i==90 ){
+				ASSERT_TRUE( DataChange(*Pump, read, 1000, T0+10s) );
+				ASSERT_TRUE( DataChange(*Pump, other, 1030, T0+30s) );
+			}
+			if( i==59 || i==119 )
+				ASSERT_TRUE( Flush(*Pump) );
+		}
+		ASSERT_EQ( generation(File(*Pump, March7)), 0 );
+		let runs = scan( File(*Pump, March7) ).Runs;
+		ASSERT_EQ( runs.size(), 3u );//the preamble's, then a flush's each.
+		ASSERT_LT( runs[2].First, runs[1].Last );
+		constexpr uint records = seconds*20+2;
+		let end = ticks( T0+std::chrono::seconds{seconds} );
+		for( let& request : {ReadRequest{.Nodes={read}, .Start=ticks(T0), .End=end}, ReadRequest{.Nodes={other, read}, .Start=ticks(T0+5s), .End=ticks(T0+170s), .Bounds=true}} ){
+			let whole = described( readAll(*Pump, request) );
+			ASSERT_EQ( whole.size(), request.Bounds ? 2*166u+2 : seconds+1 );
+			for( let budget : {50u, 200u} ){
+				SCOPED_TRACE( Ƒ("{} nodes, budget {}", request.Nodes.size(), budget) );
+				vector<uint> taken;
+				EXPECT_EQ( described(readAll(*Pump, request, {.Budget=budget, .Taken=&taken})), whole );
+				EXPECT_GT( taken.size(), 5u );
+				for( uint p=1; p+1<taken.size(); ++p )
+					EXPECT_LE( taken[p], budget+80 ) << "page " << p;
+				EXPECT_LE( std::accumulate(taken.begin(), taken.end(), 0u), records+80*taken.size() );
+			}
+		}
+		ProcessedRequest processed{ .Nodes={read}, .Start=ticks(T0), .End=end, .Interval=20s, .Aggregate=EAggregate::Average };
+		AtTimeRequest atTime{ .Nodes={read}, .OneDay=true };
+		for( auto t = T0+500ms; t<T0+std::chrono::seconds{seconds}; t+=7s )
+			atTime.Times.push_back( ticks(t) );
+		let expected = described( readAllProcessed(*Pump, processed) ), expectedAt = described( readAllAtTime(*Pump, atTime) );
+		vector<uint> taken, takenAt;
+		EXPECT_EQ( described(readAllProcessed(*Pump, processed, {.Budget=50, .Taken=&taken})), expected );
+		EXPECT_LE( std::accumulate(taken.begin(), taken.end(), 0u), records+100*taken.size() );
+		EXPECT_EQ( described(readAllAtTime(*Pump, atTime, {.Budget=50, .Taken=&takenAt})), expectedAt );
+		EXPECT_LE( std::accumulate(takenAt.begin(), takenAt.end(), 0u), records+100*takenAt.size() );
+	}
+
+	//Past the budget, a page skims on through the other nodes' records before the first it can stop at:  a page resumed by
+	//time in a live run, after a Limit ended the one before, and a first page that starts late in an archived day, which
+	//reads the day from its start.
+	TEST_F( ScanBudgets, SkimsToWhereItCanStop ){
+		Pump = AddGroup();
+		let read = Join( *Pump, "Pump1.Speed" ), other = Join( *Pump, "Pump1.Flow" );
+		T0 = Time->Now();
+		constexpr uint seconds = 300;
+		for( uint i=0; i<seconds; ++i ){
+			let at = T0+std::chrono::seconds{i};
+			ASSERT_TRUE( DataChange(*Pump, read, i, at) );
+			ASSERT_TRUE( DataChange(*Pump, other, i, at) );
+			if( i%60==59 )
+				ASSERT_TRUE( Flush(*Pump) );
+		}
+		ReadRequest r{ .Nodes={read}, .Start=ticks(T0+200s), .End=ticks(T0+std::chrono::seconds{seconds}), .Limit=5 };
+		let first = Pump->Read( r );
+		ASSERT_EQ( first.Values.size(), 5u );
+		ScanBudget budget{ 4 };
+		r.Continuation = first.Continuation;
+		r.Budget = &budget;
+		EXPECT_FALSE( Pump->Read(r).Values.empty() );
+		EXPECT_GE( budget.Skimmed, 25u );//the other's in its run, from 3:00 through the resume at 3:24.
+
+		Time->AdvanceTo( sys_days{March8}+1min );
+		Settle( *Pump );
+		ASSERT_EQ( generation(File(*Pump, March7)), 1 );
+		budget = ScanBudget{ 20 };
+		ReadRequest late{ .Nodes={read}, .Start=ticks(T0+240s), .End=ticks(T0+std::chrono::seconds{seconds}), .Budget=&budget };
+		EXPECT_FALSE( Pump->Read(late).Values.empty() );
+		EXPECT_GE( budget.Skimmed, 240u );//the other's before the start, every one.
+	}
+
+	//A modified read resumes past the modifications it took:  a page takes about its budget, not the day's
+	//modifications before it again.
+	TEST_F( ScanBudgets, ModifiedReadsResume ){
+		Pump = AddGroup();
+		let node = Join( *Pump, "Pump1.Speed" );
+		T0 = Time->Now();
+		ASSERT_TRUE( DataChange(*Pump, node, 0, T0) );
+		ASSERT_TRUE( Flush(*Pump) );
+		constexpr uint count = 300;
+		vector<Value> inserts;
+		for( uint i=1; i<=count; ++i )
+			inserts.push_back( Reading(i, T0+std::chrono::seconds{i}) );
+		let edited = BlockAwait( Pump->Edit({UpdateData{node, UA_PERFORMUPDATETYPE_INSERT, move(inserts)}}, Admin) );
+		ASSERT_EQ( edited[0].Status, UA_STATUSCODE_GOOD );
+		ReadRequest r{ .Nodes={node}, .Start=ticks(T0), .End=ticks(T0+1h), .Modified=true };
+		let whole = described( readAll(*Pump, r) );
+		ASSERT_EQ( whole.size(), count );
+		vector<uint> taken;
+		EXPECT_EQ( described(readAll(*Pump, r, {.Budget=10, .Taken=&taken})), whole );
+		EXPECT_GT( taken.size(), 10u );
+		EXPECT_LE( std::accumulate(taken.begin(), taken.end(), 0u), count+2*taken.size() );
+	}
+
 	//A read whose budget is spent before it starts returns nothing, with its continuation again, or for a first page one
 	//that starts it, its opening bounds included.
 	TEST_F( ScanBudgets, SpentBeforeItStarts ){
@@ -225,6 +336,37 @@ namespace Jde::Opc::Hist::Tests{
 		}
 	}
 
+	//An at-time page whose pass would carry past 64 KB holds its budget and reads on, its first time's values known when
+	//the budget stopped it:  it returns what the page with no budget does.  The same read of fewer nodes carries its pass.
+	TEST_F( ScanBudgets, AtTimeCarryPastTheCapReadsOn ){
+		Pump = AddGroup();
+		vector<NodeIndex> nodes;
+		for( uint i=0; i<500; ++i )
+			nodes.push_back( Join(*Pump, Ƒ("Pump{}.Speed", i)) );
+		T0 = Time->Now();
+		for( uint s=0; s<20; ++s ){
+			for( uint i=0; i<nodes.size(); ++i )
+				ASSERT_TRUE( DataChange(*Pump, nodes[i], (double)(s+i), T0+std::chrono::seconds{s}) );
+		}
+		ASSERT_TRUE( Flush(*Pump) );
+		let read = [&]( uint count ){
+			AtTimeRequest r{ .Nodes={nodes.begin(), nodes.begin()+count}, .Times={ticks(T0+2s+500ms), ticks(T0+9s+500ms), ticks(T0+17s+500ms)}, .OneDay=true };
+			let whole = Pump->ReadAtTime( r );
+			EXPECT_TRUE( whole.Continuation.empty() );
+			ScanBudget budget{ 5*count };//past the first time, short of the second.
+			r.Budget = &budget;
+			auto page = Pump->ReadAtTime( r );
+			return std::pair{ described(whole.Values), move(page) };
+		};
+		let [whole, page] = read( nodes.size() );
+		EXPECT_TRUE( page.Continuation.empty() );
+		EXPECT_EQ( described(page.Values), whole );
+		let [few, stopped] = read( 20 );
+		ASSERT_TRUE( continuation(stopped).has_pass() );
+		EXPECT_EQ( stopped.Values.size(), 20u );//the first time's.
+		EXPECT_EQ( described(stopped.Values), vector<string>(few.begin(), few.begin()+20) );
+	}
+
 	//Processed reads over the archive, the live file and the buffer stop part way through their intervals and resume
 	//there, under every aggregate the budget stops, forward and back:  each budget's pages make what the read without
 	//one returns, and a page past the first takes about its budget, an archive resumed at its place.
@@ -300,5 +442,47 @@ namespace Jde::Opc::Hist::Tests{
 		track.add_boundaries()->set_time( ticks(T0+1s) );
 		r.Continuation = c.SerializeAsString();
 		EXPECT_THROW( Pump->ReadProcessed(r), UAException );
+
+		//Nor a pass whose state the read couldn't have left:  records at no time, a time with none, a start unknown before
+		//any record, and an interval without what its aggregate reads.
+		let refused = [&]( ProcessedRequest request, const Proto::Continuation& carried ){
+			request.Continuation = carried.SerializeAsString();
+			try{
+				Pump->ReadProcessed( request );
+				ADD_FAILURE() << "accepted";
+			}
+			catch( const UAException& e ){
+				EXPECT_EQ( e.Code(), UA_STATUSCODE_BADCONTINUATIONPOINTINVALID );
+			}
+		};
+		c = continuation( page );
+		c.mutable_pass()->mutable_tracks( 0 )->set_current_time( ticks(T0) );
+		c.mutable_pass()->mutable_tracks( 0 )->clear_current();
+		refused( r, c );
+		c = continuation( page );
+		c.mutable_pass()->mutable_tracks( 0 )->clear_current_time();
+		c.mutable_pass()->mutable_tracks( 0 )->add_current()->set_time( ticks(T0) );
+		refused( r, c );
+		c = continuation( page );
+		c.mutable_pass()->mutable_tracks( 0 )->set_before_unknown( true );
+		c.mutable_pass()->mutable_tracks( 0 )->clear_first_seen();
+		refused( r, c );
+		for( let aggregate : {EAggregate::Minimum, EAggregate::Maximum, EAggregate::Start, EAggregate::End} ){
+			SCOPED_TRACE( (int)aggregate );
+			ProcessedRequest q{ .Nodes={Speed}, .Start=ticks(T0), .End=ticks(T1+20s), .Aggregate=aggregate };
+			ScanBudget one{ 3 };
+			q.Budget = &one;
+			auto carried = continuation( Pump->ReadProcessed(q) );
+			q.Budget = nullptr;
+			ASSERT_TRUE( carried.has_pass() );
+			ASSERT_GT( carried.pass().tracks(0).buckets_size(), 0 );
+			auto& bucket = *carried.mutable_pass()->mutable_tracks( 0 )->mutable_buckets( 0 );
+			ASSERT_GT( bucket.good(), 0u );
+			bucket.clear_min();
+			bucket.clear_max();
+			bucket.clear_first();
+			bucket.clear_last();
+			refused( q, carried );
+		}
 	}
 }

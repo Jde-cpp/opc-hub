@@ -79,13 +79,15 @@ namespace Jde::Opc::Hist{
 		ScanBudget( uint limit )ι:Limit{ limit }{}
 		α Exhausted()Ι->bool{ return !_holds && Taken>=Limit; }
 		struct Hold final : noncopyable{
-			Hold( ScanBudget* budget )ι:_budget{ budget }{ if( _budget ) ++_budget->_holds; }
+			Hold( ScanBudget* budget )ι:_budget{ budget }{ if( _budget ){ ++_budget->_holds; _budget->Held = true; } }
 			~Hold(){ if( _budget ) --_budget->_holds; }
 		private:
 			ScanBudget* _budget;
 		};
 		uint Limit;
 		uint Taken{};
+		uint Skimmed{};//of Taken, those passed over unparsed.
+		bool Held{};//a read held it, so Taken is all it read.
 	private:
 		uint _holds{};
 	};

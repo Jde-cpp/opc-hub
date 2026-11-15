@@ -402,8 +402,10 @@ namespace Jde::Opc::Server{
 		absl::FunctionRef<UA_StatusCode( uint, const Hist::ReadResult&, const UA_NumericRange* )> fill )ι->void{
 		let start = steady_clock::now();
 		uint values{}, scanned{};
-		//Each node's share of what the callback may scan:  what is left over the nodes left, so every node moves on each call,
-		//and what one doesn't take goes to the rest.  A node whose share is none waits for the next call.
+		//Each node's share of what the callback may scan:  what is left over the nodes left, and what one doesn't take goes to
+		//the rest.  A page reads on past its share through the records at the time it stops at, which the rest don't pay
+		//for, so every node moves on each call.  A read that held takes what it read, so the nodes after it may have none,
+		//and wait for the next call.
 		uint left = _scanLimit.load( std::memory_order_relaxed );
 		for( uint i=0; i<nodes.size(); ++i ){
 			auto& result = results[i];
@@ -418,7 +420,7 @@ namespace Jde::Opc::Server{
 			Hist::ReadResult page;
 			Hist::ScanBudget budget{ left/(nodes.size()-i) };
 			result.statusCode = read( i, *kept, nodes[i], result.continuationPoint, page, budget );
-			left -= std::min( left, budget.Taken );
+			left -= std::min( left, budget.Held ? budget.Taken : std::min(budget.Taken, budget.Limit) );
 			scanned += budget.Taken;
 			if( UA_StatusCode_isBad(result.statusCode) )
 				continue;

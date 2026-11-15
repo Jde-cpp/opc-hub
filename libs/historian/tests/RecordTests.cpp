@@ -1,14 +1,10 @@
 //Records (#202):  the HistoryRecord oneof with delta times over the framework's record layer - whose framing, first-open
 //scan and truncation Jde.Fwk.Tests covers (io/RecordsTests.cpp) - and what a group buffers becomes on disk.
-#include "hosts.h"
-#include "files.h"
-#include <fstream>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
-#include <jde/fwk/exceptions/IOException.h>
-#include <jde/fwk/io/crc.h>
 #include <jde/tests/Capture.h>
 #include <jde/opc/proto/opc.Common.h>
-#include "../src/io/Records.h"
+#include "hosts.h"
+#include "files.h"
 
 #define let const auto
 

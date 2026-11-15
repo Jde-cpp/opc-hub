@@ -32,6 +32,19 @@ message Continuation{
 	bool unstarted=8;
 	//An at-time or a processed page the scan budget stopped part way through its pass, at next.
 	Pass pass=9;
+	//A raw page the scan budget stopped, after every record through time:  the next takes none of them again, nor reads
+	//a live run that ends by then.
+	bool past=10;
+	//Where that page left each run of a live file that goes on past time:  the next page resumes each there while the
+	//file still has the run.
+	repeated RunPlace places=11;
+}
+//A run of a live file, by where it starts, and the place a page left it:  past the last record it took of the run, and
+//that record's time, which the delta of the next is from.
+message RunPlace{
+	uint64 run=1;
+	uint64 offset=2;
+	sint64 chain=3;
 }
 
 //What an at-time or a processed page's pass over the raw records had made of them when the scan budget stopped it

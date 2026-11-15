@@ -105,13 +105,12 @@ function( sync=false )
 		],
 		//The history of the variables a nodeset marks Historizing="true", each under its HA Configuration object
 		//(libs/historian/docs/spec.md, *OpcServer*).  Without this block the server keeps none and answers HistoryRead
-		//Bad_NotSupported.  The other keys, at their defaults:  delay "PT1M", maxBuffer 67108864, readLimit 10000, scanLimit
-		//100000, the records one HistoryRead callback's nodes may scan between them while it holds the service lock, each
-//node's share to stay well over one flush's records, and
+		//Bad_NotSupported.  The other keys, at their defaults:  delay "PT1M", maxBuffer 67108864, readLimit 10000 and
 		//timeZone "UTC", an IANA name that must not change once `path` holds files;  and OpcServer's own, editTimeout "PT5S",
 		//how long a HistoryUpdate waits, holding the service lock, for the flush that writes it before it answers Bad_Timeout.
 		hist:{
-			path: logsDir + "/hist/opc-server"
+			path: logsDir + "/hist/opc-server",
+			scanLimit:: 100000 //the records one HistoryRead callback's nodes may scan between them while it holds the service lock.
 		},
 		//No `pubsub` key here, deliberately.  A DataSetReader writes its target variables through the server-internal path -
 		//no session, no OpcAuthorize - so any UADP publisher that can reach the url and carries the contract's three ids

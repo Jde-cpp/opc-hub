@@ -4,36 +4,31 @@
 //budget and with hist.scanLimit's default each call:  each mode's callbacks, the longest and in all, and the day's records
 //per ms of the longest.  It asserts nothing.
 #include <iostream>
-#include "dayFiles.h"
+#include <jde/fwk/process/process.h>
+#include "reads.h"
 
 #define let const auto
 
 namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
 	namespace{
-		Ω benchHours()ι->uint{
-			let env = std::getenv( "HIST_BENCH_HOURS" );
-			return env ? std::max( 1ul, std::stoul(env) ) : 24ul;
+		Ω benchHours()ι->uint{//24 where it isn't a number.
+			let hours = Process::GetEnv( "HIST_BENCH_HOURS" ).and_then( []( let& s ){ return Str::TryTo<uint>( s ); } );
+			return std::max<uint>( 1, hours.value_or(24) );
 		}
 		struct Timing final{ uint Calls{}; steady_clock::duration Longest{}, Total{}; uint Values{}; };
-		//Every page of a read, each timed as a callback is, under a budget of its own when one is given.
+		//Every page of a read as readPaged reads it, each timed as a callback is, under a budget of its own when one is given.
 		Ŧ timed( T request, optional<uint> limit, auto read )ε->Timing{
 			Timing y;
-			for( ;; ){
-				optional<ScanBudget> budget;
-				if( limit )
-					request.Budget = &budget.emplace( *limit );
+			y.Values = readPaged( move(request), {.Budget=limit}, [&]( const T& r ){
 				let start = steady_clock::now();
-				auto page = read( request );
+				auto page = read( r );
 				let elapsed = steady_clock::now()-start;
 				++y.Calls;
 				y.Longest = std::max( y.Longest, elapsed );
 				y.Total += elapsed;
-				y.Values += page.Values.size();
-				if( page.Continuation.empty() )
-					break;
-				request.Continuation = move( page.Continuation );
-			}
+				return page;
+			}).size();
 			return y;
 		}
 	}

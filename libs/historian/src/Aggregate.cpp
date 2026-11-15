@@ -535,47 +535,25 @@ namespace Jde::Opc::Hist{
 			}
 			return last;
 		}
-		//Emits the values of [Next, last] in order, the first's nodes but those had, until the page is full, with the
-		//continuation at the cut, or after last when count goes on.  value gives the node's value at i by slot.
-		α Emit( uint64_t count, uint64_t last, absl::FunctionRef<Proto::DataValue( uint64_t, uint )> value )ε->ReadResult{
+		//Emits the values of [Next, end) in order, the first's nodes but those had, until the page is full, with the
+		//continuation at the cut, or at end while count goes on.  value gives the node's value at i by slot.  A page the scan
+		//budget stopped carries its pass there, which the next page takes up:  a Limit that cuts the page first drops it, and
+		//the next page reads its records again, as one Limit cut always has.
+		α Emit( uint64_t end, uint64_t count, absl::FunctionRef<Proto::DataValue( uint64_t, uint )> value, optional<Proto::Pass>&& pass={} )ε->ReadResult{
 			ReadResult y;
-			let cut = [&]( uint64_t i, const vector<bool>& done ){
+			let cut = [&]( uint64_t i, const vector<bool>& done, optional<Proto::Pass>&& carried ){
 				Proto::Continuation next;
 				next.set_crc( Crc );
 				next.set_next( i );
 				for( uint j=0; j<Nodes; ++j )
 					next.add_counts( done[j] ? 1 : 0 );
+				if( carried )
+					*next.mutable_pass() = move( *carried );
 				y.Continuation = next.SerializeAsString();
 			};
 			uint emitted{};
-			for( uint64_t i=Next; i<=last; ++i ){
-				vector<bool> done( Nodes );
-				for( uint slot=0; slot<Nodes; ++slot ){
-					if( i==Next && Had[slot] ){
-						done[slot] = true;
-						continue;
-					}
-					if( emitted==Limit ){
-						cut( i, done );
-						return y;
-					}
-					y.Values.push_back( {value(i, slot), false, {}} );
-					done[slot] = true;
-					++emitted;
-				}
-			}
-			if( last+1<count )
-				cut( last+1, vector<bool>(Nodes) );
-			return y;
-		}
-		//A page the scan budget stopped:  the values of [Next, final), as Emit gives them, then the continuation at final with
-		//the pass, which the next page takes up.  A Limit that cuts the page first drops the pass, and the next page reads its
-		//records again, as one Limit cut always has.
-		α Stopped( uint64_t final, absl::FunctionRef<Proto::DataValue( uint64_t, uint )> value, Proto::Pass&& pass )ε->ReadResult{
-			ReadResult y;
-			uint emitted{};
 			vector<bool> done( Nodes );
-			for( uint64_t i=Next; i<final; ++i ){
+			for( uint64_t i=Next; i<end; ++i ){
 				done.assign( Nodes, false );
 				for( uint slot=0; slot<Nodes; ++slot ){
 					if( i==Next && Had[slot] ){
@@ -583,12 +561,7 @@ namespace Jde::Opc::Hist{
 						continue;
 					}
 					if( emitted==Limit ){
-						Proto::Continuation next;
-						next.set_crc( Crc );
-						next.set_next( i );
-						for( uint j=0; j<Nodes; ++j )
-							next.add_counts( done[j] ? 1 : 0 );
-						y.Continuation = next.SerializeAsString();
+						cut( i, done, nullopt );
 						return y;
 					}
 					y.Values.push_back( {value(i, slot), false, {}} );
@@ -596,13 +569,8 @@ namespace Jde::Opc::Hist{
 					++emitted;
 				}
 			}
-			Proto::Continuation next;
-			next.set_crc( Crc );
-			next.set_next( final );
-			for( uint j=0; j<Nodes; ++j )
-				next.add_counts( final==Next && Had[j] ? 1 : 0 );
-			*next.mutable_pass() = move( pass );
-			y.Continuation = next.SerializeAsString();
+			if( end<count )
+				cut( end, end==Next ? Had : vector<bool>(Nodes), move(pass) );
 			return y;
 		}
 		uint Nodes;
@@ -1002,7 +970,13 @@ namespace Jde::Opc::Hist{
 		y.set_point_count( b.PointCount );
 		return y;
 	}
-	Ω restore( const Proto::PassBucket& p, Bucket& b, bool tuab )ι->void{
+	//Refused unless it holds what Finish reads of its aggregate's bucket, which Take always leaves:  the extreme of its
+	//Good numbers, and the first or last of its records.
+	Ω restore( const Proto::PassBucket& p, Bucket& b, EAggregate aggregate, bool tuab, SL sl )ε->void{
+		let numbers = p.good() && !p.non_numeric();
+		if( (aggregate==EAggregate::Minimum && numbers && !p.has_min()) || (aggregate==EAggregate::Maximum && numbers && !p.has_max())
+			|| (aggregate==EAggregate::Start && p.count() && !p.has_first()) || (aggregate==EAggregate::End && p.count() && !p.has_last()) )
+			invalid( "holds an interval without what its aggregate reads", sl );
 		b.Count = p.count();
 		b.GoodCount = p.good();
 		b.BadCount = p.bad();
@@ -1057,9 +1031,15 @@ namespace Jde::Opc::Hist{
 		return y;
 	}
 	//Over the track the page rebuilt, whose boundaries the carried ones lead.  Whether the node's opening bound had come.
+	//Refused unless it holds what the pass reads of a track, as feed and open leave it:  records at its current time,
+	//and a first record where what lies before it is unknown.
 	Ω restore( const Proto::PassTrack& p, Track& t, bool tuab, SL sl )ε->bool{
 		if( p.settled()!=(uint)p.boundaries_size() || p.followed()>p.settled() || p.resolved()>p.followed() || p.settled()>t.Boundaries.size() )
 			invalid( "doesn't count its boundaries", sl );
+		if( p.has_current_time()!=(p.current_size()>0) )
+			invalid( "holds records at no time, or a time with none", sl );
+		if( p.before_unknown() && !p.has_first_seen() )
+			invalid( "has a node's start unknown with no first record", sl );
 		for( uint i=0; i<p.settled(); ++i ){
 			if( p.boundaries(i).time()!=t.Boundaries[i].Time )
 				invalid( "holds a boundary the page has none at", sl );
@@ -1161,13 +1141,6 @@ namespace Jde::Opc::Hist{
 					rest.emplace( r.Budget );
 					continue;
 				}
-				for( uint slot=0; slot<tracks.size(); ++slot ){
-					for( uint i=0; i<known; ++i )
-						valueAt( tracks[slot], slot, tracks[slot].Boundaries[i] );
-				}
-				auto final = paging.Next;
-				while( final<=last && r.Times[final]<times[known] )
-					++final;
 				Proto::Pass pass;
 				pass.set_read( resume.Read );
 				pass.set_start( a );
@@ -1175,9 +1148,18 @@ namespace Jde::Opc::Hist{
 				pass.set_last( last );
 				for( uint slot=0; slot<tracks.size(); ++slot )
 					*pass.add_tracks() = carry( tracks[slot], resume.Opened[slot], known );
-				if( pass.ByteSizeLong()<=MaxCarry )
-					return paging.Stopped( final, value, move(pass) );
-				rest.emplace( r.Budget );
+				if( pass.ByteSizeLong()>MaxCarry ){//its values, the known ones too, come at the pass's end.
+					rest.emplace( r.Budget );
+					continue;
+				}
+				for( uint slot=0; slot<tracks.size(); ++slot ){
+					for( uint i=0; i<known; ++i )
+						valueAt( tracks[slot], slot, tracks[slot].Boundaries[i] );
+				}
+				auto final = paging.Next;
+				while( final<=last && r.Times[final]<times[known] )
+					++final;
+				return paging.Emit( final, r.Times.size(), value, move(pass) );
 			}
 			for( uint slot=0; slot<tracks.size(); ++slot ){
 				for( auto& bound : tracks[slot].Boundaries )
@@ -1185,7 +1167,7 @@ namespace Jde::Opc::Hist{
 			}
 			from = to;
 		}
-		return paging.Emit( r.Times.size(), last, value );
+		return paging.Emit( last+1, r.Times.size(), value );
 	}
 
 	α ToDuration( double ms )ι->optional<Duration>{
@@ -1287,7 +1269,7 @@ namespace Jde::Opc::Hist{
 				for( let& bucket : p.buckets() ){
 					if( bucket.interval()<paging.Next || bucket.interval()>last )
 						invalid( "holds an interval outside its page", sl );
-					restore( bucket, buckets[slot][bucket.interval()-paging.Next], tuab );
+					restore( bucket, buckets[slot][bucket.interval()-paging.Next], r.Aggregate, tuab, sl );
 				}
 			}
 		}
@@ -1353,9 +1335,9 @@ namespace Jde::Opc::Hist{
 				}
 			}
 			if( pass.ByteSizeLong()<=MaxCarry )
-				return paging.Stopped( final, value, move(pass) );
+				return paging.Emit( final, count, value, move(pass) );
 			rest.emplace( r.Budget );
 		}
-		return paging.Emit( count, last, value );
+		return paging.Emit( last+1, count, value );
 	}
 }
