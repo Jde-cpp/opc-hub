@@ -93,7 +93,8 @@ namespace Jde::Opc::Emulator{
 			//pubsub transport's writer samples the contract's nodes, the server transport has no contract.
 			_plc = mu<PlcServer>( PlcServer::ReadSettings(opc), _app, *nodeset, move(contract) );
 		}
-		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, SRCE_CUR );
+		let zone = Settings::FindString( "/emulator/zone" );//set, it has to resolve, `at` or not:  a typo fails like one.
+		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, zone ? &Chrono::ToTimeZone(*zone, "/emulator/zone") : nullptr, Clock::now(), SRCE_CUR );
 		for( auto& device : _devices ){//the vectors are final: ParseDevices returned them.
 			for( auto& tag : device.Tags ){
 				tag.Self = this;
@@ -101,8 +102,8 @@ namespace Jde::Opc::Emulator{
 					tag.Type = _plc->Contract()->Fields[*tag.Field].Type;
 			}
 			for( let& stop : device.Stops ){
-				if( stop.Length<=_period || *stop.Every-stop.Length<=_period )
-					WARN( "[{}]a stop of {} every {} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop or the run after it - the counts still hold to it.", device.Name, Chrono::ToString(stop.Length), Chrono::ToString(*stop.Every), Chrono::ToString(_period) );
+				if( stop.Shortest()<=_period || stop.Gap()<=_period )
+					WARN( "[{}]a stop of {} with {} of {} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop or the run after it - the counts still hold to it.", device.Name, Chrono::ToString(stop.Shortest()), stop.Shape==Recurrence::EShape::Random ? "a mean run" : "a run", Chrono::ToString(stop.Gap()), Chrono::ToString(_period) );
 			}
 		}
 		if( _transport==ETransport::Server ){
@@ -216,7 +217,9 @@ namespace Jde::Opc::Emulator{
 	α Emulator::Cycle( Duration dt, bool sessionUp )ι->void{
 		if( _tightening )
 			_tightening->Sample( dt );
+		let wall = Clock::now()-dt;//where the period began on the wall clock, which the steady clock's `dt` may have lost time to.
 		for( auto& device : _devices ){
+			device.Anchor( wall );
 			device.Sample( dt );
 			for( auto& tag : device.Tags ){
 				if( !tag.Generator )
@@ -363,7 +366,7 @@ namespace Jde::Opc::Emulator{
 				WARN( "Initial connect to '{}' failed: {} - retrying.", _url, e.what() );
 			}
 		}
-		let start = steady_clock::now();
+		let start = steady_clock::now();//the device clock's 0, a connect after the parse:  the first Cycle anchors it.
 		_lastCycle = start;
 		_nextCycle = start+_period;
 		_nextStatus = start+_statusPeriod;

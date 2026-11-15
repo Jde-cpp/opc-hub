@@ -17,7 +17,7 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_EQ( s.Name, "x" );
 		EXPECT_EQ( s.Mode, EMode::Counter );
 		EXPECT_EQ( s.Min, 0 ); EXPECT_EQ( s.Max, 100 ); EXPECT_EQ( s.Step, 1 ); EXPECT_EQ( s.RatedRpm, 1450 );
-		EXPECT_EQ( s.Period, Duration{30s} ); EXPECT_EQ( s.Tau, Duration{3s} );
+		EXPECT_EQ( s.Period, Duration{30s} ); EXPECT_EQ( s.Tau, Duration{3s} ); EXPECT_TRUE( s.Follows.empty() );
 		EXPECT_EQ( s.Cycle, Duration{1s} ); EXPECT_EQ( s.Jitter, Duration::zero() ); EXPECT_EQ( s.Reject, 0 ); EXPECT_EQ( s.RejectTag, "rejectCount" );
 		EXPECT_FALSE( s.IsBool() );
 	}
@@ -49,22 +49,22 @@ namespace Jde::Opc::Emulator::Tests{
 
 	TEST( GeneratorTests, SineSpansMinToMaxOverAPeriod ){
 		let g = gen( R"({"name":"s","mode":"sine","min":0,"max":100,"period":"PT8S"})" );
-		EXPECT_NEAR( g->Next(2s, false), 100, 1e-9 );//a quarter period: the peak
-		EXPECT_NEAR( g->Next(2s, false), 50, 1e-9 );//half: back through the middle
-		EXPECT_NEAR( g->Next(2s, false), 0, 1e-9 );//three quarters: the trough
-		EXPECT_NEAR( g->Next(2s, false), 50, 1e-9 );
+		EXPECT_NEAR( g->Next(2s, 0), 100, 1e-9 );//a quarter period: the peak
+		EXPECT_NEAR( g->Next(2s, 0), 50, 1e-9 );//half: back through the middle
+		EXPECT_NEAR( g->Next(2s, 0), 0, 1e-9 );//three quarters: the trough
+		EXPECT_NEAR( g->Next(2s, 0), 50, 1e-9 );
 	}
 	TEST( GeneratorTests, RampIsASawtoothThatWraps ){
 		let g = gen( R"({"name":"r","mode":"ramp","min":0,"max":100,"period":"PT10S"})" );
-		EXPECT_NEAR( g->Next(2500ms, false), 25, 1e-9 );
-		EXPECT_NEAR( g->Next(5s, false), 75, 1e-9 );
-		EXPECT_NEAR( g->Next(5s, false), 25, 1e-9 );//12.5 s into a 10 s period
+		EXPECT_NEAR( g->Next(2500ms, 0), 25, 1e-9 );
+		EXPECT_NEAR( g->Next(5s, 0), 75, 1e-9 );
+		EXPECT_NEAR( g->Next(5s, 0), 25, 1e-9 );//12.5 s into a 10 s period
 	}
 	TEST( GeneratorTests, RandomWalkStaysInBoundsAndNeverJumpsMoreThanStep ){
 		let g = gen( R"({"name":"w","mode":"randomWalk","min":40,"max":60,"step":5})" );
 		double previous{ 50 };//starts at the middle
 		for( uint i=0; i<2000; ++i ){
-			let v = g->Next( 1s, false );
+			let v = g->Next( 1s, 0 );
 			ASSERT_GE( v, 40 ); ASSERT_LE( v, 60 );
 			ASSERT_LE( std::abs(v-previous), 5+1e-9 );
 			previous = v;
@@ -72,25 +72,37 @@ namespace Jde::Opc::Emulator::Tests{
 	}
 	TEST( GeneratorTests, CounterStepsAndWrapsToMin ){
 		let g = gen( R"({"name":"c","mode":"counter","min":0,"max":3,"step":1})" );
-		EXPECT_EQ( g->Next(1s, false), 1 );
-		EXPECT_EQ( g->Next(1s, false), 2 );
-		EXPECT_EQ( g->Next(1s, false), 3 );
-		EXPECT_EQ( g->Next(1s, false), 0 );//4 > max wraps
-		EXPECT_EQ( g->Next(1s, false), 1 );
+		EXPECT_EQ( g->Next(1s, 0), 1 );
+		EXPECT_EQ( g->Next(1s, 0), 2 );
+		EXPECT_EQ( g->Next(1s, 0), 3 );
+		EXPECT_EQ( g->Next(1s, 0), 0 );//4 > max wraps
+		EXPECT_EQ( g->Next(1s, 0), 1 );
 	}
 	TEST( GeneratorTests, ToggleStartsOnAndFlipsEveryPeriod ){
 		let g = gen( R"({"name":"t","mode":"toggle","period":"PT2S"})" );
-		EXPECT_EQ( g->Next(1s, false), 1 );
-		EXPECT_EQ( g->Next(1s, false), 0 );//t reaches the period
-		EXPECT_EQ( g->Next(2s, false), 1 );
+		EXPECT_EQ( g->Next(1s, 0), 1 );
+		EXPECT_EQ( g->Next(1s, 0), 0 );//t reaches the period
+		EXPECT_EQ( g->Next(2s, 0), 1 );
 	}
 	TEST( GeneratorTests, FollowLagsTowardsRatedWhenCommandedAndTowardsZeroWhenNot ){
 		let g = gen( R"({"name":"f","mode":"follow","ratedRpm":1450,"tau":"PT1S"})" );
-		EXPECT_NEAR( g->Next(1s, true), 1450*(1-std::exp(-1.0)), 1e-6 );//916.6 - the emulator's first status line
-		let second = g->Next( 1s, true );
+		EXPECT_NEAR( g->Next(1s, 1), 1450*(1-std::exp(-1.0)), 1e-6 );//916.6 - the emulator's first status line
+		let second = g->Next( 1s, 1 );
 		EXPECT_GT( second, 916 ); EXPECT_LT( second, 1450 );
-		EXPECT_NEAR( g->Next(30s, true), 1450, 1e-6 );//settled
-		EXPECT_NEAR( g->Next(1s, false), 1450*std::exp(-1.0), 1e-6 );//commanded off: decays
+		EXPECT_NEAR( g->Next(30s, 1), 1450, 1e-6 );//settled
+		EXPECT_NEAR( g->Next(1s, 0), 1450*std::exp(-1.0), 1e-6 );//commanded off: decays
+	}
+	TEST( GeneratorTests, FollowLagsTowardsItsShareOfRatedAtASlowerRate ){
+		let g = gen( R"({"name":"f","mode":"follow","ratedRpm":1450,"tau":"PT1S"})" );
+		EXPECT_NEAR( g->Next(30s, 1), 1450, 1e-6 );
+		EXPECT_NEAR( g->Next(1s, .8), 1160+290*std::exp(-1.0), 1e-6 );//a slow period at a factor of 1.25
+		EXPECT_NEAR( g->Next(30s, .8), 1160, 1e-6 );
+	}
+	TEST( TagSpecTests, FollowsIsTheFollowModes ){
+		EXPECT_EQ( spec(R"({"name":"speed","mode":"follow","follows":"totalCount"})").Follows, "totalCount" );
+		EXPECT_THROW( spec(R"({"name":"speed","mode":"sine","follows":"totalCount"})"), Exception );//it would lag towards nothing
+		EXPECT_THROW( spec(R"({"name":"speed","mode":"follow","follows":"totalCount","ratedRpm":1450})"), Exception );//the count's pace would drop it
+		EXPECT_THROW( spec(R"({"name":"speed","mode":"follow","follows":7})"), Exception );
 	}
 	TEST( GeneratorTests, CommandTagsHaveNoGenerator ){
 		EXPECT_THROW( gen(R"({"name":"status","mode":"command"})"), Exception );
@@ -118,18 +130,26 @@ namespace Jde::Opc::Emulator::Tests{
 	}
 	TEST( ProductionTests, AUnitEveryCycle ){
 		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT2S"})" );
-		EXPECT_EQ( g->Next(1s, true), 0 );
-		EXPECT_EQ( g->Next(1s, true), 1 );
-		EXPECT_EQ( g->Next(4s, true), 3 );//a period of two cycles counts both
-		EXPECT_EQ( g->Next(1s, true), 3 );
-		EXPECT_EQ( g->Next(1s, true), 4 );
+		EXPECT_EQ( g->Next(1s, 1), 0 );
+		EXPECT_EQ( g->Next(1s, 1), 1 );
+		EXPECT_EQ( g->Next(4s, 1), 3 );//a period of two cycles counts both
+		EXPECT_EQ( g->Next(1s, 1), 3 );
+		EXPECT_EQ( g->Next(1s, 1), 4 );
 	}
 	TEST( ProductionTests, NothingAdvancesWhileStatusIsOff ){
 		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT2S"})" );
-		EXPECT_EQ( g->Next(1s, true), 0 );
-		EXPECT_EQ( g->Next(1h, false), 0 );
-		EXPECT_EQ( g->Next(1s, true), 1 );//the unit in hand waited where it was
-		EXPECT_EQ( g->Next(1h, false), 1 );
+		EXPECT_EQ( g->Next(1s, 1), 0 );
+		EXPECT_EQ( g->Next(1h, 0), 0 );
+		EXPECT_EQ( g->Next(1s, 1), 1 );//the unit in hand waited where it was
+		EXPECT_EQ( g->Next(1h, 0), 1 );
+	}
+	TEST( ProductionTests, ASlowerRateStretchesTheCycle ){
+		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT2S"})" );
+		EXPECT_EQ( g->Next(3s, .5), 0 );//a factor of 2:  a unit every four seconds
+		EXPECT_EQ( g->Next(1s, .5), 1 );
+		EXPECT_EQ( g->Next(8s, .5), 3 );
+		EXPECT_EQ( g->Next(1s, 1), 3 );//back at the cycle
+		EXPECT_EQ( g->Next(1s, 1), 4 );
 	}
 	TEST( ProductionTests, JitterKeepsEachUnitWithinItsBounds ){
 		let g = gen( R"({"name":"totalCount","mode":"production","cycle":"PT1S","jitter":"PT0.25S"})" );
@@ -137,7 +157,7 @@ namespace Jde::Opc::Emulator::Tests{
 		double count{}, sinceUnit{}, shortest{ 10 }, longest{};
 		for( uint i=0; i<50'000; ++i ){//500 s
 			sinceUnit += step;
-			if( let next = g->Next(10ms, true); next!=count ){
+			if( let next = g->Next(10ms, 1); next!=count ){
 				ASSERT_EQ( next, count+1 );
 				count = next;
 				shortest = std::min( shortest, sinceUnit ); longest = std::max( longest, sinceUnit );
@@ -150,17 +170,17 @@ namespace Jde::Opc::Emulator::Tests{
 	}
 	TEST( ProductionTests, RejectsAreAShareOfTheCount ){
 		auto tenth = MakeProduction( spec(R"({"name":"totalCount","mode":"production","reject":0.1})") );
-		EXPECT_EQ( tenth.Rejects->Next(1s, true), 0 );
-		EXPECT_EQ( tenth.Count->Next(10'000s, true), 10'000 );
-		let rejects = tenth.Rejects->Next( 1s, true );
+		EXPECT_EQ( tenth.Rejects->Next(1s, 1), 0 );
+		EXPECT_EQ( tenth.Count->Next(10'000s, 1), 10'000 );
+		let rejects = tenth.Rejects->Next( 1s, 1 );
 		EXPECT_GT( rejects, 800 ); EXPECT_LT( rejects, 1200 );//sd 30
-		EXPECT_EQ( tenth.Rejects->Next(1h, true), rejects );//the rejects' own sample counts nothing
+		EXPECT_EQ( tenth.Rejects->Next(1h, 1), rejects );//the rejects' own sample counts nothing
 
 		auto none = MakeProduction( spec(R"({"name":"totalCount","mode":"production"})") );
-		none.Count->Next( 1000s, true );
-		EXPECT_EQ( none.Rejects->Next(1s, true), 0 );
+		none.Count->Next( 1000s, 1 );
+		EXPECT_EQ( none.Rejects->Next(1s, 1), 0 );
 		auto all = MakeProduction( spec(R"({"name":"totalCount","mode":"production","reject":1})") );
-		all.Count->Next( 1000s, true );
-		EXPECT_EQ( all.Rejects->Next(1s, true), 1000 );
+		all.Count->Next( 1000s, 1 );
+		EXPECT_EQ( all.Rejects->Next(1s, 1), 1000 );
 	}
 }

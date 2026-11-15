@@ -114,4 +114,21 @@ namespace Jde{
 		}
 		return dflt;
 	}
+	α Chrono::ToTimeZone( sv name, sv owner, SL sl )ε->const std::chrono::time_zone&{
+		try{
+			return *std::chrono::locate_zone( name );
+		}
+		catch( const std::runtime_error& e ){
+			let database = []{//libc++ loads the whole of it for any zone:  a host without it, a minimal container, fails here.
+				try{
+					return !std::chrono::get_tzdb().zones.empty();
+				}
+				catch( const std::runtime_error& ){
+					return false;
+				}
+			}();
+			THROW_IFSL( !database, "{} '{}':  the time zone database could not be read - is tzdata installed?  {}", owner, name, e.what() );
+			THROWSL( "{} '{}' is not a known time zone: {}", owner, name, e.what() );
+		}
+	}
 }

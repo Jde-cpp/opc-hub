@@ -96,6 +96,7 @@ local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 			log:: false //every frame in and out at Trace under the openProtocol tag, which /logging/spd/tags must set to Trace
 		},
 		period: "PT1S",
+		zone:: "UTC", //the IANA zone a stop's or slow period's `at` is a time of day in
 		statusPeriod: "PT1M",
 		reconnectMin: "PT1S",
 		reconnectMax: "PT30S",
@@ -115,13 +116,18 @@ local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 		//operator's stop;  pump2's toggle is a stop of fifteen seconds in every thirty, and its `stops` list, {every, for, code}, holds
 		//`status` off for the first ten seconds of each minute after the first with `reasonCode` 1, as the toggle would come back
 		//on:  so each minute has one stop of fifteen seconds with no code and one of twenty-five, coded from its sixteenth second.
+		//The demo's shapes (docs/demo/spec.md *Production*), which the pumps leave out:  a stop is also {mean, min, max, code}, after a gap
+		//drawn about `mean` for a length drawn from `min` to `max`, or {at, for, code}, at a time of day in `zone`, its `code` 0 where
+		//left out;  a device's `slow` list has the three shapes with a `factor`, the cycle that many times as long with `status` on;
+		//a device's `seed` repeats its random stops in every run;  and a follow tag's `follows` names the production tag whose pace it
+		//lags towards, in units a minute, where `ratedRpm` would be.
 		devices:[
-			{ path: "pump1", tags:[
+			{ path: "pump1", slow:: [], tags:[
 				{ name: "motorRpm", mode: "follow", ratedRpm: 1450, tau: "PT3S" },
 				production + { name: "totalCount", mode: "production", rejectTag:: "rejectCount" },
 				{ name: "status", mode: "command" }
 			] },
-			{ path: "pump2", stops:[ { every: "PT1M", "for": "PT10S", code: 1 } ], tags:[
+			{ path: "pump2", stops:[ { every: "PT1M", "for": "PT10S", code: 1 } ], slow:: [], tags:[
 				{ name: "motorRpm", mode: "sine", min: 800, max: 1600, period: "PT30S" },
 				production + { name: "totalCount", mode: "production", rejectTag:: "rejectCount" },
 				{ name: "status", mode: "toggle", period: "PT15S" }
