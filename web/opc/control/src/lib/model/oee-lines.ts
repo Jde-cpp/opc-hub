@@ -124,6 +124,8 @@ function oeeGraph( plant:OeePlant ):OeeGraph{
 }
 //The machines a line reaches, each once, in member order with a member line's where it stands:  the order of `oeeTimeline`.
 export function oeeLineReach( plant:OeePlant, lineId:number ):OeeMachineRef[]{ return oeeGraph( plant ).reach( lineId ); }
+//every line's reach over one graph, for a caller that reads many (the floor's boxed lines)
+export function oeeReaches( plant:OeePlant ):( lineId:number )=>OeeMachineRef[]{ return oeeGraph( plant ).reach; }
 
 //What a line's Members picker offers (spec *Web*, *Lines*):  each machine is once within a line, this one and every line above
 //it, so it offers the machines none of those reaches yet, and the lines of a level no higher than its own that aren't its

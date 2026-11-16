@@ -4,7 +4,7 @@ import { OeeLiveCounts, OeeLiveEvent, OeeLiveStatus } from './oee-live';
 //What the dashboard makes of a machine's live OEE (#406, docs/oee/spec.md *Web*, *The Gantt chart*):  a tile's model from the
 //sequence of its statuses, and the Gantt chart's last band, which grows with each and gives way to a new one on a state change.
 
-export type OeeMachineRef = { id:number; name:string; slug:string };
+export type OeeMachineRef = { id:number; name:string; slug:string; groupId?:number };//`groupId` its historian group's, where the read carried it (#481)
 //A tile:  its machine, how its subscription stands, and the last status it brought.  `ended` is why the gateway ended it - the
 //machine deleted, OEE stopping - after which nothing follows.  A line's tile (#409) is the same, the line in the machine's place:
 //its statuses carry its machines' counts.
@@ -37,17 +37,7 @@ export function oeeTileView( tile:OeeTile ):OeeTileView{
 	const s = tile.status, f = s?.figures, figures = oeeTileFigures( f );
 	if( !s )
 		return { state: 'none', stateLabel: tile.link=='ended' ? 'Ended' : tile.link=='dropped' ? 'Disconnected' : 'Connecting', figures, partial: false, notes: tile.ended ? [tile.ended] : [] };
-	const stopped = s.state=='stopped', at = f?.end, between = oeeBetweenShifts( s );
-	const notes:string[] = [];
-	if( tile.link=='dropped' )
-		notes.push( 'The connection to the gateway was lost:  this is the last it said.' );
-	if( between )
-		notes.push( 'Between shifts.' );
-	else if( !s.planned )
-		notes.push( 'Outside planned time.' );
-	if( s.calendarMissing )
-		notes.push( "Its calendar isn't found, so the figures are the UTC day's." );
-	const period = s.shift ? s.shift.name ?? 'Shift' : between ? undefined : 'UTC day';
+	const stopped = s.state=='stopped', at = f?.end, { period, notes } = oeeTileNotes( s, tile.link=='dropped' );
 	if( s.machines ){
 		const c = s.machines;
 		return { state: 'line', stateLabel: `${c.running} running, ${c.stopped} stopped${c.unknown ? `, ${c.unknown} unknown` : ''}`, counts: c, period, figures, partial: f?.partial===true, notes };
@@ -58,6 +48,21 @@ export function oeeTileView( tile:OeeTile ):OeeTileView{
 		reason: stopped ? s.stop?.reason : undefined, badge: !stopped || s.stop?.reason ? undefined : s.stop?.small ? 'Small stop' : 'Uncoded',
 		period, figures, partial: f?.partial===true, notes
 	};
+}
+//What a tile says of its status beside its state and figures:  the period they are over and the notes - the socket dropped, the
+//status then the last the gateway said, between shifts or outside planned time, the calendar not found.  The dashboard's tiles'
+//and the floor page's panel and list (#481).
+export function oeeTileNotes( s:OeeLiveStatus, dropped:boolean ):{period?:string; notes:string[]}{
+	const between = oeeBetweenShifts( s ), notes:string[] = [];
+	if( dropped )
+		notes.push( 'The connection to the gateway was lost:  this is the last it said.' );
+	if( between )
+		notes.push( 'Between shifts.' );
+	else if( !s.planned )
+		notes.push( 'Outside planned time.' );
+	if( s.calendarMissing )
+		notes.push( "Its calendar isn't found, so the figures are the UTC day's." );
+	return { period: s.shift ? s.shift.name ?? 'Shift' : between ? undefined : 'UTC day', notes };
 }
 //Between shifts:  a calendar found, and none of its shifts now - without a calendar every time is planned (SetOeeShift).  A
 //status with no figures is no sign of it:  the gateway has none before it has read the machine's rows, for a machine no engine

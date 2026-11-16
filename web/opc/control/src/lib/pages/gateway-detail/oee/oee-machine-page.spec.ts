@@ -6,6 +6,7 @@ import { provideRouter } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
 import { OeeCodingCall, OeeSpan, toOeeBucket, toOeeStop, toOeeTimeline, toOeeTimelines } from '../../../model/oee';
 import { OeeAdminService } from '../../../services/oee-admin-service';
+import { OeeFloorService } from '../../../services/oee-floor-service';
 import { OeeService } from '../../../services/oee-service';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { OeeChart, OeeChartSpec } from './oee-chart';
@@ -69,7 +70,7 @@ const create = async ( {calendar='found', addOn='loaded', status, line=false}:{c
 	const title = { title: '' };
 	TestBed.configureTestingModule({ providers: [
 		provideRouter( [] ), provideRoute( {data} ), { ...pageTitleStub, useValue: title },
-		{ provide: OeeService, useValue: service }, { provide: OeeAdminService, useValue: admin }, { provide: HighchartsLoader, useValue: loader }, { provide: MatDialog, useValue: {} }
+		{ provide: OeeService, useValue: service }, { provide: OeeFloorService, useValue: {floors: vi.fn( async ()=>[{id: 1, lineId: 10, width: 40, height: 20, grid: 0.5}] )} }, { provide: OeeAdminService, useValue: admin }, { provide: HighchartsLoader, useValue: loader }, { provide: MatDialog, useValue: {} }
 	]});
 	TestBed.overrideComponent( OeeMachinePage, {remove: {imports: [OeeChart]}, add: {imports: [ChartStub]}} );
 	const fixture = TestBed.createComponent( OeeMachinePage );
@@ -349,7 +350,7 @@ describe( 'OeeMachinePage', ()=>{
 		expect( p.page.factors()[3].hint ).toBe( 'Not measured on every machine:  a machine needs a Good or Reject signal.  Coverage says how many it is over.' );//the line's words, not a machine's
 		const trend = p.charts().map( c=>c.spec() ).find( c=>c.title.startsWith( 'OEE of' ) )!;
 		expect( trend.kind=='columns' && trend.points[0].custom.text ).not.toContain( 'good of' );//its machines' counts don't add
-		expect( p.text( '.period-bar a' ) ).toEqual( ['monitoringDashboard', 'settingsLine'] );//each with its icon's name
+		expect( p.text( '.period-bar a' ) ).toEqual( ['mapFloor', 'monitoringDashboard', 'settingsLine'] );//each with its icon's name;  the line has a floor (#481)
 	} );
 	it( "draws a line's chart a pair of rows per machine, lists its stops with their machines, and codes each on its machine", async ()=>{
 		const p = await create( {line: true} );

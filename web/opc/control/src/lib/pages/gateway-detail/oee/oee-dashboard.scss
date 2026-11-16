@@ -29,3 +29,33 @@ section .notice{
 oee-chart{
 	margin-bottom: .25rem;
 }
+/* a line tile's way to its floor (#481):  a second link in the tile's corner, since a link can't sit inside the tile's own */
+.tiles li{
+	position: relative;
+	&.floored .name{
+		padding-right: 4rem;/* clear of the chip */
+	}
+}
+.floor-link{
+	position: absolute;
+	top: .6rem;
+	right: .75rem;
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px 8px 2px 4px;
+	border-radius: 12px;
+	background: var(--mat-sys-surface-container-highest);
+	color: var(--mat-sys-on-surface);
+	font: var(--mat-sys-label-medium);
+	text-decoration: none;
+	mat-icon{
+		font-size: 16px;
+		width: 16px;
+		height: 16px;
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: 2px;
+	}
+}

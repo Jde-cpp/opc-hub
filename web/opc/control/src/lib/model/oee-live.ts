@@ -6,8 +6,14 @@ import type { OeeReasonRef, OeeSpan, OeeState } from './oee';
 //the initial bundle, has no need of.
 
 export type OeeLiveStop = { start?:Date; reason?:OeeReasonRef; small:boolean; code?:string };
-//the shift's figures so far, or without a calendar the UTC day's:  `end` is how far they run, the engine's time
-export type OeeLiveFigures = { start?:Date; end?:Date; availability?:number; performance?:number; quality?:number; oee?:number; partial:boolean };
+//the shift's figures so far, or without a calendar the UTC day's:  `end` is how far they run, the engine's time.  The times are
+//milliseconds within planned time, the floor page's loss split (#481);  a status with no figures has none.
+export type OeeLiveFigures = {
+	start?:Date; end?:Date; availability?:number; performance?:number; quality?:number; oee?:number; partial:boolean;
+	planned?:number; run?:number; unplanned?:number; plannedStop?:number; small?:number; excluded?:number; unknown?:number;
+};
+//a proto count:  ts-proto's Long, or a number where the message was built in a test
+const ms = ( v:{ toNumber():number }|number|undefined ):number=>v==undefined ? 0 : typeof v=='number' ? v : v.toNumber();
 //A line's state (#409):  the machines it reaches, by theirs.  A line's status has these, and no state, since, stop or last
 //count of its own;  its `planned`, `shift` and figures are by its own calendar.
 export type OeeLiveCounts = { running:number; stopped:number; unknown:number };
@@ -22,7 +28,8 @@ export function toOeeLiveStatus( p:FromServer.OeeStatus|undefined ):OeeLiveStatu
 		state: p?.state==1 ? 'running' : p?.state==2 ? 'stopped' : 'unknown', since: p?.since, planned: p?.planned===true,
 		stop: p?.stop ? { start: p.stop.start, reason: reason ? {id: reason.id, name: reason.name || String( reason.id ), category: reason.category} : undefined, small: p.stop.small, code: p.stop.code==undefined ? undefined : String( p.stop.code ) } : undefined,
 		shift: shift?.start && shift.end ? { start: shift.start, end: shift.end, name: shift.name || undefined } : undefined,
-		figures: f ? { start: f.start, end: f.end, availability: f.availability, performance: f.performance, quality: f.quality, oee: f.oee, partial: f.partial } : undefined,
+		figures: f ? { start: f.start, end: f.end, availability: f.availability, performance: f.performance, quality: f.quality, oee: f.oee, partial: f.partial,
+			planned: ms( f.planned ), run: ms( f.run ), unplanned: ms( f.unplanned ), plannedStop: ms( f.plannedStop ), small: ms( f.small ), excluded: ms( f.excluded ), unknown: ms( f.unknown ) } : undefined,
 		lastCount: p?.lastCount, calendarMissing: p?.calendarMissing===true,
 		...(p?.machines ? {machines: {running: p.machines.running, stopped: p.machines.stopped, unknown: p.machines.unknown}} : {})
 	};

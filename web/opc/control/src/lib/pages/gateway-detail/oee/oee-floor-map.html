@@ -1,0 +1,56 @@
+<svg #svg [attr.viewBox]="viewBox()" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Floor map:  drag to pan, wheel or pinch to zoom"
+	(wheel)="wheel($event)" (pointerdown)="down($event)" (pointermove)="move($event)" (pointerup)="up($event)" (pointercancel)="up($event)">
+	<rect class="floor" x="0" y="0" [attr.width]="floor().width" [attr.height]="floor().height"/>
+	@for( z of drawing().zones; track z.shape.id ){
+		@let c = centre( z.box );
+		<g class="zone">
+			<polygon [attr.points]="points( z.points )"/>
+			@if( z.label ){ <text [attr.x]="c.x" [attr.y]="c.y" [attr.font-size]="fs( 12 )">{{ z.label }}</text> }
+		</g>
+	}
+	@for( a of drawing().aisles; track a.shape.id ){
+		<polyline class="aisle" [attr.points]="points( a.points )"/>
+	}
+	@for( w of drawing().walls; track w.shape.id ){
+		<polyline class="wall" [attr.points]="points( w.points )"/>
+	}
+	@for( s of shapes(); track s.key ){
+		@let v = s.view();
+		@let b = s.box;
+		<g class="shape" [class.machine]="s.kind=='machine'" [class.line]="s.kind=='line'" [class.selected]="selected()==s.key" [attr.data-token]="v.state.token" [attr.data-dash]="v.state.dash"
+			tabindex="0" role="button" [attr.aria-label]="v.aria"
+			(mouseenter)="enter.emit( s.key )" (mouseleave)="leave.emit()" (focus)="enter.emit( s.key )" (blur)="leave.emit()" (click)="clicked( s.key )" (keydown.enter)="pick.emit( s.key )" (keydown.space)="pick.emit( s.key ); $event.preventDefault()">
+			<polygon [attr.points]="points( s.points )"/>
+			@if( s.kind=='machine' ){<!--a line's text is drawn after the machines, over them-->
+				@if( textLevel( b )=='full' ){
+					<text class="name" [attr.x]="b.x+b.width/2" [attr.y]="b.y+fs( 18 )" [attr.font-size]="fs( 14 )">{{ s.name }}</text>
+					<text class="oee" [attr.x]="b.x+b.width/2" [attr.y]="b.y+b.height/2+fs( 6 )" [attr.font-size]="fs( 26 )">{{ v.oee }}</text>
+					<text class="detail" [attr.x]="b.x+b.width/2" [attr.y]="b.y+b.height/2+fs( 22 )" [attr.font-size]="fs( 11 )">A {{ v.availability }} · P {{ v.performance }} · Q {{ v.quality }}</text>
+					<text class="state" [attr.x]="b.x+b.width/2" [attr.y]="b.y+b.height-fs( 8 )" [attr.font-size]="fs( 12 )">{{ v.state.line }}</text>
+				}
+				@else{
+					<text class="name" [attr.x]="b.x+b.width/2" [attr.y]="b.y+b.height/2-fs( 4 )" [attr.font-size]="fs( 12 )">{{ s.name }}</text>
+					<text class="oee" [attr.x]="b.x+b.width/2" [attr.y]="b.y+b.height/2+fs( 14 )" [attr.font-size]="fs( 16 )">{{ v.oee }}</text>
+				}
+			}
+		</g>
+	}
+	@for( s of shapes(); track s.key ){
+		@if( s.kind=='line' ){
+			@let v = s.view();
+			@let b = s.box;
+			<g class="line-text" aria-hidden="true" [attr.stroke-width]="fs( 3 )">
+				<text class="name" [attr.x]="b.x+fs( 8 )" [attr.y]="b.y+fs( 18 )" [attr.font-size]="fs( 14 )">{{ s.name }}</text>
+				<text class="detail" [attr.x]="b.x+fs( 8 )" [attr.y]="b.y+fs( 34 )" [attr.font-size]="fs( 12 )">OEE {{ v.oee }} · {{ v.count }}</text>
+			</g>
+		}
+	}
+	@for( l of drawing().labels; track l.shape.id ){
+		<text class="label" [attr.x]="l.points[0][0]" [attr.y]="l.points[0][1]" [attr.font-size]="fs( 13 )">{{ l.label }}</text>
+	}
+</svg>
+<div class="controls">
+	<button matIconButton type="button" (click)="zoom( 1.25 )" aria-label="Zoom in" matTooltip="Zoom in"><mat-icon>add</mat-icon></button>
+	<button matIconButton type="button" (click)="zoom( 0.8 )" aria-label="Zoom out" matTooltip="Zoom out"><mat-icon>remove</mat-icon></button>
+	<button matButton type="button" (click)="fit()" matTooltip="The whole floor">Fit</button>
+</div>

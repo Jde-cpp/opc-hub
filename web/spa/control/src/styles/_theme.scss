@@ -1,8 +1,11 @@
 @use '@angular/material' as mat;
 
 // A theme of the theme picker's:  Material's system tokens from a primary and a tertiary palette, light or dark.  The one place
-// the typography and the density are set.  @include it in `html`.
+// the typography and the density are set.  @include it in `html`.  It sets the document's color-scheme too, which Material's
+// tokens don't:  the browser's own controls and scrollbars follow the theme, and a sheet may pick a colour by it with
+// light-dark() (jde-opc's OEE state tokens).
 @mixin theme( $type, $primary, $tertiary ) {
+	color-scheme: $type;
 	@include mat.theme((
 		color: (
 			theme-type: $type,

@@ -19,6 +19,7 @@ import { OeeLine } from '../../../model/oee-lines';
 import { oeeTileFigures } from '../../../model/oee-live-view';
 import { Gateway } from '../../../services/gateway-service';
 import { OeeAdminService } from '../../../services/oee-admin-service';
+import { OeeFloorService } from '../../../services/oee-floor-service';
 import { OeeOf, OeeService } from '../../../services/oee-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
@@ -52,6 +53,7 @@ type OeePart = typeof oeeParts[number];
 	imports: [DatePipe, RouterLink, MatButtonModule, MatButtonToggleModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSlideToggleModule, MatTableModule, MatTooltipModule, OeeChart]
 })
 export class OeeMachinePage implements OnInit{
+	floorLink = signal<string[]|undefined>( undefined );//a line's floor page (#481), where it has one
 	ngOnInit(){
 		this.#route.data.subscribe( data=>this.#open( <GatewayDetailData<any>>data['pageData'], data['kind']=='lines' ) );
 		this.#loader.load().catch( ()=>{} );//how it settled is the loader's state, for the page's one notice
@@ -71,6 +73,9 @@ export class OeeMachinePage implements OnInit{
 		this.customTo.set( '' );
 		this.uncodedOnly.set( false );
 		this.statusProblem.set( undefined );
+		this.floorLink.set( undefined );
+		if( isLine )//a line with a floor (#481) links to it;  a reader without Read on the floors sees none
+			this.#floors.floors( gateway ).then( floors=>{ if( this.#isOpen( subject ) && floors.some( f=>f.lineId==subject.row.id ) ) this.floorLink.set( ['../floor'] ); }, ()=>{} );
 		this.#service.reasons( gateway ).then( list=>{ if( this.#isOpen( subject ) ) this.reasons.set( {list} ); }, e=>{ if( this.#isOpen( subject ) ) this.reasons.set( {list: [], error: errorMessage(e)} ); } );
 		//a calendar the gateway's client finds gives the machine shifts:  the page opens on the one it is in, and the trend is by shift
 		let status:{calendar:string}|undefined, failed:string|undefined;
@@ -393,6 +398,7 @@ export class OeeMachinePage implements OnInit{
 	#title = inject( ComponentPageTitle );
 	#dialog = inject( MatDialog );
 	#service = inject( OeeService );
+	#floors = inject( OeeFloorService );
 	#admin = inject( OeeAdminService );
 	#loader = inject( HighchartsLoader );
 }

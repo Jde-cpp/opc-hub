@@ -8,7 +8,7 @@ describe( 'toOeeLiveStatus', ()=>{
 		const s = toOeeLiveStatus( <any>{ state: 2, since: t( 8, 12 ), planned: true, calendarMissing: false, stop: {start: t( 8, 12 ), reason: Jam, small: false, code: 12},
 			shift: {name: 'First', start: t( 6 ), end: t( 14 )}, figures: {start: t( 6 ), end: t( 8, 20 ), availability: 0.8, oee: 0.7, partial: true, measured: 1}, lastCount: t( 8, 11 )} );
 		expect( s ).toEqual( { state: 'stopped', since: t( 8, 12 ), planned: true, calendarMissing: false, stop: {start: t( 8, 12 ), reason: Jam, small: false, code: '12'},
-			shift: {name: 'First', start: t( 6 ), end: t( 14 )}, figures: {start: t( 6 ), end: t( 8, 20 ), availability: 0.8, performance: undefined, quality: undefined, oee: 0.7, partial: true}, lastCount: t( 8, 11 )} );
+			shift: {name: 'First', start: t( 6 ), end: t( 14 )}, figures: {start: t( 6 ), end: t( 8, 20 ), availability: 0.8, performance: undefined, quality: undefined, oee: 0.7, partial: true, planned: 0, run: 0, unplanned: 0, plannedStop: 0, small: 0, excluded: 0, unknown: 0}, lastCount: t( 8, 11 )} );//the times 0 where the message carries none
 	} );
 	it( 'takes a machine no engine runs, between shifts, as unknown with nothing else', ()=>{
 		expect( toOeeLiveStatus( <any>{state: 0, planned: false, calendarMissing: false} ) ).toEqual( {state: 'unknown', since: undefined, planned: false, stop: undefined, shift: undefined, figures: undefined, lastCount: undefined, calendarMissing: false} );

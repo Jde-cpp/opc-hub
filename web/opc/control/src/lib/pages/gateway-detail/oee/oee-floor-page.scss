@@ -1,0 +1,223 @@
+@use '../../status';
+@use 'oee-tokens';
+
+/* The page's content is its own container:  below 600px of room the map and the panel give way to the list view.  Not the host,
+   which is .main-content and must not be one (web/CLAUDE.md 'Shared styles'). */
+:host{
+	@include oee-tokens.tokens;
+	display: block;
+	width: 100%;
+}
+.floor{
+	container-type: inline-size;
+}
+.floor-header{
+	box-sizing: border-box;
+	padding: 0 24px;
+	.line-bar{
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: .25rem .5rem;
+	}
+	.line-heading{
+		margin: 0;
+		font: var(--mat-sys-headline-small);
+		.level{
+			color: var(--mat-sys-on-surface-variant);
+			font: var(--mat-sys-title-medium);
+		}
+	}
+	.spacer{
+		flex: 1 1 auto;
+	}
+}
+/* the shift, the plant's clock, the line's state and figures in a row that wraps */
+.status-bar{
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5rem 1.5rem;
+	margin: .5rem 0 0;
+	.item{
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		dt{
+			color: var(--mat-sys-on-surface-variant);
+			font: var(--mat-sys-label-small);
+		}
+		dd{
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			margin: 0;
+			font: var(--mat-sys-title-medium);
+			font-variant-numeric: tabular-nums;
+		}
+		&.lead dd{
+			font-weight: 700;
+		}
+		.zone{
+			color: var(--mat-sys-on-surface-variant);
+			font: var(--mat-sys-body-small);
+		}
+	}
+}
+/* a state's swatch:  the token's colour and the dash, as the map draws the outline */
+.swatch{
+	flex: 0 0 auto;
+	display: inline-block;
+	box-sizing: border-box;
+	width: 18px;
+	height: 12px;
+	border-radius: 3px;
+	border: 3px solid var(--oee-neutral);
+	&[data-dash=dashed]{
+		border-style: dashed;
+	}
+	&[data-dash=dotted]{
+		border-style: dotted;
+	}
+}
+.legend{
+	display: flex;
+	flex-wrap: wrap;
+	gap: .25rem 1rem;
+	margin: .5rem 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+	li{
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+}
+.body{
+	display: grid;
+	grid-template-columns: minmax( 0, 1fr ) auto;
+	gap: 1rem;
+	box-sizing: border-box;
+	padding: 1rem 24px 1.5rem;
+}
+.map-wrap{
+	min-width: 0;
+	oee-floor-map{
+		height: clamp( 320px, 60vh, 720px );
+	}
+}
+.notice{
+	@include status.refused( .5rem 0 0, var(--mat-sys-on-surface-variant) );
+	mat-icon{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+.panel{
+	box-sizing: border-box;
+	width: 300px;
+	padding: .75rem 1rem;
+	border-radius: 12px;
+	background: var(--mat-sys-surface-container-low);
+	.panel-head{
+		display: flex;
+		align-items: center;
+		gap: .5rem;
+		h3{
+			flex: 1 1 auto;
+			margin: 0;
+			font: var(--mat-sys-title-medium);
+			.level{
+				color: var(--mat-sys-on-surface-variant);
+				font: var(--mat-sys-body-small);
+			}
+		}
+	}
+	.state{
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: .25rem 0;
+		font: var(--mat-sys-body-medium);
+		font-variant-numeric: tabular-nums;
+	}
+	.figures{
+		display: flex;
+		justify-content: space-between;
+		gap: .5rem;
+		margin: .5rem 0 0;
+		.figure{
+			display: flex;
+			flex-direction: column;
+			min-width: 0;
+			dt{
+				color: var(--mat-sys-on-surface-variant);
+				font: var(--mat-sys-label-small);
+			}
+			dd{
+				margin: 0;
+				font: var(--mat-sys-title-medium);
+				font-variant-numeric: tabular-nums;
+			}
+			&.lead dd{
+				font-weight: 700;
+			}
+		}
+	}
+	.split{
+		width: 100%;
+		margin: .5rem 0 0;
+		border-collapse: collapse;
+		font: var(--mat-sys-body-small);
+		th{
+			text-align: left;
+			font-weight: 400;
+			color: var(--mat-sys-on-surface-variant);
+		}
+		td, th{
+			padding: 1px 0;
+		}
+		.num{
+			text-align: right;
+			font-variant-numeric: tabular-nums;
+			padding-left: .5rem;
+		}
+		.beside th{
+			font-style: italic;
+		}
+	}
+	.stop, .note{
+		margin: .5rem 0 0;
+		font: var(--mat-sys-body-small);
+		color: var(--mat-sys-on-surface-variant);
+		.category{
+			color: var(--mat-sys-on-surface-variant);
+		}
+	}
+	.links{
+		display: flex;
+		flex-wrap: wrap;
+		gap: .25rem;
+		margin-top: .75rem;
+	}
+}
+.list{
+	display: none;
+	grid-column: 1 / -1;
+}
+.tile .state .swatch{
+	width: 14px;
+	height: 10px;
+	border-width: 2px;
+}
+@container (width < 600px){
+	.body{
+		grid-template-columns: minmax( 0, 1fr );
+	}
+	.map-wrap, .panel, .legend{
+		display: none;
+	}
+	.list{
+		display: block;
+	}
+}

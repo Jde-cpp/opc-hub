@@ -38,13 +38,16 @@
 			<ul class="tiles">
 				@for( t of lineTiles(); track t.line.id ){
 					@let v = t.view();
-					<li>
+					<li [class.floored]="floors().has( t.line.id )">
 						<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../lines', t.line.slug, 'oee']">
 							<span class="name">{{ t.line.name }}</span>
 							<span class="category">{{ t.line.level }}</span>
 							<span class="state">{{ v.stateLabel }}</span>
 							<ng-container [ngTemplateOutlet]="figures" [ngTemplateOutletContext]="{$implicit: v}"></ng-container>
 						</a>
+						@if( floors().has( t.line.id ) ){<!--the line's floor map (#481), beside the tile's own link-->
+							<a class="floor-link" [routerLink]="['../lines', t.line.slug, 'floor']" [attr.aria-label]="'Floor map of ' + t.line.name"><mat-icon aria-hidden="true">map</mat-icon>Floor</a>
+						}
 					</li>
 				}
 			</ul>
