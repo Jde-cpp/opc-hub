@@ -57,7 +57,7 @@ namespace Jde::Opc::Server{
 			parents.includeSubtypes = true;
 			parents.nodeClassMask = UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE | UA_NODECLASS_OBJECTTYPE | UA_NODECLASS_VARIABLETYPE;
 			parents.resultMask = UA_BROWSERESULTMASK_NODECLASS;
-			auto found = UA_Server_browse( &ua, 0, &parents );
+			Owned<UA_BrowseResult,UA_TYPES_BROWSERESULT> found{ UA_Server_browse(&ua, 0, &parents) };
 			bool type{};
 			for( uint i=0; i<found.referencesSize && !type; ++i ){
 				let& parent = found.references[i];
@@ -65,7 +65,6 @@ namespace Jde::Opc::Server{
 				if( !parent.nodeId.serverIndex )
 					next.emplace_back( parent.nodeId.nodeId );
 			}
-			UA_BrowseResult_clear( &found );
 			if( type )
 				return true;
 		}

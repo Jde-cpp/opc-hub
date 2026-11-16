@@ -89,7 +89,7 @@ namespace Jde::Opc{
 		if( eo.encoding>=UA_EXTENSIONOBJECT_DECODED )
 			return eo.content.decoded.type && eo.content.decoded.data ? Variant::ElementToJson( eo.content.decoded.data, *eo.content.decoded.type, types ) : jvalue{};
 		if( let decoded = DecodeBody(eo, types); decoded )
-			return Variant::ElementToJson( decoded.Data, *decoded.Type, types );
+			return Variant::ElementToJson( decoded.Data(), decoded.Type(), types );
 		let& enc = eo.content.encoded;
 		jobject y{ {"typeId", Opc::ToJson(enc.typeId)} };
 		if( eo.encoding==UA_EXTENSIONOBJECT_ENCODED_BYTESTRING )
@@ -319,19 +319,18 @@ namespace Jde{
 				types->Missing( enc.typeId );
 			return {};
 		}
-		void* data = UA_new( type );
+		auto data = NewUA( *type );
 		if( !data ){
 			WARNT( ELogTags::Parsing, "Could not allocate a '{}' to decode a body of {} bytes into.", type->typeName, enc.body.length );
 			return {};
 		}
 		UA_DecodeBinaryOptions options{};
 		options.customTypes = types ? types->Chain() : nullptr;
-		if( let sc = UA_decodeBinary(&enc.body, data, type, &options); sc ){
-			UA_delete( data, type );
+		if( let sc = UA_decodeBinary(&enc.body, data.get(), type, &options); sc ){
 			LOG( firstFailure(enc.typeId) ? ELogLevel::Warning : ELogLevel::Trace, ELogTags::Parsing, "Could not decode a '{}' body of {} bytes - {}.  Kept as it came.", type->typeName, enc.body.length, UAException::Message(sc) );
 			return {};
 		}
-		return { data, type };
+		return { move(data) };
 	}
 	//An ExtensionObject element, or a Variant element's, at any depth.
 	α Opc::NoteMissingTypes( const UA_Variant& v, const ITypes& types )ι->void{

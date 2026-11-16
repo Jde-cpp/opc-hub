@@ -9,22 +9,6 @@
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 
-	Ω freeChain( UA_DataTypeArray* a )ι->void{
-		while( a ){
-			auto next = a->next;
-			for( uint i=0; i<a->typesSize; ++i )
-				UA_DataType_clear( &a->types[i] );//the names, the members and the three ids - a string or guid id leaks when only the array goes.
-			UA_free( a->types );
-			UA_free( a );
-			a = next;
-		}
-	}
-	TypeRegistry::~TypeRegistry(){
-		freeChain( _head.load() );
-		ul _{ _mutex };
-		for( auto a : _retired )
-			freeChain( a );
-	}
 	α TypeRegistry::Types()Ι->vector<const UA_DataType*>{
 		vector<const UA_DataType*> y;
 		for( auto a = Chain(); a; a = a->next ){
@@ -129,10 +113,10 @@ namespace Jde::Opc::Gateway{
 		if( !types || !types->typesSize )
 			return 0;
 		//No type here is in the chain:  the walk asked only for what it lacked, and no other fetch runs to add one meanwhile (_fetching).
-		auto node = types.release();//the deleter freed a `cleanup` array;  from here the chain's, freed by ~TypeRegistry alone.
-		node->cleanup = false;
+		auto node = types.get();
 		ul _{ _mutex };
 		node->next = _head.load( std::memory_order_relaxed );//writers serialize on _mutex;  a reader takes the node whole or not at all.
+		_arrays.push_back( move(types) );
 		_head.store( node, std::memory_order_release );
 		return node->typesSize;
 	}
@@ -222,8 +206,7 @@ namespace Jde::Opc::Gateway{
 				if( namespaces ){
 					moved = _namespaces.size() && ( namespaces->Uris.size()<_namespaces.size() || !std::equal(_namespaces.begin(), _namespaces.end(), namespaces->Uris.begin()) );
 					if( moved ){//set aside, not freed:  a value decoded against it may still be on its way.
-						if( auto head = _head.exchange(nullptr, std::memory_order_acq_rel); head )
-							_retired.push_back( head );
+						_head.store( nullptr, std::memory_order_release );
 						_missing.clear();
 						_unexplained.clear();
 						_walked = false;

@@ -33,11 +33,13 @@ namespace Jde::DB::Sqlite{
 		α InsertSeqSyncUInt( DB::InsertClause&& insert, SL sl )ε->uint override;
 		α Connection( SL sl )ε->sqlite3&; //lazy open.
 		α ExecuteProc( DB::Sql& sql, SL sl, Params& exeParams )ε->uint; //dispatch to SqliteProcs registry inside a transaction.
+		struct Close final{ α operator()( sqlite3* db )Ι->void; }; //sqlite3_close_v2, where sqlite3.h is included.
+		using DbPtr = up<sqlite3,Close>;
 
 		flat_set<sp<SqliteApi>> _procDlls; //shared with other data sources configured with the same dll - see _dllApis in the .cpp.
 		//Single connection, serialized by _connMutex: an in-memory db is per-connection, so a MySql-style
 		//session pool would hand each caller its own empty database. For file-backed dbs a pool + WAL is an option.
-		sqlite3* _db{};
+		DbPtr _db;
 		std::mutex _connMutex;
 		string _path{ ":memory:" };
 		//sqlite defaults to 0 - a concurrent writer makes the next statement fail with SQLITE_BUSY straight away.  Any

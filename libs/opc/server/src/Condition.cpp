@@ -34,10 +34,8 @@ namespace Jde::Opc::Server{
 			description.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HASTYPEDEFINITION );
 			description.nodeClassMask = UA_NODECLASS_OBJECTTYPE;
 			description.resultMask = UA_BROWSERESULTMASK_NONE;
-			auto result = UA_Server_browse( &ua, 1, &description );
-			NodeId y = result.statusCode==UA_STATUSCODE_GOOD && result.referencesSize ? NodeId{ result.references[0].nodeId.nodeId } : NodeId{ UA_NS0ID_ALARMCONDITIONTYPE };
-			UA_BrowseResult_clear( &result );
-			return y;
+			const Owned<UA_BrowseResult,UA_TYPES_BROWSERESULT> result{ UA_Server_browse(&ua, 1, &description) };
+			return result.statusCode==UA_STATUSCODE_GOOD && result.referencesSize ? NodeId{ result.references[0].nodeId.nodeId } : NodeId{ UA_NS0ID_ALARMCONDITIONTYPE };
 		}
 		Ω number( const UA_Variant& v )ι->optional<double>{
 			if( !UA_Variant_isScalar(&v) || !v.type || !v.data )

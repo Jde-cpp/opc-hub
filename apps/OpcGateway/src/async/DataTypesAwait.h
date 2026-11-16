@@ -5,7 +5,7 @@
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
-	α FreeDataTypeArray( UA_DataTypeArray* a )ι->void;//what UA_Client_getRemoteDataTypes's caller frees:  the types with UA_DataType_clear, then the arrays.
+	α FreeDataTypeArray( UA_DataTypeArray* a )ι->void;//one array, its types with UA_DataType_clear first - never `next`, which the registry links.
 	using DataTypeArrayPtr = up<UA_DataTypeArray, void(*)(UA_DataTypeArray*)>;
 	//The server's definitions of the DataType nodes asked for, built as UA_Client_getRemoteDataTypes builds them (ua_client_util.c)
 	//but over the asynchronous read:  the typed call is synchronous, and held the client's strand for the round trip.  Each node's
@@ -14,7 +14,7 @@ namespace Jde::Opc::Gateway{
 	//structure, or whose definition the server withholds, is left out, as the typed call leaves it.  A member's type resolves against
 	//the types built so far and `known` - the connection's registry chain (TypeRegistry), else the client's own - and in passes, so a
 	//type whose member is a type the same answer lists after it builds on the next.  Resumes with an exception when a read itself
-	//fails.  The array is `cleanup`:  the pointer's deleter frees it, unless the registry takes it over.  Any family:  TypeRegistry::Run
+	//fails.  cleanup is false, so no client's config clear frees the array once the registry chains it.  Any family:  TypeRegistry::Run
 	//awaits it from a VoidTask.
 	struct DataTypesAwait final : AnyAwait<DataTypeArrayPtr>{
 		DataTypesAwait( vector<NodeId>&& nodes, sp<UAClient> client, const UA_DataTypeArray* known=nullptr, SRCE )ι;

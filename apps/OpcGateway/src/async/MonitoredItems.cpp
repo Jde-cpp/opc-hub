@@ -24,19 +24,17 @@ namespace Jde::Opc::Gateway{
 	α DeleteMonitoredItemsAwait::SuspendOnStrand()ι->void{
 		try{
 			for( let& [subscriptionId, monitorIds] : _monitoredItems ){
-				UA_DeleteMonitoredItemsRequest request{
+				Owned<UA_DeleteMonitoredItemsRequest,UA_TYPES_DELETEMONITOREDITEMSREQUEST> request{ UA_DeleteMonitoredItemsRequest{
 					.subscriptionId = subscriptionId,
 					.monitoredItemIdsSize = monitorIds.size(),
 					.monitoredItemIds = ( UA_UInt32* )UA_Array_new( monitorIds.size(), &UA_TYPES[UA_TYPES_UINT32] )
-				};
+				} };
 				uint i=0;
 				for( let& id : monitorIds )
 					request.monitoredItemIds[i++] = id;
 
 				RequestId _requestId{};//name required by the UACε macro (it references _requestId).
-				let submitted = UA_Client_MonitoredItems_delete_async( _client->UAPointer(), request, monitoredItemsDeleteCallback, this, &_requestId );
-				UA_DeleteMonitoredItemsRequest_clear( &request );//before the check:  a refused submit - a channel already closed - used to throw past it and leak the ids.
-				UACε( submitted );
+				UACε( UA_Client_MonitoredItems_delete_async(_client->UAPointer(), request, monitoredItemsDeleteCallback, this, &_requestId) );
 				TRACE( "[{}.{}]Deleting monitored items for subscriptionId={}, count={}", hex(_client->Handle()), hex(_requestId), subscriptionId, monitorIds.size() );
 				bool first;
 				{ lg l{ _mutex }; first = _submitted++==0; }
@@ -106,8 +104,7 @@ namespace Jde::Opc::Gateway{
 		}
 		for( let& [subscriptionId, items] : bySubscription ){
 			vector<NodeId> nodes;
-			UA_ModifyMonitoredItemsRequest request;
-			UA_ModifyMonitoredItemsRequest_init( &request );
+			Owned<UA_ModifyMonitoredItemsRequest,UA_TYPES_MODIFYMONITOREDITEMSREQUEST> request;
 			request.subscriptionId = subscriptionId;
 			request.timestampsToReturn = _timestamps;
 			request.itemsToModifySize = items.size();
@@ -125,13 +122,11 @@ namespace Jde::Opc::Gateway{
 				UACε( UA_Client_MonitoredItems_modify_async(_client->UAPointer(), request, monitoredItemsModifyCallback, this, &_requestId) );
 			}
 			catch( UAException& e ){//this request's nodes fail with the refusal;  the next subscription's still go, a refusal that means the connection went included - it fails the same way.
-				UA_ModifyMonitoredItemsRequest_clear( &request );
 				WARN( "[{}]Modify monitored items on subscription {} refused for {} node(s):  {}", hex(_client->Handle()), subscriptionId, nodes.size(), e.what() );
 				for( let& node : nodes )
 					_results.try_emplace( node, MonitoredItemModifyResult{(StatusCode)e.Code()} );
 				continue;
 			}
-			UA_ModifyMonitoredItemsRequest_clear( &request );
 			TRACE( "[{}.{}]Modifying monitored items for subscriptionId={}, count={}", hex(_client->Handle()), hex(_requestId), subscriptionId, nodes.size() );
 			_requests.emplace( _requestId, move(nodes) );//before Process:  it can run the loop inline, and the answer reads this.
 			bool first;

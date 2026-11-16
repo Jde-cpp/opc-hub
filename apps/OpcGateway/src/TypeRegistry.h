@@ -16,7 +16,7 @@ namespace Jde::Opc::Gateway{
 	//Asked by each client's activation and reconnect (Check), by a value naming an encoding id the chain lacks (Missing, posted), and by
 	//the dataType query (Fetched);  one fetch at a time, an ask while one runs following it.  Each array is a new node ahead of the chain
 	//and never changes after, so a reader walks the chain off any thread;  cleanup is false on every one, so no client's config clear frees
-	//them, and they are freed here, a chain set aside by a move with them, once the last client holding this goes - a value decoded against
+	//them, and _arrays frees them, a chain set aside by a move with them, once the last client holding this goes - a value decoded against
 	//the chain is serialized at once (Value::ToJson) or re-encoded before it is kept (Variant::WithBuiltInTypes), so nothing outlives an array.
 	struct TypeRegistry final : ITypes, std::enable_shared_from_this<TypeRegistry>, noncopyable{
 		enum class EFetch : uint8{
@@ -24,7 +24,6 @@ namespace Jde::Opc::Gateway{
 			Walk//the subtree walked whatever:  a type the server added since.
 		};
 		TypeRegistry( ServerCnnctnNK slug, ServerCnnctnPK row )ι:_slug{ move(slug) }, _row{ row }{}
-		~TypeRegistry();
 		α Chain()Ι->const UA_DataTypeArray* override{ return _head.load( std::memory_order_acquire ); }
 		//A walk through a connected client, posted - once for each id, unless the walk it starts fails, after which the id may ask again
 		//once RetryAfter has passed.  Nothing is noted while no client is connected:  the next value naming it asks again.
@@ -82,9 +81,9 @@ namespace Jde::Opc::Gateway{
 		α Finish( up<Exception> error )ι->void;//the fetch's end:  its waiters resumed, the fetch asked meanwhile started.
 		const ServerCnnctnNK _slug;
 		const ServerCnnctnPK _row;
-		std::atomic<UA_DataTypeArray*> _head{};
+		std::atomic<UA_DataTypeArray*> _head{};//one of _arrays.
 		mutable absl::Mutex _mutex;
-		vector<UA_DataTypeArray*> _retired ABSL_GUARDED_BY(_mutex);//the chains a namespace move set aside:  a value decoded against one may still be on its way.
+		vector<DataTypeArrayPtr> _arrays ABSL_GUARDED_BY(_mutex);//every array the chain has held, those a namespace move set aside included:  a value decoded against one may still be on its way.
 		vector<string> _namespaces ABSL_GUARDED_BY(_mutex);//the NamespaceArray the chain was built under.
 		bool _fetching ABSL_GUARDED_BY(_mutex){};
 		bool _walked ABSL_GUARDED_BY(_mutex){};//a walk has succeeded since the chain began.

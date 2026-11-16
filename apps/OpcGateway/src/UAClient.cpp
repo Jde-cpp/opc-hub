@@ -402,16 +402,9 @@ namespace Jde::Opc::Gateway{
 		_handle{ createHandle(_opcServer) },
 		_logger{ _handle },
 		_ptr{ Create() }{
-		try{
-			Configuration();
-			INFO( "[{}]Creating UAClient slug: '{}' url: '{}' credential: '{}' )", hex(Handle()), Slug(), Url(), _credential.ToString() );
-			LogClientEndpoints();
-		}
-		catch( ... ){
-			UA_Client_delete( _ptr );
-			_ptr = nullptr;
-			throw;
-		}
+		Configuration();
+		INFO( "[{}]Creating UAClient slug: '{}' url: '{}' credential: '{}' )", hex(Handle()), Slug(), Url(), _credential.ToString() );
+		LogClientEndpoints();
 	}
 
 	α UAClient::Shutdown( bool /*terminate*/, SL /*sl*/ )ι->VoidAwait::Task{
@@ -505,7 +498,7 @@ namespace Jde::Opc::Gateway{
 			INFO( "[{}]Offering {}, {} only, with certificate '{}'", hex(Handle()), policy.empty() ? securedPolicyNames() : string{ ClientSecurity::PolicyName(policy) }, modeWords(mode), settings.Certificate.Path.string() );
 		if( !addSecurity )//not `else`: the log macros expand to their own `if`.  No endpoint filter - an unsecured channel has no uri to hold the server's against.
 			INFO( "[{}]Using SecurityPolicy None - '{}' {}; user tokens are encrypted, under the policy the server names, with certificate '{}'", hex(Handle()), Slug(), _opcServer.SecurityMode.empty() ? "has no certificateUri" : "pins security mode None", settings.Certificate.Path.string() );
-		auto config = UA_Client_getConfig( _ptr );
+		auto config = UA_Client_getConfig( _ptr.get() );
 		//A secret in the clear - a password or an issued token under a token policy of None, on any channel that is not
 		//Sign & Encrypt, a Sign channel included - is refused by open62541 itself unless this is set (matchUserTokenPolicy), and the
 		//gateway sets it only on the operator's say-so:  /gateway/allowPlaintextPassword, default false (reviews/security-matrix.md
@@ -578,14 +571,14 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 	α UAClient::ApplicationUri()Ι->string{
-		return ToString( UA_Client_getConfig(_ptr)->applicationUri );
+		return ToString( UA_Client_getConfig(_ptr.get())->applicationUri );
 	}
 	α UAClient::AdvertisedUri()Ι->string{
-		return ToString( UA_Client_getConfig(_ptr)->clientDescription.applicationUri );
+		return ToString( UA_Client_getConfig(_ptr.get())->clientDescription.applicationUri );
 	}
 	α UAClient::LogClientEndpoints()ι->void{
 		vector<string> policyUris;
-		auto config = UA_Client_getConfig( _ptr );
+		auto config = UA_Client_getConfig( _ptr.get() );
 		for( let& sp : Iterable<UA_SecurityPolicy>(config->securityPolicies, config->securityPoliciesSize) )
 			policyUris.emplace_back( ToString(sp.policyUri) );
 		//both uris: config->applicationUri filters the *server's* endpoints - the connection's certificateUri, and a wrong one
@@ -884,7 +877,7 @@ namespace Jde::Opc::Gateway{
 	Ω subscriptionInactivityCallback( UA_Client *client, SubscriptionId subscriptionId, void* /*subContext*/ ){
 		DBG( "[{}.{}]subscriptionInactivityCallback", hex((uint)client), hex(subscriptionId) );
 	}
-	α UAClient::Create()ε->UA_Client*{
+	α UAClient::Create()ε->ClientPtr{
 		//Every throwing step stays ABOVE the first allocation.  Create() is called from UAClient's member-initializer
 		//list, so a throw out of it escapes before the object exists: ~UAClient never runs, and nothing else knows
 		//about the event loop, the connection managers or the UA_Client.  Reading the credential material first means
@@ -953,8 +946,8 @@ namespace Jde::Opc::Gateway{
 		//The connection's structure types as fetched so far (TypeRegistry), which every message decodes by from the first:  the registry's
 		//own arrays, cleanup false on each, so the config's clear frees none of them;  RechainTypes re-points this after each fetch.
 		_config.customDataTypes = const_cast<UA_DataTypeArray*>( _types->Chain() );
-		auto ua = UA_Client_newWithConfig( &_config );
-		UA_Client_getConfig( ua )->eventLoop->logger = _config.logging;
+		ClientPtr ua{ UA_Client_newWithConfig(&_config) };
+		UA_Client_getConfig( ua.get() )->eventLoop->logger = _config.logging;
 
 		return ua;
 	}
@@ -1091,7 +1084,7 @@ namespace Jde::Opc::Gateway{
 
 	α UAClient::Reactivating()Ι->bool{
 		UA_SecureChannelState channel{}; UA_SessionState session{}; StatusCode connectStatus{};
-		UA_Client_getState( _ptr, &channel, &session, &connectStatus );
+		UA_Client_getState( _ptr.get(), &channel, &session, &connectStatus );
 		return channel==UA_SECURECHANNELSTATE_OPEN && session!=UA_SESSIONSTATE_ACTIVATED && !connectStatus && !_asyncRequest.IsStopped();
 	}
 	α UAClient::Park( absl::AnyInvocable<void()> submit )ι->void{
@@ -1575,7 +1568,7 @@ namespace Jde::Opc::Gateway{
 		string token;
 		UA_NodeId id{};
 		UA_ByteString nonce{};
-		if( !UA_Client_getSessionAuthenticationToken(_ptr, &id, &nonce) ){
+		if( !UA_Client_getSessionAuthenticationToken(_ptr.get(), &id, &nonce) ){
 			NodeId owned{ move(id) };//both come back copied - the wrapper clears the id, and the nonce is cleared below.
 			UA_ByteString_clear( &nonce );
 			token = owned.ToString();
@@ -1669,7 +1662,7 @@ namespace Jde::Opc::Gateway{
 		}
 		sp<UAClient> y;
 		walkClients( [&]( const sp<UAClient>& client ){
-			if( client->_ptr==ua )
+			if( client->_ptr.get()==ua )
 				y = client;
 			return !y;
 		} );
@@ -1687,7 +1680,6 @@ namespace Jde::Opc::Gateway{
 	}
 
 	UAClient::~UAClient() {
-		UA_Client_delete( _ptr );
 		INFO( "[{}]~UAClient( '{}', '{}' )", hex(Handle()), Slug(), Url() );
 	}
 }

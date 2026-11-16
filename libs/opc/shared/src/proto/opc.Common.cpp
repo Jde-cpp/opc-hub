@@ -195,7 +195,7 @@ namespace Jde::Opc{
 			return ProtoUtils::ToValue( decoded.data, *decoded.type, EStructures::Decoded, types );
 		}
 		if( let decoded = DecodeBody(eo, types); decoded )
-			return ProtoUtils::ToValue( decoded.Data, *decoded.Type, EStructures::Decoded, types );
+			return ProtoUtils::ToValue( decoded.Data(), decoded.Type(), EStructures::Decoded, types );
 		Proto::Value y;
 		*y.mutable_extension_object() = toExtensionObject( eo );
 		return y;
@@ -399,10 +399,10 @@ namespace Jde::Opc{
 		eo.content.encoded.body = ToUV( proto.binary() );
 		if( let decoded = DecodeBody(eo, types); decoded ){
 			try{
-				v = ToValue( decoded.Data, *decoded.Type, EStructures::Decoded, types );
+				v = ToValue( decoded.Data(), decoded.Type(), EStructures::Decoded, types );
 			}
 			catch( const std::exception& e ){
-				WARNT( ELogTags::Parsing, "A stored '{}' decoded but would not convert - {}.  Kept as it came.", decoded.Type->typeName, e.what() );
+				WARNT( ELogTags::Parsing, "A stored '{}' decoded but would not convert - {}.  Kept as it came.", decoded.Type().typeName, e.what() );
 			}
 		}
 	}
@@ -489,11 +489,11 @@ namespace Jde::Opc{
 			if( !known )
 				throw UAException{ UA_STATUSCODE_BADDECODINGERROR, Ƒ("A '{}' has no member '{}'.", type.typeName, m.name()) };
 		}
-		void* data = UA_new( &type );
+		auto data = NewUA( type );
 		if( !data )
 			throw UAException{ UA_STATUSCODE_BADOUTOFMEMORY, Ƒ("Could not allocate a '{}'.", type.typeName) };
 		try{
-			FillMembers( data, type, [&]( const UA_DataTypeMember& m )ε->optional<Variant>{
+			FillMembers( data.get(), type, [&]( const UA_DataTypeMember& m )ε->optional<Variant>{
 				let member = find( m.memberName );
 				if( !member || !member->has_value() )
 					return nullopt;
@@ -508,19 +508,13 @@ namespace Jde::Opc{
 			}, SRCE_CUR );
 		}
 		catch( const UAException& ){
-			UA_delete( data, &type );
 			throw;
 		}
 		catch( const Exception& e ){//FillMembers' refusal, naming the member.
-			UA_delete( data, &type );
 			throw UAException{ UA_STATUSCODE_BADDECODINGERROR, string{e.what()} };
 		}
-		catch( ... ){
-			UA_delete( data, &type );
-			throw;
-		}
 		UA_Variant y{};
-		UA_Variant_setScalar( &y, data, &type );
+		UA_Variant_setScalar( &y, data.release(), &type );
 		return Variant{ move(y) };
 	}
 

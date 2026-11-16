@@ -2,6 +2,7 @@
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/opc/uatypes/NodeId.h>
+#include <jde/opc/uatypes/UAPtr.h>
 
 namespace Jde::Opc::Emulator{
 	//The emulator's session on the OpcServer - the client half of a UA-enabled PLC.  Single-threaded: every call runs on
@@ -33,6 +34,6 @@ namespace Jde::Opc::Emulator{
 		string _url, _applicationUri, _serverApplicationUri;
 		Logger _logger;
 		UA_ClientConfig _config{};//newWithConfig shallow-copies this; UA_Client_delete clears the client's copy - never UA_ClientConfig_clear(&_config).
-		UA_Client* _ptr{};
+		ClientPtr _ptr;
 	};
 }

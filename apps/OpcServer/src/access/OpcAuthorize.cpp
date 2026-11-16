@@ -19,7 +19,7 @@ namespace Jde::Opc::Server{
 			UA_UINT32_MAX,
 			UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE | UA_NODECLASS_METHOD
 		};
-		auto br = UA_Server_browse( &server, UA_UINT32_MAX, &bd );
+		Owned<UA_BrowseResult,UA_TYPES_BROWSERESULT> br{ UA_Server_browse(&server, UA_UINT32_MAX, &bd) };
 		if( br.statusCode ){
 			UAException{ br.statusCode, Ƒ("Could not browse node {}", nodeId.ToString()) };
 			return;
@@ -46,7 +46,6 @@ namespace Jde::Opc::Server{
 				Path.pop_back();
 			}
 		}
-		UA_BrowseResult_clear(&br);
 	}
 
 	//Neither lock is held across the browse.  UA_Server_browse takes the server's serviceMutex, and open62541 calls the

@@ -23,31 +23,22 @@ namespace Jde::Opc::Emulator{
 		//no noReconnect: open62541's initial connect must close the None discovery channel and reopen with the selected
 		//secured endpoint (that reopen counts as a reconnect); blocking it aborts every connect with BadNotConnected.
 		//A genuine session drop is caught by the loop's IsActivated() check, which Disconnect()s and Connect()s afresh.
-		_ptr = UA_Client_newWithConfig( &_config );
+		_ptr.reset( UA_Client_newWithConfig(&_config) );
 		THROW_IFSL( !_ptr, "UA_Client_newWithConfig failed." );
-		UA_Client_getConfig( _ptr )->eventLoop->logger = _config.logging;
-		try{
-			Configure( certificate, sl );//a throw, the certificate unreadable included, is caught below.
-		}
-		catch( ... ){
-			UA_Client_delete( _ptr );
-			_ptr = nullptr;
-			throw;
-		}
+		UA_Client_getConfig( _ptr.get() )->eventLoop->logger = _config.logging;
+		Configure( certificate, sl );
 	}
 	EmulatorClient::~EmulatorClient(){
-		if( _ptr ){
-			UA_Client_disconnect( _ptr );
-			UA_Client_delete( _ptr );
-		}
+		if( _ptr )
+			UA_Client_disconnect( _ptr.get() );
 	}
 
 	α EmulatorClient::Configure( const Crypto::CryptoSettings& certificate, SL sl )ε->void{
-		auto config = UA_Client_getConfig( _ptr );
+		auto config = UA_Client_getConfig( _ptr.get() );
 		//A UA-enabled PLC checks who it is talking to: without the verifier, setDefault's AcceptAll would take any certificate the
 		//endpoint answers with, so anything that can occupy the OpcServer's address collects our issued token and our process
 		//values.  The gateway's, anchored on this app's own list, /emulator/trustedCertDirs - see jde/opc/ServerTrust.h.
-		ClientSecurity::Configure( *config, {.Certificate=certificate, .Secure=true, .ServerUri=_serverApplicationUri, .AdvertisedUri=_applicationUri, .TrustRoot="/emulator"}, (Jde::Handle)(uint)_ptr, _url, sl );//the client pointer is the id StateCallback logs, so the verifier's lines and the connect failure line up.
+		ClientSecurity::Configure( *config, {.Certificate=certificate, .Secure=true, .ServerUri=_serverApplicationUri, .AdvertisedUri=_applicationUri, .TrustRoot="/emulator"}, (Jde::Handle)(uint)_ptr.get(), _url, sl );//the client pointer is the id StateCallback logs, so the verifier's lines and the connect failure line up.
 		vector<string> policyUris;
 		for( uint i=0; i<config->securityPoliciesSize; ++i )
 			policyUris.emplace_back( ToString(config->securityPolicies[i].policyUri) );
@@ -77,34 +68,34 @@ namespace Jde::Opc::Emulator{
 		identityToken->policyId = AllocUAString( "open62541-issuedtoken-policy"sv );
 		UA_ByteString_allocBuffer( &identityToken->tokenData, issuedToken.size() );
 		memcpy( identityToken->tokenData.data, issuedToken.data(), issuedToken.size() );
-		auto config = UA_Client_getConfig( _ptr );
+		auto config = UA_Client_getConfig( _ptr.get() );
 		UA_ExtensionObject_clear( &config->userIdentityToken );
 		UA_ExtensionObject_setValue( &config->userIdentityToken, identityToken, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
 		DBG( "Connecting to '{}'.", _url );
-		Check( UA_Client_connect(_ptr, _url.c_str()), Ƒ("connect '{}'", _url), EOpcLogTags::Client, sl );
+		Check( UA_Client_connect(_ptr.get(), _url.c_str()), Ƒ("connect '{}'", _url), EOpcLogTags::Client, sl );
 		INFO( "Session activated on '{}'.", _url );
 	}
 	α EmulatorClient::Disconnect()ι->void{
-		UA_Client_disconnect( _ptr );
+		UA_Client_disconnect( _ptr.get() );
 	}
 	α EmulatorClient::IsActivated()Ι->bool{
 		UA_SecureChannelState channel; UA_SessionState session; UA_StatusCode status;
-		UA_Client_getState( _ptr, &channel, &session, &status );
+		UA_Client_getState( _ptr.get(), &channel, &session, &status );
 		return session==UA_SESSIONSTATE_ACTIVATED && status==UA_STATUSCODE_GOOD;
 	}
 	α EmulatorClient::Iterate( uint32 timeoutMs )ι->UA_StatusCode{
-		return UA_Client_run_iterate( _ptr, timeoutMs );
+		return UA_Client_run_iterate( _ptr.get(), timeoutMs );
 	}
 	//Deleting the subscription before a clean Disconnect is what keeps the ten in-flight publish requests quiet:  the server
 	//answers them BadNoSubscription, which open62541 debug-logs, instead of answering a subscription the client has just
 	//forgotten, which processPublishResponse's default branch reports at WARNING each time.  ι - failing here is cosmetic.
 	α EmulatorClient::DeleteSubscription( UA_UInt32 subscription )ι->void{
-		if( let sc = UA_Client_Subscriptions_deleteSingle(_ptr, subscription); sc )
+		if( let sc = UA_Client_Subscriptions_deleteSingle(_ptr.get(), subscription); sc )
 			DBG( "deleteSubscription {} on '{}' - {}", subscription, _url, UA_StatusCode_name(sc) );
 	}
 	α EmulatorClient::Namespace( sv uri, SL sl )ε->NsIndex{
 		UA_UInt16 index{};
-		Check( UA_Client_getNamespaceIndex(_ptr, ToUV(uri), &index), Ƒ("namespace '{}' is not on the server", uri), EOpcLogTags::Client, sl );
+		Check( UA_Client_getNamespaceIndex(_ptr.get(), ToUV(uri), &index), Ƒ("namespace '{}' is not on the server", uri), EOpcLogTags::Client, sl );
 		return index;
 	}
 	α EmulatorClient::Resolve( sv path, NsIndex defaultNs, const flat_map<string,NsIndex>& nsAliases, SL sl )ε->NodeId{
@@ -113,7 +104,7 @@ namespace Jde::Opc::Emulator{
 		UA_TranslateBrowsePathsToNodeIdsRequest_init( &request );
 		request.browsePaths = &browsePath;//borrowed for the call; the request is not cleared.
 		request.browsePathsSize = 1;
-		auto response = UA_Client_Service_translateBrowsePathsToNodeIds( _ptr, request );
+		auto response = UA_Client_Service_translateBrowsePathsToNodeIds( _ptr.get(), request );
 		auto sc = response.responseHeader.serviceResult;
 		if( !sc )
 			sc = response.resultsSize ? response.results[0].statusCode : UA_STATUSCODE_BADNOMATCH;
@@ -142,7 +133,7 @@ namespace Jde::Opc::Emulator{
 		UA_WriteRequest_init( &request );
 		request.nodesToWrite = &write;
 		request.nodesToWriteSize = 1;
-		auto response = UA_Client_Service_write( _ptr, request );
+		auto response = UA_Client_Service_write( _ptr.get(), request );
 		auto sc = response.responseHeader.serviceResult;
 		if( !sc )
 			sc = response.resultsSize ? response.results[0] : UA_STATUSCODE_BADUNEXPECTEDERROR;
@@ -151,15 +142,15 @@ namespace Jde::Opc::Emulator{
 	}
 	α EmulatorClient::ValueType( const NodeId& node, SL sl )ε->const UA_DataType*{
 		UA_NodeId id;
-		Check( UA_Client_readDataTypeAttribute(_ptr, node, &id), Ƒ("{}'s DataType", node.ToString()), EOpcLogTags::Client, sl );
-		let type = UA_findDataTypeWithCustom( &id, UA_Client_getConfig(_ptr)->customDataTypes );
+		Check( UA_Client_readDataTypeAttribute(_ptr.get(), node, &id), Ƒ("{}'s DataType", node.ToString()), EOpcLogTags::Client, sl );
+		let type = UA_findDataTypeWithCustom( &id, UA_Client_getConfig(_ptr.get())->customDataTypes );
 		UA_NodeId_clear( &id );
 		return type;
 	}
 	α EmulatorClient::CreateSubscription( Duration publishingInterval, SL sl )ε->UA_UInt32{
 		auto request = UA_CreateSubscriptionRequest_default();
 		request.requestedPublishingInterval = std::chrono::duration<double,std::milli>( publishingInterval ).count();
-		auto response = UA_Client_Subscriptions_create( _ptr, request, nullptr, nullptr, nullptr );
+		auto response = UA_Client_Subscriptions_create( _ptr.get(), request, nullptr, nullptr, nullptr );
 		let sc = response.responseHeader.serviceResult;
 		let id = response.subscriptionId;
 		UA_CreateSubscriptionResponse_clear( &response );
@@ -169,7 +160,7 @@ namespace Jde::Opc::Emulator{
 	α EmulatorClient::Monitor( UA_UInt32 subscription, const NodeId& node, Duration samplingInterval, void* context, UA_Client_DataChangeNotificationCallback callback, SL sl )ε->UA_UInt32{
 		auto item = UA_MonitoredItemCreateRequest_default( node );
 		item.requestedParameters.samplingInterval = std::chrono::duration<double,std::milli>( samplingInterval ).count();
-		auto result = UA_Client_MonitoredItems_createDataChange( _ptr, subscription, UA_TIMESTAMPSTORETURN_BOTH, item, context, callback, nullptr );
+		auto result = UA_Client_MonitoredItems_createDataChange( _ptr.get(), subscription, UA_TIMESTAMPSTORETURN_BOTH, item, context, callback, nullptr );
 		let sc = result.statusCode;
 		let id = result.monitoredItemId;
 		UA_MonitoredItemCreateResult_clear( &result );

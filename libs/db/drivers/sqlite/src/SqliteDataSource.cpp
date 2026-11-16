@@ -42,10 +42,8 @@ namespace Jde::DB::Sqlite{
 	//stripping procs the survivor still dispatches. Weak entries so the dll still unloads with its last data source.
 	DllApiCache<SqliteApi> _dllApis;
 
-	SqliteDataSource::~SqliteDataSource(){
-		if( _db )
-			sqlite3_close_v2( _db );
-	}
+	SqliteDataSource::~SqliteDataSource()=default;
+	α SqliteDataSource::Close::operator()( sqlite3* db )Ι->void{ sqlite3_close_v2( db ); }
 
 	α SqliteDataSource::SetConfig( const jobject& config )ε->void{
 		for( auto&& [catalogName, vcatalog] : Json::AsObject(config, "catalogs") ){
@@ -73,41 +71,35 @@ namespace Jde::DB::Sqlite{
 	α SqliteDataSource::Connection( SL sl )ε->sqlite3&{
 		if( !_db ){
 			//SQLITE_OPEN_FULLMUTEX (serialized) as a backstop; _connMutex is the real serialization.
-			let rc = sqlite3_open_v2( _path.c_str(), &_db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr );
-			try{
-				//inside the try: open_v2 allocates a handle even when it fails, so throwing past the cleanup below left _db set and every later call skipped the reopen and used the dead handle.
-				THROW_IFX( rc, SqliteException(sl, rc, Sql{}, "sqlite3_open_v2('{}'): {}", _path, _db ? sqlite3_errmsg(_db) : sqlite3_errstr(rc)) );
-				sqlite3_extended_result_codes( _db, 1 ); //ToDbError needs SQLITE_CONSTRAINT_UNIQUE etc; the base SQLITE_CONSTRAINT cannot tell unique from fk/not-null.
-				//Without this sqlite's busy handler is absent and a locked db fails the statement immediately; there is no
-				//retry on EDbError::Timeout anywhere above, so the caller just sees the error.  Harmless for ':memory:',
-				//which no second connection can reach - it is set unconditionally so the two paths cannot drift.
-				sqlite3_busy_timeout( _db, (int)_busyTimeoutMs );
-				//exec succeeds even when fks are compiled out (the pragma no-ops) - read the setting back instead of trusting rc.
-				ExecuteStatement( *_db, "pragma foreign_keys=on", {}, nullptr, sl );
-				THROW_IFSL( ScalarUInt(*_db, "pragma foreign_keys", {}, sl).value_or(0)!=1, "Could not enable foreign_keys on '{}' - fks would go unenforced.", _path );
-				if( _path!=":memory:" ){
-					string mode; //journal_mode=wal reports the resulting mode - stays on the prior journal if wal can't be used (e.g. network fs).
-					RowΛ f = [&mode]( Row&& r ){ mode = r.GetString(0); };
-					ExecuteStatement( *_db, "pragma journal_mode=wal", {}, &f, sl );
-					if( mode!="wal" )
-						WARN( "('{}') journal_mode=wal not applied - using '{}'.", _path, mode );
-				}
+			sqlite3* opened{};
+			let rc = sqlite3_open_v2( _path.c_str(), &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr );
+			//open_v2 allocates a handle even when it fails.  Kept local until configured:  a failed or half-configured connection is
+			//closed, not cached - a retry would skip the open and the pragmas.
+			DbPtr db{ opened };
+			THROW_IFX( rc, SqliteException(sl, rc, Sql{}, "sqlite3_open_v2('{}'): {}", _path, db ? sqlite3_errmsg(db.get()) : sqlite3_errstr(rc)) );
+			sqlite3_extended_result_codes( db.get(), 1 ); //ToDbError needs SQLITE_CONSTRAINT_UNIQUE etc; the base SQLITE_CONSTRAINT cannot tell unique from fk/not-null.
+			//Without this sqlite's busy handler is absent and a locked db fails the statement immediately; there is no
+			//retry on EDbError::Timeout anywhere above, so the caller just sees the error.  Harmless for ':memory:',
+			//which no second connection can reach - it is set unconditionally so the two paths cannot drift.
+			sqlite3_busy_timeout( db.get(), (int)_busyTimeoutMs );
+			//exec succeeds even when fks are compiled out (the pragma no-ops) - read the setting back instead of trusting rc.
+			ExecuteStatement( *db, "pragma foreign_keys=on", {}, nullptr, sl );
+			THROW_IFSL( ScalarUInt(*db, "pragma foreign_keys", {}, sl).value_or(0)!=1, "Could not enable foreign_keys on '{}' - fks would go unenforced.", _path );
+			if( _path!=":memory:" ){
+				string mode; //journal_mode=wal reports the resulting mode - stays on the prior journal if wal can't be used (e.g. network fs).
+				RowΛ f = [&mode]( Row&& r ){ mode = r.GetString(0); };
+				ExecuteStatement( *db, "pragma journal_mode=wal", {}, &f, sl );
+				if( mode!="wal" )
+					WARN( "('{}') journal_mode=wal not applied - using '{}'.", _path, mode );
 			}
-			catch( ... ){ //don't cache a failed or half-configured connection - a retry would skip the open and the pragmas. close_v2 is a no-op on the null handle an OOM open leaves behind.
-				sqlite3_close_v2( _db );
-				_db = nullptr;
-				throw;
-			}
+			_db = move( db );
 		}
 		return *_db;
 	}
 
 	α SqliteDataSource::Disconnect()ε->void{
 		lg l{ _connMutex };
-		if( _db ){
-			sqlite3_close_v2( _db );
-			_db = nullptr;
-		}
+		_db.reset();
 	}
 
 	//"call app_instance_insert( ?, ?, ?, ? )" never reaches the server - there is none. Dispatch to the

@@ -246,13 +246,11 @@ namespace Jde::Opc::Gateway{
 		if( !found )
 			return false;
 		let& type = *found;
-		void* data = UA_new( &type );
-		if( !data || UA_decodeBinary(&o.content.encoded.body, data, &type, nullptr) ){
-			UA_delete( data, &type );
+		auto data = NewUA( type );
+		if( !data || UA_decodeBinary(&o.content.encoded.body, data.get(), &type, nullptr) )
 			return false;
-		}
 		UA_ExtensionObject_clear( &o );
-		UA_ExtensionObject_setValue( &o, data, &type );
+		UA_ExtensionObject_setValue( &o, data.release(), &type );
 		return true;
 	}
 	//A structure's members as open62541 lays them out (ua_types.c's copyStructure and copyUnion):  each after its padding, an array,
