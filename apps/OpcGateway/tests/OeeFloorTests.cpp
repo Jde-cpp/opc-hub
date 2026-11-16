@@ -1,6 +1,6 @@
 //Demo phase 3 (#480):  the floor's two tables (docs/demo/spec.md *The floor*) over the pumps rig - a floor on an area over two
 //lines, pump1's and pump2's, a shape of each kind made through the QL and read back, each refusal of the rules a BadRequest, a
-//deleted machine's shape, the purges and the unique index.
+//deleted machine's shape, one a member's purge strands, the purges and the unique index.
 #include "utils/OeeFixture.h"
 
 namespace Jde::Opc::Gateway::Tests{
@@ -33,8 +33,10 @@ namespace Jde::Opc::Gateway::Tests{
 	};
 
 	//The two tables synced;  the plant's floor, its refusals first, then a shape of each kind read back;  each refusal of the
-	//shapes' rules;  a deleted machine's shape read;  a machine's purge taking its shape and leaving the floor, a line's taking
-	//its floor with its shapes and its Line shape, a floor's taking its shapes;  and a second floor on a line refused by the index.
+	//shapes' rules;  an update's kind refused by the stock update;  no new shape for a deleted machine or line, or through a
+	//deleted line;  a deleted machine's shape read and updated;  a shape a member's purge strands kept, updated and purged;  a
+	//machine's purge taking its shape and leaving the floor, a line's taking its floor with its shapes and its Line shape, a
+	//floor's taking its shapes;  and a second floor on a line refused by the index.
 	TEST_F( OeeFloorTests, TheFloorAndItsShapes ){
 		for( sv table : {"oeeFloors", "oeeFloorShapes"} )
 			EXPECT_NO_THROW( Mutate(Ƒ("{}{{ id }}", table)) ) << table;
@@ -50,7 +52,7 @@ namespace Jde::Opc::Gateway::Tests{
 		AddLine( plant, bottling, 1 );
 		AddLine( plant, packing, 2 );
 		AddMachine( bottling, m1 );
-		AddMachine( packing, m2 );
+		let packerMember = AddMachine( packing, m2 );
 
 		EXPECT_EQ( Status([&]{ CreateFloor( 999'999, {{"width", 40}, {"height", 20}} ); }), EHttpStatus::NotFound );
 		EXPECT_NE( Refused([&]{ CreateFloor( plant, {{"height", 20}} ); }).find("width is metres"), string::npos ) << "required";
@@ -134,13 +136,34 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Number(Mutate("oeeFloors( id:$id ){ grid }", {{"id", floorId}}).as_array()[0].as_object(), "grid"), 1 );
 		EXPECT_NE( Refused([&]{ Mutate( "deleteOeeFloorShape( id:$id )", {{"id", dock}} ); }).find("purge"), string::npos );
 		EXPECT_EQ( Status([&]{ Mutate( "purgeOeeFloorShape( id:$id )", {{"id", 999'999}} ); }), EHttpStatus::NotFound );
+		//An update's kind and keys are the stock update's to refuse, not the rules' to check as though written.
+		EXPECT_NE( Refused([&]{ Mutate( "updateOeeFloorShape( id:$id, kind:$kind )", {{"id", dock}, {"kind", "Zone"}} ); }).find("'kind' can't be updated"), string::npos ) << "not a Zone's point count";
+		EXPECT_NE( Refused([&]{ Mutate( "updateOeeFloorShape( id:$id, oeeMachineId:$machine )", {{"id", filler}, {"machine", m2}} ); }).find("can't be updated"), string::npos );
 
-		//A deleted machine keeps its shape, which reads.
+		//A new shape stands:  none through a deleted line, or for one.
+		Mutate( "deleteOeeLine( id:$id )", {{"id", packing}} );
+		EXPECT_NE( Refused([&]{ CreateShape( floorId, "Machine", Box(13, 13, 4, 4), {{"oeeMachineId", m2}} ); }).find("isn't one line 'oeeFloorPlant' reaches"), string::npos ) << "reached only through a deleted line";
+		EXPECT_NE( Refused([&]{ CreateShape( floorId, "Line", Box(13, 13, 4, 4), {{"memberLineId", packing}} ); }).find("Line 'oeeFloorPacking' is deleted"), string::npos );
+		Mutate( "restoreOeeLine( id:$id )", {{"id", packing}} );
+
+		//A deleted machine keeps its shape, which reads and updates;  a new one for it is refused.
 		let packer = CreateShape( floorId, "Machine", Box(13, 13, 4, 4), {{"oeeMachineId", m2}} );
 		Mutate( "deleteOeeMachine( id:$id )", {{"id", m2}} );
 		EXPECT_EQ( Count(OeeTable::FloorShapes, "oee_machine_id", m2), 1u );
 		EXPECT_EQ( Mutate("oeeFloorShapes( id:$id ){ id }", {{"id", packer}}).as_array().size(), 1u );
+		EXPECT_NO_THROW( Mutate("updateOeeFloorShape( id:$id, label:$label )", {{"id", packer}, {"label", "Packer"}}) );
+		EXPECT_NE( Refused([&]{ CreateShape( floorId, "Machine", Box(20, 13, 4, 4), {{"oeeMachineId", m2}} ); }).find("is deleted:  restore it"), string::npos );
 		Mutate( "restoreOeeMachine( id:$id )", {{"id", m2}} );
+
+		//A member's purge strands the packer's shape:  Plant no longer reaches it.  The shape is kept, its points still held to the
+		//floor, and purged as any;  a new one is refused.
+		Mutate( "purgeOeeLineMember( id:$id )", {{"id", packerMember}} );
+		EXPECT_EQ( Count(OeeTable::FloorShapes, "oee_machine_id", m2), 1u ) << "kept";
+		EXPECT_NO_THROW( Mutate("updateOeeFloorShape( id:$id, points:$points )", {{"id", packer}, {"points", Box(14, 13, 4, 4)}}) ) << "its points alone";
+		EXPECT_NE( Refused([&]{ Mutate( "updateOeeFloorShape( id:$id, points:$points )", {{"id", packer}, {"points", Box(38, 13, 4, 4)}} ); }).find("outside"), string::npos );
+		EXPECT_NE( Refused([&]{ CreateShape( floorId, "Machine", Box(20, 13, 4, 4), {{"oeeMachineId", m2}} ); }).find("isn't one line 'oeeFloorPlant' reaches"), string::npos );
+		Mutate( "purgeOeeFloorShape( id:$id )", {{"id", packer}} );
+		EXPECT_EQ( Count(OeeTable::FloorShapes, "oee_machine_id", m2), 0u );
 
 		//A machine's purge takes its shape and leaves the floor;  a line's takes its floor with its shapes, and its shape on the
 		//floor above;  a floor's takes its shapes.
@@ -148,14 +171,14 @@ namespace Jde::Opc::Gateway::Tests{
 		Mutate( "purgeOeeMachine( id:$id )", {{"id", m1}} );
 		pump1.Id = 0;
 		EXPECT_EQ( Count(OeeTable::FloorShapes, "oee_machine_id", m1), 0u );
-		EXPECT_EQ( Shapes(floorId), 6u );
+		EXPECT_EQ( Shapes(floorId), 5u );
 		EXPECT_EQ( Floors(plant), 1u );
 		Mutate( "purgeOeeLine( id:$id )", {{"id", bottling}} );
 		std::erase( lines.Ids, bottling );
 		EXPECT_EQ( Floors(bottling), 0u );
 		EXPECT_EQ( Shapes(bottlingFloor), 0u );
 		EXPECT_EQ( Count(OeeTable::FloorShapes, "member_line_id", bottling), 0u );
-		EXPECT_EQ( Shapes(floorId), 5u ) << "the zone, the wall, the aisle, the dock and the packer";
+		EXPECT_EQ( Shapes(floorId), 4u ) << "the zone, the wall, the aisle and the dock";
 		Mutate( "purgeOeeFloor( id:$id )", {{"id", floorId}} );
 		EXPECT_EQ( Shapes(floorId), 0u );
 		EXPECT_EQ( Floors(plant), 0u );

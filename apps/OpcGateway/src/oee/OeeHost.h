@@ -63,8 +63,8 @@ namespace Jde::Opc::Gateway{
 		//A machine's feed's, under its engine's lock:  the machine's state changed, it closed an interval, or its rows were read
 		//again, so the lines that reach it compute again, from the executor.  Nothing while no line's feed is active.
 		α MachineMoved( OeeMachinePK id )ι->void;
-		//OeeMAwait's, held over a line's or a member's checks, its write and LinesChanged, and a machine's purge, whose memberships
-		//go with it:  each check reads the graph the last edit left.
+		//OeeMAwait's, held over a line's or a member's checks, its write and LinesChanged, a machine's purge, whose memberships and
+		//shapes go with it, and a floor's or a shape's checks and write:  each check reads the graph the last edit left.
 		α LineEdits()ι->CoMutex&{ return _lineEdits; }
 		//A line or a member created, edited, deleted, restored or purged, or a machine purged, whose memberships went with it:  both
 		//tables read again, and each line's feed ended, for one deleted or gone, or computed again.

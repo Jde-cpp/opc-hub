@@ -50,18 +50,21 @@ namespace Jde::Opc{
 		REFUSE_IF( !listed, "width {} is not 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60 minutes, the widths that divide an hour.", Chrono::ToString(width) );
 	}
 
+	//A column's json list:  `value` itself, or the list its text spells, which `parsed` holds.
+	Ω listOf( const jvalue& value, jvalue& parsed, SL sl )ε->const jarray&{
+		if( !value.is_string() )
+			return Json::AsArray( value, sl );
+		parsed = Json::ParseValue( value.get_string(), sl );
+		return Json::AsArray( parsed, sl );
+	}
+
 	α Oee::ParseRunning( const jvalue& running, SL sl )ε->vector<StateValue>{
 		vector<StateValue> y;
 		if( running.is_null() || (running.is_string() && running.get_string().empty()) )
 			return { StateValue{1.0} };
 		try{
 			jvalue parsed;
-			const jvalue* p = &running;
-			if( running.is_string() ){
-				parsed = Json::ParseValue( running.get_string(), sl );
-				p = &parsed;
-			}
-			for( let& v : Json::AsArray(*p, sl) ){
+			for( let& v : listOf(running, parsed, sl) ){
 				if( v.is_bool() )
 					y.emplace_back( v.get_bool() ? 1.0 : 0.0 );
 				else if( v.is_number() )
@@ -191,12 +194,7 @@ namespace Jde::Opc{
 		vector<Point> y;
 		try{
 			jvalue parsed;
-			const jvalue* p = &points;
-			if( points.is_string() ){
-				parsed = Json::ParseValue( points.get_string(), sl );
-				p = &parsed;
-			}
-			for( let& v : Json::AsArray(*p, sl) ){
+			for( let& v : listOf(points, parsed, sl) ){
 				let& pair = Json::AsArray( v, sl );
 				THROW_IF( pair.size()!=2 || !pair[0].is_number() || !pair[1].is_number(), "{} is not an [x, y] pair of numbers", serialize(v) );
 				Point point{ pair[0].to_number<double>(), pair[1].to_number<double>() };
@@ -227,19 +225,43 @@ namespace Jde::Opc{
 				REFUSE_IF( p.X<0 || p.X>floor.Width || p.Y<0 || p.Y>floor.Height, "Point [{}, {}] is outside the floor, {} by {} metres from its top-left.", p.X, p.Y, floor.Width, floor.Height );
 		}
 		Ω lineName( const Lines::Graph& graph, uint32 id )ι->string{
-			let p = std::ranges::find( graph.Lines, id, &Lines::Line::Id );
-			return p==graph.Lines.end() ? Ƒ( "{}", id ) : p->Name;
+			let p = find( graph, id );
+			return p ? p->Name : Ƒ( "{}", id );
 		}
 	}
 	α Oee::Floors::ValidateInside( const Floor& floor, std::span<const Shape> shapes, SL sl )ε->void{
 		for( let& shape : shapes )
 			inside( floor, shape.Points, sl );
 	}
-	α Oee::Floors::ValidateShape( const Lines::Graph& graph, const Floor& floor, const Shape& shape, std::span<const Shape> others, SL sl )ε->void{
+	α Oee::Floors::ValidatePoints( const Floor& floor, const Shape& shape, SL sl )ε->void{
 		using enum EKind;
 		REFUSE_IF( !shape.Kind, "kind is Machine, Line, Zone, Wall, Aisle or Label." );
 		let kind = *shape.Kind;
 		let name = ToString( kind );
+		let& points = shape.Points;
+		let count = points.size();
+		if( kind==Machine || kind==Line || kind==Zone ){
+			REFUSE_IF( count<3, "A {} shape is a closed polygon of three points or more, not {}.", name, count );
+			double twice{};//the shoelace:  twice the signed area.
+			for( uint i=0; i<count; ++i ){
+				let& a = points[i];
+				let& b = points[(i+1)%count];
+				twice += a.X*b.Y-b.X*a.Y;
+			}
+			REFUSE_IF( std::abs(twice)<1e-9, "A {} shape encloses no area:  a polygon's points can't all lie on one line.", name );
+		}
+		else if( kind==Wall || kind==Aisle ){
+			REFUSE_IF( count<2, "A {} is a polyline of two points or more, not {}.", name, count );
+			REFUSE_IF( std::ranges::all_of(points, [&]( const Point& p ){ return p==points.front(); }), "A {} has no length:  its points are all one.", name );
+		}
+		else
+			REFUSE_IF( count!=1, "A Label is one point, not {}.", count );
+		inside( floor, points, sl );
+	}
+	α Oee::Floors::ValidateShape( const Lines::Graph& graph, const Floor& floor, const Shape& shape, std::span<const Shape> others, SL sl )ε->void{
+		using enum EKind;
+		REFUSE_IF( !shape.Kind, "kind is Machine, Line, Zone, Wall, Aisle or Label." );
+		let kind = *shape.Kind;
 		if( kind==Machine ){
 			REFUSE_IF( !shape.MachineId, "A Machine shape names its machine:  oeeMachineId is required." );
 			REFUSE_IF( shape.MemberLineId, "A Machine shape names a machine, not a line:  memberLineId is a Line shape's." );
@@ -256,12 +278,7 @@ namespace Jde::Opc{
 			REFUSE_IF( std::ranges::any_of(others, [&]( const Shape& o ){ return o.Id!=shape.Id && o.MemberLineId==shape.MemberLineId; }), "Line '{}' is on the floor already:  a line appears once on a floor.", line );
 		}
 		else
-			REFUSE_IF( shape.MachineId || shape.MemberLineId, "A {} shape names no machine or line:  oeeMachineId is a Machine shape's and memberLineId a Line shape's.", name );
-		let count = shape.Points.size();
-		let polygon = kind==Machine || kind==Line || kind==Zone, polyline = kind==Wall || kind==Aisle;
-		REFUSE_IF( polygon && count<3, "A {} shape is a closed polygon of three points or more, not {}.", name, count );
-		REFUSE_IF( polyline && count<2, "A {} is a polyline of two points or more, not {}.", name, count );
-		REFUSE_IF( kind==Label && count!=1, "A Label is one point, not {}.", count );
-		inside( floor, shape.Points, sl );
+			REFUSE_IF( shape.MachineId || shape.MemberLineId, "A {} shape names no machine or line:  oeeMachineId is a Machine shape's and memberLineId a Line shape's.", ToString(kind) );
+		ValidatePoints( floor, shape, sl );
 	}
 }

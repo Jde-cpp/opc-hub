@@ -65,10 +65,14 @@ namespace Jde::Opc::Oee{
 		α ValidateFloor( const Floor& floor, SRCE )ε->void;
 		//Every point of every shape on or inside the floor:  a floor's resize, against the shapes it holds.
 		α ValidateInside( const Floor& floor, std::span<const Shape> shapes, SRCE )ε->void;
-		//A shape against its floor, the floor's other shapes and the graph:  its kind one of the six;  a Machine's machine one the
+		//A shape's points against its kind and its floor:  Machine, Line and Zone closed polygons of three points or more that
+		//enclose an area, Wall and Aisle polylines of two points or more not all one, a Label one;  and every point on or inside
+		//the floor.  All an update is held to:  its kind and keys don't change, and a shape whose machine or line its floor's
+		//line no longer reaches is kept, as a deleted machine's is.
+		α ValidatePoints( const Floor& floor, const Shape& shape, SRCE )ε->void;
+		//A new shape against its floor, the floor's shapes and the graph:  its kind one of the six;  a Machine's machine one the
 		//floor's line reaches, a Line's line one it reaches other than itself, each once on the floor, and neither key on any other
-		//kind;  Machine, Line and Zone closed polygons of three points or more, Wall and Aisle polylines of two or more, a Label
-		//one;  and every point on or inside the floor.  `others`:  the floor's shapes but this one.
+		//kind;  and its points.  `others`:  the floor's shapes, a row with the shape's id skipped.
 		α ValidateShape( const Lines::Graph& graph, const Floor& floor, const Shape& shape, std::span<const Shape> others, SRCE )ε->void;
 	}
 }

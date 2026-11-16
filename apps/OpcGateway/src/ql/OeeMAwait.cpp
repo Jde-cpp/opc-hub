@@ -1,4 +1,5 @@
 #include "OeeMAwait.h"
+#include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/exceptions/refuse.h>
 #include <jde/access/Authorize.h>
 #include <jde/ql/ops/MutationAwait.h>
@@ -163,21 +164,23 @@ namespace Jde::Opc::Gateway{
 		metres( "grid", y.Grid, false );
 		return y;
 	}
-	//A shape as its mutation would leave it:  `row`'s, or a create's, under the arguments.
+	//A shape as its mutation would leave it:  a create's, or `row`'s under the arguments.  An update's kind and keys stay the
+	//row's, which the stock update refuses to change.
 	Ω wouldShape( const jobject& args, const Oee::Floors::Shape* row, SL sl )ε->Oee::Floors::Shape{
-		Oee::Floors::Shape y;
-		if( row )
-			y = *row;
-		if( let p = args.if_contains("kind"); p || !row ){
-			y.Kind = p && p->is_string() ? Oee::Floors::ToKind( p->get_string() ) : nullopt;
-			REFUSE_IF( !y.Kind, "kind is Machine, Line, Zone, Wall, Aisle or Label{}.", p ? Ƒ(", not {}", serialize(*p)) : string{} );
+		let points = args.if_contains( "points" );
+		if( row ){
+			auto y = *row;
+			if( points )
+				y.Points = Oee::Floors::ParsePoints( *points, sl );
+			return y;
 		}
-		if( args.contains("oeeMachineId") || !row )
-			y.MachineId = optionalId( args, "oeeMachineId", sl );
-		if( args.contains("memberLineId") || !row )
-			y.MemberLineId = optionalId( args, "memberLineId", sl );
-		if( let p = args.if_contains("points"); p || !row )
-			y.Points = Oee::Floors::ParsePoints( p ? *p : jvalue{}, sl );
+		Oee::Floors::Shape y;
+		let kind = args.if_contains( "kind" );
+		y.Kind = kind && kind->is_string() ? Oee::Floors::ToKind( kind->get_string() ) : nullopt;
+		REFUSE_IF( !y.Kind, "kind is Machine, Line, Zone, Wall, Aisle or Label{}.", kind ? Ƒ(", not {}", serialize(*kind)) : string{} );
+		y.MachineId = optionalId( args, "oeeMachineId", sl );
+		y.MemberLineId = optionalId( args, "memberLineId", sl );
+		y.Points = Oee::Floors::ParsePoints( points ? *points : jvalue{}, sl );
 		return y;
 	}
 
@@ -456,47 +459,60 @@ namespace Jde::Opc::Gateway{
 						REFUSE_IF( floors.size(), "Line '{}' has a floor, {}:  a line has one.", line->Name, floors.front().Id );
 						Oee::Floors::ValidateFloor( wouldFloor(args, nullptr, sl), sl );
 					}
-					else{
-						let id = MutationRowId( _query, sl );
-						auto floors = co_await Any( SelectOeeFloors({.Id=id}) );
+					else if( let id = MutationRowId(_query, sl); type==Update ){
+						auto [floors, shapes] = co_await All( SelectOeeFloors({.Id=id}), SelectOeeFloorShapes({.Floor=id}) );
 						if( floors.empty() )
 							notFound( Ƒ("Floor {} not found.", id), sl );
-						if( type==Update ){
-							let would = wouldFloor( args, &floors.front(), sl );
-							Oee::Floors::ValidateFloor( would, sl );
-							auto shapes = co_await Any( SelectOeeFloorShapes({.Floor=id}) );
-							Oee::Floors::ValidateInside( would, shapes, sl );
-						}
+						let would = wouldFloor( args, &floors.front(), sl );
+						Oee::Floors::ValidateFloor( would, sl );
+						Oee::Floors::ValidateInside( would, shapes, sl );
 					}
+					else if( auto floors = co_await Any(SelectOeeFloors({.Id=id})); floors.empty() )
+						notFound( Ƒ("Floor {} not found.", id), sl );
 				}
 				else if( table==FloorShapes ){
 					REFUSE_IF( type==Delete || type==Restore, "A shape has no deleted:  purge it." );
 					floorEdit = co_await host.LineEdits().Lock();
-					optional<Oee::Floors::Shape> row;
-					if( type!=Create ){
+					let spell = [&]( const Oee::Floors::Shape& shape ){
+						if( let p = args.if_contains("points"); p && !p->is_string() )
+							spelled["points"] = Oee::Floors::ToJson( shape.Points );//the column holds text.
+					};
+					if( type==Create ){
+						let floorId = requireId( args, "oeeFloorId", sl );
+						auto [floors, others] = co_await All( SelectOeeFloors({.Id=floorId}), SelectOeeFloorShapes({.Floor=floorId}) );
+						if( floors.empty() )
+							notFound( Ƒ("Floor {} not found.", floorId), sl );
+						let shape = wouldShape( args, nullptr, sl );
+						if( shape.MachineId ){
+							let machine = host.Find( *shape.MachineId );
+							if( !machine )
+								notFound( Ƒ("Machine {} not found.", *shape.MachineId), sl );
+							REFUSE_IF( machine->Row.Deleted, "Machine '{}' is deleted:  restore it before its shape is made.", machine->Row.Name );
+						}
+						let lines = host.Lines();
+						if( shape.MemberLineId ){
+							let line = lines.Find( *shape.MemberLineId );
+							if( !line )
+								notFound( Ƒ("Line {} not found.", *shape.MemberLineId), sl );
+							REFUSE_IF( line->Deleted, "Line '{}' is deleted:  restore it before its shape is made.", line->Name );
+						}
+						spell( shape );
+						//standing:  a machine reached only through a deleted line is one the map doesn't draw.
+						Oee::Floors::ValidateShape( lines.Graph(host.MachineNames(), true), floors.front(), shape, others, sl );
+					}
+					else{
 						let id = MutationRowId( _query, sl );
 						auto rows = co_await Any( SelectOeeFloorShapes({.Id=id}) );
 						if( rows.empty() )
 							notFound( Ƒ("Shape {} not found.", id), sl );
-						row = move( rows.front() );
-					}
-					if( type!=Purge ){
-						let floorId = row ? row->FloorId : requireId( args, "oeeFloorId", sl );
-						auto floors = co_await Any( SelectOeeFloors({.Id=floorId}) );
-						if( floors.empty() )
-							notFound( Ƒ("Floor {} not found.", floorId), sl );
-						auto others = co_await Any( SelectOeeFloorShapes({.Floor=floorId}) );
-						if( row )
-							std::erase_if( others, [&]( const Oee::Floors::Shape& s ){ return s.Id==row->Id; } );
-						let after = wouldShape( args, row ? &*row : nullptr, sl );
-						if( after.MachineId && !host.Find(*after.MachineId) )
-							notFound( Ƒ("Machine {} not found.", *after.MachineId), sl );
-						let lines = host.Lines();
-						if( after.MemberLineId && !lines.Find(*after.MemberLineId) )
-							notFound( Ƒ("Line {} not found.", *after.MemberLineId), sl );
-						if( let p = args.if_contains("points"); p && !p->is_string() )
-							spelled["points"] = Oee::Floors::ToJson( after.Points );//the column holds text.
-						Oee::Floors::ValidateShape( lines.Graph(host.MachineNames()), floors.front(), after, others, sl );
+						if( type==Update ){//its points alone:  a shape its floor's line no longer reaches is kept, and stays editable.
+							auto floors = co_await Any( SelectOeeFloors({.Id=rows.front().FloorId}) );
+							if( floors.empty() )
+								notFound( Ƒ("Floor {} not found.", rows.front().FloorId), sl );
+							let shape = wouldShape( args, &rows.front(), sl );
+							spell( shape );
+							Oee::Floors::ValidatePoints( floors.front(), shape, sl );
+						}
 					}
 				}
 				else{//a reason.

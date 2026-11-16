@@ -68,7 +68,7 @@ namespace Jde::Opc::Oee::Tests{
 	}
 
 	//A shape of each kind passes, and each refusal:  the kind, the key its kind takes and no other, the reach, once on a floor,
-	//the point counts and every point inside.
+	//the point counts, an area or a length, and every point inside.
 	TEST_F( FloorsTests, Shapes ){
 		EXPECT_EQ( Refuse(Shape(EKind::Machine, Box, Filler)), "" );
 		EXPECT_EQ( Refuse(Shape(EKind::Machine, Box, Palletizer)), "" ) << "reached through Packing and the Dock";
@@ -88,7 +88,7 @@ namespace Jde::Opc::Oee::Tests{
 		EXPECT_NE( Refuse(Shape(EKind::Machine, Box, 99)).find("'99' isn't one line 'Plant' reaches"), string::npos ) << "named by its number";
 		const vector<Floors::Shape> drawn{ Shape(EKind::Machine, Box, Filler, nullopt, 7), Shape(EKind::Line, Box, nullopt, Bottling, 8) };
 		EXPECT_NE( Refuse(Shape(EKind::Machine, Box, Filler), drawn).find("'Filler' is on the floor already"), string::npos );
-		EXPECT_EQ( Refuse(Shape(EKind::Machine, Box, Filler, nullopt, 7), drawn), "" ) << "its own row, an update";
+		EXPECT_EQ( Refuse(Shape(EKind::Machine, Box, Filler, nullopt, 7), drawn), "" ) << "a row with its id skipped";
 		EXPECT_EQ( Refuse(Shape(EKind::Machine, Box, Capper), drawn), "" );
 		EXPECT_NE( Refuse(Shape(EKind::Line, Box)).find("memberLineId is required"), string::npos );
 		EXPECT_NE( Refuse(Shape(EKind::Line, Box, Filler, Bottling)).find("not a machine"), string::npos );
@@ -109,5 +109,26 @@ namespace Jde::Opc::Oee::Tests{
 		EXPECT_NE( Refuse(Shape(EKind::Label, {{-0.5, 1}})).find("outside"), string::npos );
 		EXPECT_NE( Refuse(Shape(EKind::Aisle, {{0, 10}, {40.5, 10}})).find("outside"), string::npos );
 		EXPECT_EQ( Refuse(Shape(EKind::Label, {{40, 20}})), "" ) << "the far corner is on the floor";
+
+		EXPECT_NE( Refuse(Shape(EKind::Machine, {{5, 5}, {5, 5}, {5, 5}}, Filler)).find("A Machine shape encloses no area"), string::npos ) << "three points, one";
+		EXPECT_NE( Refuse(Shape(EKind::Zone, {{1, 1}, {2, 2}, {3, 3}, {4, 4}})).find("encloses no area"), string::npos ) << "on one line";
+		EXPECT_NE( Refuse(Shape(EKind::Zone, {{0.1, 0.1}, {0.2, 0.2}, {0.3, 0.3}})).find("encloses no area"), string::npos ) << "on one line, in tenths";
+		EXPECT_EQ( Refuse(Shape(EKind::Zone, {{0.5, 0.5}, {0.55, 0.5}, {0.55, 0.55}})), "" ) << "a small triangle";
+		EXPECT_NE( Refuse(Shape(EKind::Wall, {{3, 3}, {3, 3}})).find("A Wall has no length"), string::npos );
+		EXPECT_EQ( Refuse(Shape(EKind::Aisle, {{3, 3}, {3, 3}, {4, 3}})), "" ) << "a point repeated on an aisle with a length";
+	}
+
+	//An update's points alone, against the row's kind and the floor:  a shape the floor's line no longer reaches passes.
+	TEST_F( FloorsTests, Points ){
+		let points = [&]( const Floors::Shape& shape ){ return Refused( [&]{ ValidatePoints(BottlingHall, shape); } ); };
+		EXPECT_NE( Refuse(Shape(EKind::Machine, Box, Packer), {}, &BottlingHall).find("isn't one line"), string::npos ) << "a new one";
+		EXPECT_EQ( points(Shape(EKind::Machine, Box, Packer)), "" ) << "an update of one stranded";
+		EXPECT_EQ( points(Shape(EKind::Line, Box, nullopt, Packing)), "" );
+		EXPECT_NE( points(Shape(EKind::Machine, {{3, 3}, {9, 7}}, Packer)).find("three points or more, not 2"), string::npos );
+		EXPECT_NE( points(Shape(EKind::Machine, {{3, 3}, {6, 3}, {9, 3}}, Packer)).find("encloses no area"), string::npos );
+		EXPECT_NE( points(Shape(EKind::Label, {{21, 1}})).find("[21, 1] is outside the floor, 20 by 10"), string::npos );
+		Floors::Shape unknown = Shape( EKind::Label, {{1, 1}} );
+		unknown.Kind = nullopt;
+		EXPECT_NE( points(unknown).find("Machine, Line, Zone, Wall, Aisle or Label"), string::npos );
 	}
 }
