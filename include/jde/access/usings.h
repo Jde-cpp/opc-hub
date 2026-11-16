@@ -10,6 +10,11 @@ namespace Jde::Access{
 	struct RolePK final : PK<uint32>{};
 	struct ResourcePK final : PK<uint16>{};
 	using PermissionRole=variant<PermissionPK,RolePK>;
+	//An access event:  the row's kind and what became of it, the subscription's id (EventsSubscribeAwait) and the listener's switch.
+	enum class ESubscription : uint16{
+		Created=0x1, Updated=0x2, Deleted=0x4, Restored=0x8, Purged=0x10, Added=0x20, Removed=0x40,
+		User=0x80, Group=0x100, Permission=0x200, Role=0x400, Resources=0x800, Acl=0x1000
+	};
 	enum class EProviderType : ProviderPK{
 		None = 0,
 		Google=1,

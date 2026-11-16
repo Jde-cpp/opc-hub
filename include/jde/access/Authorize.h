@@ -87,6 +87,7 @@ namespace Jde::Access{
 			vector<RightsSource> Sources;
 		};
 		α UserRights( UserPK userPK )Ι->vector<ResourceRights>;//empty for a deleted user - refused everything (FindUserLocked) - and for an unknown one; by PK.
+		α IsLiveUser( UserPK userPK )Ι->bool;//a user the cache holds, not deleted.
 		//What a member gets through one group (the SPA's group Effective rights tab, IdentityRightsAwait):  UserRights' walk ending at
 		//the group, so its own grants and those of the groups containing it.  Groups run from the granted group to the one holding
 		//this one (empty = granted to it), as Holders paths a group.  Empty for a deleted group - it passes nothing on, as

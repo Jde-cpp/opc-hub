@@ -5,7 +5,6 @@
 
 namespace Jde::QL{ struct IQL; }
 namespace Jde::Access{
-	enum class ESubscription : uint16;
 	struct Authorize;
 	struct AccessListener final : QL::IListener, IShutdown{
 		AccessListener( sp<QL::IQL> qlServer )ι:QL::IListener{"Access"},_qlServer{qlServer}{}
@@ -19,6 +18,9 @@ namespace Jde::Access{
 		Ω Observe( Observer f )ι->uint;//its handle, for Unobserve.
 		Ω Unobserve( uint handle )ι->void;
 		Ω Notify()ι->void;//every observer called:  the cache changed.
+		//A host's hook on a user's row (#483):  called after the cache applied the event, on that thread, with what the event
+		//carried - the id, and the name and slug where the mutation named them.  The AppServer's guest watches for its user.
+		function<void( UserPK, ESubscription, const jobject& )> OnUser;
 		sp<QL::IQL> _qlServer;
 	private:
 		α Apply( const jvalue& j, QL::SubscriptionId clientId )ε->void;

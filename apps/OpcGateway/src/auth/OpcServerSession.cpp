@@ -17,10 +17,11 @@ namespace Jde::Opc::Gateway{
 		return session && session->Expiration>steady_clock::now();
 	}
 	//A session someone has signed in to.  A login page's request always has a live session - the web server gives every
-	//request without an Authorization header a fresh one (Sessions::UpsertAwait) - but an anonymous one, no user behind it.
+	//request without an Authorization header a fresh one (Sessions::UpsertAwait) - but an anonymous one, no user behind it,
+	//or the guest's (#483), whose user is every visitor's.
 	Ω isSignedIn( SessionPK sessionId )ι->bool{
 		let session = Web::Server::Sessions::Find( sessionId );
-		return session && session->Expiration>steady_clock::now() && session->UserPK;
+		return session && session->Expiration>steady_clock::now() && session->UserPK && !session->IsGuest;
 	}
 	ABSL_EXCLUSIVE_LOCKS_REQUIRED(_sessionsMutex) Ω pruneDeadSessions()ι->void{
 		for( auto p = _sessions.begin(); p!=_sessions.end(); ){

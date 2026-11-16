@@ -43,8 +43,8 @@ namespace Jde::Web::Server{
 			//The listing, and another's session, take Read on the app schema's `sessions`.  A signed-in caller's own session is
 			//theirs to read - the spa confirms its sign-in with session(id:<its own>) (app-service.ts validateSessionId), which can
 			//not wait on a grant.  An id that is nobody's, or not found, takes the gate too:  a refusal is the same answer either
-			//way, so a probe learns nothing.
-			let own = sessionString && UserPK.Value && sessions.size()==1 && sessions.front()->UserPK.Value==UserPK.Value;
+			//way, so a probe learns nothing.  A guest's session is nobody's own (#483):  every visitor's has the guest's user.
+			let own = sessionString && UserPK.Value && sessions.size()==1 && !sessions.front()->IsGuest && sessions.front()->UserPK.Value==UserPK.Value;
 			if( !own && !_forwarded ){
 				THROW_IF( !_authorizer, "No authorizer - refusing to list sessions." );
 				_authorizer->Test( _schema, "sessions", Access::ERights::Read, UserPK, _sl );
@@ -129,12 +129,13 @@ namespace Jde::Web::Server{
 			//A signed-in caller may end their own session, and one they signed its user in to:  a stand-alone gateway logs a user out
 			//by purging the session it began for them (AddSession, Login - MintedBy) as its own identity (HttpRequestAwait::Logout),
 			//so its sign-out needs no grant (364-sessions-resource review #2).  Anyone else's takes Administer on `sessions`.  Not the
-			//id alone:  it is 32 bits, so holding one would let a guesser sign anyone out.  An id not found takes the gate, as the listing's.
+			//id alone:  it is 32 bits, so holding one would let a guesser sign anyone out.  An id not found takes the gate, as the listing's,
+			//and so does a guest's session (#483), every visitor's having the guest's user.
 			THROW_IF( !authorizer, "No authorizer - refusing to purge session." );
 			let id = m.FindPtr( "id" );
 			let sessionId = id ? Str::TryTo<SessionPK,16>( Json::AsString(*id) ) : nullopt;
 			let session = sessionId ? Sessions::Find( *sessionId ) : sp<SessionInfo>{};
-			let theirs = session && executer.Value && (session->UserPK.Value==executer.Value || session->MintedBy.Value==executer.Value);
+			let theirs = session && executer.Value && !session->IsGuest && (session->UserPK.Value==executer.Value || session->MintedBy.Value==executer.Value);
 			if( !theirs )
 				authorizer->Test( schema, "sessions", Access::ERights::Administer, executer, sl );
 			let rows = session && Sessions::Remove( session->SessionId ) ? 1 : 0;

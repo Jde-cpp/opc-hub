@@ -149,6 +149,31 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( user, creds->UserPK() );
 	}
 
+	//483-demo-guest-sessions review #1:  a guest's session has a user - the install's guest, every visitor's - but nobody signed in, so
+	//the cache vouches for it no more than for an anonymous one:  the login mints a session with the credential's user.
+	TEST_F( PasswordTests, Authenticate_GuestSession ){
+		string opcId{ Connection->Slug };
+		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _failure = nullptr; }
+		AuthenticateTest( opcId, session() );//cached, whatever ran before
+		waitFor( 1 );
+		ASSERT_EQ( _sessionIds.size(), 1u );
+		let user = GetCredential( _sessionIds[0], opcId )->UserPK();
+		ASSERT_TRUE( user );
+		let guest = Web::Server::Sessions::Add( Jde::UserPK{user.Value+1}, "localhost", false );//any user but the credential's
+		guest->IsGuest = true;
+		AuthenticateTest( opcId, guest->SessionId );
+		waitFor( 2 );
+		ASSERT_FALSE( _failure ) << _failure->what();
+		ASSERT_EQ( _sessionIds.size(), 2u );
+		let minted = _sessionIds[1];
+		EXPECT_NE( minted, guest->SessionId ) << "the login kept the guest's session";
+		let web = Web::Server::Sessions::Find( minted );
+		ASSERT_TRUE( web ) << hex( minted );
+		EXPECT_EQ( web->UserPK.Value, user.Value );
+		EXPECT_FALSE( web->IsGuest );
+		EXPECT_FALSE( GetCredential(guest->SessionId, opcId) );
+	}
+
 	TEST_F( PasswordTests, Authenticate_BadPassword ){
 		{ std::lock_guard l{ mtx }; _completed = 0; _failure = nullptr; }
 		AuthenticateTest( Connection->Slug, session(), true );

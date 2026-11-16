@@ -17,6 +17,7 @@
 #include <jde/web/server/Server.h>
 #include <jde/web/server/SettingQL.h>
 #include <jde/web/server/SubscribeLog.h>
+#include "Guest.h"
 #include "WebServer.h"
 #include "LocalClient.h"
 #include "ql/AppServerQL.h"
@@ -183,6 +184,7 @@ namespace Jde::App::Server{
 
 		let sync = DB::SyncOrRecreate( schemas, QLPtr() );
 		QL::LoadEnums( schemas );
+		Guest::Configure( *_listener );//the hook before the access load subscribes the listener, the read after it (#483).
 		BlockAwait( Access::Server::Configure(vector<sp<DB::AppSchema>>{schemas}, QLPtr(), UserPK{UserPK::System}, authorizer, _listener) );//the access load is a coroutine chain; this is the sync api over it.
 		if( sync ){ //the role seeds (<schema>.roles):  createRole/addRole run through the access server's mutations and its acl gate, which Configure just installed - SyncSchema's .mutation pass ran before them, so a role there died with the process (setup/README.md).
 			for( let& schema : schemas ){
@@ -194,6 +196,7 @@ namespace Jde::App::Server{
 				}
 			}
 		}
+		Guest::Resolve();//after the access load:  the guest's user read as System.
 		endAppInstances();
 		loadInstanceSchemas();
 	}

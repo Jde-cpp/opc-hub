@@ -11,7 +11,7 @@ import { AuthStore } from './auth-store';
 import { errorText, httpStatus } from '../utils/errors';
 import { GoogleAuthService } from './google-auth-service';
 import { Mutation } from '../model/ql/mutation';
-import { computed, Signal } from '@angular/core';
+import { computed, signal, Signal } from '@angular/core';
 import { EProvider, User } from 'jde-spa';
 import { StringUtils } from '../utils/string-utils';
 
@@ -211,11 +211,22 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			let url = this.urlWithTarget( "serverSettings" );
 			if( this.log.restRequests ) console.log( `get: ${url}` );
 			try{
-				let args = this.user()?.authorization ? {headers:{"Authorization":this.user()!.authorization}} : {} as any;
-				const settings:any = await firstValueFrom( this.http.get<any>(url, args) );//`any`, deliberately: HttpClient picks its return type from the option LITERAL, and `args` above is already widened, so a typed body here resolves to HttpEvent<T>
+				const authorization = this.user()?.authorization;
+				//no session yet, a first visit:  the answer's Authorization header carries the one the server opened for the call - the
+				//guest's where the install has one (#483) - kept as authGet keeps one, so `active` below is that session's.
+				let args = authorization ? {headers:{"Authorization":authorization}} : {observe: "response", transferCache: {includeHeaders: ["Authorization"]}} as any;
+				const answer:any = await firstValueFrom( this.http.get<any>(url, args) );//`any`, deliberately: HttpClient picks its return type from the option LITERAL, and `args` above is already widened, so a typed body here resolves to HttpEvent<T>
+				let settings:any = answer;
+				if( !authorization ){
+					settings = answer.body;
+					const newAuth = answer.headers.get( "Authorization" );
+					if( newAuth )
+						this.authStore.append( {sessionId:newAuth} );
+				}
 				if( this.log.restResults ) console.log( JSON.stringify(settings) );
 				this.timeoutSeconds = fromIsoDuration( settings["restSessionTimeout"] );
 				let active = settings["active"];
+				this.sessionActive.set( !!active );
 				//The per-server "instance" comparison that used to gate this is gone: it read settings["serverInstance"],
 				//a key Server::SendServerSettings never emits (it sends restSessionTimeout, connectionId and active), so
 				//parseInt gave NaN, `NaN != previousInstance` was always true, and on the AppServer path reset() fired on
@@ -259,8 +270,11 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			if( observe ){
 				const response = <HttpResponse<Y>>answer;
 				const newAuth = response.headers.get( "Authorization" );
-				if( newAuth )
+				if( newAuth ){
 					this.authStore.append( {sessionId:newAuth} );
+					if( !authorization )
+						await this.#readActive();
+				}
 				y = response.body as Y;
 			}
 			else
@@ -311,6 +325,24 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		if( anonymous && renew )
 			return await this.postRaw<Y>( target, body, undefined, false );
 		throw e;
+	}
+
+	//A session minted for a call that sent none - after a 401 dropped a stale one, or a sign-out - is the guest's where the install has
+	//one (#483), which only /serverSettings' `active` says:  asked again, so isGuest follows the session, not the page load's.
+	async #readActive():Promise<void>{
+		const authorization = this.user()?.authorization;
+		if( !authorization ){
+			this.sessionActive.set( false );
+			return;
+		}
+		try{
+			const settings:any = await firstValueFrom( this.http.get<any>(this.urlWithTarget("serverSettings"), {headers:{"Authorization":authorization}}) );
+			this.sessionActive.set( !!settings?.["active"] );
+		}
+		catch( e ){
+			console.warn( "serverSettings did not say whose the new session is.", e );
+			this.sessionActive.set( false );
+		}
 	}
 
 	//Silent Google re-login (reviews/todo.md §7): renew the lapsed session in place instead of degrading to anonymous.
@@ -365,6 +397,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			await this.initWait();
 		const url = this.urlWithTarget( target );
 		const sentAuth = options ? undefined : this.user()?.authorization;//only the stored session this call attached is renewable - a caller's own options (login, logout) are theirs to handle, and a wrong-password 401 must stay one
+		const minting = !options && !sentAuth;//no session to send:  the answer carries the one the server mints for the call
 		if( !options ){
 			if( !this.user()?.authorization )
 				options = {observe: "response", transferCache:{includeHeaders:["Authorization"]}};
@@ -393,8 +426,11 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			if( options?.transferCache?.includeHeaders.includes("Authorization") ){
 				let authorization = response.headers.get( "Authorization" );
 				verify( authorization!=null, "no authorization" );
-				if( authorization )
+				if( authorization ){
 					this.authStore.append( {sessionId:authorization} );
+					if( minting )
+						await this.#readActive();
+				}
 			}
 			y = <Y>response?.body;
 		}
@@ -604,6 +640,11 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	private get restUrl(){ return `${this.transport==ETransport.Secure ? "https" : "http"}://${this.url}`; }
 
 	isLoggedIn = computed( () => { const u = this.user(); return !!(u && (u.jwt || u.id)); } );//not `!=null`: logout() keeps a serverInstances-only User, and anonymous REST gets a sessionId — only jwt (Google) or id (password/OpcServer) means logged in
+	//The stored session is live on the server, as /serverSettings answered on this page load:  a signed-in user's, or the guest's
+	//where the install has one (#483), never an anonymous one's.
+	sessionActive = signal<boolean>( false );
+	//A guest's session:  live on the server with no identity stored here - the install's guest user, named Guest by the navbar.
+	isGuest = computed( ()=>this.sessionActive() && !this.isLoggedIn() && !!this.user()?.sessionId );
 	get user():Signal<User|undefined>{return this.authStore.user; }
 	lastRestCall!:Date;
 	timeoutSeconds!:number;

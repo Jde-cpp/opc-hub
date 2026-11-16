@@ -12,6 +12,7 @@ namespace Jde::Web::Server{
 		proto.set_user_pk( session.UserPK.Value );
 		proto.set_user_endpoint( session.UserEndpoint );
 		proto.set_has_socket( session.HasSocket );
+		proto.set_is_guest( session.IsGuest );
 		return proto;
 	}
 }

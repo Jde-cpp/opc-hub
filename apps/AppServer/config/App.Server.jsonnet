@@ -47,6 +47,10 @@ function( sync=false )
 		},
 	},
 	access:{
+		//a user's slug:  a session nobody signed in to acts as that user - a public site's visitor (docs/demo/spec.md *Guests*).  Resolved
+		//once the access load has run and followed as the user is created, restored, deleted or purged;  a slug naming no live user is a
+		//start-up warning and anonymous sessions until one appears.  null:  every session with no sign-in is anonymous.
+		guest:: null,
 		//operator drop-dir for enrollment trust anchors: a client cert (.pem, .crt, .der or .cer - either encoding parses)
 		//copied here authorizes its key-login enrollment. Rescanned on failed verification - no restart needed.
 		//Production products only.  Every cert under these dirs can enroll a user whose identity is the cert's CN, so a

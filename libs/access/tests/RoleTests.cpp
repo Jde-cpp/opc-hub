@@ -457,7 +457,8 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "resources", root), "allowed")), ERights::Read ) << "every page listing resources, once access.resources is enforced";
 		//reviews/m2-closing.md #8:  every resource the gateway gates on, not just the one with a table behind it - or enforcing
 		//gateway/sessions, gateway/search or gateway/endpoint locks out every role this seed ships, the administrators included.
-		for( let slug : {"serverConnections", "sessions", "search", "endpoint"} )
+		//#483:  and the historian's four tables, the gap docs/demo/spec.md *Guests* named - a viewer reads a group's history.
+		for( let slug : {"serverConnections", "sessions", "search", "endpoint", "histTemplates", "histTemplateNodes", "histGroups", "histGroupNodes"} )
 			EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "gateway", slug, root), "allowed")), ERights::Read ) << slug;
 		//#364:  the web sessions, app/sessions - beside the gateway's, so by schema.  Viewer lists them and the administrator purges.  A
 		//stand-alone gateway's sign-out purges a session it began, which needs no grant (364-sessions-resource review #2).

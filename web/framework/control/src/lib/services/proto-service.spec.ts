@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { HttpClient, HttpHeaders, HttpResponse } from '@angular/common/http';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { User } from 'jde-spa';
 import { IError, ProtoService } from './proto-service';
 import { AuthStore } from './auth-store';
@@ -145,8 +145,9 @@ describe( 'ProtoService.instances', ()=>{
 	} );
 } );
 
-//A page load asks /serverSettings whether the stored session is `active` - a signed-in one.  An anonymous session never is, and
-//dropping it for that made every refresh of an anonymous page open another.
+//A page load asks /serverSettings whether the stored session is `active` - a signed-in one's, or the guest's (#483).  An anonymous
+//session never is, and dropping it for that made every refresh of an anonymous page open another.  A first visit has none to ask
+//about:  that call is minted one, carried back in its Authorization header as every route's is, and kept.
 describe( 'ProtoService.loginWait', ()=>{
 	const minted = "0badf00d";
 	const load = ( stored:object, active:boolean )=>{
@@ -154,20 +155,30 @@ describe( 'ProtoService.loginWait', ()=>{
 		const authStore = TestBed.inject( AuthStore );
 		if( Object.keys(stored).length )
 			authStore.append( stored );
-		const get = vi.fn( (url:string, options:any)=>url.endsWith("serverSettings")
-			? of( {restSessionTimeout:"P1D", active} )
-			: of( options?.observe=="response" ? new HttpResponse({body:{}, headers:new HttpHeaders({Authorization:minted})}) : {} ) );
+		const get = vi.fn( (url:string, options:any)=>{
+			const body = url.endsWith( "serverSettings" ) ? {restSessionTimeout:"P1D", active} : {};
+			return of( options?.observe=="response" ? new HttpResponse({body, headers:new HttpHeaders({Authorization:minted})}) : body );
+		} );
 		const service = new TestProtoService( authStore, {http: {get} as unknown as HttpClient} );
 		service.instances = [{host: location.hostname, port: 1967, instanceName: 'hub'} as any];
 		const sent = ()=>get.mock.calls.filter( ([url])=>!url.endsWith("serverSettings") ).map( ([,options])=>options?.headers?.Authorization );
 		return { authStore, service, sent };
 	};
 
-	it( "opens a session on a first visit", async ()=>{
+	it( "opens a session on a first visit, with the settings call", async ()=>{
 		const { authStore, service, sent } = load( {}, false );
 		await service.loginWait( "graphql?query=x" );
-		expect( sent() ).toEqual( [undefined] );
+		expect( sent() ).toEqual( [minted] );
 		expect( authStore.user()?.sessionId ).toBe( minted );
+		expect( service.isGuest() ).toBe( false );
+	} );
+
+	it( "names the first visit's session the guest's when the server says it is active", async ()=>{
+		const { authStore, service } = load( {}, true );
+		await service.loginWait( "graphql?query=x" );
+		expect( authStore.user()?.sessionId ).toBe( minted );
+		expect( service.sessionActive() ).toBe( true );
+		expect( service.isGuest() ).toBe( true );
 	} );
 
 	it( "keeps an anonymous session", async ()=>{
@@ -175,6 +186,15 @@ describe( 'ProtoService.loginWait', ()=>{
 		await service.loginWait( "graphql?query=x" );
 		expect( sent() ).toEqual( ["a1b2c3d4"] );
 		expect( authStore.user()?.sessionId ).toBe( "a1b2c3d4" );
+		expect( service.isGuest() ).toBe( false );
+	} );
+
+	it( "keeps a guest's session, named the guest's", async ()=>{
+		const { authStore, service, sent } = load( {sessionId:"a1b2c3d4"}, true );
+		await service.loginWait( "graphql?query=x" );
+		expect( sent() ).toEqual( ["a1b2c3d4"] );
+		expect( authStore.user()?.sessionId ).toBe( "a1b2c3d4" );
+		expect( service.isGuest() ).toBe( true );
 	} );
 
 	it( "signs a Google user in again when the session is not active", async ()=>{
@@ -190,6 +210,7 @@ describe( 'ProtoService.loginWait', ()=>{
 		const { service, sent } = load( new User({jwt, sessionId:"a1b2c3d4"}), true );
 		await service.loginWait( "graphql?query=x" );
 		expect( sent() ).toEqual( ["a1b2c3d4"] );
+		expect( service.isGuest() ).toBe( false );//a signed-in user's, not a guest's
 	} );
 
 	//this window's last REST call says nothing of the session another window kept alive
@@ -200,6 +221,40 @@ describe( 'ProtoService.loginWait', ()=>{
 		await service.loginWait( "graphql?query=x" );
 		expect( sent() ).toEqual( ["a1b2c3d4"] );
 		expect( authStore.user()?.sessionId ).toBe( "a1b2c3d4" );
+	} );
+
+	//483-demo-guest-sessions review #6:  a stored session gone stale - the demo's hour, a hub restart - answers `active:false`, and
+	//the 401 that follows mints another, the guest's where the install has one:  `active` is asked of that one.
+	const stale = async ( mintedActive:boolean )=>{
+		localStorage.clear();
+		const authStore = TestBed.inject( AuthStore );
+		authStore.append( {sessionId:"a1b2c3d4"} );
+		const get = vi.fn( (url:string, options:any)=>{
+			const sent = options?.headers?.Authorization;
+			if( url.endsWith("serverSettings") )
+				return of( {restSessionTimeout:"P1D", active: sent==minted && mintedActive} );
+			if( sent=="a1b2c3d4" )
+				return throwError( ()=>({status:401, error:"session expired", url}) );
+			return of( options?.observe=="response" ? new HttpResponse({body:{}, headers:new HttpHeaders({Authorization:minted})}) : {} );
+		} );
+		const service = new TestProtoService( authStore, {http: {get} as unknown as HttpClient} );
+		service.instances = [{host: location.hostname, port: 1967, instanceName: 'hub'} as any];
+		const log = silence( 'log' );
+		await service.loginWait( "graphql?query=x" );
+		log.mockRestore();
+		expect( authStore.user()?.sessionId ).toBe( minted );
+		return service;
+	};
+
+	it( "names the session a 401 minted the guest's when the server says it is active", async ()=>{
+		const service = await stale( true );
+		expect( service.sessionActive() ).toBe( true );
+		expect( service.isGuest() ).toBe( true );
+	} );
+
+	it( "names nobody's the session a 401 minted when the server says it isn't active", async ()=>{
+		const service = await stale( false );
+		expect( service.isGuest() ).toBe( false );
 	} );
 } );
 

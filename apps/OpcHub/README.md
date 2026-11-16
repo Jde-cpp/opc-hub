@@ -81,6 +81,11 @@ The installed args (`config/args/install`, and the OpcServer's) trust only what 
 To run the emulator or a split gateway against an installed product, add its dir to that args file (see the
 comment there) and restart the service.  A listed dir that is never created logs a warning.
 
+`access.guest`, off by default, names a user by slug:  a session nobody signed in to acts as that user, with its roles'
+rights - a public site's visitor ([`docs/demo/spec.md`](../../docs/demo/spec.md) *Guests*).  The hub resolves it at start and follows the user as it
+is created, restored, deleted or purged;  a slug naming no live user is a start-up warning and anonymous sessions until
+one appears.
+
 ## Tests
 
 `Jde.Opc.Hub.Tests` (`tests/`) embeds the hub and an OpcServer on ports nothing else binds, so it runs beside a live

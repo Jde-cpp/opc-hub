@@ -1,4 +1,5 @@
 import { Component, Signal, computed, inject, resource, signal } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import {Router, RouterLink, RouterLinkActive} from '@angular/router';
 import {MatButtonModule} from '@angular/material/button';
 import { EProvider, IAUTH, User } from '../../services/authorization/auth';
@@ -8,7 +9,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 declare const gapi: any;
 @Component( {
 	selector: "authorization", templateUrl: "./authorization.html", styleUrls: ["./authorization.scss"],
-	imports: [MatButtonModule, MatIconModule, MatTooltipModule, RouterLink, RouterLinkActive]} )
+	imports: [MatButtonModule, MatIconModule, MatTooltipModule, NgTemplateOutlet, RouterLink, RouterLinkActive]} )
 export class Authorization{
 	#authService = inject( IAUTH );
 	constructor(){
@@ -53,6 +54,9 @@ export class Authorization{
 
 	router = inject(Router);
 	user:Signal<User | undefined>;
+	//A session nobody signed in to that the install's guest user stands behind (#483):  named Guest, with the sign-in link beside it as
+	//an anonymous session has it.  A page that offers no sign-in hides it with config.json's `login` (docs/demo/spec.md *The public origin*).
+	guest = computed<boolean>( ()=>this.#authService.guest?.() ?? false );
 	//Google's avatar host answers 429 to a localhost referrer under repeated loads;  one that fails shows the icon until the url changes.
 	#failedPicture = signal<string|undefined>( undefined );
 	picture = computed( ()=>{

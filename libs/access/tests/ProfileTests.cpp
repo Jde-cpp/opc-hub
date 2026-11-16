@@ -56,6 +56,27 @@ namespace Jde::Access::Tests{
 		PurgeUser( userB, root );
 	}
 
+	//483-demo-guest-sessions review #4:  a guest's session carries the install's guest user, every visitor's, so its profile rows would
+	//be every visitor's - refused, as an anonymous caller is, whether the request hands on the session or a socket the bare pk with its
+	//mark.  The same user signed in writes.
+	TEST_F( ProfileTests, AGuestIsRefused ){
+		let root = GetRoot();
+		const UserPK user{ GetId(GetUser("profileGuest", root)) };
+		auto write = [&]( QL::Creds creds ){
+			auto request = QL::Parse( "mutation updateProfile( \"url\":\"guestKey\", \"value\":\"g\" )", {}, QL().Schemas() );
+			BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{move(request), move(creds), QL().shared_from_this()} );
+		};
+		auto session = ms<QL::IQLSession>( user );
+		session->IsGuest = true;
+		EXPECT_THROW( write(QL::Creds{sp<QL::IQLSession>{session}}), std::exception ) << "the guest's session";
+		EXPECT_THROW( write(QL::Creds{user, true}), std::exception ) << "a socket's bare pk, marked";
+		EXPECT_TRUE( selectProfile("guestKey", user).empty() );
+		write( QL::Creds{user} );
+		EXPECT_EQ( AsSV(selectProfile("guestKey", user), "value"), "g" ) << "signed in";
+		deleteProfile( "guestKey", user );
+		PurgeUser( user, root );
+	}
+
 	//#10: the save used to be update-then-insert-if-zero.  MySQL's row count is rows *changed*, so re-saving an identical
 	//value answered 0, fell into the insert, and the (identity_id,url) pk turned an idempotent save into a 409 - while
 	//sqlite and SQL Server, which count rows *matched*, succeeded.  A save is now one dialect upsert, so the second and

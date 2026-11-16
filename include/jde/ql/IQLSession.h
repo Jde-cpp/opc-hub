@@ -7,6 +7,9 @@ namespace Jde::QL{
 		IQLSession( UserPK userPK )ι:UserPK{userPK}{}
 		virtual ~IQLSession();
 		UserPK UserPK;
+		//minted for a caller with no sign-in as the install's guest user (#483):  UserPK carries its rights, but nobody signed in, and
+		//every visitor's session has the same one - so a check of who signed in, or whose a session is, reads this, never UserPK.
+		bool IsGuest{};
 	};
 	inline IQLSession::~IQLSession(){}
 
@@ -21,6 +24,8 @@ namespace Jde::QL{
 				userPK = &p->UserPK;
 			return userPK ? *userPK : Jde::UserPK{};
 		}
+		α IsGuest()ι->bool{ auto p = Session(); return p ? p->IsGuest : Guest; }
 		variant<Jde::UserPK, sp<IQLSession>> Value;
+		bool Guest{};//a bare UserPK's IsGuest:  a socket running a query as its guest session's user hands on the pk alone.
 	};
 }

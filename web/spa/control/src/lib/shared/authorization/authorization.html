@@ -17,9 +17,16 @@
 			<span class="name">{{`${user()?.domain}/${user()?.name}`}}</span>
 		</button>
 	}
+	@else if( guest() ){
+		<span class="name guest" title="Not signed in">Guest</span>
+		<ng-container [ngTemplateOutlet]="signIn"/>
+	}
 	@else {
-		<a matIconButton routerLink="login" routerLinkActive="docs-navbar-header-item-selected" aria-label="Sign in" matTooltip="Sign in">
-			<mat-icon routerLinkActive="selected">account_circle</mat-icon>
-		</a>
+		<ng-container [ngTemplateOutlet]="signIn"/>
 	}
 }
+<ng-template #signIn>
+	<a matIconButton routerLink="login" routerLinkActive="docs-navbar-header-item-selected" aria-label="Sign in" matTooltip="Sign in">
+		<mat-icon routerLinkActive="selected">account_circle</mat-icon>
+	</a>
+</ng-template>
