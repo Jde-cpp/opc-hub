@@ -394,20 +394,6 @@ namespace Jde::Opc::Gateway{
 			.Range=range, .Now={}, .Limit=HistQL::ReadLimit(), .Rows={}, .Stops={}, .CodingRows={}, .Codings={}, .Reasons=move( reasons )
 		};
 	}
-	//Whether a stock mutation of `table` would pass the caller:  the table's right, as Table::Authorize tests it for the stock op,
-	//which an unenforced resource passes.  A lack is an answer, not a denial to log;  a caller Authorize doesn't know is refused.
-	Ω may( sv table, Access::ERights right, UserPK user, SL sl )ε->bool{
-		try{
-			GetViewPtr( table )->Authorize( right, user, sl );
-			return true;
-		}
-		catch( Exception& e ){
-			if( e.HttpStatus()==EHttpStatus::Unauthorized )
-				throw;
-			e.SetLevel( ELogLevel::NoLog );
-			return false;
-		}
-	}
 	α OeeQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			let sl = _sl;
@@ -419,7 +405,7 @@ namespace Jde::Opc::Gateway{
 				struct Asked{ sv Column; sv Table; Access::ERights Right; };
 				for( let& asked : array<Asked,5>{{ {"createFloor", OeeTable::Floors, Create}, {"updateFloor", OeeTable::Floors, Update}, {"createShape", OeeTable::FloorShapes, Create}, {"updateShape", OeeTable::FloorShapes, Update}, {"purgeShape", OeeTable::FloorShapes, Purge} }} ){
 					if( _query.FindColumn(asked.Column) )
-						y[asked.Column] = may( asked.Table, asked.Right, UserPK(), sl );
+						y[asked.Column] = MayAuthorize( asked.Table, asked.Right, UserPK(), sl );
 				}
 				Resume( move(y) );
 				co_return;

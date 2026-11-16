@@ -1,27 +1,27 @@
 @let floor = edit().floor;
 <div class="bar">
-	<div class="sizes" role="group" aria-label="The floor's size, in metres">
+	<div class="sizes" role="group" aria-label="The floor's size, in metres" [attr.inert]="busy() ? '' : null">
 		<mat-form-field subscriptSizing="dynamic">
 			<mat-label>Width</mat-label>
-			<input matInput type="number" min="0" step="any" [value]="floor.width" (input)="setSize( 'width', $any($event.target).value )">
+			<input #width matInput type="number" min="0" step="any" [value]="size( 'width' )" (input)="setSize( 'width', $any($event.target).value )">
 			<span matTextSuffix>m</span>
 		</mat-form-field>
 		<mat-form-field subscriptSizing="dynamic">
 			<mat-label>Height</mat-label>
-			<input matInput type="number" min="0" step="any" [value]="floor.height" (input)="setSize( 'height', $any($event.target).value )">
+			<input matInput type="number" min="0" step="any" [value]="size( 'height' )" (input)="setSize( 'height', $any($event.target).value )">
 			<span matTextSuffix>m</span>
 		</mat-form-field>
 		<mat-form-field subscriptSizing="dynamic">
 			<mat-label>Grid</mat-label>
-			<input matInput type="number" min="0" step="any" [value]="floor.grid" (input)="setSize( 'grid', $any($event.target).value )">
+			<input matInput type="number" min="0" step="any" [value]="size( 'grid' )" (input)="setSize( 'grid', $any($event.target).value )">
 			<span matTextSuffix>m</span>
 		</mat-form-field>
 	</div>
 	@if( shape(); as s ){
-		<div class="tools" role="group" aria-label="The selected shape">
+		<div class="tools" role="group" aria-label="The selected shape" [attr.inert]="busy() ? '' : null">
 			<mat-form-field subscriptSizing="dynamic" class="text">
 				<mat-label>{{ ownName() ? 'Name on the map' : 'Text' }}</mat-label>
-				<input matInput maxlength="256" [value]="s.label ?? ''" [placeholder]="ownName() ?? ''" (input)="setLabel( $any($event.target).value )">
+				<input matInput [attr.maxlength]="labelMost" [value]="s.label ?? ''" [placeholder]="ownName() ?? ''" (input)="setLabel( $any($event.target).value )">
 			</mat-form-field>
 			<button matIconButton type="button" (click)="rotate()" [disabled]="s.kind=='Label'" aria-label="Turn a quarter clockwise" matTooltip="Turn a quarter clockwise (R)"><mat-icon>rotate_90_degrees_cw</mat-icon></button>
 			<button matIconButton type="button" (click)="mode.set( mode()=='box' ? 'points' : 'box' )" [disabled]="!boxed()" [attr.aria-pressed]="byPoints()" aria-label="Edit its points" matTooltip="Its points in place of its box:  drag one, add one at a side's middle, take one out with Delete"><mat-icon>polyline</mat-icon></button>
@@ -30,18 +30,21 @@
 	}
 	<span class="spacer"></span>
 	<input #file type="file" hidden accept=".json,application/json" aria-label="A floor's json file" (change)="onFile( file )">
-	<button matButton type="button" (click)="file.click()" [disabled]="edit().shapes.length>0" disabledInteractive [matTooltip]="edit().shapes.length ? 'Import reads onto an empty floor:  delete its shapes first' : 'Read a floor from a json file, as Export writes it'"><mat-icon>upload_file</mat-icon>Import</button>
+	<button matButton type="button" (click)="file.click()" [disabled]="busy() || edit().shapes.length>0" disabledInteractive [matTooltip]="edit().shapes.length ? 'Import reads onto an empty floor:  delete its shapes first' : 'Read a floor from a json file, as Export writes it'"><mat-icon>upload_file</mat-icon>Import</button>
 	<button matButton type="button" (click)="export()" matTooltip="The floor as a json file, machines and lines by slug:  what Import reads and the seed takes"><mat-icon>download</mat-icon>Export</button>
+	@if( stale() ){
+		<button matButton type="button" (click)="readAgain()" [disabled]="busy()" matTooltip="Read the floor's rows, and take up the edit over them"><mat-icon>refresh</mat-icon>Read again</button>
+	}
 	<button matButton="outlined" type="button" (click)="closed.emit( false )" [disabled]="busy()">Cancel</button>
 	<button matButton="filled" type="button" class="save" (click)="save()" [disabled]="!canSave()" disabledInteractive [matTooltip]="saveReason() ?? ''">Save</button>
 </div>
 @if( error(); as e ){
 	<p class="said problem" role="alert">{{ e }}</p>
 }
-@else if( problem() ?? refusal(); as why ){
+@else if( problem() ?? waiting() ?? refusal(); as why ){
 	<p class="said" role="status">{{ why }}</p>
 }
-<div class="work">
+<div class="work" [attr.inert]="busy() ? '' : null">
 	<div class="canvas">
 		<svg #svg tabindex="-1" [attr.viewBox]="port.viewBox()" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Floor editor:  drag a shape to move it and its handles to resize it, drag the floor to pan, wheel or pinch to zoom"
 			(wheel)="wheel( $event )" (pointerdown)="press( $event )" (pointermove)="move( $event )" (pointerup)="release( $event )" (pointercancel)="release( $event )">
@@ -68,7 +71,7 @@
 				</g>
 			}
 			@for( g of grips(); track g.id ){
-				<g class="grip" [class.add]="g.side!=undefined" tabindex="0" role="button" [attr.aria-label]="g.label" (pointerdown)="grab( $event, g )" (keydown)="gripKey( $event, g )">
+				<g class="grip" [class.add]="g.side!=undefined" [attr.data-grip]="g.id" tabindex="0" role="button" [attr.aria-label]="g.label" (pointerdown)="grab( $event, g )" (keydown)="gripKey( $event, g )">
 					<circle class="hit" [attr.cx]="g.at[0]" [attr.cy]="g.at[1]" [attr.r]="port.fs( 12 )"/>
 					<rect class="mark" [attr.x]="g.at[0]-port.fs( 5 )" [attr.y]="g.at[1]-port.fs( 5 )" [attr.width]="port.fs( 10 )" [attr.height]="port.fs( 10 )" [attr.rx]="g.box ? 0 : port.fs( 5 )"/>
 				</g>

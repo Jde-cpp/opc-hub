@@ -155,6 +155,10 @@ describe( 'OeeFloorEditor', ()=>{
 		expect( p.points( 's7' ) ).toEqual( [[8.5, 4.5], [13, 4.5], [13, 5.5], [9, 5.5]] );
 		await p.key( p.grip( 'Add a point after point 4' ), 'Enter' );//the side that closes it
 		expect( p.points( 's7' )!.at( -1 ) ).toEqual( [8.75, 5] );
+		( <SVGGElement>p.grip( 'Point 5 of 5' ) ).focus();
+		await p.key( p.grip( 'Point 5 of 5' ), 'Delete' );
+		expect( p.points( 's7' )!.length ).toBe( 4 );
+		expect( document.activeElement?.getAttribute( 'aria-label' ) ).toBe( 'Point 4 of 4' );//its handle gone, the focus on the point before
 		await p.key( p.shape( 'Zone Conveyor' ), 'Delete' );
 		expect( p.editor.edit().shapes.map( s=>s.key ) ).toEqual( ['s1', 's8'] );
 		expect( p.editor.selected() ).toBeUndefined();
@@ -241,14 +245,42 @@ describe( 'OeeFloorEditor', ()=>{
 		await p.key( p.shape( 'Filler' ), 'ArrowRight' );
 		expect( p.said() ).toEqual( [] );//an edit answers it
 	} );
+	it( 'holds the floor still while a save is on its way, and waits for Read again where the rows could not be read after a refusal', async ()=>{
+		const p = await create();
+		( <HTMLElement>p.offer( 'Zone' ) ).click();
+		await stable( p.fixture );
+		let refuse!:( e:Error )=>void;
+		p.service.save.mockImplementationOnce( ()=>new Promise<void>( ( _, reject )=>{ refuse = reject; } ) );
+		p.button( 'Save' ).click();
+		await stable( p.fixture );
+		const inert = ()=>['.sizes', '.tools', '.work'].map( selector=>p.el().querySelector( selector )!.hasAttribute( 'inert' ) );
+		expect( inert() ).toEqual( [true, true, true] );
+		p.service.floor.mockRejectedValueOnce( new Error( 'The socket closed.' ) );
+		refuse( new Error( 'The floor is in use.' ) );
+		await stable( p.fixture );
+		expect( inert() ).toEqual( [false, false, false] );
+		expect( p.said() ).toEqual( ["The gateway refused the save:  The floor is in use.  The floor couldn't be read again."] );
+		await p.key( p.shape( 'Filler' ), 'ArrowRight' );
+		expect( p.said() ).toEqual( ["The save was refused part-way, and the floor couldn't be read again:  Read again, and Save writes what is left."] );
+		expect( p.greyed( p.button( 'Save' ) ) ).toBe( true );//what went in is unknown:  the zone may be made twice
+		p.service.floor.mockRejectedValueOnce( new Error( 'The socket closed.' ) );
+		p.button( 'Read again' ).click();
+		await stable( p.fixture );
+		expect( p.said() ).toEqual( ["The floor still couldn't be read."] );
+		p.service.floor.mockResolvedValueOnce( { floor, shapes: [...rows(), row( 9, 'Zone', rect( 18, 9, 4, 2 ), {sort: 1} )] } );//the zone went in
+		p.button( 'Read again' ).click();
+		await stable( p.fixture );
+		expect( p.button( 'Read again' ) ).toBeUndefined();
+		expect( p.editor.batch() ).toEqual( [{ op: 'updateShape', id: 1, args: {points: rect( 3.5, 3, 6, 4 )} }] );
+		expect( p.greyed( p.button( 'Save' ) ) ).toBe( false );
+	} );
 	it( 'exports the floor as json, and imports one onto an empty floor alone', async ()=>{
 		const p = await create();
-		const blobs:Blob[] = [], names:string[] = [];
-		vi.spyOn( URL, 'createObjectURL' ).mockImplementation( b=>{ blobs.push( <Blob>b ); return 'blob:x'; } );
-		vi.spyOn( HTMLAnchorElement.prototype, 'click' ).mockImplementation( function( this:HTMLAnchorElement ){ names.push( this.download ); } );
+		const url = vi.spyOn( URL, 'createObjectURL' ).mockReturnValue( 'blob:x' );
+		const click = vi.spyOn( HTMLAnchorElement.prototype, 'click' ).mockImplementation( ()=>{} );
 		p.button( 'Export' ).click();
-		expect( names ).toEqual( ['plant-floor.json'] );
-		const text = await new Promise<string>( resolve=>{ const reader = new FileReader(); reader.onload = ()=>resolve( <string>reader.result ); reader.readAsText( blobs[0] ); } );
+		expect( click.mock.contexts.map( a=>( <HTMLAnchorElement>a ).download ) ).toEqual( ['plant-floor.json'] );
+		const text = await new Promise<string>( resolve=>{ const reader = new FileReader(); reader.onload = ()=>resolve( <string>reader.result ); reader.readAsText( <Blob>url.mock.calls[0][0] ); } );
 		expect( text ).toBe( '{ "width": 40, "height": 20, "grid": 0.5, "shapes": [\n\t{ "kind": "Machine", "machine": "filler", "points": [[3,3],[9,3],[9,7],[3,7]] },\n\t{ "kind": "Zone", "label": "Conveyor", "points": [[9,4.5],[13,4.5],[13,5.5],[9,5.5]] },\n\t{ "kind": "Label", "label": "Dock", "points": [[38,15]] }\n]}' );
 		expect( p.greyed( p.button( 'Import' ) ) ).toBe( true );//a floor with shapes
 		const input = ( file:string )=><HTMLInputElement><unknown>{ files: [{ text: async ()=>file }], value: 'floor.json' };
@@ -260,6 +292,7 @@ describe( 'OeeFloorEditor', ()=>{
 		await empty.editor.onFile( input( text.replace( '"width": 40', '"width": 60' ).replace( 'filler', 'mixer' ) ) );
 		await stable( empty.fixture );
 		expect( empty.said() ).toEqual( ['Shape 1:  machine "mixer" isn\'t one the floor\'s line reaches.'] );
+		await empty.type( 1, '' );//a height typed that isn't one, the file's the floor's
 		const read = input( text.replace( '"width": 40', '"width": 60' ) );
 		await empty.editor.onFile( read );
 		await stable( empty.fixture );
@@ -267,7 +300,7 @@ describe( 'OeeFloorEditor', ()=>{
 		expect( empty.said() ).toEqual( [] );
 		expect( empty.editor.edit().shapes.map( s=>[s.key, s.id, s.kind, s.machineId] ) ).toEqual( [['n1', undefined, 'Machine', 1], ['n2', undefined, 'Zone', undefined], ['n3', undefined, 'Label', undefined]] );
 		expect( empty.editor.port.view().width ).toBe( 61 );//the floor read, fitted
-		expect( empty.el().querySelectorAll<HTMLInputElement>( '.sizes input' )[0].value ).toBe( '60' );
+		expect( [...empty.el().querySelectorAll<HTMLInputElement>( '.sizes input' )].map( i=>i.value ) ).toEqual( ['60', '20', '0.5'] );//the floor read, the typed text gone
 		expect( empty.editor.batch().map( m=>m.op ) ).toEqual( ['updateFloor', 'createShape', 'createShape', 'createShape'] );
 	} );
 } );

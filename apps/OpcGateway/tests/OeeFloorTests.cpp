@@ -198,6 +198,9 @@ namespace Jde::Opc::Gateway::Tests{
 		let aisle = CreateShape( floorId, "Aisle", jarray{jarray{0, 10}, jarray{40, 10}} );
 		let dock = CreateShape( floorId, "Label", jarray{jarray{38, 15}}, {{"label", "Dock"}} );
 		let floor = [&]{ return Mutate( "oeeFloors( id:$id ){ width height grid }", {{"id", floorId}} ).as_array().at( 0 ).as_object(); };
+		let byLine = Mutate( "oeeFloors( oeeLineId:$line ){ id }", {{"line", plant}} ).as_array();
+		ASSERT_EQ( byLine.size(), 1u ) << "the editor reads its line's floor alone";
+		EXPECT_EQ( Id(byLine[0]), floorId );
 		let points = [&]( uint32 id ){ return string{ Json::AsSV(Mutate("oeeFloorShapes( id:$id ){ points }", {{"id", id}}).as_array().at(0).as_object(), "points") }; };
 
 		Mutate(

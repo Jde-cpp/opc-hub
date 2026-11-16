@@ -121,6 +121,12 @@ describe( 'oee-floor-edit', ()=>{
 		expect( floorEditProblem( withShape( edit, 's7', {points: [[1, 1], [2, 2], [3, 3]]} ), name ) ).toBe( 'Zone Conveyor must enclose an area.' );
 		expect( floorEditProblem( withShape( edit, 's6', {points: [[5, 5], [5, 5]]} ), name ) ).toBe( 'Aisle must have a length.' );
 		expect( floorEditProblem( withShape( edit, 's8', {points: [[1, 1], [2, 2]]} ), name ) ).toBe( 'Label Dock is one point.' );
+		const tenths = withShape( {...edit, floor: {...edit.floor, grid: 0.1}}, 's7', {points: [[0, 0], [0.1, 0.7], [0.3, 2.1]]} );//on one line, a shoelace of 2.8e-17 in doubles
+		expect( floorEditProblem( tenths, name ) ).toBe( 'Zone Conveyor must enclose an area.' );
+		expect( floorEditProblem( withShape( edit, 's7', {label: 'x'.repeat( 256 )}), name ) ).toBeUndefined();
+		expect( floorEditProblem( withShape( edit, 's7', {label: 'x'.repeat( 257 )}), name ) ).toBe( "A Zone's text is 257 characters, past the 256 a shape keeps." );
+		expect( floorEditProblem( addShape( edit, {kind: 'Machine', machineId: 2}, [30, 12] ).edit, name ) ).toBe( 'Capper is on the floor twice:  a machine appears once on a floor.' );
+		expect( floorEditProblem( addShape( addShape( edit, {kind: 'Line', lineId: 11}, [20, 12] ).edit, {kind: 'Line', lineId: 11}, [20, 12] ).edit, name ) ).toBe( 'Bottling is on the floor twice:  a line appears once on a floor.' );
 	} );
 	it( 'builds the batch from a changed, an added and a deleted shape, in the order the rules need', ()=>{
 		const start = floorEdit( base() );
@@ -173,6 +179,25 @@ describe( 'oee-floor-edit', ()=>{
 		//nothing went in, and the filler's row was purged by another hand:  it is to make again
 		const gone:FloorBase = { floor, shapes: was.shapes.slice( 1 ) };
 		expect( floorBatch( gone, floorRebase( edit, was, gone ) ).map( m=>m.op=='createShape' ? [m.op, m.args.kind, m.args.oeeMachineId] : [m.op] ) ).toEqual( [['purgeShape'], ['createShape', 'Machine', 1], ['createShape', 'Zone', undefined], ['updateFloor']] );
+	} );
+	it( "keeps what another hand changed of what the edit left, and gives a machine placed twice the other's row", ()=>{
+		const was = base();
+		let edit = withShape( floorEdit( was ), 's1', {points: rect( 4, 3, 6, 4 )} );
+		edit = addShape( edit, {kind: 'Machine', machineId: 3}, [30, 12] ).edit;//the labeler, placed here
+		//nothing went in, and meanwhile another hand moved the dock, purged the aisle, took the conveyor's text, placed the labeler and changed the grid
+		const now:FloorBase = { floor: {...floor, grid: 1}, shapes: [
+			...was.shapes.slice( 0, 2 ), row( 7, 'Zone', rect( 9, 4.5, 4, 1 ) ), row( 8, 'Label', [[30, 15]], {label: 'Dock'} ), row( 11, 'Machine', rect( 20, 15, 4, 3 ), {oeeMachineId: 3, sort: 2} )
+		] };
+		const rebased = floorRebase( edit, was, now );
+		expect( rebased.floor.grid ).toBe( 1 );
+		expect( rebased.shapes.map( s=>[s.key, s.id, s.label] ) ).toEqual( [['s1', 1, undefined], ['s2', 2, undefined], ['s7', 7, undefined], ['s8', 8, 'Dock'], ['n1', 11, undefined]] );//no aisle, and the labeler the other's row
+		expect( floorEditProblem( rebased, s=>floorShapeTitle( s, plant ) ) ).toBeUndefined();
+		expect( floorBatch( now, rebased ) ).toEqual( [//the edit's own changes alone, the labeler where this one placed it
+			{ op: 'updateShape', id: 1, args: {points: rect( 4, 3, 6, 4 )} }, { op: 'updateShape', id: 11, args: {points: rect( 28, 10.5, 4, 3 )} }
+		] );
+		//the edit changed what another hand purged:  it is made again, and what it took out stays out
+		const moved = withoutShape( withShape( floorEdit( was ), 's6', {points: [[0, 11], [40, 11]]} ), 's8' );
+		expect( floorBatch( now, floorRebase( moved, was, now ) ).map( m=>m.op ) ).toEqual( ['purgeShape', 'createShape'] );
 	} );
 	it( "exports the spec's example and reads it back, machines and lines by slug", ()=>{
 		const edit = imported( example );

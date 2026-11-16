@@ -330,10 +330,20 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 	#shapes = new Map<string,LiveShape>();
 	#links = new Map<string,Promise<PanelLinks>>();
 	#clock:ReturnType<typeof setInterval>|undefined;
-	#made = ( <{edit?:boolean}|null>inject( Location ).getState() )?.edit===true;//navigated here from a floor's making
+	#made = takeMade( inject( Location ) );//navigated here from a floor's making
 	#route = inject( ActivatedRoute );
 	#title = inject( ComponentPageTitle );
 	#service = inject( OeeFloorService );
 	#snackbar = inject( SnackbarService );
 	#refocus = false;
+}
+//A floor just made opens in its editor once (#482):  the navigation's state says so, and the flag is taken from the history
+//entry, so a Back or a reload to the page opens the map.
+function takeMade( location:Location ):boolean{
+	const state = <{edit?:boolean}|null>location.getState();
+	if( state?.edit!==true )
+		return false;
+	const { edit, ...rest } = state;
+	location.replaceState( location.path( true ), '', rest );
+	return true;
 }

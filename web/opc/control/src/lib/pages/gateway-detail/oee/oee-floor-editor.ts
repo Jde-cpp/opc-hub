@@ -6,7 +6,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorMessage, saveFile } from 'jde-framework';
 import { OeeBox, OeeFloorKind, OeeFloorRights, OeePoint, pointsBox } from '../../../model/oee-floor';
-import { addShape, addVertex, EditShape, FloorBase, floorBatch, floorBatchQL, floorBatchRefusal, floorEdit, FloorEdit, floorEditProblem, floorExport, FloorGeometry, floorGeometry, FloorHandle, floorHandles, floorImport, floorReach, floorRebase, floorShapeTitle, floorSides, FloorSize, floorStranded, floorUnplaced, handlePoint, isRectangle, movePoints, moveVertex, NewShape, newShapePoints, removeVertex, resizePoints, rotatePoints, withoutShape, withShape } from '../../../model/oee-floor-edit';
+import { addShape, addVertex, EditShape, FloorBase, floorBatch, floorBatchQL, floorBatchRefusal, floorEdit, FloorEdit, floorEditProblem, floorExport, FloorGeometry, floorLabelMost, floorGeometry, FloorHandle, floorHandles, floorImport, floorReach, floorRebase, floorShapeTitle, floorSides, FloorSize, floorStranded, floorUnplaced, handlePoint, isRectangle, movePoints, moveVertex, NewShape, newShapePoints, removeVertex, resizePoints, rotatePoints, withoutShape, withShape } from '../../../model/oee-floor-edit';
 import { OeeLineRef, OeePlant } from '../../../model/oee-lines';
 import type { HistPoster, HistReader } from '../../../services/history-service';
 import { OeeFloorService } from '../../../services/oee-floor-service';
@@ -31,10 +31,11 @@ const arrows:Record<string,{dx:number; dy:number}> = { ArrowLeft: {dx: -1, dy: 0
 //its points - one dragged, one added at a side's middle, one taken out - and deleted, every point on the grid and on the
 //floor, in metres:  the svg's viewBox is the floor's, so a pointer is read in metres at any zoom.  From the keyboard a shape
 //moves by the arrows a grid at a time and resizes with Shift, turns by R and goes by Delete, and a handle moves by the arrows;
-//a shape just placed has the focus, so the keys are its.
+//a shape just placed has the focus, so the keys are its, and the editor opened has it on its first field.
 //Save writes what differs from the rows as read as one batch (floorBatch), greyed with the reason while the gateway's rules
 //or the caller's rights would refuse it, and Cancel drops it;  a save the gateway refuses part-way is read back, so the next
-//writes what is left.  Export saves the floor as the spec's json and Import reads one onto an empty floor.
+//writes what is left, and one that can't be read back waits for Read again.  While a save is on its way the floor can't be
+//changed, so what is saved is what closes the editor.  Export saves the floor as the spec's json and Import reads one onto an empty floor.
 @Component({
 	selector: 'oee-floor-editor',
 	templateUrl: './oee-floor-editor.html',
@@ -69,7 +70,10 @@ export class OeeFloorEditor implements AfterViewInit, OnDestroy{
 			}
 		} );
 	}
-	ngAfterViewInit():void{ this.#unobserve = this.port.observe( this.#svg() ); }
+	ngAfterViewInit():void{
+		this.#unobserve = this.port.observe( this.#svg() );
+		this.width()?.nativeElement.focus();//Edit, which had the focus, is gone
+	}
 	ngOnDestroy():void{ this.#unobserve?.(); }
 
 	readonly reach = computed( ()=>floorReach( this.plant(), this.line().id ) );
@@ -98,6 +102,7 @@ export class OeeFloorEditor implements AfterViewInit, OnDestroy{
 		];
 	} );
 	points( p:OeePoint[] ):string{ return p.map( ( [x, y] )=>`${x},${y}` ).join( ' ' ); }
+	readonly labelMost = floorLabelMost;
 
 	//The side lists:  what isn't placed, and the four fixtures.
 	readonly offers = computed<Offer[]>( ()=>{
@@ -290,8 +295,12 @@ export class OeeFloorEditor implements AfterViewInit, OnDestroy{
 		}
 		else if( grip.side!=undefined && ( e.key=='Enter' || e.key==' ' ) )
 			this.#points( s.key, addVertex( s.points, grip.side ) );
-		else if( grip.vertex!=undefined && ( e.key=='Delete' || e.key=='Backspace' ) )
-			this.#points( s.key, removeVertex( s.points, grip.vertex, s.kind ) );
+		else if( grip.vertex!=undefined && ( e.key=='Delete' || e.key=='Backspace' ) ){
+			const points = removeVertex( s.points, grip.vertex, s.kind );
+			this.#points( s.key, points );
+			if( grip.vertex>=points.length )//the last point's handle goes with it:  the focus to the point before
+				this.#svg()?.querySelector<SVGGElement>( `g.grip[data-grip="v${points.length-1}"]` )?.focus();
+		}
 		else if( !grip.box || !this.#shapeKey( e, s ) )
 			return;
 		e.preventDefault();
@@ -308,6 +317,8 @@ export class OeeFloorEditor implements AfterViewInit, OnDestroy{
 		}
 	}
 	#typed = signal<Partial<Record<keyof FloorSize,string>>>( {} );
+	//what a size's field shows:  the text typed while it isn't a size, else the floor's, so an import over a typed text shows its own
+	size( field:keyof FloorSize ):string|number{ return this.#typed()[field] ?? this.edit().floor[field]; }
 	readonly sizeProblem = computed( ()=>{
 		const typed = this.#typed(), field = ( <const>['width', 'height', 'grid'] ).find( f=>typed[f]!=undefined );
 		return field ? `The floor's ${field} must be a number above zero.` : undefined;
@@ -318,7 +329,10 @@ export class OeeFloorEditor implements AfterViewInit, OnDestroy{
 	readonly batch = computed( ()=>floorBatch( this.base(), this.edit() ) );
 	readonly problem = computed( ()=>this.sizeProblem() ?? floorEditProblem( this.edit(), s=>floorShapeTitle( s, this.plant() ) ) );
 	readonly refusal = computed( ()=>floorBatchRefusal( this.batch(), this.rights() ) );
-	readonly saveReason = computed( ()=>this.problem() ?? this.refusal() ?? ( this.batch().length ? undefined : 'Nothing is changed.' ) );
+	//a save refused part-way whose rows couldn't be read again:  what went in is unknown, so Save waits for Read again
+	readonly stale = signal( false );
+	readonly waiting = computed( ()=>this.stale() ? "The save was refused part-way, and the floor couldn't be read again:  Read again, and Save writes what is left." : undefined );
+	readonly saveReason = computed( ()=>this.problem() ?? this.waiting() ?? this.refusal() ?? ( this.batch().length ? undefined : 'Nothing is changed.' ) );
 	readonly canSave = computed( ()=>!this.busy() && !this.saveReason() );
 	//what the gateway said to the last save, or an import's problem, while the floor is as it was then:  an edit answers it
 	#said = signal<{of:FloorEdit; text:string}|undefined>( undefined );
@@ -334,16 +348,29 @@ export class OeeFloorEditor implements AfterViewInit, OnDestroy{
 		}
 		catch( e ){
 			//the gateway ended the batch at what it refused, with what came before it written:  the rows as they are now, under the floor as edited
-			const now = await this.#service.floor( gateway, this.line().id ).catch( ()=>undefined );
-			if( now ){
-				this.edit.update( edit=>floorRebase( edit, was, now ) );
-				this.base.set( now );
-			}
-			this.#said.set( {of: this.edit(), text: `The gateway refused the save:  ${errorMessage( e )}`} );
+			const read = await this.#reread( gateway, was );
+			this.#said.set( {of: this.edit(), text: `The gateway refused the save:  ${errorMessage( e )}${read ? '' : "  The floor couldn't be read again."}`} );
 		}
 		finally{
 			this.busy.set( false );
 		}
+	}
+	async readAgain():Promise<void>{
+		this.busy.set( true );
+		const read = await this.#reread( this.gateway(), this.base() );
+		this.busy.set( false );
+		if( !read )
+			this.#said.set( {of: this.edit(), text: "The floor still couldn't be read."} );
+	}
+	//the rows read again and the edit rebased onto them, false where they couldn't be read
+	async #reread( gateway:HistReader, was:FloorBase ):Promise<boolean>{
+		const now = await this.#service.floor( gateway, this.line().id ).catch( ()=>undefined );
+		this.stale.set( !now );
+		if( now ){
+			this.edit.update( edit=>floorRebase( edit, was, now ) );
+			this.base.set( now );
+		}
+		return !!now;
 	}
 	export():void{ saveFile( `${this.line().slug}-floor.json`, floorExport( this.edit(), this.reach() ) ); }
 	async onFile( input:HTMLInputElement ):Promise<void>{
@@ -361,6 +388,7 @@ export class OeeFloorEditor implements AfterViewInit, OnDestroy{
 	}
 
 	svg = viewChild<ElementRef<SVGSVGElement>>( 'svg' );
+	width = viewChild<ElementRef<HTMLInputElement>>( 'width' );
 	shapeElements = viewChildren<ElementRef<SVGGElement>>( 'shapeElement' );
 	#placed?:string;//the shape just placed, until it is drawn and has the focus
 	#svg():SVGSVGElement|undefined{ return this.svg()?.nativeElement; }

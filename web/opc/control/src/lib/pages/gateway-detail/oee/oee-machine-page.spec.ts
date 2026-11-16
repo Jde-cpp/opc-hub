@@ -70,7 +70,7 @@ const create = async ( {calendar='found', addOn='loaded', status, line=false, fl
 	const dialog = vi.spyOn( OeeCodingDialog, 'open' ).mockImplementation( async ()=>answers.closeWith );
 	const gateway = { slug: 'g' };
 	const floors = {
-		floors: vi.fn( async ()=>floored ? [{id: 1, lineId: 10, width: 40, height: 20, grid: 0.5}] : [] ),
+		lineFloor: vi.fn( async ( ..._:unknown[] ):Promise<object|undefined>=>floored ? {id: 1, lineId: 10, width: 40, height: 20, grid: 0.5} : undefined ),
 		rights: vi.fn( async ()=>({ createFloor, updateFloor: true, createShape: true, updateShape: true, purgeShape: true }) ), createFloor: vi.fn( async ( ..._:unknown[] )=>{} )
 	};
 	const snackbar = snackbarStub();
@@ -359,6 +359,8 @@ describe( 'OeeMachinePage', ()=>{
 		const trend = p.charts().map( c=>c.spec() ).find( c=>c.title.startsWith( 'OEE of' ) )!;
 		expect( trend.kind=='columns' && trend.points[0].custom.text ).not.toContain( 'good of' );//its machines' counts don't add
 		expect( p.text( '.period-bar a' ) ).toEqual( ['mapFloor', 'monitoringDashboard', 'settingsLine'] );//each with its icon's name;  the line has a floor (#481)
+		expect( p.floors.lineFloor.mock.calls ).toEqual( [[p.gateway, 10]] );
+		expect( p.floors.rights ).not.toHaveBeenCalled();//asked only of a line with no floor
 	} );
 	it( 'offers a line with no floor its making, to a caller who may, and opens the new floor in its editor', async ()=>{
 		const p = await create( {line: true, floored: false} );
@@ -369,12 +371,19 @@ describe( 'OeeMachinePage', ()=>{
 		await stable( p.fixture );
 		expect( p.floors.createFloor.mock.calls ).toEqual( [[p.gateway, 10]] );
 		expect( navigate.mock.calls.map( ( [to, extras] )=>[to, extras?.state] ) ).toEqual( [[['../floor'], {edit: true}]] );
-		p.floors.createFloor.mockRejectedValueOnce( new Error( 'The line has a floor, 3:  a line has one.' ) );//made by another hand meanwhile
+		p.floors.createFloor.mockRejectedValueOnce( new Error( 'Could not make the floor.' ) );//a refusal with no floor behind it
 		button().click();
 		await stable( p.fixture );
 		expect( p.snackbar.exception ).toHaveBeenCalledWith( expect.stringMatching( /^Could not make the floor of / ), expect.any( Error ) );
 		expect( navigate ).toHaveBeenCalledTimes( 1 );//the page stays
 		expect( button().disabled ).toBe( false );
+		p.floors.createFloor.mockRejectedValueOnce( new Error( 'The line has a floor, 3:  a line has one.' ) );//made by another hand meanwhile
+		p.floors.lineFloor.mockResolvedValueOnce( {id: 3, lineId: 10, width: 40, height: 20, grid: 0.5} );
+		button().click();
+		await stable( p.fixture );
+		expect( button() ).toBeNull();//the floor read again:  its link in the offer's place
+		expect( p.text( '.period-bar a' ) ).toEqual( ['mapFloor', 'monitoringDashboard', 'settingsLine'] );
+		expect( navigate ).toHaveBeenCalledTimes( 1 );
 		TestBed.resetTestingModule();//built twice:  a caller who may not make one
 		const viewer = await create( {line: true, floored: false, createFloor: false} );
 		expect( viewer.fixture.nativeElement.querySelector( 'button.new-floor' ) ).toBeNull();

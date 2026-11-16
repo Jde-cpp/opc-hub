@@ -56,8 +56,12 @@ const create = async ( {zone='America/New_York', rights=none, made=false}:{zone?
 	const data = new BehaviorSubject<object>( {pageData: first} );
 	const title = { title: '' }, snackbar = snackbarStub();
 	TestBed.configureTestingModule({ providers: [provideRouter( [] ), provideRoute( {data} ), { ...pageTitleStub, useValue: title }, { provide: OeeFloorService, useValue: service }, { provide: SnackbarService, useValue: snackbar }] });
-	if( made )
-		vi.spyOn( TestBed.inject( Location ), 'getState' ).mockReturnValue( {edit: true} );
+	if( made ){//the history entry's state, as the router keeps it
+		const location = TestBed.inject( Location );
+		let state:unknown = {edit: true, navigationId: 2};
+		vi.spyOn( location, 'getState' ).mockImplementation( ()=>state );
+		vi.spyOn( location, 'replaceState' ).mockImplementation( ( _path, _query, next )=>{ state = next; } );
+	}
 	const fixture = TestBed.createComponent( OeeFloorPage );
 	fixture.componentRef.setInput( 'sideNav', undefined );
 	await stable( fixture );
@@ -274,6 +278,7 @@ describe( 'OeeFloorPage', ()=>{
 		p.button( 'Edit' )!.click();
 		await stable( p.fixture, 5 );
 		const editor = p.editor()!;
+		expect( document.activeElement ).toBe( p.el().querySelector( 'oee-floor-editor .sizes input' ) );//the focus, into the editor:  Edit is gone
 		expect( [editor.line().name, editor.source().floor.id, editor.source().shapes.length, editor.plant().machines.length, editor.rights().updateShape, editor.rights().createShape] ).toEqual( ['Plant', 1, 4, 3, true, false] );
 		expect( [...p.el().querySelectorAll( 'oee-floor-editor g.shape' )].map( g=>g.getAttribute( 'aria-label' ) ) ).toEqual( ['Filler', 'Capper', 'Packer', 'Label Dock'] );
 		expect( [p.el().querySelector( 'oee-floor-map' ), p.el().querySelector( '.status-bar' ), p.el().querySelector( '.legend' ), p.button( 'Edit' )] ).toEqual( [null, null, null, undefined] );
@@ -325,6 +330,7 @@ describe( 'OeeFloorPage', ()=>{
 		const p = await create( {rights: all, made: true} );
 		await stable( p.fixture, 5 );
 		expect( p.editor() ).not.toBeUndefined();
+		expect( TestBed.inject( Location ).getState() ).toEqual( {navigationId: 2} );//taken from the entry, so a Back or a reload to it opens the map
 		TestBed.resetTestingModule();//built twice:  the same navigation, without Update on the shapes
 		const viewer = await create( {made: true} );
 		await stable( viewer.fixture, 5 );

@@ -41,9 +41,14 @@ export class OeeFloorService{
 		return toOeeFloorRights( ( await reader.query<any>( OeeFloorService.rightsQuery ) )?.oeeFloorRights );
 	}
 	static readonly rightsQuery = 'oeeFloorRights{ createFloor updateFloor createShape updateShape purgeShape }';
+	//a line's floor, a line having one at most;  none for a line with no floor
+	async lineFloor( reader:HistReader, lineId:number ):Promise<OeeFloor|undefined>{
+		return ( <any[]>(( await reader.query<any>( OeeFloorService.lineFloorQuery, {line: lineId} ) )?.oeeFloors ?? []) ).map( toOeeFloor )[0];
+	}
+	static readonly lineFloorQuery = 'oeeFloors( oeeLineId: $line ){ id oeeLineId width height grid }';
 	//a line's floor and its shapes as they are now;  none for a line with no floor
 	async floor( reader:HistReader, lineId:number ):Promise<{floor:OeeFloor; shapes:OeeFloorShape[]}|undefined>{
-		const floor = ( await this.floors( reader ) ).find( f=>f.lineId==lineId );
+		const floor = await this.lineFloor( reader, lineId );
 		return floor ? { floor, shapes: await this.floorShapes( reader, floor.id ) } : undefined;
 	}
 	//a line's floor made, of the default size, for the editor to draw on.  A throw is the refusal:  a line that has one, a right withheld.

@@ -152,7 +152,9 @@ export function floorShapeTitle( s:Pick<EditShape,'kind'|'machineId'|'lineId'|'l
 }
 
 //Why the gateway would refuse the floor as it stands (its Floors' rules, rules.h):  a size or a grid that isn't above zero, a
-//point outside the floor, a polygon that encloses no area, a polyline with no length.  None for a floor it would take.
+//point outside the floor, a polygon that encloses no area by the gateway's measure, a polyline with no length, a text longer
+//than its column, a machine or a line placed twice.  None for a floor it would take.
+export const floorLabelMost = 256;//oee_floor_shapes.label's length
 const area = ( p:OeePoint[] )=>Math.abs( p.reduce( ( sum, [x, y], i )=>{ const [nextX, nextY] = p[( i+1 )%p.length]; return sum+x*nextY-nextX*y; }, 0 ) )/2;
 const run = ( p:OeePoint[] )=>p.slice( 1 ).reduce( ( sum, [x, y], i )=>sum+Math.hypot( x-p[i][0], y-p[i][1] ), 0 );
 export function floorEditProblem( edit:FloorEdit, name:( s:EditShape )=>string ):string|undefined{
@@ -165,12 +167,17 @@ export function floorEditProblem( edit:FloorEdit, name:( s:EditShape )=>string )
 		const geometry = floorGeometry( s.kind ), out = s.points.find( ( [x, y] )=>x<0 || y<0 || x>width || y>height );
 		if( out )
 			return `${name( s )} has a point at [${out[0]}, ${out[1]}], outside the floor, ${width} by ${height}.`;
-		if( geometry=='polygon' && ( s.points.length<3 || !area( s.points ) ) )
+		if( geometry=='polygon' && ( s.points.length<3 || 2*area( s.points )<1e-9 ) )//the gateway's tolerance:  points on one line snapped to a tenth leave a shoelace of 1e-17
 			return `${name( s )} must enclose an area.`;
 		if( geometry=='polyline' && ( s.points.length<2 || !run( s.points ) ) )
 			return `${name( s )} must have a length.`;
 		if( geometry=='point' && s.points.length!=1 )
 			return `${name( s )} is one point.`;
+		if( ( s.label?.length ?? 0 )>floorLabelMost )
+			return `A ${s.kind}'s text is ${s.label!.length} characters, past the ${floorLabelMost} a shape keeps.`;
+		const twice = s.kind=='Machine' ? edit.shapes.find( x=>x!==s && x.kind=='Machine' && x.machineId==s.machineId ) : s.kind=='Line' ? edit.shapes.find( x=>x!==s && x.kind=='Line' && x.lineId==s.lineId ) : undefined;
+		if( twice )
+			return `${name( s )} is on the floor twice:  a ${s.kind=='Machine' ? 'machine' : 'line'} appears once on a floor.`;
 	}
 	return undefined;
 }
@@ -231,18 +238,33 @@ export function floorBatchRefusal( batch:FloorMutation[], rights:OeeFloorRights 
 	];
 	return lacks.length ? `Save needs ${lacks.join( ', and ' )}, which your roles don't grant.` : undefined;
 }
-//The floor as edited over the rows read again, after a save the gateway refused part-way:  a shape whose create went in
-//takes its row, a row gone under an edit is a shape to make again, and a row another hand made meanwhile joins the floor, so
-//the next batch is what is still to write.
+//The floor as edited over the rows read again, after a save the gateway refused part-way, a three-way merge:  of what this
+//edit left as it was read - a shape's points, text or order, the floor's size or grid - the rows' as they are now, so another
+//hand's change stands, and a row another hand purged stays gone;  of what it changed, its own.  A shape whose create went in
+//takes its row, as does one placing a machine or a line another hand placed meanwhile, the last save winning;  a row gone under
+//a change is a shape to make again;  and a row another hand made joins the floor.  The next batch is then what is still to write.
 export function floorRebase( edit:FloorEdit, was:FloorBase, now:FloorBase ):FloorEdit{
-	const known = new Set( was.shapes.map( s=>s.id ) ), rows = new Set( now.shapes.map( s=>s.id ) ), made = now.shapes.filter( s=>!known.has( s.id ) );
-	const shapes = edit.shapes.map( ( s ):EditShape=>{
-		if( s.id!=undefined )
-			return rows.has( s.id ) ? s : {...s, id: undefined};
-		const i = made.findIndex( r=>r.kind==s.kind && r.machineId==s.machineId && r.lineId==s.lineId && r.label==( s.label || undefined ) && r.sort==s.sort && same( r.points, s.points ) );
-		return i<0 ? s : {...s, id: made.splice( i, 1 )[0].id};
+	const before = new Map( was.shapes.map( s=>[s.id, s] ) ), rows = new Map( now.shapes.map( s=>[s.id, s] ) ), made = now.shapes.filter( s=>!before.has( s.id ) );
+	const label = ( s:EditShape )=>s.label || undefined;
+	const claim = ( s:EditShape ):number|undefined=>{
+		const own = made.findIndex( r=>r.kind==s.kind && r.machineId==s.machineId && r.lineId==s.lineId && r.label==label( s ) && r.sort==s.sort && same( r.points, s.points ) );
+		const i = own>=0 || ( s.kind!='Machine' && s.kind!='Line' ) ? own : made.findIndex( r=>r.kind==s.kind && r.machineId==s.machineId && r.lineId==s.lineId );
+		return i<0 ? undefined : made.splice( i, 1 )[0].id;
+	};
+	const shapes = edit.shapes.flatMap( ( s ):EditShape[]=>{
+		const old = s.id==undefined ? undefined : before.get( s.id ), row = s.id==undefined ? undefined : rows.get( s.id );
+		if( row )
+			return [old ? { ...s, points: same( s.points, old.points ) ? row.points : s.points, label: label( s )==old.label ? row.label : s.label, sort: s.sort==old.sort ? row.sort : s.sort } : s];
+		if( old && same( s.points, old.points ) && label( s )==old.label && s.sort==old.sort )
+			return [];
+		return [{ ...s, id: claim( s ) }];
 	} );
-	return { ...edit, shapes: [...shapes, ...made.map( toEditShape )] };
+	const floor = { ...edit.floor };
+	for( const field of <const>['width', 'height', 'grid'] ){
+		if( edit.floor[field]==was.floor[field] )
+			floor[field] = now.floor[field];
+	}
+	return { floor, shapes: [...shapes, ...made.map( toEditShape )] };
 }
 
 //The floor as the spec's json (spec *The floor*), a shape a line:  its size and grid, and each shape with its kind, its

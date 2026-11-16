@@ -77,15 +77,8 @@ export class OeeMachinePage implements OnInit{
 		this.statusProblem.set( undefined );
 		this.floorLink.set( undefined );
 		this.canFloor.set( false );
-		if( isLine )//a line with a floor (#481) links to it, and one with none offers its making (#482);  a reader without Read on the floors sees neither
-			Promise.all( [this.#floors.floors( gateway ), this.#floors.rights( gateway ).catch( ()=>undefined )] ).then( ( [floors, rights] )=>{
-				if( !this.#isOpen( subject ) )
-					return;
-				if( floors.some( f=>f.lineId==subject.row.id ) )
-					this.floorLink.set( ['../floor'] );
-				else
-					this.canFloor.set( rights?.createFloor===true );
-			}, ()=>{} );
+		if( isLine )
+			this.#readFloor( subject, gateway );
 		this.#service.reasons( gateway ).then( list=>{ if( this.#isOpen( subject ) ) this.reasons.set( {list} ); }, e=>{ if( this.#isOpen( subject ) ) this.reasons.set( {list: [], error: errorMessage(e)} ); } );
 		//a calendar the gateway's client finds gives the machine shifts:  the page opens on the one it is in, and the trend is by shift
 		let status:{calendar:string}|undefined, failed:string|undefined;
@@ -106,6 +99,19 @@ export class OeeMachinePage implements OnInit{
 		await this.refresh();
 	}
 	#isOpen( subject:OeeSubject ):boolean{ return this.subject()===subject; }
+	//A line with a floor (#481) links to it, and one with none offers its making (#482), the rights asked then alone;  a reader
+	//without Read on the floors sees neither.
+	async #readFloor( subject:OeeSubject, gateway:Gateway ):Promise<void>{
+		try{
+			const floored = !!await this.#floors.lineFloor( gateway, subject.row.id );
+			const rights = floored ? undefined : await this.#floors.rights( gateway ).catch( ()=>undefined );
+			if( !this.#isOpen( subject ) )
+				return;
+			this.floorLink.set( floored ? ['../floor'] : undefined );
+			this.canFloor.set( rights?.createFloor===true );
+		}
+		catch{}
+	}
 	//The line's floor made, of the default size, and opened in its editor (#482, docs/demo/spec.md *Editing*).  A refusal - a
 	//floor another hand made meanwhile, a right withheld - is said, and the page stays.
 	async newFloor():Promise<void>{
@@ -118,6 +124,8 @@ export class OeeMachinePage implements OnInit{
 		}
 		catch( e ){
 			this.#snackbar.exception( `Could not make the floor of '${subject.title}'`, e );
+			if( this.#isOpen( subject ) )//a floor another hand made meanwhile:  its link in the offer's place
+				await this.#readFloor( subject, this.gateway );
 		}
 		finally{
 			this.makingFloor.set( false );

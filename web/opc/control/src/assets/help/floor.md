@@ -46,7 +46,7 @@ Everything is pushed over the gateway's socket as it changes; the "since" times 
 
 A shape drawn dotted names a machine or a line the floor's line no longer reaches: the map leaves it out, and it can still be moved and deleted.
 
-**Save** writes what changed, and only that, as one request: a row another user changed meanwhile is overwritten only where you changed it too. Save is greyed, with the reason beside it, while the floor would be refused - a point outside it, a shape with no area - or while the change needs a right your roles lack: placing a shape needs Create on the shapes, deleting one Purge, and the floor's size or grid Update on the floors. Should the gateway refuse part of a save, the editor says what it said and reads the floor again, so the next Save writes what is left.
+**Save** writes what changed, and only that, as one request: a row another user changed meanwhile is overwritten only where you changed it too. Save is greyed, with the reason beside it, while the floor would be refused - a point outside it, a shape with no area, a text over 256 characters, a machine or a line placed twice - or while the change needs a right your roles lack: placing a shape needs Create on the shapes, deleting one Purge, and the floor's size or grid Update on the floors. Nothing can be changed while a save is on its way. Should the gateway refuse part of a save, the editor says what it said and reads the floor again, keeping what another user changed of what you left alone, so the next Save writes what is left; should the floor not read, Save waits for **Read again**.
 
 **Export** saves the floor as a json file, machines and lines by their slugs, and **Import** reads such a file onto an empty floor:
 
