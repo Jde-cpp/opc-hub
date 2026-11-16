@@ -3,6 +3,7 @@
 #include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/process/execution.h>
+#include <jde/fwk/str.h>
 #include "jde/db/DBException.h"
 #include <jde/ql/ql.h>
 #include <jde/ql/QLAwait.h>
@@ -19,7 +20,36 @@ namespace Server{
 	Τ Ω doEof( T& stream )ι->net::awaitable<void, executor_type>{ beast::error_code ec; stream.socket().shutdown( tcp::socket::shutdown_send, ec ); co_return; }
 	Τ Ω doEof( beast::ssl_stream<T>& stream )ι->net::awaitable<void, executor_type>{ co_await stream.async_shutdown(); }
 
-	Τ Ω runSession( T& stream, beast::flat_buffer& buffer, tcp::endpoint userEndpoint, bool isSsl, uint32 connectionIndex, IRequestHandler* reqHandler )ι->net::awaitable<void, executor_type>{
+	Ω plain( const net::ip::address& a )ι->net::ip::address{//a dual-stack listener reads 127.0.0.1 as ::ffff:127.0.0.1
+		return a.is_v6() && a.to_v6().is_v4_mapped() ? net::ip::address{ net::ip::make_address_v4(net::ip::v4_mapped, a.to_v6()) } : a;
+	}
+	//The address a request came from.  Behind a front every peer is the front, which appends the caller's own address to
+	//X-Forwarded-For:  where the peer is one of /http/trustedProxies, the last address there is the caller, whatever the caller
+	//wrote ahead of it.  A peer outside the list is the caller itself and the header its own claim, so it is not read;  no header,
+	//or one whose last address does not parse, keeps the peer.  The front's connection has a port, the caller's is not known.
+	Ω userEndpoint( const tcp::endpoint& peer, const TRequestType& request )ι->tcp::endpoint{
+		auto [line, end] = request.equal_range( "X-Forwarded-For" );
+		if( line==end )
+			return peer;
+		let proxies = Settings::FindStringArray( "/http/trustedProxies" );
+		let trusted = std::ranges::any_of( proxies, [peerAddress=plain(peer.address())]( str proxy ){
+			beast::error_code ec;
+			let address = net::ip::make_address( proxy, ec );
+			return !ec && plain( address )==peerAddress;
+		} );
+		if( !trusted )
+			return peer;
+		sv forwarded;
+		for( ; line!=end; ++line )//repeated lines are one list (RFC 9110 §5.3), which the last line ends.
+			forwarded = line->value();
+		if( let comma = forwarded.rfind(','); comma!=sv::npos )
+			forwarded.remove_prefix( comma+1 );
+		beast::error_code ec;
+		let address = net::ip::make_address( Str::Trim(forwarded), ec );
+		return ec ? peer : tcp::endpoint{ address, 0 };
+	}
+
+	Τ Ω runSession( T& stream, beast::flat_buffer& buffer, tcp::endpoint peer, bool isSsl, uint32 connectionIndex, IRequestHandler* reqHandler )ι->net::awaitable<void, executor_type>{
 		optional<http::request_parser<http::string_body>> parser;// a new parser must be used for every message so we use an optional to reconstruct it every time.
 		parser.emplace();
 		parser->body_limit( BodyLimit() );
@@ -35,10 +65,12 @@ namespace Server{
 		for( auto cs = co_await net::this_coro::cancellation_state; cs.cancelled() == net::cancellation_type::none; cs = co_await net::this_coro::cancellation_state ){
 			if( websocket::is_upgrade(parser->get()) ){
 				beast::get_lowest_layer(stream).expires_never();// Disable the timeout. The websocket::stream uses its own timeout settings.
-				Internal::RunSocketSession( reqHandler->WebsocketSession(ms<RestStream<T>>(move(stream)), move(buffer), parser->release(), userEndpoint, connectionIndex), reqHandler );
+				auto user = userEndpoint( peer, parser->get() );
+				Internal::RunSocketSession( reqHandler->WebsocketSession(ms<RestStream<T>>(move(stream)), move(buffer), parser->release(), move(user), connectionIndex), reqHandler );
 				co_return;
 			}
-			HttpRequest req{ parser->release(), move(userEndpoint), isSsl, connectionIndex };
+			auto user = userEndpoint( peer, parser->get() );
+			HttpRequest req{ parser->release(), move(user), isSsl, connectionIndex };
 			optional<http::message_generator> res;
 			if( req.Method() == http::verb::options )
 				res = SendOptions( move(req) );
@@ -80,7 +112,7 @@ namespace Server{
 		}
 	}
 
-	Ω detectSession( StreamType stream, tcp::endpoint userEndpoint, Server::IRequestHandler* handler )ι->net::awaitable<void, executor_type>{
+	Ω detectSession( StreamType stream, tcp::endpoint peer, Server::IRequestHandler* handler )ι->net::awaitable<void, executor_type>{
 		beast::flat_buffer buffer;
 		stream.expires_after( std::chrono::seconds(30) );// Set the timeout.
 		auto [ec, isSsl] = co_await beast::async_detect_ssl( stream, buffer );// on_run
@@ -98,10 +130,10 @@ namespace Server{
 			}
 
 			buffer.consume( bytes_used );
-			co_await runSession( ssl_stream, buffer, move(userEndpoint), true, index, handler );
+			co_await runSession( ssl_stream, buffer, move(peer), true, index, handler );
 		}
 		else
-			co_await runSession( stream, buffer, move(userEndpoint), false, index, handler );
+			co_await runSession( stream, buffer, move(peer), false, index, handler );
 	}
 
 	Ω send( HttpRequest&& req, sp<IRestStream> stream, jvalue j, sv contentType={}, SRCE )ι->void{
@@ -294,7 +326,7 @@ namespace Server{
 					break;//Stop has already cancelled the connections, so nothing would end this one.
 				let exec = sock.get_executor();
 				beast::error_code endpointEc;
-				let userEndpoint = sock.remote_endpoint( endpointEc );
+				auto peer = sock.remote_endpoint( endpointEc );
 				if( endpointEc ){
 					CodeException{ endpointEc, ELogTags::Server | ELogTags::Http, ELogLevel::Debug };
 					continue;
@@ -303,7 +335,7 @@ namespace Server{
 				listener->Connections.emplace( cancelSignal.get(), Connection{cancelSignal, executor_type{exec}} );
 				net::co_spawn(
 					exec,
-					detectSession( StreamType(move(sock)), move(userEndpoint), handler.get() ),
+					detectSession( StreamType(move(sock)), move(peer), handler.get() ),
 					net::bind_cancellation_slot( cancelSignal->slot(),
 					[listener, cancelSignal]( std::exception_ptr e ){
 						listener->Connections.erase( cancelSignal.get() );
@@ -348,6 +380,12 @@ namespace Server{
 		//Benign in production: the anchor names a cert whose private key this process already holds.
 		Client::Ssl::AddTrustAnchor( handler->Settings().Crypto().Certificate.Path );
 
+		for( let& proxy : Settings::FindStringArray("/http/trustedProxies") ){
+			beast::error_code ec;
+			net::ip::make_address( proxy, ec );
+			if( ec )
+				WARNT( ELogTags::App, "/http/trustedProxies names '{}', which is not an address - ignored.  X-Forwarded-For is read only from a peer at a listed address.", proxy );
+		}
 		let port = handler->Settings().Port();
 		let addressString = handler->Settings().Address();
 		let address = tcp::endpoint{ net::ip::make_address(addressString), port };

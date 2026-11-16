@@ -2,10 +2,11 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { signal } from '@angular/core';
 import { EProvider, IAUTH, IAuth, User } from '../../services/authorization/auth';
+import { IENVIRONMENT } from '../../services/environment/environment';
 import { Authorization } from './authorization';
 import { routerStub, stable } from 'jde-spa/testing';
 
-//review3 L8: `gapi` is a `declare const` over index.html's `async defer` platform.js.  A bare `gapi.auth2` is a
+//review3 L8: `gapi` is a `declare const` over Google's platform.js, which a Google sign-in loads.  A bare `gapi.auth2` is a
 //ReferenceError wherever that script has not loaded, and it sat between logout() and the navigate to /login - so the user
 //was logged out and left standing on the page they had just lost access to.
 describe( 'Authorization.onLogout', ()=>{
@@ -92,11 +93,13 @@ describe( 'Authorization picture', ()=>{
 
 //#483:  a session the install's guest user stands behind is named Guest, with the sign-in link beside it, whatever sign-in the site
 //offers - a password's has no client id (483-demo-guest-sessions review #11);  an anonymous session, no guest, shows the link as before.
+//#484:  config.json's `login` false is a site that offers none, and neither has the link.
 describe( 'Authorization guest', ()=>{
-	const create = async ( guest:boolean )=>{
+	const create = async ( guest:boolean, environment?:Record<string,unknown> )=>{
 		TestBed.configureTestingModule({ providers: [
 			provideRouter( [] ),//the sign-in link is a routerLink
-			{ provide: IAUTH, useValue: { user: signal<User|undefined>( undefined ), guest: signal( guest ), logout: vi.fn(), providers: ()=>Promise.resolve([]) } as unknown as IAuth }
+			{ provide: IAUTH, useValue: { user: signal<User|undefined>( undefined ), guest: signal( guest ), logout: vi.fn(), providers: ()=>Promise.resolve([]) } as unknown as IAuth },
+			...( environment ? [{ provide: IENVIRONMENT, useValue: {get: ( key:string )=>environment[key]} }] : [] )
 		]});
 		const fixture = TestBed.createComponent( Authorization );
 		await stable( fixture, 3 );
@@ -114,5 +117,23 @@ describe( 'Authorization guest', ()=>{
 		const { name, signIn } = await create( false );
 		expect( name ).toBeUndefined();
 		expect( signIn ).toBe( true );
+	} );
+
+	it( 'keeps the link where the environment says nothing of login, or true', async ()=>{
+		expect( (await create( true, {} )).signIn ).toBe( true );
+		TestBed.resetTestingModule();//a second build in the one test
+		expect( (await create( false, {login: true} )).signIn ).toBe( true );
+	} );
+
+	it( 'names a guest with no sign-in link where login is false', async ()=>{
+		const { name, signIn } = await create( true, {login: false} );
+		expect( name ).toBe( 'Guest' );
+		expect( signIn ).toBe( false );
+	} );
+
+	it( 'shows an anonymous session nothing where login is false', async ()=>{
+		const { name, signIn } = await create( false, {login: false} );
+		expect( name ).toBeUndefined();
+		expect( signIn ).toBe( false );
 	} );
 } );

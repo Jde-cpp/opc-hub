@@ -24,7 +24,17 @@ export function resolveInstanceHost( host:string|undefined, pageHost:string ):st
 		return pageHost || "localhost";
 	return pageHost && loopbackHosts.has( host.toLowerCase() ) ? pageHost : host;
 }
-export function resolveInstance<T extends Instance>( instance:T, pageHost:string = typeof location=="undefined" ? "" : location.hostname ):T{
+//The port the page was browsed by:  location.port is empty on the scheme's own.
+export function pagePort( page:Pick<Location,'port'|'protocol'>|undefined = typeof location=="undefined" ? undefined : location ):number|undefined{
+	return page ? +page.port || ( page.protocol=="https:" ? 443 : 80 ) : undefined;
+}
+//`pagePort` is given where the site's config.json says applicationServer.port null (docs/demo/spec.md *The public origin*):  a
+//front answers for the hub on the page's own port, so every instance on an empty or loopback host - the hub's own process,
+//the gateway /opcGateways names at localhost:1967 too - takes the page's port as it takes the page's host.  An instance on
+//another host, a split gateway, keeps its own.
+export function resolveInstance<T extends Instance>( instance:T, pageHost:string = typeof location=="undefined" ? "" : location.hostname, pagePort?:number ):T{
 	const host = resolveInstanceHost( instance.host, pageHost );
-	return host==instance.host ? instance : { ...instance, host };
+	const own = !instance.host || loopbackHosts.has( instance.host.toLowerCase() );
+	const port = own && pagePort ? pagePort : instance.port;
+	return host==instance.host && port==instance.port ? instance : { ...instance, host, port };
 }

@@ -1,6 +1,6 @@
 import { Injectable, InjectionToken, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import {Instance, resolveInstance} from './app-service-types'
+import {Instance, pagePort, resolveInstance} from './app-service-types'
 
 import { pageTransport, ProtoService } from '../proto-service';
 import * as FromServer from 'jde-proto/App.FromServer';
@@ -25,8 +25,11 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 			console.log( "No Application Server set in environment" );
 			appServer = { port:1967, host:"" };
 		}
-		super.instances = [appServer];//the setter resolves an empty or loopback host to the page's
+		this.#pagePort = appServer.port===null ? pagePort() : undefined;
+		super.instances = [resolveInstance( appServer, undefined, this.#pagePort )];//an empty or loopback host is the page's
 	}
+	//config.json's applicationServer.port null:  the hub answers on the page's own port, and so does every instance of its process.
+	#pagePort:number|undefined;
 	protected override get product(){ return "The application server"; }
 	// ping():Promise<string>{
 	// 	return this.sendSingularRequest( FromClient.ERequest.Ping );
@@ -51,12 +54,12 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	//that works from where the page runs (resolveInstanceHost, install-issues #2).
 	async gatewayInstances():Promise<Instance[]>{
 		const y = await this.get( "opcGateways" ) as any;
-		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance) );
+		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance, undefined, this.#pagePort) );
 	}
 
 	async opcServerInstances():Promise<Instance[]>{
 		const y = await this.get( "opcServers" ) as any;
-		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance) );
+		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance, undefined, this.#pagePort) );
 	}
 
 	async instancePK( instanceName:string, programName?:string ):Promise<number|undefined>{ return (await this.instancePKs( instanceName, [programName] ))[0]; }

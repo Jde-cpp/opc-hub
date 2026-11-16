@@ -1,7 +1,8 @@
-import {Routes} from '@angular/router';
+import { inject } from '@angular/core';
+import { CanActivateFn, Router, Routes } from '@angular/router';
 
 import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
-import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
+import { HelpRouteService, helpTopicResolver, IENVIRONMENT, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
 import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadFlowDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeFloorPage, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, OeeFloorResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
@@ -24,15 +25,23 @@ const calendarRoutes:Routes = [
 	}
 ];
 
+//config.json's `home` and `login` (docs/demo/spec.md *The public origin*, EnvironmentService):  the empty path goes to `home`
+//in place of the cards, and a site that offers no sign-in has no login page - a visitor's url would load Google's scripts.
+const home:CanActivateFn = ()=>{
+	const url = inject( IENVIRONMENT ).get<string>( 'home' );
+	return url ? inject( Router ).parseUrl( url ) : true;
+};
+const login:CanActivateFn = ()=>inject( IENVIRONMENT ).get<boolean>( 'login' )!==false || inject( Router ).parseUrl( '/' );
+
 //Pages load through each library's <lib>-pages.ts loaders, never `import('jde-…')`:  this file imports every barrel statically,
 //so a dynamic import of one splits nothing off.  What else keeps a page in main:  web/CLAUDE.md, "Routed pages are loaders".
 
 export const routes: Routes = [
 	{ path: '', title: "Home", loadComponent: loadCards,
 		data: {summary: "Welcome to OPC Hub", hero: {lead: "Welcome to", name: "OPC Hub", tagline: "Browse OPC UA servers, manage who can reach them, and monitor the services behind them.", tilesHeading: "Where do you want to begin?"} },
-		canActivate: [AuthGuard],
+		canActivate: [home, AuthGuard],
 		providers: [  {provide: IROUTE_SERVICE, useClass: HomeRouteService} ]},
-	{ path: 'login', title: "Login", loadComponent: loadLoginPage, data: {name: "Login", summary: "Login to Site"} },
+	{ path: 'login', title: "Login", loadComponent: loadLoginPage, canActivate: [login], data: {name: "Login", summary: "Login to Site"} },
 	{ path: 'gateways', title: "Gateways", canActivate: [AuthGuard], loadComponent: loadCards,
 		providers: [{provide: IROUTE_SERVICE, useClass: GatewayRouteService}],
 		data: {summary: "Available Gateways", icon: "hub"}

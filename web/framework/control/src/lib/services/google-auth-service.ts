@@ -4,6 +4,10 @@ declare const google: any;
 
 export const googleClientIdKey = 'googleAuthClientId';
 export const googleLoginHintKey = 'googleLoginHint';
+//Google's sign-in library and the platform library the navbar's sign-out reads `gapi` from.  No page carries them:  index.html
+//did, so every page of every site asked Google for both, one whose server offers no Google sign-in included.
+export const googleSignInScript = 'https://accounts.google.com/gsi/client';
+export const googlePlatformScript = 'https://apis.google.com/js/platform.js';
 
 //Owns the Google Identity Services machinery (initialize/renderButton/prompt) so a silent prompt() can run from any
 //page, not just /login (reviews/todo.md §7). The login page wires `credentialHandler` for interactive sign-ins;
@@ -14,9 +18,16 @@ export class GoogleAuthService{
 	//renewCredential() settles that renewal instead - the two flows never race for one credential.
 	credentialHandler?: ( credential:string )=>void;
 
-	get available():boolean{ return typeof google!="undefined" && !!google; }
+	//the sign-in library has loaded:  false until initialize, which injects it, has seen it load.
+	get available():boolean{ return this.#loaded && typeof google!="undefined" && !!google; }
 
-	initialize( clientId:string ):void{
+	//Injects Google's scripts the first time it is given a client id, which only a server that offers the sign-in reports, and
+	//sets the library up once they have loaded.  Rejects where the sign-in library does not load;  the platform library is the
+	//sign-out's best effort, and a sign-in does not wait on its failure.
+	async initialize( clientId:string ):Promise<void>{
+		if( !clientId )
+			throw new Error( "no google client id" );
+		await ( this.#scripts ??= this.#load() );
 		if( !this.available )
 			throw new Error( "google not defined" );
 		localStorage.setItem( googleClientIdKey, clientId );//the silent-renewal path needs it on page loads that never visit /login
@@ -44,13 +55,30 @@ export class GoogleAuthService{
 		google.accounts.id.prompt();
 	}
 
+	//a script element, settled by its load or its failure - a spec's override settles without one
+	protected loadScript( src:string ):Promise<void>{
+		return new Promise<void>( ( resolve, reject )=>{
+			const script = document.createElement( "script" );
+			script.src = src;
+			script.async = true;
+			script.onload = ()=>resolve();
+			script.onerror = ()=>reject( new Error(`'${src}' did not load.`) );
+			document.head.appendChild( script );
+		} );
+	}
+	async #load():Promise<void>{
+		this.loadScript( googlePlatformScript ).catch( e=>console.warn( "The Google sign-out will not reach Google.", e ) );
+		await this.loadScript( googleSignInScript );
+		this.#loaded = true;
+	}
+
 	//Silent renewal: resolves the fresh credential, or null when the prompt produced none - FedCM cooldown, multiple
 	//Google sessions, or a dismissal are normal outcomes, never errors. Concurrent callers coalesce into one prompt.
 	renewCredential():Promise<string|null>{
 		if( this.#renewal )
 			return this.#renewal;
 		const clientId = localStorage.getItem( googleClientIdKey );
-		if( !clientId || !this.available )
+		if( !clientId )
 			return Promise.resolve( null );//no cached client id means the login page has never run in this browser - nothing to renew with
 		let resolve!:( credential:string|null )=>void;
 		const renewal = new Promise<string|null>( r=>resolve=r );
@@ -64,9 +92,10 @@ export class GoogleAuthService{
 			resolve( credential );
 		};
 		this.#renewalSettle = settle;
-		const timer = setTimeout( ()=>settle(null), GoogleAuthService.renewalTimeoutMs );//backstop for FedCM paths that fire no moment callback at all
-		try{
-			this.initialize( clientId );
+		const timer = setTimeout( ()=>settle(null), GoogleAuthService.renewalTimeoutMs );//backstop for FedCM paths that fire no moment callback at all, and for scripts that never settle
+		this.initialize( clientId ).then( ()=>{
+			if( this.#renewal!==renewal )
+				return;//the backstop settled it while the scripts loaded
 			google.accounts.id.prompt( ( moment:any )=>{
 				//FedCM deprecated the display-moment queries, so only skip/dismiss are inspected. 'credential_returned'
 				//is a dismissal that precedes success - the credential callback settles that one.
@@ -75,11 +104,10 @@ export class GoogleAuthService{
 					settle( null );
 				}
 			});
-		}
-		catch( e ){
+		} ).catch( e=>{
 			console.warn( "silent google prompt failed.", e );
 			settle( null );
-		}
+		} );
 		return renewal;
 	}
 
@@ -93,6 +121,8 @@ export class GoogleAuthService{
 			console.warn( "google credential arrived with no handler - ignored." );
 	}
 
+	#scripts?:Promise<void>;
+	#loaded = false;
 	#initializedClientId?:string;
 	#renewal:Promise<string|null>|null = null;
 	#renewalSettle?:( credential:string|null )=>void;

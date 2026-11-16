@@ -4,6 +4,17 @@ app-root {
 	height: 100vh;
 }
 
+//config.json's banner:  a row of its own at the top of the column, so the navbar and the pane keep what is left.
+.site-banner {
+	flex: none;
+	margin: 0;
+	padding: 4px 16px;
+	text-align: center;
+	font: var(--mat-sys-label-large);
+	background: var(--mat-sys-tertiary-container);
+	color: var(--mat-sys-on-tertiary-container);
+}
+
 //sticky, not fixed: the navbar keeps its place in the column, so the pane below is simply what is left over.
 //Nothing downstream has to mirror the navbar height or the breadcrumb row's - both used to be hard-coded here
 //and in every page that fills the viewport, and the two states drifted apart (see component-sidenav.scss).

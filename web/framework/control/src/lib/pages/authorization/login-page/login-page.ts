@@ -20,12 +20,7 @@ export class LoginPage implements OnDestroy{
 		effect( async ()=>{
 			if( this.providers?.value()?.includes(EProvider.Google) && !this.showedGoogleLogin ){
 				this.showedGoogleLogin = true;
-				if( !this.googleAuth.available )
-					console.error( "google not defined" );
-				else{
-					let authId = await this.getGoogleAuthClientId();
-					this.showGoogleLogin( authId );
-				}
+				this.showGoogleLogin( await this.getGoogleAuthClientId() );
 			}
 		});
 
@@ -65,11 +60,14 @@ export class LoginPage implements OnDestroy{
 	}
 
 	//initialize/prompt live in GoogleAuthService so a silent prompt() can also run from any page on session expiry
-	//(reviews/todo.md §7) — this page only wires its interactive handler and renders the button.
-	showGoogleLogin( authId:string ){
+	//(reviews/todo.md §7) — this page only wires its interactive handler and renders the button.  initialize loads Google's
+	//scripts, which no page carries, so the button follows them.
+	async showGoogleLogin( authId:string ){
 		try{
 			this.googleAuth.credentialHandler = this.#onCredential;
-			this.googleAuth.initialize( authId );
+			await this.googleAuth.initialize( authId );
+			if( this.googleAuth.credentialHandler!==this.#onCredential )
+				return;//the page was left while the scripts loaded
 			this.googleAuth.renderButton( document.getElementById("google-button") );
 			this.googleAuth.prompt();//auto_select only takes effect during prompt() — silently re-signs-in a returning user after session timeout
 			if( this.googleCredential && !this.user()?.picture )//user() is undefined when nobody's logged in

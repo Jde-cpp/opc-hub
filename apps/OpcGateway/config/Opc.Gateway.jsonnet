@@ -236,9 +236,9 @@ function( sync=false )
 		address: null,
 		host: "localhost",//advertised to the AppServer registry.  A loopback name is rewritten by the page to the host it was served from (web: resolveInstanceHost), which is what allowOrigin 'sameHost' needs; a real name is kept as the page's target.
 		port: 1968,
-		threads: 1,
 		timeout:: "PT30M",
 		socketTimeout:: "P1D",
+		trustedProxies:: [], //the addresses of the fronts before this listener, whose X-Forwarded-For names the caller - App.Server.jsonnet.
 		maxLogLength: 255,
 		bodyLimit: 10000,
 		accessControl: {

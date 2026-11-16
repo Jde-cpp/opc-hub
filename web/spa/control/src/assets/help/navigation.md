@@ -51,7 +51,7 @@ The account button at the right of the bar shows who is signed in.
 
 Signed out, it opens the [login page](/login).
 
-On a site with a guest user, a visitor who has not signed in shows as *Guest*, and sees what that user's roles read. The sign-in button stays beside it.
+On a site with a guest user, a visitor who has not signed in shows as *Guest*, and sees what that user's roles read. The sign-in button stays beside it, unless the site offers no sign-in.
 
 Signed in, clicking it signs you out at once and returns you to the login page.
 

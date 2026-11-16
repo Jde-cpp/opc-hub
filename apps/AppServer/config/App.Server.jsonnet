@@ -13,9 +13,13 @@ function( sync=false )
 	http:{
 		address: null,
 		port: 1967,
-		threads: 1,
 		timeout: "P1D",
 		socketTimeout:: "P1D",
+		//the addresses of the fronts before this listener, an nginx on the same machine being "127.0.0.1":  a request or a socket from
+		//one is its caller's, the last address of its X-Forwarded-For, the one the front appended, so a session is tied to the visitor
+		//and the sessions pages and the log show the visitor, not the front.  Addresses only, no names or ranges.  A peer not listed
+		//is the caller, whatever the header says.
+		trustedProxies:: [],
 		maxLogLength: 255,
 		bodyLimit: 10000,
 		accessControl:{

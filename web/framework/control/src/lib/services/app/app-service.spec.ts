@@ -37,6 +37,29 @@ describe( 'AppService host', ()=>{
 	} );
 } );
 
+//#484:  a null port is the page's own - a front answers for the hub there (config.json's applicationServer.port) - and the
+//instances the hub names on a loopback host, its own process, are reached on it too.
+describe( 'AppService port', ()=>{
+	afterEach( ()=>vi.unstubAllGlobals() );
+	const gateways = async ( port:number|null )=>{
+		vi.stubGlobal( 'location', {protocol: 'https:', hostname: 'demo', host: 'demo', port: ''} );
+		const service = create( {applicationServer:{host:"", port}} );
+		(service as any).get = async ()=>({ servers: [{host: 'localhost', port: 1967}, {host: 'gateway2', port: 1968}] });
+		return { service, gateways: await service.gatewayInstances(), opcServers: await service.opcServerInstances() };
+	};
+	it( 'takes the page\'s port for a null one, for the hub and each instance of its process', async ()=>{
+		const { service, gateways: found, opcServers } = await gateways( null );
+		expect( service.instances[0] ).toEqual( {host: 'demo', port: 443} );
+		expect( found ).toEqual( [{host: 'demo', port: 443}, {host: 'gateway2', port: 1968}] );
+		expect( opcServers ).toEqual( found );
+	} );
+	it( 'keeps a port the environment names, and the instances theirs', async ()=>{
+		const { service, gateways: found } = await gateways( 1967 );
+		expect( service.instances[0] ).toEqual( {host: 'demo', port: 1967} );
+		expect( found ).toEqual( [{host: 'demo', port: 1967}, {host: 'gateway2', port: 1968}] );
+	} );
+} );
+
 //review3 C12/L8: a logout whose round trip fails still has to drop the local session - the user was left logged in with
 //no feedback and no way out, and GatewayService.logout already swallowed the same failure.
 describe( 'AppService.logout', ()=>{

@@ -4,6 +4,11 @@
 #include "ServerMock.h"
 
 #define let const auto
+namespace Jde::Web{
+	static mutex _lastSocketMutex;
+	static string _lastSocketEndpoint;
+	α Mock::LastSocketEndpoint()ι->string{ lg _{ _lastSocketMutex }; return _lastSocketEndpoint; }
+}
 namespace Jde::Web::Mock{
 	ServerSocketSession::ServerSocketSession( sp<IRestStream> stream, beast::flat_buffer&& buffer, TRequestType&& request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι:
 		base{ move(stream), move(buffer), move(request), move(userEndpoint), connectionIndex }
@@ -72,6 +77,10 @@ namespace Jde::Web::Mock{
 		}
 	}
 	α RequestHandler::WebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<IWebsocketSession>{
+		{
+			lg _{ _lastSocketMutex };
+			_lastSocketEndpoint = userEndpoint.address().to_string();
+		}
 		return ms<ServerSocketSession>( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
 	};
 }

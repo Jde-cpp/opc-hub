@@ -86,6 +86,23 @@ rights - a public site's visitor ([`docs/demo/spec.md`](../../docs/demo/spec.md)
 is created, restored, deleted or purged;  a slug naming no live user is a start-up warning and anonymous sessions until
 one appears.
 
+`http.trustedProxies`, empty by default, lists the addresses of the fronts before the listener;  an nginx on the same machine
+is `127.0.0.1`.  A request or a socket from one is its caller's, the last address of its `X-Forwarded-For`, so a session
+is tied to the visitor's address and the sessions pages show it.  A peer not listed is the caller itself, whatever the
+header says.  Addresses only, no names or ranges, and a listed address is believed:  list a front that appends the
+address it accepted, as nginx's `$proxy_add_x_forwarded_for` does.
+
+The site reads an optional `config.json` beside its `index.html` before it starts
+([`docs/demo/spec.md`](../../docs/demo/spec.md) *The public origin*):
+
+- `applicationServer.port`, null for a hub reached on the page's own port, behind a front;
+- `home`, a route the empty path goes to in place of the cards;
+- `banner`, a line above every page;
+- `login`, false for a site with no sign-in.
+
+No install ships one, and without it the site is as built.  [`setup/linux/nginx-demo.conf`](setup/linux/nginx-demo.conf)
+is the demo's front, which serves one.
+
 ## Tests
 
 `Jde.Opc.Hub.Tests` (`tests/`) embeds the hub and an OpcServer on ports nothing else binds, so it runs beside a live
