@@ -4,7 +4,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { confirm, errorMessage, SnackbarService } from 'jde-framework';
+import { confirm, errorMessage, saveFile, SnackbarService } from 'jde-framework';
 import { exportFlow, Flow, FlowDeployed, FlowFault, flowFaultText, FlowGraph, FlowNode, sameFlowGraph, toFlowFault } from '../../../../model/flow';
 import { flowGraphFault, flowNodeFaults, FlowNodePatch, normalizeFlowGraph } from '../../../../model/flow-nodes';
 import { FlowService } from '../../../../services/flow-service';
@@ -207,14 +207,7 @@ export class FlowEditor{
 	//the canvas as a file, which Import reads
 	export():void{
 		const flow = this.flow();
-		const url = URL.createObjectURL( new Blob( [exportFlow( flow, this.graph() )], {type: 'application/json'} ) );
-		const a = document.createElement( 'a' );
-		a.href = url;
-		a.download = `${flow.slug}.json`;
-		document.body.appendChild( a );//Firefox and Safari save from an anchor in the page, and may read the url after the click returns
-		a.click();
-		a.remove();
-		setTimeout( ()=>URL.revokeObjectURL( url ) );
+		saveFile( `${flow.slug}.json`, exportFlow( flow, this.graph() ) );
 	}
 	refusalText = computed( ()=>{ const r = this.refusal(); return r ? flowFaultText( r, this.graph() ) : undefined; } );
 }

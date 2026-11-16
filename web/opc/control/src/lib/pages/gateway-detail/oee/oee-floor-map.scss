@@ -1,3 +1,4 @@
+@use 'oee-floor-draw' as floor-draw;
 @use 'oee-tokens';
 
 :host{
@@ -9,67 +10,7 @@
 	background: var(--mat-sys-surface-container-lowest);
 	overflow: hidden;
 }
-svg{
-	display: block;
-	width: 100%;
-	height: 100%;
-	min-height: 320px;
-	touch-action: none;/* the svg takes every pointer, so a pinch zooms the floor and not the page */
-	cursor: grab;
-	font-family: var(--mat-sys-body-medium-font, Roboto, sans-serif);
-	&:active{
-		cursor: grabbing;
-	}
-	&:focus-visible{
-		outline: 2px solid var(--mat-sys-primary);
-		outline-offset: -2px;
-	}
-}
-/* every outline keeps its screen width whatever the zoom */
-polygon, polyline, rect{
-	vector-effect: non-scaling-stroke;
-}
-text{
-	pointer-events: none;
-	user-select: none;
-	fill: var(--mat-sys-on-surface);
-	text-anchor: middle;
-	dominant-baseline: auto;
-}
-.floor{
-	fill: var(--mat-sys-surface-container-low);
-	stroke: var(--mat-sys-outline-variant);
-	stroke-width: 1px;
-}
-.zone{
-	polygon{
-		fill: var(--mat-sys-surface-container-high);
-		stroke: var(--mat-sys-outline-variant);
-		stroke-width: 1px;
-	}
-	text{
-		fill: var(--mat-sys-on-surface-variant);
-		dominant-baseline: middle;
-	}
-}
-/* an aisle is a dashed floor marking, a wall a thick line:  dashes in screen pixels, as the stroke is */
-.aisle{
-	fill: none;
-	stroke: var(--mat-sys-outline);
-	stroke-width: 2px;
-	stroke-dasharray: 10 8;
-}
-.wall{
-	fill: none;
-	stroke: var(--mat-sys-on-surface-variant);
-	stroke-width: 6px;
-	stroke-linecap: square;
-	stroke-linejoin: miter;
-}
-.label{
-	fill: var(--mat-sys-on-surface-variant);
-	font-weight: 500;
-}
+@include floor-draw.fixtures;
 /* a machine or a line:  its outline the state's colour and dash over a neutral fill, the state in its text too */
 .shape{
 	cursor: pointer;

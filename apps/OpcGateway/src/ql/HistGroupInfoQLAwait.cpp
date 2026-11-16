@@ -104,25 +104,10 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 
-	//Whether updateHistGroupNode would pass the caller:  the table's Update right, as Table::Authorize tests it for the stock op,
-	//which an unenforced resource passes.  A lack is an answer, not a denial to log, as in Groups;  a caller Authorize doesn't
-	//know is refused, as there.
-	Ω mayUpdate( UserPK user, SL sl )ε->bool{
-		try{
-			GetViewPtr( HistTable::GroupNodes )->Authorize( Access::ERights::Update, user, sl );
-			return true;
-		}
-		catch( Exception& e ){
-			if( e.HttpStatus()==EHttpStatus::Unauthorized )
-				throw;
-			e.SetLevel( ELogLevel::NoLog );
-			return false;
-		}
-	}
 	α HistGroupInfoQLAwait::Thresholds( const HistGroupRow& group, const vector<HistGroupNodeRow>& rows, const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, const HistGroupHost& host )ε->jvalue{
 		jobject y;
 		if( _query.FindColumn("update") )
-			y["update"] = mayUpdate( UserPK(), _sl );
+			y["update"] = MayAuthorize( HistTable::GroupNodes, Access::ERights::Update, UserPK(), _sl );//whether updateHistGroupNode would pass the caller
 		let nodesQL = _query.FindTable( "nodes" );
 		if( !nodesQL )
 			return y;

@@ -1,8 +1,9 @@
-import { AfterViewInit, Component, computed, effect, ElementRef, input, OnDestroy, output, Signal, signal, untracked, viewChild } from '@angular/core';
+import { AfterViewInit, Component, effect, ElementRef, input, OnDestroy, output, Signal, untracked, viewChild } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { FloorDrawing, floorTextLevel, OeeBox, OeeFloor, OeeFloorState, OeePoint } from '../../../model/oee-floor';
+import { FloorViewport } from './oee-floor-viewport';
 
 //A placed machine or line as the map draws it (#481, docs/demo/spec.md *Drawing*):  its state, its figures as text, a line's
 //count, and its accessible name.  The page computes one per shape from its live status, so a push redraws its own shape alone.
@@ -32,10 +33,11 @@ export class OeeFloorMap implements AfterViewInit, OnDestroy{
 	pick = output<string>();
 
 	//the view, in metres, and the pixels the svg has:  a metre is their ratio under `meet`
-	view = signal<OeeBox>( {x: 0, y: 0, width: 1, height: 1} );
-	size = signal( {width: 800, height: 450} );
-	readonly pxPerMetre = computed( ()=>{ const v = this.view(), s = this.size(); return Math.min( s.width/v.width, s.height/v.height ); } );
-	readonly viewBox = computed( ()=>{ const v = this.view(); return `${v.x} ${v.y} ${v.width} ${v.height}`; } );
+	readonly port = new FloorViewport();
+	view = this.port.view;
+	size = this.port.size;
+	readonly pxPerMetre = this.port.pxPerMetre;
+	readonly viewBox = this.port.viewBox;
 	constructor(){
 		effect( ()=>{//another floor:  the whole of it
 			this.floor();
@@ -43,25 +45,14 @@ export class OeeFloorMap implements AfterViewInit, OnDestroy{
 		} );
 	}
 	//a screen size in metres, for text and offsets
-	fs( px:number ):number{ return px/this.pxPerMetre(); }
+	fs( px:number ):number{ return this.port.fs( px ); }
 	textLevel( box:OeeBox ){ return floorTextLevel( box, this.pxPerMetre() ); }
 	points( p:OeePoint[] ):string{ return p.map( ( [x, y] )=>`${x},${y}` ).join( ' ' ); }
 	//the whole floor, a grid's margin around it
-	fit():void{
-		const f = this.floor(), pad = f.grid;
-		this.view.set( {x: -pad, y: -pad, width: f.width+2*pad, height: f.height+2*pad} );
-	}
+	fit():void{ this.port.fit( this.floor() ); }
 	//`factor` times closer, about `at` in metres, or the view's centre;  held between a sixteenth of the floor and three of it
-	zoom( factor:number, at?:{x:number; y:number} ):void{
-		const v = this.view(), f = this.floor(), longest = Math.max( f.width, f.height );
-		const width = Math.min( longest*3, Math.max( longest/16, v.width/factor ) ), real = v.width/width;
-		const p = at ?? { x: v.x+v.width/2, y: v.y+v.height/2 };
-		this.view.set( { x: p.x-( p.x-v.x )/real, y: p.y-( p.y-v.y )/real, width, height: v.height/real } );
-	}
-	wheel( e:WheelEvent ):void{
-		e.preventDefault();
-		this.zoom( Math.exp( -e.deltaY*0.0015 ), this.#metres( e ) );
-	}
+	zoom( factor:number, at?:{x:number; y:number} ):void{ this.port.zoom( factor, this.floor(), at ); }
+	wheel( e:WheelEvent ):void{ this.port.wheel( e, this.floor(), this.svg()?.nativeElement ); }
 	//Pointers:  one drags the view, two pinch it.  A press that moved past a few pixels is no click on the shape under it, and
 	//only then does the svg capture the pointer, so the drag pans past its edge:  a capture at the press would send the click to
 	//the svg, and never to the shape.
@@ -72,25 +63,13 @@ export class OeeFloorMap implements AfterViewInit, OnDestroy{
 		this.#moved = 0;
 	}
 	move( e:PointerEvent ):void{
-		const was = this.#pointers.get( e.pointerId );
-		if( !was )
+		if( !this.#pointers.has( e.pointerId ) )
 			return;
 		if( e.pointerType=='mouse' && !e.buttons )//released outside the svg before it captured the pointer
 			return this.up( e );
-		const now = {x: e.clientX, y: e.clientY}, scale = this.pxPerMetre();
-		if( this.#pointers.size==1 ){
-			this.#moved += Math.abs( now.x-was.x )+Math.abs( now.y-was.y );
-			this.view.update( v=>({ ...v, x: v.x-( now.x-was.x )/scale, y: v.y-( now.y-was.y )/scale }) );
-		}
-		else{
-			const other = [...this.#pointers.entries()].find( ( [id] )=>id!=e.pointerId )![1];
-			const before = Math.hypot( was.x-other.x, was.y-other.y ), after = Math.hypot( now.x-other.x, now.y-other.y );
-			this.#moved += Math.abs( after-before );
-			if( before>0 && after>0 )
-				this.zoom( after/before, this.#metres( {clientX: ( now.x+other.x )/2, clientY: ( now.y+other.y )/2} ) );
-		}
+		const now = {x: e.clientX, y: e.clientY}, svg = this.svg()?.nativeElement;
+		this.#moved += this.port.drag( this.#pointers, e.pointerId, now, this.floor(), svg );
 		this.#pointers.set( e.pointerId, now );
-		const svg = this.svg()?.nativeElement;
 		if( this.#moved>=OeeFloorMap.clickSlop && svg && !svg.hasPointerCapture( e.pointerId ) )
 			svg.setPointerCapture( e.pointerId );
 	}
@@ -100,30 +79,12 @@ export class OeeFloorMap implements AfterViewInit, OnDestroy{
 			this.pick.emit( key );
 	}
 	static readonly clickSlop = 6;//px of movement past which a press is a drag, not a click
-	//a client point in metres, under `meet`:  the drawn floor is centred in the svg
-	#metres( e:{clientX:number; clientY:number} ):{x:number; y:number}{
-		const svg = this.svg()?.nativeElement, v = this.view(), scale = this.pxPerMetre();
-		if( !svg )
-			return { x: v.x+v.width/2, y: v.y+v.height/2 };
-		const r = svg.getBoundingClientRect(), left = r.left+( r.width-v.width*scale )/2, top = r.top+( r.height-v.height*scale )/2;
-		return { x: v.x+( e.clientX-left )/scale, y: v.y+( e.clientY-top )/scale };
-	}
-	ngAfterViewInit():void{
-		const el = this.svg()?.nativeElement;
-		if( el && typeof ResizeObserver!='undefined' ){
-			this.#observer = new ResizeObserver( entries=>{
-				const r = entries[0]?.contentRect;
-				if( r?.width && r.height )
-					this.size.set( {width: r.width, height: r.height} );
-			} );
-			this.#observer.observe( el );
-		}
-	}
-	ngOnDestroy():void{ this.#observer?.disconnect(); }
+	ngAfterViewInit():void{ this.#unobserve = this.port.observe( this.svg()?.nativeElement ); }
+	ngOnDestroy():void{ this.#unobserve?.(); }
 	//a fixture's text sits at its box's centre;  a label is its one point
 	centre( box:OeeBox ):{x:number; y:number}{ return { x: box.x+box.width/2, y: box.y+box.height/2 }; }
 	private svg = viewChild<ElementRef<SVGSVGElement>>( 'svg' );
 	#pointers = new Map<number,{x:number; y:number}>();
 	#moved = 0;
-	#observer?:ResizeObserver;
+	#unobserve?:()=>void;
 }

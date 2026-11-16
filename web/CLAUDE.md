@@ -94,6 +94,15 @@ The blocks' own specs run Blockly for real under jsdom, which has no canvas and 
 `flow-block-editor.spec.ts` stubs `HTMLCanvasElement.prototype.getContext`;  a page's spec provides `flowBlocksLoader()` of
 `jde-opc/testing` for the loader, whose stub component stands in for the editor, and never loads Blockly.
 
+## The floor's editor
+
+`oee-floor-editor.ts` and its model, `opc/control/src/lib/model/oee-floor-edit.ts`, load when Edit is pressed on a line's floor
+page, a dynamic import in `oee-floor-page.ts`, so a visitor's floor page never carries them.  Never import either statically from
+a file the page's chunk or `main` reaches (`import type` is fine):  what the resolver, the service or another page needs by name -
+the rights' type, a new floor's size - lives in `oee-floor-rows.ts`.  The map and the editor share the view, `FloorViewport`
+(`oee-floor-viewport.ts`), and the fixtures' rules, `_oee-floor-draw.scss`.  jsdom lays nothing out, so a spec that drives the
+editor's pointers gives the svg a `getBoundingClientRect` and sets `port.size`, and reads a client point in metres from them.
+
 ## Libraries
 
 Four libraries plus the `my-workspace` application. Dependencies run one way:

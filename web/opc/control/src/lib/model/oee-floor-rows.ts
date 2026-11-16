@@ -7,6 +7,14 @@ export type OeeFloorKind = typeof oeeFloorKinds[number];
 export type OeePoint = [number, number];//metres from the floor's top-left
 export type OeeFloor = { id:number; lineId:number; width:number; height:number; grid:number };
 export type OeeFloorShape = { id:number; floorId:number; kind:OeeFloorKind; machineId?:number; lineId?:number; points:OeePoint[]; label?:string; sort:number };
+//a new floor's size, the editor's to change (#482):  the demo's hall
+export const oeeFloorDefault = { width: 40, height: 20, grid: 0.5 };
+//What the caller may do to the two tables, as the gateway's oeeFloorRights answers it (#482, spec *Editing*):  each what the
+//table's own gate would say to the mutation, which an unenforced resource passes.
+export type OeeFloorRights = { createFloor:boolean; updateFloor:boolean; createShape:boolean; updateShape:boolean; purgeShape:boolean };
+export function toOeeFloorRights( json:any ):OeeFloorRights{
+	return { createFloor: json?.createFloor===true, updateFloor: json?.updateFloor===true, createShape: json?.createShape===true, updateShape: json?.updateShape===true, purgeShape: json?.purgeShape===true };
+}
 export function toOeeFloor( json:any ):OeeFloor{
 	return { id: Number( json.id ), lineId: Number( json.oeeLineId ), width: Number( json.width ), height: Number( json.height ), grid: Number( json.grid ) || 0.5 };
 }

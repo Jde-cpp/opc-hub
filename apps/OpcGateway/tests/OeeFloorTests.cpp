@@ -185,4 +185,60 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Status([&]{ Mutate( "purgeOeeFloor( id:$id )", {{"id", floorId}} ); }), EHttpStatus::NotFound );
 		EXPECT_TRUE( Mutate("oeeFloorShapes( oeeFloorId:$floor ){ id }", {{"floor", floorId}}).as_array().empty() );
 	}
+
+	//The floor editor's Save (#482, docs/demo/spec.md *Editing*), one request in the page's spelling, each mutation with
+	//variables of its own:  a purge, the floor grown, a shape moved into the new room, a shape made and the floor's height taken
+	//in.  A mutation refused ends the request there, with what came before it written, which the page reads back.  And
+	//oeeFloorRights, what the editor offers and greys by:  every right while nothing enforces the two tables, the shapes' three
+	//gone with oee_floor_shapes enforced and the suite's user granted nothing on it.
+	TEST_F( OeeFloorTests, TheEditorsBatchAndItsRights ){
+		Lines lines;
+		let plant = lines.Create( "oeeEditPlant", "Area" );
+		let floorId = Json::AsNumber<uint32>( CreateFloor(plant, {{"width", 40}, {"height", 20}}), "id" );
+		let aisle = CreateShape( floorId, "Aisle", jarray{jarray{0, 10}, jarray{40, 10}} );
+		let dock = CreateShape( floorId, "Label", jarray{jarray{38, 15}}, {{"label", "Dock"}} );
+		let floor = [&]{ return Mutate( "oeeFloors( id:$id ){ width height grid }", {{"id", floorId}} ).as_array().at( 0 ).as_object(); };
+		let byLine = Mutate( "oeeFloors( oeeLineId:$line ){ id }", {{"line", plant}} ).as_array();
+		ASSERT_EQ( byLine.size(), 1u ) << "the editor reads its line's floor alone";
+		EXPECT_EQ( Id(byLine[0]), floorId );
+		let points = [&]( uint32 id ){ return string{ Json::AsSV(Mutate("oeeFloorShapes( id:$id ){ points }", {{"id", id}}).as_array().at(0).as_object(), "points") }; };
+
+		Mutate(
+			"mutation purgeOeeFloorShape( id:$id0 ) updateOeeFloor( id:$id1, width:$width1 ) updateOeeFloorShape( id:$id2, points:$points2, label:$label2 )"
+			" createOeeFloorShape( oeeFloorId:$oeeFloorId3, kind:$kind3, points:$points3, sort:$sort3 ) updateOeeFloor( id:$id4, height:$height4, grid:$grid4 )",
+			{ {"id0", aisle}, {"id1", floorId}, {"width1", 50}, {"id2", dock}, {"points2", jarray{jarray{45, 12}}}, {"label2", jvalue{}},
+				{"oeeFloorId3", floorId}, {"kind3", "Wall"}, {"points3", jarray{jarray{0, 0}, jarray{50, 0}}}, {"sort3", 1}, {"id4", floorId}, {"height4", 15}, {"grid4", 1}} );
+		EXPECT_EQ( Shapes(floorId), 2u ) << "the aisle purged, a wall made";
+		EXPECT_EQ( Number(floor(), "width"), 50 );
+		EXPECT_EQ( Number(floor(), "height"), 15 );
+		EXPECT_EQ( Number(floor(), "grid"), 1 );
+		EXPECT_EQ( points(dock), "[[45,12]]" ) << "moved into the room the update before it made";
+		let rows = Mutate( "oeeFloorShapes( oeeFloorId:$floor ){ id kind points label sort }", {{"floor", floorId}} ).as_array();
+		let wall = std::ranges::find_if( rows, []( let& row ){ return Json::AsSV( row.as_object(), "kind" )=="Wall"; } );
+		ASSERT_NE( wall, rows.end() );
+		EXPECT_EQ( Json::AsSV(wall->as_object(), "points"), "[[0,0],[50,0]]" );
+		EXPECT_EQ( Number(wall->as_object(), "sort"), 1 );
+		let label = std::ranges::find_if( rows, [&]( let& row ){ return Id( row )==dock; } );
+		ASSERT_NE( label, rows.end() );
+		EXPECT_TRUE( label->as_object().at("label").is_null() ) << "a null clears the text";
+
+		EXPECT_NE( Refused([&]{ Mutate(
+			"mutation updateOeeFloorShape( id:$id0, points:$points0 ) updateOeeFloorShape( id:$id1, points:$points1 ) updateOeeFloor( id:$id2, grid:$grid2 )",
+			{{"id0", dock}, {"points0", jarray{jarray{44, 12}}}, {"id1", Id(*wall)}, {"points1", jarray{jarray{0, 0}, jarray{51, 0}}}, {"id2", floorId}, {"grid2", 2}} ); }).find("outside"), string::npos );
+		EXPECT_EQ( points(dock), "[[44,12]]" ) << "what came before the refusal is written";
+		EXPECT_EQ( Number(floor(), "grid"), 1 ) << "and nothing after it";
+
+		let rights = []{ return Mutate( "oeeFloorRights{ createFloor updateFloor createShape updateShape purgeShape }" ).as_object(); };
+		for( sv right : {"createFloor", "updateFloor", "createShape", "updateShape", "purgeShape"} )
+			EXPECT_TRUE( Json::AsBool(rights(), right) ) << right << ":  nothing enforces the floor's tables";
+		EXPECT_EQ( Mutate("oeeFloorRights{ updateShape }").as_object().size(), 1u ) << "what was asked alone";
+		EnforceResource( "gateway", "oeeFloorShapes", true );
+		absl::Cleanup open = []{ try{ EnforceResource( "gateway", "oeeFloorShapes", false ); }catch( const std::exception& e ){ ADD_FAILURE() << "oeeFloorShapes wasn't opened again:  " << e.what(); } };
+		let enforced = rights();
+		for( sv right : {"createFloor", "updateFloor"} )
+			EXPECT_TRUE( Json::AsBool(enforced, right) ) << right << ":  oee_floors is still open";
+		for( sv right : {"createShape", "updateShape", "purgeShape"} )
+			EXPECT_FALSE( Json::AsBool(enforced, right) ) << right;
+		EXPECT_THROW( Mutate("updateOeeFloorShape( id:$id, label:$label )", {{"id", dock}, {"label", "Dock"}}), std::exception ) << "as the mutation is";
+	}
 }

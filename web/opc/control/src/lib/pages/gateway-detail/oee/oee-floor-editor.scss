@@ -1,0 +1,180 @@
+@use 'oee-floor-draw' as floor-draw;
+
+/* The editor stands where the map, the panel and the list do, in their margins:  the bar, what the save says, then the floor
+   beside the lists, which go below it where the room is narrow. */
+:host{
+	display: block;
+	box-sizing: border-box;
+	padding: 1rem 24px 1.5rem;
+	container-type: inline-size;
+}
+.bar{
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: .5rem;
+	.sizes, .tools{
+		display: flex;
+		align-items: center;
+		gap: .5rem;
+	}
+	mat-form-field{
+		width: 6.5rem;
+		&.text{
+			width: 11rem;
+		}
+	}
+	.tools button[aria-pressed=true]{
+		background: var(--mat-sys-secondary-container);
+	}
+	.spacer{
+		flex: 1 1 auto;
+	}
+}
+.said{
+	margin: .5rem 0 0;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+	&.problem{
+		color: var(--mat-sys-error);
+	}
+}
+.work{
+	display: grid;
+	grid-template-columns: minmax( 0, 1fr ) 220px;
+	gap: 1rem;
+	margin-top: .75rem;
+}
+.canvas{
+	position: relative;
+	min-width: 0;
+	height: clamp( 320px, 60vh, 720px );
+	border-radius: 12px;
+	background: var(--mat-sys-surface-container-lowest);
+	overflow: hidden;
+}
+@include floor-draw.fixtures;
+/* a shape:  the fixtures as the map draws them, a machine and a line a plain outline, the one selected in the primary colour */
+.shape{
+	cursor: move;
+	outline: none;
+	&.machine polygon, &.line polygon{
+		fill: var(--mat-sys-surface);
+		stroke: var(--mat-sys-outline);
+		stroke-width: 2px;
+		stroke-linejoin: round;
+	}
+	&.line polygon{
+		fill: transparent;
+		stroke-dasharray: 8 6;
+	}
+	&.stranded polygon{
+		stroke-dasharray: 2 5;
+	}
+	text{
+		dominant-baseline: middle;
+	}
+	/* a run and a label take a press about them, wider than they draw */
+	.hit{
+		fill: transparent;
+		stroke: transparent;
+		vector-effect: non-scaling-stroke;
+	}
+	polyline.hit{
+		fill: none;
+		stroke-width: 16px;
+	}
+	&.selected polygon, &.selected polyline:not( .hit ){
+		stroke: var(--mat-sys-primary);
+	}
+	&.selected .label{
+		fill: var(--mat-sys-primary);
+	}
+	&:focus-visible polygon, &:focus-visible .hit{
+		stroke: var(--mat-sys-primary);
+		stroke-width: 4px;
+	}
+	&:focus-visible polyline.hit{
+		stroke-width: 16px;
+		stroke-opacity: .3;
+	}
+}
+/* a handle:  a box's are squares, a point's round, a side's middle hollow until it is a point */
+.grip{
+	cursor: pointer;
+	outline: none;
+	.hit{
+		fill: transparent;
+	}
+	.mark{
+		fill: var(--mat-sys-primary);
+		stroke: var(--mat-sys-surface);
+		stroke-width: 1px;
+		vector-effect: non-scaling-stroke;
+	}
+	&.add .mark{
+		fill: var(--mat-sys-surface);
+		stroke: var(--mat-sys-primary);
+	}
+	&:focus-visible .mark{
+		stroke: var(--mat-sys-on-surface);
+		stroke-width: 3px;
+	}
+}
+.ghost{
+	fill: none;
+	stroke: var(--mat-sys-primary);
+	stroke-width: 2px;
+	stroke-dasharray: 4 4;
+	vector-effect: non-scaling-stroke;
+	pointer-events: none;
+}
+.controls{
+	position: absolute;
+	right: 8px;
+	bottom: 8px;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 20px;
+	background: color-mix( in srgb, var(--mat-sys-surface-container) 85%, transparent );
+}
+.side{
+	box-sizing: border-box;
+	padding: .75rem 1rem;
+	border-radius: 12px;
+	background: var(--mat-sys-surface-container-low);
+	h3{
+		margin: 0 0 .25rem;
+		font: var(--mat-sys-title-small);
+		&:not( :first-child ){
+			margin-top: .75rem;
+		}
+	}
+	ul{
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.none{
+		margin: .25rem 0 0;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-small);
+	}
+}
+/* dragged onto the floor, so the pointer is its own and never the page's scroll */
+.offer{
+	width: 100%;
+	justify-content: flex-start;
+	cursor: grab;
+	touch-action: none;
+}
+@container (width < 600px){
+	.work{
+		grid-template-columns: minmax( 0, 1fr );
+	}
+}

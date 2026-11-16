@@ -1,14 +1,14 @@
-import { DatePipe } from '@angular/common';
-import { Component, computed, effect, inject, model, OnDestroy, OnInit, Signal, signal, untracked, WritableSignal } from '@angular/core';
+import { DatePipe, Location } from '@angular/common';
+import { Component, computed, effect, ElementRef, inject, model, OnDestroy, OnInit, Signal, signal, untracked, viewChild, ViewContainerRef, WritableSignal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle, RouteItem } from 'jde-spa';
-import { errorMessage } from 'jde-framework';
+import { errorMessage, SnackbarService } from 'jde-framework';
 import { oeeDuration, oeePercent, OeeSplitRow } from '../../../model/oee';
-import { FloorDrawing, floorDrawing, floorLineKey, floorListOrder, OeeFloorLegendItem, oeeFloorLegend, oeeFloorLineLegend, OeeFloorLink, OeeFloorState, oeeFloorState, floorShapeName, floorStateText, oeeLiveSplit, shiftLeft, zoneClock } from '../../../model/oee-floor';
+import { FloorDrawing, floorDrawing, floorLineKey, floorListOrder, OeeFloorLegendItem, oeeFloorLegend, oeeFloorLineLegend, OeeFloorLink, OeeFloorRights, OeeFloorState, oeeFloorState, floorShapeName, floorStateText, oeeLiveSplit, shiftLeft, zoneClock } from '../../../model/oee-floor';
 import { parseHistNodeText } from '../../../model/hist-admin';
 import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
 import { OeeMachineRef, oeeTileFigures, oeeTileNotes } from '../../../model/oee-live-view';
@@ -39,7 +39,9 @@ type ListTile = { key:string; kind:'machine'|'line'; name:string; level?:string;
 //the stop in progress, the last count and its links;  and below 600 pixels of width the list view, the dashboard's tiles in the
 //floor's order.  A subscription refused draws its shape No access, one ended otherwise Ended, and the others stand.  The "since"
 //text and the clock tick from a one-second timer, never a read.  The resolver read the floor, its shapes and the plant, and the
-//router reuses the page from one line's floor to the next.
+//router reuses the page from one line's floor to the next.  Edit (#482, spec *Editing*), for a caller the gateway says may
+//update the floor's shapes, puts the editor in the map's place, imported then, until its Save or Cancel;  a save reads the floor
+//again and draws it.
 @Component({
 	templateUrl: './oee-floor-page.html',
 	styleUrls: ['./oee-floor-page.scss', './oee-tiles.scss'],
@@ -60,6 +62,8 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 			return;
 		this.#close();
 		const gateway = pageData.gateway, line = pageData.line;
+		if( this.gateway!==gateway )//the rights are the gateway's tables', asked once for it
+			this.#readRights( gateway );
 		this.gateway = gateway;
 		this.sideNav.set( pageData.routing );
 		this.#title.title = `${line.name} - Floor`;
@@ -123,6 +127,69 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 		this.mapShapes.set( [] );
 		this.drawing.set( undefined );
 		this.data.set( undefined );
+		this.editing.set( false );
+	}
+
+	//Edit:  shown where the gateway says the caller may update the floor's shapes, which is what its own gate would say to the
+	//mutation;  a gateway that doesn't answer shows none.  A floor just made, from the line's OEE page, opens in its editor.
+	rights = signal<OeeFloorRights|undefined>( undefined );
+	editing = signal( false );
+	readonly canEdit = computed( ()=>this.rights()?.updateShape===true );
+	editorSlot = viewChild( 'editorSlot', {read: ViewContainerRef} );
+	editButton = viewChild( 'editButton', {read: ElementRef<HTMLElement>} );
+	async #readRights( gateway:Gateway ):Promise<void>{
+		this.rights.set( undefined );
+		const made = this.#made;
+		this.#made = false;
+		try{
+			const rights = await this.#service.rights( gateway );
+			if( this.gateway!==gateway )
+				return;
+			this.rights.set( rights );
+			if( made && rights.updateShape && this.data() )
+				this.editing.set( true );
+		}
+		catch( e ){
+			console.warn( "Could not read the rights on the floor's tables:  the page offers no Edit.", e );
+		}
+	}
+	//the editor, in a chunk of its own, over the floor as it was read;  dropped where Edit went off, or the floor changed, while it loaded
+	async #mount( slot:ViewContainerRef ):Promise<void>{
+		const d = this.data(), rights = this.rights();
+		try{
+			const { OeeFloorEditor } = await import( './oee-floor-editor' );
+			if( !d || !rights || this.editorSlot()!==slot || this.data()!==d )
+				return;
+			const editor = slot.createComponent( OeeFloorEditor );
+			editor.setInput( 'gateway', d.gateway );
+			editor.setInput( 'line', d.line );
+			editor.setInput( 'source', {floor: d.floor, shapes: d.shapes} );
+			editor.setInput( 'plant', d.plant );
+			editor.setInput( 'rights', rights );
+			editor.instance.closed.subscribe( saved=>this.#edited( d, saved ) );
+		}
+		catch( e ){
+			this.editing.set( false );
+			this.#snackbar.exception( 'Could not load the editor', e );
+		}
+	}
+	//The editor's Save or Cancel:  the map again, the focus back on Edit, and after a save the floor, its shapes and the plant
+	//read again and drawn.
+	async #edited( d:OeeFloorPageData, saved:boolean ):Promise<void>{
+		if( this.data()!==d )
+			return;
+		this.#refocus = true;
+		this.editing.set( false );
+		if( !saved )
+			return;
+		try{
+			const [now, plant] = await Promise.all( [this.#service.floor( d.gateway, d.line.id ), this.#service.plant( d.gateway )] );
+			if( now && this.data()===d )
+				this.#open( {...d, ...now, plant} );
+		}
+		catch( e ){
+			this.#snackbar.exception( 'The floor is saved, but could not be read again', e );
+		}
 	}
 
 	//The header:  the line, its shift and the time left from its own status - no calendar where the line names none, between
@@ -183,6 +250,18 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 		effect( ()=>{//another shape in the panel:  a machine's links, read once
 			const key = this.selected(), s = key ? this.#shapes.get( key ) : undefined;
 			untracked( ()=>this.#describe( s ) );
+		} );
+		effect( ()=>{//Edit is on, and its slot is there
+			const slot = this.editorSlot();
+			if( slot )
+				untracked( ()=>this.#mount( slot ) );
+		} );
+		effect( ()=>{//the editor closed, and Edit is there again:  the focus goes back to it
+			const button = this.editButton();
+			if( button && this.#refocus ){
+				this.#refocus = false;
+				button.nativeElement.focus();
+			}
 		} );
 	}
 	//The machine's links, read once:  a read in flight is shared by a shape selected again, and one for a floor since closed is
@@ -251,7 +330,20 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 	#shapes = new Map<string,LiveShape>();
 	#links = new Map<string,Promise<PanelLinks>>();
 	#clock:ReturnType<typeof setInterval>|undefined;
+	#made = takeMade( inject( Location ) );//navigated here from a floor's making
 	#route = inject( ActivatedRoute );
 	#title = inject( ComponentPageTitle );
 	#service = inject( OeeFloorService );
+	#snackbar = inject( SnackbarService );
+	#refocus = false;
+}
+//A floor just made opens in its editor once (#482):  the navigation's state says so, and the flag is taken from the history
+//entry, so a Back or a reload to the page opens the map.
+function takeMade( location:Location ):boolean{
+	const state = <{edit?:boolean}|null>location.getState();
+	if( state?.edit!==true )
+		return false;
+	const { edit, ...rest } = state;
+	location.replaceState( location.path( true ), '', rest );
+	return true;
 }

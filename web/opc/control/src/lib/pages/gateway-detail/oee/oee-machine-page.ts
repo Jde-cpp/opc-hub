@@ -1,6 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, model, OnInit, signal } from '@angular/core';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatDialog } from '@angular/material/dialog';
@@ -12,7 +12,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ComponentPageTitle, RouteItem } from 'jde-spa';
-import { DateUtils, errorMessage } from 'jde-framework';
+import { DateUtils, errorMessage, SnackbarService } from 'jde-framework';
 import { isOeeRangeRefusal, narrowOeeRange, OeeBucket, oeeDuration, OeeLoss, oeeLossSplit, OeeMachineTimeline, OeeNamed, oeePercent, OeePeriod, oeePeriodRange, oeePeriods, OeeSegment, OeeShift, OeeSpan, OeeStop } from '../../../model/oee';
 import { OeeMachine } from '../../../model/oee-admin';
 import { OeeLine } from '../../../model/oee-lines';
@@ -54,6 +54,8 @@ type OeePart = typeof oeeParts[number];
 })
 export class OeeMachinePage implements OnInit{
 	floorLink = signal<string[]|undefined>( undefined );//a line's floor page (#481), where it has one
+	canFloor = signal( false );//a line with no floor, for a caller who may make one (#482)
+	makingFloor = signal( false );
 	ngOnInit(){
 		this.#route.data.subscribe( data=>this.#open( <GatewayDetailData<any>>data['pageData'], data['kind']=='lines' ) );
 		this.#loader.load().catch( ()=>{} );//how it settled is the loader's state, for the page's one notice
@@ -74,8 +76,9 @@ export class OeeMachinePage implements OnInit{
 		this.uncodedOnly.set( false );
 		this.statusProblem.set( undefined );
 		this.floorLink.set( undefined );
-		if( isLine )//a line with a floor (#481) links to it;  a reader without Read on the floors sees none
-			this.#floors.floors( gateway ).then( floors=>{ if( this.#isOpen( subject ) && floors.some( f=>f.lineId==subject.row.id ) ) this.floorLink.set( ['../floor'] ); }, ()=>{} );
+		this.canFloor.set( false );
+		if( isLine )
+			this.#readFloor( subject, gateway );
 		this.#service.reasons( gateway ).then( list=>{ if( this.#isOpen( subject ) ) this.reasons.set( {list} ); }, e=>{ if( this.#isOpen( subject ) ) this.reasons.set( {list: [], error: errorMessage(e)} ); } );
 		//a calendar the gateway's client finds gives the machine shifts:  the page opens on the one it is in, and the trend is by shift
 		let status:{calendar:string}|undefined, failed:string|undefined;
@@ -96,6 +99,38 @@ export class OeeMachinePage implements OnInit{
 		await this.refresh();
 	}
 	#isOpen( subject:OeeSubject ):boolean{ return this.subject()===subject; }
+	//A line with a floor (#481) links to it, and one with none offers its making (#482), the rights asked then alone;  a reader
+	//without Read on the floors sees neither.
+	async #readFloor( subject:OeeSubject, gateway:Gateway ):Promise<void>{
+		try{
+			const floored = !!await this.#floors.lineFloor( gateway, subject.row.id );
+			const rights = floored ? undefined : await this.#floors.rights( gateway ).catch( ()=>undefined );
+			if( !this.#isOpen( subject ) )
+				return;
+			this.floorLink.set( floored ? ['../floor'] : undefined );
+			this.canFloor.set( rights?.createFloor===true );
+		}
+		catch{}
+	}
+	//The line's floor made, of the default size, and opened in its editor (#482, docs/demo/spec.md *Editing*).  A refusal - a
+	//floor another hand made meanwhile, a right withheld - is said, and the page stays.
+	async newFloor():Promise<void>{
+		const subject = this.subject();
+		this.makingFloor.set( true );
+		try{
+			await this.#floors.createFloor( this.gateway, subject.row.id );
+			if( this.#isOpen( subject ) )
+				await this.#router.navigate( ['../floor'], {relativeTo: this.#route, state: {edit: true}} );
+		}
+		catch( e ){
+			this.#snackbar.exception( `Could not make the floor of '${subject.title}'`, e );
+			if( this.#isOpen( subject ) )//a floor another hand made meanwhile:  its link in the offer's place
+				await this.#readFloor( subject, this.gateway );
+		}
+		finally{
+			this.makingFloor.set( false );
+		}
+	}
 	#of():OeeOf{ return this.subject().of; }
 	#clear():void{
 		++this.#epoch;//what is on its way is another period's, or another machine's
@@ -395,6 +430,8 @@ export class OeeMachinePage implements OnInit{
 	readonly line = computed( ()=>this.subject()?.line );
 	gateway!:Gateway;
 	#route = inject( ActivatedRoute );
+	#router = inject( Router );
+	#snackbar = inject( SnackbarService );
 	#title = inject( ComponentPageTitle );
 	#dialog = inject( MatDialog );
 	#service = inject( OeeService );

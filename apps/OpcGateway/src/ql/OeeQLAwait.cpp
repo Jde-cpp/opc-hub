@@ -399,6 +399,17 @@ namespace Jde::Opc::Gateway{
 			let sl = _sl;
 			let& name = _query.JsonName;
 			_query.CheckVariables( sl );//before an argument is read:  an unbound one would read as absent.
+			if( name==FloorRightsCommand ){
+				using enum Access::ERights;
+				jobject y;
+				struct Asked{ sv Column; sv Table; Access::ERights Right; };
+				for( let& asked : array<Asked,5>{{ {"createFloor", OeeTable::Floors, Create}, {"updateFloor", OeeTable::Floors, Update}, {"createShape", OeeTable::FloorShapes, Create}, {"updateShape", OeeTable::FloorShapes, Update}, {"purgeShape", OeeTable::FloorShapes, Purge} }} ){
+					if( _query.FindColumn(asked.Column) )
+						y[asked.Column] = MayAuthorize( asked.Table, asked.Right, UserPK(), sl );
+				}
+				Resume( move(y) );
+				co_return;
+			}
 			let machineId = _query.TryNumber<OeeMachinePK>( "machine" );
 			let lineId = _query.TryNumber<OeeLinePK>( "line" );
 			REFUSE_IF( name==StatusCommand && !machineId, "{} needs machine, an oee_machines id.", name );

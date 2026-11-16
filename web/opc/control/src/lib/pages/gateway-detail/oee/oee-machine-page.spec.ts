@@ -2,8 +2,9 @@ import { Component, input, output, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
+import { SnackbarService } from 'jde-framework';
 import { OeeCodingCall, OeeSpan, toOeeBucket, toOeeStop, toOeeTimeline, toOeeTimelines } from '../../../model/oee';
 import { OeeAdminService } from '../../../services/oee-admin-service';
 import { OeeFloorService } from '../../../services/oee-floor-service';
@@ -13,6 +14,7 @@ import { OeeChart, OeeChartSpec } from './oee-chart';
 import { OeeCodingDialog, OeeCodingDialogData } from './oee-coding-dialog';
 import { OeeMachinePage } from './oee-machine-page';
 import { flush, pageTitleStub, provideRoute, stable } from 'jde-spa/testing';
+import { snackbarStub } from 'jde-framework/testing';
 
 //the chart, which the page hands a spec:  Highcharts' own drawing is oee-chart.spec's
 @Component({ selector: 'oee-chart', template: '' })
@@ -28,8 +30,9 @@ const stopJson = ( id:number, extra:object={} )=>({ id, start: iso( 8, 12 ), end
 //The page over stubs:  `service` records each read and answers what the test set on `answers`;  `status` is the machine's, a
 //calendar found by default;  `addOn` is how the add-on settled;  `dialog` is what the coding dialog was opened with, and
 //`closeWith` what it answers.  `open` moves the page to another machine, as the router does.  `line` opens it on a line, whose
-//figures carry two members and whose timeline is a machine each.
-const create = async ( {calendar='found', addOn='loaded', status, line=false}:{calendar?:string; addOn?:'loaded'|'absent'; status?:Error; line?:boolean}={} )=>{
+//figures carry two members and whose timeline is a machine each;  `floored` is whether the line has a floor, and `createFloor`
+//whether the caller may make one.
+const create = async ( {calendar='found', addOn='loaded', status, line=false, floored=true, createFloor=true}:{calendar?:string; addOn?:'loaded'|'absent'; status?:Error; line?:boolean; floored?:boolean; createFloor?:boolean}={} )=>{
 	const answers = {
 		timelineRefusals: 0,
 		stops: [stopJson( 7 )], continuation: <string|undefined>undefined,
@@ -66,11 +69,16 @@ const create = async ( {calendar='found', addOn='loaded', status, line=false}:{c
 	const loader = { state: signal( addOn ), load: vi.fn( async ()=>addOn=='loaded' ? {} : undefined ) };
 	const dialog = vi.spyOn( OeeCodingDialog, 'open' ).mockImplementation( async ()=>answers.closeWith );
 	const gateway = { slug: 'g' };
+	const floors = {
+		lineFloor: vi.fn( async ( ..._:unknown[] ):Promise<object|undefined>=>floored ? {id: 1, lineId: 10, width: 40, height: 20, grid: 0.5} : undefined ),
+		rights: vi.fn( async ()=>({ createFloor, updateFloor: true, createShape: true, updateShape: true, purgeShape: true }) ), createFloor: vi.fn( async ( ..._:unknown[] )=>{} )
+	};
+	const snackbar = snackbarStub();
 	const data = new BehaviorSubject<object>( line ? {kind: 'lines', pageData: {row: lineRow, routing: {}, schema: {}, gateway}} : {pageData: {row, routing: {}, schema: {}, gateway}} );
 	const title = { title: '' };
 	TestBed.configureTestingModule({ providers: [
 		provideRouter( [] ), provideRoute( {data} ), { ...pageTitleStub, useValue: title },
-		{ provide: OeeService, useValue: service }, { provide: OeeFloorService, useValue: {floors: vi.fn( async ()=>[{id: 1, lineId: 10, width: 40, height: 20, grid: 0.5}] )} }, { provide: OeeAdminService, useValue: admin }, { provide: HighchartsLoader, useValue: loader }, { provide: MatDialog, useValue: {} }
+		{ provide: OeeService, useValue: service }, { provide: OeeFloorService, useValue: floors }, { provide: SnackbarService, useValue: snackbar }, { provide: OeeAdminService, useValue: admin }, { provide: HighchartsLoader, useValue: loader }, { provide: MatDialog, useValue: {} }
 	]});
 	TestBed.overrideComponent( OeeMachinePage, {remove: {imports: [OeeChart]}, add: {imports: [ChartStub]}} );
 	const fixture = TestBed.createComponent( OeeMachinePage );
@@ -85,7 +93,7 @@ const create = async ( {calendar='found', addOn='loaded', status, line=false}:{c
 		await stable( fixture );
 	};
 	const dialogData = ()=><OeeCodingDialogData>dialog.mock.calls.at( -1 )![1];
-	return { page, fixture, service, admin, answers, gateway, title, text, rows, charts, open, dialog, dialogData };
+	return { page, fixture, service, admin, answers, gateway, title, text, rows, charts, open, dialog, dialogData, floors, snackbar };
 };
 
 describe( 'OeeMachinePage', ()=>{
@@ -351,6 +359,38 @@ describe( 'OeeMachinePage', ()=>{
 		const trend = p.charts().map( c=>c.spec() ).find( c=>c.title.startsWith( 'OEE of' ) )!;
 		expect( trend.kind=='columns' && trend.points[0].custom.text ).not.toContain( 'good of' );//its machines' counts don't add
 		expect( p.text( '.period-bar a' ) ).toEqual( ['mapFloor', 'monitoringDashboard', 'settingsLine'] );//each with its icon's name;  the line has a floor (#481)
+		expect( p.floors.lineFloor.mock.calls ).toEqual( [[p.gateway, 10]] );
+		expect( p.floors.rights ).not.toHaveBeenCalled();//asked only of a line with no floor
+	} );
+	it( 'offers a line with no floor its making, to a caller who may, and opens the new floor in its editor', async ()=>{
+		const p = await create( {line: true, floored: false} );
+		expect( p.text( '.period-bar a' ) ).toEqual( ['monitoringDashboard', 'settingsLine'] );//no floor to link
+		const button = ()=><HTMLButtonElement>p.fixture.nativeElement.querySelector( 'button.new-floor' );
+		const navigate = vi.spyOn( TestBed.inject( Router ), 'navigate' ).mockResolvedValue( true );
+		button().click();
+		await stable( p.fixture );
+		expect( p.floors.createFloor.mock.calls ).toEqual( [[p.gateway, 10]] );
+		expect( navigate.mock.calls.map( ( [to, extras] )=>[to, extras?.state] ) ).toEqual( [[['../floor'], {edit: true}]] );
+		p.floors.createFloor.mockRejectedValueOnce( new Error( 'Could not make the floor.' ) );//a refusal with no floor behind it
+		button().click();
+		await stable( p.fixture );
+		expect( p.snackbar.exception ).toHaveBeenCalledWith( expect.stringMatching( /^Could not make the floor of / ), expect.any( Error ) );
+		expect( navigate ).toHaveBeenCalledTimes( 1 );//the page stays
+		expect( button().disabled ).toBe( false );
+		p.floors.createFloor.mockRejectedValueOnce( new Error( 'The line has a floor, 3:  a line has one.' ) );//made by another hand meanwhile
+		p.floors.lineFloor.mockResolvedValueOnce( {id: 3, lineId: 10, width: 40, height: 20, grid: 0.5} );
+		button().click();
+		await stable( p.fixture );
+		expect( button() ).toBeNull();//the floor read again:  its link in the offer's place
+		expect( p.text( '.period-bar a' ) ).toEqual( ['mapFloor', 'monitoringDashboard', 'settingsLine'] );
+		expect( navigate ).toHaveBeenCalledTimes( 1 );
+		TestBed.resetTestingModule();//built twice:  a caller who may not make one
+		const viewer = await create( {line: true, floored: false, createFloor: false} );
+		expect( viewer.fixture.nativeElement.querySelector( 'button.new-floor' ) ).toBeNull();
+		TestBed.resetTestingModule();//and a third time:  a machine has no floor to make
+		const machine = await create( {floored: false} );
+		expect( machine.fixture.nativeElement.querySelector( 'button.new-floor' ) ).toBeNull();
+		expect( machine.floors.rights ).not.toHaveBeenCalled();
 	} );
 	it( "draws a line's chart a pair of rows per machine, lists its stops with their machines, and codes each on its machine", async ()=>{
 		const p = await create( {line: true} );

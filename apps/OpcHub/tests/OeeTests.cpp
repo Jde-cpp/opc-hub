@@ -33,6 +33,7 @@ namespace Jde::Opc::Hub::Tests{
 		}
 		EXPECT_TRUE( Gateway::AppClient()->QuerySync<jarray>(R"(oeeLines{ id })", {}).empty() ) << "the lines' tables too (#408)";
 		EXPECT_TRUE( Gateway::AppClient()->QuerySync<jarray>(R"(oeeFloorShapes{ id })", {}).empty() ) << "and the floor's (#480)";
+		EXPECT_TRUE( Json::AsBool(Gateway::AppClient()->QuerySync<jobject>(R"(oeeFloorRights{ updateShape })", {}), "updateShape") ) << "the editor's rights (#482), a system table there too";
 		try{//a floor's rules run in the hub as in the gateway.
 			Gateway::AppClient()->QuerySync<jobject>( R"(createOeeFloor( oeeLineId:999999, width:0, height:20 ){ id })", {} );
 			FAIL() << "a floor on a line that isn't there was made";
