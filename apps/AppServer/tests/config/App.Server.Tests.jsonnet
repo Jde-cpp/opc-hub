@@ -21,6 +21,10 @@ local logsDir = args.logsDir;
 			catalogs: args.dbServers.localhost.catalogs
 		}
 	},
+	access:{
+		guest: "webSessionGuest", //#483, WebGuestTests:  a user the suite creates and purges at its end, so a start finds the slug unresolved.
+		trustedCertDirs: [ "$(ProgramData)/Jde-Cpp/$(PRODUCT_NAME)/ssl/certs" ] //this process's own web certificate, so a jwt it signs enrolls (WebGuestTests.ASignInReplacesTheGuest) - as the hub's suite trusts its own.
+	},
 	http:{
 		//1972: unique to this suite - 1967 collides with a running Jde.AppServer, 2067 with the gateway/opcServer suites.
 		app:{ port: 1972, ssl:{ certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1", commonName: args.instanceName + ".appServer.tests.web" } } },//TLS clients match the SAN - without it host_name_verification rejects the generated cert.

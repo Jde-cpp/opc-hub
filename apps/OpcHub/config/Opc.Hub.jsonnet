@@ -26,6 +26,7 @@ function( sync=false )
 	//process logs in to this one.  The dev default names the emulator's dir; args.access (args/install) names only what is
 	//installed - a dir that is never created is a warning in every log (reviews/install-issues.md, "Noise in a production log").
 	access:{
+		guest:: null, //as App.Server.jsonnet:  the slug of the user a session nobody signed in to acts as;  the demo's overlay sets it (docs/demo/plan.md Phase 8).
 		trustedCertDirs: if std.objectHas(args, 'access') then args.access.trustedCertDirs else [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator") ]
 	},
 	dbServers: app.dbServers, //args-driven: the hub args mount access + app + gateway and list all three script dirs.

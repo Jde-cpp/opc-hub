@@ -78,6 +78,7 @@ export interface IAuth{
 	validateSessionId():void;
 	googleAuthClientId():Promise<string>;
 	user:Signal<User | undefined>;
+	guest?:Signal<boolean>;//the session is the install's guest user's (#483):  live on the server with no identity stored here.  Absent, no site has one.
 }
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const IAUTH = new InjectionToken<IAuth>( 'IAuth' );

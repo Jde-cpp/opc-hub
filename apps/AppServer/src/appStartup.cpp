@@ -17,6 +17,7 @@
 #include <jde/web/server/Server.h>
 #include <jde/web/server/SettingQL.h>
 #include <jde/web/server/SubscribeLog.h>
+#include "Guest.h"
 #include "WebServer.h"
 #include "LocalClient.h"
 #include "ql/AppServerQL.h"
@@ -194,6 +195,7 @@ namespace Jde::App::Server{
 				}
 			}
 		}
+		Guest::Configure( *_listener );//after the access load:  the guest's user read as System, and the listener's user events from here on (#483).
 		endAppInstances();
 		loadInstanceSchemas();
 	}

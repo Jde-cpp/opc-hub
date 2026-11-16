@@ -27,6 +27,9 @@ namespace Jde::Web::Server{
 		return _sockExpirationDuration;
 	}
 	steady_clock::time_point _lastTrim{ steady_clock::now() };
+	std::atomic<UserPK::Type> _guest{};
+	α Sessions::Guest()ι->UserPK{ return UserPK{ _guest.load() }; }
+	α Sessions::SetGuest( UserPK userPK )ι->void{ _guest = userPK.Value; }
 
 	concurrent_flat_map<SessionPK,sp<SessionInfo>> _sessions;
 	Ω upsert( sp<SessionInfo>& info )ι->void{
@@ -159,7 +162,7 @@ namespace Sessions{
 	α UpsertAwait::Run()ι->VoidTask{
 		try{
 			if( _authorization.empty() || _authorization.starts_with("Bearer ") ){
-				UserPK userPK{};
+				UserPK userPK{ Guest() };//no sign-in:  the guest's, where one is set (#483), else nobody's.
 				if( _authorization.size() )
 					userPK = co_await Any( JwtLoginAwait{Web::Jwt{_authorization.substr(7)}, _endpoint, _appClient} );
 				auto info = Sessions::Internal::CreateSession( userPK, _endpoint, _socket, false );

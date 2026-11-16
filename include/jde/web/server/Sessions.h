@@ -38,6 +38,10 @@ namespace Jde::Web::Server{
 		α Extend( SessionPK sessionId )ι->sp<SessionInfo>;
 		α Remove( SessionPK sessionId )ι->bool;
 		α RestSessionTimeout()ι->steady_clock::duration;
+		//The user a session minted for a caller with no Authorization takes (#483):  the AppServer's /access/guest, which it resolves and
+		//keeps current (apps/AppServer/src/Guest.cpp), this library knowing nothing of access;  empty, as shipped, mints an anonymous one.
+		α Guest()ι->UserPK;
+		α SetGuest( UserPK userPK )ι->void;
 		α Get()ι->vector<sp<SessionInfo>>;
 
 		struct UpsertAwait : TAwait<sp<SessionInfo>>, noncopyable{

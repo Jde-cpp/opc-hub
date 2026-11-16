@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { Router } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { signal } from '@angular/core';
 import { EProvider, IAUTH, IAuth, User } from '../../services/authorization/auth';
 import { Authorization } from './authorization';
@@ -87,5 +87,40 @@ describe( 'Authorization picture', ()=>{
 		user.set( {provider:EProvider.Google, name:'Test User', picture:'https://lh3.example/b'} as User );
 		await stable( fixture );
 		expect( element.querySelector('img')?.getAttribute('src') ).toBe( 'https://lh3.example/b' );
+	} );
+} );
+
+//#483:  a session the install's guest user stands behind is named Guest, with the sign-in link beside it only where a client id is
+//served;  an anonymous session, no guest, shows the link as before.
+describe( 'Authorization guest', ()=>{
+	const create = async ( guest:boolean, clientId:string|undefined )=>{
+		const googleAuthClientId = vi.fn( async ()=>clientId );
+		TestBed.configureTestingModule({ providers: [
+			provideRouter( [] ),//the sign-in link is a routerLink
+			{ provide: IAUTH, useValue: { user: signal<User|undefined>( undefined ), guest: signal( guest ), logout: vi.fn(), providers: ()=>Promise.resolve([]), googleAuthClientId } as unknown as IAuth }
+		]});
+		const fixture = TestBed.createComponent( Authorization );
+		await stable( fixture, 3 );
+		const element = fixture.nativeElement as HTMLElement;
+		return { name: element.querySelector('.guest')?.textContent?.trim(), signIn: !!element.querySelector('a[aria-label="Sign in"]'), googleAuthClientId };
+	};
+
+	it( 'names a guest Guest, with the sign-in link where a client id is served', async ()=>{
+		const { name, signIn } = await create( true, 'client-id' );
+		expect( name ).toBe( 'Guest' );
+		expect( signIn ).toBe( true );
+	} );
+
+	it( 'names a guest Guest alone where no client id is served', async ()=>{
+		const { name, signIn } = await create( true, undefined );
+		expect( name ).toBe( 'Guest' );
+		expect( signIn ).toBe( false );
+	} );
+
+	it( 'shows an anonymous session the sign-in link, asking for no client id', async ()=>{
+		const { name, signIn, googleAuthClientId } = await create( false, 'client-id' );
+		expect( name ).toBeUndefined();
+		expect( signIn ).toBe( true );
+		expect( googleAuthClientId ).not.toHaveBeenCalled();
 	} );
 } );

@@ -42,5 +42,6 @@ export class OpcAuthService implements IAuth{
 		return promise;
 	} #signedInto:Gateway|undefined;
 	user = computed( () => this.#app?.user() );
+	guest = computed( ()=>this.#app.isGuest() );
 	isOpc = signal<boolean|undefined>( undefined );
 }

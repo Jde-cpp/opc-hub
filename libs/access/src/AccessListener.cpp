@@ -83,6 +83,14 @@ namespace Jde::Access{
 			case Purged: Authorizer().PurgeUser( userPK ); break;
 			default: break;
 		}
+		if( OnUser ){
+			try{
+				OnUser( userPK, event, o );
+			}
+			catch( const std::exception& e ){
+				WARNT( ELogTags::Access, "[{}]The user hook threw on event {}:  {}", userPK.Value, hex(underlying(event)), e.what() );
+			}
+		}
 	}
 	α AccessListener::GroupChanged( GroupPK groupPK, ESubscription event, const jobject& o )ε->void{
 		using enum ESubscription;

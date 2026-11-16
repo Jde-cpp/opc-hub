@@ -1,4 +1,5 @@
 ﻿#include <execution>
+#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
@@ -284,13 +285,36 @@ namespace Jde::Web{
 		EXPECT_TRUE( j.contains("connectionId") ) << serialize(j);
 		EXPECT_FALSE( j.at("active").as_bool() ) << "no Authorization, so no session to be active";
 	}
-	//the answer carries no session back, so asking with no session id must not mint one - each page load left an orphan.
-	TEST_F( WebTests, ServerSettingsMintsNoSession ){
-		let before = Server::Sessions::Get().size();
-		BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port} );
-		let j = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port, {.Authorization="Bearer ey.token.sig"}} ).Json();
-		EXPECT_FALSE( j.at("active").as_bool() ) << serialize( j );
-		EXPECT_EQ( Server::Sessions::Get().size(), before );
+	//#483:  a call with no header, a page's first, is minted its session and told it, as every route tells one (HttpRequest::Response),
+	//so the page keeps it and `active` says whose it is - the guest's where one is set, else nobody's.  It used to mint none, the
+	//answer carrying none back:  each page load left an orphan.  A Bearer header is a sign-in, /login's, and still mints none.
+	TEST_F( WebTests, ServerSettingsMintsForNoHeader ){
+		auto ask = []( string authorization={} ){ return BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port, {.Authorization=move(authorization)}} ); };
+		auto minted = []( const ClientHttpRes& res ){ return Str::TryTo<SessionPK,16>( string{res.Headers()[http::field::authorization]} ); };
+		let nobody = ask();
+		let nobodyId = minted( nobody );
+		ASSERT_TRUE( nobodyId ) << "the answer names no session";
+		absl::Cleanup removeNobody{ [&]{ Server::Sessions::Remove( *nobodyId ); } };
+		EXPECT_FALSE( nobody.Json().at("active").as_bool() ) << "nobody's";
+		ASSERT_TRUE( Server::Sessions::Find(*nobodyId) );
+		EXPECT_FALSE( Server::Sessions::Find(*nobodyId)->UserPK );
+
+		Server::Sessions::SetGuest( Jde::UserPK{7} );
+		absl::Cleanup unset{ []{ Server::Sessions::SetGuest( {} ); } };
+		let guest = ask();
+		let guestId = minted( guest );
+		ASSERT_TRUE( guestId );
+		absl::Cleanup removeGuest{ [&]{ Server::Sessions::Remove( *guestId ); } };
+		EXPECT_TRUE( guest.Json().at("active").as_bool() ) << "the guest's";
+		ASSERT_TRUE( Server::Sessions::Find(*guestId) );
+		EXPECT_EQ( Server::Sessions::Find(*guestId)->UserPK.Value, 7u );
+		let named = ask( Ƒ("{:x}", *guestId) );
+		EXPECT_TRUE( named.Json().at("active").as_bool() ) << "the session named, as a page's later load names it";
+		EXPECT_EQ( minted(named), guestId ) << "its own, as every answer carries its session";
+
+		let bearer = ask( "Bearer ey.token.sig" );
+		EXPECT_FALSE( bearer.Json().at("active").as_bool() ) << serialize( bearer.Json() );
+		EXPECT_FALSE( minted(bearer) ) << "a sign-in is /login's";
 	}
 	//web-refactor B3: the server reads one request per connection, so a handled response must not advertise keep-alive - a
 	//browser would reuse a connection that is already closing.

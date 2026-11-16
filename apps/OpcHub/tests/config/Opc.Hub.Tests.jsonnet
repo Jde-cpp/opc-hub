@@ -20,6 +20,7 @@ local logsDir = args.logsDir;
 		introspection: [ "../../../OpcGateway/config/introspection/serverConnection.jsonnet", "../../../OpcGateway/config/introspection/search.jsonnet", "../../../OpcGateway/config/introspection/hist.jsonnet", "../../../OpcGateway/config/introspection/oee.jsonnet", "../../../OpcGateway/config/introspection/flows.jsonnet" ] //relative to this file (gatewayStartup.cpp).
 	},
 	access:{
+		guest: "hubGuest", //#483, GuestTests:  a user the test creates and purges, so a start finds the slug unresolved.
 		trustedCertDirs: [
 			"$(ProgramData)/Jde-Cpp/$(PRODUCT_NAME)/ssl/certs" //both roles and the embedded OpcServer share the test binary's product dir.
 		]

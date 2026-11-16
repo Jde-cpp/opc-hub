@@ -463,9 +463,14 @@ namespace Server{
 		j["connectionId"] = ServerSetting( "serverConnection", *appClient );
 		try{
 			sp<SessionInfo> session;
-			//a session id only:  for an empty or Bearer header UpsertAwait mints a session, and this answer carries none back - one orphan per page load.
-			if( let authorization = req.Header("authorization"); authorization.size() && !authorization.starts_with("Bearer ") )
+			//a session id, or none:  a call with no header, a page's first, is minted its session and told it, as every route tells one
+			//(HttpRequest::Response), so the page keeps it and `active` says whose it is - the guest's where one is set (#483), else
+			//nobody's.  It used to mint none, the answer carrying none back:  one orphan per page load.  A Bearer header is a sign-in,
+			///login's, and mints none here.
+			if( let authorization = req.Header("authorization"); !authorization.starts_with("Bearer ") ){
 				session = co_await Sessions::UpsertAwait( authorization, req.UserEndpoint.address().to_string(), false, appClient, false );
+				req.SessionInfo = session;
+			}
 			j["active"] = ( bool )session && session->UserPK;
 		}
 		catch( Exception& e ){
