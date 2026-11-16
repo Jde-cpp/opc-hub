@@ -10,6 +10,7 @@
 // /logging.
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
+local hostNames = if std.objectHas(args, 'hostNames') then std.join('', [',DNS:' + n for n in args.hostNames]) else '';
 function( sync=false )
 {
 	instanceName: args.instanceName,
@@ -83,13 +84,11 @@ function( sync=false )
 		ssl:{
 			certificate: {
 				path:: "{ApplicationDataFolder}/ssl/certs/OpcServer.pem",
-				//The URI is the applicationUri the endpoint advertises (libs/opc/server UAConfig.cpp), what a gateway connection's
-				//certificateUri and the emulator's serverApplicationUri filter endpoints by:  this server's own, spelled as the gateway's
-				//is, not open62541's default (urn:open62541.server.application), which every open62541 server shares.  The names are
-				//what a client holds the url's host to (libs/opc ServerTrust.cpp warns of a server without them).  A changed SAN
-				//re-issues the certificate on the same key at the next start;  the usage extensions a UA client checks are
-				//IssueCertificate's own (#510).
-				subjectAltName: "URI:urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME),DNS:localhost,DNS:$(HostName),IP:127.0.0.1",
+				//The URI is the applicationUri the endpoint advertises (libs/opc/server UAConfig.cpp), which a gateway connection's
+				//certificateUri and the emulator's serverApplicationUri must match.  The names are what a client holds the url's host
+				//to;  args.hostNames (args/install) adds the others it reaches the server by, as DNS entries.  A changed SAN re-issues
+				//the certificate on the same key at the next start.
+				subjectAltName: "URI:urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME),DNS:localhost,DNS:$(HostName),IP:127.0.0.1" + hostNames,
 				company:: "Jde-Cpp",
 				country: "US",
 			},

@@ -8,11 +8,11 @@ namespace Jde::Crypto{
 	//managed guard, the re-issue predicate and the passcode migration cannot drift between them again (web-certs3 #17, m2-closing #7).
 	Φ CreateKey( const CryptoSettings& settings, SRCE )ε->void;//a new RSA pair, the public half written beside the private.
 	//a self-signed application instance certificate on the block's key:  the configured subject and SAN, and the usage extensions a
-	//UA client checks - basicConstraints, keyUsage, extendedKeyUsage (#510) - which the https pairs carry too (issue.cpp _profile).
+	//UA client checks - basicConstraints, keyUsage, extendedKeyUsage - which the https pairs carry too (issue.cpp _profile).
 	//validity is a test seam:  production always issues for a year, and the expiry branch of ReissueReason is otherwise untestable (nothing else mints an expired certificate).
 	Φ IssueCertificate( const CryptoSettings& settings, std::chrono::seconds validity = std::chrono::days{365}, SRCE )ε->void;
 	//why the certificate on disk can no longer stand for `settings` - missing, issued on another key, expired or expiring within a
-	//day, a SAN drifted from the configured one, or a usage extension not the profile's (issued before #510) - empty if it can.
+	//day, a SAN drifted from the configured one, or a usage extension not the profile's - empty if it can.
 	//An unreadable certificate throws (#3(b)).
 	Φ ReissueReason( const CryptoSettings& settings, SRCE )ε->string;
 	//a managed private key written in the clear, before privateKey.passcode was set, rewritten encrypted with it - the same key, so

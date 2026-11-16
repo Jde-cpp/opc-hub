@@ -37,15 +37,11 @@ namespace Jde{
 			return y;
 		}
 
-		//What an application instance certificate carries beyond its SAN (OPC 10000-6 6.2.2):  the set open62541's own generator
-		//writes (plugins/crypto/openssl/create_certificate.c) and UaExpert's carries, critical as UaExpert's are.  A leaf, since
-		//open62541 refuses a CA as a peer's certificate (certificategroup.c openSSLCheckCA);  the usages a secure channel's signing
-		//and encryption need, keyCertSign for the self-signature;  both auth roles.  The one profile for every certificate issued
-		//here, the https pairs included:  the gateway's web pair is presented on both (Opc.Gateway.jsonnet /http/ssl), and TLS asks
-		//nothing the set lacks - serverAuth and a signing or enciphering usage, under OpenSSL's ssl_server purpose - while a
-		//self-signed anchor is a chain of one, which X509_verify_cert takes with CA:FALSE (TrustStoreTests' mint needs CA:TRUE to
-		//ISSUE).  UaExpert refused the OpcServer's without them, BadCertificateBasicConstraintsMissing (#510).  Each field of a
-		//parsed Certificate is held to its value by ReissueReason, so one issued before is re-issued on its key.
+		//An application instance certificate's extensions (OPC 10000-6 6.2.2), as open62541's own generator writes them
+		//(plugins/crypto/openssl/create_certificate.c).  CA:FALSE, since open62541 refuses a CA as a peer's certificate
+		//(certificategroup.c openSSLCheckCA);  keyCertSign for the self-signature, without which OpenSSL doesn't take a
+		//certificate with a keyUsage as self-signed.  The https pairs carry them too:  the gateway presents its web pair on both
+		//channels (Opc.Gateway.jsonnet /http/ssl).  ReissueReason holds a parsed Certificate's fields to these values.
 		struct ProfileExtension{ int Nid; sv Value; string Certificate::*Field; };
 		constexpr array<ProfileExtension,3> _profile{{
 			{ NID_basic_constraints, "CA:FALSE", &Certificate::BasicConstraints },
@@ -140,7 +136,7 @@ namespace Jde{
 			return Ƒ( "{} {}", onDisk.Expiration<=now ? "expired" : "expires", ToIsoString<std::chrono::days>(onDisk.Expiration) );
 		if( comparableSanEntries(settings.Certificate.SubjectAltName)!=comparableSanEntries(onDisk.SubjectAltName) )
 			return Ƒ( "subjectAltName '{}' -> '{}'", onDisk.SubjectAltName, settings.Certificate.SubjectAltName );
-		vector<string> drifts;//issued before #510, with the SAN its one extension:  a UA client refuses it.
+		vector<string> drifts;
 		for( let& e : _profile ){
 			if( onDisk.*e.Field!=e.Value )
 				drifts.push_back( Ƒ("{} '{}' -> '{}'", ::OBJ_nid2sn(e.Nid), onDisk.*e.Field, e.Value) );

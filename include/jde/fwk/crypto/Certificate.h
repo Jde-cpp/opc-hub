@@ -21,10 +21,9 @@ namespace Jde::Crypto{
 		//openssl config syntax - "URI:urn:x,DNS:host,IP:127.0.0.1,email:a@b" - i.e. what X509V3_EXT_conf_nid consumes, NOT a DN,
 		//and the form CertificateSettings::SubjectAltName takes, so a parsed certificate can be re-issued without mangling the extension.
 		string SubjectAltName;
-		//The usage extensions, each in the config syntax IssueCertificate writes it in, so ReissueReason holds them to its profile as
-		//it holds the SAN:  "CA:FALSE", "digitalSignature,nonRepudiation,…", "serverAuth,clientAuth".  Empty where absent, as every
-		//certificate issued before #510 has them, which UaExpert refuses.  A pathlen is not carried, and an extended usage openssl has
-		//no short name for comes back as its dotted oid.
+		//The usage extensions in the config syntax IssueCertificate writes them in, so ReissueReason can compare them:  "CA:FALSE",
+		//"digitalSignature,nonRepudiation,…", "serverAuth,clientAuth".  Empty where absent.  A pathlen is not carried, and an
+		//extended usage openssl has no short name for comes back as its dotted oid.
 		string BasicConstraints;
 		string KeyUsage;
 		string ExtendedKeyUsage;

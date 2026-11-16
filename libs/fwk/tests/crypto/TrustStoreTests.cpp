@@ -8,49 +8,13 @@
 
 #define let const auto
 namespace Jde::Crypto{
-	using X509Ptr = up<X509, decltype(&::X509_free)>;
+	using namespace Tests;//X509Ptr, Day, parse, toDer and mint (cryptoFixture.h).
 	using KeyPtr = up<EVP_PKEY, decltype(&::EVP_PKEY_free)>;
-	constexpr long Day{ 24*60*60 };
 
-	Ω parse( const vector<byte>& der )ε->X509Ptr{
-		auto p = (const unsigned char*)der.data();
-		return X509Ptr{ ::d2i_X509(nullptr, &p, (long)der.size()), ::X509_free };
-	}
-	Ω toDer( const X509Ptr& cert )ε->vector<byte>{
-		unsigned char* p{};
-		let size = ::i2d_X509( cert.get(), &p );
-		THROW_IFX( size<=0, OpenSslException("i2d_X509") );
-		vector<byte> der{ (const byte*)p, (const byte*)p+size };
-		::OPENSSL_free( p );
-		return der;
-	}
 	Ω newKey()ε->KeyPtr{
 		KeyPtr key{ ::EVP_RSA_gen(2048), ::EVP_PKEY_free };
 		THROW_IFX( !key, OpenSslException("EVP_RSA_gen(2048)") );
 		return key;
-	}
-	//CreateKeyCertificate only mints fresh 365-day self-signed leaves; Verify's depth-0 time checks and its chain path need expired, not-yet-valid and CA-issued inputs.  issuer==nullptr self-signs.
-	Ω mint( const char* commonName, EVP_PKEY* subjectKey, EVP_PKEY* issuerKey, X509* issuer, long notBefore, long notAfter, bool ca )ε->X509Ptr{
-		X509Ptr cert{ ::X509_new(), ::X509_free };
-		THROW_IFX( !cert, OpenSslException("X509_new") );
-		::X509_set_version( cert.get(), 2 );//X509v3
-		::ASN1_INTEGER_set( ::X509_get_serialNumber(cert.get()), (long)(Random<uint32_t>() & 0x7fffffff) );//see IssueCertificate: same-DN+same-serial certs are indistinguishable to an X509_STORE.
-		::X509_gmtime_adj( ::X509_getm_notBefore(cert.get()), notBefore );
-		::X509_gmtime_adj( ::X509_getm_notAfter(cert.get()), notAfter );
-		::X509_set_pubkey( cert.get(), subjectKey );
-		auto name = ::X509_get_subject_name( cert.get() );
-		::X509_NAME_add_entry_by_txt( name, "CN", MBSTRING_ASC, (const unsigned char*)commonName, -1, -1, 0 );
-		::X509_set_issuer_name( cert.get(), issuer ? ::X509_get_subject_name(issuer) : name );
-		if( ca ){//without basicConstraints CA:TRUE X509_verify_cert rejects the anchor with X509_V_ERR_INVALID_CA.
-			X509V3_CTX ctx;
-			X509V3_set_ctx_nodb( &ctx );
-			X509V3_set_ctx( &ctx, issuer ? issuer : cert.get(), cert.get(), nullptr, nullptr, 0 );
-			up<X509_EXTENSION, decltype(&::X509_EXTENSION_free)> ext{ ::X509V3_EXT_conf_nid(nullptr, &ctx, NID_basic_constraints, "critical,CA:TRUE"), ::X509_EXTENSION_free };
-			THROW_IFX( !ext, OpenSslException("X509V3_EXT_conf_nid(basicConstraints)") );
-			::X509_add_ext( cert.get(), ext.get(), -1 );
-		}
-		THROW_IFX( !::X509_sign(cert.get(), issuerKey, ::EVP_sha256()), OpenSslException("X509_sign") );
-		return cert;
 	}
 
 	struct TrustStoreTests : public ::testing::Test{

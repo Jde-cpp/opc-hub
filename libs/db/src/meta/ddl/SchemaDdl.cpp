@@ -199,8 +199,10 @@ namespace Jde::DB{
 	//removed from a seeded role came back at the next reboot (reviews/m3-closing.md #12, ruled 09-21:  the admin's edits win).  A
 	//schema with a `seeds` table records each file by content once it has applied, and skips it while it is unchanged;  a release
 	//whose seed changed applies it again, adding what is missing (Upsert's adds rewrite nothing).  Recorded only after the text
-	//applied, so a pass that throws is retried at the next start.  No `seeds` table (a schema without one), no skipping.
-	α SchemaDdl::SeedFile( const AppSchema& config, string name, str text, sp<QL::IQL> ql, bool skipUnchanged )ε->bool{
+	//applied, so a pass that throws is retried at the next start.  No `seeds` table (a schema without one), no skipping.  A $(NAME)
+	//expands as a setting's does, so a seed can name this machine (release-opcServer.mutation's certificateUri).
+	α SchemaDdl::SeedFile( const AppSchema& config, string name, str file, sp<QL::IQL> ql, bool skipUnchanged )ε->bool{
+		let text = Settings::Expand( file );
 		let seeds = skipUnchanged ? config.FindTable( "seeds" ) : nullptr;
 		let hash = seeds ? boost::uuids::to_string( Crypto::CalcMd5(text) ) : string{};
 		auto& ds = *config.DS();
