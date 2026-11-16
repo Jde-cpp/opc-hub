@@ -1,0 +1,32 @@
+# A demo PLC (docs/demo/spec.md "The PLCs"):  jde-plc@1 to jde-plc@5, each a Jde.Opc.PlcEmulator on -transport=server with its
+# overlay, plc<N>.jsonnet - opc.tcp 4841+N on loopback, for the hub's gateway alone.  Laid by the demo tarball's install-demo.sh,
+# not the jde-opchub package.  `seed.sh certs` makes each PLC's certificates before its first start.
+[Unit]
+Description=Jde demo PLC %i - PLC emulator (opc.tcp 484x, loopback)
+Documentation=https://github.com/Jde-cpp/opc-hub
+# It logs in to the hub, and its sessions log in through it.
+After=jde-opchub.service
+Wants=jde-opchub.service
+
+[Service]
+Type=simple
+User=jde-cpp
+Group=jde-cpp
+# The hub's data root:  the certificates under /var/lib/Jde-Cpp/PlcEmulator.plc%i and PlcEmulator.plc%i.opc, the log, Opc.PlcEmulator.log,
+# beside the first, and the nodeset under PlcEmulator/nodesets.
+StateDirectory=Jde-Cpp
+StateDirectoryMode=0750
+EnvironmentFile=-/etc/jde-cpp/env
+WorkingDirectory=/opt/jde-cpp/demo
+# -include is relative to the settings file's dir.  No -sync:  the emulator has no database.
+ExecStart=/opt/jde-cpp/demo/Jde.Opc.PlcEmulator -c -settings=/etc/jde-cpp/apps/OpcServer/emulator/config/demo/plc%i.jsonnet -include=../args/install
+# always:  a PLC that stops for any reason - the hub away at its start, a clean exit - is a machine gone from the floor.
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

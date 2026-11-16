@@ -1,8 +1,9 @@
 name: Linux Release
 
 # Builds the release tree (linux-clang-relWithDebInfo-jde, the app targets only) on the self-hosted, containerised
-# runner (.github/docker/) and packages it with apps/OpcHub/setup/linux/build-deb.sh: a push of a `yyyy.MM.dd` tag publishes
-# the .deb and the per-user tarball on that tag's GitHub release - beside the Windows installer win2025-build.yml puts
+# runner (.github/docker/) and packages it with apps/OpcHub/setup/linux/build-deb.sh, then the public demo's tarball with
+# apps/OpcHub/setup/demo/build-demo.sh: a push of a `yyyy.MM.dd` tag publishes
+# the .deb, the per-user tarball and the demo's on that tag's GitHub release - beside the Windows installer win2025-build.yml puts
 # there - and any other run uploads them as an artifact. The Web UI comes from the `web` job, a GitHub-hosted `ng build`, as in
 # the Windows workflow. Dispatch it by hand (Actions -> Linux Release -> Run workflow, any branch; gated to users with
 # write access, so no fork-PR fence is needed) or push a tag.
@@ -79,7 +80,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build "$BUILD_DIR" -j "$(nproc)" --target Jde.Opc.Hub Jde.Opc.Server Jde.DB.Sqlite Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway Jde.DB.MySql
+          # Jde.Opc.PlcEmulator is the demo tarball's alone:  the .deb ships no emulator
+          cmake --build "$BUILD_DIR" -j "$(nproc)" --target Jde.Opc.Hub Jde.Opc.Server Jde.DB.Sqlite Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway Jde.DB.MySql Jde.Opc.PlcEmulator
 
       - name: Download the Web UI
         uses: actions/download-artifact@v4
@@ -109,6 +111,8 @@ jobs:
           version=""; [ "$GITHUB_REF_TYPE" = tag ] && version="$GITHUB_REF_NAME"
           bash apps/OpcHub/setup/linux/build-deb.sh --build-dir "$BUILD_DIR" --web-dist "$RUNNER_TEMP/web" --ua-nodesets "$UA_NODE_SETS" \
             --out-dir "$RUNNER_TEMP/setup" --version "$version" --maintainer "Jde-Cpp <noreply@jde-cpp.invalid>"
+          # the public demo's box (docs/demo), jde-opc-demo-<version>.tar.gz beside the .deb, whose version it takes
+          bash apps/OpcHub/setup/demo/build-demo.sh --build-dir "$BUILD_DIR" --out-dir "$RUNNER_TEMP/setup"
 
       - name: Upload the package
         if: github.ref_type != 'tag' # a tag run publishes it on the release instead

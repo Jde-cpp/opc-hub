@@ -103,7 +103,7 @@ The site reads an optional `config.json` beside its `index.html` before it start
 - `login`, false for a site with no sign-in.
 
 No install ships one, and without it the site is as built.  [`setup/linux/nginx-demo.conf`](setup/linux/nginx-demo.conf)
-is the demo's front, which serves one.
+is the demo's front, which serves one, and [`setup/demo/README.md`](setup/demo/README.md) the demo box's runbook.
 
 ## Tests
 

@@ -173,7 +173,7 @@ The demo plant's five PLCs ([its spec](../../../docs/demo/spec.md#design), *The 
 `-transport=server`, each with an overlay under `config/demo/`, [`plc1.jsonnet`](config/demo/plc1.jsonnet) to `plc5.jsonnet`, over
 [`demo.libsonnet`](config/demo/demo.libsonnet) and the installed config,
 [`Opc.PlcEmulator.Install.jsonnet`](config/Opc.PlcEmulator.Install.jsonnet), which reads no ext var and takes its paths from an
-args dir: [`args/install`](config/args/install/args.libsonnet) on the box the demo plan's Phase 8 packages, [`args/dev`](config/args/dev/args.libsonnet)
+args dir: [`args/install`](config/args/install/args.libsonnet) on the demo's box ([its runbook](../../OpcHub/setup/demo/README.md)), [`args/dev`](config/args/dev/args.libsonnet)
 on a dev box, where the nodeset is read from the source tree.  The `-include` is relative to the settings file's dir, so the
 overlays take `-include=../args/<which>`.
 
