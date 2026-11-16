@@ -7,6 +7,8 @@ namespace Jde::DB::Sqlite{
 		procs.RegisterProc( "gateway_oee_line_purge", [&procs]( sqlite3& db, const vector<Value>& params, RowΛ*, SL sl )->uint{
 			procs.ExecuteStatement( db, "savepoint oee_line_purge", {}, nullptr, sl );
 			try{
+				procs.ExecuteStatement( db, "delete from gateway_oee_floor_shapes where member_line_id=? or oee_floor_id in ( select oee_floor_id from gateway_oee_floors where oee_line_id=? )", {params[0], params[0]}, nullptr, sl );
+				procs.ExecuteStatement( db, "delete from gateway_oee_floors where oee_line_id=?", {params[0]}, nullptr, sl );
 				procs.ExecuteStatement( db, "delete from gateway_oee_line_members where oee_line_id=? or member_line_id=?", {params[0], params[0]}, nullptr, sl );
 				const uint y = procs.ExecuteStatement( db, "delete from gateway_oee_lines where oee_line_id=?", {params[0]}, nullptr, sl );
 				procs.ExecuteStatement( db, "release oee_line_purge", {}, nullptr, sl );

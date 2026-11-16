@@ -25,6 +25,14 @@ namespace Jde::Opc::Gateway{
 	//itself or a machine by two paths, and whose level is no higher than its line's.  A member is created, re-sorted and purged:
 	//it has no deleted, and its keys aren't updateable.  A line's purge takes its memberships both ways, its proc's, and a
 	//machine's takes its own.  After each, OeeHost reads both tables again, under one lock with the checks and the write.
+	//The floor's two tables (docs/demo/spec.md *The floor*) are held to libs/oee's floor rules under the same lock, over the host's
+	//graph and the floor's rows read here:  a floor on a line that exists, isn't deleted and has none, its width, height and grid
+	//above zero, and a resize that leaves every shape inside;  a new shape whose kind is one of the six, a Machine's machine one the
+	//floor's line reaches through lines that stand and a Line's line one it reaches other than itself, neither deleted, each once
+	//on the floor, neither key on a fixture, the points its kind takes, every one on or inside the floor.  Neither has a deleted:  a
+	//floor's purge takes its shapes, its line's takes the floor, and a machine's or a line's takes the shapes that name it, each
+	//proc's;  a deleted machine keeps its shape, and so does one its floor's line no longer reaches, after a member's purge.  A
+	//shape's kind and keys aren't updateable, so an update holds its points alone, to its kind and the floor.  No live side.
 	//recomputeOee( machine, start, end ){ machine start end }, a system mutation registered by its whole name (spec *The
 	//engine*, *Authorization*):  the machine's rows over the span made again from the group's history (OeeHost::Recompute),
 	//for the caller with Update on oee_machines and Read on the machine's group through HistHost::Gate.  It answers once the

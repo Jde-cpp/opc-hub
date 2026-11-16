@@ -108,7 +108,7 @@ local attributes( i ) = {
 		//are the spec's end and interval:  SQL Server reserves END and mysql INTERVAL, and column names are emitted unquoted.
 		oeeMachines:{
 			comment: "A machine:  one historian group whose members are given roles (oee_machine_signals), with its thresholds, its rows' width and its shift calendar",
-			purgeProc: "oee_machine_purge", //its stops, intervals, codings, signals and line memberships go with it, in one transaction:  codings are operator-entered and nothing restores them.
+			purgeProc: "oee_machine_purge", //its stops, intervals, codings, signals, line memberships and floor shapes go with it, in one transaction:  codings are operator-entered and nothing restores them.
 			columns: {
 				oeeMachineId: common.pkSequenced,
 				histGroupId: tables.histGroups.columns.histGroupId+{ pkTable: "hist_groups", sk:null, updateable:false, i:1, comment:"The group whose records the engine reads, a foreign key and unique:  a group has at most one machine, deleted ones counted.  OeeMAwait refuses the group's delete and purge while the row stands;  the key is the backstop.  Not updateable:  purge the machine and create it again." },
@@ -196,7 +196,7 @@ local attributes( i ) = {
 		//no member line above its parent's level - and tells OeeHost, which holds the graph for the reads and the live feed.
 		oeeLines:{
 			comment: "A line:  a named set of machines and of lines (oee_line_members), whose figures are its members' combined",
-			purgeProc: "oee_line_purge", //its memberships go with it, as a parent and as a member.
+			purgeProc: "oee_line_purge", //its memberships go with it, as a parent and as a member, its floor with that floor's shapes, and the Line shapes that name it.
 			columns: {
 				oeeLineId: common.pkSequenced,
 				level: common.types.varchar+{ length:8, i:1, comment:"Site, Area, Line or Cell, ISA-95's below the enterprise:  a member line's is no higher than its parent's.  It changes no figure." },
@@ -212,6 +212,38 @@ local attributes( i ) = {
 				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, nullable:true, updateable:false, i:2 },
 				memberLineId: tables.oeeLines.columns.oeeLineId+{ pkTable: "oee_lines", name: "member_line_id", sk:null, nullable:true, updateable:false, i:3, comment:"The member when it is a line.  A member is this or oee_machine_id;  once in a line, which is OeeMAwait's check, not an index:  SQL Server's unique index holds one null." },
 				sort: common.types.uint+{ default:0, i:4, comment:"The members' order on the pages, and of a line's machines in oeeTimeline." }
+			}
+		},
+		//The floor (docs/demo/spec.md *The floor*):  a line's map, the machines and the lines it reaches drawn where they stand among
+		//the fixtures, in metres from the floor's top-left.  OeeMAwait holds the two to libs/oee's floor rules over the host's graph:
+		//a new Machine shape's machine reached by the floor's line, a Line shape's line reached and not the floor's own, neither
+		//deleted, each once on a floor, the points a kind takes and every one on or inside the floor;  an update its points alone.
+		//Neither has a deleted:  a floor leaves by purge, its line's purge taking it, and a shape by purge, its machine's, its line's
+		//or its floor's taking it.  A shape the floor's line no longer reaches, after a member's purge, is kept, as a deleted
+		//machine's is, and the map leaves it out.  Read through the generic queries, gated as tables are.
+		oeeFloors:{
+			comment: "A line's floor:  the hall its machines are drawn in, in metres.  Named by its line, so no slug columns, and no deleted - a floor leaves by purge, and its line's purge takes it",
+			purgeProc: "oee_floor_purge", //its shapes go with it.
+			columns: {
+				oeeFloorId: common.pkSequenced,
+				oeeLineId: tables.oeeLines.columns.oeeLineId+{ pkTable: "oee_lines", sk:null, updateable:false, i:1, comment:"The line the floor maps, a foreign key and unique:  a line has at most one floor, which is OeeMAwait's refusal with the index as the backstop.  Not updateable:  purge the floor and make it again." },
+				width: common.types.float+{ i:2, comment:"Metres, above zero:  x runs from the floor's left to it." },
+				height: common.types.float+{ i:3, comment:"Metres, above zero:  y runs from the floor's top to it." },
+				grid: common.types.float+{ default:0.5, i:4, comment:"The editor's snap in metres, above zero:  half a metre by default." }
+			},
+			naturalKeys: [["oee_line_id"]]
+		},
+		oeeFloorShapes:{
+			comment: "A floor's shape:  a Machine or a Line drawn where it stands, or a fixture - a Zone, a Wall, an Aisle or a Label.  No deleted - a shape leaves by purge, and its machine's, its line's or its floor's purge takes it",
+			columns: {
+				oeeFloorShapeId: common.pkSequenced,
+				oeeFloorId: tables.oeeFloors.columns.oeeFloorId+{ pkTable: "oee_floors", sk:null, updateable:false, i:1 },
+				kind: common.types.varchar+{ length:8, updateable:false, i:2, comment:"Machine, Line, Zone, Wall, Aisle or Label.  Machine, Line and Zone are closed polygons of three points or more enclosing an area, Wall and Aisle open polylines of two or more not all one point, and a Label one point.  Not updateable, nor the two keys:  purge the shape and make it again." },
+				oeeMachineId: tables.oeeMachines.columns.oeeMachineId+{ pkTable: "oee_machines", sk:null, nullable:true, updateable:false, i:3, comment:"A Machine shape's machine, standing and one the floor's line reaches when the shape is made, once on the floor;  null on every other kind.  A deleted machine keeps its shape, which the map leaves out until its restore, as it does one its line no longer reaches." },
+				memberLineId: tables.oeeLines.columns.oeeLineId+{ pkTable: "oee_lines", name: "member_line_id", sk:null, nullable:true, updateable:false, i:4, comment:"A Line shape's line, standing and one the floor's line reaches other than itself when the shape is made, once on the floor;  null on every other kind." },
+				points: common.types.text+{ i:5, comment:"The shape's points as json, [[x,y],…] in metres from the floor's top-left, each on or inside the floor.  A floor shrinks no further than its shapes." },
+				label: common.types.varchar+{ length:256, nullable:true, i:6, comment:"A fixture's text, or a name that overrides the machine's or line's on the map." },
+				sort: common.types.uint+{ default:0, i:7, comment:"The drawing order within its kind." }
 			}
 		},
 		//Flows (docs/flows/spec.md *Flows*, *Context*, *Replay*).  Every edit of the four is routed by Gateway::CustomMutation, the

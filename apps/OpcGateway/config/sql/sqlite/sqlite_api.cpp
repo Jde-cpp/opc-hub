@@ -17,6 +17,9 @@ void RegisterProcs( Jde::DB::Sqlite::IProcs& procs ){
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeLineInsert( procs );
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeLineMemberInsert( procs );
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeLinePurge( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeFloorInsert( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeFloorShapeInsert( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayOeeFloorPurge( procs );
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayFlowInsert( procs );
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayFlowVersionInsert( procs );
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayFlowContextInsert( procs );
