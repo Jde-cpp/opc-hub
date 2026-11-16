@@ -7,7 +7,6 @@ import { IENVIRONMENT } from '../../services/environment/environment';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
-declare const gapi: any;
 @Component( {
 	selector: "authorization", templateUrl: "./authorization.html", styleUrls: ["./authorization.scss"],
 	imports: [MatButtonModule, MatIconModule, MatTooltipModule, NgTemplateOutlet, RouterLink, RouterLinkActive]} )
@@ -16,30 +15,9 @@ export class Authorization{
 	constructor(){
 		this.user = this.#authService.user;
 	}
-	async onLogout() {
-		const isGoogle = this.user()?.provider == EProvider.Google;//`?.`: the signal can already be empty, and a throw here skips the logout itself
+	async onLogout() {//a Google user's sign-out reaches Google in the logout itself (jde-framework's GoogleAuthService.signOut)
 		await this.#authService.logout();
-		if( isGoogle )
-			await this.#signOutGoogle();
 		this.router.navigate( ['/login'] );
-	}
-
-	//Best effort, and it must never strand the user on the page they just logged out of.  `gapi` is a `declare const` over
-	//Google's platform.js, which a Google sign-in loads (jde-framework's GoogleAuthService), so a bare `gapi.auth2` is a
-	//ReferenceError - not a falsy read - whenever that script has not loaded (offline, blocked, or a session signed in on an
-	//earlier page load), and that skipped the navigate below it.  So did a signOut() that rejected.  The session is already
-	//dropped locally either way; this only clears Google's own state.
-	async #signOutGoogle():Promise<void>{
-		try{
-			const auth2 = typeof gapi!="undefined" && gapi.auth2 ? gapi.auth2.getAuthInstance() : undefined;
-			if( !auth2 )
-				return;
-			await auth2.signOut();
-			console.log( "User signed out." );
-		}
-		catch( e ){
-			console.warn( "Google sign-out failed; the local session is already dropped.", e );
-		}
 	}
 	providers = resource<EProvider[], {}>({
     loader: async () => {

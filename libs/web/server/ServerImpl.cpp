@@ -3,7 +3,6 @@
 #include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/process/execution.h>
-#include <jde/fwk/str.h>
 #include "jde/db/DBException.h"
 #include <jde/ql/ql.h>
 #include <jde/ql/QLAwait.h>
@@ -23,30 +22,55 @@ namespace Server{
 	Ω plain( const net::ip::address& a )ι->net::ip::address{//a dual-stack listener reads 127.0.0.1 as ::ffff:127.0.0.1
 		return a.is_v6() && a.to_v6().is_v4_mapped() ? net::ip::address{ net::ip::make_address_v4(net::ip::v4_mapped, a.to_v6()) } : a;
 	}
+	absl::Mutex _proxiesMutex;
+	vector<net::ip::address> _proxies ABSL_GUARDED_BY(_proxiesMutex);//each plain:  /http/trustedProxies, as ReadTrustedProxies read it.
+	std::atomic_flag _unlistedFrontWarned;
+
+	//The caller a trusted front's X-Forwarded-For names, read from its end past each address that is a listed front too, a front
+	//before the front:  the first that is not, whatever the caller wrote ahead of it, or the first of a header of fronts alone.  An
+	//entry that does not parse stops the walk at the front after it;  the last one not parsing, there is none.  Repeated lines are
+	//one list (RFC 9110 §5.3), a field's lines adjacent in beast's list.
+	Ω forwardedCaller( auto line, auto end, const vector<net::ip::address>& proxies )ι->optional<net::ip::address>{
+		optional<net::ip::address> caller;
+		for( auto it = end; it!=line; ){
+			sv list = (--it)->value();
+			for( auto more = true; more; ){
+				let comma = list.rfind( ',' );
+				more = comma!=sv::npos;
+				beast::error_code ec;
+				let address = net::ip::make_address( Str::Trim(more ? list.substr(comma+1) : list), ec );
+				if( ec )
+					return caller;
+				caller = address;
+				if( find(proxies, plain(address))==proxies.end() )
+					return caller;
+				if( more )
+					list = list.substr( 0, comma );
+			}
+		}
+		return caller;
+	}
 	//The address a request came from.  Behind a front every peer is the front, which appends the caller's own address to
-	//X-Forwarded-For:  where the peer is one of /http/trustedProxies, the last address there is the caller, whatever the caller
-	//wrote ahead of it.  A peer outside the list is the caller itself and the header its own claim, so it is not read;  no header,
-	//or one whose last address does not parse, keeps the peer.  The front's connection has a port, the caller's is not known.
+	//X-Forwarded-For:  where the peer is one of /http/trustedProxies, the header names the caller (forwardedCaller).  A peer outside
+	//the list is the caller itself and the header its own claim, so it is not read;  no header, or none that parses, keeps the peer.
+	//The front's connection has a port, the caller's is not known.  A loopback peer forwarding with no front listed is a front the
+	//settings miss, so every caller would be the front:  a Warning, once.
 	Ω userEndpoint( const tcp::endpoint& peer, const TRequestType& request )ι->tcp::endpoint{
 		auto [line, end] = request.equal_range( "X-Forwarded-For" );
 		if( line==end )
 			return peer;
-		let proxies = Settings::FindStringArray( "/http/trustedProxies" );
-		let trusted = std::ranges::any_of( proxies, [peerAddress=plain(peer.address())]( str proxy ){
-			beast::error_code ec;
-			let address = net::ip::make_address( proxy, ec );
-			return !ec && plain( address )==peerAddress;
-		} );
-		if( !trusted )
-			return peer;
-		sv forwarded;
-		for( ; line!=end; ++line )//repeated lines are one list (RFC 9110 §5.3), which the last line ends.
-			forwarded = line->value();
-		if( let comma = forwarded.rfind(','); comma!=sv::npos )
-			forwarded.remove_prefix( comma+1 );
-		beast::error_code ec;
-		let address = net::ip::make_address( Str::Trim(forwarded), ec );
-		return ec ? peer : tcp::endpoint{ address, 0 };
+		let peerAddress = plain( peer.address() );
+		optional<net::ip::address> caller;
+		bool noneListed;
+		{
+			rl _{ _proxiesMutex };
+			noneListed = _proxies.empty();
+			if( find(_proxies, peerAddress)!=_proxies.end() )
+				caller = forwardedCaller( line, end, _proxies );
+		}
+		if( noneListed && peerAddress.is_loopback() && !_unlistedFrontWarned.test_and_set() )
+			WARNT( ELogTags::App, "X-Forwarded-For came from {}, a front on this host, but /http/trustedProxies lists none, so every caller is taken for the front.  List the front there;  a key over a hidden one shows only with ':::'.", peerAddress.to_string() );
+		return caller ? tcp::endpoint{ *caller, 0 } : peer;
 	}
 
 	Τ Ω runSession( T& stream, beast::flat_buffer& buffer, tcp::endpoint peer, bool isSsl, uint32 connectionIndex, IRequestHandler* reqHandler )ι->net::awaitable<void, executor_type>{
@@ -380,12 +404,7 @@ namespace Server{
 		//Benign in production: the anchor names a cert whose private key this process already holds.
 		Client::Ssl::AddTrustAnchor( handler->Settings().Crypto().Certificate.Path );
 
-		for( let& proxy : Settings::FindStringArray("/http/trustedProxies") ){
-			beast::error_code ec;
-			net::ip::make_address( proxy, ec );
-			if( ec )
-				WARNT( ELogTags::App, "/http/trustedProxies names '{}', which is not an address - ignored.  X-Forwarded-For is read only from a peer at a listed address.", proxy );
-		}
+		ReadTrustedProxies();
 		let port = handler->Settings().Port();
 		let addressString = handler->Settings().Address();
 		let address = tcp::endpoint{ net::ip::make_address(addressString), port };
@@ -457,6 +476,22 @@ namespace Server{
 		return sessions.size();
 	}
 }
+	α Server::ReadTrustedProxies()ι->void{
+		vector<net::ip::address> proxies;
+		if( let setting = Json::FindValue(Settings::Value(), "/http/trustedProxies"); setting && !setting->is_null() && !setting->is_array() )
+			WARNT( ELogTags::App, "/http/trustedProxies is {}, not a list of addresses - ignored.  X-Forwarded-For is read only from a peer at a listed address.", serialize(*setting) );
+		for( let& entry : Settings::FindDefaultArray("/http/trustedProxies") ){
+			beast::error_code ec;
+			let address = entry.is_string() ? net::ip::make_address( Settings::Expand(string{entry.get_string()}), ec ) : net::ip::address{};
+			if( entry.is_string() && !ec )
+				proxies.push_back( plain(address) );
+			else
+				WARNT( ELogTags::App, "/http/trustedProxies names {}, which is not an address - ignored.", serialize(entry) );
+		}
+		ul _{ _proxiesMutex };
+		_proxies = move( proxies );
+		_unlistedFrontWarned.clear();
+	}
 	α Server::HandleRequest( HttpRequest req, sp<IRestStream> stream, IRequestHandler* reqHandler )ι->TAwait<sp<SessionInfo>>::Task{
 		try{
 			req.DecodeBody();

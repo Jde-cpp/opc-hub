@@ -87,10 +87,12 @@ is created, restored, deleted or purged;  a slug naming no live user is a start-
 one appears.
 
 `http.trustedProxies`, empty by default, lists the addresses of the fronts before the listener;  an nginx on the same machine
-is `127.0.0.1`.  A request or a socket from one is its caller's, the last address of its `X-Forwarded-For`, so a session
-is tied to the visitor's address and the sessions pages show it.  A peer not listed is the caller itself, whatever the
-header says.  Addresses only, no names or ranges, and a listed address is believed:  list a front that appends the
-address it accepted, as nginx's `$proxy_add_x_forwarded_for` does.
+is `127.0.0.1`.  A request or a socket from one is its caller's, the last address of its `X-Forwarded-For`, or past it
+where that is a listed front too, so a session is tied to the visitor's address and the sessions pages show it.  A peer
+not listed is the caller itself, whatever the header says.  Addresses only, no names or ranges, and a listed address is
+believed:  list a front that appends the address it accepted, as nginx's `$proxy_add_x_forwarded_for` does.  A value
+that is no list is a start-up warning, and so, once, is a front on the same machine forwarding while none is listed;  an
+overlay over the hidden key shows it only with `:::`.
 
 The site reads an optional `config.json` beside its `index.html` before it starts
 ([`docs/demo/spec.md`](../../docs/demo/spec.md) *The public origin*):

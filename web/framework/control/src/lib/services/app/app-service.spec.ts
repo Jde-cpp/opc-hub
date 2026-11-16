@@ -1,7 +1,9 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { AUTH_STORE } from '../auth-store';
-import { IENVIRONMENT } from 'jde-spa';
+import { GoogleAuthService } from '../google-auth-service';
+import { EProvider, IENVIRONMENT } from 'jde-spa';
 import { ETransport } from '../proto-service';
 import { AppService } from './app-service';
 import { anonymousAuthStore } from 'jde-framework/testing';
@@ -38,25 +40,61 @@ describe( 'AppService host', ()=>{
 } );
 
 //#484:  a null port is the page's own - a front answers for the hub there (config.json's applicationServer.port) - and the
-//instances the hub names on a loopback host, its own process, are reached on it too.
+//instances the hub names on a loopback host at its listener's port, the build's, its own process, are reached on it too.
+//Another process on the box, an OpcServer at 1970, keeps its own, and so do the services built on what these answer.
 describe( 'AppService port', ()=>{
 	afterEach( ()=>vi.unstubAllGlobals() );
-	const gateways = async ( port:number|null )=>{
+	const servers = [{host: 'localhost', port: 1967}, {host: 'gateway2', port: 1968}, {host: 'localhost', port: 1970}];
+	const gateways = async ( applicationServer:Record<string,any> )=>{
 		vi.stubGlobal( 'location', {protocol: 'https:', hostname: 'demo', host: 'demo', port: ''} );
-		const service = create( {applicationServer:{host:"", port}} );
-		(service as any).get = async ()=>({ servers: [{host: 'localhost', port: 1967}, {host: 'gateway2', port: 1968}] });
+		const service = create( {applicationServer} );
+		(service as any).get = async ()=>({ servers });
 		return { service, gateways: await service.gatewayInstances(), opcServers: await service.opcServerInstances() };
 	};
 	it( 'takes the page\'s port for a null one, for the hub and each instance of its process', async ()=>{
-		const { service, gateways: found, opcServers } = await gateways( null );
+		const { service, gateways: found, opcServers } = await gateways( {host: "", port: null, listenerPort: 1967} );
 		expect( service.instances[0] ).toEqual( {host: 'demo', port: 443} );
-		expect( found ).toEqual( [{host: 'demo', port: 443}, {host: 'gateway2', port: 1968}] );
+		expect( found ).toEqual( [{host: 'demo', port: 443}, {host: 'gateway2', port: 1968}, {host: 'demo', port: 1970}] );
 		expect( opcServers ).toEqual( found );
+		service.instances = [servers[2]];//a service's own setter, as an OpcServer's page sets it
+		expect( service.instances[0] ).toEqual( {host: 'demo', port: 1970} );
+		service.instances = [servers[0]];
+		expect( service.instances[0] ).toEqual( {host: 'demo', port: 443} );
+	} );
+	it( 'takes a null port\'s listener as 1967 where the environment names none', async ()=>{
+		const { service, gateways: found } = await gateways( {host: "", port: null} );
+		expect( service.instances[0] ).toEqual( {host: 'demo', port: 443} );
+		expect( found[0] ).toEqual( {host: 'demo', port: 443} );
 	} );
 	it( 'keeps a port the environment names, and the instances theirs', async ()=>{
-		const { service, gateways: found } = await gateways( 1967 );
+		const { service, gateways: found } = await gateways( {host: "", port: 1967} );
 		expect( service.instances[0] ).toEqual( {host: 'demo', port: 1967} );
-		expect( found ).toEqual( [{host: 'demo', port: 1967}, {host: 'gateway2', port: 1968}] );
+		expect( found ).toEqual( [{host: 'demo', port: 1967}, {host: 'gateway2', port: 1968}, {host: 'demo', port: 1970}] );
+	} );
+} );
+
+//#484:  /login's prompt signs a Google user straight back in until Google's library hears of the sign-out.
+describe( 'AppService.logout', ()=>{
+	const logout = async ( provider:EProvider )=>{
+		const signOut = vi.fn();
+		const authStore = { user: signal( {provider, authorization: 'session'} ), logout: vi.fn() };
+		TestBed.configureTestingModule({ providers: [
+			provideHttpClient(),
+			{ provide: IENVIRONMENT, useValue: { get: ( key:string )=>key=='applicationServer' ? {host: 'localhost', port: 1967} : undefined } },
+			{ provide: AUTH_STORE, useValue: authStore },
+			{ provide: GoogleAuthService, useValue: { signOut } }
+		]});
+		const service = TestBed.runInInjectionContext( ()=>new AppService() );
+		(service as any).postRaw = vi.fn( async ()=>'' );
+		await service.logout();
+		expect( authStore.logout ).toHaveBeenCalled();
+		return signOut;
+	};
+	it( 'tells Google of a Google user\'s', async ()=>{
+		expect( await logout(EProvider.Google) ).toHaveBeenCalledTimes( 1 );
+	} );
+	it( 'leaves Google alone for another provider\'s', async ()=>{
+		expect( await logout(EProvider.OpcServer) ).not.toHaveBeenCalled();
 	} );
 } );
 

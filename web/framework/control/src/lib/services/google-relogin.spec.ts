@@ -4,7 +4,7 @@ import { TestBed } from '@angular/core/testing';
 import { HttpClient, HttpHeaders, HttpResponse } from '@angular/common/http';
 import { of, throwError } from 'rxjs';
 import { AuthStore } from './auth-store';
-import { GoogleAuthService, googleClientIdKey, googlePlatformScript, googleSignInScript } from './google-auth-service';
+import { GoogleAuthService, googleClientIdKey, googleSignedOutKey, googleSignInScript } from './google-auth-service';
 import { EProvider, User, UserJson } from 'jde-spa';
 import { fakeJwt, flush, silence } from 'jde-spa/testing';
 import { TestProtoService } from 'jde-framework/testing';
@@ -31,16 +31,17 @@ class LoadedGoogleAuth extends GoogleAuthService{
 }
 
 //#484:  index.html carried Google's two scripts, so every page asked Google for them, a site with no Google sign-in included.
-//initialize injects them, once, and `available` waits on the sign-in library's load.
+//initialize injects the sign-in library, once while it loads or has loaded, and `available` waits on its load.  The platform
+//library is gone:  nothing used it.
 describe( 'GoogleAuthService scripts', ()=>{
 	const create = ()=>{
-		const gis = { initialize: vi.fn(), prompt: vi.fn(), renderButton: vi.fn() };
-		const scripts = ()=>[...document.head.querySelectorAll<HTMLScriptElement>( 'script' )].filter( s=>[googleSignInScript, googlePlatformScript].includes(s.src) );
-		//the library defines its global as it loads
-		const settle = ( src:string, event:'load'|'error' )=>{
-			if( src==googleSignInScript && event=='load' )
+		const gis = { initialize: vi.fn(), prompt: vi.fn(), renderButton: vi.fn(), disableAutoSelect: vi.fn() };
+		const scripts = ()=>[...document.head.querySelectorAll<HTMLScriptElement>( 'script' )].filter( s=>s.src==googleSignInScript );
+		//the latest injected settles, and the library defines its global as it loads
+		const settle = ( event:'load'|'error' )=>{
+			if( event=='load' )
 				vi.stubGlobal( 'google', { accounts:{ id:gis } } );
-			scripts().find( s=>s.src==src )!.dispatchEvent( new Event(event) );
+			scripts().at( -1 )!.dispatchEvent( new Event(event) );
 		};
 		return { service: new GoogleAuthService(), gis, scripts, settle };
 	};
@@ -58,16 +59,16 @@ describe( 'GoogleAuthService scripts', ()=>{
 		expect( scripts() ).toEqual( [] );
 	});
 
-	it( 'injects both scripts once, and is available when the sign-in library has loaded', async ()=>{
+	it( 'injects the sign-in library once, and is available when it has loaded', async ()=>{
 		const { service, gis, scripts, settle } = create();
 		const first = service.initialize( 'client-id' );
 		const second = service.initialize( 'client-id' );
-		expect( scripts().map(s=>s.src).sort() ).toEqual( [googleSignInScript, googlePlatformScript] );
+		expect( scripts().map(s=>s.src) ).toEqual( [googleSignInScript] );
 		expect( scripts().every(s=>s.async) ).toBe( true );
 		expect( service.available ).toBe( false );
 		expect( gis.initialize ).not.toHaveBeenCalled();
 
-		settle( googleSignInScript, 'load' );
+		settle( 'load' );
 		await Promise.all( [first, second] );
 		expect( service.available ).toBe( true );
 		expect( gis.initialize ).toHaveBeenCalledTimes( 1 );
@@ -76,31 +77,51 @@ describe( 'GoogleAuthService scripts', ()=>{
 
 		await service.initialize( 'client-id' );
 		expect( gis.initialize ).toHaveBeenCalledTimes( 1 );
-		expect( scripts() ).toHaveLength( 2 );
+		expect( scripts() ).toHaveLength( 1 );
 	});
 
-	it( 'does not wait on the platform library, nor fail with it', async ()=>{
-		const { service, settle } = create();
-		const warn = silence();
-		const initialized = service.initialize( 'client-id' );
-		settle( googlePlatformScript, 'error' );
-		settle( googleSignInScript, 'load' );
-		await expect( initialized ).resolves.toBeUndefined();
-		expect( service.available ).toBe( true );
-		expect( warn ).toHaveBeenCalledTimes( 1 );
-		warn.mockRestore();
-	});
-
-	it( 'rejects, and stays unavailable, when the sign-in library does not load', async ()=>{
+	it( 'rejects, unavailable, when the sign-in library does not load, and injects it again at the next call', async ()=>{
 		const { service, gis, scripts, settle } = create();
 		const initialized = service.initialize( 'client-id' );
-		settle( googleSignInScript, 'error' );
+		settle( 'error' );
 		await expect( initialized ).rejects.toThrow( 'did not load' );
 		expect( service.available ).toBe( false );
 		expect( gis.initialize ).not.toHaveBeenCalled();
 		expect( ()=>service.renderButton(null) ).toThrow( 'google not defined' );
-		await expect( service.initialize('client-id') ).rejects.toThrow( 'did not load' );
-		expect( scripts() ).toHaveLength( 2 );//not injected again
+
+		const again = service.initialize( 'client-id' );
+		expect( scripts() ).toHaveLength( 2 );
+		settle( 'load' );
+		await expect( again ).resolves.toBeUndefined();
+		expect( service.available ).toBe( true );
+		expect( gis.initialize ).toHaveBeenCalledTimes( 1 );
+	});
+
+	//auto_select on /login's prompt signs a returning user straight back in until the library hears of the sign-out.
+	it( 'tells a loaded library of a sign-out', async ()=>{
+		const { service, gis, settle } = create();
+		const initialized = service.initialize( 'client-id' );
+		settle( 'load' );
+		await initialized;
+		service.signOut();
+		expect( gis.disableAutoSelect ).toHaveBeenCalledTimes( 1 );
+		expect( localStorage.getItem(googleSignedOutKey) ).toBeNull();
+	});
+
+	it( 'tells the library of a sign-out from a page that never loaded it, once it loads', async ()=>{
+		const { service, gis, scripts, settle } = create();
+		service.signOut();
+		expect( scripts() ).toEqual( [] );
+		expect( localStorage.getItem(googleSignedOutKey) ).not.toBeNull();
+
+		const initialized = service.initialize( 'client-id' );
+		settle( 'load' );
+		await initialized;
+		expect( gis.disableAutoSelect ).toHaveBeenCalledTimes( 1 );
+		expect( gis.initialize.mock.invocationCallOrder[0] ).toBeLessThan( gis.disableAutoSelect.mock.invocationCallOrder[0] );
+		expect( localStorage.getItem(googleSignedOutKey) ).toBeNull();
+		await service.initialize( 'client-id' );
+		expect( gis.disableAutoSelect ).toHaveBeenCalledTimes( 1 );
 	});
 
 	it( 'a renewal with a stored client id loads them, and resolves null when they fail', async ()=>{
@@ -108,8 +129,8 @@ describe( 'GoogleAuthService scripts', ()=>{
 		localStorage.setItem( googleClientIdKey, 'client-id' );
 		const warn = silence();
 		const renewal = service.renewCredential();
-		expect( scripts() ).toHaveLength( 2 );
-		settle( googleSignInScript, 'error' );
+		expect( scripts() ).toHaveLength( 1 );
+		settle( 'error' );
 		await expect( renewal ).resolves.toBeNull();
 		expect( gis.prompt ).not.toHaveBeenCalled();
 		warn.mockRestore();

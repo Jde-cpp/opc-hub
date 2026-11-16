@@ -1,11 +1,11 @@
 import { Injectable, InjectionToken, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import {Instance, pagePort, resolveInstance} from './app-service-types'
+import {AppServerEnvironment, Instance, pagePort, resolveInstance, setFront} from './app-service-types'
 
 import { pageTransport, ProtoService } from '../proto-service';
 import * as FromServer from 'jde-proto/App.FromServer';
 import * as FromClient from 'jde-proto/App.FromClient';
-import { IAuth, IENVIRONMENT, IEnvironment, User } from 'jde-spa';
+import { EProvider, IAuth, IENVIRONMENT, IEnvironment, User } from 'jde-spa';
 import { IGraphQL } from '../graphql';
 import { AUTH_STORE } from '../auth-store';
 import { GoogleAuthService } from '../google-auth-service';
@@ -20,16 +20,17 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	constructor(){
 		const environment:IEnvironment = inject( IENVIRONMENT );
 		super( FromClient.Transmission, inject(HttpClient), pageTransport(), inject(AUTH_STORE), inject(GoogleAuthService) );
-		let appServer = environment.get<Instance>( 'applicationServer' );
+		let appServer = environment.get<AppServerEnvironment>( 'applicationServer' );
 		if( !appServer ){
 			console.log( "No Application Server set in environment" );
 			appServer = { port:1967, host:"" };
 		}
-		this.#pagePort = appServer.port===null ? pagePort() : undefined;
-		super.instances = [resolveInstance( appServer, undefined, this.#pagePort )];//an empty or loopback host is the page's
+		const { port, listenerPort, ...instance } = appServer;
+		const listener = port ?? listenerPort ?? 1967;
+		const page = port===null ? pagePort() : undefined;
+		setFront( page ? {listener, page} : undefined );
+		super.instances = [{ ...instance, port: listener }];//the setter resolves an empty or loopback host to the page's, and behind a front the port
 	}
-	//config.json's applicationServer.port null:  the hub answers on the page's own port, and so does every instance of its process.
-	#pagePort:number|undefined;
 	protected override get product(){ return "The application server"; }
 	// ping():Promise<string>{
 	// 	return this.sendSingularRequest( FromClient.ERequest.Ping );
@@ -54,12 +55,12 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	//that works from where the page runs (resolveInstanceHost, install-issues #2).
 	async gatewayInstances():Promise<Instance[]>{
 		const y = await this.get( "opcGateways" ) as any;
-		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance, undefined, this.#pagePort) );
+		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance) );
 	}
 
 	async opcServerInstances():Promise<Instance[]>{
 		const y = await this.get( "opcServers" ) as any;
-		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance, undefined, this.#pagePort) );
+		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance) );
 	}
 
 	async instancePK( instanceName:string, programName?:string ):Promise<number|undefined>{ return (await this.instancePKs( instanceName, [programName] ))[0]; }
@@ -87,6 +88,7 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	}
 	async logout():Promise<void>{
 		if( this.log.restRequests )	console.log( `logout()` );
+		const isGoogle = this.user()?.provider==EProvider.Google;
 		const options = { observe: "response", headers:{"Authorization":this.user()?.authorization} };
 		try{
 			const result = await this.postRaw<string>( 'logout', {}, options );
@@ -95,6 +97,8 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 		catch( e:unknown ){
 			console.log( `logout failed:  ${errorMessage(e)}` );//angular-review3 C12/L8: the local session goes regardless, as GatewayService.logout already does - a failed round trip must not leave the user logged in with no way out.
 		}
+		if( isGoogle )
+			this.googleAuth?.signOut();
 		this.authStore.logout();
 	}
 

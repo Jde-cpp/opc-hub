@@ -65,7 +65,7 @@ describe( 'config.json', ()=>{
 
 	it( 'present, sets the port, the home, the banner and the login over the build\'s', async ()=>{
 		const { environment, info, warn } = await load( new Response(JSON.stringify(demo), {status: 200, headers: {'Content-Type': 'application/json; charset=utf-8'}}) );
-		expect( environment.get('applicationServer') ).toEqual( {...build, port: null} );
+		expect( environment.get('applicationServer') ).toEqual( {...build, port: null, listenerPort: build.port} );//the build's port the hub's listener, the front's own
 		expect( environment.get('home') ).toBe( floor );
 		expect( environment.get('banner') ).toBe( demo.banner );
 		expect( environment.get('login') ).toBe( false );
@@ -88,6 +88,35 @@ describe( 'config.json', ()=>{
 		const home = await load( json({home: '/', applicationServer: {port: 8443}}) );//the empty path is no home for itself;  a port of the front's own is one
 		expect( home.environment.get('home') ).toBeUndefined();
 		expect( home.environment.get('applicationServer') ).toEqual( {...build, port: 8443} );
+	} );
+
+	it( 'takes no home that its login false closes', async ()=>{
+		for( const login of ['/login', '/login?next=/apps', '/login/'] ){
+			const { environment, warn } = await load( json({home: login, login: false}) );
+			expect( environment.get('home') ).toBeUndefined();
+			expect( environment.get('login') ).toBe( false );
+			expect( warn ).toHaveBeenCalledTimes( 1 );
+			vi.restoreAllMocks();
+		}
+		expect( (await load( json({home: '/login', login: true}) )).environment.get('home') ).toBe( '/login' );//a site that opens on its sign-in
+		expect( (await load( json({home: '/logins', login: false}) )).environment.get('home') ).toBe( '/logins' );
+	} );
+
+	it( 'is absent when it is not answered in time, the site waiting on it to start', async ()=>{
+		const timeout = EnvironmentService.timeoutMs;
+		EnvironmentService.timeoutMs = 10;
+		try{
+			const fetch = vi.fn( ( _:URL, init:RequestInit )=>new Promise<Response>( ( _resolve, reject )=>init.signal!.addEventListener( 'abort', ()=>reject(init.signal!.reason) ) ) );
+			vi.stubGlobal( 'fetch', fetch );
+			const info = silence( 'info' );
+			const environment = new EnvironmentService();
+			await environment.load();
+			expect( environment.get('applicationServer') ).toEqual( build );
+			expect( info ).toHaveBeenCalledTimes( 1 );
+		}
+		finally{
+			EnvironmentService.timeoutMs = timeout;
+		}
 	} );
 } );
 
@@ -120,9 +149,9 @@ describe( 'the site under a config.json', ()=>{
 
 	it( 'has no login page where login is false', async ()=>{
 		expect( await open( json(demo), '/login' ) ).toBe( floor );
-		TestBed.resetTestingModule();
+		TestBed.resetTestingModule();//a second build in the one test
 		expect( await open( json({login: false}), '/login' ) ).toBe( '/' );
-		TestBed.resetTestingModule();
+		TestBed.resetTestingModule();//and a third
 		expect( await open( json({login: true, home: floor}), '/login' ) ).toBe( '/login' );
 	} );
 

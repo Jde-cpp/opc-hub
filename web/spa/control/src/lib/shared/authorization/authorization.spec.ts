@@ -6,9 +6,8 @@ import { IENVIRONMENT } from '../../services/environment/environment';
 import { Authorization } from './authorization';
 import { routerStub, stable } from 'jde-spa/testing';
 
-//review3 L8: `gapi` is a `declare const` over Google's platform.js, which a Google sign-in loads.  A bare `gapi.auth2` is a
-//ReferenceError wherever that script has not loaded, and it sat between logout() and the navigate to /login - so the user
-//was logged out and left standing on the page they had just lost access to.
+//review3 L8:  the navigate to /login follows the logout for every provider, so the user is never left on the page they just
+//lost access to.  A Google user's sign-out reaches Google in the logout itself (jde-framework's GoogleAuthService.signOut, #484).
 describe( 'Authorization.onLogout', ()=>{
 	const create = ( provider:EProvider )=>{
 		const router = routerStub();
@@ -24,38 +23,10 @@ describe( 'Authorization.onLogout', ()=>{
 		return { authorization: TestBed.createComponent( Authorization ).componentInstance, navigate: router.navigate, logout };
 	};
 
-	afterEach( ()=>{ delete (globalThis as any).gapi; } );
-
-	it( 'still reaches /login when gapi never loaded', async ()=>{
-		expect( 'gapi' in globalThis ).toBe( false );//the whole point: the identifier is not merely undefined, it is absent
-		const { authorization, navigate, logout } = create( EProvider.Google );
+	it.each( [EProvider.Google, EProvider.OpcServer] )( 'logs out and reaches /login, signed in by provider %s', async provider=>{
+		const { authorization, navigate, logout } = create( provider );
 		await authorization.onLogout();
 		expect( logout ).toHaveBeenCalled();
-		expect( navigate ).toHaveBeenCalledWith( ['/login'] );
-	} );
-
-	it( 'still reaches /login when signOut rejects', async ()=>{
-		(globalThis as any).gapi = { auth2: {getAuthInstance: ()=>({signOut: ()=>Promise.reject(new Error("popup closed"))})} };
-		const { authorization, navigate } = create( EProvider.Google );
-		await authorization.onLogout();
-		expect( navigate ).toHaveBeenCalledWith( ['/login'] );
-	} );
-
-	it( 'signs out of Google when the library is there', async ()=>{
-		const signOut = vi.fn().mockResolvedValue( undefined );
-		(globalThis as any).gapi = { auth2: {getAuthInstance: ()=>({signOut})} };
-		const { authorization, navigate } = create( EProvider.Google );
-		await authorization.onLogout();
-		expect( signOut ).toHaveBeenCalled();
-		expect( navigate ).toHaveBeenCalledWith( ['/login'] );
-	} );
-
-	it( 'does not touch Google for a non-Google login', async ()=>{
-		const signOut = vi.fn();
-		(globalThis as any).gapi = { auth2: {getAuthInstance: ()=>({signOut})} };
-		const { authorization, navigate } = create( EProvider.OpcServer );
-		await authorization.onLogout();
-		expect( signOut ).not.toHaveBeenCalled();
 		expect( navigate ).toHaveBeenCalledWith( ['/login'] );
 	} );
 } );

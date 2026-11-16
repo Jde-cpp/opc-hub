@@ -4,10 +4,10 @@ declare const google: any;
 
 export const googleClientIdKey = 'googleAuthClientId';
 export const googleLoginHintKey = 'googleLoginHint';
-//Google's sign-in library and the platform library the navbar's sign-out reads `gapi` from.  No page carries them:  index.html
-//did, so every page of every site asked Google for both, one whose server offers no Google sign-in included.
+export const googleSignedOutKey = 'googleSignedOut';//a sign-out the sign-in library has yet to hear of (signOut)
+//Google's sign-in library.  No page carries it:  index.html did, with the platform library beside it, which nothing used, so
+//every page of every site asked Google for both, one whose server offers no Google sign-in included.
 export const googleSignInScript = 'https://accounts.google.com/gsi/client';
-export const googlePlatformScript = 'https://apis.google.com/js/platform.js';
 
 //Owns the Google Identity Services machinery (initialize/renderButton/prompt) so a silent prompt() can run from any
 //page, not just /login (reviews/todo.md §7). The login page wires `credentialHandler` for interactive sign-ins;
@@ -21,13 +21,12 @@ export class GoogleAuthService{
 	//the sign-in library has loaded:  false until initialize, which injects it, has seen it load.
 	get available():boolean{ return this.#loaded && typeof google!="undefined" && !!google; }
 
-	//Injects Google's scripts the first time it is given a client id, which only a server that offers the sign-in reports, and
-	//sets the library up once they have loaded.  Rejects where the sign-in library does not load;  the platform library is the
-	//sign-out's best effort, and a sign-in does not wait on its failure.
+	//Injects Google's sign-in library the first time it is given a client id, which only a server that offers the sign-in reports,
+	//and sets it up once it has loaded.  Rejects where it does not load, and the next call injects it again.
 	async initialize( clientId:string ):Promise<void>{
 		if( !clientId )
 			throw new Error( "no google client id" );
-		await ( this.#scripts ??= this.#load() );
+		await ( this.#scripts ??= this.#load().catch( e=>{ this.#scripts = undefined; throw e; } ) );
 		if( !this.available )
 			throw new Error( "google not defined" );
 		localStorage.setItem( googleClientIdKey, clientId );//the silent-renewal path needs it on page loads that never visit /login
@@ -43,6 +42,20 @@ export class GoogleAuthService{
 			login_hint: localStorage.getItem( googleLoginHintKey )
 		});
 		this.#initializedClientId = clientId;
+		if( localStorage.getItem(googleSignedOutKey) ){
+			localStorage.removeItem( googleSignedOutKey );
+			google.accounts.id.disableAutoSelect();
+		}
+	}
+
+	//A Google user's sign-out.  /login's prompt runs with auto_select, so the library would sign them straight back in until told
+	//not to:  disableAutoSelect, which it keeps in Google's own cookie.  Where it has not loaded on this page, a session signed in
+	//on an earlier load, the next initialize tells it, before any prompt.
+	signOut():void{
+		if( this.available )
+			google.accounts.id.disableAutoSelect();
+		else
+			localStorage.setItem( googleSignedOutKey, "true" );
 	}
 
 	renderButton( parent:HTMLElement|null, options:object={theme:"outline", size:"large"} ):void{
@@ -67,7 +80,6 @@ export class GoogleAuthService{
 		} );
 	}
 	async #load():Promise<void>{
-		this.loadScript( googlePlatformScript ).catch( e=>console.warn( "The Google sign-out will not reach Google.", e ) );
 		await this.loadScript( googleSignInScript );
 		this.#loaded = true;
 	}
