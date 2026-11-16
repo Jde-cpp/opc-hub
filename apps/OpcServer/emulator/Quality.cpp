@@ -100,7 +100,7 @@ namespace Jde::Opc::Emulator{
 	}
 	α TagQuality::Anchor( Duration drift, const Device& device )ι->void{
 		for( auto& window : _windows )
-			window.Anchor( drift, device, _engine );
+			window.Anchor( drift, device );
 	}
 	α TagQuality::Apply( const Device& device, double raw, double& value )ι->UA_StatusCode{
 		Advance( device );

@@ -58,6 +58,14 @@ namespace Jde::Opc::Emulator{
 		Begin = start.value_or( every ? Every : Duration::zero() );
 		End = Begin+Length;
 	}
+	//An `at` window's Begin:  the one under way at the device's clock, else the next.
+	Ω nextAt( const Recurrence& r, const Device& device )ι->Duration{
+		let now = device.Start+device.Clock;
+		for( auto day = floor<days>( device.Zone->to_local(now) )-days{ 1 }; ; day += days{ 1 } ){//from yesterday's, which may still run.
+			if( let begin = device.Zone->to_sys(day+r.At, choose::earliest); begin+r.Length>now )
+				return begin-device.Start;
+		}
+	}
 	α Recurrence::Advance( const Device& device, std::mt19937_64& engine )ι->void{
 		if( Shape==EShape::Once ){
 			Begin = End = Duration::max();
@@ -69,22 +77,17 @@ namespace Jde::Opc::Emulator{
 			Begin = End+duration_cast<Duration>( duration<double>{absl::Exponential<double>(engine, 1/toSeconds(Mean))} );
 			Length = Duration{ absl::Uniform<Duration::rep>(absl::IntervalClosed, engine, Min.count(), Max.count()) };
 		}
-		else{
-			let now = device.Start+device.Clock;
-			for( auto day = floor<days>( device.Zone->to_local(now) )-days{ 1 }; ; day += days{ 1 } ){//from yesterday's, which may still run.
-				if( let begin = device.Zone->to_sys(day+At, choose::earliest); begin+Length>now ){
-					Begin = begin-device.Start;
-					break;
-				}
-			}
-		}
+		else
+			Begin = nextAt( *this, device );
 		End = Begin+Length;
 	}
-	α Recurrence::Anchor( Duration drift, const Device& device, std::mt19937_64& engine )ι->void{
+	α Recurrence::Anchor( Duration drift, const Device& device )ι->void{
 		if( Shape!=EShape::At )
 			return;
 		Begin -= drift; End -= drift;
-		if( device.Clock>=End )//the pause ran past it:  on to the next, as Sample would have.
-			Advance( device, engine );
+		if( device.Clock>=End ){//the pause ran past it:  on to the next, as Sample would have.
+			Begin = nextAt( *this, device );
+			End = Begin+Length;
+		}
 	}
 }

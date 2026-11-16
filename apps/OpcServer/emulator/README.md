@@ -74,7 +74,7 @@ of that kind.  See *Tightening station* below.
 
 | | value |
 |---|---|
-| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 102 units, no database or server) |
+| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 105 units, no database or server) |
 | settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes; [`Opc.PlcEmulator.Install.jsonnet`](config/Opc.PlcEmulator.Install.jsonnet) installed, the demo PLCs' base, alone the pumps on a dev box with `-include=args/dev`; `config/demo/` the demo's five PLCs, *Demo* below) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url; the tightening station's Open Protocol on loopback 4545 (`tightening.address`) |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
@@ -273,7 +273,7 @@ overrides that beat them.
 | `pubsub` | | the contract - `import` the shared file, never a copy |
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
 | `namespace` | | the device paths' default namespace; absent = the contract's (`pubsub.dataSet.namespace`), so the write and server transports need no `pubsub` block |
-| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `seed` (the random stops' and slow periods' engine; absent = from the start time), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, for `follow` `follows` (none), and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)), `stops[]` (`for` from `start` (0) once, `start`, `every` and `for`, `mean`, `min` and `max`, or `at` and `for`, each with `code` (0)) and `slow[]` (the stops' shapes, each with `factor`, over 1) |
+| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `seed` (the random stops', slow periods' and quality windows' draws; absent = from the start time), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, for `follow` `follows` (none), and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)), `stops[]` (`for` from `start` (0) once, `start`, `every` and `for`, `mean`, `min` and `max`, or `at` and `for`, each with `code` (0)) and `slow[]` (the stops' shapes, each with `factor`, over 1) |
 | `tightening` | | the tightening station; absent = none |
 | `tightening.port` / `tightening.address` | | its Open Protocol port (4545) and the interface it listens on (absent = loopback, `""` = every interface) |
 | `tightening.cycle` / `tightening.jitter` / `tightening.reject` | | `production`'s: a rundown every `cycle` (`PT1S`), give or take `jitter` (none), a `reject` share of them NOK (0) |
@@ -287,7 +287,7 @@ for `randomWalk`/`counter`, and for `production` a `cycle` that is not positive,
 `reject` outside 0 to 1, at startup, naming the tag.  A `follows` is refused on a mode other than `follow`, beside a
 `ratedRpm`, which it would drop, and where it names no `production` tag of its device.
 
-A stop or a slow period is refused with no shape or with two, with a key of another shape's, a `factor` on a stop and
+A stop or a slow period is refused with two shapes, with a key of another shape's, a `factor` on a stop and
 a `code` on a slow period among them, with a `for` that is not positive or not shorter than its `every`, or than 23
 hours beside an `at`, with a `mean` or a `min` that is not positive, with a `max` below its `min`, and with an `at`
 that is not a time of day.  A slow period is refused with a `factor` that is not over 1, and on a device with no
@@ -355,7 +355,7 @@ Per tag, beside `mode` (not on a `command` tag - the emulator never writes one):
 | key | meaning |
 |---|---|
 | `sensorMin` / `sensorMax` | the transmitter's range.  A generated value outside it is published pinned at the range as `UncertainEngineeringUnitsExceeded` with LimitBits Low/High.  Not on a bool. |
-| `quality[]` | scheduled faults, each a window in the stops' shapes (*Devices* above) on the device's clock: `{start, for}` once, `{start, every, for}`, `{mean, min, max}` - drawn from an engine of the tag's own, seeded from the device's `seed` and the tag's place in `tags[]`, so the stops stay where they were - or `{at, for}` in the emulator's `zone`.  The **first active** window wins, outside them the sensor range decides, else Good.  A fault that stays is a one-shot with a long `for`. |
+| `quality[]` | scheduled faults, each a window in the stops' shapes (*Devices* above) on the device's clock: `{start, for}` once, `{start, every, for}`, `{mean, min, max}` - drawn from an engine of the tag's own, seeded from the device's `seed` and the tag's place in `tags[]`, so the stops stay where they were - or `{at, for}` in the emulator's `zone`.  The **first active** window wins, outside them the sensor range decides, else Good.  A fault that stays is a one-shot with a long `for`.  A reading is published once a period, so a window, or the run between two, that isn't longer than the period is warned of at startup, as a stop is. |
 | `quality[].status` | a name below, or any code by number (`"0x80340000"`, or the JSON number) - the rest of Table 178 |
 | `quality[].hold` | publish the last reading from before the window - a blind sensor.  Default `true` for Bad and the two `…LastUsableValue` codes, else `false`.  The generator advances either way, so the reading jumps when the window closes. |
 | `quality[].limit` | `none` \| `low` \| `high` \| `constant`; absent = the sensor range's limit, if pinned |

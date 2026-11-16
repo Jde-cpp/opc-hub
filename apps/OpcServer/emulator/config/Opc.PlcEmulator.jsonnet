@@ -97,7 +97,7 @@ local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 			log:: false //every frame in and out at Trace under the openProtocol tag, which /logging/spd/tags must set to Trace
 		},
 		period: "PT1S",
-		zone:: "UTC", //the IANA zone a stop's or slow period's `at` is a time of day in
+		zone:: "UTC", //the IANA zone a stop's, slow period's or quality window's `at` is a time of day in
 		statusPeriod: "PT1M",
 		reconnectMin: "PT1S",
 		reconnectMax: "PT30S",
@@ -119,7 +119,7 @@ local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 		//on:  so each minute has one stop of fifteen seconds with no code and one of twenty-five, coded from its sixteenth second.
 		//The demo's shapes (docs/demo/spec.md *Production*), which the pumps leave out:  a stop is also {mean, min, max, code}, after a gap
 		//drawn about `mean` for a length drawn from `min` to `max`, or {at, for, code}, at a time of day in `zone`, its `code` 0 where
-		//left out;  a device's `slow` list has the three shapes with a `factor`, the cycle that many times as long with `status` on;
+		//left out;  a device's `slow` list has the stops' shapes with a `factor`, the cycle that many times as long with `status` on;
 		//a device's `seed` repeats its random stops in every run;  and a follow tag's `follows` names the production tag whose pace it
 		//lags towards, in units a minute, where `ratedRpm` would be.
 		devices:[

@@ -29,7 +29,7 @@ namespace Jde::Opc::Emulator{
 		α Advance( const Device& device, std::mt19937_64& engine )ι->void;
 		//An `at` window keeps to the wall clock:  moved by `drift`, what Device::Anchor moved Start by, and on to the next once
 		//the clock is past it.  The other shapes keep the device clock.
-		α Anchor( Duration drift, const Device& device, std::mt19937_64& engine )ι->void;
+		α Anchor( Duration drift, const Device& device )ι->void;
 		α Shortest()Ι->Duration{ return Shape==EShape::Random ? Min : Length; }
 		//The run between two windows:  the shortest an {every} or {at} entry has, a random entry's mean - its gaps are exponential;
 		//none after a one-shot.

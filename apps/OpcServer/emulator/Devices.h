@@ -47,6 +47,9 @@ namespace Jde::Opc::Emulator{
 		//is cut at each stop's and slow period's start and end, so each holds for its length whatever the period;  a counter
 		//and a random walk, which step once a period, are sampled once, after the pieces.
 		α Sample( Duration dt )ι->void;
+		//Each stop and slow period at its End on to the next, from Engine in the lists' order:  a seed draws the same windows whatever
+		//the periods.  The tags' quality windows move on in their Apply.
+		α Advance()ι->void;
 		//Moves Start so that Start+Clock is `wall`, and each {at, for} window with it, the tags' quality windows' too:  their
 		//times of day are the wall clock's, which runs on through a pause the steady clock misses (a suspend, a VM paused).  The
 		//other shapes keep the device clock.
@@ -70,7 +73,7 @@ namespace Jde::Opc::Emulator{
 	//null where it is left out:  UTC, looked up only for a device with an {at, for} window, a stop's, a slow period's or a tag's
 	//quality, so a host without the tz database runs the rest.  `start` is the wall time of each device's Clock 0.  Throws on an empty list, a device without tags, any
 	//TagSpec refusal (#9), two tags of one name, a `follows` that names no production tag of its device, a stop or slow period
-	//of no shape or two or with another shape's key, stops on a device whose `status` is not generated, slow periods on one
+	//of two shapes or with another shape's key, stops on a device whose `status` is not generated, slow periods on one
 	//with no production tag, and a command tag beside a generated `status`, which would command nothing.  Owner and the
 	//`status` and `reasonCode` generators point into the vector, which never grows after.
 	α ParseDevices( const jarray& devices, const FindField& findField, const std::chrono::time_zone* zone, TimePoint start, SRCE )ε->vector<Device>;

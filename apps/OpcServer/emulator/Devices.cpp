@@ -31,19 +31,18 @@ namespace Jde::Opc::Emulator{
 		const Device& _device;
 	};
 
+	α Device::Advance()ι->void{
+		for( auto& stop : Stops ){
+			if( Clock>=stop.End )
+				stop.Advance( *this, Engine );
+		}
+		for( auto& slow : Slows ){
+			if( Clock>=slow.End )
+				slow.Advance( *this, Engine );
+		}
+	}
 	α Device::Sample( Duration dt )ι->void{
 		let active = [this]( let& entries ){ return std::ranges::find_if( entries, [this](let& x){ return x.IsActive(Clock); } ); };
-		//At its End, in the lists' order:  a seed draws the same windows whatever the periods.
-		let advance = [this]{
-			for( auto& stop : Stops ){
-				if( Clock>=stop.End )
-					stop.Advance( *this, Engine );
-			}
-			for( auto& slow : Slows ){
-				if( Clock>=slow.End )
-					slow.Advance( *this, Engine );
-			}
-		};
 		let period = dt;
 		double rate{};
 		do{
@@ -57,7 +56,7 @@ namespace Jde::Opc::Emulator{
 			rate = commanded && active( Stops )==Stops.end() ? 1/( slow==Slows.end() ? 1 : slow->Factor ) : 0;//through the piece, which no edge cuts.
 			Clock += piece;
 			dt -= piece;
-			advance();
+			Advance();
 			let coded = std::ranges::find_if( Stops, [this](let& x){ return x.Code && x.IsActive(Clock); } );//an uncoded stop never hides a coded one's reason.
 			Code = coded==Stops.end() ? 0 : coded->Code;
 			On = commanded && active( Stops )==Stops.end();//at the piece's end:  what `status` publishes.
@@ -75,9 +74,9 @@ namespace Jde::Opc::Emulator{
 		let drift = wall-( Start+Clock );
 		Start += drift;
 		for( auto& stop : Stops )
-			stop.Anchor( drift, *this, Engine );
+			stop.Anchor( drift, *this );
 		for( auto& slow : Slows )
-			slow.Anchor( drift, *this, Engine );
+			slow.Anchor( drift, *this );
 		for( auto& tag : Tags )
 			tag.Quality.Anchor( drift, *this );
 	}
@@ -140,7 +139,7 @@ namespace Jde::Opc{
 			THROW_IFSL( device.Tags.empty(), "Device '{}' has no tags.", device.Path );
 			let generated = device.StatusTag && device.Tags[*device.StatusTag].Generator;
 			if( let stops = o.if_contains("stops"); stops ){
-				THROW_IFSL( !stops->is_array(), "Device '{}': stops must be an array of {{every, for, code}}, {{mean, min, max, code}} or {{at, for, code}}.", device.Path );
+				THROW_IFSL( !stops->is_array(), "Device '{}': stops must be an array of {{start, for, code}} once, {{start, every, for, code}}, {{mean, min, max, code}} or {{at, for, code}}.", device.Path );
 				for( let& stop : stops->get_array() )
 					device.Stops.emplace_back( Json::AsObject(stop, sl), device.Path, sl );
 			}
@@ -156,16 +155,9 @@ namespace Jde::Opc{
 			};
 			if( any(Recurrence::EShape::At) )
 				device.Zone = zone ? zone : &Chrono::ToTimeZone( "UTC", "/emulator/zone, UTC where left out,", sl );
-			//Each random or `at` window to its first, in the lists' order, as Sample moves them on;  an {every} or one-shot one is
-			//placed already, and left there.
-			for( auto& stop : device.Stops ){
-				if( device.Clock>=stop.End )
-					stop.Advance( device, device.Engine );
-			}
-			for( auto& slow : device.Slows ){
-				if( device.Clock>=slow.End )
-					slow.Advance( device, device.Engine );
-			}
+			//Each random or `at` window to its first, as Sample moves them on;  an {every} or one-shot one is placed already, and
+			//left there.
+			device.Advance();
 			for( auto& tag : device.Tags )
 				tag.Quality.Advance( device );
 			if( !seed && any(Recurrence::EShape::Random) )

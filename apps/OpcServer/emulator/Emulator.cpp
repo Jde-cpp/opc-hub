@@ -106,6 +106,13 @@ namespace Jde::Opc::Emulator{
 				if( stop.Shortest()<=_period || (gap && *gap<=_period) )
 					WARN( "[{}]a stop of {}{} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop or the run after it - the counts still hold to it.", device.Name, Chrono::ToString(stop.Shortest()), gap ? Ƒ(" with {} of {}", stop.Shape==Recurrence::EShape::Random ? "a mean run" : "a run", Chrono::ToString(*gap)) : string{}, Chrono::ToString(_period) );
 			}
+			for( let& tag : device.Tags ){
+				for( let& window : tag.Spec.Quality ){
+					let gap = window.Gap();
+					if( window.Shortest()<=_period || (gap && *gap<=_period) )
+						WARN( "[{}]{}'s quality {} of {}{} beside a period of {}:  a reading is published once a period, so the window or the run after it may pass unpublished.", device.Name, tag.Spec.Name, ToString(window.Status), Chrono::ToString(window.Shortest()), gap ? Ƒ(" with {} of {}", window.Shape==Recurrence::EShape::Random ? "a mean run" : "a run", Chrono::ToString(*gap)) : string{}, Chrono::ToString(_period) );
+				}
+			}
 		}
 		if( _transport==ETransport::Server ){
 			//Every tag is a node of the PLC's own server, resolved once - the address space is this process's - and a generated one
