@@ -1,5 +1,5 @@
 import { provideHttpClient } from "@angular/common/http";
-import { ApplicationConfig } from '@angular/core';
+import { ApplicationConfig, inject, provideAppInitializer } from '@angular/core';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { MAT_NATIVE_DATE_FORMATS, MatDateFormats, provideNativeDateAdapter } from '@angular/material/core';
 import { PreloadAllModules, provideRouter, TitleStrategy, withNavigationErrorHandler, withPreloading } from '@angular/router';
@@ -46,6 +46,9 @@ export const appConfig: ApplicationConfig = {
 		{provide: IAUTH, useClass: OpcAuthService},
 		{provide: AUTH_STORE, useClass: AuthStore},
 		{provide: IENVIRONMENT, useClass: EnvironmentService},
+		//config.json beside the page, over the build's environment, read before the first service is made:  AppService takes its
+		//port in its constructor and the empty path its redirect.
+		provideAppInitializer( ()=>(inject( IENVIRONMENT ) as EnvironmentService).load() ),
 		{provide: GATEWAY_SERVICE, useExisting: GatewayService},//useExisting, not useClass:  useClass is a construction recipe, so each token would build its own GatewayService (and its own sockets/queries)
 		{provide: OPC_STORE, useExisting: OpcStore},//string-token writers (GatewayService, NodeResolver, NodeRoute) and class-token readers (ClientResolver) must share one store
 		{provide: NODE_LINK_RESOLVER, useExisting: OpcNodeLinkResolver},//jde-access's Effective rights tab links a node-scoped resource to its node page; only jde-opc can place a node

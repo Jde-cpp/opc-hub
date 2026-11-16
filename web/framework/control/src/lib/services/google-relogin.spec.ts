@@ -4,9 +4,9 @@ import { TestBed } from '@angular/core/testing';
 import { HttpClient, HttpHeaders, HttpResponse } from '@angular/common/http';
 import { of, throwError } from 'rxjs';
 import { AuthStore } from './auth-store';
-import { GoogleAuthService, googleClientIdKey } from './google-auth-service';
+import { GoogleAuthService, googleClientIdKey, googleSignedOutKey, googleSignInScript } from './google-auth-service';
 import { EProvider, User, UserJson } from 'jde-spa';
-import { fakeJwt, flush } from 'jde-spa/testing';
+import { fakeJwt, flush, silence } from 'jde-spa/testing';
 import { TestProtoService } from 'jde-framework/testing';
 
 const makeJwt = ( email:string )=>fakeJwt( {email, name:'Test User', picture:'p', exp:4102444800, iss:'https://accounts.google.com'} );
@@ -25,6 +25,117 @@ class TestService extends TestProtoService{
 }
 
 const the401 = ()=>throwError( ()=>({status:401, error:'session expired', url:'http://apphost:1/x'}) );
+//Google's scripts as loaded:  jsdom fetches none, so a script element would never settle.
+class LoadedGoogleAuth extends GoogleAuthService{
+	protected override loadScript():Promise<void>{ return Promise.resolve(); }
+}
+
+//#484:  index.html carried Google's two scripts, so every page asked Google for them, a site with no Google sign-in included.
+//initialize injects the sign-in library, once while it loads or has loaded, and `available` waits on its load.  The platform
+//library is gone:  nothing used it.
+describe( 'GoogleAuthService scripts', ()=>{
+	const create = ()=>{
+		const gis = { initialize: vi.fn(), prompt: vi.fn(), renderButton: vi.fn(), disableAutoSelect: vi.fn() };
+		const scripts = ()=>[...document.head.querySelectorAll<HTMLScriptElement>( 'script' )].filter( s=>s.src==googleSignInScript );
+		//the latest injected settles, and the library defines its global as it loads
+		const settle = ( event:'load'|'error' )=>{
+			if( event=='load' )
+				vi.stubGlobal( 'google', { accounts:{ id:gis } } );
+			scripts().at( -1 )!.dispatchEvent( new Event(event) );
+		};
+		return { service: new GoogleAuthService(), gis, scripts, settle };
+	};
+	beforeEach( ()=>localStorage.clear() );
+	afterEach( ()=>{
+		vi.unstubAllGlobals();
+		document.head.querySelectorAll( 'script' ).forEach( s=>s.remove() );
+	});
+
+	it( 'asks Google for nothing until a client id arrives', async ()=>{
+		const { service, scripts } = create();
+		expect( service.available ).toBe( false );
+		await expect( service.renewCredential() ).resolves.toBeNull();//no client id stored
+		await expect( service.initialize('') ).rejects.toThrow( 'no google client id' );
+		expect( scripts() ).toEqual( [] );
+	});
+
+	it( 'injects the sign-in library once, and is available when it has loaded', async ()=>{
+		const { service, gis, scripts, settle } = create();
+		const first = service.initialize( 'client-id' );
+		const second = service.initialize( 'client-id' );
+		expect( scripts().map(s=>s.src) ).toEqual( [googleSignInScript] );
+		expect( scripts().every(s=>s.async) ).toBe( true );
+		expect( service.available ).toBe( false );
+		expect( gis.initialize ).not.toHaveBeenCalled();
+
+		settle( 'load' );
+		await Promise.all( [first, second] );
+		expect( service.available ).toBe( true );
+		expect( gis.initialize ).toHaveBeenCalledTimes( 1 );
+		expect( gis.initialize.mock.lastCall![0].client_id ).toBe( 'client-id' );
+		expect( localStorage.getItem(googleClientIdKey) ).toBe( 'client-id' );
+
+		await service.initialize( 'client-id' );
+		expect( gis.initialize ).toHaveBeenCalledTimes( 1 );
+		expect( scripts() ).toHaveLength( 1 );
+	});
+
+	it( 'rejects, unavailable, when the sign-in library does not load, and injects it again at the next call', async ()=>{
+		const { service, gis, scripts, settle } = create();
+		const initialized = service.initialize( 'client-id' );
+		settle( 'error' );
+		await expect( initialized ).rejects.toThrow( 'did not load' );
+		expect( service.available ).toBe( false );
+		expect( gis.initialize ).not.toHaveBeenCalled();
+		expect( ()=>service.renderButton(null) ).toThrow( 'google not defined' );
+
+		const again = service.initialize( 'client-id' );
+		expect( scripts() ).toHaveLength( 2 );
+		settle( 'load' );
+		await expect( again ).resolves.toBeUndefined();
+		expect( service.available ).toBe( true );
+		expect( gis.initialize ).toHaveBeenCalledTimes( 1 );
+	});
+
+	//auto_select on /login's prompt signs a returning user straight back in until the library hears of the sign-out.
+	it( 'tells a loaded library of a sign-out', async ()=>{
+		const { service, gis, settle } = create();
+		const initialized = service.initialize( 'client-id' );
+		settle( 'load' );
+		await initialized;
+		service.signOut();
+		expect( gis.disableAutoSelect ).toHaveBeenCalledTimes( 1 );
+		expect( localStorage.getItem(googleSignedOutKey) ).toBeNull();
+	});
+
+	it( 'tells the library of a sign-out from a page that never loaded it, once it loads', async ()=>{
+		const { service, gis, scripts, settle } = create();
+		service.signOut();
+		expect( scripts() ).toEqual( [] );
+		expect( localStorage.getItem(googleSignedOutKey) ).not.toBeNull();
+
+		const initialized = service.initialize( 'client-id' );
+		settle( 'load' );
+		await initialized;
+		expect( gis.disableAutoSelect ).toHaveBeenCalledTimes( 1 );
+		expect( gis.initialize.mock.invocationCallOrder[0] ).toBeLessThan( gis.disableAutoSelect.mock.invocationCallOrder[0] );
+		expect( localStorage.getItem(googleSignedOutKey) ).toBeNull();
+		await service.initialize( 'client-id' );
+		expect( gis.disableAutoSelect ).toHaveBeenCalledTimes( 1 );
+	});
+
+	it( 'a renewal with a stored client id loads them, and resolves null when they fail', async ()=>{
+		const { service, gis, scripts, settle } = create();
+		localStorage.setItem( googleClientIdKey, 'client-id' );
+		const warn = silence();
+		const renewal = service.renewCredential();
+		expect( scripts() ).toHaveLength( 1 );
+		settle( 'error' );
+		await expect( renewal ).resolves.toBeNull();
+		expect( gis.prompt ).not.toHaveBeenCalled();
+		warn.mockRestore();
+	});
+});
 
 describe( 'GoogleAuthService.renewCredential', ()=>{
 	//credential and moment:  what GIS calls back with a credential, and with a prompt's outcome - the latest callbacks it was given
@@ -32,7 +143,7 @@ describe( 'GoogleAuthService.renewCredential', ()=>{
 		const gis = { initialize: vi.fn(), prompt: vi.fn(), renderButton: vi.fn() };
 		vi.stubGlobal( 'google', { accounts:{ id:gis } } );
 		return {
-			service: new GoogleAuthService(),
+			service: new LoadedGoogleAuth(),
 			gis,
 			credential: ( r:any )=>gis.initialize.mock.lastCall![0].callback( r ),
 			moment: ( m:any )=>gis.prompt.mock.lastCall![0]( m )
@@ -47,6 +158,7 @@ describe( 'GoogleAuthService.renewCredential', ()=>{
 	it( 'resolves the credential the prompt produces', async ()=>{
 		const { service, gis, credential } = create();
 		const p = service.renewCredential();
+		await flush();//the scripts' load
 		expect( gis.prompt ).toHaveBeenCalledTimes( 1 );
 		credential( {credential:'tok'} );
 		await expect( p ).resolves.toBe( 'tok' );
@@ -57,12 +169,14 @@ describe( 'GoogleAuthService.renewCredential', ()=>{
 		const p1 = service.renewCredential();
 		const p2 = service.renewCredential();
 		expect( p2 ).toBe( p1 );
+		await flush();
 		expect( gis.prompt ).toHaveBeenCalledTimes( 1 );
 		credential( {credential:'tok'} );
 		await expect( p2 ).resolves.toBe( 'tok' );
 		//settled - the next renewal starts a fresh prompt
 		const p3 = service.renewCredential();
 		expect( p3 ).not.toBe( p1 );
+		await flush();
 		expect( gis.prompt ).toHaveBeenCalledTimes( 2 );
 		credential( {credential:'tok2'} );
 		await expect( p3 ).resolves.toBe( 'tok2' );
@@ -71,6 +185,7 @@ describe( 'GoogleAuthService.renewCredential', ()=>{
 	it( 'a skipped moment is a normal null outcome, not an error', async ()=>{
 		const { service, moment } = create();
 		const p = service.renewCredential();
+		await flush();
 		moment( {isSkippedMoment:()=>true} );
 		await expect( p ).resolves.toBeNull();
 	});
@@ -78,11 +193,13 @@ describe( 'GoogleAuthService.renewCredential', ()=>{
 	it( 'a dismissal resolves null - except credential_returned, which precedes the credential callback', async ()=>{
 		const { service, credential, moment } = create();
 		const p = service.renewCredential();
+		await flush();
 		moment( {isSkippedMoment:()=>false, isDismissedMoment:()=>true, getDismissedReason:()=>'credential_returned'} );
 		credential( {credential:'tok'} );//the dismissal must not have settled null first
 		await expect( p ).resolves.toBe( 'tok' );
 
 		const p2 = service.renewCredential();
+		await flush();
 		moment( {isSkippedMoment:()=>false, isDismissedMoment:()=>true, getDismissedReason:()=>'cancel_called'} );
 		await expect( p2 ).resolves.toBeNull();
 	});
@@ -105,11 +222,11 @@ describe( 'GoogleAuthService.renewCredential', ()=>{
 		finally{ vi.useRealTimers(); }
 	});
 
-	it( 'a credential with no pending renewal dispatches to the interactive handler', ()=>{
+	it( 'a credential with no pending renewal dispatches to the interactive handler', async ()=>{
 		const { service, credential } = create();
 		const handler = vi.fn();
 		service.credentialHandler = handler;
-		service.initialize( 'client-id' );
+		await service.initialize( 'client-id' );
 		credential( {credential:'tok'} );
 		expect( handler ).toHaveBeenCalledWith( 'tok' );
 	});

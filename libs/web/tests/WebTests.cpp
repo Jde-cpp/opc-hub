@@ -12,6 +12,7 @@
 #include <jde/app/proto/common.h>
 #include <jde/access/AccessException.h>
 #include <jde/web/server/Server.h>
+#include <jde/tests/Capture.h>
 #include <jde/tests/HttpTest.h>
 #include "jde/fwk/exceptions/Exception.h"
 #include "mocks/ServerMock.h"
@@ -315,6 +316,92 @@ namespace Jde::Web{
 		let bearer = ask( "Bearer ey.token.sig" );
 		EXPECT_FALSE( bearer.Json().at("active").as_bool() ) << serialize( bearer.Json() );
 		EXPECT_FALSE( HttpTest::Minted(bearer) ) << "a sign-in is /login's";
+	}
+	//#484:  behind a front every peer is the front, so a peer named in /http/trustedProxies is read by the last address of its
+	//X-Forwarded-For, the one the front appended, or past it where that is a listed front too:  the session is the visitor's, tied
+	//to that address and refused from another.  A peer outside the list is the caller itself, whatever the header says, and so is
+	//a listed one whose header does not parse.  A list that is none is a Warning, and so, once, is a loopback front with none.
+	TEST_F( WebTests, TrustedProxies ){
+		Logging::Capture warnings{ ELogLevel::Warning };
+		auto warned = [&]( sv text ){ return warnings.Find( [=]( const Logging::Entry& e ){ return e.Text().contains(text); } ).size(); };
+		auto trust = []( jvalue proxies ){ Settings::Set( "/http/trustedProxies", move(proxies) ); Server::ReadTrustedProxies(); };
+		auto ask = []( sv target, vector<string> forwardedFor, string authorization={} ){
+			http::request<http::string_body> req{ http::verb::get, target, 11 };
+			for( let& line : forwardedFor )
+				req.insert( "X-Forwarded-For", line );
+			if( authorization.size() )
+				req.set( http::field::authorization, authorization );
+			return RawConnection{}.Exchange( move(req) );
+		};
+		vector<SessionPK> sessions;
+		absl::Cleanup remove{ [&]{ for( let id : sessions ) Server::Sessions::Remove( id ); } };
+		auto minted = [&]( vector<string> forwardedFor )->string{//the address the server minted a caller's session for
+			let id = Str::TryTo<SessionPK,16>( string{ask("/Authorization", move(forwardedFor))[http::field::authorization]} );
+			let session = id ? Server::Sessions::Find( *id ) : nullptr;
+			if( !session )
+				return {};
+			sessions.push_back( *id );
+			return session->UserEndpoint;
+		};
+		let peer = minted( {} );
+		ASSERT_FALSE( peer.empty() );
+		EXPECT_EQ( minted({"203.0.113.7"}), peer ) << "no proxy is trusted, as shipped";
+		EXPECT_EQ( minted({"203.0.113.7"}), peer );
+		EXPECT_EQ( warned("lists none"), 1u ) << "a loopback front with none listed, once";
+
+		absl::Cleanup unset{ [&]{ trust( jvalue{} ); } };
+		trust( "192.0.2.1" );
+		EXPECT_EQ( warned("not a list of addresses"), 1u ) << "a key the overlay set to an address, not a list";
+		trust( jarray{"192.0.2.1"} );
+		EXPECT_EQ( minted({"203.0.113.7"}), peer ) << "the peer is not the front named";
+		EXPECT_EQ( warned("lists none"), 1u ) << "a front is listed";
+
+		trust( jarray{7, peer} );
+		EXPECT_EQ( warned("which is not an address"), 1u );
+		EXPECT_EQ( minted({"203.0.113.7"}), "203.0.113.7" ) << "the entry that is an address kept";
+
+		trust( jarray{"192.0.2.1", peer} );
+		EXPECT_EQ( minted({"203.0.113.7"}), "203.0.113.7" );
+		EXPECT_EQ( minted({"198.51.100.1, 203.0.113.8"}), "203.0.113.8" ) << "the caller wrote the first, the front appended the last";
+		EXPECT_EQ( minted({"198.51.100.1", "198.51.100.2,203.0.113.9"}), "203.0.113.9" ) << "two lines are one list";
+		EXPECT_EQ( minted({"2001:db8::7"}), "2001:db8::7" );
+		EXPECT_EQ( minted({}), peer ) << "no header";
+		EXPECT_EQ( minted({"203.0.113.7, unknown"}), peer ) << "a last address that is none";
+		EXPECT_EQ( minted({"203.0.113.7:4711"}), peer ) << "an address alone, no port";
+		EXPECT_EQ( minted({"203.0.113.40, 192.0.2.1"}), "203.0.113.40" ) << "a listed front before the front, read past";
+		EXPECT_EQ( minted({"203.0.113.41", "192.0.2.1"}), "203.0.113.41" ) << "read past over two lines";
+		EXPECT_EQ( minted({"192.0.2.1, "+peer}), "192.0.2.1" ) << "fronts alone:  the first";
+		EXPECT_EQ( minted({"unknown, 192.0.2.1"}), "192.0.2.1" ) << "the front after what does not parse";
+
+		let visitor = ask( "/Authorization", {"203.0.113.20"} );
+		let authorization = string{ visitor[http::field::authorization] };
+		let visitorId = Str::TryTo<SessionPK,16>( authorization );
+		ASSERT_TRUE( visitorId ) << visitor;
+		sessions.push_back( *visitorId );
+		EXPECT_EQ( ask("/timeout", {"203.0.113.20"}, authorization).result(), http::status::ok ) << "its own address";
+		EXPECT_EQ( ask("/timeout", {"198.51.100.1, 203.0.113.20"}, authorization).result(), http::status::ok );
+		EXPECT_EQ( ask("/timeout", {"203.0.113.21"}, authorization).result(), http::status::unauthorized ) << "another visitor's address";
+		EXPECT_EQ( ask("/timeout", {"203.0.113.21, 203.0.113.20"}, authorization).result(), http::status::ok ) << "a claim ahead of the front's is not read";
+		EXPECT_EQ( ask("/timeout", {}, authorization).result(), http::status::unauthorized ) << "the front's own address is not the visitor's";
+
+		auto socket = []( string forwardedFor )->string{//the address a socket's session is handed, the upgrade carrying the header
+			net::io_context ioc;
+			websocket::stream<beast::tcp_stream> ws{ ioc };
+			beast::get_lowest_layer( ws ).connect( tcp::resolver{ioc}.resolve(Host, std::to_string(Port)) );
+			ws.set_option( websocket::stream_base::decorator( [&]( websocket::request_type& req ){
+				if( forwardedFor.size() )
+					req.set( "X-Forwarded-For", forwardedFor );
+			} ) );
+			ws.handshake( Host, "/" );
+			auto endpoint = Mock::LastSocketEndpoint();
+			ws.async_close( websocket::close_code::normal, []( beast::error_code ){} );
+			ioc.run_for( 2s );
+			return endpoint;
+		};
+		EXPECT_EQ( socket("198.51.100.1, 203.0.113.30"), "203.0.113.30" );
+		EXPECT_EQ( socket({}), peer );
+		trust( jarray{"192.0.2.1"} );
+		EXPECT_EQ( socket("203.0.113.30"), peer ) << "the peer is not the front named";
 	}
 	//web-refactor B3: the server reads one request per connection, so a handled response must not advertise keep-alive - a
 	//browser would reuse a connection that is already closing.

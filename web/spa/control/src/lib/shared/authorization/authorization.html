@@ -19,13 +19,15 @@
 	}
 	@else if( guest() ){
 		<span class="name guest" title="Not signed in">Guest</span>
-		<ng-container [ngTemplateOutlet]="signIn"/>
+		@if( signIn ){
+			<ng-container [ngTemplateOutlet]="signInLink"/>
+		}
 	}
-	@else {
-		<ng-container [ngTemplateOutlet]="signIn"/>
+	@else if( signIn ){
+		<ng-container [ngTemplateOutlet]="signInLink"/>
 	}
 }
-<ng-template #signIn>
+<ng-template #signInLink>
 	<a matIconButton routerLink="login" routerLinkActive="docs-navbar-header-item-selected" aria-label="Sign in" matTooltip="Sign in">
 		<mat-icon routerLinkActive="selected">account_circle</mat-icon>
 	</a>

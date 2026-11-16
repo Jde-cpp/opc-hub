@@ -3,10 +3,10 @@ import { NgTemplateOutlet } from '@angular/common';
 import {Router, RouterLink, RouterLinkActive} from '@angular/router';
 import {MatButtonModule} from '@angular/material/button';
 import { EProvider, IAUTH, User } from '../../services/authorization/auth';
+import { IENVIRONMENT } from '../../services/environment/environment';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
-declare const gapi: any;
 @Component( {
 	selector: "authorization", templateUrl: "./authorization.html", styleUrls: ["./authorization.scss"],
 	imports: [MatButtonModule, MatIconModule, MatTooltipModule, NgTemplateOutlet, RouterLink, RouterLinkActive]} )
@@ -15,29 +15,9 @@ export class Authorization{
 	constructor(){
 		this.user = this.#authService.user;
 	}
-	async onLogout() {
-		const isGoogle = this.user()?.provider == EProvider.Google;//`?.`: the signal can already be empty, and a throw here skips the logout itself
+	async onLogout() {//a Google user's sign-out reaches Google in the logout itself (jde-framework's GoogleAuthService.signOut)
 		await this.#authService.logout();
-		if( isGoogle )
-			await this.#signOutGoogle();
 		this.router.navigate( ['/login'] );
-	}
-
-	//Best effort, and it must never strand the user on the page they just logged out of.  `gapi` is a `declare const` over
-	//index.html's `async defer` platform.js, so a bare `gapi.auth2` is a ReferenceError - not a falsy read - whenever that
-	//script has not loaded (offline, blocked, or simply not yet), and that skipped the navigate below it.  So did a
-	//signOut() that rejected.  The session is already dropped locally either way; this only clears Google's own state.
-	async #signOutGoogle():Promise<void>{
-		try{
-			const auth2 = typeof gapi!="undefined" && gapi.auth2 ? gapi.auth2.getAuthInstance() : undefined;
-			if( !auth2 )
-				return;
-			await auth2.signOut();
-			console.log( "User signed out." );
-		}
-		catch( e ){
-			console.warn( "Google sign-out failed; the local session is already dropped.", e );
-		}
 	}
 	providers = resource<EProvider[], {}>({
     loader: async () => {
@@ -55,8 +35,10 @@ export class Authorization{
 	router = inject(Router);
 	user:Signal<User | undefined>;
 	//A session nobody signed in to that the install's guest user stands behind (#483):  named Guest, with the sign-in link beside it as
-	//an anonymous session has it.  A page that offers no sign-in hides it with config.json's `login` (docs/demo/spec.md *The public origin*).
+	//an anonymous session has it.
 	guest = computed<boolean>( ()=>this.#authService.guest?.() ?? false );
+	//config.json's `login` false (docs/demo/spec.md *The public origin*):  a page that offers no sign-in shows no link to one.
+	signIn = inject( IENVIRONMENT, {optional: true} )?.get<boolean>( 'login' )!==false;
 	//Google's avatar host answers 429 to a localhost referrer under repeated loads;  one that fails shows the icon until the url changes.
 	#failedPicture = signal<string|undefined>( undefined );
 	picture = computed( ()=>{

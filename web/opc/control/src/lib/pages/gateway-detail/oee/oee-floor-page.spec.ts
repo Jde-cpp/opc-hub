@@ -44,6 +44,7 @@ const all:OeeFloorRights = { createFloor: true, updateFloor: true, createShape: 
 //default, or their refusal, and the floor read again.  `made` is a page navigated to from a floor's making.  `open` moves the
 //page to another floor, as the router does.
 const create = async ( {zone='America/New_York', rights=none, made=false}:{zone?:string; rights?:OeeFloorRights|Error; made?:boolean}={} )=>{
+	await import( './oee-floor-editor' );//loaded here, so the page's import of it is a known number of turns
 	const feeds = new Map<number,Feed<OeeLiveEvent,number>>();
 	const feed = ( id:number )=>feeds.get( id ) ?? feeds.set( id, new Feed<OeeLiveEvent,number>() ).get( id )!;
 	const gateway = { name: 'gw', slug: 'gw', feed, oeeSubscribe: vi.fn( ( machine:number )=>feed( machine ).open( machine ) ), oeeSubscribeLine: vi.fn( ( line:number )=>feed( -line ).open( -line ) ), querySingle: vi.fn( async ()=>({ name: 'Machine', nodeClass: 1, path: 'Objects/2~Machine' }) ) };

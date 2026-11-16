@@ -18,6 +18,7 @@ namespace Jde::Web::Mock{
 	//"could not ask".  The gateway must cache anonymous only for the first.
 	α FailingAppClient( EHttpStatus status )ι->sp<App::IApp>;
 	α Gzip( sv text )ι->string;
+	α LastSocketEndpoint()ι->string;//the address the listener handed the last socket session it accepted
 
 	struct RequestHandler final : IRequestHandler{
 		RequestHandler( jobject settings )ι: IRequestHandler{ settings, AppClient() }{}

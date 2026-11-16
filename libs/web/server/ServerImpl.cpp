@@ -19,7 +19,61 @@ namespace Server{
 	Τ Ω doEof( T& stream )ι->net::awaitable<void, executor_type>{ beast::error_code ec; stream.socket().shutdown( tcp::socket::shutdown_send, ec ); co_return; }
 	Τ Ω doEof( beast::ssl_stream<T>& stream )ι->net::awaitable<void, executor_type>{ co_await stream.async_shutdown(); }
 
-	Τ Ω runSession( T& stream, beast::flat_buffer& buffer, tcp::endpoint userEndpoint, bool isSsl, uint32 connectionIndex, IRequestHandler* reqHandler )ι->net::awaitable<void, executor_type>{
+	Ω plain( const net::ip::address& a )ι->net::ip::address{//a dual-stack listener reads 127.0.0.1 as ::ffff:127.0.0.1
+		return a.is_v6() && a.to_v6().is_v4_mapped() ? net::ip::address{ net::ip::make_address_v4(net::ip::v4_mapped, a.to_v6()) } : a;
+	}
+	absl::Mutex _proxiesMutex;
+	vector<net::ip::address> _proxies ABSL_GUARDED_BY(_proxiesMutex);//each plain:  /http/trustedProxies, as ReadTrustedProxies read it.
+	std::atomic_flag _unlistedFrontWarned;
+
+	//The caller a trusted front's X-Forwarded-For names, read from its end past each address that is a listed front too, a front
+	//before the front:  the first that is not, whatever the caller wrote ahead of it, or the first of a header of fronts alone.  An
+	//entry that does not parse stops the walk at the front after it;  the last one not parsing, there is none.  Repeated lines are
+	//one list (RFC 9110 §5.3), a field's lines adjacent in beast's list.
+	Ω forwardedCaller( auto line, auto end, const vector<net::ip::address>& proxies )ι->optional<net::ip::address>{
+		optional<net::ip::address> caller;
+		for( auto it = end; it!=line; ){
+			sv list = (--it)->value();
+			for( auto more = true; more; ){
+				let comma = list.rfind( ',' );
+				more = comma!=sv::npos;
+				beast::error_code ec;
+				let address = net::ip::make_address( Str::Trim(more ? list.substr(comma+1) : list), ec );
+				if( ec )
+					return caller;
+				caller = address;
+				if( find(proxies, plain(address))==proxies.end() )
+					return caller;
+				if( more )
+					list = list.substr( 0, comma );
+			}
+		}
+		return caller;
+	}
+	//The address a request came from.  Behind a front every peer is the front, which appends the caller's own address to
+	//X-Forwarded-For:  where the peer is one of /http/trustedProxies, the header names the caller (forwardedCaller).  A peer outside
+	//the list is the caller itself and the header its own claim, so it is not read;  no header, or none that parses, keeps the peer.
+	//The front's connection has a port, the caller's is not known.  A loopback peer forwarding with no front listed is a front the
+	//settings miss, so every caller would be the front:  a Warning, once.
+	Ω userEndpoint( const tcp::endpoint& peer, const TRequestType& request )ι->tcp::endpoint{
+		auto [line, end] = request.equal_range( "X-Forwarded-For" );
+		if( line==end )
+			return peer;
+		let peerAddress = plain( peer.address() );
+		optional<net::ip::address> caller;
+		bool noneListed;
+		{
+			rl _{ _proxiesMutex };
+			noneListed = _proxies.empty();
+			if( find(_proxies, peerAddress)!=_proxies.end() )
+				caller = forwardedCaller( line, end, _proxies );
+		}
+		if( noneListed && peerAddress.is_loopback() && !_unlistedFrontWarned.test_and_set() )
+			WARNT( ELogTags::App, "X-Forwarded-For came from {}, a front on this host, but /http/trustedProxies lists none, so every caller is taken for the front.  List the front there;  a key over a hidden one shows only with ':::'.", peerAddress.to_string() );
+		return caller ? tcp::endpoint{ *caller, 0 } : peer;
+	}
+
+	Τ Ω runSession( T& stream, beast::flat_buffer& buffer, tcp::endpoint peer, bool isSsl, uint32 connectionIndex, IRequestHandler* reqHandler )ι->net::awaitable<void, executor_type>{
 		optional<http::request_parser<http::string_body>> parser;// a new parser must be used for every message so we use an optional to reconstruct it every time.
 		parser.emplace();
 		parser->body_limit( BodyLimit() );
@@ -35,10 +89,12 @@ namespace Server{
 		for( auto cs = co_await net::this_coro::cancellation_state; cs.cancelled() == net::cancellation_type::none; cs = co_await net::this_coro::cancellation_state ){
 			if( websocket::is_upgrade(parser->get()) ){
 				beast::get_lowest_layer(stream).expires_never();// Disable the timeout. The websocket::stream uses its own timeout settings.
-				Internal::RunSocketSession( reqHandler->WebsocketSession(ms<RestStream<T>>(move(stream)), move(buffer), parser->release(), userEndpoint, connectionIndex), reqHandler );
+				auto user = userEndpoint( peer, parser->get() );
+				Internal::RunSocketSession( reqHandler->WebsocketSession(ms<RestStream<T>>(move(stream)), move(buffer), parser->release(), move(user), connectionIndex), reqHandler );
 				co_return;
 			}
-			HttpRequest req{ parser->release(), move(userEndpoint), isSsl, connectionIndex };
+			auto user = userEndpoint( peer, parser->get() );
+			HttpRequest req{ parser->release(), move(user), isSsl, connectionIndex };
 			optional<http::message_generator> res;
 			if( req.Method() == http::verb::options )
 				res = SendOptions( move(req) );
@@ -80,7 +136,7 @@ namespace Server{
 		}
 	}
 
-	Ω detectSession( StreamType stream, tcp::endpoint userEndpoint, Server::IRequestHandler* handler )ι->net::awaitable<void, executor_type>{
+	Ω detectSession( StreamType stream, tcp::endpoint peer, Server::IRequestHandler* handler )ι->net::awaitable<void, executor_type>{
 		beast::flat_buffer buffer;
 		stream.expires_after( std::chrono::seconds(30) );// Set the timeout.
 		auto [ec, isSsl] = co_await beast::async_detect_ssl( stream, buffer );// on_run
@@ -98,10 +154,10 @@ namespace Server{
 			}
 
 			buffer.consume( bytes_used );
-			co_await runSession( ssl_stream, buffer, move(userEndpoint), true, index, handler );
+			co_await runSession( ssl_stream, buffer, move(peer), true, index, handler );
 		}
 		else
-			co_await runSession( stream, buffer, move(userEndpoint), false, index, handler );
+			co_await runSession( stream, buffer, move(peer), false, index, handler );
 	}
 
 	Ω send( HttpRequest&& req, sp<IRestStream> stream, jvalue j, sv contentType={}, SRCE )ι->void{
@@ -294,7 +350,7 @@ namespace Server{
 					break;//Stop has already cancelled the connections, so nothing would end this one.
 				let exec = sock.get_executor();
 				beast::error_code endpointEc;
-				let userEndpoint = sock.remote_endpoint( endpointEc );
+				auto peer = sock.remote_endpoint( endpointEc );
 				if( endpointEc ){
 					CodeException{ endpointEc, ELogTags::Server | ELogTags::Http, ELogLevel::Debug };
 					continue;
@@ -303,7 +359,7 @@ namespace Server{
 				listener->Connections.emplace( cancelSignal.get(), Connection{cancelSignal, executor_type{exec}} );
 				net::co_spawn(
 					exec,
-					detectSession( StreamType(move(sock)), move(userEndpoint), handler.get() ),
+					detectSession( StreamType(move(sock)), move(peer), handler.get() ),
 					net::bind_cancellation_slot( cancelSignal->slot(),
 					[listener, cancelSignal]( std::exception_ptr e ){
 						listener->Connections.erase( cancelSignal.get() );
@@ -348,6 +404,7 @@ namespace Server{
 		//Benign in production: the anchor names a cert whose private key this process already holds.
 		Client::Ssl::AddTrustAnchor( handler->Settings().Crypto().Certificate.Path );
 
+		ReadTrustedProxies();
 		let port = handler->Settings().Port();
 		let addressString = handler->Settings().Address();
 		let address = tcp::endpoint{ net::ip::make_address(addressString), port };
@@ -419,6 +476,22 @@ namespace Server{
 		return sessions.size();
 	}
 }
+	α Server::ReadTrustedProxies()ι->void{
+		vector<net::ip::address> proxies;
+		if( let setting = Json::FindValue(Settings::Value(), "/http/trustedProxies"); setting && !setting->is_null() && !setting->is_array() )
+			WARNT( ELogTags::App, "/http/trustedProxies is {}, not a list of addresses - ignored.  X-Forwarded-For is read only from a peer at a listed address.", serialize(*setting) );
+		for( let& entry : Settings::FindDefaultArray("/http/trustedProxies") ){
+			beast::error_code ec;
+			let address = entry.is_string() ? net::ip::make_address( Settings::Expand(string{entry.get_string()}), ec ) : net::ip::address{};
+			if( entry.is_string() && !ec )
+				proxies.push_back( plain(address) );
+			else
+				WARNT( ELogTags::App, "/http/trustedProxies names {}, which is not an address - ignored.", serialize(entry) );
+		}
+		ul _{ _proxiesMutex };
+		_proxies = move( proxies );
+		_unlistedFrontWarned.clear();
+	}
 	α Server::HandleRequest( HttpRequest req, sp<IRestStream> stream, IRequestHandler* reqHandler )ι->TAwait<sp<SessionInfo>>::Task{
 		try{
 			req.DecodeBody();

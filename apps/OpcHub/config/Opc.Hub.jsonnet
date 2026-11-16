@@ -54,9 +54,9 @@ function( sync=false )
 		//the Angular site, served at / by this listener (Web::Server::StaticSite - install-issues #3): the installers' <program dir>/web,
 		//named by args/install; none in dev, where ng serve has it.
 		site: if std.objectHas(args, 'siteDir') then args.siteDir else null,
-		threads: app.http.threads,
 		timeout: app.http.timeout,
 		socketTimeout:: app.http.socketTimeout,
+		trustedProxies:: app.http.trustedProxies, //a front before this listener, whose X-Forwarded-For names the caller - App.Server.jsonnet.
 		maxLogLength: app.http.maxLogLength,
 		bodyLimit: app.http.bodyLimit,
 		accessControl: app.http.accessControl,

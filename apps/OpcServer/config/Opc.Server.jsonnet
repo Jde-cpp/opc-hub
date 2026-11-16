@@ -70,6 +70,7 @@ function( sync=false )
 	http:{
 		host: "localhost",//advertised to the AppServer registry - the frontend fetches this host, and allowOrigin 'sameHost' requires it to match the page's host (localhost:4200).
 		port: 1970,
+		trustedProxies:: [], //the addresses of the fronts before this listener, whose X-Forwarded-For names the caller - App.Server.jsonnet.
 		ssl:{
 			certificate:{
 				commonName: args.instanceName + ".web"
