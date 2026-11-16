@@ -48,7 +48,7 @@ local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductN
 		servers: [
 			{
 				slug: "OpcSoak", name: "Soak test server", description: "Soak test connection",
-				certificateUri: "urn:open62541.server.application",
+				certificateUri: "urn:$(HostName):Jde-Cpp:OpcServer", //the OpcServer's applicationUri (Opc.Server.jsonnet), on this box.
 				url: "opc.tcp://127.0.0.1:4840",
 				nodes: [ { ns: 4, id: 6017 } ] //writable numeric var from IA examples nodeset - same node SubscribeTests uses.
 			},

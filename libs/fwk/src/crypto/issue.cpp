@@ -37,6 +37,22 @@ namespace Jde{
 			return y;
 		}
 
+		//What an application instance certificate carries beyond its SAN (OPC 10000-6 6.2.2):  the set open62541's own generator
+		//writes (plugins/crypto/openssl/create_certificate.c) and UaExpert's carries, critical as UaExpert's are.  A leaf, since
+		//open62541 refuses a CA as a peer's certificate (certificategroup.c openSSLCheckCA);  the usages a secure channel's signing
+		//and encryption need, keyCertSign for the self-signature;  both auth roles.  The one profile for every certificate issued
+		//here, the https pairs included:  the gateway's web pair is presented on both (Opc.Gateway.jsonnet /http/ssl), and TLS asks
+		//nothing the set lacks - serverAuth and a signing or enciphering usage, under OpenSSL's ssl_server purpose - while a
+		//self-signed anchor is a chain of one, which X509_verify_cert takes with CA:FALSE (TrustStoreTests' mint needs CA:TRUE to
+		//ISSUE).  UaExpert refused the OpcServer's without them, BadCertificateBasicConstraintsMissing (#510).  Each field of a
+		//parsed Certificate is held to its value by ReissueReason, so one issued before is re-issued on its key.
+		struct ProfileExtension{ int Nid; sv Value; string Certificate::*Field; };
+		constexpr array<ProfileExtension,3> _profile{{
+			{ NID_basic_constraints, "CA:FALSE", &Certificate::BasicConstraints },
+			{ NID_key_usage, "digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment,keyCertSign", &Certificate::KeyUsage },
+			{ NID_ext_key_usage, "serverAuth,clientAuth", &Certificate::ExtendedKeyUsage }
+		}};
+
 		//X509_check_private_key:  the certificate carries the key's public half.
 		Ω issuedOnKey( std::span<const byte> der, const CryptoSettings& settings, SL sl )ε->bool{
 			let cert = ParseDer( der, sl );
@@ -83,6 +99,9 @@ namespace Jde{
 		let& certSettings = settings.Certificate;
 		if( certSettings.SubjectAltName.size() )
 			add_x509V3ext( NID_subject_alt_name, certSettings.SubjectAltName.c_str() );
+		for( let& e : _profile )
+			add_x509V3ext( e.Nid, Ƒ("critical,{}", e.Value).c_str() );
+		add_x509V3ext( NID_subject_key_identifier, "hash" );//of the public key set above - open62541 writes one too;  not held to by ReissueReason.
 
 		auto name{ ::X509_get_subject_name(pCert) };
 		if( !certSettings.Country.empty() )
@@ -121,7 +140,12 @@ namespace Jde{
 			return Ƒ( "{} {}", onDisk.Expiration<=now ? "expired" : "expires", ToIsoString<std::chrono::days>(onDisk.Expiration) );
 		if( comparableSanEntries(settings.Certificate.SubjectAltName)!=comparableSanEntries(onDisk.SubjectAltName) )
 			return Ƒ( "subjectAltName '{}' -> '{}'", onDisk.SubjectAltName, settings.Certificate.SubjectAltName );
-		return {};
+		vector<string> drifts;//issued before #510, with the SAN its one extension:  a UA client refuses it.
+		for( let& e : _profile ){
+			if( onDisk.*e.Field!=e.Value )
+				drifts.push_back( Ƒ("{} '{}' -> '{}'", ::OBJ_nid2sn(e.Nid), onDisk.*e.Field, e.Value) );
+		}
+		return Str::Join( drifts, ", " );
 	}
 
 	α Crypto::EncryptPrivateKey( const CryptoSettings& settings, SL sl )ε->void{

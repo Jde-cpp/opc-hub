@@ -65,7 +65,7 @@ namespace Jde::Opc::Emulator{
 		_transport{ ETransport::PubSub },
 		_url{ Settings::FindArgString( "-url", "/emulator/url" ).value_or( "opc.tcp://127.0.0.1:4840" ) },
 		_applicationUri{ Settings::FindString("/emulator/applicationUri").value_or("urn:jde:plc-emulator") },
-		_serverApplicationUri{ Settings::FindString("/emulator/serverApplicationUri").value_or("urn:open62541.server.application") },
+		_serverApplicationUri{ Settings::FindString("/emulator/serverApplicationUri").value_or(Ƒ("urn:{}:Jde-Cpp:OpcServer", Process::HostName())) },//the Jde OpcServer's on this box (Opc.Server.jsonnet).
 		_period{ Settings::FindArgDuration( "-period", "/emulator/period" ).value_or( 1s ) },
 		_statusPeriod{ Settings::FindArgDuration( "-statusPeriod", "/emulator/statusPeriod" ).value_or( 1min ) },
 		_reconnectMin{ Settings::FindArgDuration( "-reconnectMin", "/emulator/reconnectMin" ).value_or( 1s ) },

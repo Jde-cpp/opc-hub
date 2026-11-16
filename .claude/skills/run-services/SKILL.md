@@ -191,7 +191,7 @@ $E -c -tests -settings=$C               # runs until Ctrl-C (or -duration=PT10M)
 ```
 
 Expected in its log: `PLC server on 127.0.0.1:4842 with 'pumps.NodeSet2.xml';  publishing dataSet 'pumps' @ opc.udp://…`,
-`Client security policies: …None, …Basic256Sha256, applicationUri filter: 'urn:open62541.server.application'`,
+`Client security policies: …None, …Basic256Sha256, applicationUri filter: 'urn:<host>:Jde-Cpp:OpcServer'`,
 `Session activated`, `Connected … 3 command tag(s) subscribed`, then every `statusPeriod`
 a `cycles=… published=… writes=… externalChanges=… reconnects=…` line. In the OpcServer's
 log: `PubSub 'pumps' field 'pump1.motorRpm' (Double) -> ns=N;i=6012` ×5, `PubSub reader: …`

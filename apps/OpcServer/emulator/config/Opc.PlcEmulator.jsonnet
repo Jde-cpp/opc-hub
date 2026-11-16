@@ -18,11 +18,12 @@ local pubsub = import '../../config/pubsub/pumps.libsonnet';
 // Two uris, two jobs.  applicationUri is THIS device's identity: what the client advertises (clientDescription) and the
 // SAN of its channel certificate - the OpcServer matches those two against each other (open62541 validateCertificate),
 // never against its own uri.  serverApplicationUri is the endpoint FILTER (open62541 matchEndpoint): with one set the
-// client takes only endpoints whose server advertises it; the Jde OpcServer's is its certificate's SAN, open62541's
-// default here; "" skips the filter.  The gateway derives all three from one per-connection certificateUri
-// (UAClient::Configuration), so a Jde client claims to BE the server it talks to - this device says who it is.
+// client takes only endpoints whose server advertises it; the Jde OpcServer's is its certificate's SAN
+// (Opc.Server.jsonnet), urn:<its host>:Jde-Cpp:OpcServer, this box's here; "" skips the filter.  The gateway derives all
+// three from one per-connection certificateUri (UAClient::Configuration), so a Jde client claims to BE the server it talks
+// to - this device says who it is.
 local applicationUri = "urn:jde:plc-emulator";
-local serverApplicationUri = "urn:open62541.server.application";
+local serverApplicationUri = "urn:$(HostName):Jde-Cpp:OpcServer";
 // production's figures (README, the modes):  the pumps' counts and the tightening station's rundowns run on the one set.
 local production = { cycle: "PT2S", jitter: "PT0.5S", reject: 0.05 };
 {

@@ -190,6 +190,25 @@ namespace Jde::Crypto{
 		EXPECT_THROW( store.Verify(vector<byte>{}), OpenSslException );
 	}
 
+	//#510's worry:  CA:FALSE on every issued certificate, the hub's enrollment anchors and the AppServer's TLS anchor among them.
+	//X509_verify_cert takes a self-signed leaf as its own anchor - a chain of one, where CA:TRUE is asked of an issuer alone
+	//(mint's) - under TLS's two purposes.  Verify's exact-match path never reaches it, so this is the raw entry point, the one
+	//the web client's handshake and open62541's trust list run.
+	TEST_F( TrustStoreTests, SelfSignedLeafChainsToItself ){
+		let cert = parse( Der );
+		ASSERT_TRUE( cert );
+		EXPECT_EQ( ::X509_check_ca(cert.get()), 0 );
+		TrustStore store{ false };
+		store.AddCertificate( Der );
+		for( int purpose : {X509_PURPOSE_SSL_SERVER, X509_PURPOSE_SSL_CLIENT} ){
+			up<X509_STORE_CTX, decltype(&::X509_STORE_CTX_free)> ctx{ ::X509_STORE_CTX_new(), ::X509_STORE_CTX_free };
+			ASSERT_TRUE( ctx );
+			ASSERT_EQ( ::X509_STORE_CTX_init(ctx.get(), store.Native(), cert.get(), nullptr), 1 );
+			ASSERT_EQ( ::X509_STORE_CTX_set_purpose(ctx.get(), purpose), 1 );
+			EXPECT_EQ( ::X509_verify_cert(ctx.get()), 1 ) << purpose << ": " << ::X509_verify_cert_error_string( ::X509_STORE_CTX_get_error(ctx.get()) );
+		}
+	}
+
 	TEST_F( TrustStoreTests, SerialsRandomized ){//IssueCertificate must never reuse a constant serial - same-DN+same-serial re-issues are indistinguishable by subject in an X509_STORE.
 		let cert = parse( Der ), cert2 = parse( Der2 );
 		ASSERT_TRUE( cert && cert2 );

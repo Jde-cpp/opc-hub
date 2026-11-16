@@ -38,6 +38,44 @@ namespace Jde{
 			}
 		}
 
+		//The usage extensions back in the config syntax they were issued with (Certificate.h):  X509_get_extension_flags parses and
+		//caches every extension, and is what X509_get_key_usage reads.
+		Ω basicConstraints( X509* cert )ι->string{
+			let flags = ::X509_get_extension_flags( cert );
+			return flags & EXFLAG_BCONS ? (flags & EXFLAG_CA ? "CA:TRUE" : "CA:FALSE") : "";
+		}
+		Ω keyUsage( X509* cert )ι->string{
+			if( !(::X509_get_extension_flags(cert) & EXFLAG_KUSAGE) )
+				return {};
+			constexpr array<std::pair<uint32_t,sv>,9> bits{{
+				{KU_DIGITAL_SIGNATURE, "digitalSignature"}, {KU_NON_REPUDIATION, "nonRepudiation"}, {KU_KEY_ENCIPHERMENT, "keyEncipherment"},
+				{KU_DATA_ENCIPHERMENT, "dataEncipherment"}, {KU_KEY_AGREEMENT, "keyAgreement"}, {KU_KEY_CERT_SIGN, "keyCertSign"},
+				{KU_CRL_SIGN, "cRLSign"}, {KU_ENCIPHER_ONLY, "encipherOnly"}, {KU_DECIPHER_ONLY, "decipherOnly"}
+			}};
+			let usage = ::X509_get_key_usage( cert );
+			vector<string> y;
+			for( let& [bit, name] : bits ){
+				if( usage & bit )
+					y.emplace_back( name );
+			}
+			return Str::Join( y );
+		}
+		Ω extendedKeyUsage( const X509* cert )ι->string{
+			const up<EXTENDED_KEY_USAGE, decltype( &::EXTENDED_KEY_USAGE_free )> usages{ (EXTENDED_KEY_USAGE*)::X509_get_ext_d2i(cert, NID_ext_key_usage, nullptr, nullptr), ::EXTENDED_KEY_USAGE_free };
+			vector<string> y;
+			for( int i = 0; usages && i<sk_ASN1_OBJECT_num(usages.get()); ++i ){
+				let usage = sk_ASN1_OBJECT_value( usages.get(), i );
+				if( let nid = ::OBJ_obj2nid(usage); nid!=NID_undef )
+					y.emplace_back( ::OBJ_nid2sn(nid) );//the config name:  serverAuth, clientAuth.
+				else{
+					char oid[80];
+					::OBJ_obj2txt( oid, sizeof(oid), usage, 1 );
+					y.emplace_back( oid );
+				}
+			}
+			return Str::Join( y );
+		}
+
 		Ω asn1Time( const ASN1_TIME* time, sv what, SL sl )ε->TimePoint{
 			tm t{};
 			THROW_IFX( ::ASN1_TIME_to_tm(time, &t)!=1, OpenSslException(Ƒ("ASN1_TIME_to_tm failed for {}", what), sl) );
@@ -77,6 +115,9 @@ namespace Jde{
 					sanEntries.push_back( move(entry) );
 			}
 			SubjectAltName = Str::Join( sanEntries );
+			BasicConstraints = basicConstraints( cert.get() );
+			KeyUsage = keyUsage( cert.get() );
+			ExtendedKeyUsage = extendedKeyUsage( cert.get() );
 			NotBefore = asn1Time( ::X509_get0_notBefore(cert.get()), "notBefore", sl );
 			Expiration = asn1Time( ::X509_get0_notAfter(cert.get()), "notAfter", sl );
 			//the whole DER, not the key:  what openssl and every browser's certificate viewer print, so an operator can match it by eye.
@@ -89,8 +130,8 @@ namespace Jde{
 		}
 		α Certificate::ToString()Ι->string{
 			return Ƒ(
-				"issuer: {}, subject: {}, SubjectAltName: {}, CommonName: {}, UPN: {}, Email: {}, NotBefore: {}, Expiration: {}, Fingerprint: {}, Thumbprint: {}",
-				Issuer, DistinguishedName, SubjectAltName, CommonName, Upn, Email, ToIsoString<std::chrono::days>( NotBefore ), ToIsoString<std::chrono::days>( Expiration ), Fingerprint, Thumbprint
+				"issuer: {}, subject: {}, SubjectAltName: {}, BasicConstraints: {}, KeyUsage: {}, ExtendedKeyUsage: {}, CommonName: {}, UPN: {}, Email: {}, NotBefore: {}, Expiration: {}, Fingerprint: {}, Thumbprint: {}",
+				Issuer, DistinguishedName, SubjectAltName, BasicConstraints, KeyUsage, ExtendedKeyUsage, CommonName, Upn, Email, ToIsoString<std::chrono::days>( NotBefore ), ToIsoString<std::chrono::days>( Expiration ), Fingerprint, Thumbprint
 			);
 		}
 	}
