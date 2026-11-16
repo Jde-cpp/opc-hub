@@ -19,9 +19,7 @@
 	}
 	@else if( guest() ){
 		<span class="name guest" title="Not signed in">Guest</span>
-		@if( clientId.value() ){
-			<ng-container [ngTemplateOutlet]="signIn"/>
-		}
+		<ng-container [ngTemplateOutlet]="signIn"/>
 	}
 	@else {
 		<ng-container [ngTemplateOutlet]="signIn"/>

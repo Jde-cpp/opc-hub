@@ -104,7 +104,8 @@ namespace Jde::App::Server{
 		try{
 			LogRead( Ƒ("GraphQL{}: {}", returnRaw ? "*" : "", query), requestId );
 			auto ql = QL::Parse( move(query), move(vars), Server::Schemas(), returnRaw );
-			auto j = co_await QL::QLAwait( move(ql), {executer.value_or(Jde::UserPK{0})}, LocalQL() );//run as the on-behalf-of user threaded through ProcessTransmission (a forwarded request carries the end-user's pk), not the sending session's identity.
+			let guest = executer && Session() && Session()->IsGuest && executer->Value==Session()->UserPK.Value;//the socket's own guest session's
+			auto j = co_await QL::QLAwait( move(ql), QL::Creds{executer.value_or(Jde::UserPK{0}), guest}, LocalQL() );//run as the on-behalf-of user threaded through ProcessTransmission (a forwarded request carries the end-user's pk), not the sending session's identity.
 			auto y = serialize( move(j) );
 			LogWrite( Ƒ("GraphQL: {}", y.substr(0,100)), requestId );
 			Write( FromServer::GraphQL(move(y), requestId) );

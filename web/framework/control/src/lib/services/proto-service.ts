@@ -270,8 +270,11 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			if( observe ){
 				const response = <HttpResponse<Y>>answer;
 				const newAuth = response.headers.get( "Authorization" );
-				if( newAuth )
+				if( newAuth ){
 					this.authStore.append( {sessionId:newAuth} );
+					if( !authorization )
+						await this.#readActive();
+				}
 				y = response.body as Y;
 			}
 			else
@@ -322,6 +325,24 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		if( anonymous && renew )
 			return await this.postRaw<Y>( target, body, undefined, false );
 		throw e;
+	}
+
+	//A session minted for a call that sent none - after a 401 dropped a stale one, or a sign-out - is the guest's where the install has
+	//one (#483), which only /serverSettings' `active` says:  asked again, so isGuest follows the session, not the page load's.
+	async #readActive():Promise<void>{
+		const authorization = this.user()?.authorization;
+		if( !authorization ){
+			this.sessionActive.set( false );
+			return;
+		}
+		try{
+			const settings:any = await firstValueFrom( this.http.get<any>(this.urlWithTarget("serverSettings"), {headers:{"Authorization":authorization}}) );
+			this.sessionActive.set( !!settings?.["active"] );
+		}
+		catch( e ){
+			console.warn( "serverSettings did not say whose the new session is.", e );
+			this.sessionActive.set( false );
+		}
 	}
 
 	//Silent Google re-login (reviews/todo.md §7): renew the lapsed session in place instead of degrading to anonymous.
@@ -376,6 +397,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			await this.initWait();
 		const url = this.urlWithTarget( target );
 		const sentAuth = options ? undefined : this.user()?.authorization;//only the stored session this call attached is renewable - a caller's own options (login, logout) are theirs to handle, and a wrong-password 401 must stay one
+		const minting = !options && !sentAuth;//no session to send:  the answer carries the one the server mints for the call
 		if( !options ){
 			if( !this.user()?.authorization )
 				options = {observe: "response", transferCache:{includeHeaders:["Authorization"]}};
@@ -404,8 +426,11 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			if( options?.transferCache?.includeHeaders.includes("Authorization") ){
 				let authorization = response.headers.get( "Authorization" );
 				verify( authorization!=null, "no authorization" );
-				if( authorization )
+				if( authorization ){
 					this.authStore.append( {sessionId:authorization} );
+					if( minting )
+						await this.#readActive();
+				}
 			}
 			y = <Y>response?.body;
 		}

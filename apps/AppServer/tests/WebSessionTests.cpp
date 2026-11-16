@@ -284,14 +284,19 @@ namespace Jde::App::Server::Tests{
 		}
 		Ω GuestPK()->Jde::UserPK{ return Web::Server::Sessions::Guest(); }
 		//the session a request with no Authorization is minted, from the answer's header.
+		using HttpTest::Minted;
 		Ω Minted( string target="/opcGateways" )->SessionPK{
-			let res = Get( Port(), move(target) );
-			let id = Str::TryTo<SessionPK,16>( string{res.Headers()[http::field::authorization]} );
+			let id = Minted( Get(Port(), move(target)) );
 			THROW_IF( !id, "The answer named no session." );
 			return *id;
 		}
-		Ω Minted( const Web::Client::ClientHttpRes& res )->optional<SessionPK>{ return Str::TryTo<SessionPK,16>( string{res.Headers()[http::field::authorization]} ); }
 		Ω UserOf( SessionPK id )->Jde::UserPK{ let session = Web::Server::Sessions::Find( id ); return session ? session->UserPK : Jde::UserPK{ Jde::UserPK::System }; }
+		//Read on app/sessions for the guest:  the permission's id, for Revoke.
+		Ω GrantSessionsRead( str schema )->uint{
+			let grant = RunQL( Ƒ("createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:\"{}\", slug:\"sessions\" }} }} ){{ permissionRight{{id}} }}", _user.Value, underlying(Access::ERights::Read), schema) );
+			return Json::AsNumber<uint>( Json::AsObject(grant), "permissionRight/id" );
+		}
+		Ω Revoke( uint permission )->void{ RunQL( Ƒ("purgeAcl( identity:{{ id:{} }}, permissionRight:{{ id:{} }} )", _user.Value, permission) ); }
 		Ω Warned( const Logging::Capture& warnings, sv text )->bool{ return !warnings.Find( [text](let& e){ return e.Level==ELogLevel::Warning && e.Message().contains( text ); } ).empty(); }
 		Ω SetUpTestSuite()->void{
 			ASSERT_FALSE( Slug().empty() ) << "the suite's config names the guest";
@@ -356,9 +361,8 @@ namespace Jde::App::Server::Tests{
 		let authorization = Ƒ( "{:x}", id );
 		let listing = serialize( jobject{{"query", "sessions{ endpoint }"}} );
 		EXPECT_EQ( FailureStatus([&]{ Post(Port(), "/graphql", listing, authorization); }), http::status::forbidden ) << "a user with no grant";
-		let grant = RunQL( Ƒ("createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:\"{}\", slug:\"sessions\" }} }} ){{ permissionRight{{id}} }}", _user.Value, underlying(Access::ERights::Read), schema) );
-		let permission = Json::AsNumber<uint>( Json::AsObject(grant), "permissionRight/id" );
-		absl::Cleanup revoke{ [&]{ RunQL( Ƒ("purgeAcl( identity:{{ id:{} }}, permissionRight:{{ id:{} }} )", _user.Value, permission) ); } };
+		let permission = GrantSessionsRead( schema );
+		absl::Cleanup revoke{ [&]{ Revoke( permission ); } };
 		let sessions = QL( Port(), "sessions{ endpoint }", authorization );
 		EXPECT_TRUE( sessions.is_object() && sessions.get_object().contains("sessions") ) << serialize( sessions );
 	}
@@ -380,19 +384,70 @@ namespace Jde::App::Server::Tests{
 	}
 
 	//the guest's user deleted:  the next session with no sign-in is nobody's, with the Warning;  restored by id, which names no slug,
-	//the guest again.  A session minted before keeps its user, refused on an enforced resource as any deleted user is (FindUserLocked).
+	//the guest again.  A session minted before keeps its user, refused on an enforced resource as any deleted user is (FindUserLocked):
+	//with app/sessions enforced and granted the guest, its listing passes before the delete and is refused after it.
 	TEST_F( WebGuestTests, TheUserDeletedMakesTheNextSessionAnonymous ){
+		let schema = AppSchema()->Name;
+		let wasEnforced = WebSessionGateTests::Enforced( schema );
+		WebSessionGateTests::Enforce( schema, true );
+		absl::Cleanup unenforce{ [&]{ WebSessionGateTests::Enforce( schema, wasEnforced ); } };
+		let permission = GrantSessionsRead( schema );
+		absl::Cleanup revoke{ [&]{ Revoke( permission ); } };
+		let before = Minted();
+		absl::Cleanup removeBefore{ [before]{ Web::Server::Sessions::Remove( before ); } };
+		let listing = serialize( jobject{{"query", "sessions{ endpoint }"}} );
+		let authorization = Ƒ( "{:x}", before );
+		EXPECT_FALSE( FailureStatus([&]{ Post(Port(), "/graphql", listing, authorization); }) ) << "the guest's grant";
+
 		Logging::Capture warnings{ ELogLevel::Warning };
 		RunQL( Ƒ("deleteUser( id:{} )", _user.Value) );
 		absl::Cleanup restore{ []{ RunQL( Ƒ("restoreUser( id:{} )", _user.Value) ); } };
 		EXPECT_FALSE( GuestPK() );
 		EXPECT_TRUE( Warned(warnings, "was deleted") );
+		EXPECT_EQ( UserOf(before).Value, _user.Value ) << "a session minted before keeps its user";
+		EXPECT_EQ( FailureStatus([&]{ Post(Port(), "/graphql", listing, authorization); }), http::status::forbidden ) << "a deleted user's";
 		let after = Minted();
 		absl::Cleanup removeAfter{ [after]{ Web::Server::Sessions::Remove( after ); } };
 		EXPECT_FALSE( UserOf(after) );
 		RunQL( Ƒ("restoreUser( id:{} )", _user.Value) );
 		std::move( restore ).Cancel();
 		EXPECT_EQ( GuestPK().Value, _user.Value ) << "restored by id";
+	}
+
+	//483-demo-guest-sessions review #2, #3:  every visitor's session has the guest's user, so none is a visitor's own.  With
+	//app/sessions enforced, a guest reads another visitor's session - its address - or ends it only with the grant anyone would need.
+	TEST_F( WebGuestTests, AGuestsSessionIsNobodysOwn ){
+		let schema = AppSchema()->Name;
+		let wasEnforced = WebSessionGateTests::Enforced( schema );
+		WebSessionGateTests::Enforce( schema, true );
+		absl::Cleanup restore{ [&]{ WebSessionGateTests::Enforce( schema, wasEnforced ); } };
+		let visitor = Minted(), other = Minted();
+		absl::Cleanup remove{ [=]{ Web::Server::Sessions::Remove( visitor ); Web::Server::Sessions::Remove( other ); } };
+		ASSERT_EQ( UserOf(other).Value, UserOf(visitor).Value ) << "both the guest's";
+		let authorization = Ƒ( "{:x}", visitor );
+		let read = serialize( jobject{{"query", Ƒ("session( id:\"{:x}\" ){{ endpoint }}", other)}} );
+		EXPECT_EQ( FailureStatus([&]{ Post(Port(), "/graphql", read, authorization); }), http::status::forbidden ) << "another visitor's address";
+		let purge = serialize( jobject{{"query", Ƒ("mutation purgeSession( id:\"{:x}\" )", other)}} );
+		EXPECT_EQ( FailureStatus([&]{ Post(Port(), "/graphql", purge, authorization); }), http::status::forbidden ) << "another visitor signed out";
+		EXPECT_TRUE( Web::Server::Sessions::Find(other) );
+	}
+
+	//483-demo-guest-sessions review #7:  a deleted user renamed to the guest's slug is no guest - known, so its restore by id makes it one.
+	TEST_F( WebGuestTests, ADeletedUserRenamedToTheSlugIsNoGuest ){
+		RunQL( Ƒ("updateUser( id:{}, slug:\"{}-away\" )", _user.Value, Slug()) );//the slug free
+		absl::Cleanup back{ []{ RunQL( Ƒ("updateUser( id:{}, slug:\"{}\" )", _user.Value, Slug()) ); } };
+		EXPECT_FALSE( GuestPK() ) << "renamed away";
+		let other = User( Slug()+"-deleted" );
+		absl::Cleanup purge{ [other]{ RunQL( Ƒ("purgeUser( id:{} )", other.Value) ); } };
+		RunQL( Ƒ("deleteUser( id:{} )", other.Value) );
+		Logging::Capture warnings{ ELogLevel::Warning };
+		RunQL( Ƒ("updateUser( id:{}, slug:\"{}\" )", other.Value, Slug()) );
+		EXPECT_FALSE( GuestPK() ) << "a deleted user";
+		EXPECT_TRUE( Warned(warnings, "A deleted user was renamed") );
+		RunQL( Ƒ("restoreUser( id:{} )", other.Value) );
+		EXPECT_EQ( GuestPK().Value, other.Value ) << "restored by id";
+		RunQL( Ƒ("updateUser( id:{}, slug:\"{}-deleted\" )", other.Value, Slug()) );//away again, so the guest's own takes it back
+		EXPECT_FALSE( GuestPK() );
 	}
 
 	//the seed creates the guest after the hub has started (plan Phase 8), and again after every reset:  the start's read finds no user

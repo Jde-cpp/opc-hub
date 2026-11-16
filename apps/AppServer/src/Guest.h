@@ -7,7 +7,6 @@ namespace Jde::Access{ struct AccessListener; }
 //events - set when a user of the slug is created or restored, or renamed to it, cleared with a Warning when it is deleted,
 //purged or renamed away.  Unset, as shipped, every session with no sign-in is anonymous, as before.
 namespace Jde::App::Server::Guest{
-	α Configure( Access::AccessListener& listener )ε->void;//reads the setting, hooks the listener and resolves.
-	α Resolve()ε->void;//the slug's user read as System:  the guest where it is live;  a Warning and none where there is no such user, or it is deleted.
-	α Slug()ι->str;//what /access/guest names;  empty where it is unset.
+	α Configure( Access::AccessListener& listener )ι->void;//reads the setting and hooks the listener, before the access load subscribes it.
+	α Resolve()ε->void;//after the access load:  the slug's user read as System, the guest where it is live;  a Warning and none where there is no such user, or it is deleted.
 }

@@ -728,6 +728,11 @@ namespace Jde::Access{
 		auto user = Users.find( userPK );
 		return user!=Users.end() && !user->second.IsDeleted ? IdentityRightsLocked( userPK ) : vector<ResourceRights>{};
 	}
+	α Authorize::IsLiveUser( UserPK userPK )Ι->bool{
+		rl _{ Mutex };
+		auto user = Users.find( userPK );
+		return user!=Users.end() && !user->second.IsDeleted;
+	}
 	α Authorize::GroupRights( GroupPK groupPK )Ι->vector<ResourceRights>{
 		rl _{ Mutex };
 		auto group = Groups.find( groupPK );

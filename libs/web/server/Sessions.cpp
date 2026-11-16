@@ -166,6 +166,7 @@ namespace Sessions{
 				if( _authorization.size() )
 					userPK = co_await Any( JwtLoginAwait{Web::Jwt{_authorization.substr(7)}, _endpoint, _appClient} );
 				auto info = Sessions::Internal::CreateSession( userPK, _endpoint, _socket, false );
+				info->IsGuest = _authorization.empty() && userPK;
 				upsert( info );
 				Resume( move(info) );
 				co_return;
@@ -192,6 +193,7 @@ namespace Sessions{
 					if( !denied ){
 						let expiration = Chrono::ToClock<steady_clock,Clock>( Protobuf::ToTimePoint(proto.expiration()) );
 						info = ms<SessionInfo>( *sessionId, expiration, UserPK{proto.user_pk()}, remoteEndpoint, proto.has_socket() );
+						info->IsGuest = proto.is_guest();
 						info->UserEndpoint = _endpoint;//normalize - sameEndpoint accepts ::ffff: mapped & loopback variants, store what later requests compare against.
 						info->HasSocket = _socket;
 					}

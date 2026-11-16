@@ -11,4 +11,5 @@ message SessionInfo{
 	uint32 user_pk=3;
 	string user_endpoint=4;
 	bool has_socket=5;
+	bool is_guest=6;//minted as the install's guest (#483):  user_pk is the guest's, and nobody signed in.
 };

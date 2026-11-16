@@ -34,7 +34,7 @@ namespace Jde::Opc::Hub::Tests{
 		ASSERT_EQ( Web::Server::Sessions::Guest().Value, guest.Value ) << "the listener's userCreated sets the guest";
 
 		let res = Get( AppPort(), "/opcGateways" );
-		let id = Str::TryTo<SessionPK,16>( string{res.Headers()[http::field::authorization]} );
+		let id = Minted( res );
 		ASSERT_TRUE( id ) << "a caller with no Authorization was told no session";
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( *id ); } };
 		ASSERT_TRUE( Web::Server::Sessions::Find(*id) );
@@ -53,7 +53,8 @@ namespace Jde::Opc::Hub::Tests{
 		catch( const Gateway::Tests::GatewayErrorResponse& e ){
 			EXPECT_NE( string{e.what()}.find("'Read' access"), string::npos ) << e.what();
 		}
-		GrantRole( *Gateway::AppClient(), "hubGuestViewer", "gateway", "serverConnections", {}, Access::ERights::Read, guest );//the demo's visitor role (spec *Guests*)
+		let role = GrantRole( *Gateway::AppClient(), "hubGuestViewer", "gateway", "serverConnections", {}, Access::ERights::Read, guest );//the demo's visitor role (spec *Guests*)
+		absl::Cleanup purgeRole{ [&]{ app->QuerySync<jvalue>( "purgeRole( id:$id )", {{"id", role.Value}} ); } };//or a later run's GrantRole finds it without the grant to that run's guest
 		let ack = subscribe();
 		EXPECT_EQ( ack.results_size(), 1 ) << "with Read the guest's subscribe reaches the server";
 	}

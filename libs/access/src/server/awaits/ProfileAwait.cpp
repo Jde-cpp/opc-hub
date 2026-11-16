@@ -12,7 +12,7 @@ namespace Jde::Access::Server{
 	}
 	α ProfileAwait::Execute()ι->DB::ExecuteAwait::Task{
 		try{
-			THROW_IF( !_executer || _executer.Value==UserPK::System, "profile mutations require an authenticated user." );
+			THROW_IF( !_executer || _executer.Value==UserPK::System || _guest, "profile mutations require an authenticated user." );
 			using enum QL::EMutationQL;
 			THROW_IF( _mutation.Type!=Create && _mutation.Type!=Update, "profile mutation '{}' is not supported.", _mutation.CommandName );
 			let args = _mutation.ExtrapolateVariables();

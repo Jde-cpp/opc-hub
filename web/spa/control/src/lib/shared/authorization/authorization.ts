@@ -54,21 +54,9 @@ export class Authorization{
 
 	router = inject(Router);
 	user:Signal<User | undefined>;
-	//A session nobody signed in to that the install's guest user stands behind (#483):  named Guest, with the sign-in link beside it
-	//only where a client id is served - a public page serving none has nobody to sign in (docs/demo/spec.md *Guests*).
+	//A session nobody signed in to that the install's guest user stands behind (#483):  named Guest, with the sign-in link beside it as
+	//an anonymous session has it.  A page that offers no sign-in hides it with config.json's `login` (docs/demo/spec.md *The public origin*).
 	guest = computed<boolean>( ()=>this.#authService.guest?.() ?? false );
-	clientId = resource<string|undefined, true|undefined>({
-		params: ()=>this.guest() || undefined,//asked once a guest, never for a signed-in user or an anonymous session, which keep the link
-		loader: async ()=>{
-			try{
-				return await this.#authService.googleAuthClientId() || undefined;
-			}
-			catch( e ){
-				console.warn( "No client id for the guest's sign-in link.", e );
-				return undefined;
-			}
-		}
-	});
 	//Google's avatar host answers 429 to a localhost referrer under repeated loads;  one that fails shows the icon until the url changes.
 	#failedPicture = signal<string|undefined>( undefined );
 	picture = computed( ()=>{

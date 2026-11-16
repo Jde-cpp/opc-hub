@@ -12,6 +12,7 @@
 #include <jde/app/proto/common.h>
 #include <jde/access/AccessException.h>
 #include <jde/web/server/Server.h>
+#include <jde/tests/HttpTest.h>
 #include "jde/fwk/exceptions/Exception.h"
 #include "mocks/ServerMock.h"
 
@@ -290,9 +291,8 @@ namespace Jde::Web{
 	//answer carrying none back:  each page load left an orphan.  A Bearer header is a sign-in, /login's, and still mints none.
 	TEST_F( WebTests, ServerSettingsMintsForNoHeader ){
 		auto ask = []( string authorization={} ){ return BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port, {.Authorization=move(authorization)}} ); };
-		auto minted = []( const ClientHttpRes& res ){ return Str::TryTo<SessionPK,16>( string{res.Headers()[http::field::authorization]} ); };
 		let nobody = ask();
-		let nobodyId = minted( nobody );
+		let nobodyId = HttpTest::Minted( nobody );
 		ASSERT_TRUE( nobodyId ) << "the answer names no session";
 		absl::Cleanup removeNobody{ [&]{ Server::Sessions::Remove( *nobodyId ); } };
 		EXPECT_FALSE( nobody.Json().at("active").as_bool() ) << "nobody's";
@@ -302,7 +302,7 @@ namespace Jde::Web{
 		Server::Sessions::SetGuest( Jde::UserPK{7} );
 		absl::Cleanup unset{ []{ Server::Sessions::SetGuest( {} ); } };
 		let guest = ask();
-		let guestId = minted( guest );
+		let guestId = HttpTest::Minted( guest );
 		ASSERT_TRUE( guestId );
 		absl::Cleanup removeGuest{ [&]{ Server::Sessions::Remove( *guestId ); } };
 		EXPECT_TRUE( guest.Json().at("active").as_bool() ) << "the guest's";
@@ -310,11 +310,11 @@ namespace Jde::Web{
 		EXPECT_EQ( Server::Sessions::Find(*guestId)->UserPK.Value, 7u );
 		let named = ask( Ƒ("{:x}", *guestId) );
 		EXPECT_TRUE( named.Json().at("active").as_bool() ) << "the session named, as a page's later load names it";
-		EXPECT_EQ( minted(named), guestId ) << "its own, as every answer carries its session";
+		EXPECT_EQ( HttpTest::Minted(named), guestId ) << "its own, as every answer carries its session";
 
 		let bearer = ask( "Bearer ey.token.sig" );
 		EXPECT_FALSE( bearer.Json().at("active").as_bool() ) << serialize( bearer.Json() );
-		EXPECT_FALSE( minted(bearer) ) << "a sign-in is /login's";
+		EXPECT_FALSE( HttpTest::Minted(bearer) ) << "a sign-in is /login's";
 	}
 	//web-refactor B3: the server reads one request per connection, so a handled response must not advertise keep-alive - a
 	//browser would reuse a connection that is already closing.

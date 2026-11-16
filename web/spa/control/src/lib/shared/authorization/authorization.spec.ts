@@ -90,37 +90,29 @@ describe( 'Authorization picture', ()=>{
 	} );
 } );
 
-//#483:  a session the install's guest user stands behind is named Guest, with the sign-in link beside it only where a client id is
-//served;  an anonymous session, no guest, shows the link as before.
+//#483:  a session the install's guest user stands behind is named Guest, with the sign-in link beside it, whatever sign-in the site
+//offers - a password's has no client id (483-demo-guest-sessions review #11);  an anonymous session, no guest, shows the link as before.
 describe( 'Authorization guest', ()=>{
-	const create = async ( guest:boolean, clientId:string|undefined )=>{
-		const googleAuthClientId = vi.fn( async ()=>clientId );
+	const create = async ( guest:boolean )=>{
 		TestBed.configureTestingModule({ providers: [
 			provideRouter( [] ),//the sign-in link is a routerLink
-			{ provide: IAUTH, useValue: { user: signal<User|undefined>( undefined ), guest: signal( guest ), logout: vi.fn(), providers: ()=>Promise.resolve([]), googleAuthClientId } as unknown as IAuth }
+			{ provide: IAUTH, useValue: { user: signal<User|undefined>( undefined ), guest: signal( guest ), logout: vi.fn(), providers: ()=>Promise.resolve([]) } as unknown as IAuth }
 		]});
 		const fixture = TestBed.createComponent( Authorization );
 		await stable( fixture, 3 );
 		const element = fixture.nativeElement as HTMLElement;
-		return { name: element.querySelector('.guest')?.textContent?.trim(), signIn: !!element.querySelector('a[aria-label="Sign in"]'), googleAuthClientId };
+		return { name: element.querySelector('.guest')?.textContent?.trim(), signIn: !!element.querySelector('a[aria-label="Sign in"]') };
 	};
 
-	it( 'names a guest Guest, with the sign-in link where a client id is served', async ()=>{
-		const { name, signIn } = await create( true, 'client-id' );
+	it( 'names a guest Guest, with the sign-in link', async ()=>{
+		const { name, signIn } = await create( true );
 		expect( name ).toBe( 'Guest' );
 		expect( signIn ).toBe( true );
 	} );
 
-	it( 'names a guest Guest alone where no client id is served', async ()=>{
-		const { name, signIn } = await create( true, undefined );
-		expect( name ).toBe( 'Guest' );
-		expect( signIn ).toBe( false );
-	} );
-
-	it( 'shows an anonymous session the sign-in link, asking for no client id', async ()=>{
-		const { name, signIn, googleAuthClientId } = await create( false, 'client-id' );
+	it( 'shows an anonymous session the sign-in link', async ()=>{
+		const { name, signIn } = await create( false );
 		expect( name ).toBeUndefined();
 		expect( signIn ).toBe( true );
-		expect( googleAuthClientId ).not.toHaveBeenCalled();
 	} );
 } );

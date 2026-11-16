@@ -1,4 +1,5 @@
 #pragma once
+#include <jde/fwk/str.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
@@ -13,6 +14,8 @@ namespace Jde{
 		Ω Post( PortType port, string target, string body, string authorization={}, string contentType="application/json", string origin={} )->Web::Client::ClientHttpRes{
 			return BlockAwait<Web::Client::ClientHttpAwait,Web::Client::ClientHttpRes>( Web::Client::ClientHttpAwait{string{Host}, move(target), move(body), port, {.Authorization=move(authorization), .Origin=move(origin), .ContentType=move(contentType), .IsSsl=false}} );
 		}
+		//the session the server minted for a call with no Authorization, which every answer with a session names in its own.
+		Ω Minted( const Web::Client::ClientHttpRes& res )->optional<SessionPK>{ return Str::TryTo<SessionPK,16>( string{res.Headers()[http::field::authorization]} ); }
 		Ω QL( PortType port, string query, string authorization={} )->jvalue{//`data`: an object for a query, an array for a mutation.
 			return Post( port, "/graphql", serialize(jobject{{"query", move(query)}}), move(authorization) ).Json().at( "data" );
 		}

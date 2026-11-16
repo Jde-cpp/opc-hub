@@ -1,7 +1,8 @@
 #include "Guest.h"
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/access/AccessListener.h>
 #include <jde/ql/QLAwait.h>
+#include <jde/access/AccessListener.h>
+#include <jde/access/Authorize.h>
 #include <jde/web/server/Sessions.h>
 #include "LocalClient.h"
 
@@ -21,8 +22,6 @@ namespace Jde::App::Server{
 		WARN( "[{}]The guest user '{}' was {} - sessions with no sign-in are anonymous until {}.", userPK.Value, _slug, what, until );
 	}
 
-	α Guest::Slug()ι->str{ return _slug; }
-
 	α Guest::Resolve()ε->void{
 		if( _slug.empty() )
 			return;
@@ -37,7 +36,9 @@ namespace Jde::App::Server{
 		}
 	}
 
-	α Guest::Configure( Access::AccessListener& listener )ε->void{
+	//Before Access::Server::Configure subscribes the listener, so no event reads OnUser while it is assigned:  until Resolve, _userPK
+	//is 0, and a user created of the slug meanwhile is the guest, as Resolve will find it.
+	α Guest::Configure( Access::AccessListener& listener )ι->void{
 		_slug = Settings::FindString( "/access/guest" ).value_or( "" );
 		if( _slug.empty() )
 			return;
@@ -58,14 +59,20 @@ namespace Jde::App::Server{
 					_userPK = 0;
 			}
 			else if( event==Updated && slug ){//a slug renamed:  another user's to the guest's, or the guest's away.
-				if( named && !known )
-					setGuest( userPK );
+				if( named && !known ){
+					if( Authorizer()->IsLiveUser(userPK) )
+						setGuest( userPK );
+					else{//as Resolve has it:  known, so its restore by id is matched, but no guest.
+						_userPK = userPK.Value;
+						Web::Server::Sessions::SetGuest( {} );
+						WARN( "[{}]A deleted user was renamed '{}', the guest's slug - sessions with no sign-in are anonymous until it is restored.", userPK.Value, _slug );
+					}
+				}
 				else if( known && !named ){
 					clearGuest( userPK, Ƒ("renamed '{}'", *slug), "one of that slug is created" );
 					_userPK = 0;
 				}
 			}
 		};
-		Resolve();
 	}
 }

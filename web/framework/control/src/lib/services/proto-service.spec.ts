@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { HttpClient, HttpHeaders, HttpResponse } from '@angular/common/http';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { User } from 'jde-spa';
 import { IError, ProtoService } from './proto-service';
 import { AuthStore } from './auth-store';
@@ -221,6 +221,40 @@ describe( 'ProtoService.loginWait', ()=>{
 		await service.loginWait( "graphql?query=x" );
 		expect( sent() ).toEqual( ["a1b2c3d4"] );
 		expect( authStore.user()?.sessionId ).toBe( "a1b2c3d4" );
+	} );
+
+	//483-demo-guest-sessions review #6:  a stored session gone stale - the demo's hour, a hub restart - answers `active:false`, and
+	//the 401 that follows mints another, the guest's where the install has one:  `active` is asked of that one.
+	const stale = async ( mintedActive:boolean )=>{
+		localStorage.clear();
+		const authStore = TestBed.inject( AuthStore );
+		authStore.append( {sessionId:"a1b2c3d4"} );
+		const get = vi.fn( (url:string, options:any)=>{
+			const sent = options?.headers?.Authorization;
+			if( url.endsWith("serverSettings") )
+				return of( {restSessionTimeout:"P1D", active: sent==minted && mintedActive} );
+			if( sent=="a1b2c3d4" )
+				return throwError( ()=>({status:401, error:"session expired", url}) );
+			return of( options?.observe=="response" ? new HttpResponse({body:{}, headers:new HttpHeaders({Authorization:minted})}) : {} );
+		} );
+		const service = new TestProtoService( authStore, {http: {get} as unknown as HttpClient} );
+		service.instances = [{host: location.hostname, port: 1967, instanceName: 'hub'} as any];
+		const log = silence( 'log' );
+		await service.loginWait( "graphql?query=x" );
+		log.mockRestore();
+		expect( authStore.user()?.sessionId ).toBe( minted );
+		return service;
+	};
+
+	it( "names the session a 401 minted the guest's when the server says it is active", async ()=>{
+		const service = await stale( true );
+		expect( service.sessionActive() ).toBe( true );
+		expect( service.isGuest() ).toBe( true );
+	} );
+
+	it( "names nobody's the session a 401 minted when the server says it isn't active", async ()=>{
+		const service = await stale( false );
+		expect( service.isGuest() ).toBe( false );
 	} );
 } );
 
