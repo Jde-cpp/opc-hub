@@ -384,7 +384,7 @@ namespace Jde::App::Server::Tests{
 	}
 
 	//the guest's user deleted:  the next session with no sign-in is nobody's, with the Warning;  restored by id, which names no slug,
-	//the guest again.  A session minted before keeps its user, refused on an enforced resource as any deleted user is (FindUserLocked):
+	//the guest again, after a start that read it deleted too.  A session minted before keeps its user, refused on an enforced resource as any deleted user is (FindUserLocked):
 	//with app/sessions enforced and granted the guest, its listing passes before the delete and is refused after it.
 	TEST_F( WebGuestTests, TheUserDeletedMakesTheNextSessionAnonymous ){
 		let schema = AppSchema()->Name;
@@ -406,6 +406,9 @@ namespace Jde::App::Server::Tests{
 		EXPECT_TRUE( Warned(warnings, "was deleted") );
 		EXPECT_EQ( UserOf(before).Value, _user.Value ) << "a session minted before keeps its user";
 		EXPECT_EQ( FailureStatus([&]{ Post(Port(), "/graphql", listing, authorization); }), http::status::forbidden ) << "a deleted user's";
+		Guest::Resolve();//a start while it is deleted:  known, so the restore by id below is matched
+		EXPECT_TRUE( Warned(warnings, "names a deleted user") );
+		EXPECT_FALSE( GuestPK() );
 		let after = Minted();
 		absl::Cleanup removeAfter{ [after]{ Web::Server::Sessions::Remove( after ); } };
 		EXPECT_FALSE( UserOf(after) );
@@ -467,5 +470,8 @@ namespace Jde::App::Server::Tests{
 		let guest = Minted();
 		absl::Cleanup removeGuest{ [guest]{ Web::Server::Sessions::Remove( guest ); } };
 		EXPECT_EQ( UserOf(guest).Value, _user.Value );
+		Web::Server::Sessions::SetGuest( {} );
+		Guest::Resolve();//the next start's read, the user there
+		EXPECT_EQ( GuestPK().Value, _user.Value ) << "the start's read found no live user";
 	}
 }

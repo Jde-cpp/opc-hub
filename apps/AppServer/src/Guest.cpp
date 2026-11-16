@@ -26,9 +26,10 @@ namespace Jde::App::Server{
 		if( _slug.empty() )
 			return;
 		let user = BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{"user( slug:$slug ){ id deleted }", jobject{{"slug", _slug}}, UserPK{UserPK::System}, QLPtr()} );//deleted or not:  a deleted one is known, so its restore by id is matched.
-		let id = Json::FindNumber<UserPK::Type>( user, "id" );
+		let row = user.if_object();//null where no user has the slug;  the jobject overloads, a jvalue's taking a strict JSON pointer, `/id`
+		let id = row ? Json::FindNumber<UserPK::Type>( *row, "id" ) : nullopt;
 		_userPK = id.value_or( 0 );
-		if( id && !Json::FindTimePoint(user.get_object(), "deleted") )
+		if( id && !Json::FindTimePoint(*row, "deleted") )
 			setGuest( UserPK{*id} );
 		else{
 			Web::Server::Sessions::SetGuest( {} );
