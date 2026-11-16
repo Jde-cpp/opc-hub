@@ -26,6 +26,7 @@ namespace Jde::Settings{
 	Ξ FindSV( sv path )ι->optional<sv>{ return Json::FindSV(Value(), path); }
 	Φ FindString( sv path )ι->optional<string>;
 	Φ FindStringArray( sv path )ι->vector<string>;
+	Φ Expand( string value )ι->string;//each $(NAME) as a string setting's:  the environment's, else a built-in (HostName, PRODUCT_NAME, ExeDir...).
 	Ξ FindPath( sv path )ι->optional<fs::path>{ auto s = FindString(path); return s ? fs::path{*s} : optional<fs::path>{}; }
 	Φ FindPathArray( sv path )ι->vector<fs::path>;
 	Ŧ FindNumber( sv path )ι->optional<T>{ return Json::FindNumber<T>(Value(), path); }

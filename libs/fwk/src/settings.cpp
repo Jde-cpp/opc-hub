@@ -76,7 +76,7 @@ namespace Jde{
 		return y;
 	}
 
-	Ω expandEnvVariable( string setting )ι->string{
+	α Settings::Expand( string setting )ι->string{
 		static const std::regex regex{ "\\$\\((.+?)\\)" };
 		constexpr uint maxPasses{ 32 };//expansion is transitive but must be bounded - a value containing its own $(NAME) rescans forever.
 		for( uint i=0;; ++i ){
@@ -103,7 +103,7 @@ namespace Jde{
 	α Settings::FindString( sv path )ι->optional<string>{
 		auto setting = Json::FindString( Value(), path );
 		if( setting )
-			setting = expandEnvVariable( *setting );
+			setting = Settings::Expand( *setting );
 		return setting;
 	}
 
@@ -112,7 +112,7 @@ namespace Jde{
 		if( let jarray = Json::FindArray(Value(), path); jarray ){
 			for( let& s : *jarray ){
 				if( s.is_string() )
-					y.push_back( expandEnvVariable(string{s.get_string()}) );
+					y.push_back( Settings::Expand(string{s.get_string()}) );
 			}
 		}
 		return y;
@@ -169,7 +169,7 @@ namespace Jde{
 
 	α SetEnv( jvalue& value )->void{
 		if( value.is_string() )
-			value = expandEnvVariable( string{value.get_string()} );
+			value = Settings::Expand( string{value.get_string()} );
 		else if( value.is_object() )
 			for( auto& [key,child] : value.get_object() )
 				SetEnv( child );

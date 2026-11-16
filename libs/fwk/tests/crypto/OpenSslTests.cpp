@@ -245,6 +245,33 @@ namespace Jde::Crypto{
 		fs::remove_all( dir );
 	}
 
+	//#510:  UaExpert refused the OpcServer's certificate, BadCertificateBasicConstraintsMissing - the SAN was its one extension.
+	//Every certificate issued is an application instance certificate in the shape open62541 and UaExpert mint:  a leaf, the
+	//usages, both auth roles, each critical, the key's identifier - and still the https pair's, so TLS's two purposes take it.
+	TEST_F( OpenSslTests, ApplicationInstanceExtensions ){
+		let dir = ScratchDir( "applicationInstance" );
+		let publicKeyFile = (dir/"public.pem").string(), privateKeyFile = (dir/"private.pem").string(), certificateFile = (dir/"cert.pem").string();
+		Crypto::CreateKeyCertificate( SslSettings(publicKeyFile, privateKeyFile, certificateFile, "application-instance-cn") );
+		let der = ReadCertificate( certificateFile );
+		let info = Crypto::Certificate{ der };
+		EXPECT_EQ( info.BasicConstraints, "CA:FALSE" );
+		EXPECT_EQ( info.KeyUsage, "digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment,keyCertSign" );
+		EXPECT_EQ( info.ExtendedKeyUsage, "serverAuth,clientAuth" );
+		EXPECT_EQ( info.SubjectAltName, "URI:urn:my.server.application" );//beside the SAN, not in its place.
+		let cert = Tests::parse( der );
+		ASSERT_TRUE( cert );
+		for( int nid : {NID_basic_constraints, NID_key_usage, NID_ext_key_usage} ){
+			let i = ::X509_get_ext_by_NID( cert.get(), nid, -1 );
+			ASSERT_GE( i, 0 ) << ::OBJ_nid2sn( nid );
+			EXPECT_TRUE( ::X509_EXTENSION_get_critical(::X509_get_ext(cert.get(), i)) ) << ::OBJ_nid2sn( nid );
+		}
+		EXPECT_TRUE( ::X509_get0_subject_key_id(cert.get()) );
+		EXPECT_EQ( ::X509_check_ca(cert.get()), 0 );//open62541 refuses a CA as a peer's certificate (certificategroup.c openSSLCheckCA).
+		EXPECT_EQ( ::X509_check_purpose(cert.get(), X509_PURPOSE_SSL_SERVER, 0), 1 );//the https listener's job...
+		EXPECT_EQ( ::X509_check_purpose(cert.get(), X509_PURPOSE_SSL_CLIENT, 0), 1 );//...and the certificate token's.
+		fs::remove_all( dir );
+	}
+
 	// access_users is keyed by (modulus, exponent) and Jwt caches by fingerprint, so a byte-order slip in
 	// ExponentInt or a spelling/width change in ModulusHex re-enrolls every existing identity as a stranger.
 	// None of these helpers had a caller in any test.
@@ -525,6 +552,42 @@ namespace Jde::Crypto{
 		let slack = SslSettings( publicFile, privateFile, certFile, "reconcile-san", " DNS:localhost , IP:127.0.0.1 ,otherName:1.3.6.1.4.1.311.20.2.3;UTF8:upn@jde-cpp.com" );
 		Crypto::EnsureKeyCertificate( slack );
 		EXPECT_TRUE( ReadCertificate(certFile)==healedDer );//equivalent config - the cert stands, no re-issue loop.
+		fs::remove_all( dir );
+	}
+
+	//a certificate with the SAN its one extension, on the block's own key, written where the block looks for it.  Thirty days,
+	//past ReissueReason's expiry margin, so the usages are the one reason it finds.
+	Ω issueSanOnly( const CryptoSettings& settings )ε->void{
+		const Crypto::PrivateKey key{ settings.PrivateKey.Path, settings.PrivateKey.Passcode };
+		let cert = Tests::mint( settings.Certificate.CommonName.c_str(), key.Native(), key.Native(), nullptr, 0, 30*Tests::Day, false, settings.Certificate.SubjectAltName.c_str() );
+		Crypto::WriteCertificate( settings.Certificate.Path, Tests::toDer(cert) );//DER - ReadCertificate takes either.
+	}
+	//#510:  an installed OpcServer's or gateway's certificate, issued before, takes the profile at the next start, on its key - no
+	//operator deleting the pem, and the enrolled identity and every public-key trust survive.
+	TEST_F( OpenSslTests, EnsureKeyCertificate_ReconcilesExtensions ){
+		let dir = ScratchDir( "reconcileExtensions" );
+		let publicFile = (dir/"public.pem").string(), privateFile = (dir/"private.pem").string(), certFile = (dir/"cert.pem").string();
+		let settings = SslSettings( publicFile, privateFile, certFile, "reconcile-extensions" );
+		settings.CreateDirs();
+		Crypto::CreateKey( settings );
+		issueSanOnly( settings );
+		let before = Crypto::Certificate{ ReadCertificate(certFile) };
+		EXPECT_EQ( before.SubjectAltName, settings.Certificate.SubjectAltName );
+		EXPECT_TRUE( before.BasicConstraints.empty() && before.KeyUsage.empty() && before.ExtendedKeyUsage.empty() ) << before.ToString();
+		let reason = Crypto::ReissueReason( settings );
+		EXPECT_TRUE( reason.contains("basicConstraints '' -> 'CA:FALSE'") ) << reason;
+		EXPECT_TRUE( reason.contains("keyUsage '' -> 'digitalSignature,") && reason.contains("extendedKeyUsage '' -> 'serverAuth,clientAuth'") ) << reason;
+		Crypto::EnsureKeyCertificate( settings );
+		auto healedDer = ReadCertificate( certFile );
+		let after = Crypto::Certificate{ healedDer };
+		EXPECT_EQ( after.BasicConstraints, "CA:FALSE" );
+		EXPECT_EQ( after.KeyUsage, "digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment,keyCertSign" );
+		EXPECT_EQ( after.ExtendedKeyUsage, "serverAuth,clientAuth" );
+		EXPECT_EQ( after.SubjectAltName, before.SubjectAltName );
+		EXPECT_TRUE( Crypto::ExtractPublicKey(healedDer, SRCE_CUR)==Crypto::ReadPublicKey(publicFile) );//re-issued on the same key.
+		EXPECT_TRUE( Crypto::ReissueReason(settings).empty() ) << Crypto::ReissueReason( settings );
+		Crypto::EnsureKeyCertificate( settings );
+		EXPECT_TRUE( ReadCertificate(certFile)==healedDer );//stands - no re-issue loop.
 		fs::remove_all( dir );
 	}
 	//certificate.managed:false - the operator's pair, a CA-issued one:  EnsureKeyCertificate uses it as found (no SAN reconciliation,

@@ -17,6 +17,10 @@ paths + {
 	//(reviews/install-issues.md #49).  The text log keeps them - a support request may want them.
 	logConsole: { pattern: "%^%3!l%$-%H:%M:%S.%e %v" },
 	nodesetsDir: serverDir+"/nodesets", //read by Opc.Server.Install.jsonnet.
+	//The UA server's certificate (Opc.Server.jsonnet opcServer.ssl).  Its names are localhost, this machine's name and 127.0.0.1;
+	//hostNames adds the others a client such as UaExpert reaches the server by - a fully qualified name, an alias - as DNS entries.
+	//A change re-issues the certificate on the same key at the next start.
+	hostNames: [],
 	access: {
 		trustedCertDirs: [
 			//Production products only - never a test product's dir.  Every cert under these dirs opens a secured UA session.

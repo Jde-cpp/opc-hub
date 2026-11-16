@@ -6,6 +6,7 @@
 #include "../../AppServer/src/appStartup.h"
 #include "../../AppServer/src/LocalClient.h"
 #include "../../OpcGateway/src/GatewayAppClient.h"
+#include "../../OpcGateway/src/opcInternal.h"
 #include "../../OpcGateway/src/auth/OpcServerSession.h"
 #include "../../OpcGateway/tests/utils/helpers.h"
 #include <jde/opc/server/UAAccess.h>
@@ -276,7 +277,7 @@ namespace Jde::Opc::Hub::Tests{
 	}
 
 	//The "OPC UA Server" component's seeds (setup/OpcHubSetup.nsi SEC_OPCSERVER, setup/linux/build-deb.sh), applied the way the
-	//hub applies them - LocalQL::Upsert, twice:  the Google provider type and row, provider 7 for the bundled server, the server
+	//hub applies them - DB::SeedFile, twice:  the Google provider type and row, provider 7 for the bundled server, the server
 	//as the default connection.  Here the connection insert also takes ServerCnnctnMAwait's provider step (the gateway is configured
 	//and its client connected by now, unlike inside either build's first sync), which has to reuse the seeded provider row rather than insert a second
 	//one (ProviderMAwait::Check).
@@ -286,15 +287,17 @@ namespace Jde::Opc::Hub::Tests{
 		ASSERT_EQ( scriptPaths.size(), 3u );
 		auto configDir = [&]( uint i ){ return fs::path{ string{Json::AsSV(scriptPaths[i])} }.parent_path().parent_path(); };
 		let ql = App::Server::QLPtr();
+		let& schema = *Gateway::GetViewPtr( "server_connections" )->Schema;//not skipping unchanged files, SeedFile asks the schema for nothing else.
 		for( uint pass=0; pass<2; ++pass ){
 			for( let& file : {configDir(1)/"release-google.mutation", configDir(1)/"release-opcServer.mutation", configDir(2)/"release-opcServer.mutation", configDir(1)/"release-opcServer.roles"} )
-				ASSERT_NO_THROW( ql->Upsert(IO::Load(file), {}, {UserPK::System}) ) << file.string() << " pass " << pass;//Upsert is idempotent (LocalQL checks the slug first), so the .roles createRole survives the second pass.
+				ASSERT_NO_THROW( DB::SeedFile(schema, file.filename().string(), IO::Load(file), ql, false) ) << file.string() << " pass " << pass;//Upsert is idempotent (LocalQL checks the slug first), so the .roles createRole survives the second pass.
 		}
 		auto one = [&]( string query, sv name )->jobject { let d = QL( AppPort(), move(query), root.Authorization ); let& v = d.as_object().at( name ); return v.is_object() ? v.get_object() : jobject{}; };
 		EXPECT_EQ( Json::FindDefaultSV(one("provider(id:1){ id providerTypeId }", "provider"), "providerTypeId"), "Google" );//the ql spells the enum by name
 		EXPECT_EQ( Json::FindDefaultSV(one("provider(name:\"OpcServer\"){ id providerTypeId }", "provider"), "providerTypeId"), "OpcServer" );//id 7 on an install; here the test connection's provider took 7 first, so the seeded insert was skipped and the connection's create step made the row
-		let connection = one( "serverConnection(slug:\"OpcServer\"){ id url isDefault }", "serverConnection" );
+		let connection = one( "serverConnection(slug:\"OpcServer\"){ id url isDefault certificateUri }", "serverConnection" );
 		EXPECT_EQ( Json::FindDefaultSV(connection, "url"), "opc.tcp://127.0.0.1:4840" );
+		EXPECT_EQ( Json::FindDefaultSV(connection, "certificateUri"), Ƒ("urn:{}:Jde-Cpp:OpcServer", Process::HostName()) );//the server's applicationUri (Opc.Server.jsonnet), the seed's $(HostName) expanded.
 		EXPECT_TRUE( Json::FindBool(connection, "isDefault").value_or(false) );
 		//install-issues #25: the machine role this component ships (release-opcServer.roles) - Administer on opc.install nodeIds,
 		//so granting OpcServer.web is one tick on its Roles tab, the grant the server's startup warning asks for.

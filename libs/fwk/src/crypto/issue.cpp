@@ -37,6 +37,18 @@ namespace Jde{
 			return y;
 		}
 
+		//An application instance certificate's extensions (OPC 10000-6 6.2.2), as open62541's own generator writes them
+		//(plugins/crypto/openssl/create_certificate.c).  CA:FALSE, since open62541 refuses a CA as a peer's certificate
+		//(certificategroup.c openSSLCheckCA);  keyCertSign for the self-signature, without which OpenSSL doesn't take a
+		//certificate with a keyUsage as self-signed.  The https pairs carry them too:  the gateway presents its web pair on both
+		//channels (Opc.Gateway.jsonnet /http/ssl).  ReissueReason holds a parsed Certificate's fields to these values.
+		struct ProfileExtension{ int Nid; sv Value; string Certificate::*Field; };
+		constexpr array<ProfileExtension,3> _profile{{
+			{ NID_basic_constraints, "CA:FALSE", &Certificate::BasicConstraints },
+			{ NID_key_usage, "digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment,keyCertSign", &Certificate::KeyUsage },
+			{ NID_ext_key_usage, "serverAuth,clientAuth", &Certificate::ExtendedKeyUsage }
+		}};
+
 		//X509_check_private_key:  the certificate carries the key's public half.
 		Ω issuedOnKey( std::span<const byte> der, const CryptoSettings& settings, SL sl )ε->bool{
 			let cert = ParseDer( der, sl );
@@ -83,6 +95,9 @@ namespace Jde{
 		let& certSettings = settings.Certificate;
 		if( certSettings.SubjectAltName.size() )
 			add_x509V3ext( NID_subject_alt_name, certSettings.SubjectAltName.c_str() );
+		for( let& e : _profile )
+			add_x509V3ext( e.Nid, Ƒ("critical,{}", e.Value).c_str() );
+		add_x509V3ext( NID_subject_key_identifier, "hash" );//of the public key set above - open62541 writes one too;  not held to by ReissueReason.
 
 		auto name{ ::X509_get_subject_name(pCert) };
 		if( !certSettings.Country.empty() )
@@ -121,7 +136,12 @@ namespace Jde{
 			return Ƒ( "{} {}", onDisk.Expiration<=now ? "expired" : "expires", ToIsoString<std::chrono::days>(onDisk.Expiration) );
 		if( comparableSanEntries(settings.Certificate.SubjectAltName)!=comparableSanEntries(onDisk.SubjectAltName) )
 			return Ƒ( "subjectAltName '{}' -> '{}'", onDisk.SubjectAltName, settings.Certificate.SubjectAltName );
-		return {};
+		vector<string> drifts;
+		for( let& e : _profile ){
+			if( onDisk.*e.Field!=e.Value )
+				drifts.push_back( Ƒ("{} '{}' -> '{}'", ::OBJ_nid2sn(e.Nid), onDisk.*e.Field, e.Value) );
+		}
+		return Str::Join( drifts, ", " );
 	}
 
 	α Crypto::EncryptPrivateKey( const CryptoSettings& settings, SL sl )ε->void{
