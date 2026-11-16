@@ -14,7 +14,9 @@ Two things come with it that Node-RED does not have:
 
 A flow monitors, derives, forwards and alerts. Safety, interlocks and control logic stay in the PLC.
 
-Flows are edited from the gateway's page under [Applications](/apps), on its **Flows** tab. They run on a gateway whose settings have a `flows` block; see [Settings](#settings).
+Flows are edited from the gateway's page under [Applications](/apps), on its **Flows** tab.
+
+They run on a gateway whose settings have a `flows` block. See [Settings](#settings).
 
 To start from a working flow, import [the sample](#the-sample).
 
@@ -45,7 +47,11 @@ A message is a json object. The gateway sets:
 - `topic` - text. A data change's is its node id, a timer's its name.
 - `payload` - the value
 
-A data change adds `node`, the connection's slug and the node's id, `status`, the status code, and `sourceTime` and `serverTime`.
+A data change adds:
+
+- `node` - `{ connection, id }`, the connection's slug and the node's id
+- `status` - the status code
+- `sourceTime` and `serverTime`
 
 Anything else on a message is the flow's own.
 
@@ -237,7 +243,8 @@ At a **function** node built from blocks, the panel has **blocks passed**. It op
 Each deploy is a version, kept with who deployed it, when and why.
 
 - **Open in the editor** puts a version's graph back on the canvas, where **Deploy** makes it the next version.
-- **Compare** sets two versions side by side by node: added, removed and changed, with what changed.
+- **Copy as json** copies a version as the json **Import** reads, to paste into another flow or gateway.
+- **Compare** sets two versions side by side by node: added, removed and changed, with what changed, and a count of the nodes that only moved on the canvas.
 - **Replay** runs the current version over history. See [Replay](#replay).
 
 ### Context
@@ -278,7 +285,7 @@ Every error and status change is on the Activity tab as it happens, and in the t
 
 The trace is the record of what a flow did. It is what the History tab reads.
 
-Each flow has a level, **Trace** on its Properties tab. Blank takes the gateway's `trace` setting, which is `hops` as installed:
+Each flow has a level, **Trace** on its Properties tab. **The gateway's level** takes the gateway's `trace` setting, which is `hops` as installed:
 
 - `off` - nothing is written. The Activity tab still counts.
 - `counts` - a minute's counts for each node
@@ -393,6 +400,7 @@ Who may see and change the flow itself is the `flows` table's resource, switched
 - **Read** - the flow, its versions, its trace, its replays and its activity
 - **Update** - editing, Deploy, Enable and Disable, an inject, a context value and Replay
 - **Delete** and **Purge**
+- **Administer** - changing these grants, once the flow's own resource governs it
 
 A flow's **Access** tab grants roles those rights on the flow alone. It works as a [group's Access tab](/help/gateways/groups#access) does.
 
@@ -402,9 +410,12 @@ The `flows` block under `gateway` in the gateway's settings switches flows on. W
 
 Its keys, with what each is as installed:
 
+- `path` - the trace's directory, a folder per flow by its slug: `flows/opc-gateway` under the logs directory
+- `delay` - how long a trace record waits before it is written, so the most a crash loses: `PT1M`
 - `trace` - the level of a flow that names none: `hops`
 - `retention` and `maxSize` - how much trace is kept: `P30D` and `10GiB`
 - `valueLimit` - the bytes of a message's json a trace record keeps: 4096
+- `readLimit` - the most records one trace read returns, a page: 10000
 - `queue` - the messages a node's input holds: 1000
 - `live` - how often at most the Activity tab hears from a flow: `PT0.2S`
 - `function` - a flow's sandbox: `memory` 16 MiB, `stack` 256 KiB, `timeout` `PT0.1S`
