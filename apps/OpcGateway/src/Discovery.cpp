@@ -1,5 +1,6 @@
 #include "Discovery.h"
 #include <jde/fwk/io/crc.h>
+#include <jde/opc/uatypes/UAPtr.h>
 #include "async/ConnectionManager.h"
 #include "types/UAClientException.h"
 
@@ -7,7 +8,6 @@
 
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
-	using ClientPtr = up<UA_Client, decltype(&::UA_Client_delete)>;
 
 	α Discovery::ParseUrl( str url )ι->optional<UrlName>{
 		if( !url.starts_with("opc.tcp://") )
@@ -62,7 +62,7 @@ namespace Jde::Opc::Gateway{
 		config.endpoint.endpointUrl = UA_STRING_ALLOC( url.c_str() );
 		config.endpoint.securityMode = UA_MESSAGESECURITYMODE_NONE;
 		UA_String_copy( &UA_SECURITY_POLICY_NONE_URI, &config.endpoint.securityPolicyUri );
-		ClientPtr client{ UA_Client_newWithConfig(&config), ::UA_Client_delete };//takes a copy - from here the client owns the config, and UA_Client_delete clears it.
+		ClientPtr client{ UA_Client_newWithConfig(&config) };//takes a copy - from here the client owns the config, and UA_Client_delete clears it.
 		if( !client ){
 			UA_ClientConfig_clear( &config );
 			throw Exception{ sl, {EHttpStatus::InternalServerError}, "Could not create a discovery client for '{}'.", url };
@@ -74,17 +74,6 @@ namespace Jde::Opc::Gateway{
 			DBG( "The discovery client for '{}' has no tick, so a refusal answers a second late:  {:x}", url, sc );
 		return client;
 	}
-	//An array a discovery service allocated, freed with its scope.
-	template<class T>
-	struct UAArray final{
-		UAArray( const UA_DataType& type )ι:_type{type}{}
-		~UAArray(){ UA_Array_delete( Data, Size, &_type ); }
-		α Span()Ι->std::span<const T>{ return { Data, Size }; }
-		T* Data{}; uint Size{};
-	private:
-		const UA_DataType& _type;
-	};
-
 	α Discovery::FindServers( str url, Duration timeout, Jde::Handle h, SL sl )ε->vector<Server>{
 		Logger logger{ h };
 		auto client = discoveryClient( url, timeout, logger, sl );

@@ -7,16 +7,10 @@ namespace Jde::Opc{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Browse };
 
 	α Gateway::FreeDataTypeArray( UA_DataTypeArray* a )ι->void{
-		while( a ){
-			auto next = a->next;
-			if( a->cleanup ){
-				for( uint i=0; i<a->typesSize; ++i )
-					UA_DataType_clear( &a->types[i] );//the names and members, and the type and encoding ids - a string or guid id leaked when only the first two went.
-				UA_free( a->types );
-				UA_free( a );
-			}
-			a = next;
-		}
+		for( uint i=0; i<a->typesSize; ++i )
+			UA_DataType_clear( &a->types[i] );//the names and members, and the type and encoding ids - a string or guid id leaked when only the first two went.
+		UA_free( a->types );
+		UA_free( a );
 	}
 	namespace Gateway{
 	DataTypesAwait::DataTypesAwait( vector<NodeId>&& nodes, sp<UAClient> client, const UA_DataTypeArray* known, SL sl )ι:
@@ -78,7 +72,6 @@ namespace Jde::Opc{
 		}
 		DataTypeArrayPtr y{ (UA_DataTypeArray*)UA_calloc(1, sizeof(UA_DataTypeArray)), FreeDataTypeArray };
 		THROW_IF( !y, "Could not allocate the DataTypeArray." );
-		y->cleanup = true;
 		y->types = (UA_DataType*)UA_calloc( count, sizeof(UA_DataType) );
 		THROW_IF( !y->types, "Could not allocate {} DataTypes.", count );
 		vector<uint> pending;//the nodes with a definition to build, by index.

@@ -15,7 +15,7 @@ namespace Jde::Opc::Gateway{
 		α DeleteAtTime( const UA_NodeId& node, const vector<UA_DateTime>& times )ε->void;
 		α Size()Ι->uint{ return historyUpdateDetailsSize; }
 	private:
-		α Add( void* details, const UA_DataType& type )ε->void;//takes details, which it frees if it can't add them.
+		α Add( UAPtr<>&& details )ε->void;
 	};
 	//The response:  results[i] answers the request's i-th entry, its operationResults one per value or time, which a
 	//server that refuses the entry whole leaves out.

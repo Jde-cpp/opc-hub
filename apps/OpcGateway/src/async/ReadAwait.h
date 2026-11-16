@@ -20,9 +20,8 @@ namespace Jde::Opc::Gateway{
 		ReadRequest( const vector<NodeId>& ids, UA_AttributeId attrib )ι;//results[i] answers ids[i].
 		ReadRequest( const vector<NodeId>& ids, std::initializer_list<UA_AttributeId> attribs )ι;//results[i*attribs.size()+j] answers attribs[j] of ids[i].
 		ReadRequest( Browse::Response&& browse, QL::TableQL&& ql )ι;
-		ReadRequest( ReadRequest&& x )ι;//move-only:  the implicit copy would double-free the identifiers.
-		~ReadRequest();
-		α operator=( ReadRequest&& x )ι->ReadRequest&;
+		ReadRequest( ReadRequest&& x )ι;//move-only:  a copy's nodesToRead would point at the source's ids.
+		α operator=( ReadRequest&& x )ι->ReadRequest& = default;//the vector's buffer moves with it, so nodesToRead still points at _readIds.
 		α Add( const QL::TableQL& ql, const flat_map<NodeId, jobject>& nodes )ι->void;
 		Ω AttribName( UA_AttributeId id )ι->const string&;
 		Ω FindAttrib( sv jsonName )ι->optional<UA_AttributeId>;//the attribute a column names, as the reads spell them - updateNode's keys too;  `dataValue` is Value's.
@@ -31,7 +30,7 @@ namespace Jde::Opc::Gateway{
 		α Asked( uint i )Ι->UA_AttributeId{ return _asked[i]; }//what nodesToRead[i] was asked as:  its attribute, or the `dataValue` sentinel (ReadAwait.cpp), which never leaves this class.
 		α Push( const UA_NodeId& nodeId, UA_AttributeId attrib )ι->void;//deep-copies nodeId into a new _readIds entry.
 		α SetNodesToRead()ι->void{ nodesToReadSize=_readIds.size(); nodesToRead=_readIds.data(); }//_readIds may have reallocated.
-		vector<UA_ReadValueId> _readIds;
+		vector<Owned<UA_ReadValueId,UA_TYPES_READVALUEID>> _readIds;//laid out as UA_ReadValueIds, which nodesToRead reads them as.
 		vector<UA_AttributeId> _asked;//one per _readIds entry.
 	};
 	struct ReadResponse final : Owned<UA_ReadResponse, UA_TYPES_READRESPONSE>{

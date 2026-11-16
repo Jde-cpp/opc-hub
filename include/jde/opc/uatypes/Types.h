@@ -1,5 +1,5 @@
 #pragma once
-#include <jde/opc/usings.h>
+#include "UAPtr.h"
 
 namespace Jde::Opc{
 	//The structure types a value is decoded by (clients spec *Structures*, #421):  a connection's registry of the types its server defines
@@ -27,14 +27,10 @@ namespace Jde::Opc{
 	//type.  None when no type explains the id - which is noted with `types` for its fetch (Missing), unless namespace 0's, which no fetch
 	//explains - or when the body won't decode, which is logged.
 	struct DecodedBody final{
-		DecodedBody()ι=default;
-		DecodedBody( void* data, const UA_DataType* type )ι:Data{ data }, Type{ type }{}
-		DecodedBody( DecodedBody&& x )ι:Data{ std::exchange(x.Data, nullptr) }, Type{ x.Type }{}
-		DecodedBody( const DecodedBody& )=delete;
-		~DecodedBody(){ if( Data ) UA_delete( Data, Type ); }
-		explicit operator bool()Ι{ return Data!=nullptr; }
-		void* Data{};
-		const UA_DataType* Type{};
+		explicit operator bool()Ι{ return (bool)Ptr; }
+		α Data()Ι->const void*{ return Ptr.get(); }
+		α Type()Ι->const UA_DataType&{ return *Ptr.get_deleter().Type; }
+		UAPtr<> Ptr;
 	};
 	α DecodeBody( const UA_ExtensionObject& eo, const ITypes* types )ι->DecodedBody;
 	//Every encoded ExtensionObject in `v`, an element or the value itself, whose encoding id `types` lacks, noted with it (ITypes::Missing):

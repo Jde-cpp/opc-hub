@@ -2,6 +2,7 @@
 #include <open62541/client.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/opc/uatypes/ExNodeId.h>
+#include <jde/opc/uatypes/UAPtr.h>
 #include "jde/fwk/crypto/CryptoSettings.h"
 #include "jde/fwk/settings.h"
 #include "uatypes/ExpectedNodeId.h"
@@ -56,7 +57,7 @@ namespace Jde::Opc::Gateway{
 		UAClient( str address, Credential cred )ε;
 		~UAClient();
 
-		operator UA_Client* ()ι{ return _ptr; }
+		operator UA_Client* ()ι{ return _ptr.get(); }
 		Ω Shutdown( bool terminate=false, SRCE )ι->VoidAwait::Task;
 		//Shutdown's:  every client still waiting for its session - in no registry yet, so Shutdown's snapshot would miss it and its
 		//activation register it after - stopped, and its waiters failed BadShutdown;  a test connect answered so.  The count.
@@ -235,7 +236,7 @@ namespace Jde::Opc::Gateway{
 		Ω LostDiagnostics( const ServerCnnctnNK& slug, const Credential& credential )ι->optional<Diagnostics>;
 		α Row()Ι->const ServerCnnctn&{ return _opcServer; }//the copy this client was built from, with any later ping_interval and ttl edit (KeepAliveEdited) - its mode and policy, for the Connection tab and the tests.
 		α Handle()Ι->Jde::Handle{ return _handle; }
-		α UAPointer()Ι->UA_Client*{ return _ptr; }
+		α UAPointer()Ι->UA_Client*{ return _ptr.get(); }
 		α Credential()Ι->const Gateway::Credential&{ return _credential; }
 		α IsConnected()Ι->bool{ return _connected; }
 		α IsDiscarded()Ι->bool{ return _discarded; }//set by RemoveClient just before it clears connected:  a rebuild on this client drops what it has not restored instead of parking it.
@@ -252,7 +253,7 @@ namespace Jde::Opc::Gateway{
 		Ω ClearConnectError( const ServerCnnctnNK& slug )ι->void;//clears the slug's rejected thumbprint too:  a reachable slug has no standing server-certificate rejection.
 		Ω ServiceNotificationCallback( UA_Client* ua, UA_ApplicationNotificationType type, const UA_KeyValueMap payload )ι->void;
 		α Configuration()ε->void;
-		α Create()ε->UA_Client*;
+		α Create()ε->ClientPtr;
 		α Connect()ε->void;
 		//What GetEndpoints on `url` answers, for the connect-failure diagnostics:  the server's ApplicationUri (empty when the
 		//endpoints could not be read), whether it has an unsecured (None) endpoint at that url at all, and every token policy of
@@ -313,7 +314,6 @@ namespace Jde::Opc::Gateway{
 		vector<absl::AnyInvocable<void()>> _parked;//strand-only:  Park's.
 		Jde::Handle _handle;
 		Logger _logger; //after handle
-		UA_Client* _ptr{};//needs to be after _logger, _config, Password.
 		friend ConnectAwait;
 		friend Tests::UAClientState;//QLTests' held-but-disconnected client.
 
@@ -324,6 +324,9 @@ namespace Jde::Opc::Gateway{
 		MethodArgumentCache _methods;
 		AggregateFunctions _aggregates;
 		std::once_flag _monitoredNodesOnce;
-		up<UAMonitoringNodes> _monitoredNodes;//destroy first
+		up<UAMonitoringNodes> _monitoredNodes;//destroyed first after _ptr.
+		//The last member, so deleted first:  UA_Client_delete answers what is pending BadShutdown, and those callbacks may reach any
+		//other member, but not this one, which unique_ptr nulls before the delete.  After _logger, _config and Password in any case.
+		ClientPtr _ptr;
 	};
 }

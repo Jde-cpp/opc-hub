@@ -120,8 +120,7 @@ namespace Jde::Opc::Server{
 		context = this;
 		asyncOperationCancelCallback = AsyncCancelled;
 
-		UA_TrustListDataType list;
-		UA_TrustListDataType_init( &list );
+		Owned<UA_TrustListDataType,UA_TYPES_TRUSTLISTDATATYPE> list;
 		_trust.LoadTrustList( list );//also primes the mtime cache the runtime rescan (UATrust::Verify) diffs against. An unreadable cert now logs CRITICAL and is skipped rather than aborting startup - matches Access loadTrustAnchors.
 
 		//The certificate groups' parameters.  The rejected list capped:  setBasics leaves it 0, unbounded.
@@ -144,18 +143,11 @@ namespace Jde::Opc::Server{
 		if( secureChannelPKI.clear )
 			secureChannelPKI.clear( &secureChannelPKI );
 		UA_NodeId defaultApplicationGroup = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP );
-		try{
-			UAε( UA_CertificateGroup_Memorystore(&secureChannelPKI, &defaultApplicationGroup, &list, logging, &paramsMap) );
-			if( sessionPKI.clear )
-				sessionPKI.clear( &sessionPKI );
-			UA_NodeId defaultUserTokenGroup = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP );
-			UAε( UA_CertificateGroup_Memorystore(&sessionPKI, &defaultUserTokenGroup, &list, logging, &paramsMap) );
-		}
-		catch( std::exception& ){
-			UA_TrustListDataType_clear( &list );
-			throw;//rethrow original: `throw move(e)` slices to std::exception, losing the derived type and Jde::Exception state.
-		}
-		UA_TrustListDataType_clear( &list );
+		UAε( UA_CertificateGroup_Memorystore(&secureChannelPKI, &defaultApplicationGroup, &list, logging, &paramsMap) );
+		if( sessionPKI.clear )
+			sessionPKI.clear( &sessionPKI );
+		UA_NodeId defaultUserTokenGroup = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP );
+		UAε( UA_CertificateGroup_Memorystore(&sessionPKI, &defaultUserTokenGroup, &list, logging, &paramsMap) );
 		AddSecurityPolicies( move(certificate), move(privateKey), settings.EncryptOnly );
 
 		UAAccess::Init( *this, settings, move(appClient), move(nodeAccess) );

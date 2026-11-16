@@ -502,11 +502,10 @@ namespace Jde::Opc::Gateway{
 			description.browseDirection = UA_BROWSEDIRECTION_FORWARD;
 			description.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
 			description.includeSubtypes = true;
-			auto found = UA_Server_browse( &ua, 0, &description );
+			Owned<UA_BrowseResult,UA_TYPES_BROWSERESULT> found{ UA_Server_browse(&ua, 0, &description) };
 			vector<NodeId> next;
 			for( uint r=0; r<found.referencesSize; ++r )
 				next.emplace_back( found.references[r].nodeId.nodeId );
-			UA_BrowseResult_clear( &found );
 			std::ranges::move( next, std::back_inserter(y) );
 		}
 		return y;
@@ -520,11 +519,8 @@ namespace Jde::Opc::Gateway{
 		description.browseDirection = UA_BROWSEDIRECTION_FORWARD;
 		description.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
 		description.includeSubtypes = true;
-		auto found = UA_Server_browse( &ua, 1, &description );
-		let status = found.statusCode;
-		let size = found.referencesSize;
-		UA_BrowseResult_clear( &found );
-		return status ? std::expected<uint,UA_StatusCode>{ std::unexpect, status } : size;
+		const Owned<UA_BrowseResult,UA_TYPES_BROWSERESULT> found{ UA_Server_browse(&ua, 1, &description) };
+		return found.statusCode ? std::expected<uint,UA_StatusCode>{ std::unexpect, found.statusCode } : found.referencesSize;
 	}
 	//The identifier alone, `i=6042`, for a node its source hasn't described:  its browse and display name until the path comes.
 	Ω identifier( const NodeId& node )ι->string{

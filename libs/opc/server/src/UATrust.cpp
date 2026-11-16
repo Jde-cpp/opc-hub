@@ -126,8 +126,7 @@ namespace Jde::Opc::Server{
 		if( (lastNs && nowNs-lastNs<duration_cast<std::chrono::nanoseconds>(_rescanInterval).count())
 			|| !_lastRescanNs.compare_exchange_strong(lastNs, nowNs, std::memory_order_relaxed) )
 			return y;//rescanned just now, or another thread is: the original failure, exactly as before the reload existed.
-		UA_TrustListDataType fresh;
-		UA_TrustListDataType_init( &fresh );
+		Owned<UA_TrustListDataType,UA_TYPES_TRUSTLISTDATATYPE> fresh;
 		if( LoadTrustList(fresh) ){//a cert re-issued or copied in after startup shouldn't require a restart - rescan before failing.
 			//Each group on its own, a refusal said:  that group keeps the list it had, so what was added since stays untrusted by
 			//it until the files change again or a restart, which loads the list unmeasured.  Said once a change, as the scan only
@@ -141,7 +140,6 @@ namespace Jde::Opc::Server{
 			y = _originals[i]( group, certificate );
 			LOG( y==UA_STATUSCODE_GOOD ? ELogLevel::Information : ELogLevel::Warning, _tags, "Reloaded trusted certificates after failed verify: {} -> {}.", UA_StatusCode_name(sc), UA_StatusCode_name(y) );
 		}
-		UA_TrustListDataType_clear( &fresh );
 		if( y!=UA_STATUSCODE_GOOD && !_rejectedDir.empty() )
 			WriteRejected( *certificate );
 		return y;

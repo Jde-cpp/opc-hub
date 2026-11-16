@@ -331,16 +331,10 @@ namespace Jde::Opc{
 	α Value::SetStructure( const jvalue& j, SL sl )ε->void{
 		let type = value.type;
 		THROW_IFSL( !j.is_object(), "Expected a '{}' object - '{}'.", type->typeName, serialize(j) );
-		void* data = UA_new( type );
+		auto data = NewUA( *type );
 		THROW_IFSL( !data, "Could not allocate a '{}'.", type->typeName );
-		try{
-			fillStructure( data, *type, j.get_object(), sl );
-		}
-		catch( ... ){
-			UA_delete( data, type );
-			throw;
-		}
-		UA_Variant_setScalar( &value, data, type );
+		fillStructure( data.get(), *type, j.get_object(), sl );
+		UA_Variant_setScalar( &value, data.release(), type );
 	}
 
 	//Each element goes through Set itself, so the array covers exactly the types the scalar arms do - the Long form and
@@ -354,26 +348,19 @@ namespace Jde::Opc{
 
 	α Value::SetArray( const jarray& a, SL sl )ε->void{
 		let type = value.type;
-		auto data = UA_Array_new( a.size(), type );
-		if( !data )
+		UAArray<UA_Byte> data{ a.size(), *type };
+		if( !data.Data )
 			throw Exception{ sl, ELogLevel::Error, "Could not allocate {} '{}' elements.", a.size(), type->typeName };
-		try{
-			for( uint i=0; i<a.size(); ++i ){
-				if( a[i].is_array() )
-					throw Exception{ sl, ELogLevel::Error, "A UA array is flat - nested arrays are its arrayDimensions, not json - '{}'.", serialize(a[i]) };
-				Value element{ a[i], type, sl };
-				if( !element.value.data )
-					throw Exception{ sl, ELogLevel::Error, "Element {} of '{}' produced no value.", i, type->typeName };
-				::memcpy( (UA_Byte*)data+i*type->memSize, element.value.data, type->memSize );
-				UA_free( element.value.data );
-				UA_Variant_init( &element.value );
-			}
+		for( uint i=0; i<a.size(); ++i ){
+			if( a[i].is_array() )
+				throw Exception{ sl, ELogLevel::Error, "A UA array is flat - nested arrays are its arrayDimensions, not json - '{}'.", serialize(a[i]) };
+			Value element{ a[i], type, sl };
+			if( !element.value.data )
+				throw Exception{ sl, ELogLevel::Error, "Element {} of '{}' produced no value.", i, type->typeName };
+			::memcpy( data.Data+i*type->memSize, element.value.data, type->memSize );
+			UA_free( element.value.data );
+			UA_Variant_init( &element.value );
 		}
-		catch( ... ){
-			UA_Array_delete( data, a.size(), type );//UA_Array_new zeroes, so the slots not yet filled clear to no-ops.
-			value.type = type;//UA_Array_delete does not touch `value`; keep the type for the caller's diagnostics.
-			throw;
-		}
-		UA_Variant_setArray( &value, data, a.size(), type );
+		UA_Variant_setArray( &value, data.Release(), a.size(), type );
 	}
 }

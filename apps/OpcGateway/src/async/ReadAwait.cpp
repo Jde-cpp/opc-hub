@@ -138,6 +138,7 @@ namespace Jde::Opc::Gateway{
 			Push( nodeId, attrib );
 		SetNodesToRead();
 	}
+	static_assert( sizeof(Owned<UA_ReadValueId,UA_TYPES_READVALUEID>)==sizeof(UA_ReadValueId), "nodesToRead reads _readIds as a UA_ReadValueId array" );
 	ReadRequest::ReadRequest( ReadRequest&& x )ι:
 		UA_ReadRequest{ x },
 		_readIds{ move(x._readIds) },
@@ -145,29 +146,13 @@ namespace Jde::Opc::Gateway{
 		x.nodesToRead=nullptr; x.nodesToReadSize=0;//x no longer owns the identifiers this points at.
 		SetNodesToRead();
 	}
-	ReadRequest::~ReadRequest(){
-		for( auto& id : _readIds )
-			UA_ReadValueId_clear( &id );
-	}
-	α ReadRequest::operator=( ReadRequest&& x )ι->ReadRequest&{
-		if( this != &x ){
-			for( auto& id : _readIds )
-				UA_ReadValueId_clear( &id );
-			*( UA_ReadRequest* )this = x;
-			_readIds = move( x._readIds );
-			_asked = move( x._asked );
-			x.nodesToRead=nullptr; x.nodesToReadSize=0;
-			SetNodesToRead();
-		}
-		return *this;
-	}
 	α ReadRequest::Push( const UA_NodeId& nodeId, UA_AttributeId attrib )ι->void{
 		let dataValue = attrib==DataValueAttrib;
 		auto& id = _readIds.emplace_back( UA_ReadValueId{{}, (UA_UInt32)(dataValue ? UA_ATTRIBUTEID_VALUE : attrib), UA_STRING_NULL, {0, UA_STRING_NULL}} );
 		_asked.push_back( attrib );
 		if( dataValue )
 			timestampsToReturn = UA_TIMESTAMPSTORETURN_BOTH;//the request's:  every Value in it then carries both, which `value` drops anyway.
-		UA_NodeId_copy( &nodeId, &id.nodeId );//deep: ~ReadRequest clears it, and the source is gone by the time Suspend encodes.
+		UA_NodeId_copy( &nodeId, &id.nodeId );//deep:  its Owned clears it, and the source is gone by the time Suspend encodes.
 	}
 
 	α ReadRequest::Add( const QL::TableQL& ql, const flat_map<NodeId, jobject>& nodes )ι->void{

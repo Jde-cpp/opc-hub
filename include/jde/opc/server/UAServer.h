@@ -3,6 +3,7 @@
 #include <absl/functional/any_invocable.h>
 #include <open62541/server.h>
 #include "jde/fwk/process/process.h"
+#include <jde/opc/uatypes/UAPtr.h>
 #include "Condition.h"
 #include "UAConfig.h"
 #include "UAHistory.h"
@@ -25,7 +26,7 @@ namespace Jde::Opc::Server {
 		α Sessions()ι->sp<UAAccess::SessionList>;//the sessions held, kept by the plugin:  a host reads it off this server's thread, and after the server.
 		//The endpoints offered, each its security policy URI and mode, as the config holds them from construction:  no UA call, read any time.
 		α Policies()Ι->vector<std::pair<string,UA_MessageSecurityMode>>;
-		α Ptr()ι->UA_Server*{ return _ua; }
+		α Ptr()ι->UA_Server*{ return _ua.get(); }
 		α History()ι->UAHistory&{ return _history; }
 		α Conditions()ι->Server::Conditions&{ return _conditions; }//the alarm conditions the host declared and added (Condition.h):  Add before Run.
 		α Trust()ι->UATrust&{ return _config.Trust(); }
@@ -43,9 +44,12 @@ namespace Jde::Opc::Server {
 	private:
 		UAHistory _history;//before _config, which installs its backend, and so destroyed after the server it serves.
 		UAConfig _config;
-		UA_Server* _ua{};
 		optional<std::jthread> _thread;
 		vector<UA_DataTypeArray> _customTypes;
 		Server::Conditions _conditions;//node ids alone, so its order against _ua is free.
+		//The last member, so deleted first, once the destructor has joined _thread and stopped _history:  UA_Server_delete walks the
+		//_customTypes its config points into.  unique_ptr nulls _ua before the delete, so a callback from it
+		//gets no server from Ptr(), Sessions() or operator UA_Server&.
+		ServerPtr _ua;
 	};
 }

@@ -23,19 +23,15 @@ namespace Jde::Opc::Server {
 			_thread.reset();
 		}
 		_history.Stop();
-		if( _ua ){
-			UA_Server_delete( _ua );
-			_ua = nullptr;
-		}
 	}
 
 	α UAServer::Run()ε->void{
 		if( _thread )
 			return;
-		if( let sc = UA_Server_run_startup(_ua); sc ){
+		if( let sc = UA_Server_run_startup(_ua.get()); sc ){
 			//A failed startup - the port taken - stops the components it started but leaves the event loop running, which the
 			//destructor's UA_Server_delete can't free:  stop it as UA_Server_run_shutdown does for a started server.
-			auto& el = *UA_Server_getConfig( _ua )->eventLoop;
+			auto& el = *UA_Server_getConfig( _ua.get() )->eventLoop;
 			if( el.state==UA_EVENTLOOPSTATE_STARTED ){
 				el.stop( &el );
 				while( el.state!=UA_EVENTLOOPSTATE_STOPPED && !el.run(&el, 100) ){}
@@ -46,8 +42,8 @@ namespace Jde::Opc::Server {
 			Thread::SetName( "UAServer" );
 			//UA_Server_run(...) demands a volatile UA_Boolean*; run the loop manually against the stop token instead. This is what UA_Server_run does internally, and it also drops the original's double run_shutdown.
 			while( !st.stop_requested() )
-				UA_Server_run_iterate( _ua, true );
-			RunShutdown( *_ua );//the delete is the destructor's, after it joins this thread.
+				UA_Server_run_iterate( _ua.get(), true );
+			RunShutdown( *_ua );//the delete is _ua's, after the destructor joins this thread.
 			INFOT( ELogTags::App, "OPC UA server stopped." );
 		}};
 	}
@@ -93,7 +89,7 @@ namespace Jde::Opc::Server {
 	α UAServer::Sessions()ι->sp<UAAccess::SessionList>{ return UAAccess::Sessions( *_ua ); }
 	α UAServer::Policies()Ι->vector<std::pair<string,UA_MessageSecurityMode>>{
 		vector<std::pair<string,UA_MessageSecurityMode>> y;
-		let& config = *UA_Server_getConfig( _ua );
+		let& config = *UA_Server_getConfig( _ua.get() );
 		for( uint i=0; i<config.endpointsSize; ++i )
 			y.emplace_back( Opc::ToString(config.endpoints[i].securityPolicyUri), config.endpoints[i].securityMode );
 		return y;
@@ -101,7 +97,7 @@ namespace Jde::Opc::Server {
 	α UAServer::Namespaces()ι->flat_map<uint,string>{
 		flat_map<uint,string> y;
 		UA_String ns;
-		for( uint i=0; !UA_Server_getNamespaceByIndex(_ua, i, &ns); ++i ){
+		for( uint i=0; !UA_Server_getNamespaceByIndex(_ua.get(), i, &ns); ++i ){
 			y.emplace( i, Opc::ToString(ns) );
 			UA_String_clear( &ns );
 		}

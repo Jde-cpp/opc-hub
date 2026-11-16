@@ -738,7 +738,7 @@ namespace Jde::Opc::Server::Tests{
 			UA_NodeId node = UA_NODEID_NUMERIC( 0, id );
 			ASSERT_EQ( UA_CertificateGroup_Memorystore(group, &node, &empty, config.logging, nullptr), UA_STATUSCODE_GOOD );
 		}
-		up<UA_Server,decltype(&UA_Server_delete)> server{ UA_Server_newWithConfig(&config), &UA_Server_delete };
+		ServerPtr server{ UA_Server_newWithConfig(&config) };
 		ASSERT_TRUE( server );
 		{
 			UA_TrustListDataType list; UA_TrustListDataType_init( &list );
