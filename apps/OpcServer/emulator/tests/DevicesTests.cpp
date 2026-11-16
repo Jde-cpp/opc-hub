@@ -62,18 +62,19 @@ namespace Jde::Opc::Emulator::Tests{
 			}
 		}
 	}
-	TEST( ParseDevicesTests, AGeneratedTagCarriesItsQualitySchedule ){
-		auto y = devices( R"([{ "path":"pump1", "tags":[ { "name":"motorRpm", "mode":"sine", "quality":[{ "status":"BadSensorFailure", "duration":"PT5S" }] }, { "name":"status", "mode":"toggle" } ] }])" );
-		auto& tag = y[0].Tags[0];
+	TEST( ParseDevicesTests, AGeneratedTagCarriesItsQualityWindows ){
+		auto y = devices( R"([{ "path":"pump1", "tags":[ { "name":"motorRpm", "mode":"sine", "quality":[{ "status":"BadSensorFailure", "for":"PT5S" }] }, { "name":"status", "mode":"toggle" } ] }])" );
+		auto& device = y[0]; auto& tag = device.Tags[0];
 		EXPECT_EQ( tag.Status, UA_STATUSCODE_GOOD );//until the first cycle says otherwise
-		tag.Status = tag.Quality.Apply( 1s, 1000, tag.Value );
+		device.Clock = 1s;
+		tag.Status = tag.Quality.Apply( device, 1000, tag.Value );
 		EXPECT_EQ( tag.Status, UA_STATUSCODE_BADSENSORFAILURE );
-		EXPECT_EQ( y[0].Tags[1].Quality.Apply(1s, 1, y[0].Tags[1].Value), UA_STATUSCODE_GOOD );//no schedule: Good
+		EXPECT_EQ( device.Tags[1].Quality.Apply(device, 1, device.Tags[1].Value), UA_STATUSCODE_GOOD );//no window: Good
 	}
 	TEST( ParseDevicesTests, AProductionTagIsFollowedByItsRejects ){
 		let contract = []( sv name )ι->optional<uint>{ return name=="pump1.totalCount" ? optional<uint>{5} : name=="pump1.rejectCount" ? optional<uint>{6} : optional<uint>{}; };
 		let y = devices( R"([
-			{ "path":"pump1", "tags":[ { "name":"totalCount", "mode":"production", "reject":0.05, "quality":[{ "status":"Bad", "duration":"PT1S" }] }, { "name":"status", "mode":"command" } ] },
+			{ "path":"pump1", "tags":[ { "name":"totalCount", "mode":"production", "reject":0.05, "quality":[{ "status":"Bad", "for":"PT1S" }] }, { "name":"status", "mode":"command" } ] },
 			{ "path":"pump2", "tags":[ { "name":"units", "mode":"production", "reject":0.05, "rejectTag":"scrap" }, { "name":"plain", "mode":"production" } ] }
 		])", contract );
 		ASSERT_EQ( y[0].Tags.size(), 3u );
@@ -296,7 +297,7 @@ namespace Jde::Opc::Emulator::Tests{
 		}
 	}
 	TEST( DeviceTests, AHeldFaultOnTheCountHoldsItsRejects ){//one sensor:  never more rejects than units in an interval
-		auto y = devices( R"([{ "path":"pump1", "tags":[ { "name":"totalCount", "mode":"production", "reject":1, "quality":[{ "status":"BadSensorFailure", "start":"PT2S", "duration":"PT2S" }] } ] }])" );
+		auto y = devices( R"([{ "path":"pump1", "tags":[ { "name":"totalCount", "mode":"production", "reject":1, "quality":[{ "status":"BadSensorFailure", "start":"PT2S", "for":"PT2S" }] } ] }])" );
 		auto& pump = y[0];
 		let& count = pump.Tags[0]; let& rejects = pump.Tags[1];
 		for( uint second=1; second<=5; ++second ){
@@ -344,7 +345,12 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( stops(R"([{ "mean":600, "min":"PT2M", "max":"PT6M" }])"), Exception );
 		EXPECT_THROW( stops(R"([{ "every":"PT1H", "for":"PT3S", "mean":"PT10M", "min":"PT2M", "max":"PT6M" }])"), Exception );//two shapes
 		EXPECT_THROW( stops(R"([{ "at":"06:00", "every":"PT1H", "for":"PT3S" }])"), Exception );
-		EXPECT_THROW( stops(R"([{ "for":"PT3S", "code":7 }])"), Exception );//none
+		EXPECT_NO_THROW( stops(R"([{ "for":"PT3S", "code":7 }])") );//none:  a one-shot, from 0
+		EXPECT_NO_THROW( stops(R"([{ "start":"PT5S", "every":"PT10S", "for":"PT3S" }])") );
+		EXPECT_THROW( stops(R"([{ "code":7 }])"), Exception );//no `for`
+		EXPECT_THROW( stops(R"([{ "start":"PT-1S", "for":"PT3S" }])"), Exception );
+		EXPECT_THROW( stops(R"([{ "start":"PT1M", "mean":"PT10M", "min":"PT2M", "max":"PT6M" }])"), Exception );//a `start` is the clock's two shapes'
+		EXPECT_THROW( stops(R"([{ "start":"PT1M", "at":"06:00", "for":"PT20M" }])"), Exception );
 		EXPECT_THROW( stops(R"([{ "at":"06:00" }])"), Exception );
 		EXPECT_THROW( stops(R"([{ "at":"06:00", "for":"PT23H" }])"), Exception );//the day the clocks go forward:  it would never release
 		EXPECT_NO_THROW( stops(R"([{ "at":"06:00", "for":"PT22H59M" }])") );
@@ -370,7 +376,7 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( slow(R"([{ "every":"PT1H", "for":"PT30M", "factor":1 }])"), Exception );//not slow
 		EXPECT_THROW( slow(R"([{ "every":"PT1H", "for":"PT30M", "factor":0.8 }])"), Exception );
 		EXPECT_THROW( slow(R"([{ "every":"PT1H", "for":"PT30M", "factor":"1.25" }])"), Exception );
-		EXPECT_THROW( slow(R"([{ "for":"PT30M", "factor":1.25 }])"), Exception );//no shape
+		EXPECT_NO_THROW( slow(R"([{ "for":"PT30M", "factor":1.25 }])") );//no shape:  a one-shot, from 0
 		EXPECT_THROW( slow(R"([{ "every":"PT1H", "for":"PT30M", "factor":1.25, "code":3 }])"), Exception );//a stop's key
 		constexpr sv noCount{ R"([{ "path":"pump1", "slow":[{ "every":"PT1H", "for":"PT30M", "factor":1.25 }], "tags":[ { "name":"motorRpm", "mode":"follow" }, { "name":"status", "mode":"command" } ] }])" };
 		EXPECT_THROW( devices(noCount), Exception );//nothing to slow
@@ -379,6 +385,78 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_EQ( machines(R"("stops":[ { "every":"PT1H", "for":"PT10M" } ])")[0].Zone, nullptr );
 		EXPECT_EQ( machines(R"("stops":[ { "at":"06:00", "for":"PT10M" } ])")[0].Zone->name(), std::chrono::locate_zone("UTC")->name() );//left out
 		EXPECT_EQ( machines(R"("slow":[ { "at":"06:00", "for":"PT10M", "factor":2 } ])", _start, "America/New_York")[0].Zone->name(), "America/New_York" );
+		EXPECT_EQ( devices(R"([{ "path":"m", "tags":[ { "name":"x", "mode":"sine", "quality":[{ "status":"Bad", "at":"06:00", "for":"PT10M" }] } ] }])")[0].Zone->name(), std::chrono::locate_zone("UTC")->name() );//a tag's window alone
+	}
+	TEST( DeviceTests, AOneShotStopHappensOnceAndAStartPlacesTheFirst ){
+		auto once = machines( R"("stops":[ { "start":"PT10S", "for":"PT3S", "code":7 } ])" );//stopped [10,13), never again
+		auto& machine = once[0];
+		machine.Sample( 1min );
+		EXPECT_EQ( machine.Tags[1].Value, 57 );
+		machine.Sample( 1h );
+		EXPECT_EQ( machine.Tags[1].Value, 57+3600 ); EXPECT_TRUE( machine.On ); EXPECT_EQ( machine.Code, 0 );
+		EXPECT_FALSE( machine.Stops[0].Gap() );
+		auto fromZero = machines( R"("stops":[ { "for":"PT3S", "code":7 } ])" );//a one-shot's `start` is 0:  stopped from the start
+		fromZero[0].Sample( 1s );
+		EXPECT_FALSE( fromZero[0].On ); EXPECT_EQ( fromZero[0].Code, 7 );
+		fromZero[0].Sample( 1min );
+		EXPECT_EQ( fromZero[0].Tags[1].Value, 58 ); EXPECT_TRUE( fromZero[0].On );
+		auto early = machines( R"("stops":[ { "start":"PT5S", "every":"PT10S", "for":"PT3S", "code":7 } ])" );//[5,8) [15,18) [25,28):  the first at `start`, not at `every`
+		early[0].Sample( 30s );
+		EXPECT_EQ( early[0].Tags[1].Value, 30-9 );
+		EXPECT_EQ( early[0].Stops[0].Begin, 35s ); EXPECT_EQ( early[0].Stops[0].Gap(), 7s );
+	}
+	TEST( DeviceTests, ATagsRandomWindowsDrawFromAnEngineOfItsOwn ){
+		let seeded = []( uint seed, sv quality ){
+			return devices( Ƒ(R"([{{ "path":"machine", "seed":{}, "stops":[ {{ "mean":"PT40M", "min":"PT2M", "max":"PT6M" }} ], "tags":[ {{ "name":"motorRpm", "mode":"sine", "quality":[{}] }}, {{ "name":"status", "mode":"on" }} ] }}])", seed, quality) );
+		};
+		constexpr sv window{ R"({ "status":"BadSensorFailure", "mean":"PT10S", "min":"PT2S", "max":"PT4S" })" };
+		//the seed's stops stay where ASeedRepeatsItsStopsAndAnotherDiffers pins them, the tag's windows beside them
+		auto withWindow = seeded( 1, window );
+		let millis = []( Duration d ){ return duration_cast<milliseconds>( d ).count(); };
+		let stops = stopWindows( withWindow[0], 2 );
+		EXPECT_EQ( millis(stops[0].first), 344'947 ); EXPECT_EQ( millis(stops[0].second), 497'684 );
+		EXPECT_EQ( millis(stops[1].first), 1'937'800 ); EXPECT_EQ( millis(stops[1].second), 2'062'846 );
+		//and the windows repeat with the seed, and differ with another
+		let faults = [&]( uint seed ){
+			auto y = seeded( seed, window );
+			vector<bool> bad;
+			for( uint second=1; second<=600; ++second ){
+				y[0].Sample( 1s );
+				bad.push_back( y[0].Tags[0].Status==UA_STATUSCODE_BADSENSORFAILURE );
+			}
+			return bad;
+		};
+		let a = faults( 1 );
+		EXPECT_EQ( a, faults(1) );
+		EXPECT_NE( a, faults(2) );
+		let count = std::ranges::count( a, true );
+		EXPECT_GT( count, 60 ); EXPECT_LT( count, 240 );//3 s in every 13 or so
+	}
+	TEST( DeviceTests, AnAtQualityWindowKeepsToTheWallClock ){
+		constexpr sv plc{ R"([{ "path":"machine", "tags":[ { "name":"motorRpm", "mode":"sine", "quality":[{ "status":"BadSensorFailure", "at":"06:00", "for":"PT20M" }] } ] }])" };
+		let midnight = Chrono::ToTimePoint( "2026-07-01T04:00:00Z" );//New York's
+		auto y = devices( plc, {}, midnight, "America/New_York" );
+		auto& machine = y[0]; let& tag = machine.Tags[0];
+		EXPECT_EQ( machine.Zone->name(), "America/New_York" );//for the tag's window alone
+		machine.Sample( 6h-1s );
+		EXPECT_EQ( tag.Status, UA_STATUSCODE_GOOD );
+		machine.Sample( 1s );
+		EXPECT_EQ( tag.Status, UA_STATUSCODE_BADSENSORFAILURE );
+		machine.Sample( 20min-1s );
+		EXPECT_EQ( tag.Status, UA_STATUSCODE_BADSENSORFAILURE );
+		machine.Sample( 1s );
+		EXPECT_EQ( tag.Status, UA_STATUSCODE_GOOD );
+		//through a pause the steady clock missed, past the window:  the next day's
+		auto paused = devices( plc, {}, midnight, "America/New_York" );
+		auto& through = paused[0];
+		through.Sample( 5h );
+		through.Anchor( midnight+5h+90min );//06:30
+		through.Sample( 1s );
+		EXPECT_EQ( through.Tags[0].Status, UA_STATUSCODE_GOOD );
+		through.Sample( 24h-30min-2s );//05:59:59 the next day
+		EXPECT_EQ( through.Tags[0].Status, UA_STATUSCODE_GOOD );
+		through.Sample( 1s );
+		EXPECT_EQ( through.Tags[0].Status, UA_STATUSCODE_BADSENSORFAILURE );
 	}
 	TEST( ParseDevicesTests, AGapIsTheShortestRunBetweenTwoWindows ){//what the startup warning holds to the period
 		let y = machines( R"("stops":[ { "every":"PT1H", "for":"PT10M" }, { "at":"06:00", "for":"PT22H" }, { "mean":"PT40M", "min":"PT2M", "max":"PT6M" } ])" );
@@ -399,6 +477,6 @@ namespace Jde::Opc::Emulator::Tests{
 		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[] }])"), Exception );
 		EXPECT_THROW( devices(R"([{ "tags":[ { "name":"motorRpm" } ] }])"), Exception );//no path
 		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"motorRpm", "mode":"randomWalk", "step":0 } ] }])"), Exception );//#9 propagates
-		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"status", "mode":"command", "quality":[{ "status":"Bad", "duration":"PT1S" }] } ] }])"), Exception );//so does a quality nothing would write
+		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"status", "mode":"command", "quality":[{ "status":"Bad", "for":"PT1S" }] } ] }])"), Exception );//so does a quality nothing would write
 	}
 }

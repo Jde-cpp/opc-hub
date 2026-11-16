@@ -7,7 +7,7 @@ find_package( open62541 REQUIRED )
 findNodesetLoader() #the emulated PLC's own address space is the same NodeSet2 file the OpcServer loads.
 findZlibAndJsonnet()
 
-#The PLC's units that need no session on the OpcServer - its tags (Quality, Signals, Devices), its own UA server (PlcServer) and
+#The PLC's units that need no session on the OpcServer - its tags (Recurrence, Quality, Signals, Devices), its own UA server (PlcServer) and
 #its tightening station (Tightening) - compiled once for the emulator, its unit suite and Jde.Opc.Server.Tests, whose PubSubTests
 #publish through PlcServer.  PlcServer is on the UA server library (servers plan Phase 6), which brings the app client its logins
 #ask and the historian library, unused here;  on that library's PCH, whose link set this matches.  The station is the Open
@@ -15,7 +15,7 @@ findZlibAndJsonnet()
 set( libName Jde.Opc.PlcEmulatorLib )
 add_library( ${libName} )
 compileOptions( ${libName} )
-target_sources( ${libName} PRIVATE Quality.cpp Signals.cpp Devices.cpp PlcServer.cpp Tightening.cpp Quality.h Signals.h Devices.h PlcServer.h Tightening.h )
+target_sources( ${libName} PRIVATE Recurrence.cpp Quality.cpp Signals.cpp Devices.cpp PlcServer.cpp Tightening.cpp Recurrence.h Quality.h Signals.h Devices.h PlcServer.h Tightening.h )
 if( WIN32 )
 	target_compile_definitions( ${libName} PRIVATE NOMINMAX )
 endif()

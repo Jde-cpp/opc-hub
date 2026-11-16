@@ -1,20 +1,7 @@
 #pragma once
-#include <jde/fwk/chrono.h>
+#include "Recurrence.h"
 
 namespace Jde::Opc::Emulator{
-	//`key`'s value, none when it is absent;  present as anything else it throws, naming `owner` - a typo has to fail like
-	//one, not read as the default (`cycle: "2s"`).  T:  Duration (ISO 8601), bool, string or a number.
-	Ŧ FindKey( const jobject& o, sv key, sv owner, SRCE )ε->optional<T>;
-
-	//`Length` from `Start`, again every `Every` when set, on a clock that starts with the emulator:  a quality window's and a
-	//device's stop's.  Each owner refuses its own edge cases.
-	struct Schedule{
-		α IsActive( Duration t )Ι->bool;
-		α NextEdge( Duration t )Ι->optional<Duration>;//the first start or end after `t`;  none once a one-shot window has ended.
-		Duration Start{}, Length{};
-		optional<Duration> Every;
-	};
-
 	//A reading's data quality - OPC 10000-4 §7.38.  A StatusCode's layout (Table 176, and Table 177 for the info bits):
 	//  31:30 Severity (00 Good, 01 Uncertain, 10 Bad, 11 reserved) | 27:16 SubCode | 15 StructureChanged | 14 SemanticsChanged
 	//  | 11:10 InfoType (01 = DataValue: the bits below mean something) | 9:8 LimitBits | 7 Overflow | 4:0 historian bits.
@@ -31,8 +18,8 @@ namespace Jde::Opc::Emulator{
 	α StatusNames()ι->std::span<const std::pair<sv,UA_StatusCode>>;//the qualities a device produces about its own readings.
 	α ToString( UA_StatusCode sc )ι->string;//"BadSensorFailure", "UncertainEngineeringUnitsExceeded+High".
 
-	//One scheduled fault:  `Status` on its schedule, on the tag's own clock.  `every` may equal `duration`:  on for good from `start`.
-	struct QualityWindow : Schedule{
+	//One scheduled fault:  `Status` through each of its windows, in any of Recurrence's shapes, on the device's clock.
+	struct QualityWindow : Recurrence{
 		QualityWindow( const jobject& o, sv tagName, SRCE )ε;
 		UA_StatusCode Status{};//composed: the flags are already in it.
 		bool Hold{};//publish the last reading from before the window - a blind sensor.  Defaults on for Bad and the two LastUsableValue codes.
@@ -43,46 +30,19 @@ namespace Jde::Opc::Emulator{
 	//UncertainEngineeringUnitsExceeded with the Low/High limit bit;  otherwise Good.
 	struct TagQuality{
 		TagQuality()ι = default;
-		TagQuality( vector<QualityWindow> windows, optional<double> sensorMin, optional<double> sensorMax )ι;
-		//`raw` is the generator's sample, `value` the last published reading:  left alone while a window holds, else set to
-		//`raw` clamped to the sensor range.  The generator is sampled either way - the process runs on, the sensor is blind.
-		α Apply( Duration dt, double raw, double& value )ι->UA_StatusCode;
+		//The random windows draw from an engine of the tag's own, seeded from `seed`, the device's, and `place`, the tag's in its
+		//list:  a tag gaining a window leaves the device's stops where they were, and a seed draws the same windows every run.
+		TagQuality( vector<QualityWindow> windows, optional<double> sensorMin, optional<double> sensorMax, uint64_t seed=0, uint32_t place=0 )ι;
+		α Advance( const Device& device )ι->void;//each window past its End on to the next - to its first at the parse;  Apply does it too.
+		α Anchor( Duration drift, const Device& device )ι->void;//the `at` windows with the wall clock, by `drift`, what Device::Anchor moved Start by.
+		//At the device's clock:  `raw` is the generator's sample, `value` the last published reading - left alone while a window
+		//holds, else set to `raw` clamped to the sensor range.  The generator is sampled either way - the process runs on, the
+		//sensor is blind.
+		α Apply( const Device& device, double raw, double& value )ι->UA_StatusCode;
 	private:
 		vector<QualityWindow> _windows;
 		optional<double> _sensorMin, _sensorMax;
-		Duration _t{};
+		std::mt19937_64 _engine;
 		ELimit _clamp{};//of the last live reading;  a held reading keeps the limit it was taken at.
 	};
-
-	Ŧ FindKey( const jobject& o, sv key, sv owner, SL sl )ε->optional<T>{
-		const auto v = o.if_contains( key );
-		if( !v )
-			return {};
-		optional<T> y;
-		sv kind;
-		if constexpr( std::is_same_v<T,Duration> ){
-			kind = "an ISO 8601 duration, PT30S";
-			if( v->is_string() ){
-				if( auto d = Chrono::TryToDuration(v->get_string(), ELogLevel::Trace, sl); d )
-					y = *d;
-			}
-		}
-		else if constexpr( std::is_same_v<T,bool> ){
-			kind = "true or false";
-			if( v->is_bool() )
-				y = v->get_bool();
-		}
-		else if constexpr( std::is_same_v<T,string> ){
-			kind = "a string";
-			if( v->is_string() )
-				y = string{ v->get_string() };
-		}
-		else{
-			kind = "a number";
-			if( auto n = v->try_to_number<T>(); n )
-				y = *n;
-		}
-		THROW_IFSL( !y, "{}: `{}` is {} - it takes {}.", owner, key, serialize(*v), kind );
-		return y;
-	}
 }
