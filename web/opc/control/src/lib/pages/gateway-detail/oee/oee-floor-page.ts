@@ -8,11 +8,11 @@ import { Subscription } from 'rxjs';
 import { ComponentPageTitle, RouteItem } from 'jde-spa';
 import { errorMessage } from 'jde-framework';
 import { oeeDuration, oeePercent, OeeSplitRow } from '../../../model/oee';
-import { FloorDrawing, floorDrawing, floorLineKey, floorListOrder, OeeFloorLegendItem, oeeFloorLegend, oeeFloorLineLegend, OeeFloorLink, OeeFloorState, oeeFloorState, floorShapeName, oeeLiveSplit, shiftLeft, zoneClock } from '../../../model/oee-floor';
+import { FloorDrawing, floorDrawing, floorLineKey, floorListOrder, OeeFloorLegendItem, oeeFloorLegend, oeeFloorLineLegend, OeeFloorLink, OeeFloorState, oeeFloorState, floorShapeName, floorStateText, oeeLiveSplit, shiftLeft, zoneClock } from '../../../model/oee-floor';
 import { parseHistNodeText } from '../../../model/hist-admin';
 import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
-import { OeeMachineRef, oeeTileFigures } from '../../../model/oee-live-view';
-import { OeeLineRef, oeeLineTitle } from '../../../model/oee-lines';
+import { OeeMachineRef, oeeTileFigures, oeeTileNotes } from '../../../model/oee-live-view';
+import { OeeLineRef } from '../../../model/oee-lines';
 import { pageSegments } from '../../../model/node';
 import { Gateway, gatewayAnswer, placeNode } from '../../../services/gateway-service';
 import { OeeFloorService } from '../../../services/oee-floor-service';
@@ -27,9 +27,9 @@ type LiveShape = {
 	state:Signal<OeeFloorState>; subscription?:Subscription;
 };
 //the side panel's links for a machine:  its group's page, and its group's root node in the browser, whose History tab is the trend
-type PanelLinks = { key:string; group?:string[]; node?:string[]; pending:boolean };
+type PanelLinks = { key:string; group?:string[]; node?:string[] };
 //a row of the list view:  the dashboard's tile for the machine or the line
-type ListTile = { key:string; kind:'machine'|'line'; name:string; level?:string; link:string[]; state:OeeFloorState; figures:{label:string; value:string}[]; period?:string; partial:boolean; note?:string };
+type ListTile = { key:string; kind:'machine'|'line'; name:string; level?:string; link:string[]; state:OeeFloorState; figures:{label:string; value:string}[]; period?:string; partial:boolean; notes:string[] };
 
 //A line's floor page (#481, docs/demo/spec.md *Drawing*, *Live*), `lines/<slug>/floor` under its gateway's page:  the header
 //with the line, its shift and the time left in it from the line's own status, the plant's clock in the line's calendar's zone,
@@ -69,14 +69,15 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 			...drawing.machines.map( m=>this.#shape( m.key, 'machine', m.name, {machine: m.machine} ) )
 		];
 		this.#shapes = new Map( shapes.map( s=>[s.key, s] ) );
-		this.own = this.#shape( floorLineKey( line.id ), 'line', line.name, {line} );
+		const own = this.#shape( floorLineKey( line.id ), 'line', line.name, {line} );
+		this.own.set( own );
 		this.data.set( pageData );
 		this.drawing.set( drawing );
 		this.mapShapes.set( [...drawing.lines, ...drawing.machines].map( ( d ):FloorMapShape=>{
 			const live = this.#shapes.get( d.key )!;
 			return { key: d.key, kind: live.kind, name: d.name, points: d.points, box: d.box, view: this.#view( live ) };
 		} ) );
-		for( const s of [...shapes, this.own] )
+		for( const s of [...shapes, own] )
 			s.subscription = ( s.kind=='machine' ? gateway.oeeSubscribe( s.machine!.id ) : gateway.oeeSubscribeLine( s.line!.id ) ).subscribe( {next: e=>this.#on( s, e ), error: e=>this.#ended( s, e )} );
 	}
 	#shape( key:string, kind:'machine'|'line', name:string, ref:{machine?:OeeMachineRef; line?:OeeLineRef} ):LiveShape{
@@ -111,10 +112,10 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 	}
 	//the subscriptions end with the page, and with the floor it showed
 	#close():void{
-		for( const s of [...this.#shapes.values(), ...(this.own ? [this.own] : [])] )
+		for( const s of this.#live() )
 			s.subscription?.unsubscribe();
 		this.#shapes.clear();
-		this.own = undefined;
+		this.own.set( undefined );
 		this.#links.clear();
 		this.links.set( undefined );
 		this.pinned.set( undefined );
@@ -127,10 +128,9 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 	//The header:  the line, its shift and the time left from its own status - no calendar where the line names none, between
 	//shifts where its calendar has none now - the plant's clock in its zone, its figures and its state.
 	now = signal( new Date() );
-	readonly title = computed( ()=>{ const d = this.data(); return d ? oeeLineTitle( d.line ) : ''; } );
 	readonly clock = computed( ()=>zoneClock( this.now(), this.data()?.zone ?? 'UTC' ) );
 	readonly shift = computed( ()=>{
-		const d = this.data(), s = this.own?.status(), now = this.now();
+		const d = this.data(), own = this.own(), s = own?.status(), now = this.now();
 		if( !d )
 			return '';
 		if( s?.shift )
@@ -138,11 +138,16 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 		if( d.line.calendarId==undefined )
 			return 'No calendar';
 		if( !s )
-			return this.own?.state().label ?? '';
+			return own?.state().label ?? '';
 		return s.calendarMissing ? 'Calendar not found' : 'Between shifts';
 	} );
-	readonly ownFigures = computed( ()=>oeeTileFigures( this.own?.status()?.figures ) );
-	readonly ownState = computed( ()=>this.own?.state() );
+	readonly ownFigures = computed( ()=>oeeTileFigures( this.own()?.status()?.figures ) );
+	readonly ownState = computed( ()=>this.own()?.state() );
+	//the socket to the gateway dropped:  the map shows the last it said, until each subscription's next status
+	readonly dropped = computed( ()=>{
+		this.data();//another floor, other shapes
+		return this.#live().some( s=>s.link()=='dropped' );
+	} );
 	readonly legend:OeeFloorLegendItem[] = [...oeeFloorLegend, ...oeeFloorLineLegend];
 
 	//The map, and the shape it has under the pointer or the focus, or pinned by a tap or Enter:  the pinned one holds the panel
@@ -155,20 +160,24 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 	readonly selected = computed( ()=>this.pinned() ?? this.hovered() );
 	togglePin( key:string ):void{ this.pinned.update( p=>p==key ? undefined : key ); }
 
-	//The side panel:  the shape's state, the shift's figures with the loss split, the stop in progress, the last count and its
-	//links - a machine's OEE page, its group's page and its root node in the browser, a line's its OEE page.
+	//The side panel, standing beside the map whether a shape is selected or not, so it never takes the map's room:  the shape's
+	//state, the shift's figures with the loss split, the dashboard tile's period and notes, the stop in progress, the last count
+	//and its links - a machine's OEE page, its group's page and its root node in the browser, a line's its OEE page.  Its live
+	//region says the shape and its state in words that hold still, as the "since" ticks each second.
 	readonly panel = computed( ()=>{
 		const key = this.selected(), s = key ? this.#shapes.get( key ) : undefined;
 		if( !s )
 			return undefined;
 		const status = s.status(), f = status?.figures, stop = status?.state=='stopped' ? status.stop : undefined;
+		const told = status ? oeeTileNotes( status, s.link()=='dropped' ) : { notes: [] };
 		return {
 			key, kind: s.kind, name: s.name, level: s.line?.level, state: s.state(), ended: s.ended(), link: s.link(),
-			figures: oeeTileFigures( f ), split: f ? oeeLiveSplit( f ) : undefined, period: status?.shift ? status.shift.name ?? 'Shift' : f ? 'UTC day' : undefined, partial: f?.partial===true,
-			stop, lastCount: status?.lastCount, since: status?.since, planned: status?.planned ?? true,
+			figures: oeeTileFigures( f ), split: f ? oeeLiveSplit( f ) : undefined, period: told.period, notes: told.notes, partial: f?.partial===true,
+			stop, lastCount: status?.lastCount,
 			oeeLink: s.kind=='machine' ? ['../../../machines', s.slug, 'oee'] : ['../../../lines', s.slug, 'oee']
 		};
 	} );
+	readonly live = computed( ()=>{ const p = this.panel(); return p ? `${p.name}, ${floorStateText( p.state )}` : ''; } );
 	links = signal<PanelLinks|undefined>( undefined );
 	constructor(){
 		effect( ()=>{//another shape in the panel:  a machine's links, read once
@@ -176,16 +185,25 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 			untracked( ()=>this.#describe( s ) );
 		} );
 	}
-	//the machine's group once, for the panel's Group and Node links:  the node is the group's root placed on its connection, the
-	//connection's own page for a group rooted at the Objects folder, and none for a root the gateway can't place
-	async #describe( s:LiveShape|undefined ):Promise<void>{
+	//The machine's links, read once:  a read in flight is shared by a shape selected again, and one for a floor since closed is
+	//dropped.
+	#describe( s:LiveShape|undefined ):void{
 		if( !s?.machine )
 			return this.links.set( undefined );
-		const key = s.key, gateway = this.gateway, known = this.#links.get( key );
-		if( known )
-			return this.links.set( known );
-		this.links.set( {key, pending: true} );
-		const links:PanelLinks = { key, pending: false }, groupId = s.machine.groupId;
+		const key = s.key;
+		let read = this.#links.get( key );
+		if( !read )
+			this.#links.set( key, read = this.#read( s ) );
+		this.links.set( {key} );
+		read.then( links=>{
+			if( this.#links.get( key )===read && this.selected()==key )
+				this.links.set( links );
+		} );
+	}
+	//the machine's group, for the panel's Group and Node links:  the node is the group's root placed on its connection, the
+	//connection's own page for a group rooted at the Objects folder, and none for a root the gateway can't place
+	async #read( s:LiveShape ):Promise<PanelLinks>{
+		const key = s.key, gateway = this.gateway, links:PanelLinks = { key }, groupId = s.machine!.groupId;
 		if( groupId!=undefined ){
 			try{
 				const group = await this.#service.group( gateway, groupId );
@@ -207,34 +225,31 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 				console.warn( `Could not describe the group of '${s.name}':  the panel has no link to it.`, e );
 			}
 		}
-		if( this.gateway!=gateway || !this.#shapes.has( key ) )
-			return;
-		this.#links.set( key, links );
-		if( this.selected()==key )
-			this.links.set( links );
+		return links;
 	}
 	duration( ms:number ):string{ return oeeDuration( ms ); }
-	percent( v:number|undefined ):string{ return oeePercent( v ); }
 	share( row:OeeSplitRow ):string{ return row.share==undefined ? '' : oeePercent( row.share ); }
 
 	//the list view:  a tile per line and machine in the floor's order, its state as the map says it
 	readonly list = computed<ListTile[]>( ()=>{
 		const d = this.drawing();
 		return d ? floorListOrder( d ).map( item=>{
-			const s = this.#shapes.get( item.key )!, status = s.status(), f = status?.figures, link = s.link();
+			const s = this.#shapes.get( item.key )!, status = s.status(), f = status?.figures, ended = s.ended();
+			const told = status ? oeeTileNotes( status, s.link()=='dropped' ) : { notes: [] };
 			return {
 				key: s.key, kind: s.kind, name: s.name, level: s.line?.level, link: s.kind=='machine' ? ['../../../machines', s.slug, 'oee'] : ['../../../lines', s.slug, 'oee'],
-				state: s.state(), figures: oeeTileFigures( f ), period: status?.shift ? status.shift.name ?? 'Shift' : f ? 'UTC day' : undefined, partial: f?.partial===true,
-				note: link=='dropped' ? 'The connection to the gateway was lost:  this is the last it said.' : s.ended()
+				state: s.state(), figures: oeeTileFigures( f ), period: told.period, partial: f?.partial===true, notes: ended ? [...told.notes, ended] : told.notes
 			};
 		} ) : [];
 	} );
 
 	sideNav = model.required<RouteItem>();
 	gateway!:Gateway;
-	own?:LiveShape;//the floor's line
+	own = signal<LiveShape|undefined>( undefined );//the floor's line
+	//the placed shapes and the floor's own line
+	#live():LiveShape[]{ const own = this.own(); return [...this.#shapes.values(), ...(own ? [own] : [])]; }
 	#shapes = new Map<string,LiveShape>();
-	#links = new Map<string,PanelLinks>();
+	#links = new Map<string,Promise<PanelLinks>>();
 	#clock:ReturnType<typeof setInterval>|undefined;
 	#route = inject( ActivatedRoute );
 	#title = inject( ComponentPageTitle );

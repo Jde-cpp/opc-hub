@@ -1,12 +1,14 @@
 @use '../../status';
 @use 'oee-tokens';
 
-/* The page is its own container:  below 600px of room the map and the panel give way to the list view (web/CLAUDE.md 'Shared
-   styles') */
+/* The page's content is its own container:  below 600px of room the map and the panel give way to the list view.  Not the host,
+   which is .main-content and must not be one (web/CLAUDE.md 'Shared styles'). */
 :host{
 	@include oee-tokens.tokens;
 	display: block;
 	width: 100%;
+}
+.floor{
 	container-type: inline-size;
 }
 .floor-header{

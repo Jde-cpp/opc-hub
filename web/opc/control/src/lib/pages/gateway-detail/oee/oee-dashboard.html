@@ -38,7 +38,7 @@
 			<ul class="tiles">
 				@for( t of lineTiles(); track t.line.id ){
 					@let v = t.view();
-					<li>
+					<li [class.floored]="floors().has( t.line.id )">
 						<a class="tile" [class.off]="v.state=='none'" [routerLink]="['../lines', t.line.slug, 'oee']">
 							<span class="name">{{ t.line.name }}</span>
 							<span class="category">{{ t.line.level }}</span>

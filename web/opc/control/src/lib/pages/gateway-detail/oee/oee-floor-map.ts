@@ -10,8 +10,8 @@ export type FloorShapeView = { state:OeeFloorState; oee:string; availability:str
 export type FloorMapShape = { key:string; kind:'machine'|'line'; name:string; points:OeePoint[]; box:OeeBox; view:Signal<FloorShapeView> };
 
 //The floor as an SVG whose viewBox is the floor in metres:  wheel and pinch zoom about the pointer, drag pans, Fit and the
-//buttons reset and step the view.  It draws bottom to top the zones, the aisles, the walls, the lines, the machines and the
-//labels.  Every outline is a vector-effect stroke, so it keeps its screen width at any zoom, and the text is sized in metres
+//buttons reset and step the view.  It draws bottom to top the zones, the aisles, the walls, the lines, the machines, the lines'
+//text, over the machines a boxed line holds, and the labels.  Every outline is a vector-effect stroke, so it keeps its screen width at any zoom, and the text is sized in metres
 //from the pixels a metre is, so it keeps its screen size too;  a shape too small on the screen for its figures and state line
 //keeps its name and its OEE (floorTextLevel).  A shape's outline colour is its state's token, a custom property of the sheet, and
 //its dash the state's;  the state is in the text as well.  Shapes are focusable in drawing order, each a button named by its
@@ -62,18 +62,21 @@ export class OeeFloorMap implements AfterViewInit, OnDestroy{
 		e.preventDefault();
 		this.zoom( Math.exp( -e.deltaY*0.0015 ), this.#metres( e ) );
 	}
-	//Pointers:  one drags the view, two pinch it.  A press that moved past a few pixels is no click on the shape under it.
+	//Pointers:  one drags the view, two pinch it.  A press that moved past a few pixels is no click on the shape under it, and
+	//only then does the svg capture the pointer, so the drag pans past its edge:  a capture at the press would send the click to
+	//the svg, and never to the shape.
 	down( e:PointerEvent ):void{
 		if( e.button!=0 && e.pointerType=='mouse' )
 			return;
 		this.#pointers.set( e.pointerId, {x: e.clientX, y: e.clientY} );
 		this.#moved = 0;
-		this.svg()?.nativeElement.setPointerCapture( e.pointerId );
 	}
 	move( e:PointerEvent ):void{
 		const was = this.#pointers.get( e.pointerId );
 		if( !was )
 			return;
+		if( e.pointerType=='mouse' && !e.buttons )//released outside the svg before it captured the pointer
+			return this.up( e );
 		const now = {x: e.clientX, y: e.clientY}, scale = this.pxPerMetre();
 		if( this.#pointers.size==1 ){
 			this.#moved += Math.abs( now.x-was.x )+Math.abs( now.y-was.y );
@@ -87,6 +90,9 @@ export class OeeFloorMap implements AfterViewInit, OnDestroy{
 				this.zoom( after/before, this.#metres( {clientX: ( now.x+other.x )/2, clientY: ( now.y+other.y )/2} ) );
 		}
 		this.#pointers.set( e.pointerId, now );
+		const svg = this.svg()?.nativeElement;
+		if( this.#moved>=OeeFloorMap.clickSlop && svg && !svg.hasPointerCapture( e.pointerId ) )
+			svg.setPointerCapture( e.pointerId );
 	}
 	up( e:PointerEvent ):void{ this.#pointers.delete( e.pointerId ); }
 	clicked( key:string ):void{

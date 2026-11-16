@@ -74,10 +74,10 @@ text{
 .shape{
 	cursor: pointer;
 	outline: none;
+	@include oee-tokens.by-token( stroke, polygon );/* the token is on the group:  stroke inherits, so the group's would stroke the text too */
 	polygon{
 		stroke-width: 3px;
 		stroke-linejoin: round;
-		@include oee-tokens.by-token( stroke );
 	}
 	&[data-dash=dashed] polygon{
 		stroke-dasharray: 8 6;
@@ -93,9 +93,6 @@ text{
 		polygon{
 			fill: transparent;/* painted, so the box is entered between its machines;  the machines above it take their own */
 			stroke-width: 2px;
-		}
-		text{
-			text-anchor: start;
 		}
 	}
 	&:hover polygon, &.selected polygon{
@@ -115,6 +112,22 @@ text{
 		font-variant-numeric: tabular-nums;
 	}
 	.detail, .state{
+		fill: var(--mat-sys-on-surface-variant);
+		font-variant-numeric: tabular-nums;
+	}
+}
+/* a line's text, over its machines and haloed in the floor's colour where it crosses one;  the halo's width is set in metres */
+.line-text{
+	paint-order: stroke;
+	stroke: var(--mat-sys-surface-container-low);
+	stroke-linejoin: round;
+	text{
+		text-anchor: start;
+	}
+	.name{
+		font-weight: 500;
+	}
+	.detail{
 		fill: var(--mat-sys-on-surface-variant);
 		font-variant-numeric: tabular-nums;
 	}

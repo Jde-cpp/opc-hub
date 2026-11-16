@@ -95,20 +95,26 @@ describe( 'oee-floor', ()=>{
 		it( "colours a line by its machines, always dashed, and counts them", ()=>{
 			const line = ( running:number, stopped:number, unknown=0, planned=true )=>oeeFloorState( status( {state: 'unknown', planned, machines: {running, stopped, unknown}} ), 'live', now );
 			expect( line( 3, 0 ) ).toEqual( { token: 'running', dash: 'dashed', label: 'All running', line: '3 of 3 running' } );
-			expect( line( 2, 1 ) ).toEqual( { token: 'uncoded', dash: 'dashed', label: 'Some stopped', line: '2 of 3 running' } );
-			expect( line( 0, 2, 1 ) ).toEqual( { token: 'Unplanned', dash: 'dashed', label: 'All stopped', line: '0 of 3 running' } );
+			expect( line( 2, 1 ) ).toEqual( { token: 'uncoded', dash: 'dashed', label: 'Not all running', line: '2 of 3 running' } );
+			expect( line( 0, 2 ) ).toEqual( { token: 'Unplanned', dash: 'dashed', label: 'All stopped', line: '0 of 2 running' } );
+			expect( line( 1, 0, 2 ) ).toEqual( { token: 'uncoded', dash: 'dashed', label: 'Not all running', line: '1 of 3 running' } );//not all running while two are unknown
+			expect( line( 0, 2, 1 ).token ).toBe( 'uncoded' );//nor all stopped
 			expect( line( 0, 0, 2 ) ).toEqual( { token: 'unknown', dash: 'dashed', label: 'No data', line: 'No data, 0 of 2 running' } );
 			expect( line( 0, 0, 0 ).line ).toBe( 'No data' );
 			expect( line( 2, 1, 0, false ) ).toEqual( { token: 'neutral', dash: 'dashed', label: 'Not planned', line: 'Not planned, 2 of 3 running' } );
 		} );
 		it( 'names a shape by its machine, its state and its OEE, and splits the live figures as the figures panel does', ()=>{
 			const s = status( {state: 'running', since: t( 7, 48 )} );
-			expect( floorShapeName( 'Filler', oeeFloorState( s, 'live', now ), s.figures ) ).toBe( 'Filler, Running 1h 12m, OEE 68.4%' );
+			expect( floorShapeName( 'Filler', oeeFloorState( s, 'live', now ), s.figures ) ).toBe( 'Filler, Running, OEE 68.4%' );//no "since", which ticks
+			expect( floorShapeName( 'Filler', oeeFloorState( s, 'live', t( 9, 0, 1 ) ), s.figures ) ).toBe( 'Filler, Running, OEE 68.4%' );
+			const bottling = status( {state: 'unknown', machines: {running: 2, stopped: 1, unknown: 0}} );
+			expect( floorShapeName( 'Bottling', oeeFloorState( bottling, 'live', now ), bottling.figures ) ).toBe( 'Bottling, 2 of 3 running, OEE 68.4%' );
 			expect( floorShapeName( 'Filler', oeeFloorState( undefined, 'refused', now ), undefined ) ).toBe( 'Filler, No access, OEE –' );
 			const split = oeeLiveSplit( figures )!;
 			expect( split.planned.map( r=>[r.id, r.ms, r.share] ) ).toEqual( [['run', 9000000, 9000000/10800000], ['unplanned', 1200000, 1200000/10800000], ['plannedStop', 600000, 600000/10800000]] );
 			expect( split.beside.map( r=>[r.id, r.ms] ) ).toEqual( [['small', 120000], ['excluded', 0], ['unknown', 0]] );
 			expect( oeeLiveSplit( {partial: false} ) ).toBeUndefined();
+			expect( oeeLiveSplit( {...figures, planned: 0, run: 0, unplanned: 0, plannedStop: 0, small: 0} ) ).toBeUndefined();//the first instant of a shift
 		} );
 	} );
 	describe( 'the clock', ()=>{

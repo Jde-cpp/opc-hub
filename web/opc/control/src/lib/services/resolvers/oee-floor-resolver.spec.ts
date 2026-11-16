@@ -49,10 +49,11 @@ describe( 'OeeFloorResolver', ()=>{
 		expect( [p.data().zone, p.data().calendar] ).toEqual( ['UTC', undefined] );
 		expect( p.calendarService.calendars ).toHaveBeenCalledTimes( 1 );
 	} );
-	it( "lands a line with no floor on its OEE page, saying so", async ()=>{
+	it( "lands a line with no floor on its OEE page, saying so and forgetting the visit", async ()=>{
 		const p = await open( '/apps/gateways/gw/lines/loose/floor' );
 		expect( p.router.url ).toBe( '/apps/gateways/gw/lines/loose/oee' );
 		expect( p.snackbar.info ).toHaveBeenCalledWith( "'Loose line' has no floor." );
+		expect( p.forget ).toHaveBeenCalledWith( '/apps/gateways/gw/lines/loose/floor' );//a floor purged since the visit
 		expect( p.service.floorShapes ).not.toHaveBeenCalled();
 	} );
 	it( "lands a slug that is no line's on the gateway's page, forgetting the visit, and a gateway that doesn't answer too", async ()=>{

@@ -144,6 +144,16 @@ describe( 'OeeDashboard', ()=>{
 		p.fixture.detectChanges();
 		expect( p.tiles( 'oee-line-tiles' )[1] ).toContain( 'The connection to the gateway was lost' );
 	} );
+	it( "links a line's tile to its floor where it has one, the name kept clear of the link", async ()=>{
+		const p = await create( {floors: [{id: 1, lineId: 1, width: 40, height: 20, grid: 0.5}]} );
+		const li = <HTMLElement>p.fixture.nativeElement.querySelector( 'section[aria-labelledby=oee-line-tiles] li' );
+		expect( li.querySelector( '.floor-link' )?.getAttribute( 'aria-label' ) ).toBe( 'Floor map of Packaging' );
+		expect( li.classList ).toContain( 'floored' );
+		TestBed.resetTestingModule();//a second page, in the same test
+		const none = await create();
+		const bare = <HTMLElement>none.fixture.nativeElement.querySelector( 'section[aria-labelledby=oee-line-tiles] li' );
+		expect( [bare.querySelector( '.floor-link' ), bare.classList.contains( 'floored' )] ).toEqual( [null, false] );
+	} );
 	it( "has no tile for a line one of whose machines the user may not read, its machines in no line, and keeps one the gateway ends, saying why", async ()=>{
 		const Site = {id: 2, name: 'Plant', slug: 'plant', level: 'Site'};
 		const p = await create( {lines: [Packaging, Site]} );

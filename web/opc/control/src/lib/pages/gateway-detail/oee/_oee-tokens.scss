@@ -14,14 +14,9 @@
 	--oee-unknown: light-dark( #9aa0ab, #7b808b );
 	--oee-neutral: var(--mat-sys-outline);
 }
-// a mark's colour by its state's token, on the element that carries data-token
-@mixin by-token( $property ){
-	&[data-token=running]{ #{$property}: var(--oee-running); }
-	&[data-token=Unplanned]{ #{$property}: var(--oee-Unplanned); }
-	&[data-token=Planned]{ #{$property}: var(--oee-Planned); }
-	&[data-token=Excluded]{ #{$property}: var(--oee-Excluded); }
-	&[data-token=uncoded]{ #{$property}: var(--oee-uncoded); }
-	&[data-token=small]{ #{$property}: var(--oee-small); }
-	&[data-token=unknown]{ #{$property}: var(--oee-unknown); }
-	&[data-token=neutral]{ #{$property}: var(--oee-neutral); }
+// a mark's colour by its state's token, on the element that carries data-token, or on `$part` within it
+@mixin by-token( $property, $part: null ){
+	@each $token in running, Unplanned, Planned, Excluded, uncoded, small, unknown, neutral{
+		&[data-token=#{$token}] #{$part}{ #{$property}: var(--oee-#{$token}); }
+	}
 }

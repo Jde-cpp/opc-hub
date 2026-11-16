@@ -1,7 +1,7 @@
 import { OeeBucket, oeeDuration, oeeLossSplit, oeePercent, OeeSplitRow } from './oee';
 import { OeeFloor, OeeFloorKind, OeeFloorShape, OeePoint } from './oee-floor-rows';
 import { OeeLiveFigures, OeeLiveStatus } from './oee-live';
-import { OeeLineRef, oeeLineReach, oeeMembersOf, OeePlant } from './oee-lines';
+import { OeeLineRef, oeeMembersOf, OeePlant, oeeReaches } from './oee-lines';
 import type { OeeMachineRef } from './oee-live-view';
 
 //A line's floor as its page draws it (#481, docs/demo/spec.md *The floor*, *Drawing*):  what the map draws from the two tables'
@@ -57,7 +57,7 @@ export type FloorFixture = { shape:OeeFloorShape; label?:string; points:OeePoint
 export type FloorDrawing = { machines:FloorMachine[]; lines:FloorLine[]; zones:FloorFixture[]; walls:FloorFixture[]; aisles:FloorFixture[]; labels:FloorFixture[] };
 export const floorMachineKey = ( id:number )=>`m${id}`, floorLineKey = ( id:number )=>`l${id}`;
 export function floorDrawing( floor:OeeFloor, shapes:OeeFloorShape[], plant:OeePlant, lineId:number ):FloorDrawing{
-	const machines = new Map( oeeLineReach( plant, lineId ).map( m=>[m.id, m] ) ), lines = new Map( oeeReachedLines( plant, lineId ).map( l=>[l.id, l] ) );
+	const reach = oeeReaches( plant ), machines = new Map( reach( lineId ).map( m=>[m.id, m] ) ), lines = new Map( oeeReachedLines( plant, lineId ).map( l=>[l.id, l] ) );
 	const of = ( kind:OeeFloorKind )=>shapes.filter( s=>s.kind==kind && s.points.length ).sort( ( a, b )=>a.sort-b.sort || a.id-b.id );
 	const placed = of( 'Machine' ).flatMap( ( shape ):FloorMachine[]=>{
 		const machine = shape.machineId==undefined ? undefined : machines.get( shape.machineId );
@@ -69,7 +69,7 @@ export function floorDrawing( floor:OeeFloor, shapes:OeeFloorShape[], plant:OeeP
 	} );
 	const shapedLines = new Set( shaped.map( l=>l.line.id ) ), byMachine = new Map( placed.map( p=>[p.machine.id, p] ) );
 	const boxed = [...lines.values()].filter( l=>!shapedLines.has( l.id ) ).flatMap( ( line ):FloorLine[]=>{
-		const boxes = oeeLineReach( plant, line.id ).flatMap( m=>{ const p = byMachine.get( m.id ); return p ? [p.box] : []; } );
+		const boxes = reach( line.id ).flatMap( m=>{ const p = byMachine.get( m.id ); return p ? [p.box] : []; } );
 		if( !boxes.length )
 			return [];
 		const box = grownBox( unionBox( boxes ), floor.grid/2, floor );
@@ -84,7 +84,8 @@ export function floorListOrder( drawing:FloorDrawing ):( FloorLine|FloorMachine 
 //A shape's state (spec *Drawing*, the table):  the outline's colour token, one of the Gantt chart's kinds or neutral, its dash,
 //and the state line.  No access, the subscription refused, outranks all;  then `planned` false, Not planned;  then the state:
 //running, a stop in its reason's category or uncoded, a stop still small in the small-stop colour, unknown grey and dashed.
-//A line's outline is always dashed, its colour its machines':  all running, some stopped, or all stopped.  `now` is the page's
+//A line's outline is always dashed, its colour its machines':  every one running, every one stopped, or any other mix with one
+//known.  `now` is the page's
 //clock, ticking each second, so the "since" text moves with no read.
 export type OeeFloorToken = 'running'|'Unplanned'|'Planned'|'Excluded'|'uncoded'|'small'|'unknown'|'neutral';
 export type OeeFloorDash = 'solid'|'dashed'|'dotted';
@@ -122,11 +123,11 @@ function oeeFloorLineState( status:OeeLiveStatus ):OeeFloorState{
 		return { token: 'neutral', dash: 'dashed', label: 'Not planned', line: `Not planned, ${count}` };
 	if( !total || c.running+c.stopped==0 )
 		return { token: 'unknown', dash: 'dashed', label: 'No data', line: total ? `No data, ${count}` : 'No data' };
-	if( !c.stopped )
+	if( c.running==total )
 		return { token: 'running', dash: 'dashed', label: 'All running', line: count };
-	if( !c.running )
+	if( c.stopped==total )
 		return { token: 'Unplanned', dash: 'dashed', label: 'All stopped', line: count };
-	return { token: 'uncoded', dash: 'dashed', label: 'Some stopped', line: count };
+	return { token: 'uncoded', dash: 'dashed', label: 'Not all running', line: count };
 }
 //the legend, machines' states and lines'
 export type OeeFloorLegendItem = { token:OeeFloorToken; dash:OeeFloorDash; label:string };
@@ -136,7 +137,7 @@ export const oeeFloorLegend:OeeFloorLegendItem[] = [
 	{ token: 'unknown', dash: 'dashed', label: 'No data' }, { token: 'neutral', dash: 'solid', label: 'Not planned' }, { token: 'neutral', dash: 'dotted', label: 'No access' }
 ];
 export const oeeFloorLineLegend:OeeFloorLegendItem[] = [
-	{ token: 'running', dash: 'dashed', label: 'Line, all running' }, { token: 'uncoded', dash: 'dashed', label: 'Line, some stopped' }, { token: 'Unplanned', dash: 'dashed', label: 'Line, all stopped' }
+	{ token: 'running', dash: 'dashed', label: 'Line, all running' }, { token: 'uncoded', dash: 'dashed', label: 'Line, not all running' }, { token: 'Unplanned', dash: 'dashed', label: 'Line, all stopped' }
 ];
 
 //The text a shape keeps at a size on the screen:  its name, its OEE in large type, its availability, performance and quality in
@@ -146,25 +147,43 @@ export const floorFullText = { width: 120, height: 76 };//px
 export function floorTextLevel( box:OeeBox, pxPerMetre:number ):FloorTextLevel{
 	return box.width*pxPerMetre>=floorFullText.width && box.height*pxPerMetre>=floorFullText.height ? 'full' : 'brief';
 }
+//A state in words that hold still, for an accessible name or a live region:  a machine's label without the "since"
+//that ticks each second, a line's count.
+export function floorStateText( state:OeeFloorState ):string{ return state.since ? state.label : state.line; }
 //a shape's accessible name:  what it is, its state and its OEE
 export function floorShapeName( name:string, state:OeeFloorState, figures:OeeLiveFigures|undefined ):string{
-	return `${name}, ${state.line}, OEE ${oeePercent( figures?.oee )}`;
+	return `${name}, ${floorStateText( state )}, OEE ${oeePercent( figures?.oee )}`;
 }
 
-//the side panel's loss split, the figures panel's over the live figures' times
+//the side panel's loss split, the figures panel's over the live figures' times;  none before there is planned time to split
 export function oeeLiveSplit( f:OeeLiveFigures ):{planned:OeeSplitRow[]; beside:OeeSplitRow[]}|undefined{
-	return f.planned==undefined ? undefined : oeeLossSplit( <OeeBucket><unknown>{ planned: f.planned, run: f.run ?? 0, unplanned: f.unplanned ?? 0, plannedStop: f.plannedStop ?? 0, small: f.small ?? 0, excluded: f.excluded ?? 0, unknown: f.unknown ?? 0 } );
+	return f.planned>0 ? oeeLossSplit( <OeeBucket><unknown>f ) : undefined;
 }
 
 //The plant's clock:  the wall time in `zone` now, and the zone as the header names it, with its offset from UTC.  A zone the
-//browser doesn't know reads as UTC.
+//browser doesn't know reads as UTC.  The formats are made once a zone, null for one the browser doesn't know, as the clock
+//ticks each second.
+const clockFormats = new Map<string,{time:Intl.DateTimeFormat; offset:Intl.DateTimeFormat}|null>();
+function clockFormat( zone:string ){
+	let f = clockFormats.get( zone );
+	if( f===undefined ){
+		try{
+			f = {
+				time: new Intl.DateTimeFormat( undefined, {timeZone: zone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit'} ),
+				offset: new Intl.DateTimeFormat( 'en-US', {timeZone: zone, timeZoneName: 'longOffset'} )
+			};
+		}
+		catch{ f = null; }
+		clockFormats.set( zone, f );
+	}
+	return f;
+}
 export function zoneClock( now:Date, zone:string ):{time:string; zone:string; offset:string}{
-	let z = zone || 'UTC';
-	try{ new Intl.DateTimeFormat( 'en-US', {timeZone: z} ); }
-	catch{ z = 'UTC'; }
-	const time = new Intl.DateTimeFormat( undefined, {timeZone: z, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit'} ).format( now );
-	const offset = ( new Intl.DateTimeFormat( 'en-US', {timeZone: z, timeZoneName: 'longOffset'} ).formatToParts( now ).find( p=>p.type=='timeZoneName' )?.value ?? 'GMT' ).replace( /^GMT/, 'UTC' );
-	return { time, zone: z, offset: offset=='UTC+00:00' ? 'UTC' : offset };
+	let z = zone || 'UTC', f = clockFormat( z );
+	if( !f )
+		f = clockFormat( z = 'UTC' )!;
+	const offset = ( f.offset.formatToParts( now ).find( p=>p.type=='timeZoneName' )?.value ?? 'GMT' ).replace( /^GMT/, 'UTC' );
+	return { time: f.time.format( now ), zone: z, offset: offset=='UTC+00:00' ? 'UTC' : offset };
 }
 //the time left in a shift, to the minute
 export function shiftLeft( end:Date, now:Date ):string{ return now>=end ? 'ending' : `${oeeDuration( Math.ceil( ( end.getTime()-now.getTime() )/60000 )*60000 )} left`; }

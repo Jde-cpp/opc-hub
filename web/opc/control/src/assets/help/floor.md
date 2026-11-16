@@ -8,7 +8,7 @@ A floor and its shapes are rows of the gateway's `oeeFloors` and `oeeFloorShapes
 
 Drag to pan, wheel or pinch to zoom, and **Fit** shows the whole floor again. The outline of a shape keeps its width at any zoom; a shape too small on the screen to hold its figures and its state keeps its name and its OEE.
 
-Hovering, focusing or tapping a shape opens the side panel: the shift's figures with the loss split, the stop in progress with its reason and start, the time of the last count, and links to the machine's OEE page, its group's page and its PLC's node in the browser, whose **History** tab draws the group's trend. A line's panel shows its figures and links to its OEE page. Shapes take focus in drawing order; each is named by its machine, its state and its OEE.
+Hovering, focusing or tapping a shape fills the side panel beside the map: the shift's figures with the loss split, the stop in progress with its reason and start, the time of the last count, and links to the machine's OEE page, its group's page and its PLC's node in the browser, whose **History** tab draws the group's trend. A line's panel shows its figures and links to its OEE page. Shapes take focus in drawing order; each is named by its machine, its state and its OEE.
 
 Below 600 pixels of width the map gives way to a list: the dashboard's tiles for the same machines and lines, in the floor's order.
 
@@ -26,13 +26,13 @@ The outline is the state, in the colours the OEE charts use, so the floor and th
 | Neutral, solid | Not planned:  outside the machine's shifts, or in a break |
 | Neutral, dotted | No access:  the gateway refused the subscription, as it does where Read on the machine's group is withheld |
 
-A line's outline is always dashed: green when every machine it reaches is running, amber when some are stopped, red when all are. Its text says how many are running.
+A line's outline is always dashed: green when every machine it reaches is running, red when every one is stopped, and amber for any other mix. Its text, drawn over its machines, says how many are running.
 
 ## The figures
 
 The figures are the shift's so far, by the machine's calendar, or the UTC day's for a machine with none. **OEE** is availability times performance times quality; the panel's loss split says where the planned time went. The header carries the floor's line's shift and the time left in it, the plant's clock in the line's calendar's zone so a visitor elsewhere reads the shift right, UTC for a line with no calendar, and the line's own figures.
 
-Everything is pushed over the gateway's socket as it changes; the "since" times tick in the browser. Nothing is read on a timer.
+Everything is pushed over the gateway's socket as it changes; the "since" times tick in the browser. Nothing is read on a timer. Should the socket drop, the map says so and shows the last the gateway said until each machine's next status.
 
 ## Access
 

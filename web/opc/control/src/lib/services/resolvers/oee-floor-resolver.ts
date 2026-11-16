@@ -40,6 +40,7 @@ export class OeeFloorResolver implements Resolve<OeeFloorPageData>{
 			const floor = floors.find( f=>f.lineId==line.id );
 			if( !floor ){
 				this.#snackbar.info( `'${line.name}' has no floor.` );
+				this.#recentVisits.forget( RecentVisits.bare( state.url ) );//the redirect is a NavigationCancel, so RecentVisits never drops the page
 				this.#router.navigateByUrl( createUrlTreeFromSnapshot( route, ['../oee'] ) );
 				return null as unknown as OeeFloorPageData;
 			}

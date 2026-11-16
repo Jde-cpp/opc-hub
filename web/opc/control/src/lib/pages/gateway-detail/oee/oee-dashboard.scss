@@ -32,6 +32,9 @@ oee-chart{
 /* a line tile's way to its floor (#481):  a second link in the tile's corner, since a link can't sit inside the tile's own */
 .tiles li{
 	position: relative;
+	&.floored .name{
+		padding-right: 4rem;/* clear of the chip */
+	}
 }
 .floor-link{
 	position: absolute;
