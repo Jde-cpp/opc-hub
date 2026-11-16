@@ -3,6 +3,7 @@ import { Component, computed, inject, input, LOCALE_ID, output } from '@angular/
 import { MatButtonModule } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
+import { saveFile } from 'jde-framework';
 import { modeName, policyName } from '../../../../model/gateway-endpoint';
 import { identityFields, OpDiagnostics, OpenProtocolIdentity, OpName, OpReading, scBadNoCommunication, scBadNotSupported, scBadWaitingForInitialData } from '../../../../model/open-protocol';
 import { countText, dateText } from '../../../../model/reading';
@@ -145,23 +146,11 @@ export class ServerProperties{
 		if( c && !this.trusting() )
 			this.trust.emit( c.thumbprint );
 	}
-	//the gateway's certificate as a .pem file:  a Blob the browser saves, no new route - the PEM is already on the row.  The anchor is
-	//attached for its click, and the url outlives it:  Chrome starts the fetch inside click(), Firefox and Safari after it returns,
-	//and a url revoked by then saves nothing.  Revoked long after, as FileSaver.js does - the blob is a few kB.
+	//the gateway's certificate as a .pem file the browser saves, no new route:  the PEM is already on the row
 	downloadPem():void{
 		const c = this.client();
-		if( !c )
-			return;
-		const blob = new Blob( [c.pem], {type: 'application/x-pem-file'} );
-		const url = URL.createObjectURL( blob );
-		const a = document.createElement( 'a' );
-		a.href = url;
-		a.download = `${this.certificateName(c)}.pem`;
-		a.hidden = true;
-		document.body.append( a );
-		a.click();
-		a.remove();
-		setTimeout( ()=>URL.revokeObjectURL(url), 40_000 );
+		if( c )
+			saveFile( `${this.certificateName(c)}.pem`, c.pem, 'application/x-pem-file' );
 	}
 	//the file's stem for the download name, else "gateway-certificate" - the path is the gateway's, "<slug>.pem" as issued.
 	private certificateName( c:ClientCertificate ):string{

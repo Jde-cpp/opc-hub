@@ -4,117 +4,127 @@
 			<div class="line-bar">
 				<h2 class="line-heading"><span class="level">{{ d.line.level }}</span> {{ d.line.name }}</h2>
 				<span class="spacer"></span>
+				@if( canEdit() && !editing() ){
+					<button #editButton matButton type="button" (click)="editing.set( true )" matTooltip="Place the line's machines and lines, and draw the floor's fixtures"><mat-icon>edit</mat-icon>Edit</button>
+				}
 				<a matButton [routerLink]="['../oee']" matTooltip="The line's figures, Gantt chart, losses and stops"><mat-icon>insights</mat-icon>OEE</a>
 				<a matButton [routerLink]="['../../../oee']" matTooltip="Every line and machine of the gateway, live"><mat-icon>monitoring</mat-icon>Dashboard</a>
 				<a matButton [routerLink]="['..']" matTooltip="The line's properties and members"><mat-icon>settings</mat-icon>Line</a>
 			</div>
-			<dl class="status-bar">
-				<div class="item"><dt>Shift</dt><dd>{{ shift() }}</dd></div>
-				<div class="item"><dt>Plant time</dt><dd><time class="clock">{{ clock().time }}</time> <span class="zone">{{ clock().zone }}, {{ clock().offset }}</span></dd></div>
-				@if( ownState(); as s ){
-					<div class="item"><dt>Line</dt><dd><span class="swatch" aria-hidden="true" [attr.data-token]="s.token" [style.border-color]="'var(--oee-' + s.token + ')'" [attr.data-dash]="s.dash"></span>{{ s.line }}</dd></div>
-				}
-				@for( f of ownFigures(); track f.label ){
-					<div class="item figure" [class.lead]="f.label=='OEE'"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></div>
-				}
-			</dl>
-			<ul class="legend" aria-label="Legend">
-				@for( item of legend; track $index ){
-					<li><span class="swatch" aria-hidden="true" [attr.data-token]="item.token" [style.border-color]="'var(--oee-' + item.token + ')'" [attr.data-dash]="item.dash"></span>{{ item.label }}</li>
-				}
-			</ul>
-		</header>
-		<div class="body">
-			@if( drawing(); as drawing ){
-				<div class="map-wrap">
-					<oee-floor-map [floor]="d.floor" [drawing]="drawing" [shapes]="mapShapes()" [selected]="selected()" (enter)="hovered.set( $event )" (leave)="hovered.set( undefined )" (pick)="togglePin( $event )"></oee-floor-map>
-					@if( !mapShapes().length ){
-						<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>The floor has no machine or line to draw:  its shapes are placed in the editor, and a shape shows while the line holds its machine.</p>
+			@if( !editing() ){
+				<dl class="status-bar">
+					<div class="item"><dt>Shift</dt><dd>{{ shift() }}</dd></div>
+					<div class="item"><dt>Plant time</dt><dd><time class="clock">{{ clock().time }}</time> <span class="zone">{{ clock().zone }}, {{ clock().offset }}</span></dd></div>
+					@if( ownState(); as s ){
+						<div class="item"><dt>Line</dt><dd><span class="swatch" aria-hidden="true" [attr.data-token]="s.token" [style.border-color]="'var(--oee-' + s.token + ')'" [attr.data-dash]="s.dash"></span>{{ s.line }}</dd></div>
 					}
-					@if( dropped() ){
-						<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="cloud_off"></mat-icon>The connection to the gateway was lost:  the map shows the last it said.</p>
+					@for( f of ownFigures(); track f.label ){
+						<div class="item figure" [class.lead]="f.label=='OEE'"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></div>
 					}
-				</div>
-				<aside class="panel" aria-label="The shape's details">
-					<p class="live cdk-visually-hidden" aria-live="polite">{{ live() }}</p>
-					@if( panel(); as p ){
-						<div class="panel-head">
-							<h3>{{ p.name }}@if( p.level ){ <span class="level">{{ p.level }}</span>}</h3>
-							@if( pinned()==p.key ){
-								<button matIconButton type="button" (click)="pinned.set( undefined )" aria-label="Close the panel"><mat-icon>close</mat-icon></button>
-							}
-						</div>
-						<p class="state"><span class="swatch" aria-hidden="true" [attr.data-token]="p.state.token" [style.border-color]="'var(--oee-' + p.state.token + ')'" [attr.data-dash]="p.state.dash"></span>{{ p.state.line }}</p>
-						@if( p.ended; as why ){
-							<p class="note">{{ why }}</p>
-						}
-						@if( p.link=='refused' ){
-							<p class="note">Read on its historian group is withheld from your role, so its figures aren't shown.</p>
-						}
-						<dl class="figures">
-							@for( f of p.figures; track f.label ){
-								<div class="figure" [class.lead]="f.label=='OEE'"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></div>
-							}
-						</dl>
-						@if( p.period ){
-							<p class="note">{{ p.period }}, so far@if( p.partial ){, partial}</p>
-						}
-						@for( n of p.notes; track $index ){
-							<p class="note">{{ n }}</p>
-						}
-						@if( p.split; as s ){
-							<table class="split" aria-label="Planned time">
-								<tbody>
-									@for( row of s.planned; track row.id ){
-										<tr><th scope="row">{{ row.label }}</th><td class="num">{{ duration( row.ms ) }}</td><td class="num">{{ share( row ) }}</td></tr>
-									}
-									@for( row of s.beside; track row.id ){
-										<tr class="beside"><th scope="row">{{ row.label }}</th><td class="num">{{ duration( row.ms ) }}</td><td class="num">{{ row.share==undefined ? '' : share( row ) + ' of run' }}</td></tr>
-									}
-								</tbody>
-							</table>
-						}
-						@if( p.stop; as stop ){
-							<p class="stop">Stop in progress@if( stop.start ){ since {{ stop.start | date:'MMM d, HH:mm:ss' }}}:  @if( stop.reason; as r ){{{ r.name }} <span class="category">{{ r.category }}</span>}@else if( stop.small ){short stop}@else{uncoded@if( stop.code ){, code {{ stop.code }}}}</p>
-						}
-						@if( p.lastCount; as at ){
-							<p class="note">Last count {{ at | date:'MMM d, HH:mm:ss' }}</p>
-						}
-						<div class="links">
-							<a matButton [routerLink]="p.oeeLink"><mat-icon>insights</mat-icon>OEE page</a>
-							@if( p.kind=='machine' ){
-								@if( links(); as l ){
-									@if( l.group ){ <a matButton [routerLink]="l.group" matTooltip="The historian group whose records the machine's figures come from"><mat-icon>history</mat-icon>Group</a> }
-									@if( l.node ){ <a matButton [routerLink]="l.node" matTooltip="The PLC's node in the browser;  its History tab draws the group's trend"><mat-icon>account_tree</mat-icon>Node</a> }
-								}
-							}
-						</div>
+				</dl>
+				<ul class="legend" aria-label="Legend">
+					@for( item of legend; track $index ){
+						<li><span class="swatch" aria-hidden="true" [attr.data-token]="item.token" [style.border-color]="'var(--oee-' + item.token + ')'" [attr.data-dash]="item.dash"></span>{{ item.label }}</li>
 					}
-					@else{
-						<p class="note prompt">Point at, focus or tap a machine or line for its figures, its stop and its links.</p>
-					}
-				</aside>
-				<section class="list" aria-label="The floor's lines and machines">
-					<ul class="tiles">
-						@for( t of list(); track t.key ){
-							<li>
-								<a class="tile" [class.off]="t.state.token=='neutral'" [routerLink]="t.link">
-									<span class="name">{{ t.name }}</span>
-									@if( t.level ){ <span class="category">{{ t.level }}</span> }
-									<span class="state"><span class="swatch" aria-hidden="true" [attr.data-token]="t.state.token" [style.border-color]="'var(--oee-' + t.state.token + ')'" [attr.data-dash]="t.state.dash"></span><span>{{ t.state.line }}</span></span>
-									<span class="figures">
-										@for( f of t.figures; track f.label ){
-											<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
-										}
-									</span>
-									@if( t.period ){ <span class="note">{{ t.period }}, so far@if( t.partial ){, partial}</span> }
-									@for( n of t.notes; track $index ){ <span class="note">{{ n }}</span> }
-								</a>
-							</li>
-						}
-					</ul>
-				</section>
+				</ul>
 			}
-		</div>
+		</header>
+		@if( editing() ){
+			<ng-container #editorSlot></ng-container>
+		}
+		@else{
+			<div class="body">
+				@if( drawing(); as drawing ){
+					<div class="map-wrap">
+						<oee-floor-map [floor]="d.floor" [drawing]="drawing" [shapes]="mapShapes()" [selected]="selected()" (enter)="hovered.set( $event )" (leave)="hovered.set( undefined )" (pick)="togglePin( $event )"></oee-floor-map>
+						@if( !mapShapes().length ){
+							<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="info"></mat-icon>The floor has no machine or line to draw:  its shapes are placed in the editor, and a shape shows while the line holds its machine.</p>
+						}
+						@if( dropped() ){
+							<p class="notice" role="status"><mat-icon aria-hidden="true" fontIcon="cloud_off"></mat-icon>The connection to the gateway was lost:  the map shows the last it said.</p>
+						}
+					</div>
+					<aside class="panel" aria-label="The shape's details">
+						<p class="live cdk-visually-hidden" aria-live="polite">{{ live() }}</p>
+						@if( panel(); as p ){
+							<div class="panel-head">
+								<h3>{{ p.name }}@if( p.level ){ <span class="level">{{ p.level }}</span>}</h3>
+								@if( pinned()==p.key ){
+									<button matIconButton type="button" (click)="pinned.set( undefined )" aria-label="Close the panel"><mat-icon>close</mat-icon></button>
+								}
+							</div>
+							<p class="state"><span class="swatch" aria-hidden="true" [attr.data-token]="p.state.token" [style.border-color]="'var(--oee-' + p.state.token + ')'" [attr.data-dash]="p.state.dash"></span>{{ p.state.line }}</p>
+							@if( p.ended; as why ){
+								<p class="note">{{ why }}</p>
+							}
+							@if( p.link=='refused' ){
+								<p class="note">Read on its historian group is withheld from your role, so its figures aren't shown.</p>
+							}
+							<dl class="figures">
+								@for( f of p.figures; track f.label ){
+									<div class="figure" [class.lead]="f.label=='OEE'"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></div>
+								}
+							</dl>
+							@if( p.period ){
+								<p class="note">{{ p.period }}, so far@if( p.partial ){, partial}</p>
+							}
+							@for( n of p.notes; track $index ){
+								<p class="note">{{ n }}</p>
+							}
+							@if( p.split; as s ){
+								<table class="split" aria-label="Planned time">
+									<tbody>
+										@for( row of s.planned; track row.id ){
+											<tr><th scope="row">{{ row.label }}</th><td class="num">{{ duration( row.ms ) }}</td><td class="num">{{ share( row ) }}</td></tr>
+										}
+										@for( row of s.beside; track row.id ){
+											<tr class="beside"><th scope="row">{{ row.label }}</th><td class="num">{{ duration( row.ms ) }}</td><td class="num">{{ row.share==undefined ? '' : share( row ) + ' of run' }}</td></tr>
+										}
+									</tbody>
+								</table>
+							}
+							@if( p.stop; as stop ){
+								<p class="stop">Stop in progress@if( stop.start ){ since {{ stop.start | date:'MMM d, HH:mm:ss' }}}:  @if( stop.reason; as r ){{{ r.name }} <span class="category">{{ r.category }}</span>}@else if( stop.small ){short stop}@else{uncoded@if( stop.code ){, code {{ stop.code }}}}</p>
+							}
+							@if( p.lastCount; as at ){
+								<p class="note">Last count {{ at | date:'MMM d, HH:mm:ss' }}</p>
+							}
+							<div class="links">
+								<a matButton [routerLink]="p.oeeLink"><mat-icon>insights</mat-icon>OEE page</a>
+								@if( p.kind=='machine' ){
+									@if( links(); as l ){
+										@if( l.group ){ <a matButton [routerLink]="l.group" matTooltip="The historian group whose records the machine's figures come from"><mat-icon>history</mat-icon>Group</a> }
+										@if( l.node ){ <a matButton [routerLink]="l.node" matTooltip="The PLC's node in the browser;  its History tab draws the group's trend"><mat-icon>account_tree</mat-icon>Node</a> }
+									}
+								}
+							</div>
+						}
+						@else{
+							<p class="note prompt">Point at, focus or tap a machine or line for its figures, its stop and its links.</p>
+						}
+					</aside>
+					<section class="list" aria-label="The floor's lines and machines">
+						<ul class="tiles">
+							@for( t of list(); track t.key ){
+								<li>
+									<a class="tile" [class.off]="t.state.token=='neutral'" [routerLink]="t.link">
+										<span class="name">{{ t.name }}</span>
+										@if( t.level ){ <span class="category">{{ t.level }}</span> }
+										<span class="state"><span class="swatch" aria-hidden="true" [attr.data-token]="t.state.token" [style.border-color]="'var(--oee-' + t.state.token + ')'" [attr.data-dash]="t.state.dash"></span><span>{{ t.state.line }}</span></span>
+										<span class="figures">
+											@for( f of t.figures; track f.label ){
+												<span class="figure" [class.lead]="f.label=='OEE'"><span class="label">{{ f.label }}</span><span class="value">{{ f.value }}</span></span>
+											}
+										</span>
+										@if( t.period ){ <span class="note">{{ t.period }}, so far@if( t.partial ){, partial}</span> }
+										@for( n of t.notes; track $index ){ <span class="note">{{ n }}</span> }
+									</a>
+								</li>
+							}
+						</ul>
+					</section>
+				}
+			</div>
+		}
 	</div>
 }

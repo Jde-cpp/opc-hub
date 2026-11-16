@@ -27,6 +27,9 @@
 		@if( floorLink(); as link ){
 			<a matButton [routerLink]="link" matTooltip="The line's floor map, its machines outlined by their state, live"><mat-icon>map</mat-icon>Floor</a>
 		}
+		@else if( canFloor() ){
+			<button matButton type="button" class="new-floor" (click)="newFloor()" [disabled]="makingFloor()" matTooltip="Make the line a floor, 40 by 20 metres to begin with, and open its editor"><mat-icon>add_location_alt</mat-icon>New floor</button>
+		}
 		<a matButton [routerLink]="['../../../oee']" matTooltip="Every line and machine of the gateway, live"><mat-icon>monitoring</mat-icon>Dashboard</a>
 		<a matButton [routerLink]="['..']" [matTooltip]="subject.settings.tip"><mat-icon>settings</mat-icon>{{ subject.settings.label }}</a>
 	</div>

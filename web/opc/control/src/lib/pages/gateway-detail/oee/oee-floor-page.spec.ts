@@ -1,13 +1,18 @@
+import { Location } from '@angular/common';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
+import { SnackbarService } from 'jde-framework';
+import { OeeFloorRights, toOeeFloorShape } from '../../../model/oee-floor';
 import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
 import { OeeFloorService } from '../../../services/oee-floor-service';
 import { OeeFloorPageData } from '../../../services/resolvers/oee-floor-resolver';
+import { OeeFloorEditor } from './oee-floor-editor';
 import { OeeFloorMap } from './oee-floor-map';
 import { OeeFloorPage } from './oee-floor-page';
-import { flush, pageTitleStub, provideRoute, stable } from 'jde-spa/testing';
+import { flush, pageTitleStub, provideRoute, silence, stable } from 'jde-spa/testing';
+import { snackbarStub } from 'jde-framework/testing';
 import { Feed } from 'jde-opc/testing';
 
 const t = ( h:number, m=0, s=0 )=>new Date( Date.UTC( 2026, 10, 11, h, m, s ) );
@@ -32,16 +37,27 @@ const pageData = ( gateway:unknown, {calendar=true, zone='America/New_York'}={} 
 		members: [{id: 1, lineId: 10, memberLineId: 11, sort: 0}, {id: 2, lineId: 10, memberLineId: 12, sort: 1}, {id: 3, lineId: 11, machineId: 1, sort: 0}, {id: 4, lineId: 11, machineId: 2, sort: 1}, {id: 6, lineId: 12, machineId: 4, sort: 0}]
 	}
 });
+const none:OeeFloorRights = { createFloor: false, updateFloor: false, createShape: false, updateShape: false, purgeShape: false };
+const all:OeeFloorRights = { createFloor: true, updateFloor: true, createShape: true, updateShape: true, purgeShape: true };
 //The page over stubs:  a gateway whose oeeSubscribe opens a feed per machine and oeeSubscribeLine one per line, under its id
-//negated, `push` a status on one;  `service` answers a machine's group.  `open` moves the page to another floor, as the router does.
-const create = async ( {zone='America/New_York'}={} )=>{
+//negated, `push` a status on one;  `service` answers a machine's group, the caller's `rights` on the floor's tables, none by
+//default, or their refusal, and the floor read again.  `made` is a page navigated to from a floor's making.  `open` moves the
+//page to another floor, as the router does.
+const create = async ( {zone='America/New_York', rights=none, made=false}:{zone?:string; rights?:OeeFloorRights|Error; made?:boolean}={} )=>{
 	const feeds = new Map<number,Feed<OeeLiveEvent,number>>();
 	const feed = ( id:number )=>feeds.get( id ) ?? feeds.set( id, new Feed<OeeLiveEvent,number>() ).get( id )!;
 	const gateway = { name: 'gw', slug: 'gw', feed, oeeSubscribe: vi.fn( ( machine:number )=>feed( machine ).open( machine ) ), oeeSubscribeLine: vi.fn( ( line:number )=>feed( -line ).open( -line ) ), querySingle: vi.fn( async ()=>({ name: 'Machine', nodeClass: 1, path: 'Objects/2~Machine' }) ) };
-	const service = { group: vi.fn( async ( _g:unknown, id:number )=>id==21 ? { slug: 'filler', connection: 'plc1', root: 'ns=2;i=5001' } : id==24 ? { slug: 'packer', connection: 'plc4' } : undefined ) };
-	const data = new BehaviorSubject<object>( {pageData: pageData( gateway, {zone} )} );
-	const title = { title: '' };
-	TestBed.configureTestingModule({ providers: [provideRouter( [] ), provideRoute( {data} ), { ...pageTitleStub, useValue: title }, { provide: OeeFloorService, useValue: service }] });
+	const first = pageData( gateway, {zone} );
+	const service = {
+		group: vi.fn( async ( _g:unknown, id:number )=>id==21 ? { slug: 'filler', connection: 'plc1', root: 'ns=2;i=5001' } : id==24 ? { slug: 'packer', connection: 'plc4' } : undefined ),
+		rights: vi.fn( async ( ..._:unknown[] )=>{ if( rights instanceof Error ) throw rights; return rights; } ),
+		floor: vi.fn( async ( ..._:unknown[] ):Promise<object|undefined>=>({ floor: first.floor, shapes: first.shapes }) ), plant: vi.fn( async ( ..._:unknown[] )=>first.plant ), save: vi.fn( async ()=>{} )
+	};
+	const data = new BehaviorSubject<object>( {pageData: first} );
+	const title = { title: '' }, snackbar = snackbarStub();
+	TestBed.configureTestingModule({ providers: [provideRouter( [] ), provideRoute( {data} ), { ...pageTitleStub, useValue: title }, { provide: OeeFloorService, useValue: service }, { provide: SnackbarService, useValue: snackbar }] });
+	if( made )
+		vi.spyOn( TestBed.inject( Location ), 'getState' ).mockReturnValue( {edit: true} );
 	const fixture = TestBed.createComponent( OeeFloorPage );
 	fixture.componentRef.setInput( 'sideNav', undefined );
 	await stable( fixture );
@@ -64,7 +80,9 @@ const create = async ( {zone='America/New_York'}={} )=>{
 		data.next( {pageData: next} );
 		await stable( fixture );
 	};
-	return { page, fixture, gateway, service, title, push, shapes, text, tiles, shape, lineTexts, layers, map, open, el };
+	const editor = ()=><OeeFloorEditor|undefined>fixture.debugElement.query( By.directive( OeeFloorEditor ) )?.componentInstance;
+	const button = ( label:string )=><HTMLButtonElement|undefined>[...el().querySelectorAll( 'button' )].find( b=>b.textContent!.trim().endsWith( label ) );
+	return { page, fixture, gateway, service, title, push, shapes, text, tiles, shape, lineTexts, layers, map, open, el, editor, button, first, snackbar };
 };
 
 describe( 'OeeFloorPage', ()=>{
@@ -248,5 +266,69 @@ describe( 'OeeFloorPage', ()=>{
 		expect( tiles[2] ).toMatch( /^Filler Running .* Availability 80\.0% Performance 90\.0% Quality 95\.0% OEE 68\.4% First, so far$/ );
 		expect( tiles[3] ).toBe( 'Capper Connecting Availability – Performance – Quality – OEE –' );
 		expect( p.page.list().map( t=>t.link.join( '/' ) ) ).toEqual( ['../../../lines/bottling/oee', '../../../lines/packing/oee', '../../../machines/filler/oee', '../../../machines/capper/oee', '../../../machines/packer/oee'] );
+	} );
+	it( "offers Edit to a caller who may update the floor's shapes, and stands the editor in the map's place until its Cancel", async ()=>{
+		const p = await create( {rights: {...none, updateShape: true}} );
+		expect( p.service.rights ).toHaveBeenCalledWith( p.gateway );
+		expect( p.editor() ).toBeUndefined();//imported once Edit is pressed
+		p.button( 'Edit' )!.click();
+		await stable( p.fixture, 5 );
+		const editor = p.editor()!;
+		expect( [editor.line().name, editor.source().floor.id, editor.source().shapes.length, editor.plant().machines.length, editor.rights().updateShape, editor.rights().createShape] ).toEqual( ['Plant', 1, 4, 3, true, false] );
+		expect( [...p.el().querySelectorAll( 'oee-floor-editor g.shape' )].map( g=>g.getAttribute( 'aria-label' ) ) ).toEqual( ['Filler', 'Capper', 'Packer', 'Label Dock'] );
+		expect( [p.el().querySelector( 'oee-floor-map' ), p.el().querySelector( '.status-bar' ), p.el().querySelector( '.legend' ), p.button( 'Edit' )] ).toEqual( [null, null, null, undefined] );
+		expect( p.text( '.line-heading' ) ).toEqual( ['Site Plant'] );//the header stays
+		p.button( 'Cancel' )!.click();
+		await stable( p.fixture );
+		expect( p.editor() ).toBeUndefined();
+		expect( p.el().querySelector( 'oee-floor-map' ) ).not.toBeNull();
+		expect( document.activeElement ).toBe( p.button( 'Edit' ) );//the focus, back where it left
+		expect( p.service.floor ).not.toHaveBeenCalled();//nothing saved, nothing to read
+		expect( p.gateway.oeeSubscribe ).toHaveBeenCalledTimes( 3 );//and the subscriptions stood through it
+	} );
+	it( "offers no Edit without Update on the shapes, or where the gateway doesn't say", async ()=>{
+		const viewer = await create( {rights: {...all, updateShape: false}} );
+		expect( viewer.button( 'Edit' ) ).toBeUndefined();
+		TestBed.resetTestingModule();//built twice:  a gateway that has no oeeFloorRights
+		const warn = silence();
+		const old = await create( {rights: new Error( "Could not find view 'oeeFloorRights'" )} );
+		expect( old.button( 'Edit' ) ).toBeUndefined();
+		expect( warn ).toHaveBeenCalledTimes( 1 );
+		expect( old.shapes().length ).toBe( 5 );//the map stands
+	} );
+	it( "reads the floor again after the editor's save, and draws it", async ()=>{
+		const p = await create( {rights: all} );
+		p.button( 'Edit' )!.click();
+		await stable( p.fixture, 5 );
+		const moved = [...p.first.shapes.slice( 0, 3 ), toOeeFloorShape( {id: 5, oeeFloorId: 1, kind: 'Label', points: [[38, 15]], label: 'Dock'} )!, toOeeFloorShape( {id: 6, oeeFloorId: 1, kind: 'Label', points: [[2, 18]], label: 'Exit', sort: 1} )!];
+		p.service.floor.mockResolvedValueOnce( {floor: {...p.first.floor, width: 50}, shapes: moved} );
+		p.editor()!.closed.emit( true );
+		await stable( p.fixture, 5 );
+		expect( p.service.floor ).toHaveBeenCalledWith( p.gateway, 10 );
+		expect( p.service.plant ).toHaveBeenCalledWith( p.gateway );
+		expect( p.editor() ).toBeUndefined();
+		expect( p.text( 'text.label' ) ).toEqual( ['Dock', 'Exit'] );
+		expect( p.map().floor().width ).toBe( 50 );
+		expect( p.gateway.oeeSubscribe ).toHaveBeenCalledTimes( 6 );//the floor read is opened as a floor is
+		expect( p.service.rights ).toHaveBeenCalledTimes( 1 );//the rights are the gateway's, asked once
+		expect( p.button( 'Edit' ) ).not.toBeUndefined();
+		p.button( 'Edit' )!.click();
+		await stable( p.fixture, 5 );
+		expect( p.editor()!.source().shapes.length ).toBe( 5 );//the editor again, over what was read
+		p.service.floor.mockRejectedValueOnce( new Error( 'gone' ) );
+		p.editor()!.closed.emit( true );
+		await stable( p.fixture, 5 );
+		expect( p.snackbar.exception ).toHaveBeenCalledWith( 'The floor is saved, but could not be read again', expect.any( Error ) );
+		expect( p.text( 'text.label' ) ).toEqual( ['Dock', 'Exit'] );//the map as it was
+	} );
+	it( 'opens a floor just made in its editor, for a caller who may edit it', async ()=>{
+		const p = await create( {rights: all, made: true} );
+		await stable( p.fixture, 5 );
+		expect( p.editor() ).not.toBeUndefined();
+		TestBed.resetTestingModule();//built twice:  the same navigation, without Update on the shapes
+		const viewer = await create( {made: true} );
+		await stable( viewer.fixture, 5 );
+		expect( viewer.editor() ).toBeUndefined();
+		expect( viewer.el().querySelector( 'oee-floor-map' ) ).not.toBeNull();
 	} );
 } );

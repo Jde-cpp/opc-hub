@@ -9,6 +9,8 @@
 //Each of the four takes `line`, an oee_lines id, in place of `machine` (spec *Lines*):  its machines' combined, a bucket
 //adding `machines` and `coverage`, and with `members: true` a bucket per direct member.  oeeLineStatus( line ){ … } is the
 //line's oeeMachineStatus.
+//oeeFloorRights{ createFloor updateFloor createShape updateShape purgeShape }:  whether a stock mutation of oee_floors and of
+//oee_floor_shapes would pass the caller, which an unenforced resource passes:  what the floor's editor offers and greys.
 //Each needs Read on the machine's group, a line's on the group of every machine it reaches.  Times are ISO 8601 to a hundred
 //nanoseconds, durations milliseconds.
 //recomputeOee( machine, start, end ){ machine start end } (ql/OeeMAwait.cpp):  the machine's rows over start to end made
@@ -66,6 +68,15 @@ local oeeLineStatus = {
 		{ name: "calendarId", type: UInt },
 		{ name: "deleted", type: NonNull(Boolean) },
 		{ name: "machines", type: List(Object("OeeMachineStatus")) } //one per machine it reaches, in member order.
+	]
+};
+local oeeFloorRights = {
+	fields: [
+		{ name: "createFloor", type: NonNull(Boolean) }, //createOeeFloor would pass the caller.
+		{ name: "updateFloor", type: NonNull(Boolean) }, //updateOeeFloor would:  the floor's size and grid.
+		{ name: "createShape", type: NonNull(Boolean) }, //createOeeFloorShape would.
+		{ name: "updateShape", type: NonNull(Boolean) }, //updateOeeFloorShape would:  what shows the editor.
+		{ name: "purgeShape", type: NonNull(Boolean) } //purgeOeeFloorShape would.
 	]
 };
 local oeeStops = {
@@ -127,6 +138,8 @@ local oeeCoding = {
 	oeeMachineStatus: oeeMachineStatus,
 	OeeLineStatus: oeeLineStatus,
 	oeeLineStatus: oeeLineStatus,
+	OeeFloorRights: oeeFloorRights,
+	oeeFloorRights: oeeFloorRights,
 	OeeMember: oee,
 	OeeCoverage: { fields: [ { name: "performance", type: NonNull(UInt) }, { name: "quality", type: NonNull(UInt) } ] },
 	OeeLineRef: { fields: [ { name: "id", type: NonNull(UInt) }, { name: "name", type: NonNull(String) }, { name: "slug", type: NonNull(String) }, { name: "level", type: String } ] },

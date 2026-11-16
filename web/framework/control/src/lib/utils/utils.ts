@@ -13,6 +13,21 @@ export function verify( expr:unknown, msg?:string ):asserts expr{
 		throw new Error( msg ?? "Assertion failed" );
 }
 
+//Text as a file the browser saves:  a Blob behind an anchor, no route.  The anchor is attached for its click, and the url
+//outlives it:  Chrome starts the fetch inside click(), Firefox and Safari after it returns, and a url revoked by then saves
+//nothing.  Revoked long after, as FileSaver.js does.
+export function saveFile( name:string, text:string, type='application/json' ):void{
+	const url = URL.createObjectURL( new Blob( [text], {type} ) );
+	const a = document.createElement( 'a' );
+	a.href = url;
+	a.download = name;
+	a.hidden = true;
+	document.body.append( a );
+	a.click();
+	a.remove();
+	setTimeout( ()=>URL.revokeObjectURL( url ), 40_000 );
+}
+
 export function clone<T>( obj:T ):T{//a JSON round trip, so the result really is the same shape - not `any`
 	return JSON.parse( JSON.stringify(obj) );
 }

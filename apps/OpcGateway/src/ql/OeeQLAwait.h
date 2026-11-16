@@ -39,14 +39,17 @@ namespace Jde::Opc::Gateway{
 	//waiting, between engines, blocked, with `why`, or deleted;  `state` is the machine's, running, stopped or unknown.
 	//oeeLineStatus( line ){ line{ id name level } enabled calendar calendarId machines{ … } }:  the same for a line, `calendar`
 	//its own and `machines` an oeeMachineStatus per machine it reaches, past Read on each one's group's own row.
+	//oeeFloorRights{ createFloor updateFloor createShape updateShape purgeShape }:  whether a stock mutation of oee_floors and of
+	//oee_floor_shapes would pass the caller, for the floor's editor (docs/demo/spec.md *Editing*):  each the table's right, as
+	//Table::Authorize tests it, which an unenforced resource passes.  It takes no argument and names no row.
 	//The engine's three tables take no generic select (spec *Reads*):  their meta's noSelect refuses one in TableQL::AuthorizeRead,
 	//since the generic path knows nothing of the gate.
 	struct OeeQLAwait final : QL::IQLTableAwaitExe{
 		using base = QL::IQLTableAwaitExe;
 		OeeQLAwait( QL::TableQL&& q, QL::Creds creds, SRCE )ι:base{ move(q), move(creds), sl }{}
 		Ω IsApplicable( const QL::TableQL& q )ι->bool;
-		static constexpr sv FiguresCommand{ "oee" }, StopsCommand{ "oeeStops" }, LossesCommand{ "oeeLosses" }, TimelineCommand{ "oeeTimeline" }, StatusCommand{ "oeeMachineStatus" }, LineStatusCommand{ "oeeLineStatus" };
-		static constexpr array<sv,6> Tables{ FiguresCommand, StopsCommand, LossesCommand, TimelineCommand, StatusCommand, LineStatusCommand };//their sub-tables inherit.
+		static constexpr sv FiguresCommand{ "oee" }, StopsCommand{ "oeeStops" }, LossesCommand{ "oeeLosses" }, TimelineCommand{ "oeeTimeline" }, StatusCommand{ "oeeMachineStatus" }, LineStatusCommand{ "oeeLineStatus" }, FloorRightsCommand{ "oeeFloorRights" };
+		static constexpr array<sv,7> Tables{ FiguresCommand, StopsCommand, LossesCommand, TimelineCommand, StatusCommand, LineStatusCommand, FloorRightsCommand };//their sub-tables inherit.
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};
