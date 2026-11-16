@@ -33,9 +33,12 @@ a `toggle` or `on`.  A device's `stops` list holds a generated `status` off thro
 Where stops overlap, any holds `status` off and the first coded one in the list gives `reasonCode`, so an uncoded stop
 never hides a coded one's reason.
 
-A stop has one of three shapes:
+A stop is a window on the device's clock, which starts with the emulator, in one of four shapes - the slow periods' and
+the tags' `quality` windows' too:
 
-- `{every, for}`: from each `every` of the device's clock for `for`, the first at `every`, not at 0.
+- `{start, for}`: once, from `start` (0) for `for`.
+- `{start, every, for}`: from `start` and again every `every`, for `for`, the shorter.  `start` left out, the first is at
+  `every`, not at 0.  `for` is a Jsonnet keyword, so a config spells the key `"for"`.
 - `{mean, min, max}`: a random stop.  It starts after a gap from the last one's end, drawn about `mean`, exponential,
   and lasts a length drawn from `min` to `max`.
 - `{at, for}`: from a time of day, `06:00` or `06:00:00`, in the emulator's `zone`, for `for`, under 23 hours.  One
@@ -43,7 +46,7 @@ A stop has one of three shapes:
   and one they repeat is its first.  The time of day is the wall clock's, read each period, so a pause the steady
   clock misses, a suspend or a paused VM, doesn't move it.
 
-A device's `slow` list has the same three shapes, each with a `factor` where a stop has its `code`: a performance loss
+A device's `slow` list has the same shapes, each with a `factor` where a stop has its `code`: a performance loss
 with `status` left on.  Through it the device runs at 1/`factor` of its pace: a `production` count's cycle takes
 `factor` times as long, and a `follow` tag lags towards that share of its target.
 
@@ -270,7 +273,7 @@ overrides that beat them.
 | `pubsub` | | the contract - `import` the shared file, never a copy |
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
 | `namespace` | | the device paths' default namespace; absent = the contract's (`pubsub.dataSet.namespace`), so the write and server transports need no `pubsub` block |
-| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `seed` (the random stops' and slow periods' engine; absent = from the start time), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, for `follow` `follows` (none), and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)), `stops[]` (`every` and `for`, `mean`, `min` and `max`, or `at` and `for`, each with `code` (0)) and `slow[]` (the stops' shapes, each with `factor`, over 1) |
+| `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another), `seed` (the random stops' and slow periods' engine; absent = from the start time), `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`, for `follow` `follows` (none), and for `production` `cycle` (`PT1S`), `jitter` (none), `reject` (0) and `rejectTag` (`rejectCount`)), `stops[]` (`for` from `start` (0) once, `start`, `every` and `for`, `mean`, `min` and `max`, or `at` and `for`, each with `code` (0)) and `slow[]` (the stops' shapes, each with `factor`, over 1) |
 | `tightening` | | the tightening station; absent = none |
 | `tightening.port` / `tightening.address` | | its Open Protocol port (4545) and the interface it listens on (absent = loopback, `""` = every interface) |
 | `tightening.cycle` / `tightening.jitter` / `tightening.reject` | | `production`'s: a rundown every `cycle` (`PT1S`), give or take `jitter` (none), a `reject` share of them NOK (0) |
@@ -294,7 +297,8 @@ the emulator's to hold off.  A `zone` the time zone database lacks is refused.
 A device is refused with two tags of one name, a reject tag (`rejectCount` unless `rejectTag` says) and a stops
 list's `reasonCode` included, and with a `command` tag beside a generated `status`, which would command nothing.
 
-A production count's reject tag takes the count's `quality` windows, one counter's faults, but not its sensor range.
+A production count's reject tag takes the count's `quality` windows, one counter's faults, the random ones drawn alike,
+but not its sensor range.
 
 The tightening station is refused at startup with no parameter set, with two of one `id`, with a `target` that is not
 between its `min`, 0 or more, and its `max`, with a `max` that leaves a NOK's torque no room under the field's 9999.99,
@@ -351,9 +355,8 @@ Per tag, beside `mode` (not on a `command` tag - the emulator never writes one):
 | key | meaning |
 |---|---|
 | `sensorMin` / `sensorMax` | the transmitter's range.  A generated value outside it is published pinned at the range as `UncertainEngineeringUnitsExceeded` with LimitBits Low/High.  Not on a bool. |
-| `quality[]` | scheduled faults on the tag's own clock (it starts with the emulator); the **first active** window wins, outside them the sensor range decides, else Good |
+| `quality[]` | scheduled faults, each a window in the stops' shapes (*Devices* above) on the device's clock: `{start, for}` once, `{start, every, for}`, `{mean, min, max}` - drawn from an engine of the tag's own, seeded from the device's `seed` and the tag's place in `tags[]`, so the stops stay where they were - or `{at, for}` in the emulator's `zone`.  The **first active** window wins, outside them the sensor range decides, else Good.  A fault that stays is a one-shot with a long `for`. |
 | `quality[].status` | a name below, or any code by number (`"0x80340000"`, or the JSON number) - the rest of Table 178 |
-| `quality[].start` / `duration` / `every` | active from `start` (default 0) for `duration` (required), again every `every` (not shorter than `duration`; absent = once) |
 | `quality[].hold` | publish the last reading from before the window - a blind sensor.  Default `true` for Bad and the two `…LastUsableValue` codes, else `false`.  The generator advances either way, so the reading jumps when the window closes. |
 | `quality[].limit` | `none` \| `low` \| `high` \| `constant`; absent = the sensor range's limit, if pinned |
 | `quality[].overflow` / `structureChanged` / `semanticsChanged` | the flag bits |
@@ -422,14 +425,16 @@ each side; the test configs use it.
 
 `Jde.Opc.PlcEmulator.Tests` (`tests/`): `Signals` (parsing, every refusal, each generator's shape, `production`'s
 advance, jitter bounds and reject share, a rate under 1, a key of the wrong kind), `Quality` (the status names, the
-§7.38 bit layout, the windows and their edges, hold and the sensor range), `ParseDevices` (two tags of one name, a
-command beside a generated `status`, a `follows` tag's pace, the stops' and slow periods' refusals, the zone looked up
-for an `at` alone, each shape's run between two), `Device::Sample` on the device clock alone (a scheduled stop's
-timing and code, a thousand random stops' gaps and lengths over a `seed`, a seed's stops repeating and another's
-differing, an `at` stop on the days New York's clocks change, a slow period's count and a `follows` tag's lag towards
-it and back, an uncoded stop after a coded one and one never hiding a coded one's reason, an `at` stop keeping to the
-wall clock through a pause, a counter stepping once a period whatever its cuts, a period cut at its edges, nothing
-counted while `status` is off or before the first command, a held fault reaching the rejects), and `PlcServer` on
+§7.38 bit layout, a one-shot window and a repeating one and their edges, a random one's seed, every shape's refusals,
+hold and the sensor range), `ParseDevices` (two tags of one name, a command beside a generated `status`, a `follows`
+tag's pace, the stops' and slow periods' refusals, the zone looked up for an `at` alone, a tag's included, each shape's
+run between two), `Device::Sample` on the device clock alone (a scheduled stop's timing and code, a one-shot stop and a
+`start`, a thousand random stops' gaps and lengths over a `seed`, a seed's stops repeating and another's differing, and
+staying put beside a tag's random windows, an `at` stop on the days New York's clocks change, an `at` quality window on
+the wall clock, a slow period's count and a `follows` tag's lag towards it and back, an uncoded stop after a coded one
+and one never hiding a coded one's reason, an `at` stop keeping to the wall clock through a pause, a counter stepping
+once a period whatever its cuts, a period cut at its edges, nothing counted while `status` is off or before the first
+command, a held fault reaching the rejects), and `PlcServer` on
 loopback 4851 with the writer aimed at a port nothing reads: the `/emulator/plc` block and its defaults, a secured
 session with a `plc.users` login reading and writing its nodes, anonymous, an issued token (there is no hub in the
 suite) and a stranger's certificate refused, a command write reaching the emulator's queue, and the demo's nodeset on a

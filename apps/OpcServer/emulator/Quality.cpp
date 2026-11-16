@@ -2,6 +2,7 @@
 #include <charconv>
 #include <ranges>
 #include <jde/fwk/str.h>
+#include "Devices.h"
 
 #define let const auto
 namespace Jde::Opc::Emulator{
@@ -70,45 +71,40 @@ namespace Jde::Opc::Emulator{
 	Ω isLastUsable( UA_StatusCode sc )ι->bool{
 		return UA_StatusCode_isEqualTop( sc, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE ) || UA_StatusCode_isEqualTop( sc, UA_STATUSCODE_UNCERTAINNOCOMMUNICATIONLASTUSABLEVALUE );
 	}
-	α Schedule::IsActive( Duration t )Ι->bool{
-		if( t<Start )
-			return false;
-		let elapsed = t-Start;
-		return ( Every ? elapsed % *Every : elapsed )<Length;
-	}
-	α Schedule::NextEdge( Duration t )Ι->optional<Duration>{
-		if( t<Start )
-			return Start;
-		let elapsed = t-Start;
-		if( !Every )
-			return elapsed<Length ? optional{ Start+Length } : nullopt;
-		let phase = elapsed % *Every;
-		return t-phase + ( phase<Length ? Length : *Every );
-	}
-
-	Ω windowSchedule( const jobject& o, sv owner, SL sl )ε->Schedule{
-		return { FindKey<Duration>(o, "start", owner, sl).value_or(Duration::zero()), FindKey<Duration>(o, "duration", owner, sl).value_or(Duration::zero()), FindKey<Duration>(o, "every", owner, sl) };
+	//The window's status, as the config spells it, names the window in its refusals - a tag has several.
+	Ω windowOwner( const jobject& o, sv tagName )ι->string{
+		let status = o.if_contains( "status" );
+		return status ? Ƒ( "Tag '{}' quality {}", tagName, serialize(*status) ) : Ƒ( "Tag '{}' quality", tagName );
 	}
 	QualityWindow::QualityWindow( const jobject& o, sv tagName, SL sl )ε:
-		Schedule{ windowSchedule(o, Ƒ("Tag '{}' quality", tagName), sl) }{
-		let owner = Ƒ( "Tag '{}' quality", tagName );
+		Recurrence{ o, windowOwner(o, tagName), {"status", "limit", "hold", "overflow", "structureChanged", "semanticsChanged"}, sl }{
+		let owner = windowOwner( o, tagName );
 		let& status = Json::AsValue( o, "status", sl );//a name, a "0x…" string, or the number itself.
 		let code = status.is_string() ? ParseStatus( status.get_string(), sl ) : ParseStatus( std::to_string(Json::AsNumber<UA_StatusCode>(status, sl)), sl );
 		let limit = FindKey<string>( o, "limit", owner, sl );
 		HasLimit = limit.has_value();
 		Status = Compose( code, {limit ? ParseLimit(*limit, sl) : ELimit::None, FindKey<bool>(o, "overflow", owner, sl).value_or(false), FindKey<bool>(o, "structureChanged", owner, sl).value_or(false), FindKey<bool>(o, "semanticsChanged", owner, sl).value_or(false)} );
 		Hold = FindKey<bool>( o, "hold", owner, sl ).value_or( UA_StatusCode_isBad(Status) || isLastUsable(Status) );
-		THROW_IFSL( Start<Duration::zero(), "Tag '{}' quality '{}': start must not be negative.", tagName, ToString(Status) );
-		THROW_IFSL( Length<=Duration::zero(), "Tag '{}' quality '{}': duration is required and must be positive.", tagName, ToString(Status) );
-		THROW_IFSL( Every && *Every<Length, "Tag '{}' quality '{}': every ({}) must not be shorter than duration ({}).", tagName, ToString(Status), Chrono::ToString(*Every), Chrono::ToString(Length) );
 	}
 
-	TagQuality::TagQuality( vector<QualityWindow> windows, optional<double> sensorMin, optional<double> sensorMax )ι:
-		_windows{ move(windows) }, _sensorMin{ sensorMin }, _sensorMax{ sensorMax }
-	{}
-	α TagQuality::Apply( Duration dt, double raw, double& value )ι->UA_StatusCode{
-		_t += dt;
-		let window = find_if( _windows, [this](let& w){ return w.IsActive(_t); } );
+	TagQuality::TagQuality( vector<QualityWindow> windows, optional<double> sensorMin, optional<double> sensorMax, uint64_t seed, uint32_t place )ι:
+		_windows{ move(windows) }, _sensorMin{ sensorMin }, _sensorMax{ sensorMax }{
+		std::seed_seq sequence{ (uint32_t)seed, (uint32_t)(seed>>32), place };
+		_engine.seed( sequence );
+	}
+	α TagQuality::Advance( const Device& device )ι->void{
+		for( auto& window : _windows ){
+			while( device.Clock>=window.End )//a period may jump a window, or several:  each is passed, never published.
+				window.Advance( device, _engine );
+		}
+	}
+	α TagQuality::Anchor( Duration drift, const Device& device )ι->void{
+		for( auto& window : _windows )
+			window.Anchor( drift, device, _engine );
+	}
+	α TagQuality::Apply( const Device& device, double raw, double& value )ι->UA_StatusCode{
+		Advance( device );
+		let window = find_if( _windows, [&](let& w){ return w.IsActive(device.Clock); } );
 		let active = window!=_windows.end();
 		if( !active || !window->Hold ){
 			_clamp = _sensorMin && raw<*_sensorMin ? ELimit::Low : _sensorMax && raw>*_sensorMax ? ELimit::High : ELimit::None;

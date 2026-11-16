@@ -102,8 +102,9 @@ namespace Jde::Opc::Emulator{
 					tag.Type = _plc->Contract()->Fields[*tag.Field].Type;
 			}
 			for( let& stop : device.Stops ){
-				if( stop.Shortest()<=_period || stop.Gap()<=_period )
-					WARN( "[{}]a stop of {} with {} of {} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop or the run after it - the counts still hold to it.", device.Name, Chrono::ToString(stop.Shortest()), stop.Shape==Recurrence::EShape::Random ? "a mean run" : "a run", Chrono::ToString(stop.Gap()), Chrono::ToString(_period) );
+				let gap = stop.Gap();//none after a one-shot
+				if( stop.Shortest()<=_period || (gap && *gap<=_period) )
+					WARN( "[{}]a stop of {}{} beside a period of {}:  `status` and `reasonCode` are published once a period, so they may miss the stop or the run after it - the counts still hold to it.", device.Name, Chrono::ToString(stop.Shortest()), gap ? Ƒ(" with {} of {}", stop.Shape==Recurrence::EShape::Random ? "a mean run" : "a run", Chrono::ToString(*gap)) : string{}, Chrono::ToString(_period) );
 			}
 		}
 		if( _transport==ETransport::Server ){

@@ -19,25 +19,25 @@
 local every = "PT2M";
 local quality = {
 	"pump1.motorRpm":{
-		quality:[ { status: "GoodLocalOverride", start: "PT60S", duration: "PT15S", every: every } ]
+		quality:[ { status: "GoodLocalOverride", start: "PT60S", "for": "PT15S", every: every } ]
 	},
 	"pump2.motorRpm":{
 		sensorMin: 900, sensorMax: 1500,
-		quality:[ { status: "UncertainSensorNotAccurate", start: "PT20S", duration: "PT10S", every: every } ]
+		quality:[ { status: "UncertainSensorNotAccurate", start: "PT20S", "for": "PT10S", every: every } ]
 	},
 	"pump3.motorRpm":{
-		quality:[ { status: "BadSensorFailure", start: "PT40S", duration: "PT15S", every: every } ]
+		quality:[ { status: "BadSensorFailure", start: "PT40S", "for": "PT15S", every: every } ]
 	},
 	"pump4.motorRpm":{
 		quality:[
-			{ status: "Good", overflow: true, start: "PT80S", duration: "PT10S", every: every },
-			{ status: "UncertainLastUsableValue", limit: "constant", start: "PT100S", duration: "PT15S", every: every }
+			{ status: "Good", overflow: true, start: "PT80S", "for": "PT10S", every: every },
+			{ status: "UncertainLastUsableValue", limit: "constant", start: "PT100S", "for": "PT15S", every: every }
 		]
 	},
 	"pumpManual.motorRpm":{
 		quality:[
-			{ status: "Good", semanticsChanged: true, start: "PT30S", duration: "PT5S", every: every },
-			{ status: "Good", structureChanged: true, start: "PT90S", duration: "PT5S", every: every }
+			{ status: "Good", semanticsChanged: true, start: "PT30S", "for": "PT5S", every: every },
+			{ status: "Good", structureChanged: true, start: "PT90S", "for": "PT5S", every: every }
 		]
 	}
 };

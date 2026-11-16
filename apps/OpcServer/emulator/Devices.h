@@ -1,32 +1,10 @@
 #pragma once
-#include <random>
 #include <jde/opc/uatypes/NodeId.h>
 #include "Signals.h"
 
 namespace Jde::Opc::Emulator{
-	struct Device; struct Emulator;
-	//One entry of a device's `stops` or `slow` list:  its window on the device's clock, the one it is in or the next, in one of
-	//three shapes.  {every, for}:  from each `every` of the clock, which starts with the emulator - the first at `every`, not at
-	//0 - for `for`, the shorter.  {mean, min, max}:  after a gap from the last one's end, the first's from 0, drawn about `mean`,
-	//exponential, for a length drawn from [min, max], both from the device's engine.  {at, for}:  from a time of day in the
-	//emulator's zone for `for`, under 23 hours, the shortest day a clock change makes, the one under way at the start included;
-	//a time the clocks skip is the instant they jump to, one they repeat its first.  A key of no shape's but the owner's own
-	//(`own`:  a stop's `code`, a slow period's `factor`) is refused.
-	struct Recurrence{
-		enum class EShape : uint8{ Every, Random, At };
-		Recurrence( const jobject& o, sv owner, sv own, SRCE )ε;
-		α IsActive( Duration t )Ι->bool{ return t>=Begin && t<End; }
-		α NextEdge( Duration t )Ι->Duration{ return t<Begin ? Begin : End; }
-		α Advance( Device& device )ι->void;//to the window after this one, once the clock is at its End.
-		α Shortest()Ι->Duration{ return Shape==EShape::Random ? Min : Length; }
-		//The run between two windows:  the shortest an {every} or {at} entry has, a random entry's mean - its gaps are exponential.
-		α Gap()Ι->Duration{ return Shape==EShape::Every ? Every-Length : Shape==EShape::At ? 23h-Length : Mean; }
-		EShape Shape;
-		Duration Every{}, Mean{}, Min{}, Max{};
-		Duration At{};//since the local midnight.
-		Duration Length{};//`for`;  a random entry's, this window's draw.
-		Duration Begin{}, End{};//this window's;  ParseDevices advances each entry to its first.
-	};
+	struct Emulator;
+	//One entry of a device's `stops` or `slow` list:  a Recurrence on the device's clock, with the owner's own key.
 	struct Stop : Recurrence{
 		Stop( const jobject& o, sv device, SRCE )ε;
 		UA_Int32 Code;//what `reasonCode` reads through the stop;  0, none given:  a stop with no reason.
@@ -69,16 +47,18 @@ namespace Jde::Opc::Emulator{
 		//is cut at each stop's and slow period's start and end, so each holds for its length whatever the period;  a counter
 		//and a random walk, which step once a period, are sampled once, after the pieces.
 		α Sample( Duration dt )ι->void;
-		//Moves Start so that Start+Clock is `wall`, and each {at, for} window with it:  their times of day are the wall clock's,
-		//which runs on through a pause the steady clock misses (a suspend, a VM paused).  The other shapes keep the device clock.
+		//Moves Start so that Start+Clock is `wall`, and each {at, for} window with it, the tags' quality windows' too:  their
+		//times of day are the wall clock's, which runs on through a pause the steady clock misses (a suspend, a VM paused).  The
+		//other shapes keep the device clock.
 		α Anchor( TimePoint wall )ι->void;
 		optional<uint> StatusTag, ReasonTag;//indexes into Tags:  the bool tag named `status`;  `reasonCode`, which a stops list adds.
 		Duration Clock{};
 		TimePoint Start;//the wall time of Clock 0, as Anchor last set it, which the {at, for} entries read.
-		const std::chrono::time_zone* Zone{};//the emulator's;  null on a device with no {at, for} entry.
-		//The random entries' draws.  Seeded from `seed`, else from the parse's start time and the device's place in the list,
-		//which ParseDevices logs:  a std engine, so a seed draws the same stops in every run, where a seeded absl::BitGen is
-		//salted per process.
+		const std::chrono::time_zone* Zone{};//the emulator's;  null on a device with no {at, for} window, a tag's included.
+		//The random stops' and slow periods' draws.  Seeded from `seed`, else from the parse's start time and the device's place in
+		//the list, which ParseDevices logs:  a std engine, so a seed draws the same stops in every run, where a seeded absl::BitGen
+		//is salted per process.  A tag's random quality windows draw from an engine of its own, seeded from this one's seed and
+		//the tag's place in its list (TagQuality), so a tag gaining a window leaves the stops where they were.
 		std::mt19937_64 Engine;
 	};
 	//Answers whether the contract publishes "<device>.<tag>" - PlcServer::FindField - and its field index when it does.
@@ -87,8 +67,8 @@ namespace Jde::Opc::Emulator{
 	///emulator/devices -> the devices, generators built, published fields mapped, Owner set.  Self is the caller's:
 	//nothing here needs an Emulator, a session or a PLC server, which is what makes it a unit (T2).  A production tag with
 	//a reject share is followed by its reject tag, and a `stops` list adds `reasonCode` as the last.  `zone` is /emulator/zone's,
-	//null where it is left out:  UTC, looked up only for a device with an {at, for} entry, so a host without the tz database
-	//runs the rest.  `start` is the wall time of each device's Clock 0.  Throws on an empty list, a device without tags, any
+	//null where it is left out:  UTC, looked up only for a device with an {at, for} window, a stop's, a slow period's or a tag's
+	//quality, so a host without the tz database runs the rest.  `start` is the wall time of each device's Clock 0.  Throws on an empty list, a device without tags, any
 	//TagSpec refusal (#9), two tags of one name, a `follows` that names no production tag of its device, a stop or slow period
 	//of no shape or two or with another shape's key, stops on a device whose `status` is not generated, slow periods on one
 	//with no production tag, and a command tag beside a generated `status`, which would command nothing.  Owner and the
