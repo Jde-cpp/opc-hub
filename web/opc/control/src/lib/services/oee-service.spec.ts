@@ -35,7 +35,7 @@ describe( 'OeeService', ()=>{
 			machines: [{id: 4, name: 'Pump 1', slug: 'pump1'}, {id: 5, name: 'Pump 2', slug: 'pump2'}], lines: [{id: 1, name: 'Filling', slug: 'filling', level: 'Line'}],
 			members: [{id: 1, lineId: 1, machineId: 5, memberLineId: undefined, sort: 0}, {id: 2, lineId: 3, machineId: undefined, memberLineId: 1, sort: 1}]//line 3 deleted, its members not yet purged
 		} );
-		expect( g.query.mock.calls.map( ([ql])=>ql ).sort() ).toEqual( ['oeeLineMembers{ id oeeLineId oeeMachineId memberLineId sort }', 'oeeLines( deleted: null ){ id name slug level }', 'oeeMachines( deleted: null ){ id name slug }'] );
+		expect( g.query.mock.calls.map( ([ql])=>ql ).sort() ).toEqual( ['oeeLineMembers{ id oeeLineId oeeMachineId memberLineId sort }', 'oeeLines( deleted: null ){ id name slug level }', 'oeeMachines( deleted: null ){ id name slug histGroupId }'] );
 		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
 		const refused = { query: vi.fn( async ( ql:string )=>{ if( ql==OeeService.lineMembersQuery ) throw new Error( '(403)No Read on oeeLineMembers.' ); return <any>{oeeMachines: [{id: 4, name: 'Pump 1', slug: 'pump1'}]}; } ) };
 		expect( await service.plant( refused ) ).toEqual( {machines: [{id: 4, name: 'Pump 1', slug: 'pump1'}], lines: [], members: []} );//the members withheld:  every machine is in no line

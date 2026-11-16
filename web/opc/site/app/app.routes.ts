@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadFlowDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, GatewayResolver, WatchResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadFlowDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeFloorPage, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, OeeFloorResolver, GatewayResolver, WatchResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
@@ -190,6 +190,15 @@ export const routes: Routes = [
 				canActivate: [AuthGuard],
 				data: { summary: "OEE", kind: "lines", suffix: "oee" },
 				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			{//the line's floor (#481):  its machines drawn where they stand, each outlined by its state, live;  a line with no floor lands on its OEE page
+				path: 'lines/:slug/floor',
+				loadComponent: loadOeeFloorPage,
+				providers: [ OeeFloorResolver ],
+				canActivate: [AuthGuard],
+				data: { summary: "Floor" },
+				resolve: { pageData: OeeFloorResolver },
 				runGuardsAndResolvers: "paramsChange"
 			},
 			{

@@ -24,6 +24,9 @@
 		@if( range(); as r ){
 			<span class="range">{{ r.start | date:'yyyy-MM-dd HH:mm' }} to {{ r.end | date:'yyyy-MM-dd HH:mm' }}</span>
 		}
+		@if( floorLink(); as link ){
+			<a matButton [routerLink]="link" matTooltip="The line's floor map, its machines outlined by their state, live"><mat-icon>map</mat-icon>Floor</a>
+		}
 		<a matButton [routerLink]="['../../../oee']" matTooltip="Every line and machine of the gateway, live"><mat-icon>monitoring</mat-icon>Dashboard</a>
 		<a matButton [routerLink]="['..']" [matTooltip]="subject.settings.tip"><mat-icon>settings</mat-icon>{{ subject.settings.label }}</a>
 	</div>

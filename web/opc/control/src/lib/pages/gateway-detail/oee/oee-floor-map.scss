@@ -1,0 +1,132 @@
+@use 'oee-tokens';
+
+:host{
+	@include oee-tokens.tokens;
+	position: relative;
+	display: block;
+	min-height: 320px;
+	border-radius: 12px;
+	background: var(--mat-sys-surface-container-lowest);
+	overflow: hidden;
+}
+svg{
+	display: block;
+	width: 100%;
+	height: 100%;
+	min-height: 320px;
+	touch-action: none;/* the svg takes every pointer, so a pinch zooms the floor and not the page */
+	cursor: grab;
+	font-family: var(--mat-sys-body-medium-font, Roboto, sans-serif);
+	&:active{
+		cursor: grabbing;
+	}
+	&:focus-visible{
+		outline: 2px solid var(--mat-sys-primary);
+		outline-offset: -2px;
+	}
+}
+/* every outline keeps its screen width whatever the zoom */
+polygon, polyline, rect{
+	vector-effect: non-scaling-stroke;
+}
+text{
+	pointer-events: none;
+	user-select: none;
+	fill: var(--mat-sys-on-surface);
+	text-anchor: middle;
+	dominant-baseline: auto;
+}
+.floor{
+	fill: var(--mat-sys-surface-container-low);
+	stroke: var(--mat-sys-outline-variant);
+	stroke-width: 1px;
+}
+.zone{
+	polygon{
+		fill: var(--mat-sys-surface-container-high);
+		stroke: var(--mat-sys-outline-variant);
+		stroke-width: 1px;
+	}
+	text{
+		fill: var(--mat-sys-on-surface-variant);
+		dominant-baseline: middle;
+	}
+}
+/* an aisle is a dashed floor marking, a wall a thick line:  dashes in screen pixels, as the stroke is */
+.aisle{
+	fill: none;
+	stroke: var(--mat-sys-outline);
+	stroke-width: 2px;
+	stroke-dasharray: 10 8;
+}
+.wall{
+	fill: none;
+	stroke: var(--mat-sys-on-surface-variant);
+	stroke-width: 6px;
+	stroke-linecap: square;
+	stroke-linejoin: miter;
+}
+.label{
+	fill: var(--mat-sys-on-surface-variant);
+	font-weight: 500;
+}
+/* a machine or a line:  its outline the state's colour and dash over a neutral fill, the state in its text too */
+.shape{
+	cursor: pointer;
+	outline: none;
+	polygon{
+		stroke-width: 3px;
+		stroke-linejoin: round;
+		@include oee-tokens.by-token( stroke );
+	}
+	&[data-dash=dashed] polygon{
+		stroke-dasharray: 8 6;
+	}
+	&[data-dash=dotted] polygon{
+		stroke-dasharray: 2 5;
+		stroke-linecap: round;
+	}
+	&.machine polygon{
+		fill: var(--mat-sys-surface);
+	}
+	&.line{
+		polygon{
+			fill: transparent;/* painted, so the box is entered between its machines;  the machines above it take their own */
+			stroke-width: 2px;
+		}
+		text{
+			text-anchor: start;
+		}
+	}
+	&:hover polygon, &.selected polygon{
+		fill: var(--mat-sys-surface-container-highest);
+	}
+	&.line:hover polygon, &.line.selected polygon{
+		fill: color-mix( in srgb, var(--mat-sys-surface-container-highest) 35%, transparent );
+	}
+	&:focus-visible polygon{
+		stroke-width: 5px;
+	}
+	.name{
+		font-weight: 500;
+	}
+	.oee{
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+	.detail, .state{
+		fill: var(--mat-sys-on-surface-variant);
+		font-variant-numeric: tabular-nums;
+	}
+}
+.controls{
+	position: absolute;
+	right: 8px;
+	bottom: 8px;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 20px;
+	background: color-mix( in srgb, var(--mat-sys-surface-container) 85%, transparent );
+}

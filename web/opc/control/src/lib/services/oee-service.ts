@@ -1,7 +1,8 @@
 import { Service } from '@angular/core';
 import { OeeBucket, OeeCoding, OeeCodingCall, OeeLoss, OeeMachineTimeline, OeeReasonRef, OeeShift, OeeSpan, OeeStop, OeeStopsPage, OeeTimeline, toOeeBucket, toOeeCoding, toOeeLoss, toOeeStopsPage, toOeeTimeline, toOeeTimelines, toReasonRef } from '../model/oee';
-import { OeePlant, toOeeLineMember, toOeeLineRef } from '../model/oee-lines';
+import { OeePlant } from '../model/oee-lines';
 import { HistPoster, HistReader } from './history-service';
+import { oeeLineMembersQuery, oeeLinesQuery, oeeMachinesQuery, readOeePlant } from './oee-plant';
 
 const bucket = 'start end shift planned run unplanned plannedStop small excluded unknown total good reject outside ideal availability performance quality oee teep measured partial';
 const reason = 'reason{ id name category }';
@@ -67,19 +68,10 @@ export class OeeService{
 	//The gateway's live machines, by name, with its live lines and every membership (#406, #409):  what the dashboard orders its
 	//tiles and rows by, and what a line's pages pick and link from.  A caller who may not read the lines or their members has
 	//none of either, so every machine is one in no line;  `strict` throws instead, for a page that edits them.
-	async plant( reader:HistReader, strict=false ):Promise<OeePlant>{
-		const lines = Promise.all( [reader.query<any>( OeeService.linesQuery ), reader.query<any>( OeeService.lineMembersQuery )] ).then( ( [lines, members] )=>({
-			lines: ( <any[]>(lines?.oeeLines ?? []) ).map( toOeeLineRef ), members: ( <any[]>(members?.oeeLineMembers ?? []) ).map( toOeeLineMember )
-		}) );
-		const [data, held] = await Promise.all( [reader.query<any>( OeeService.machinesQuery ), strict ? lines : lines.catch( e=>{
-			console.warn( "Could not read the lines' members.", e );
-			return { lines: [], members: [] };
-		} )] );
-		return { machines: ( <any[]>(data?.oeeMachines ?? []) ).map( m=>({ id: Number( m.id ), name: String( m.name ?? m.slug ), slug: String( m.slug ) }) ).sort( ( a, b )=>a.name.localeCompare( b.name ) ), ...held };
-	}
-	static readonly machinesQuery = 'oeeMachines( deleted: null ){ id name slug }';
-	static readonly linesQuery = 'oeeLines( deleted: null ){ id name slug level }';
-	static readonly lineMembersQuery = 'oeeLineMembers{ id oeeLineId oeeMachineId memberLineId sort }';
+	plant( reader:HistReader, strict=false ):Promise<OeePlant>{ return readOeePlant( reader, strict ); }//oee-plant.ts:  the floor's resolver reads it too (#481)
+	static readonly machinesQuery = oeeMachinesQuery;
+	static readonly linesQuery = oeeLinesQuery;
+	static readonly lineMembersQuery = oeeLineMembersQuery;
 	//the reasons a stop is coded with:  the live ones
 	async reasons( reader:HistReader ):Promise<OeeReasonRef[]>{
 		const data = await reader.query<any>( OeeService.reasonsQuery );

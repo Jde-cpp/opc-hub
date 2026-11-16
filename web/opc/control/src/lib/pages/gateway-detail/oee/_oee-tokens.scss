@@ -1,0 +1,27 @@
+// The OEE state colours as custom properties (#481, docs/demo/spec.md *Drawing*):  the Gantt chart's set, oeeKindColors in
+// oee-chart-data.ts, as the light values, and for a dark theme the same hues stepped into the dark band and validated against
+// the dark surface by the dataviz validator (every pair;  Excluded's contrast is the one warning, relieved by the text and the
+// dash every shape carries).  light-dark() picks by the theme's color-scheme (styles/_theme.scss).  @include it on the host of
+// a sheet that draws a state:  the floor map, its legend and its panel.  The chart keeps its hex, which Highcharts takes by
+// value;  a change here is a change there.
+@mixin tokens{
+	--oee-running: light-dark( #1baf7a, #09a974 );
+	--oee-Unplanned: light-dark( #d03b3b, #c42e31 );
+	--oee-Planned: light-dark( #2a78d6, #3799f4 );
+	--oee-Excluded: light-dark( #4a3aa7, #733da9 );
+	--oee-uncoded: light-dark( #eda100, #c78600 );
+	--oee-small: light-dark( #e87ba4, #bf71be );
+	--oee-unknown: light-dark( #9aa0ab, #7b808b );
+	--oee-neutral: var(--mat-sys-outline);
+}
+// a mark's colour by its state's token, on the element that carries data-token
+@mixin by-token( $property ){
+	&[data-token=running]{ #{$property}: var(--oee-running); }
+	&[data-token=Unplanned]{ #{$property}: var(--oee-Unplanned); }
+	&[data-token=Planned]{ #{$property}: var(--oee-Planned); }
+	&[data-token=Excluded]{ #{$property}: var(--oee-Excluded); }
+	&[data-token=uncoded]{ #{$property}: var(--oee-uncoded); }
+	&[data-token=small]{ #{$property}: var(--oee-small); }
+	&[data-token=unknown]{ #{$property}: var(--oee-unknown); }
+	&[data-token=neutral]{ #{$property}: var(--oee-neutral); }
+}

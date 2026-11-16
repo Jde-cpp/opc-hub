@@ -4,7 +4,7 @@ import { OeeLiveCounts, OeeLiveEvent, OeeLiveStatus } from './oee-live';
 //What the dashboard makes of a machine's live OEE (#406, docs/oee/spec.md *Web*, *The Gantt chart*):  a tile's model from the
 //sequence of its statuses, and the Gantt chart's last band, which grows with each and gives way to a new one on a state change.
 
-export type OeeMachineRef = { id:number; name:string; slug:string };
+export type OeeMachineRef = { id:number; name:string; slug:string; groupId?:number };//`groupId` its historian group's, where the read carried it (#481)
 //A tile:  its machine, how its subscription stands, and the last status it brought.  `ended` is why the gateway ended it - the
 //machine deleted, OEE stopping - after which nothing follows.  A line's tile (#409) is the same, the line in the machine's place:
 //its statuses carry its machines' counts.

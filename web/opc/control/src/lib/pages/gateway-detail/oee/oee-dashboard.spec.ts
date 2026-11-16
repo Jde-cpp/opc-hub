@@ -6,6 +6,7 @@ import { BehaviorSubject } from 'rxjs';
 import { OeeSpan, toOeeTimeline } from '../../../model/oee';
 import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
 import { OeeLineMember } from '../../../model/oee-lines';
+import { OeeFloorService } from '../../../services/oee-floor-service';
 import { OeeService } from '../../../services/oee-service';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
 import { OeeChart, OeeChartSpec } from './oee-chart';
@@ -32,7 +33,7 @@ const lineStatus = ( at:Date, machines:{running:number; stopped:number; unknown:
 //The page over stubs:  a gateway whose oeeSubscribe opens a feed per machine, `push` a status on one, and oeeSubscribeLine one
 //per line, under its id negated;  `service` answers the machines, with the Filler in a line, and each machine's timeline, read to 09:00;  `addOn` is how the add-on settled.  `open` moves the page to another
 //gateway, as the router does.
-const create = async ( {machines=all, lines=[Packaging], members=[{id: 1, lineId: 1, machineId: 6, sort: 0}], addOn='loaded', timeline}:{machines?:typeof all; lines?:(typeof Packaging)[]; members?:OeeLineMember[]; addOn?:'loaded'|'absent'; timeline?:Error}={} )=>{
+const create = async ( {machines=all, lines=[Packaging], members=[{id: 1, lineId: 1, machineId: 6, sort: 0}], floors=<{id:number; lineId:number; width:number; height:number; grid:number}[]>[], addOn='loaded', timeline}:{machines?:typeof all; lines?:(typeof Packaging)[]; members?:OeeLineMember[]; floors?:{id:number; lineId:number; width:number; height:number; grid:number}[]; addOn?:'loaded'|'absent'; timeline?:Error}={} )=>{
 	const gatewayOf = ( name:string )=>{
 		const feeds = new Map<number,Feed<OeeLiveEvent,number>>();
 		const feed = ( id:number )=>feeds.get( id ) ?? feeds.set( id, new Feed<OeeLiveEvent,number>() ).get( id )!;
@@ -52,7 +53,7 @@ const create = async ( {machines=all, lines=[Packaging], members=[{id: 1, lineId
 	const title = { title: '' };
 	TestBed.configureTestingModule({ providers: [
 		provideRouter( [] ), provideRoute( {data} ), { ...pageTitleStub, useValue: title },
-		{ provide: OeeService, useValue: service }, { provide: HighchartsLoader, useValue: loader }
+		{ provide: OeeService, useValue: service }, { provide: OeeFloorService, useValue: {floors: vi.fn( async ()=>floors )} }, { provide: HighchartsLoader, useValue: loader }
 	]});
 	TestBed.overrideComponent( OeeDashboard, {remove: {imports: [OeeChart]}, add: {imports: [ChartStub]}} );
 	const navigate = vi.spyOn( TestBed.inject( Router ), 'navigate' ).mockResolvedValue( true );

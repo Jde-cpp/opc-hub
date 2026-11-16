@@ -12,6 +12,7 @@ import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
 import { oeeDashboardGroups, OeeLineGroup, OeeLineRef, oeeLineTitle } from '../../../model/oee-lines';
 import { growOeeBands, oeeBetweenShifts, oeeLiveMark, oeeLiveRange, OeeMachineRef, OeeTile, oeeTile, oeeTileNext, OeeTileView, oeeTileView } from '../../../model/oee-live-view';
 import { Gateway, gatewayAnswer } from '../../../services/gateway-service';
+import { OeeFloorService } from '../../../services/oee-floor-service';
 import { OeeService } from '../../../services/oee-service';
 import { WatchPageData } from '../../../services/resolvers/watch-resolver';
 import { HighchartsLoader } from '../../node-detail/node-history/highcharts-loader';
@@ -67,7 +68,7 @@ export class OeeDashboard implements OnInit, OnDestroy{
 		this.#title.title = `${gateway.name} - OEE`;
 		this.loading.set( true );
 		try{
-			const plant = await this.#service.plant( gateway );
+			const [plant, floors] = await Promise.all( [this.#service.plant( gateway ), this.#floors.floors( gateway ).catch( ()=>[] )] );//a reader without Read on the floors sees no floor link
 			if( opened!=this.#epoch )
 				return;
 			this.#groups = oeeDashboardGroups( plant ).groups;
@@ -77,6 +78,7 @@ export class OeeDashboard implements OnInit, OnDestroy{
 				return { line, tile, view: computed( ()=>oeeTileView( tile() ) ) };
 			} );
 			this.lineTiles.set( lines );
+			this.floors.set( new Set( floors.map( f=>f.lineId ) ) );
 			this.#arrange();
 			const rows = [...new Map( this.#order.map( o=>[o.machine.id, o.machine] ) ).values()].map( machine=>this.#row( machine ) );
 			this.#live.set( rows );
@@ -114,6 +116,7 @@ export class OeeDashboard implements OnInit, OnDestroy{
 		for( const line of this.lineTiles() )
 			line.subscription?.unsubscribe();
 		this.lineTiles.set( [] );
+		this.floors.set( new Set() );
 		this.#groups = [];
 		this.#machines = [];
 		this.#order = [];
@@ -127,6 +130,7 @@ export class OeeDashboard implements OnInit, OnDestroy{
 
 	//The tiles
 	lineTiles = signal<LineTile[]>( [] );//the lines in no line, in level order
+	floors = signal( new Set<number>() );//the lines that have a floor (#481), whose tiles link to it
 	#live = signal<LiveRow[]>( [] );//every machine's:  a line's machines have a row and no tile
 	#loose = signal( new Set<number>() );//the machines no line with a tile reaches
 	readonly machines = computed( ()=>this.#live().map( r=>r.machine ) );//those the user may read
@@ -286,6 +290,7 @@ export class OeeDashboard implements OnInit, OnDestroy{
 	#router = inject( Router );
 	#title = inject( ComponentPageTitle );
 	#service = inject( OeeService );
+	#floors = inject( OeeFloorService );
 	#loader = inject( HighchartsLoader );
 }
 //what a band is, where it began and whether it has a length to draw yet:  a change of it is drawn at once
