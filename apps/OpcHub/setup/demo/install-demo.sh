@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# The public demo's install (docs/demo/plan.md Phase 8;  README.md beside this file is the runbook).  Run from the unpacked
+# The public demo's install (docs/demo/plan.md Phases 8 and 9;  README.md beside this file is the runbook).  Run from the unpacked
 # jde-opc-demo tarball, as root, on a box with this release's jde-opchub package, nginx and certbot.  An upgrade is the same
 # line from the newer tarball, after the newer package.
 #   sudo ./install-demo.sh [--email <address>]
 #     --email   the certbot account's address, for the first certificate on a box where certbot has no account yet
 # In this order, so the 443 site never fronts a hub whose resources are not enforced, where every caller holds every right:
 # the 443 site out, on an upgrade;  the files;  the port-80 site, and certbot's first certificate over it;  the hub on the demo's
-# config;  `seed.sh certs`, the PLC units and `seed.sh access`;  and the 443 site last.
+# config;  `seed.sh certs`, the PLC units and `seed.sh plant`, which runs the access half first;  and the 443 site last.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 name=opchub.trypoply.com #the two nginx sites' server_name, the certificate's and the policy's
 die(){ echo "install-demo.sh: $*" >&2; exit 1; }
+[ -f "$here/opt/jde-cpp/demo/demo-lib.sh" ] || die "run it from the unpacked tarball (opt/jde-cpp/demo/demo-lib.sh not found beside it)"
+source "$here/opt/jde-cpp/demo/demo-lib.sh"
 
 email=
 while [ $# -gt 0 ]; do
@@ -70,15 +72,6 @@ done
 #nginx refuses a config naming a certificate that is not there, so the 443 site waits for certbot, and certbot's challenge
 #is answered by the port-80 site, which serves nothing else.  A certificate already at certbot's path - an upgrade, or one laid
 #by hand - is used as found.
-site(){ #file link - enabled if nginx takes it, else taken back out so the next reload of nginx still works
-	local out
-	ln -sfn "/etc/jde-cpp/demo/$1" "/etc/nginx/sites-enabled/$2"
-	if ! out=$(nginx -t 2>&1); then
-		rm -f "/etc/nginx/sites-enabled/$2"
-		die "nginx refused $1, which was not enabled:  $out"
-	fi
-	systemctl reload-or-restart nginx
-}
 install -d /var/www/certbot
 site nginx-demo-80.conf jde-demo-80
 if [ ! -f "/etc/letsencrypt/live/$name/fullchain.pem" ]; then
@@ -89,16 +82,13 @@ fi
 #--- the hub, the PLCs and the seed ------------------------------------------------------------------------------------
 systemctl daemon-reload
 systemctl restart jde-opchub.service #onto the drop-in:  Opc.Hub.Demo.jsonnet under args/demo
-up=0
-for _ in $(seq 60); do #a unit that fails its start restarts every 5 s and `systemctl restart` says nothing of it
-	if curl -s -o /dev/null --max-time 5 http://127.0.0.1:1967/serverSettings; then up=1; break; fi
-	sleep 1
-done
-[ $up = 1 ] || die "the hub does not answer on 127.0.0.1:1967 under the demo's config - journalctl -u jde-opchub -e;  \`systemctl revert jde-opchub\` and a restart put the package's unit back"
+hubUp || die "the hub does not answer on 127.0.0.1:1967 under the demo's config - journalctl -u jde-opchub -e;  \`systemctl revert jde-opchub\` and a restart put the package's unit back"
 /opt/jde-cpp/demo/seed.sh certs #before a PLC's first start:  it logs in with its certificate
 systemctl enable --quiet jde-plc@{1,2,3,4,5}.service
 systemctl restart jde-plc@{1,2,3,4,5}.service #an upgrade's, onto the new files
-/opt/jde-cpp/demo/seed.sh access --plcs 60 #each PLC's user is enrolled by its first login, and takes `demo-plc` to run enforced
+#the access half, each PLC's user enrolled by its first login and put in `demo-plc` to run enforced, waiting 60 s for the five;
+#then the connections, the machines, the lines and the floor, where there are none
+/opt/jde-cpp/demo/seed.sh plant
 
 #--- 443 ---------------------------------------------------------------------------------------------------------------
 site nginx-demo.conf jde-demo
@@ -107,9 +97,11 @@ cat <<MSG
 installed the demo at https://$name:
   the hub      jde-opchub on Opc.Hub.Demo.jsonnet, loopback 1967 behind nginx - journalctl -u jde-opchub
   the PLCs     jde-plc@1 to jde-plc@5 - journalctl -u 'jde-plc@*'
+  the plant    plc1 to plc5 on opc.tcp 4842 to 4846, five machines, the site and its two lines - /opt/jde-cpp/demo/seed.sh plant
   settings     /etc/jde-cpp/demo/config.json, the nginx sites beside it, /etc/jde-cpp/apps/OpcServer/emulator/config/demo/plc<N>.jsonnet
 next:
   sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
 and the first time, the admin's sign-in through the tunnel, then \`seed.sh grant <email>\` (README.md, The first sign-in).
+An upgrade whose release changed the database or the historian's files:  sudo /opt/jde-cpp/demo/reset.sh --yes (README.md, Reset).
 MSG
 for f in "${kept[@]}"; do echo "kept your edited $f - this release's is beside it as $(basename "$f").new: merge any change by hand"; done

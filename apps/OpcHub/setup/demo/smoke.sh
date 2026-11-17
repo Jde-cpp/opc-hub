@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The public demo's smoke, its HTTP half (docs/demo/plan.md Phase 8;  Phase 10 adds the socket's):  what a visitor's browser
-# meets at the public name, and with --hub what the owner meets at the hub itself.  Run it after every deploy.
+# The public demo's smoke, its HTTP and GraphQL halves (docs/demo/plan.md Phases 8 and 9;  Phase 10 adds the socket's):  what a
+# visitor's browser meets at the public name, the plant as a visitor reads it, and with --hub what the owner meets at the hub
+# itself.  Run it after every deploy.
 #   smoke.sh [--url <site>] [--resolve <address>] [--insecure] [--hub <hub>]
 #     --url        the site                                   default: https://opchub.trypoply.com
 #     --resolve    dial the site's name at this address:  127.0.0.1 on the box, or before the DNS records exist
@@ -17,7 +18,7 @@ while [ $# -gt 0 ]; do
 		--resolve) resolve=${2:?}; shift 2;;  --resolve=*) resolve=${1#*=}; shift;;
 		--insecure) insecure=1; shift;;
 		--hub) hub=${2:?}; shift 2;;          --hub=*) hub=${1#*=}; shift;;
-		-h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+		-h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
 		*) echo "smoke.sh: unknown option '$1'" >&2; exit 2;;
 	esac
 done
@@ -45,6 +46,8 @@ site=() #the site's name at --resolve's address, on both ports
 tls=(); [ $insecure = 0 ] || tls=( -k )
 header(){ grep -q "^$2" "$tmp/$1.h"; } #name, a lower-case header line's start
 json(){ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$tmp/$1.b" "$2" 2>/dev/null; } #name, a python test of `d`
+pick(){ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$tmp/$1.b" "$2" 2>/dev/null; } #name, a python expression of `d`
+stamp(){ python3 -c 'import sys,time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()-int(sys.argv[1]))))' "$1"; } #the time that many seconds ago
 ql(){ #name session query - a POST to the site's /graphql, or to the hub's where name starts with hub
 	local name=$1 session=$2 base=$url; shift 2
 	local args=( "${site[@]}" "${tls[@]}" )
@@ -105,6 +108,43 @@ if [ -n "$guest" ]; then
 	status=$(get gateways "${site[@]}" "${tls[@]}" -H "Authorization: $guest" "$url/opcGateways")
 	check "the guest finds the gateways ($status)" json gateways 'len(d["servers"])>0'
 	check "  with no pid or start" json gateways 'all( "pid" not in s and "startTime" not in s for s in d["servers"] )'
+
+	#--- the plant, as a visitor reads it ----------------------------------------------------------------------------------
+	now=$(stamp 0); day=$(stamp 86400)
+	status=$(ql plant "$guest" 'oeeLines{ id slug } oeeMachines{ id slug histGroupId } oeeReasons{ id }')
+	check "the guest reads the plant:  the site, its two lines, five machines and the reasons ($status)" json plant '{"plant", "bottling", "packing"}<={ l["slug"] for l in d["data"]["oeeLines"] } and len(d["data"]["oeeMachines"])==5 and len(d["data"]["oeeReasons"])>0'
+	if json plant 'len(d["data"]["oeeMachines"])>0 and len(d["data"]["oeeReasons"])>0'; then
+		for line in bottling packing; do
+			id=$(pick plant "next( (l['id'] for l in d['data']['oeeLines'] if l['slug']=='$line'), 0 )")
+			status=$(ql figures "$guest" "oee( line:$id, start:\"$day\", end:\"$now\", by:\"shift\" ){ shift planned run total oee machines }")
+			check "the guest reads $line's figures by shift ($status)" json figures 'len(d["data"]["oee"])>0 and all( b["machines"]>0 for b in d["data"]["oee"] )'
+		done
+		for machine in $(pick plant "' '.join( f'{m[\"slug\"]}:{m[\"id\"]}:{m[\"histGroupId\"]}' for m in d['data']['oeeMachines'] )"); do
+			IFS=: read -r slug id group <<<"$machine"
+			#its count's node, the member its Total signal reads, as GraphQL:  {nsu:"urn:jde:demo",i:6002}
+			status=$(ql count "$guest" "oeeMachineSignals( oeeMachineId:$id ){ role histGroupNodeId } histGroupNodes( histGroupId:$group ){ id node }")
+			node=$(pick count "(lambda n: '{'+','.join(f'{k}:{json.dumps(v)}' for k, v in n.items())+'}')( next( json.loads(m['node']) if isinstance(m['node'], str) else m['node'] for s in d['data']['oeeMachineSignals'] if s['role']=='Total' for m in d['data']['histGroupNodes'] if m['id']==s['histGroupNodeId'] ) )")
+			check "the $slug's count is a member of its group ($status)" [ -n "$node" ]
+			[ -n "${counted:-}" ] || counted=$node #the first machine's, which the history edit below names
+			#An engine starts a few seconds after its machine's last edit, and after the hub's start.  After that start the collector is
+			#back on each PLC within the minute, so a group made just before it holds nothing until then.
+			for _ in $(seq 12); do
+				status=$(ql engine "$guest" "oeeMachineStatus( machine:$id ){ engine state }")
+				held=$(ql history "$guest" "history( group:$group, nodes:[${node:-{\}}], start:\"$day\", end:\"$(stamp 0)\", limit:1 ){ values{ source } }")
+				json engine 'd["data"]["oeeMachineStatus"]["engine"]=="live"' && json history 'len(d["data"]["history"]["values"])>0' && break
+				sleep 5
+			done
+			check "the $slug's engine is live, the machine $(pick engine 'd["data"]["oeeMachineStatus"]["state"]') ($status)" json engine 'd["data"]["oeeMachineStatus"]["engine"]=="live"'
+			check "  and its group holds its count's history ($held)" json history 'len(d["data"]["history"]["values"])>0'
+		done
+		#a stop's coding and a history edit:  each passes while its resource is unenforced, and the seed enforces them.  At a time
+		#before any machine's `from`, so a refusal that regressed writes nothing an engine reads.
+		id=$(pick plant 'd["data"]["oeeMachines"][0]["id"]'); group=$(pick plant 'd["data"]["oeeMachines"][0]["histGroupId"]'); reason=$(pick plant 'd["data"]["oeeReasons"][0]["id"]')
+		status=$(ql refused "$guest" "mutation codeOee( machine:$id, start:\"2000-01-01T00:00:00Z\", end:\"2000-01-01T00:01:00Z\", reason:$reason ){ id }")
+		check "the guest is refused codeOee ($status)" [ "$status" = 403 ]
+		status=$(ql refused "$guest" "mutation createHistory( group:$group, values:[{ node:${counted:-{\}}, source:\"2000-01-01T00:00:00Z\", value:0 }] ){ values{ status } }")
+		check "the guest is refused createHistory ($status)" [ "$status" = 403 ]
+	fi
 fi
 
 #--- the hub itself, as the owner --------------------------------------------------------------------------------------
@@ -120,6 +160,13 @@ if [ -n "$hub" ]; then
 	if [ -n "$owner" ]; then
 		status=$(ql hubUsers "$owner" 'users{ id }')
 		check "the owner reads users ($status)" json hubUsers 'len(d["data"]["users"])>0'
+		connected='{"plc1", "plc2", "plc3", "plc4", "plc5"}<={ c["slug"] for c in d["data"]["serverConnections"] if c["connectionStatus"]["name"]=="Connected" }'
+		for _ in $(seq 12); do #after the hub's restart a PLC refuses the collector until its own login is back, and the collector asks again in 30 s
+			status=$(ql hubPlcs "$owner" 'serverConnections{ slug connectionStatus{ name } }')
+			json hubPlcs "$connected" && break
+			sleep 5
+		done
+		check "the five PLCs' connections are connected ($status)" json hubPlcs "$connected"
 		[ $seeded = 0 ] || curl -s -o /dev/null --max-time 30 -X POST "$hub/logout" -H "Authorization: $owner"
 	else
 		fail "no owner's session:  set JDE_SESSION to a signed-in browser's, or run as root on the box"

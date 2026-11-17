@@ -1,0 +1,17 @@
+{ "width": 40, "height": 20, "grid": 0.5, "shapes": [
+	{ "kind": "Wall", "points": [[0,0],[40,0],[40,20],[0,20],[0,0]] },
+	{ "kind": "Aisle", "points": [[0,10],[40,10]] },
+	{ "kind": "Line", "line": "bottling", "points": [[2,1],[28,1],[28,8],[2,8]] },
+	{ "kind": "Machine", "machine": "filler", "points": [[3,3],[9,3],[9,7],[3,7]] },
+	{ "kind": "Zone", "label": "Conveyor", "points": [[9,4.5],[13,4.5],[13,5.5],[9,5.5]] },
+	{ "kind": "Machine", "machine": "capper", "points": [[13,3],[17,3],[17,7],[13,7]] },
+	{ "kind": "Zone", "label": "Conveyor", "points": [[17,4.5],[21,4.5],[21,5.5],[17,5.5]] },
+	{ "kind": "Machine", "machine": "labeler", "points": [[21,3],[27,3],[27,7],[21,7]] },
+	{ "kind": "Zone", "points": [[25.5,7],[26.5,7],[26.5,13],[25.5,13]] },
+	{ "kind": "Line", "line": "packing", "points": [[17,11],[36,11],[36,18],[17,18]] },
+	{ "kind": "Machine", "machine": "case-packer", "points": [[21,13],[27,13],[27,17],[21,17]] },
+	{ "kind": "Zone", "points": [[27,14.5],[30,14.5],[30,15.5],[27,15.5]] },
+	{ "kind": "Machine", "machine": "palletizer", "points": [[30,13],[35,13],[35,17],[30,17]] },
+	{ "kind": "Zone", "points": [[36.5,11.5],[39.5,11.5],[39.5,18.5],[36.5,18.5]] },
+	{ "kind": "Label", "label": "Dock", "points": [[38,15]] }
+]}

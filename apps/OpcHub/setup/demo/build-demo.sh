@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The public demo's box (docs/demo/plan.md Phase 8).  Builds jde-opc-demo-<version>.tar.gz from the release build tree, beside
+# The public demo's box (docs/demo/plan.md Phases 8 and 9).  Builds jde-opc-demo-<version>.tar.gz from the release build tree, beside
 # the .deb ../linux/build-deb.sh wrote there, whose version it takes:  the demo's hub config extends the package's, so the two
 # deploy as a pair.  The .deb carries none of this - no customer install has the demo.  README.md beside this file is the
 # runbook the tarball ships;  the tarball mirrors the box's root, which install-demo.sh lays:
-#   opt/jde-cpp/demo                        Jde.Opc.PlcEmulator with the .so's it loads, seed.sh, seed.py, smoke.sh, the runbook
+#   opt/jde-cpp/demo                        Jde.Opc.PlcEmulator with the .so's it loads, seed.sh, seed.py, floor.json, reset.sh, smoke.sh, demo-lib.sh, the runbook
 #   etc/jde-cpp/apps/OpcHub/config          Opc.Hub.Demo.jsonnet and args/demo, beside the package's Opc.Hub.jsonnet
 #   etc/jde-cpp/apps/OpcServer/emulator     the emulator's installed config, its args and the five PLCs' overlays, the repo's layout
 #   etc/jde-cpp/demo                        the site's config.json and the two nginx sites
@@ -68,7 +68,9 @@ if [ $strip = 1 ]; then
 	for f in "$optDir"/*; do strip --strip-debug "$f"; done
 fi
 carry "$stage" "$optDir"
-install -m 755 -t "$optDir" "$demoDir/seed.sh" "$demoDir/seed.py" "$demoDir/smoke.sh"
+install -m 755 -t "$optDir" "$demoDir/seed.sh" "$demoDir/seed.py" "$demoDir/reset.sh" "$demoDir/smoke.sh"
+install -m 644 "$demoDir/demo-lib.sh" "$optDir/demo-lib.sh" #install-demo.sh's and reset.sh's site() and hubUp()
+install -m 644 "$demoDir/floor.json" "$optDir/floor.json" #the plant's floor, which `seed.sh plant` reads
 install -m 644 "$demoDir/README.md" "$optDir/README.md" #the runbook stays on the box
 
 #the settings mirror, in the repo's layout as the package's is, so each file's relative imports resolve:  the hub's demo config

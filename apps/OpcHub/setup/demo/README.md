@@ -1,7 +1,8 @@
 # Jde OpcHub - the public demo's box
 
-The runbook for the public demo ([`demo/spec.md`](../../../../docs/demo/spec.md), plan *Phase 8*): one VM,
-`opchub.trypoply.com`, with the hub on loopback behind nginx, five emulated PLCs, and a visitor who is a guest.
+The runbook for the public demo ([`demo/spec.md`](../../../../docs/demo/spec.md), plan *Phases 8* and *9*): one VM,
+`opchub.trypoply.com`, with the hub on loopback behind nginx, five emulated PLCs, the plant they make, and a visitor
+who is a guest.
 
 It takes two artefacts of one release, built by the Linux Release workflow:
 
@@ -45,7 +46,7 @@ site never fronts a hub whose resources are not enforced, where every caller hol
 3. The hub restarted on the demo's config: loopback, the guest, nginx as the trusted front.
 4. `seed.sh certs`: each PLC's two certificates, made as its unit would, and the seed's own pair.
 5. The five PLC units enabled and started. Each logs in to the hub, which enrolls it as `plc<N>`.
-6. `seed.sh access`, below.
+6. `seed.sh plant`, below, which runs `seed.sh access` first.
 7. The 443 site.
 
 `seed.sh access` logs in as `demo-seed`, a certificate user of its own whose key only root reads, and:
@@ -56,7 +57,29 @@ site never fronts a hub whose resources are not enforced, where every caller hol
 - creates `demo-plc`, Read on `users`, and puts the PLCs in it;
 - enforces every resource, last.
 
+`seed.sh plant` runs `seed.sh access` first, waiting for the five PLCs' users, a minute by default, and dies where one
+has not logged in. Then it makes the plant as the same user, every resource enforced, `owner` holding every right:
+
+- five connections, `plc1` to `plc5`, on `opc.tcp://127.0.0.1:4842` to `:4846`, each with its PLC's applicationUri.
+  `plc1` is the default;
+- one template, `machine`, over the PLC's five variables, with no threshold, so every change is stored;
+- a group from it for each connection, `filler`, `capper`, `labeler`, `case-packer` and `palletizer`;
+- the reasons: Jam 1, Starved 2, Fault 3, Changeover 10, Cleaning 11 and No orders 20;
+- the `plant` calendar in `America/New_York`: three eight-hour shifts from 06:00 every day, a half-hour break in each;
+- the five machines, each on its group and the calendar, its rows starting at the seed's run;
+- the site, `plant`, with its two lines, `bottling` and `packing`;
+- the site's floor, from `floor.json` beside the script.
+
 Every step is looked up by slug first, so a second run changes nothing and a partial one is finished by the next.
+
+- **What the owner edits is kept.** An upgrade's seed doesn't undo an edit made on the page.
+    - A machine is found by its group, so one renamed keeps its new slug.
+    - The calendar's shifts are made only where it has none. One with any is the owner's.
+- **The floor.** `floor.json` is the floor editor's export. To change the shipped floor, edit it on the page, export
+  it, and replace the file in the repository.
+    - A floor with no shape takes the file's.
+    - A floor with any shape is kept as the editor left it, a shape deleted on the page included. A run that died
+      part-way through the floor leaves it part-made: delete its shapes on the page and run `seed.sh plant` again.
 
 ## The first sign-in
 
@@ -78,13 +101,37 @@ sudo systemctl stop nginx
 sudo apt install ./jde-opchub_<version>_amd64.deb
 tar xzf jde-opc-demo-<version>.tar.gz && cd jde-opc-demo-<version>
 sudo ./install-demo.sh
+sudo /opt/jde-cpp/demo/reset.sh --yes     # until the first release, where the release changed the tables or the history's files
 sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
 ```
 
 - nginx stops first. The package's upgrade restarts the hub, and a table a release adds ships unenforced until the
   seed runs. `install-demo.sh` starts nginx on port 80 alone, runs the seed, and enables the 443 site last.
+- Until the first release, a release may change the database's tables or the historian's files with no conversion.
+  Where it did, take the reset, below, after `install-demo.sh`.
+    - Where `install-demo.sh` stopped because the hub does not start on the old database, reset, then run
+      `install-demo.sh` again: it enables the 443 site.
 - A file under `/etc` that was edited on the box is kept. The release's copy lands beside it as `.new`, and the script
   names each one: merge by hand.
+
+## Reset
+
+```bash
+sudo /opt/jde-cpp/demo/reset.sh --yes
+sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
+```
+
+The plant from nothing. Until the first release no database or historian file has to survive a change.
+
+- It removes the hub's database, `/var/lib/Jde-Cpp/OpcHub/OpcHub.db`, and the historian's directory,
+  `/var/lib/Jde-Cpp/OpcHub/hist/opc-gateway`. Every machine's figures and history start again.
+- It keeps the certificates, the settings and the logs. Each PLC is enrolled again by its next login, and the admin by
+  the next sign-in: run `seed.sh grant <the Google address>` after it.
+- The order is the install's: the 443 site out, the units stopped, the two removed, the hub and the PLCs started, the
+  seed whole, and the 443 site back last.
+- Where the 443 site was on, a reset that fails part-way leaves `/var/lib/Jde-Cpp/OpcHub/reset-fronted`, so the run
+  that finishes it puts the site back.
+- Without `--yes` it says what it would remove, and removes nothing.
 
 ## Operating
 
@@ -95,11 +142,17 @@ sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
 | a PLC's figures | `/etc/jde-cpp/apps/OpcServer/emulator/config/demo/plc<N>.jsonnet`, then `sudo systemctl restart jde-plc@<N>` |
 | the hub's config | `/etc/jde-cpp/apps/OpcHub/config/Opc.Hub.Demo.jsonnet` and `args/demo/args.libsonnet`, run by the drop-in `/etc/systemd/system/jde-opchub.service.d/demo.conf` |
 | the logs | `journalctl -u jde-opchub`, `journalctl -u 'jde-plc@*'`, `/var/log/nginx` |
-| the data | `/var/lib/Jde-Cpp`: `OpcHub/` the database, `PlcEmulator.plc<N>/` and `PlcEmulator.plc<N>.opc/` each PLC's certificates, `DemoSeed/` the seed's |
+| the data | `/var/lib/Jde-Cpp`: `OpcHub/OpcHub.db` the database, `OpcHub/hist/opc-gateway/` the machines' history, a directory a day, `PlcEmulator.plc<N>/` and `PlcEmulator.plc<N>.opc/` each PLC's certificates, `DemoSeed/` the seed's |
+| the plant | `/opt/jde-cpp/demo/seed.py`'s tables and `floor.json`. `sudo /opt/jde-cpp/demo/seed.sh plant` makes what is missing |
 | the certificate | certbot's timer renews it over port 80, and `/etc/letsencrypt/renewal-hooks/deploy/jde-demo` reloads nginx. `sudo certbot renew --dry-run` checks it |
 
 - **Enforced resources.** A resource is enforced while its row is live, and unenforced means every right for every
   caller, the guest included. Run `sudo /opt/jde-cpp/demo/seed.sh access` after anything that adds a resource.
+- **A PLC out of `demo-plc`.** Each PLC looks a session's certificate up as its own hub user, a read of `users`. Out
+  of the role it refuses the hub's collector, `BadIdentityTokenInvalid` on its connection, and its machine's history
+  stops. `seed.sh access` puts it back, and the collector returns within two minutes.
+- **The smoke.** Its last lines read the plant as a visitor: the two lines' figures by shift, each machine's engine
+  and history, and `codeOee` and `createHistory` refused. With `--hub`, the owner's half checks the five connections.
 - **The policy.** `nginx-demo.conf` sends it as `Content-Security-Policy-Report-Only`. The comment above that line
   says how to enforce it, at the opening.
 - **Back to the package's hub:** `sudo systemctl revert jde-opchub && sudo systemctl restart jde-opchub`, and
