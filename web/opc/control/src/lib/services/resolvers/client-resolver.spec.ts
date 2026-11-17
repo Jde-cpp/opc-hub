@@ -59,6 +59,18 @@ describe( 'ClientResolver.load delegation', ()=>{
 		expect( querySingle.mock.calls[0][1] ).toBeNull();//NOT DetailResolver's default {} - ql() appends `&variables=` for anything truthy
 	} );
 
+	//docs/demo/plan.md Phase 10:  the gateway refuses a row that names a session graft to a caller who reads the connection and no
+	//session, so the demo's visitor had no connection's page.  The page reads none of them from the row.
+	it( 'asks the row with none of the session grafts, however often it loads', async ()=>{
+		const slugQuery = vi.fn( ( _s:any, slug:string, _excluded:string[] )=>`serverConnection(slug:"${slug}")` );
+		const ql = (<unknown>slugQl( row(), {collection: 'serverConnections', type: 'ServerConnection', slugQuery, query: async ()=>({})} )) as Gateway;
+		const own = new DetailRoute( 'plc1', undefined, [], <any>{path:'.', title:'gw'} );
+		const store = {getConnection: async ()=>({})} as unknown as OpcStore;
+		await ClientResolver.load( ql, store, 'plc1', own, snackbar );
+		await ClientResolver.load( ql, store, 'plc1', own, snackbar );
+		expect( slugQuery.mock.calls.map( c=>c[2] ) ).toEqual( [["opcSessions", "opcConnections", "clientDiagnostics"], ["opcSessions", "opcConnections", "clientDiagnostics"]] );
+	} );
+
 	it( 'resolves the row even when the server connection cannot be reached', async ()=>{
 		const failing = { getConnection: async ()=>{ throw new Error("no route to host"); } } as unknown as OpcStore;
 		const exception = vi.fn();

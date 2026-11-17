@@ -199,7 +199,10 @@ namespace Jde::Opc::Gateway{
 			auto rejectedQL = _query.ExtractTable( "rejectedCertificate" );//the <thumbprint>.der our verifier wrote for the slug.
 			auto clientCertQL = _query.ExtractTable( "clientCertificate" );//the gateway's own issued certificate for the slug.
 			auto diagnosticsQL = _query.ExtractTable( "clientDiagnostics" );//the caller's own client of the slug, as it stands.
-			if( sessionsQL || connectionsQL || statusQL || diagnosticsQL )//one gate covers the four - the same live-usage telemetry;  the certificates are the connection's, under the table's Read alone.
+			//One gate covers the telemetry - the two counts, the caller's client and the last connect's error, whose text may name a file
+			//of the gateway's.  The status' name is the row's own, as the certificates are, under the table's Read alone:  a caller who
+			//reads a connection reads whether it is up (docs/demo/plan.md Phase 10).
+			if( sessionsQL || connectionsQL || diagnosticsQL || (statusQL && statusQL->FindColumn("error")) )
 				QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl );
 			let addedSlug = _query.AddColumn( "slug" ); //the join key - both totals are per slug.
 			_query.ReturnRaw = true;

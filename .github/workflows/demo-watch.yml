@@ -1,0 +1,59 @@
+name: Demo Watch
+
+# The public demo's outside check, its socket half (docs/demo/spec.md "Seed and operations", Watching;  the runbook is
+# apps/OpcHub/setup/demo/README.md):  every five minutes, `smoke.sh --quick` from the latest release's demo artefact against the
+# public name - the certificate, the page, and a guest's socket subscribing each machine, hearing the Filler and opening the
+# floor's subscriptions.  The hosted monitor beside it fetches the page and reads the certificate's expiry, and keeps the five
+# minutes:  GitHub's schedule is five minutes at best and late under load, and it stops after 60 days with no commit.
+#
+# Runs on a GitHub-hosted runner ON PURPOSE - the check has to come from outside the box.  ubuntu-24.04, whose apt has the
+# python3-websockets and python3-protobuf the smoke is written for.
+#
+# A failure here is the alert:  GitHub mails a failed scheduled run to whoever last changed this file's schedule, under their
+# notification settings (Notifications -> Actions).
+#
+# It runs only while the repository variable DEMO_WATCH is `on` (Settings -> Secrets and variables -> Actions -> Variables), set
+# once the box is deployed from a release that carries the demo's tarball, and cleared while the box is down on purpose.
+# DEMO_URL, where set, is the site in place of https://opchub.trypoply.com.  A run by hand (Actions -> Demo Watch -> Run
+# workflow) needs neither.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: demo-watch
+  cancel-in-progress: false # a late run finishes;  the next waits its turn
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke.sh --quick
+    if: github.event_name == 'workflow_dispatch' || vars.DEMO_WATCH == 'on'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: The smoke's Python
+        run: |
+          python3 -c 'import websockets, google.protobuf' 2>/dev/null \
+            || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends python3-websockets python3-protobuf; }
+
+      # smoke.sh, smoke.py and proto/, the modules build-demo.sh made for it, out of the tarball's opt/jde-cpp/demo
+      - name: The latest release's smoke
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release download --pattern 'jde-opc-demo-*.tar.gz' --dir "$RUNNER_TEMP/release"
+          mkdir "$RUNNER_TEMP/demo"
+          tar -xzf "$RUNNER_TEMP"/release/jde-opc-demo-*.tar.gz -C "$RUNNER_TEMP/demo" --strip-components=4 --wildcards \
+            '*/opt/jde-cpp/demo/smoke.sh' '*/opt/jde-cpp/demo/smoke.py' '*/opt/jde-cpp/demo/proto'
+
+      - name: Smoke
+        env:
+          DEMO_URL: ${{ vars.DEMO_URL || 'https://opchub.trypoply.com' }}
+        run: bash "$RUNNER_TEMP/demo/smoke.sh" --quick --url "$DEMO_URL"

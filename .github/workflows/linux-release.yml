@@ -111,7 +111,8 @@ jobs:
           version=""; [ "$GITHUB_REF_TYPE" = tag ] && version="$GITHUB_REF_NAME"
           bash apps/OpcHub/setup/linux/build-deb.sh --build-dir "$BUILD_DIR" --web-dist "$RUNNER_TEMP/web" --ua-nodesets "$UA_NODE_SETS" \
             --out-dir "$RUNNER_TEMP/setup" --version "$version" --maintainer "Jde-Cpp <noreply@jde-cpp.invalid>"
-          # the public demo's box (docs/demo), jde-opc-demo-<version>.tar.gz beside the .deb, whose version it takes
+          # the public demo's box (docs/demo), jde-opc-demo-<version>.tar.gz beside the .deb, whose version it takes;  its smoke's
+          # Python modules are made by the runner image's apt protoc, 3.21 (.github/docker/Dockerfile), not the build's own
           bash apps/OpcHub/setup/demo/build-demo.sh --build-dir "$BUILD_DIR" --out-dir "$RUNNER_TEMP/setup"
 
       - name: Upload the package

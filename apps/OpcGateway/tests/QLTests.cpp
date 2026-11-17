@@ -237,6 +237,43 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( o.contains("rejectedCertificate") && o.contains("clientCertificate") ) << serialize( o );
 	}
 
+	//docs/demo/plan.md Phase 10:  a caller who reads the connections and no session, the demo's visitor, was refused the status with
+	//the counts, so neither the Connections list nor a connection's page could say whether one is up.  The name is the row's own.
+	//The error keeps the sessions gate, with the counts:  its text is the last connect's, which may name a file of the gateway's.
+	TEST_F( QLTests, TheStatusNameNeedsNoSessionsRead ){
+		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
+		auto query = [&]( str text )->jvalue{
+			auto ql = QL::Parse( text, {}, Schemas(), true );
+			return BlockAwait<ServerCnnctnSessionsQLAwait,jvalue>( ServerCnnctnSessionsQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		};
+		EnforceResource( "gateway", "sessions", true );
+		absl::Cleanup open = []{ try{ EnforceResource("gateway", "sessions", false); }catch( const std::exception& ){} };
+		let refused = WaitUntil( [&]{
+			try{
+				query( "serverConnections( deleted:null ){ slug connectionStatus{ name error } }" );
+			}
+			catch( const Exception& e ){
+				return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+			}
+			return false;
+		}, 5s, 50ms );
+		ASSERT_TRUE( refused ) << "gateway/sessions is enforced and an ungranted user still reads a connection's last error";
+
+		jvalue rows;
+		try{
+			rows = query( "serverConnections( deleted:null ){ slug connectionStatus{ name } }" );
+		}
+		catch( const Exception& e ){
+			FAIL() << "the status' name was refused for want of gateway/sessions Read:  " << e.what();
+		}
+		ASSERT_TRUE( rows.is_array() && !rows.get_array().empty() ) << serialize( rows );
+		for( let& row : rows.get_array() ){
+			let name = Json::AsSV( row.as_object(), "connectionStatus/name" );
+			EXPECT_TRUE( name=="Connected" || name=="Idle" || name=="Error" ) << serialize( row );
+			EXPECT_FALSE( Json::AsObject(row.as_object(), "connectionStatus").contains("error") ) << serialize( row );
+		}
+	}
+
 	TEST_F( QLTests, webSessionCounted ){ //no manual AddSession: a jwt-backed web session's connect must register itself (ConnectAwait::await_resume).
 		const jobject vars{ {"opc", OpcServerSlug} };
 		Socket().QuerySync( "serverDescription( opc: $opc ){ applicationUri }", vars );//forces a ConnectAwait for this socket's session.
