@@ -1,5 +1,6 @@
 import { inject, Injectable } from '@angular/core';
-import { ISearchProvider, searchRank, SearchResult } from 'jde-spa';
+import { Router } from '@angular/router';
+import { ISearchProvider, matchConfig, searchRank, SearchResult } from 'jde-spa';
 import { AccessService } from './access-service';
 
 type Kind = 'user'|'group'|'role'|'resource';
@@ -17,12 +18,13 @@ export class AccessSearchProvider implements ISearchProvider{
 	readonly name = 'access';
 	readonly prefixes:Kind[] = [ 'user', 'group', 'role', 'resource' ];
 	#access = inject( AccessService );
+	#router = inject( Router );
 	#entities?:Promise<Entity[]>;
 	#loadedAt = 0;
 	static readonly ttl = 60_000;//ms - re-fetch after this so additions (and a re-login as someone else) show up without a reload.
 
 	async search( text:string, scope:string|undefined, limit:number ):Promise<SearchResult[]>{
-		if( !text.length && !scope )
+		if( !text.length && !scope || !matchConfig(this.#router.config, ['access']) )//a site with no Access section has no page for a result, and its visitor no right to the rows
 			return [];
 		const entities = await this.#load();
 		return entities

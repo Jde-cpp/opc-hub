@@ -2,9 +2,9 @@
 # The public demo's seed, its access half (docs/demo/plan.md Phase 8;  README.md beside this file is the runbook).  As root, on
 # the box, against the loopback hub.  Each step is safe to run again.
 #   seed.sh certs           the five PLCs' certificates and the seed's own pair - before the PLC units first start
-#   seed.sh access          owner for the seed's user, and every right on every resource for `owner`;  the bundled OPC UA server's
-#                           connection purged;  the guest in `visitor`;  the PLCs that have logged in in `demo-plc`, `--plcs <seconds>`
-#                           waiting that long for their first logins;  and every resource enforced, last
+#   seed.sh access          owner for the seed's user;  the bundled OPC UA server's connection purged, and the flow server's;  the guest in `visitor`;  the
+#                           PLCs that have logged in in `demo-plc`, `--plcs <seconds>` waiting that long for their first logins;
+#                           and every resource enforced, last
 #   seed.sh grant <email>   owner for the Google user of that address, enrolled by its first sign-in through the tunnel
 #   seed.sh session         a session of the seed's user on stdout, for smoke.sh
 set -euo pipefail
@@ -26,11 +26,11 @@ certs(){
 			|| { echo "$out" >&2; die "plc$n:  -createCert failed"; }
 		echo "seed.sh: plc$n:  $data/PlcEmulator.plc$n/ssl and PlcEmulator.plc$n.opc/ssl"
 	done
-	#The seed's own, in a sixth dir args/demo trusts.  The hub reads the certificate;  the key is root's, so nothing running as
-	#jde-cpp can log in as the owner it becomes.
+	#The seed's own, in a sixth dir args/demo trusts.  The hub reads the certificate;  the key and every dir above it are root's,
+	#so nothing running as jde-cpp can log in as the owner it becomes, nor lay a pair of its own for the next run to use.
 	local ssl=$data/DemoSeed/ssl
 	if [ ! -f "$ssl/private/demo-seed.pem" ] || [ ! -f "$ssl/certs/demo-seed.pem" ]; then
-		install -d -m 755 -o jde-cpp -g jde-cpp "$data/DemoSeed" "$ssl" "$ssl/certs"
+		install -d -m 755 "$data/DemoSeed" "$ssl" "$ssl/certs"
 		install -d -m 700 "$ssl/private"
 		( umask 077; openssl req -x509 -newkey rsa:2048 -noenc -keyout "$ssl/private/demo-seed.pem" -out "$ssl/certs/demo-seed.pem" -days 3650 -subj "/CN=demo-seed" 2>/dev/null ) \
 			|| die "openssl could not make the seed's pair under $ssl"

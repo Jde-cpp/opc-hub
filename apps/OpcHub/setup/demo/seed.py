@@ -2,8 +2,8 @@
 # The public demo's seed, its half through the hub's GraphQL (docs/demo/plan.md Phase 8).  seed.sh runs it, as root:  it logs in
 # to the loopback hub as the seed's own certificate user, `demo-seed`, with the key `seed.sh certs` left for root alone.  Every
 # step looks its row up by slug first, so a second run changes nothing and a partial one is finished by the next.
-#   seed.py access [--plcs <seconds>]   owner for the seed's user and every right for `owner`, the bundled connection purged, the guest,
-#                                       `visitor`, `demo-plc`, every resource enforced;  --plcs waits that long for the five PLCs' first logins
+#   seed.py access [--plcs <seconds>]   owner for the seed's user, the bundled server's and the flow server's connections purged, the guest, `visitor`, `demo-plc`,
+#                                       every resource enforced;  --plcs waits that long for the five PLCs' first logins
 #   seed.py grant <email>               owner for the Google user of that address
 #   seed.py session                     a session of the seed's user on stdout, for smoke.sh, which ends it
 import argparse, base64, json, os, subprocess, sys, time, urllib.error, urllib.request
@@ -58,14 +58,12 @@ def login():
 
 class Hub:
 	def __init__( self ): self.session = login()
-	def ql( self, query, _refusable=False, **variables ): #the answer's data;  None for a 403 where the caller can take a refusal
+	def ql( self, query, **variables ): #the answer's data
 		request = urllib.request.Request( HUB+'/graphql', data=json.dumps({'query': query, 'variables': variables}).encode(), headers={'Content-Type': 'application/json', 'Authorization': self.session} )
 		try:
 			with urllib.request.urlopen( request, timeout=60 ) as response:
 				answer = json.loads( response.read() )
 		except urllib.error.HTTPError as e:
-			if _refusable and e.code==403:
-				return None
 			die( f"{query} {variables}:  {e.code} {e.read().decode(errors='replace')}" )
 		if not isinstance( answer, dict ) or 'errors' in answer:
 			die( f'{query} {variables}:  {answer}' )
@@ -92,7 +90,7 @@ class Hub:
 			return
 		self.ql( 'mutation createAcl( identity:{ id:$user }, role:{ id:$role } )', user=user, role=role )
 		say( f"'{userName}' is in '{roleName}'" )
-	#Read on each resource named, for those that exist:  addRole answers a resource that does not as it answers one that does.
+	#Read on each resource named, for those that exist:  addRole refuses a name that is none, 404, which would end the seed.
 	def reads( self, role, wanted ):
 		resources = { (r['schemaName'], r['slug']) for r in self.ql('resources{ schemaName slug criteria }')['resources'] if not r['criteria'] }
 		has = { (p['resource']['schemaName'], p['resource']['slug']) for p in self.ql('roles( slug:$slug ){ permissionRights{ resource{ schemaName slug } } }', slug=role)['roles'][0]['permissionRights'] }
@@ -104,39 +102,21 @@ class Hub:
 					self.ql( 'mutation addRole( slug:$role, permissionRight:{ allowed:$allowed, denied:0, resource:{ schemaName:$schema, slug:$slug } } )', role=role, allowed=RIGHTS['Read'], schema=schema, slug=slug )
 					say( f"'{role}' reads {schema}/{slug}" )
 
-	#Every right each resource declares.  addRole on a resource the role holds a right on sets that right.  A grant takes
-	#Administer on its resource, which nobody may hold on one enforced by hand before this ran:  that one is opened for the grant,
-	#and the caller's enforcing closes it again.
-	def every( self, role ):
-		rights = self.ql( 'roles( slug:$slug ){ permissionRights{ allowed resource{ schemaName slug criteria } } }', slug=role )['roles'][0]['permissionRights']
-		has = { (p['resource']['schemaName'], p['resource']['slug']): set( p['allowed'] ) for p in rights if not p['resource']['criteria'] }
-		for r in self.ql( 'resources{ id schemaName slug criteria allowed }' )['resources']:
-			if r['criteria'] or not r['allowed'] or has.get( (r['schemaName'], r['slug']) )==set( r['allowed'] ):
-				continue
-			grant = lambda refusable: self.ql( 'mutation addRole( slug:$role, permissionRight:{ allowed:$allowed, denied:0, resource:{ schemaName:$schema, slug:$slug } } )', refusable, role=role, allowed=sum(RIGHTS[a] for a in r['allowed']), schema=r['schemaName'], slug=r['slug'] )
-			if grant( True ) is None:
-				self.ql( 'mutation deleteResource( id:$id )', id=r['id'] )
-				say( f"{r['schemaName']}/{r['slug']}:  nobody could grant on it, opened for the grant" )
-				grant( False )
-			say( f"'{role}' has every right on {r['schemaName']}/{r['slug']}" )
-
 def owner( hub ):
 	if id := hub.find( 'roles', 'owner' ):
 		return id
 	die( "the hub has no `owner` role:  its role seed, access.roles, did not apply - journalctl -u jde-opchub" )
 
 def access( hub, plcWait ):
-	#owner first, while every resource is unenforced:  the first grant, which the hub leaves to the first user (apps/OpcHub/README.md, First run)
+	#owner first, while every resource is unenforced:  the first grant, which the hub leaves to the first user (apps/OpcHub/README.md, First run).
+	#The shipped role holds every right on every resource (libs/access/config/release.roles).
 	hub.member( hub.find('users', SEED), SEED, owner(hub), 'owner' )
-	#The shipped role has its rights on the tables of its day, none on the historian's, OEE's, the calendars' or the flows'.  Every
-	#right on every resource is the admin's reach, and what keeps a resource enforced:  a start takes an enforced resource nobody
-	#holds a right on for one an install never got to disable, and disables it (libs/access/src/awaits/ResourceLoadAwait.cpp) -
-	#which is every right on it for everyone, the guest too.
-	hub.every( 'owner' )
-	#the package's bundled OPC UA server, whose unit the demo leaves disabled:  its connection would be a dead card
-	for connection in hub.ql( 'serverConnections( slug:"OpcServer" ){ id }' )['serverConnections']:
-		hub.ql( 'mutation purgeServerConnection( id:$id )', id=connection['id'] )
-		say( "connection 'OpcServer':  purged" )
+	#the package's bundled OPC UA server, whose unit the demo leaves disabled, and the flow server, which the package's first start
+	#made a row for and the demo's config runs none of (Opc.Hub.Demo.jsonnet):  each connection would be a dead card
+	for slug in ( 'OpcServer', 'flow-server' ):
+		for connection in hub.ql( 'serverConnections( slug:$slug ){ id }', slug=slug )['serverConnections']:
+			hub.ql( 'mutation purgeServerConnection( id:$id )', id=connection['id'] )
+			say( f"connection '{slug}':  purged" )
 	guest = hub.ensure( 'users', 'guest', 'Guest', "The public demo's visitor:  every session nobody signed in to (access.guest)." )
 	visitor = hub.ensure( 'roles', 'visitor', 'Visitor', "The public demo's guest:  reads the plant's pages and changes nothing.  No users, sessions or logs, which Viewer reads." )
 	hub.reads( 'visitor', VISITOR )

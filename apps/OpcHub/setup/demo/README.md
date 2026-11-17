@@ -50,8 +50,8 @@ site never fronts a hub whose resources are not enforced, where every caller hol
 
 `seed.sh access` logs in as `demo-seed`, a certificate user of its own whose key only root reads, and:
 
-- grants itself `owner`, and gives `owner` every right on every resource;
-- purges the package's bundled `OpcServer` connection, which the demo never serves;
+- grants itself `owner`, the shipped role that holds every right on every resource;
+- purges the package's bundled `OpcServer` connection, which the demo never serves, and `flow-server`, which the package's first start made for the flow server the demo's config runs none of;
 - creates the `guest` user and the `visitor` role with the pages' reads, and puts the guest in it;
 - creates `demo-plc`, Read on `users`, and puts the PLCs in it;
 - enforces every resource, last.
@@ -90,7 +90,7 @@ sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
 
 | what | where |
 |---|---|
-| the site's `config.json` | `/etc/jde-cpp/demo/config.json`: the port, the banner, `login` false. An edit shows at the next page load |
+| the site's `config.json` | `/etc/jde-cpp/demo/config.json`: the port, the banner, `login` false, and `closed`, the sections the public page does not offer, Access and Applications. An edit shows at the next page load |
 | the nginx sites | `/etc/jde-cpp/demo/nginx-demo-80.conf` and `nginx-demo.conf`, linked from `/etc/nginx/sites-enabled`. After an edit: `sudo nginx -t && sudo systemctl reload nginx` |
 | a PLC's figures | `/etc/jde-cpp/apps/OpcServer/emulator/config/demo/plc<N>.jsonnet`, then `sudo systemctl restart jde-plc@<N>` |
 | the hub's config | `/etc/jde-cpp/apps/OpcHub/config/Opc.Hub.Demo.jsonnet` and `args/demo/args.libsonnet`, run by the drop-in `/etc/systemd/system/jde-opchub.service.d/demo.conf` |
@@ -100,8 +100,6 @@ sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
 
 - **Enforced resources.** A resource is enforced while its row is live, and unenforced means every right for every
   caller, the guest included. Run `sudo /opt/jde-cpp/demo/seed.sh access` after anything that adds a resource.
-- **A resource nobody holds a right on does not stay enforced.** A start disables it again, taking it for one an
-  install never got to disable. The seed's grant to `owner` is what holds each one, so do not remove it.
 - **The policy.** `nginx-demo.conf` sends it as `Content-Security-Policy-Report-Only`. The comment above that line
   says how to enforce it, at the opening.
 - **Back to the package's hub:** `sudo systemctl revert jde-opchub && sudo systemctl restart jde-opchub`, and

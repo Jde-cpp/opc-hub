@@ -1,8 +1,10 @@
+#include <absl/cleanup/cleanup.h>
 #include <jde/db/db.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/Row.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
+#include <jde/tests/HttpTest.h>
 #include "helpers.h"
 #include "../src/appStartup.h"
 #include "../src/WebServer.h"
@@ -77,5 +79,72 @@ namespace Jde::App::Server::Tests{
 		WaitUntil( [=]{ return !LiveCount(connection); } );
 		EXPECT_EQ( LiveCount(connection), 0u );
 		EXPECT_EQ( LiveCount(survivor), 1u ) << "only the ended connection may be stamped";
+	}
+
+	//`connections` declares no right, so any known user read all of it, and with a guest that is every visitor:  the demo's walk
+	//listed the hub and its PLCs with their hosts (docs/demo/plan.md Phase 8).  What a route finds its instance by stays any known
+	//user's;  the host, the pid, the start, a run's end and the live status, a filter or an order by anything else, and the hosts'
+	//rows, queried or introspected as an enum, take Read on app/instances once that is enforced (Server::CustomQuery), as do a
+	//top-level status's memory and start (AppQL::StatusQuery) and /opcGateways' pid and start (HttpRequestAwait.cpp).
+	TEST_F( ConnectionTests, TheRegistryBeyondALookupIsTheInstances ){
+		App::AddConnection( "Tests.Connections", "gated", "gated-host", 121 );
+		let schema = Server::AppSchema()->Name;
+		let nobody = User( "registryNobody" ), reader = User( "registryReader" );
+		let role = FindOrCreate( "role", "registryReader" );
+		RunQL( "addRole( id:$role, permissionRight:{ allowed:2, denied:0, resource:{ schemaName:$schema, slug:\"instances\" } } )", {{"role", role}, {"schema", schema}} );
+		let acl = RunQL( "acl( identityId:$user ){ role{ id } }", {{"user", reader.Value}} );
+		if( !acl.is_array() || std::ranges::none_of(acl.get_array(), [role](let& row){ return row.is_object() && Json::FindNumber<uint>(Json::FindDefaultObject(row.get_object(), "role"), "id")==role; }) )
+			RunQL( "createAcl( identity:{ id:$user }, role:{ id:$role } )", {{"user", reader.Value}, {"role", role}} );
+
+		const vector<string> lookups{ "connections( deleted:null ){ id instanceId instanceName programName }", "status{ timeZone }" };
+		const vector<string> own{
+			"connections( deleted:null ){ id hostName }",
+			"connections{ id created }",
+			"connections{ id deleted }",
+			"connections( deleted:{ne:null} ){ id }",
+			"connections{ id pid }",
+			"connections{ id status{ memory } }",
+			"status{ memory startTime uptimeSeconds }",
+			"connections( hostName:\"gated-host\" ){ id }",
+			"hosts{ id name }",
+			"__type( name:\"Host\" ){ enumValues{ id name } }"
+		};
+		for( let& q : own )
+			EXPECT_EQ( Status([&]{ RunQL(q, {}, nobody); }), EHttpStatus::None ) << "unenforced, as installed:  " << q;
+
+		let resource = Json::AsArray( RunQL(Ƒ("resources( schemaName:[\"{}\"], slug:\"instances\", criteria:null ){{ id deleted }}", schema)) );
+		ASSERT_EQ( resource.size(), 1u );
+		ASSERT_FALSE( Json::AsObject(resource[0]).at("deleted").is_null() ) << "the suite leaves app/instances unenforced";
+		let id = Id( resource[0] );
+		RunQL( Ƒ("restoreResource( id:{} )", id) );
+		absl::Cleanup unenforce{ [&]{ RunQL( Ƒ("deleteResource( id:{} )", id) ); } };
+
+		for( let& q : lookups )
+			EXPECT_EQ( Status([&]{ RunQL(q, {}, nobody); }), EHttpStatus::None ) << "what a route finds its instance by, and a calendar's zone:  " << q;
+		for( let& q : own ){
+			EXPECT_EQ( Status([&]{ RunQL(q, {}, nobody); }), EHttpStatus::Forbidden ) << q;
+			EXPECT_EQ( Status([&]{ RunQL(q, {}, reader); }), EHttpStatus::None ) << q;
+			EXPECT_EQ( Status([&]{ RunQL(q); }), EHttpStatus::None ) << "the system:  " << q;
+		}
+		EXPECT_EQ( Status([&]{ RunQL("connections( orderBy:\"hostName\" ){ id }", {}, nobody); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Status([&]{ RunQL(own.front(), {}, {}); }), EHttpStatus::Unauthorized ) << "enforced:  who is asking";
+		EXPECT_EQ( Status([&]{ RunQL("__type( name:\"Host\" ){ fields{ name } }", {}, nobody); }), EHttpStatus::None ) << "the type's shape is no row";
+		let hosts = Json::AsArray( RunQL(own.front(), {}, reader) );
+		EXPECT_TRUE( std::ranges::any_of(hosts, [](let& row){ return Json::FindDefaultSV(Json::AsObject(row), "hostName")=="gated-host"; }) ) << serialize( hosts );
+
+		auto client = Connect();//so /opcGateways, which answers a caller with a user the pid and the start (types/rest/json.h)
+		absl::Cleanup close{ [&]{ BlockAwait( client->Close(true, SRCE_CUR) ); } };
+		RegisterInstance( *client, "Jde.OpcGateway", "gated-gw", "gw-host", 4324, 4444 );
+		let gateway = [&]( Jde::UserPK user )->jobject{
+			for( let& jserver : Json::AsArray(HttpTest::Get(Port(), "/opcGateways", Ƒ("{:x}", MintSession(user))).Json(), "servers") ){
+				if( let& o = jserver.as_object(); Json::AsString(o, "instanceName")=="gated-gw" )
+					return o;
+			}
+			return {};
+		};
+		let refused = gateway( nobody );
+		ASSERT_FALSE( refused.empty() ) << "discovery stays every caller's";
+		EXPECT_FALSE( refused.contains("pid") || refused.contains("startTime") ) << serialize( refused );
+		EXPECT_EQ( gateway(reader).at("pid").to_number<uint32>(), 4444u );
 	}
 }

@@ -28,9 +28,9 @@ namespace Jde::App{
 		HiddenLogInstancesΛ _hiddenLogInstances;
 	};
 
-	//CustomMutation is ι, so a refusal has to be an await that throws on resume, not a throw.
-	struct RefusedMutation final : TAwait<jvalue>{
-		RefusedMutation( string reason, UserPK executer, EHttpStatus status, SL sl )ι:TAwait<jvalue>{sl}, _reason{move(reason)}, _executer{executer}, _status{status}{}
+	//CustomMutation and CustomQuery are ι, so a refusal has to be an await that throws on resume, not a throw.
+	struct RefusedAwait final : TAwait<jvalue>{
+		RefusedAwait( string reason, UserPK executer, EHttpStatus status, SL sl )ι:TAwait<jvalue>{sl}, _reason{move(reason)}, _executer{executer}, _status{status}{}
 		α await_ready()ι->bool override{ return true; }
 		α await_resume()ε->jvalue override;
 	private:

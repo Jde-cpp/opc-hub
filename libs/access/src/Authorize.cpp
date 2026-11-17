@@ -233,8 +233,19 @@ namespace Jde::Access{
 			}
 		}
 	}
+	//Administer on the row - or, where the install enforces access/resources, Delete there, the Enforced switch, which is what
+	//deleteResource asks (MutationAwait):  whoever may stop enforcing a resource could open it, where everyone administers it,
+	//so they administer it closed.  Else a grant on a resource nobody administers took that opening, the table every caller's
+	//in between.  A deny on the row still refuses.  With the switches unenforced nothing changes:  anyone may flip one, and that
+	//is not everyone administering.
 	α Authorize::TestAdmin( const Resource& resource, UserPK executer, SL sl )ε->void{
-		TestRights( resource.PK, resource.Slug, ERights::Administer, executer, sl );
+		auto admin = HasRights( resource.PK, resource.Slug, ERights::Administer, executer, sl );
+		if( admin )
+			return;
+		let configured = ConfiguredRightsLocked( executer, resource.PK );
+		let switches = FindActiveResourcePKLocked( "access", "resources", {} );
+		if( !configured || !empty(configured->Denied & ERights::Administer) || !switches || !HasRights(*switches, "resources", ERights::Delete, executer, sl) )
+			throw move( admin.error() );
 	}
 	α Authorize::TestAdminPermission( PermissionPK permissionPK, UserPK userPK, SL sl )ε->void{
 		ResourcePK resourcePK;

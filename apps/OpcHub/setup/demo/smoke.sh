@@ -75,6 +75,7 @@ check "config.json answers ($status)" [ "$status" = 200 ]
 check "  as json" header config 'content-type: application/json'
 check "  no-cache" header config 'cache-control: no-cache'
 check "  the page's own port, and no sign-in" json config 'd["applicationServer"]["port"] is None and d["login"] is False'
+check "  no Access and no Applications section" json config '{"access", "apps"}<=set(d.get("closed", []))'
 if json config '"home" in d'; then
 	home=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["home"])' "$tmp/config.b")
 	status=$(get home "${site[@]}" "${tls[@]}" "$url$home")
@@ -90,14 +91,20 @@ guest=$(sed -n 's/^authorization: *//p' "$tmp/settings.h" | head -1)
 check "a call with no session is given one ($status)" [ -n "$guest" ]
 check "  which acts as the guest" json settings 'd["active"] is True'
 if [ -n "$guest" ]; then
-	status=$(ql connections "$guest" 'serverConnections{ id }')
+	status=$(ql connections "$guest" 'serverConnections{ id slug }')
 	check "the guest reads the connections ($status)" json connections '"serverConnections" in d["data"]'
-	#users, sessions and logs, which Viewer reads and a visitor must not;  flows, a table no role but the owner's names, which a
-	#start would open to everyone were no right held on it;  and a write
-	for refused in 'users{ id }' 'sessions{ id }' 'logs{ id }' 'flows{ id }' 'mutation createUser( slug:"smoke", name:"smoke" ){ id }'; do
+	check "  the flow server's not among them, the demo running no flows" json connections 'all( c["slug"]!="flow-server" for c in d["data"]["serverConnections"] )'
+	status=$(ql registry "$guest" 'connections( deleted:null ){ instanceId instanceName programName }')
+	check "the guest finds the hub's instance, which its pages look up ($status)" json registry 'len(d["data"]["connections"])>0'
+	#users, sessions and logs, which Viewer reads and a visitor must not;  a process's host, pid, start, past runs and status, and the
+	#hosts, the instances' own;  flows, a table no role but the owner's names;  and a write
+	for refused in 'users{ id }' 'sessions{ id }' 'logs{ id }' 'connections{ id hostName pid created }' 'connections{ id deleted }' 'status{ memory startTime }' 'hosts{ id name }' 'flows{ id }' 'mutation createUser( slug:"smoke", name:"smoke" ){ id }'; do
 		status=$(ql refused "$guest" "$refused")
 		check "the guest is refused $refused ($status)" [ "$status" = 403 ]
 	done
+	status=$(get gateways "${site[@]}" "${tls[@]}" -H "Authorization: $guest" "$url/opcGateways")
+	check "the guest finds the gateways ($status)" json gateways 'len(d["servers"])>0'
+	check "  with no pid or start" json gateways 'all( "pid" not in s and "startTime" not in s for s in d["servers"] )'
 fi
 
 #--- the hub itself, as the owner --------------------------------------------------------------------------------------

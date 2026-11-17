@@ -1,1 +1,1 @@
-{ "applicationServer":{ "port": null }, "banner": "Live demo, read-only. The plant, five emulated PLCs, is on its way.", "login": false }
+{ "applicationServer":{ "port": null }, "banner": "Live demo, read-only. The plant, five emulated PLCs, is on its way.", "login": false, "closed": [ "access", "apps" ] }

@@ -1,7 +1,8 @@
 import { inject } from '@angular/core';
 import { CanActivateFn, Router, Routes } from '@angular/router';
+import type { EnvironmentService } from './services/environment-service';
 
-import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
+import{ CalendarResolver, DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, isSection, AppResolver, loadApps, loadAppServerDetail, loadCalendarDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IENVIRONMENT, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
 import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadFlowDetail, loadGatewayDetail, loadGatewayWatch, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOeeDashboard, loadOeeFloorPage, loadOeeLineDetail, loadOeeMachineDetail, loadOeeMachinePage, loadOeeReasonDetail, loadOpcServerDetail, NodeResolver, OeeFloorResolver, GatewayResolver, WatchResolver } from 'jde-opc';
@@ -32,6 +33,26 @@ const home:CanActivateFn = ()=>{
 	return url ? inject( Router ).parseUrl( url ) : true;
 };
 const login:CanActivateFn = ()=>inject( IENVIRONMENT ).get<boolean>( 'login' )!==false || inject( Router ).parseUrl( '/' );
+
+//config.json's `closed`:  the sections this origin does not offer, each by the path of its tile - the demo's visitor holds no
+//right in Access, and Applications lists what only who reads the instances may see.  A closed section's routes are gone, so its
+//url is Page not found and neither the home's tiles, the navbar, the search nor a page's way up names it (app.config.ts resets
+//the router's config).  A page under it at a path of its own stays, a gateway's under `apps`.
+export function offered( all:Routes, closed:readonly string[]|undefined ):Routes{
+	const sections = new Set( all.filter( isSection ).map( r=>r.path! ) );
+	for( const path of closed?.filter( path=>!sections.has(path) ) ?? [] )
+		console.warn( `config.json's 'closed' names no section, '${path}' - ignored.` );
+	const shut = closed?.filter( path=>sections.has(path) ) ?? [];
+	return shut.length ? all.filter( r=>r.path===undefined || !shut.includes(r.path) ) : all;
+}
+//app.config.ts's initializer:  config.json read, then the router, built from every route, given the open ones - before the navbar
+//and the home read them.
+export async function applyConfig( environment:EnvironmentService, router:Router ):Promise<void>{
+	await environment.load();
+	const open = offered( routes, environment.get<string[]|undefined>('closed') );
+	if( open!==routes )
+		router.resetConfig( open );
+}
 
 //Pages load through each library's <lib>-pages.ts loaders, never `import('jde-…')`:  this file imports every barrel statically,
 //so a dynamic import of one splits nothing off.  What else keeps a page in main:  web/CLAUDE.md, "Routed pages are loaders".

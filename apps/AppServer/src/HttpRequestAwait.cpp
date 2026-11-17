@@ -1,5 +1,8 @@
 #include "HttpRequestAwait.h"
 #include <jde/fwk/process/execution.h>
+#include <jde/db/meta/AppSchema.h>
+#include <jde/access/Authorize.h>
+#include "appStartup.h"
 #include "LocalClient.h"
 #include "WebServer.h"
 #include "types/rest/json.h"
@@ -29,7 +32,11 @@ namespace Jde::App::Server{
 		}
 		if( req.IsGet("/opcGateways") || req.IsGet("/opcServers") ){
 			req.LogRead();
-			return mu<jvalue>( instances(req.Target()=="/opcServers", req.UserPK()!=Jde::UserPK{}) );//every http caller is minted a session; only a logged-in one has a user.
+			//every http caller is minted a session, and a logged-in one or the guest has a user.  The pid and the start are the
+			//instances' own, as `connections`' are (Server::CustomQuery).
+			let user = req.UserPK();
+			let identified = user!=Jde::UserPK{} && Authorizer()->Check( AppSchema()->Name, "instances", {}, Access::ERights::Read, user ).has_value();
+			return mu<jvalue>( instances(req.Target()=="/opcServers", identified) );
 		}
 		return {};
 	}

@@ -2,12 +2,12 @@ import { provideHttpClient } from "@angular/common/http";
 import { ApplicationConfig, inject, provideAppInitializer } from '@angular/core';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { MAT_NATIVE_DATE_FORMATS, MatDateFormats, provideNativeDateAdapter } from '@angular/material/core';
-import { PreloadAllModules, provideRouter, TitleStrategy, withNavigationErrorHandler, withPreloading } from '@angular/router';
+import { PreloadAllModules, provideRouter, Router, TitleStrategy, withNavigationErrorHandler, withPreloading } from '@angular/router';
 import { APP_SERVICE, AppCardStatus, AppService, AUTH_STORE, AuthStore, CARD_STATUS, frameworkHelpTopics, HelpCardStatus, listHelpTopics, ProfileService } from 'jde-framework'
 import { GATEWAY_SERVICE, GatewayCardStatus, GatewayConnectionsStatus, GatewayService, nodeSegmentName, NodeSearchProvider, OPC_STORE, OpcAuthService, opcHelpTopics, OpcNodeLinkResolver, OpcStore} from 'jde-opc';
 import { APP_LOGO, APP_NAME, AppTitleStrategy, HELP_LINKS, HELP_TOPICS, HelpLink, HelpTopic, IAUTH, IENVIRONMENT, IPROFILE_SERVICE, reloadOnChunkLoadError, RouteSearchProvider, SEARCH_PROVIDERS, SEGMENT_NAME, spaHelpTopics } from 'jde-spa';
 import {EnvironmentService} from './services/environment-service';
-import { routes } from './app.routes';
+import { applyConfig, routes } from './app.routes';
 import { ACCESS_SERVICE, AccessCardStatus, AccessCollectionStatus, accessHelpTopics, AccessSearchProvider, AccessService, NODE_LINK_RESOLVER } from "jde-access";
 
 //the site's own help topics - the libraries export theirs.  Served from src/assets (web/opc/site/assets, linked by setup.sh).
@@ -47,8 +47,9 @@ export const appConfig: ApplicationConfig = {
 		{provide: AUTH_STORE, useClass: AuthStore},
 		{provide: IENVIRONMENT, useClass: EnvironmentService},
 		//config.json beside the page, over the build's environment, read before the first service is made:  AppService takes its
-		//port in its constructor and the empty path its redirect.
-		provideAppInitializer( ()=>(inject( IENVIRONMENT ) as EnvironmentService).load() ),
+		//port in its constructor, the empty path its redirect, and the router the routes of the sections it leaves open, before
+		//the navbar and the home read them.
+		provideAppInitializer( ()=>applyConfig(inject(IENVIRONMENT) as EnvironmentService, inject(Router)) ),
 		{provide: GATEWAY_SERVICE, useExisting: GatewayService},//useExisting, not useClass:  useClass is a construction recipe, so each token would build its own GatewayService (and its own sockets/queries)
 		{provide: OPC_STORE, useExisting: OpcStore},//string-token writers (GatewayService, NodeResolver, NodeRoute) and class-token readers (ClientResolver) must share one store
 		{provide: NODE_LINK_RESOLVER, useExisting: OpcNodeLinkResolver},//jde-access's Effective rights tab links a node-scoped resource to its node page; only jde-opc can place a node

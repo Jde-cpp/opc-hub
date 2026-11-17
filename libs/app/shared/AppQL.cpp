@@ -34,18 +34,22 @@ namespace Jde::App{
 			TestLogs( creds, Access::ERights::Update, m.CommandName, sl );
 		}
 		catch( const Exception& e ){
-			return mu<RefusedMutation>( e.what(), creds.UserPK(), e.HttpStatus(), sl );
+			return mu<RefusedAwait>( e.what(), creds.UserPK(), e.HttpStatus(), sl );
 		}
 		catch( const runtime_error& e ){
-			return mu<RefusedMutation>( e.what(), creds.UserPK(), EHttpStatus::Forbidden, sl );
+			return mu<RefusedAwait>( e.what(), creds.UserPK(), EHttpStatus::Forbidden, sl );
 		}
 		return mu<LogSettingsMAwait>( move(m), move(app), creds.UserPK(), sl );
 	}
-	α RefusedMutation::await_resume()ε->jvalue{
+	α RefusedAwait::await_resume()ε->jvalue{
 		throw Access::AccessException{ Source(), _executer, ELogLevel::Debug, _status, "{}", _reason };
 	}
-	α AppQL::StatusQuery( QL::TableQL&&, QL::Creds executer, SL sl )ε->jobject{
+	//The zone is any user's, a new calendar's default.  The memory, start and uptime are the instances' own:  Read on
+	//<schema>/instances where enforced, as `connections`' are (AppServerQL.cpp instancesOwn), which only the app schema declares.
+	α AppQL::StatusQuery( QL::TableQL&& q, QL::Creds executer, SL sl )ε->jobject{
 		RequireAuthenticated( executer, "status", sl );
+		if( _logSchema.size() && std::ranges::any_of(q.Columns, [](const auto& c){ return c.JsonName!="timeZone"; }) )
+			Authorizer().Test( _logSchema, "instances", Access::ERights::Read, executer.UserPK(), sl );
 		return App::IApp::Status();
 	}
 }

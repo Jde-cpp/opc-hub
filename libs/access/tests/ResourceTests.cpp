@@ -80,6 +80,30 @@ namespace Jde::Access::Tests{
 		CreateAcl( root, ERights::All, ERights::None, slug, system ); //as GetRoot left it.
 	}
 
+	//The heal's other side:  a resource enforced with no right on it - closed to all but the system - is no interrupted install, and a
+	//start leaves it enforced.  It once took it for one, so a table nobody was granted opened to everyone at the next restart.  The
+	//install's disable and the enforce each stamp `updated`, which the row an install never got to disable lacks.
+	TEST_F( ResourceTests, SyncLeavesAResourceEnforcedWithNoRights ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System };
+		const string slug{ "providerTypes" };
+		let rootGrant = SelectAcl( root, slug );
+		ASSERT_FALSE( rootGrant.empty() );
+		PurgeAcl( root, PermissionPK{GetId(rootGrant)}, system );
+		auto row = SelectResource( slug, root, true );
+		let id = GetId( row );
+		ASSERT_EQ( Json::AsString(row, "description"), "From installation" );
+		ASSERT_FALSE( row.at("deleted").is_null() ) << "unenforced, as the sync left it";
+		ASSERT_TRUE( QL().QuerySync<jarray>(Ƒ("permissionRights( resourceId:{} ){{ id }}", id), {}, system).empty() );
+		QL().QuerySync<jvalue>( Ƒ("mutation restoreResource( id:{} )", id), {}, system ); //the Enforced toggle.
+
+		BlockAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} ); //the next start's sync.
+		EXPECT_TRUE( SelectResource(slug, root, true).at("deleted").is_null() ) << "still enforced";
+
+		QL().QuerySync<jvalue>( Ƒ("mutation deleteResource( id:{} )", id), {}, system );
+		CreateAcl( root, ERights::All, ERights::None, slug, system ); //as GetRoot left it.
+	}
+
 	//install-issues #25 (the no-checkboxes half):  a resource that exists only because a role referenced it - the hub's role seed
 	//names opc.install nodeIds before the OpcServer connects and declares it - carries no `allowed`, so the permission table shows
 	//no checkboxes.  The OpcServer's next resource sync fills the ops from the meta, and does not re-enable the unenforced row.
@@ -93,9 +117,9 @@ namespace Jde::Access::Tests{
 		if( auto row = SelectResource(slug, root, true); !row.empty() )
 			Purge( "resource", GetId(row), UserPK{UserPK::System} );
 
-		//a role references it -> access_role_add creates it, and (criteria-null, install-issues #25) bare and unenforced.
+		//the seed's role references it -> access_role_add creates it, and (criteria-null, install-issues #25) bare and unenforced.
 		const RolePK rolePK{ GetId(Get("role", "roleSyncOpsFill", root)) };
-		QL().QuerySync<jvalue>( Ƒ(R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug), {}, root );
+		QL().Upsert( Ƒ(R"(mutation{{ addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ) }})", rolePK.Value, slug), {}, root );
 		auto row = SelectResource( slug, root, true );
 		ASSERT_FALSE( row.empty() );
 		EXPECT_TRUE( bareAllowed(row) ) << "created bare - the permission table would show no checkboxes";

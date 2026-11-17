@@ -7,7 +7,8 @@ const keys:Record<string,( x:any )=>boolean> = {
 	applicationServer: x=>typeof x=="object" && !!x && ( x.port===null || Number.isInteger(x.port) && x.port>0 ),//port null:  the page's own port
 	home: x=>typeof x=="string" && /^\/[^/]/.test( x ),//a route the empty path redirects to in place of the cards, never itself
 	banner: x=>typeof x=="string",//a line above every page
-	login: x=>typeof x=="boolean"//false hides the sign-in
+	login: x=>typeof x=="boolean",//false hides the sign-in
+	closed: x=>Array.isArray(x) && x.every( path=>typeof path=="string" && /^[^/]+$/.test(path) )//the sections this origin does not offer, by their path:  access, apps (app.routes.ts `offered`)
 };
 
 @Injectable()

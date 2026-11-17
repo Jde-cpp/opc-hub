@@ -100,7 +100,10 @@ The site reads an optional `config.json` beside its `index.html` before it start
 - `applicationServer.port`, null for a hub reached on the page's own port, behind a front;
 - `home`, a route the empty path goes to in place of the cards;
 - `banner`, a line above every page;
-- `login`, false for a site with no sign-in.
+- `login`, false for a site with no sign-in;
+- `closed`, the sections the site does not offer, by their path, `[ "access", "apps" ]`:  neither a tile, a navbar
+  entry nor a search result, and the url is Page not found.  A page under one at a path of its own stays, a gateway's
+  under `apps`.
 
 No install ships one, and without it the site is as built.  [`setup/linux/nginx-demo.conf`](setup/linux/nginx-demo.conf)
 is the demo's front, which serves one, and [`setup/demo/README.md`](setup/demo/README.md) the demo box's runbook.

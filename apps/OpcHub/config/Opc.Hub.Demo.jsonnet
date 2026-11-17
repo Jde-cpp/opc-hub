@@ -6,6 +6,10 @@ local args = import 'args.libsonnet';
 function( sync=false ) (import 'Opc.Hub.jsonnet')( sync ) + {
 	access+:{ guest::: "guest" }, //a visitor's session acts as this user, which setup/demo/seed.sh makes, in the `visitor` role.
 	gateway+:{
+		//No `flows` block, no flows:  the demo runs none, and a visitor reads none of their tables, so the gateway makes neither the
+		//flow server nor its `flow-server` connection, which showed as an empty one.  Hidden, the default, absent;  `flows: super.flows`
+		//turns them on with the stock block.
+		flows:: null,
 		//the five PLCs' channel certificates (apps/OpcServer/emulator/config/demo/demo.libsonnet), beside the base's:  no dir here is
 		//among access.trustedCertDirs, the logins'.
 		trustedCertDirs+: [ args.certsDir("PlcEmulator.plc"+n+".opc") for n in std.range(1, 5) ]

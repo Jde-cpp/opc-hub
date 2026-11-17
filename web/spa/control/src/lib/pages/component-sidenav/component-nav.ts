@@ -1,8 +1,9 @@
-import {Component, effect, input, output, signal, inject } from '@angular/core';
+import {Component, computed, effect, input, output, signal, inject } from '@angular/core';
 import {MatIconModule} from '@angular/material/icon';
 import {MatListModule} from '@angular/material/list';
-import {ActivatedRoute, RouterLink, RouterLinkActive} from '@angular/router';
+import {ActivatedRoute, Router, RouterLink, RouterLinkActive} from '@angular/router';
 
+import {matchConfig} from '../../services/route-utils';
 import {RouteItem} from './route-item';
 
 @Component({
@@ -23,6 +24,7 @@ import {RouteItem} from './route-item';
 })
 export class ComponentNav {
   #route = inject( ActivatedRoute );
+	#router = inject( Router );
   constructor(){
 		effect(() => {
 			let loaded = this.item()!=null;
@@ -56,6 +58,12 @@ export class ComponentNav {
 	}
 	chosen = output<void>();
 	item = input.required<RouteItem>();
+	//the way up, where the site has that page:  a section its config.json closes has none (the site's `offered`), and the link
+	//went to Page not found.  A relative path is the page's own, which is routed.
+	parent = computed<RouteItem|undefined>( ()=>{
+		const parent = this.item().parent;
+		return parent && ( !parent.path.startsWith('/') || matchConfig(this.#router.config, parent.path.split('/').filter( s=>s.length )) ) ? parent : undefined;
+	});
 	parentUrl!: string;
 	isLoading = signal( true );
 }

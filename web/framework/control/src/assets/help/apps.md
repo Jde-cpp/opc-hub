@@ -12,6 +12,8 @@ Each card shows:
 
 Open a card for the instance's own page.
 
+Which services are registered is known to every user. A service's uptime, memory and host take **Read** on the `instances` resource once it is enforced, and without it the page is refused. See [Access](/help/access#what-the-hub-gates-and-what-it-does-not).
+
 Which cards there are depends on how the services are laid out.
 
 ## Stand-alone

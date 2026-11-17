@@ -2,7 +2,7 @@ import { inject, Injectable } from '@angular/core';
 import {ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot, UrlSegment} from '@angular/router';
 import { AppInstanceRoute, SnackbarService, QLListData, QLListResolver, View, AppResolver } from 'jde-framework';
 import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
-import { LocalPrefs, RouteItem, ProfileStore, RouteStore } from 'jde-spa';
+import { LocalPrefs, matchConfig, RouteItem, ProfileStore, RouteStore } from 'jde-spa';
 
 export type GatewayData = Omit<QLListData, "routing"> & { routing:AppInstanceRoute };//the Connections tab is a QLList
 
@@ -29,9 +29,18 @@ export class GatewayResolver implements Resolve<GatewayData> {
 		}
 		catch( e ){
 			this.#cnsl.exception( `Could not open ${instanceName}.`, e );
-			this.#router.navigateByUrl( "/apps" );
+			this.#router.navigateByUrl( GatewayResolver.fallback(this.#router) );
 			return null as unknown as GatewayData;
 		}
+	}
+	//Where the site offers no Applications, the Gateways list, which opens no instance:  the home may be a page under this one
+	//(config.json's `home`, the demo's floor), and going there would come straight back (reviews-issue/485-demo-box.md #1).
+	static fallback( router:Router ):string{
+		for( const path of ['apps', 'gateways'] ){
+			if( matchConfig(router.config, [path]) )
+				return `/${path}`;
+		}
+		return "/";
 	}
 	async #load( instanceName:string, routing:AppInstanceRoute, url:UrlSegment[] ):Promise<GatewayData>{
 		const gateway = await this.#gatewayService.gateway( instanceName );

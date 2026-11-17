@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { ActivatedRouteSnapshot, Router, RouterStateSnapshot } from '@angular/router';
+import { ActivatedRouteSnapshot, Router, Routes, RouterStateSnapshot } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { LocalPrefs, ProfileStore, RouteStore } from 'jde-spa';
 import { AppInstanceRoute, QLListResolver, SnackbarService, View } from 'jde-framework';
@@ -71,8 +71,8 @@ describe( 'GatewayResolver', ()=>{
 	} );
 
 	//no gateway of that name - a stale bookmark or Recently-visited tile - leaves no page to say it on
-	it( 'says so and lands on Applications when the instance cannot be opened', async ()=>{
-		const router = routerStub(), snackbar = snackbarStub();
+	const gone = async ( config:Routes )=>{
+		const router = routerStub( '/', config ), snackbar = snackbarStub();
 		TestBed.configureTestingModule({ providers: [
 			GatewayResolver,
 			provideRoute(),
@@ -84,8 +84,22 @@ describe( 'GatewayResolver', ()=>{
 		]});
 		const route = <unknown>{ params: {instance: "gone"}, data: {tableSettings: gatewayTableSettings}, parent: {url: [{path: "apps"}, {path: "gateways"}, {path: "gone"}]} } as ActivatedRouteSnapshot;
 		await TestBed.inject( GatewayResolver ).resolve( route, {} as RouterStateSnapshot ).catch( ()=>{} );
+		return { router, snackbar };
+	};
+	it( 'says so and lands on Applications when the instance cannot be opened', async ()=>{
+		const { router, snackbar } = await gone( [{path: 'apps'}] );
 		expect( snackbar.exception ).toHaveBeenCalledWith( "Could not open gone.", expect.any(Error) );
 		expect( router.navigateByUrl ).toHaveBeenCalledWith( "/apps" );
+	} );
+	//not the home, which config.json may point at a page under this one, the demo's floor:  the two would send it round for ever
+	it( 'lands on the Gateways list where the site offers no Applications', async ()=>{
+		const { router, snackbar } = await gone( [{path: ''}, {path: 'gateways'}, {path: 'apps/gateways/:instance'}] );
+		expect( snackbar.exception ).toHaveBeenCalledWith( "Could not open gone.", expect.any(Error) );
+		expect( router.navigateByUrl ).toHaveBeenCalledWith( "/gateways" );
+	} );
+	it( 'lands on the home where the site offers neither list', async ()=>{
+		const { router } = await gone( [{path: ''}, {path: 'apps/gateways/:instance'}] );
+		expect( router.navigateByUrl ).toHaveBeenCalledWith( "/" );
 	} );
 
 	//the state's words came from the route title - "No access to gateways/opchub." - which is not something to ask for

@@ -53,6 +53,23 @@ describe( 'ComponentSidenav', ()=>{
 		expect( close ).toHaveBeenCalledTimes( 2 );//and again on the NavigationEnd the click brings
 	} );
 
+	//a section a site closes has no page (the opc site's config.json `closed`), and the header went to Page not found
+	it( 'links the way up where the site has that page, and leaves it out where it has none', ()=>{
+		const { fixture, shell } = create( false );
+		const up = ()=>fixture.nativeElement.querySelector( 'main app-component-nav a.parent-nav' ) as HTMLElement|null;
+		const under = ( parent:string )=>{
+			shell.item.set( new RouteItem({path: 'y', title: 'Y', parent: new RouteItem({path: parent, title: 'Section'}), siblings: [new RouteItem({path: 'y', title: 'Y'})]}) );
+			fixture.detectChanges();
+		};
+		under( '/x' );
+		expect( up()?.getAttribute('href') ).toBe( '/x' );
+		under( '/closed' );
+		expect( up() ).toBeNull();
+		expect( fixture.nativeElement.querySelector('main app-component-nav a[href="/closed/y"]') ).not.toBeNull();//the pages beside it stay
+		under( '.' );//the page's own, which is routed
+		expect( up() ).not.toBeNull();
+	} );
+
 	it( 'puts the nav beside the page on a wide one', async ()=>{
 		const { fixture, shell, router } = create( false );
 		expect( drawer(fixture) ).toBeNull();
