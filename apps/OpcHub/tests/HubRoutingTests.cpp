@@ -323,6 +323,58 @@ namespace Jde::Opc::Hub::Tests{
 		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the purge takes its provider with it
 		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
 	}
+	//The shipped Owner (libs/access/config/release.roles), "every permission on every resource":  with the roles under it, each
+	//right of every root the hub declares, so a table a release adds fails here until the seed names it.  The historian's, OEE's,
+	//the calendars' and the flows' tables went in with no line.  The seed names the installed OPC UA server's schema, opc.install:
+	//the server here is another instance, so its roots are asked of their opc.install twins, rows the seed's reference made.
+	TEST_F( HubRoutingTests, OwnerHoldsEveryRightOnEveryResource ){
+		WebSession root;
+		let& scriptPaths = Settings::FindDefaultArray( "/dbServers/scriptPaths" );
+		ASSERT_EQ( scriptPaths.size(), 3u );
+		let seed = fs::path{ string{Json::AsSV(scriptPaths[1])} }.parent_path().parent_path()/"release.roles";
+		let& schema = *Gateway::GetViewPtr( "server_connections" )->Schema;
+		auto ql = [&]( string query ){ return QL( AppPort(), move(query), root.Authorization ); };
+		auto findRole = [&]( sv slug ){ return Json::FindNumber<uint>( Json::FindDefaultObject(ql(Ƒ("role( slug:\"{}\" ){{ id }}", slug)).as_object(), "role"), "id" ); };
+		absl::Cleanup purge = [&]{//on the way out of an ASSERT or a throw too, a seed half applied among them.  A destructor:  nothing may leave it.
+			for( let slug : {"owner", "engineer", "operator", "maint-tech", "gateway-instance", "sa", "viewer"} ){//parents before children.
+				try{
+					if( let id = findRole(slug); id )
+						ql( Ƒ("mutation purgeRole( id:{} )", *id) );
+				}
+				catch( const std::exception& e ){
+					ADD_FAILURE() << "the shipped role '" << slug << "' is left:  " << e.what();
+				}
+			}
+		};
+		ASSERT_NO_THROW( DB::SeedFile(schema, seed.filename().string(), IO::Load(seed), App::Server::QLPtr(), false) );
+		let owner = findRole( "owner" ).value_or( 0 );
+		ASSERT_NE( owner, 0u ) << "the seed made no owner";
+		let resources = Json::AsArray( ql("resources( criteria:null ){ id schemaName slug allowed }").as_object(), "resources" );
+		flat_map<string,uint> ids;//by schema/slug
+		for( let& v : resources ){
+			let& r = Json::AsObject( v );
+			ids.emplace( Ƒ("{}/{}", Json::AsSV(r, "schemaName"), Json::AsSV(r, "slug")), Json::AsNumber<uint>(r, "id") );
+		}
+		uint declared{};
+		for( let& v : resources ){
+			let& r = Json::AsObject( v );
+			let allowed = Access::ToRights( Json::FindDefaultArray(r, "allowed") );
+			if( empty(allowed) )//a row a role's reference made, which no server here declares.
+				continue;
+			++declared;
+			let schemaName = Json::AsSV( r, "schemaName" );
+			let key = Ƒ( "{}/{}", schemaName.starts_with("opc") ? "opc.install" : schemaName, Json::AsSV(r, "slug") );
+			Access::ERights held{};
+			if( let id = ids.find(key); id!=ids.end() ){
+				for( let& role : Json::AsArray(Json::AsObject(ql(Ƒ("resourceRights( id:{} ){{ roles{{ id allowed }} }}", id->second)).as_object(), "resourceRights"), "roles") ){
+					if( Json::AsNumber<uint>(Json::AsObject(role), "id")==owner )
+						held = (Access::ERights)Json::AsNumber<uint8>( Json::AsObject(role), "allowed" );
+				}
+			}
+			EXPECT_EQ( underlying(held & allowed), underlying(allowed) ) << "owner on " << key;
+		}
+		EXPECT_GT( declared, 30u ) << "the access, app and gateway tables, and the OPC UA server's two";
+	}
 	//A group's history fields reach the gateway's historian through HubQL, not the pass-through or the engine:  a read of a
 	//group the hub doesn't host answers that it doesn't, and an edit, with nothing enforcing hist_groups, is refused before
 	//anything else is looked at (Authorize::TestEnforced).

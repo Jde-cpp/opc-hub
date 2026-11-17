@@ -30,6 +30,8 @@ claims**; the CI runner's container is `ubuntu-noble` for that reason):
 
 The release tree is configured with `linux-clang-relWithDebInfo-jde` and needs the targets `Jde.Opc.Hub`,
 `Jde.Opc.Server`, `Jde.DB.Sqlite`, `Jde.DB.Sqlite.AppServer`, `Jde.DB.Sqlite.OpcGateway` and `Jde.DB.MySql`.
+The public demo's tarball, which [`../demo/build-demo.sh`](../demo/build-demo.sh) builds beside the `.deb`, needs
+`Jde.Opc.PlcEmulator` too ([`../demo/README.md`](../demo/README.md)).
 
 `web/opc/scripts/setup.sh` builds the Angular site with `ng build`; its `*.map` files are not packed.
 `setup.sh --release`, which the workflows' tag runs use, hashes the output names, which the hub then serves as
@@ -74,9 +76,9 @@ RUNPATH at all.
 `ca-certificates` is recommended, for the OS trust store.
 
 Nothing installs a tarball's dependencies, so the tarball also carries the `Depends:` a system may lack. Today that is
-`liburing2`'s `liburing.so.2`. `build-deb.sh` names both halves: `tarballPkgs` are carried, and `systemPkgs` (glibc,
-the gcc runtime, openssl, compression) are left to the system, so its loader keeps its own glibc and apt keeps
-updating openssl. A package in neither list fails the build.
+`liburing2`'s `liburing.so.2`. `package-lib.sh`, which `build-deb.sh` and the demo's `build-demo.sh` source, names both
+halves: `tarballPkgs` are carried, and `systemPkgs` (glibc, the gcc runtime, openssl, compression) are left to the
+system, so its loader keeps its own glibc and apt keeps updating openssl. A package in neither list fails the build.
 
 The version is `git describe --tags` unless `--version` names one (the release workflow passes the tag):
 
@@ -88,8 +90,8 @@ The version is `git describe --tags` unless `--version` names one (the release w
 
 CI: the Linux Release workflow (`.github/workflows/linux-release.yml`) builds the release tree on the self-hosted runner
 (`.github/docker/`), the Web UI on a GitHub-hosted `web` job as the Windows workflow does, runs `build-deb.sh` and
-uploads the `.deb` and the tarball as an artifact; a push of a `yyyy.MM.dd` tag runs it too and publishes both on that
-tag's GitHub release, beside the Windows installer.
+`build-demo.sh`, and uploads the `.deb` and the two tarballs as an artifact; a push of a `yyyy.MM.dd` tag runs it too and
+publishes them on that tag's GitHub release, beside the Windows installer.
 
 ## Installing the `.deb`
 

@@ -103,6 +103,8 @@ One exception: the bundled OPC server refuses history edits and deletes on its n
 
 Once a resource is enforced, only a user holding a grant gets through - you as well. So grant first and enforce second: enforcing a resource you hold no permission on shuts you out of it as surely as anyone else, which is why the toggle asks before it changes either way.
 
+Granting on an enforced resource takes **Administer** on it, as do editing the resource and a service's claim to answer for its grants. Once the resources table is itself enforced, **Delete** on that table, which the **Enforced** toggle takes, counts as Administer on every resource: whoever may stop enforcing a resource may administer it as it stands, rather than open it to everyone to do so. A denied Administer on the resource still refuses.
+
 ### A resource's page
 
 Clicking a row opens the resource's own page, which answers who can reach it. It says whether the resource is enforced, and has three tabs:
@@ -137,6 +139,8 @@ Web sessions have one resource, `app/sessions`, for every instance's **Web Sessi
 - **Administer** ends someone else's. Nothing on these pages does that.
 
 Signing out needs no grant. A user may end their own session, and a stand-alone gateway may end the sessions it signed users in to.
+
+The registered services have one resource, `app/instances`. Every user may read which services are registered, by program and instance name, which the pages find a service by. **Read** on `app/instances` shows the rest: each service's host, process id, start and memory, as the [Applications](/apps) page lists them, and when its earlier runs ended.
 
 `gateway/sessions` is another resource. It gates the gateway's OPC sessions. `gateway/endpoint` gates the gateway's own OPC UA endpoint, its **Endpoint** tab and where a group's page says its members are served.
 

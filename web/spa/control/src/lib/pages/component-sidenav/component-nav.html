@@ -2,12 +2,12 @@
 	<div class="docs-component-viewer-nav">
 		<div class="docs-component-viewer-nav-content">
 			<mat-nav-list>
-				@if( item().parent ){
+				@if( parent(); as up ){
 					<a mat-list-item class="parent-nav" (click)="onItemClick($event)"
-							[routerLink]="item().parent!.path"
-							[queryParams]="item().parent!.queryParams"
+							[routerLink]="up.path"
+							[queryParams]="up.queryParams"
 							[attr.aria-current]="'false'">
-						{{item().parent!.title}}
+						{{up.title}}
 					</a>
 				}
 				@for (component of item().siblings; track component.track) {

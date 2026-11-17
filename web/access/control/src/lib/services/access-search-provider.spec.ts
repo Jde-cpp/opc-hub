@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { AccessService } from './access-service';
 import { AccessSearchProvider } from './access-search-provider';
+import { Blank } from 'jde-spa/testing';
 import { qlAnswering } from 'jde-framework/testing';
 
 const rows:Record<string,{id:number,name:string,slug:string,deleted?:string}[]> = {
@@ -14,12 +16,19 @@ const access = {
 };
 
 describe( 'AccessSearchProvider', ()=>{
-	const create = ()=>{
-		TestBed.configureTestingModule({ providers: [ {provide: AccessService, useValue: access} ] });
+	const create = ( section='access' )=>{
+		TestBed.configureTestingModule({ providers: [ provideRouter( [{path: section, component: Blank}] ), {provide: AccessService, useValue: access} ] });
 		const provider = TestBed.inject( AccessSearchProvider );
 		provider.invalidate();
 		return provider;
 	};
+
+	//a site that closes the section (the opc site's config.json `closed`) has no page for a hit, and its visitor is refused the rows
+	it( 'finds nothing, and asks for nothing, on a site with no Access section', async ()=>{
+		access.queryArray.mockClear();
+		expect( await create('gateways').search('john', 'user', 10) ).toEqual( [] );
+		expect( access.queryArray ).not.toHaveBeenCalled();
+	} );
 
 	//angular-review3 #7: the route was pre-encoded and then handed to router.navigate, which encodes each command again -
 	//'@' went out as '%2540', paramMap yielded '…%40…', and no Google-provisioned user resolved.  Raw segments, as

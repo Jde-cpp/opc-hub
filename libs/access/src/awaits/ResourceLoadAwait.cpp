@@ -43,7 +43,7 @@ namespace Jde::Access{
 		try{
 			for( let& schema : _schemas ){
 				let schemaName = InstanceSchemaName( schema->Name, _opcServerInstance );
-				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug criteria deleted description allowed}}", schemaName );
+				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug criteria deleted updated description allowed}}", schemaName );
 				auto existing = Json::AsArray( co_await *_qlServer->Query(move(q), {}, _executer) );
 				flat_set<string> slugs;
 				flat_map<string,ResourcePK> bare;//install-issues #25: existing rows with no `allowed` - the ops-fill below keys off this.
@@ -61,9 +61,13 @@ namespace Jde::Access{
 						bare.emplace( slug, ResourcePK{Json::AsNumber<ResourcePK::Type>(resource, "id")} );
 					//A row a sync created and never got to disable:  the disable is a second call, and a failure between the two left the
 					//table denying every non-System user - for good, since a slug with a row was then skipped here (access-review3 #24).
-					//Its signature is the sync's own description and not one right on it; an operator who enabled a resource granted something.
+					//Its signature is the sync's own description, a row never written since its insert, and not one right on it.  A disable and
+					//an enforce each stamp `updated` (UpdateClause), so a resource an operator enforced is never taken for it, granted or not:
+					//with no right on it, it is closed to all but the system, and a start leaves it so.
 					let deleted = resource.if_contains( "deleted" );
 					if( !(deleted && deleted->is_null()) || Json::FindDefaultSV(resource, "description")!="From installation" )
+						continue;
+					if( let updated = resource.if_contains("updated"); updated && !updated->is_null() )
 						continue;
 					let id = Json::AsNumber<ResourcePK::Type>( resource, "id" );
 					if( Json::AsArray(co_await *_qlServer->Query(Ƒ("permissionRights( resourceId:{} ){{ id }}", id), {}, _executer)).empty() ){

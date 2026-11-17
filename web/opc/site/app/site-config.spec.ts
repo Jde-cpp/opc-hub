@@ -1,16 +1,17 @@
 //config.json (docs/demo/spec.md *The public origin*, #484):  a file a front serves beside index.html, layered over the build's
 //environment before any service starts.  Absent, or a page answered in its place, the site is as the build made it - the hub on
 //1967, the cards at home, the sign-in shown.  Present, the hub is called on the page's own port, as is every instance of its
-//process, the empty path goes to `home`, `banner` heads every page and `login` false leaves no sign-in.
+//process, the empty path goes to `home`, `banner` heads every page, `login` false leaves no sign-in and a section among `closed`
+//has no page, tile or search result.
 import { CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Routes } from '@angular/router';
 import { provideHttpClient } from '@angular/common/http';
 import { AuthGuard } from 'jde-access';
-import { AppService, AUTH_STORE } from 'jde-framework';
-import { IENVIRONMENT, NavBar } from 'jde-spa';
+import { AppService, AUTH_STORE, HomeRouteService } from 'jde-framework';
+import { IENVIRONMENT, NavBar, RouteSearchProvider } from 'jde-spa';
 import { App } from './app';
-import { routes } from './app.routes';
+import { applyConfig, offered, routes } from './app.routes';
 import { EnvironmentService } from './services/environment-service';
 import { environment as built } from '../environments/environment';
 import { blankRoutes, flush, silence } from 'jde-spa/testing';
@@ -18,7 +19,7 @@ import { anonymousAuthStore, openRoute } from 'jde-framework/testing';
 
 const build = built.applicationServer;//the build's own:  1967, on the page's host
 const floor = '/apps/gateways/hub/lines/plant/floor';
-const demo = { applicationServer: {port: null}, home: floor, banner: 'Live demo: a plant of five emulated PLCs, read-only.', login: false };
+const demo = { applicationServer: {port: null}, home: floor, banner: 'Live demo: a plant of five emulated PLCs, read-only.', login: false, closed: ['access', 'apps'] };
 const json = ( body:unknown )=>new Response( typeof body=='string' ? body : JSON.stringify( body ), {status: 200, headers: {'Content-Type': 'application/json'}} );
 //an EnvironmentService that read `answer` as its config.json:  a Response, or the fetch's failure
 const load = async ( answer:Response|Error )=>{
@@ -48,6 +49,7 @@ describe( 'config.json', ()=>{
 		expect( environment.get('home') ).toBeUndefined();
 		expect( environment.get('banner') ).toBeUndefined();
 		expect( environment.get('login') ).toBeUndefined();
+		expect( environment.get('closed') ).toBeUndefined();
 		expect( info ).toHaveBeenCalledTimes( 1 );
 		expect( warn ).not.toHaveBeenCalled();
 	} );
@@ -63,26 +65,32 @@ describe( 'config.json', ()=>{
 		}
 	} );
 
-	it( 'present, sets the port, the home, the banner and the login over the build\'s', async ()=>{
+	it( 'present, sets the port, the home, the banner, the login and the closed sections over the build\'s', async ()=>{
 		const { environment, info, warn } = await load( new Response(JSON.stringify(demo), {status: 200, headers: {'Content-Type': 'application/json; charset=utf-8'}}) );
 		expect( environment.get('applicationServer') ).toEqual( {...build, port: null, listenerPort: build.port} );//the build's port the hub's listener, the front's own
 		expect( environment.get('home') ).toBe( floor );
 		expect( environment.get('banner') ).toBe( demo.banner );
 		expect( environment.get('login') ).toBe( false );
+		expect( environment.get('closed') ).toEqual( ['access', 'apps'] );
 		expect( environment.get('version') ).toBeTypeOf( 'string' );//the build's own keys stay
 		expect( info ).not.toHaveBeenCalled();
 		expect( warn ).not.toHaveBeenCalled();
 	} );
 
 	it( 'takes a key of its own type alone, and no key of the build\'s', async ()=>{
-		const { environment, warn } = await load( json({applicationServer: {port: '443'}, home: 'https://elsewhere.example/', banner: 7, login: 'no', version: 'forged', production: !built.production}) );
+		const { environment, warn } = await load( json({applicationServer: {port: '443'}, home: 'https://elsewhere.example/', banner: 7, login: 'no', closed: 'access', version: 'forged', production: !built.production}) );
 		expect( environment.get('applicationServer') ).toEqual( build );
 		expect( environment.get('home') ).toBeUndefined();
 		expect( environment.get('banner') ).toBeUndefined();
 		expect( environment.get('login') ).toBeUndefined();
+		expect( environment.get('closed') ).toBeUndefined();
 		expect( environment.get('version') ).not.toBe( 'forged' );
 		expect( environment.get('production') ).toBe( built.production );
-		expect( warn ).toHaveBeenCalledTimes( 4 );
+		expect( warn ).toHaveBeenCalledTimes( 5 );
+		for( const closed of [['access', 7], ['access/users'], ['']] ){//a list of paths, each a section's own
+			vi.restoreAllMocks();
+			expect( (await load( json({closed}) )).environment.get('closed') ).toBeUndefined();
+		}
 
 		vi.restoreAllMocks();
 		const home = await load( json({home: '/', applicationServer: {port: 8443}}) );//the empty path is no home for itself;  a port of the front's own is one
@@ -129,7 +137,7 @@ describe( 'the site under a config.json', ()=>{
 	const unresolved = ( rs:Routes ):Routes=>rs.map( r=>({ ...r, resolve: undefined, children: r.children && unresolved( r.children ) }) );
 	const open = async ( answer:Response, url:string )=>{
 		const { environment } = await load( answer );
-		const { router } = await openRoute( {routes: unresolved( blankRoutes(routes) ), url, providers: [
+		const { router } = await openRoute( {routes: unresolved( blankRoutes(offered( routes, environment.get('closed') )) ), url, providers: [
 			{ provide: IENVIRONMENT, useValue: environment },
 			{ provide: AuthGuard, useValue: {canActivate: ()=>true, canActivateChild: ()=>true} }
 		]} );
@@ -153,6 +161,82 @@ describe( 'the site under a config.json', ()=>{
 		expect( await open( json({login: false}), '/login' ) ).toBe( '/' );
 		TestBed.resetTestingModule();//and a third
 		expect( await open( json({login: true, home: floor}), '/login' ) ).toBe( '/login' );
+	} );
+
+	//the site under that config.json, opened at url:  whether a url is Page not found, the home's tiles and what the search lists
+	const site = async ( answer:Response, url:string )=>{
+		const { environment, warn } = await load( answer );
+		const open = offered( routes, environment.get('closed') );
+		const { harness, leaf } = await openRoute( {routes: unresolved( blankRoutes(open) ), url, providers: [
+			{ provide: IENVIRONMENT, useValue: environment },
+			{ provide: AuthGuard, useValue: {canActivate: ()=>true, canActivateChild: ()=>true} }
+		]} );
+		const notFound = async ( to?:string )=>{
+			if( to ){
+				await harness.navigateByUrl( to );
+				await flush();
+			}
+			return leaf().data['notFound'] as boolean|undefined;
+		};
+		const tiles = ( await TestBed.inject( HomeRouteService ).children() ).map( tile=>tile.path );
+		return { open, warn, notFound, tiles, found: TestBed.inject( RouteSearchProvider ).items().map( item=>String(item.route) ) };
+	};
+
+	it( 'has no page, tile or search result for a closed section, and keeps the pages under it at a path of their own', async ()=>{
+		const { open, warn, notFound, tiles, found } = await site( json(demo), '/access/users' );
+		expect( open.map( r=>r.path ) ).toEqual( routes.map( r=>r.path ).filter( path=>path!='access' && path!='apps' ) );
+		expect( warn ).not.toHaveBeenCalled();
+		expect( await notFound() ).toBe( true );
+		for( const [url, missing] of [['/access', true], ['/apps', true], ['/apps/gateways/hub', undefined], [floor, undefined], ['/gateways', undefined]] as const )
+			expect( await notFound(url), url ).toBe( missing );
+		expect( tiles ).toEqual( ['gateways', 'help'] );
+		expect( found.filter( route=>route=='/apps' || route.startsWith('/access') ) ).toEqual( [] );
+		expect( found ).toContain( '/gateways' );
+	} );
+
+	it( 'offers every section with none closed, and none that a name which is no section would close', async ()=>{
+		const { open, warn, notFound, tiles } = await site( json({closed: ['login', 'nowhere', '**']}), '/access/users' );//the sign-in is `login`'s to close
+		expect( open ).toBe( routes );
+		expect( warn ).toHaveBeenCalledTimes( 3 );
+		expect( await notFound() ).toBeUndefined();
+		expect( await notFound('/apps') ).toBeUndefined();
+		expect( tiles ).toEqual( ['gateways', 'access', 'apps', 'help'] );
+		expect( offered(routes, undefined) ).toBe( routes );
+		expect( offered(routes, []) ).toBe( routes );
+	} );
+
+	//app.config.ts's initializer, on a router built from every route as provideRouter builds it
+	const configured = async ( answer:Response )=>{
+		vi.stubGlobal( 'fetch', vi.fn( async ()=>answer ) );
+		silence( 'info' );
+		const environment = new EnvironmentService();
+		const { router, harness, leaf } = await openRoute( {routes: unresolved( blankRoutes(routes) ), url: '/gateways', providers: [
+			{ provide: IENVIRONMENT, useValue: environment },
+			{ provide: AuthGuard, useValue: {canActivate: ()=>true, canActivateChild: ()=>true} }
+		]} );
+		const resetConfig = vi.spyOn( router, 'resetConfig' );
+		await applyConfig( environment, router );
+		const notFound = async ( to:string )=>{
+			await harness.navigateByUrl( to );
+			await flush();
+			return leaf().data['notFound'] as boolean|undefined;
+		};
+		return { environment, resetConfig, notFound, tiles: async ()=>( await TestBed.inject( HomeRouteService ).children() ).map( tile=>tile.path ) };
+	};
+
+	it( 'closes the sections once config.json has loaded', async ()=>{
+		const { environment, resetConfig, notFound, tiles } = await configured( json(demo) );
+		expect( environment.get('closed') ).toEqual( demo.closed );
+		expect( resetConfig ).toHaveBeenCalledTimes( 1 );
+		expect( await tiles() ).toEqual( ['gateways', 'help'] );
+		expect( await notFound('/apps') ).toBe( true );
+		expect( await notFound('/access') ).toBe( true );
+	} );
+
+	it( 'leaves the router as built with no config.json', async ()=>{
+		const { resetConfig, notFound } = await configured( absent() );
+		expect( resetConfig ).not.toHaveBeenCalled();
+		expect( await notFound('/apps') ).toBeUndefined();
 	} );
 
 	const banner = async ( answer:Response )=>{

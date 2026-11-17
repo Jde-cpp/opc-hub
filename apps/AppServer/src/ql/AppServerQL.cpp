@@ -1,6 +1,7 @@
 #include "AppServerQL.h"
-#include <jde/access/server/accessServer.h>
 #include <jde/db/meta/AppSchema.h>
+#include <jde/access/Authorize.h>
+#include <jde/access/server/accessServer.h>
 #include <jde/app/log/LogQLAwait.h>
 #include <jde/app/IApp.h>
 #include <jde/calendar/server/CalendarMAwait.h>
@@ -14,6 +15,7 @@
 #include "InstanceSessionsAwait.h"
 #include "InstanceTagLevelAwait.h"
 
+#define let const auto
 namespace Jde::App{
 	sp<QL::LocalQL> _ql;
 	α Server::QLPtr()ι->sp<QL::LocalQL>{ return App::_ql; }
@@ -25,7 +27,29 @@ namespace Jde::App{
 	α Server::SetQL( sp<QL::LocalQL> ql )ι->void{ _ql = move(ql); }
 
 	Ω sessionGraphQL()ι->Web::Server::SessionGraphQL{ return { Server::AppClient(), Server::Authorizer(), Server::AppSchema()->Name }; }
+	//The registry, `connections`, declares no right, so any known user reads it, and where the install has a guest that is every
+	//visitor (docs/demo/spec.md *Guests*).  What a route finds its instance by stays so, as /opcGateways answers discovery
+	//(types/rest/json.h):  the row's id, the instance's and its names, and `deleted:null`, the live rows.  The rest is the
+	//instances' own:  the host, the pid, the start, a run's end - an instance's restarts - and the live status, a filter or an
+	//order by anything else, and the hosts' rows, queried or introspected as an enum.
+	Ω instancesOwn( const QL::TableQL& q )ι->bool{
+		let open = []( sv name ){ return name=="id" || name=="instanceId" || name=="instanceName" || name=="programName"; };
+		let openArg = [&]( const jobject::value_type& arg ){
+			let key = arg.key();
+			return open( key ) || (key=="deleted" && arg.value().is_null()) || key=="limit" || key=="offset" || key=="skip";
+		};
+		if( let table = q.DBTable(); table && table->Name=="hosts" && table->Schema==Server::AppSchema() )
+			return q.JsonName!="__type" || q.FindTable( "enumValues" );
+		return q.JsonName.starts_with( "connection" ) && (
+			q.Tables.size()
+			|| std::ranges::any_of( q.Columns, [&](let& c){ return !open(c.JsonName); } )
+			|| !std::ranges::all_of( q.Args, openArg ) );
+	}
 	α Server::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
+		if( instancesOwn(q) ){//Read on app/instances, where that is enforced.
+			if( let read = Authorizer()->Check(AppSchema()->Name, "instances", {}, Access::ERights::Read, creds.UserPK(), sl); !read )
+				return mu<RefusedAwait>( read.error().what(), creds.UserPK(), read.error().HttpStatus(), sl );
+		}
 		if( auto await = Access::Server::CustomQuery(q, creds, sl); await )
 			return await;
 		if( Calendar::Server::OccurrencesQLAwait::IsApplicable(q) )//calendarOccurrences (docs/calendar/spec.md *Reads*);  QLPtr() is the HubQL in the hub.

@@ -81,15 +81,16 @@ namespace Jde::App::Tests{
 		EXPECT_NO_THROW( ql->LogSettingsQuery(table("logSettings"), user(), SRCE_CUR) );
 	}
 
-	//The app's own <logSchema>/logs, enforced:  Read for the log and its settings, Update to change the settings - after the user.
-	struct LogsAuthorize final : Access::Authorize{
-		LogsAuthorize()ι:Authorize{ "AppQLTests" }{
-			CreateResource( Access::Resource{_logs, jobject{{"schemaName","app"},{"slug","logs"}}} );
-			AddResource( _logs, "app", "logs", {} );
+	//One of the app's own resources enforced, <logSchema>/logs by default:  Read for the log and its settings, Update to change the
+	//settings - after the user.
+	struct AppAuthorize final : Access::Authorize{
+		AppAuthorize( string slug="logs" )ι:Authorize{ "AppQLTests" }{
+			CreateResource( Access::Resource{_resource, jobject{{"schemaName","app"},{"slug",slug}}} );
+			AddResource( _resource, "app", slug, {} );
 			CreateUser( user().UserPK(), "user" );
 		}
-		α Grant( Access::ERights rights )ι->void{ AddAcl( user().UserPK().Value, {Access::PermissionPK{10}, _logs, rights, Access::ERights::None} ); }
-		constexpr static Access::ResourcePK _logs{ 1 };
+		α Grant( Access::ERights rights )ι->void{ AddAcl( user().UserPK().Value, {Access::PermissionPK{10}, _resource, rights, Access::ERights::None} ); }
+		constexpr static Access::ResourcePK _resource{ 1 };
 	};
 	Ω status( auto&& f )->EHttpStatus{
 		try{
@@ -106,7 +107,7 @@ namespace Jde::App::Tests{
 		return y && y->await_ready() ? status( [&]{ y->await_resume(); } ) : EHttpStatus::None;
 	}
 	TEST( AppQLTests, AnEnforcedLogsResourceGatesTheLogRoutes ){
-		auto auth = ms<LogsAuthorize>();
+		auto auth = ms<AppAuthorize>();
 		auto ql = ms<QLStub>( auth, "app" );
 		EXPECT_EQ( status([&]{ ql->LogQuery(table("logs","{limit:1}"), anonymous(), SRCE_CUR); }), EHttpStatus::Unauthorized ) << "who is asking comes first";
 		EXPECT_EQ( status([&]{ ql->LogSettingsQuery(table("logSettings"), anonymous(), SRCE_CUR); }), EHttpStatus::Unauthorized );
@@ -121,13 +122,29 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( mutationStatus(*ql, user()), EHttpStatus::Forbidden ) << "changing the levels is Update, not Read";
 	}
 	TEST( AppQLTests, UpdateOnTheLogsResourceRoutesTheSettingsMutation ){
-		auto auth = ms<LogsAuthorize>();
+		auto auth = ms<AppAuthorize>();
 		auth->Grant( Access::ERights::Update );
 		EXPECT_EQ( mutationStatus(*ms<QLStub>(auth, "app"), user()), EHttpStatus::None );
 	}
+	//The status's memory, start and uptime are the app's instances' own (app/instances), its zone, a new calendar's default, any user's.
+	TEST( AppQLTests, AnEnforcedInstancesResourceGatesTheStatus ){
+		auto auth = ms<AppAuthorize>( "instances" );
+		auto app = ms<QLStub>( auth, "app" ), other = ms<QLStub>( auth, "opc.install" );
+		let ask = [&]( std::initializer_list<sv> columns, sp<QLStub> ql=nullptr ){
+			auto t = table( "status" );
+			addColumns( t, columns );
+			return status( [&]{ (ql ? ql : app)->StatusQuery( move(t), user(), SRCE_CUR ); } );
+		};
+		EXPECT_EQ( ask({"timeZone"}), EHttpStatus::None );
+		EXPECT_EQ( ask({"memory"}), EHttpStatus::Forbidden );
+		EXPECT_EQ( ask({"timeZone", "startTime"}), EHttpStatus::Forbidden );
+		EXPECT_EQ( ask({"memory"}, other), EHttpStatus::None ) << "another app's status";
+		auth->Grant( Access::ERights::Read );
+		EXPECT_EQ( ask({"memory", "uptimeSeconds"}), EHttpStatus::None );
+	}
 	//Another app's logs:  an OpcServer's QL tests opc.install/logs, so app/logs enforced does not reach it.
 	TEST( AppQLTests, TheLogsResourceIsTheAppsOwn ){
-		auto ql = ms<QLStub>( ms<LogsAuthorize>(), "opc.install" );
+		auto ql = ms<QLStub>( ms<AppAuthorize>(), "opc.install" );
 		EXPECT_EQ( status([&]{ ql->LogQuery(table("logs","{limit:1}"), user(), SRCE_CUR); }), EHttpStatus::None );
 	}
 	//No logs row - the install default:  the log and its settings are anyone's, signed in or not.

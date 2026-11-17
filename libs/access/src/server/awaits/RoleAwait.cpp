@@ -161,6 +161,15 @@ namespace Jde::Access::Server{
 			params.emplace_back( *key.Criteria );
 		return { Ƒ("select resource_id, deleted from {} where schema_name=? and slug=? and {}", GetTable("resources").DBName, key.Criteria ? "criteria=?" : "criteria is null"), move(params) };
 	}
+	//A grant names a resource there is:  its own row or, for a criteria, its slug's root, under which access_role_add makes a
+	//node's or a group's row.  Only the seed's add makes a root, since it runs before a service declares its own:  a client's
+	//grant on a name that is none answered 200 and left an unenforced row of it.
+	Ω rowOrRootSelect( const ResourceKey& key )ε->DB::Sql{
+		vector<DB::Value> params{ {key.Schema}, {key.Slug} };
+		if( key.Criteria )
+			params.emplace_back( *key.Criteria );
+		return { Ƒ("select resource_id from {} where schema_name=? and slug=? and {}", GetTable("resources").DBName, key.Criteria ? "(criteria is null or criteria=?)" : "criteria is null"), move(params) };
+	}
 	Ω resourceRow( const DB::Row& row, const ResourceKey& key, Authorize& auth )ε->jobject{
 		const ResourcePK resourcePK{ row.Get<ResourcePK::Type>(0) };
 		jobject y{ {"id", resourcePK.Value} };
@@ -192,12 +201,17 @@ namespace Jde::Access::Server{
 			auto adminCheck = auth.TestAdminGrant( key.Schema, key.Slug, key.Criteria.value_or(""), _userPK );//the schema's OpcServer answers when one is registered - it knows which resource governs the node; else the flat rule, where a criteria without a row falls back to the slug's root (appserver-review3 #13).
 			co_await *adminCheck;
 			let& table = GetTable( "roles" );
-			if( _mutation.AddIfMissing ){//the seed's add (LocalQL::Upsert):  a role that already holds a grant on this resource keeps it as it is.  access_role_add would have rewritten it with the seed's numbers at every -sync start - Delete back on a hardened Engineer, a deny on Viewer cleared (reviews/m3-closing.md #12, ruled 09-21).
+			auto ds = table.Schema->DS();
+			if( !_mutation.AddIfMissing ){
+				let named = co_await Any( ds->SelectAsync(rowOrRootSelect(key)) );
+				THROW_IFX( named.empty(), Exception(_sl, ExceptionArgs{EHttpStatus::NotFound}, "Resource '{}/{}' not found.", key.Schema, key.Slug) );
+			}
+			else{//the seed's add (LocalQL::Upsert):  a role that already holds a grant on this resource keeps it as it is.  access_role_add would have rewritten it with the seed's numbers at every -sync start - Delete back on a hardened Engineer, a deny on Viewer cleared (reviews/m3-closing.md #12, ruled 09-21).
 				let byCriteria = key.Criteria ? "r.criteria=?" : "r.criteria is null";
 				vector<DB::Value> params{ {rolePK.Value}, {key.Slug}, {key.Schema} };
 				if( key.Criteria )
 					params.emplace_back( *key.Criteria );
-				let held = co_await Any( table.Schema->DS()->SelectAsync({ Ƒ("select m.member_id from {} m join {} p on p.permission_id=m.member_id join {} r on r.resource_id=p.resource_id where m.role_id=? and r.slug=? and r.schema_name=? and {}",
+				let held = co_await Any( ds->SelectAsync({ Ƒ("select m.member_id from {} m join {} p on p.permission_id=m.member_id join {} r on r.resource_id=p.resource_id where m.role_id=? and r.slug=? and r.schema_name=? and {}",
 					GetTable("role_members").DBName, GetTable("permission_rights").DBName, GetTable("resources").DBName, byCriteria), move(params) }) );
 				if( held.size() ){
 					DBGT( ELogTags::Access, "[{}]Seed grant on '{}.{}' skipped - the role holds one.", rolePK.Value, key.Schema, key.Slug );
@@ -213,7 +227,6 @@ namespace Jde::Access::Server{
 			insert.Add( key.Schema );
 			insert.AddOpt( key.Name );
 			insert.AddOpt( key.Criteria );
-			auto ds = table.Schema->DS();
 			let permissionPK = co_await ds->InsertSeq<PermissionPK::Type>( move(insert) );
 			jobject y;
 			auto& permissionRight = y["permissionRight"].emplace_object();

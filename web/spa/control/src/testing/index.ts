@@ -18,7 +18,7 @@ export function routeStub( {data, params, snapshot={}, parent, routeConfig={}}:R
 export const provideRoute = ( shape?:RouteShape ):Provider=>({ provide: ActivatedRoute, useValue: routeStub( shape ) });
 
 //Router, for a page that navigates:  `url` is what it reads, and navigate/navigateByUrl record their calls and succeed.
-export const routerStub = ( url='/' )=>({ url, navigate: vi.fn().mockResolvedValue( true ), navigateByUrl: vi.fn().mockResolvedValue( true ) });
+export const routerStub = ( url='/', config:Routes=[] )=>({ url, config, navigate: vi.fn().mockResolvedValue( true ), navigateByUrl: vi.fn().mockResolvedValue( true ) });
 
 export const pageTitleStub:Provider = { provide: ComponentPageTitle, useValue: {} };
 

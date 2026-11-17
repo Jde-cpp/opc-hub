@@ -106,7 +106,7 @@ cd $B && ctest --timeout 300 --output-on-failure                   # then the cp
 ```
 
 Release: `R=…/<checkout>/release; cmake -B $R -S $JDE_DIR -Wno-dev --preset linux-clang-relWithDebInfo-jde -Djde_TESTS=OFF`,
-then the targets the installer packs: `--target Jde.Opc.Hub Jde.Opc.Server Jde.DB.Sqlite Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway Jde.DB.MySql`.
+then the targets the installer packs: `--target Jde.Opc.Hub Jde.Opc.Server Jde.DB.Sqlite Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway Jde.DB.MySql`, plus `Jde.Opc.PlcEmulator` for the public demo's tarball (`apps/OpcHub/setup/demo/build-demo.sh`).
 
 ## Targets
 

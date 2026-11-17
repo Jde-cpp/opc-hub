@@ -31,7 +31,7 @@ namespace Jde::Opc::Server{
 		//UserPK::System) are the only ql writer;  everything else is a web request.
 		return executer.Value==UserPK::System
 			? nullptr
-			: up<TAwait<jvalue>>{ mu<App::RefusedMutation>(Ƒ("'{}' is not supported;  the OpcServer's schema owns no tables to write.", m.CommandName), executer, EHttpStatus::Forbidden, sl) };
+			: up<TAwait<jvalue>>{ mu<App::RefusedAwait>(Ƒ("'{}' is not supported;  the OpcServer's schema owns no tables to write.", m.CommandName), executer, EHttpStatus::Forbidden, sl) };
 	}
 
 }

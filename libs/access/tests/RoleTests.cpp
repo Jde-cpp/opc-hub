@@ -1,3 +1,4 @@
+#include <absl/cleanup/cleanup.h>
 #include "gtest/gtest.h"
 #include <jde/access/server/awaits/RoleAwait.h>
 #include <jde/access/Authorize.h>
@@ -90,6 +91,12 @@ namespace Jde::Access::Tests{
 	}
 
 	Ω getRole( str slug, UserPK executer )ε->jobject{ return Get("role", slug, executer); }
+	//The seed's add (LocalQL::Upsert), which alone makes a resource nothing has declared yet.
+	Ω seedAdd( str q, UserPK executer )ε->jobject{
+		auto m = QL::ParseM( q, {}, Schemas() );
+		m.AddIfMissing = true;
+		return BlockAwait( Server::RoleMAwait{m, executer} ).as_object();
+	}
 
 	//A role the query filters out (deleted:null) that still holds a matched permission was seeded from the permission rows and
 	//returned as a bare {id, permissionRight} - no name, and the node Access tab's sort on it threw.
@@ -454,6 +461,17 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(sa, "resources", root), "allowed")), ERights::Administer ) << "TestSchemaAdmin(\"access\") once access.resources is enforced";
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "users", root), "allowed")), ERights::Create|ERights::Update|ERights::Delete|ERights::Purge|ERights::Subscribe|ERights::Execute );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "resources", root), "allowed")), ERights::Delete|ERights::Subscribe );
+		//Owner, "every permission on every resource":  on the historian's tables what Viewer's Read leaves, and each right on the
+		//calendars', OEE's and the flows', which no other role names.  They went in with no line;  the hub's suite asks it of every
+		//root the hub declares (OwnerHoldsEveryRightOnEveryResource).
+		constexpr ERights writes{ ERights::Create|ERights::Update|ERights::Delete|ERights::Purge|ERights::Administer };
+		let ownerOn = [&]( sv schema, sv slug ){ let p = GetRolePermission( owner, schema, slug, root ); return p.empty() ? ERights::None : ToRights( Json::AsArray(p, "allowed") ); };
+		for( let slug : {"histTemplates", "histTemplateNodes", "histGroups", "histGroupNodes"} )
+			EXPECT_EQ( ownerOn("gateway", slug), writes ) << slug;
+		for( let slug : {"oeeMachines", "oeeMachineSignals", "oeeStops", "oeeIntervals", "oeeReasons", "oeeCodings", "oeeLines", "oeeLineMembers", "oeeFloors", "oeeFloorShapes", "flows", "flowVersions", "flowContexts", "flowRuns"} )
+			EXPECT_EQ( ownerOn("gateway", slug), writes|ERights::Read ) << slug;
+		for( let slug : {"calendars", "calendarPatterns", "calendarShifts", "calendarExceptions"} )
+			EXPECT_EQ( ownerOn("app", slug), writes|ERights::Read ) << slug;
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "resources", root), "allowed")), ERights::Read ) << "every page listing resources, once access.resources is enforced";
 		//reviews/m2-closing.md #8:  every resource the gateway gates on, not just the one with a table behind it - or enforcing
 		//gateway/sessions, gateway/search or gateway/endpoint locks out every role this seed ships, the administrators included.
@@ -560,7 +578,7 @@ namespace Jde::Access::Tests{
 		}
 	}
 	//and the behaviour itself, on the dialects this suite runs against:  a role permission on a resource nothing has registered
-	//yet, with no name - the resource is created, named after its slug.
+	//yet, with no name - the resource is created, named after its slug.  The seed's add:  a client's is refused one.
 	TEST_F( RoleTests, AddPermissionOnNewResourceWithoutName ){
 		let root = GetRoot();
 		const UserPK system{ UserPK::System };
@@ -571,7 +589,7 @@ namespace Jde::Access::Tests{
 			Purge( "resource", GetId(Json::AsObject(v)), system );
 		const RolePK rolePK{ GetId(getRole("roleParityNew", root)) };
 		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK.Value, slug, criteria );
-		let added = BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
+		let added = seedAdd( q, root );
 		let resources = QL().QuerySync<jarray>( select, {}, root );
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_EQ( Json::AsSV(Json::AsObject(resources[0]), "name"), slug ) << "name coalesced over the slug";
@@ -593,7 +611,7 @@ namespace Jde::Access::Tests{
 			Purge( "resource", GetId(Json::AsObject(v)), system );
 		const RolePK rolePK{ GetId(getRole("roleParityRoot", root)) };
 		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug );
-		let added = BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
+		let added = seedAdd( q, root );
 		let resources = QL().QuerySync<jarray>( select, {}, root );
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_FALSE( Json::AsObject(resources[0]).at("deleted").is_null() ) << "a role-referenced root resource should ship unenforced";
@@ -603,7 +621,7 @@ namespace Jde::Access::Tests{
 	}
 
 	//reviews-issue/historian-group-access.md #1:  removeRole asked Administer of the permission's own row (TestAdminResource), not the
-	//gate AddPermission takes.  A criteria row whose slug has no enforced root, which the flat rule doesn't consult, refused every
+	//gate AddPermission takes.  A criteria row whose slug's root is not enforced, which the flat rule doesn't consult, refused every
 	//remove while the add passed - a historian group's grants froze from the first one - and a criteria row stopped from enforcing
 	//let anyone remove what only the root's administrator may grant.
 	TEST_F( RoleTests, RevokeAsGranted ){
@@ -620,9 +638,11 @@ namespace Jde::Access::Tests{
 			let added = BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), executer} ).as_object();
 			return PermissionPK{ Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id") };
 		};
-		EXPECT_NO_THROW( RemoveRolePermission(rolePK, grant(nobody), nobody) ) << "no root:  the add passed nobody, so the remove does";
+		let rootId = GetId( QL().QuerySync(Ƒ(R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}" ){{ id }})", slug), {}, system) );
+		QL().QuerySync<jvalue>( Ƒ("mutation deleteResource( id:{} )", rootId), {}, system );
+		EXPECT_NO_THROW( RemoveRolePermission(rolePK, grant(nobody), nobody) ) << "the root unenforced:  the add passed nobody, so the remove does";
 
-		QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}" ))", slug), {}, system );//the root, enforced
+		QL().QuerySync<jvalue>( Ƒ("mutation restoreResource( id:{} )", rootId), {}, system );//the root, enforced
 		let permission = grant( system );
 		EXPECT_THROW( RemoveRolePermission(rolePK, permission, nobody), Exception ) << "an enforced root:  the criteria row governs, and nobody administers it";
 
@@ -640,6 +660,102 @@ namespace Jde::Access::Tests{
 			Purge( "resource", GetId(Json::AsObject(v)), system );
 		Purge( "role", rolePK, root );
 		PurgeUser( nobody, root );
+	}
+
+	//A grant takes Administer on its resource, so one enforced with nobody administering it could be granted on again only by
+	//opening it, every right on it everyone's in between.  Where the install enforces access/resources, whoever holds Delete there,
+	//the Enforced switch, may open it, so they administer it closed (Authorize::TestAdmin):  every admin check, a resource's edit as
+	//well as a grant.  A deny on the row still refuses;  and with the switches unenforced, where anyone may flip one, nothing
+	//changes:  that is not everyone administering.
+	TEST_F( RoleTests, TheSwitchHolderAdministers ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System };
+		const string slug{ "switchHolder" };
+		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}" ){{ id }})", slug );
+		for( let& v : QL().QuerySync<jarray>(select, {}, root) )//a previous run's row.
+			Purge( "resource", GetId(Json::AsObject(v)), system );
+		const RolePK rolePK{ GetId(getRole("roleSwitchHolder", root)) };
+		const UserPK keeper{ GetId(GetUser("switchHolderKeeper", root)) };
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}" ))", slug), {}, system );//enforced, and nobody is granted
+		let grant = [&]( UserPK executer ){
+			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug );
+			let added = BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), executer} ).as_object();
+			return PermissionPK{ Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id") };
+		};
+		EXPECT_THROW( grant(keeper), Exception ) << "enforced, and nobody administers it";
+
+		let switches = SelectResource( "resources", root, true );
+		ASSERT_FALSE( switches.at("deleted").is_null() ) << "the fixture leaves the switches unenforced";
+		CreateAcl( keeper, ERights::Delete, ERights::None, "resources", system );
+		EXPECT_THROW( grant(keeper), Exception ) << "the switches unenforced:  Delete there is everyone's, and says nothing";
+		{
+			QL().QuerySync<jvalue>( Ƒ("mutation restoreResource( id:{} )", GetId(switches)), {}, system );
+			absl::Cleanup unenforce = [id=GetId(switches)]{//a destructor:  nothing may leave it.
+				try{
+					QL().QuerySync<jvalue>( Ƒ("mutation deleteResource( id:{} )", id), {}, UserPK{UserPK::System} );
+				}
+				catch( const std::exception& e ){
+					ADD_FAILURE() << "access/resources is still enforced:  " << e.what();
+				}
+			};
+			PermissionPK permission{};
+			EXPECT_NO_THROW( permission = grant(keeper) ) << "the switches enforced, and theirs to flip";
+			EXPECT_NO_THROW( RemoveRolePermission(rolePK, permission, keeper) ) << "who may grant may revoke";
+			const UserPK nobody{ GetId(GetUser("switchHolderNobody", root)) };
+			EXPECT_THROW( grant(nobody), Exception ) << "no Delete on the switches";
+			let resourceId = GetId( Json::AsObject(QL().QuerySync<jarray>(select, {}, root).at(0)) );
+			let rename = [&]( UserPK executer ){ QL().QuerySync<jvalue>( Ƒ(R"(mutation updateResource( id:{}, name:"switchHolderRenamed" ))", resourceId), {}, executer ); };
+			EXPECT_NO_THROW( rename(keeper) ) << "every admin check, the resource's edit among them";
+			EXPECT_THROW( rename(nobody), Exception );
+			CreateAcl( keeper, ERights::None, ERights::Administer, slug, system );
+			EXPECT_THROW( grant(keeper), Exception ) << "a deny on the row wins";
+			EXPECT_THROW( rename(keeper), Exception ) << "a deny on the row wins";
+			PurgeUser( nobody, root );
+		}
+		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
+			Purge( "resource", GetId(Json::AsObject(v)), system );
+		Purge( "role", rolePK, root );
+		PurgeUser( keeper, root );
+	}
+
+	//A grant names a resource there is:  its own row or, for a criteria, its slug's root, under which a node's or a group's row
+	//is made.  A client's addRole on a name that is none answered 200 and left an unenforced row of it, and with a criteria an
+	//enforced one under no root.  Only the seed's add makes a root, since it runs before a service declares its own.
+	TEST_F( RoleTests, AGrantNamesAResourceThereIs ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System };
+		constexpr sv slug{ "noSuchResource" }, criteria{ "x" };
+		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}" ){{ id criteria deleted }})", slug );
+		let purge = [&]{
+			for( let& v : QL().QuerySync<jarray>(select, {}, root) )
+				Purge( "resource", GetId(Json::AsObject(v)), system );
+		};
+		purge();//a previous run's rows.
+		const RolePK rolePK{ GetId(getRole("roleNoSuchResource", root)) };
+		let byRoot = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug );
+		let byCriteria = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK.Value, slug, criteria );
+		let add = [&]( str q ){ return BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), system} ).as_object(); };
+		for( let& q : {byRoot, byCriteria} ){
+			try{
+				add( q );
+				ADD_FAILURE() << "granted:  " << q;
+			}
+			catch( const Exception& e ){
+				EXPECT_EQ( e.HttpStatus(), EHttpStatus::NotFound ) << q << " - " << e.what();
+			}
+		}
+		EXPECT_TRUE( QL().QuerySync<jarray>(select, {}, root).empty() ) << "a refused grant made a row";
+
+		seedAdd( byRoot, system );
+		let seeded = QL().QuerySync<jarray>( select, {}, root );
+		ASSERT_EQ( seeded.size(), 1u ) << "the seed's add makes the root";
+		EXPECT_FALSE( Json::AsObject(seeded[0]).at("deleted").is_null() ) << "unenforced";
+		EXPECT_NO_THROW( add(byRoot) ) << "the root is there";
+		EXPECT_NO_THROW( add(byCriteria) ) << "a criteria's row is made under its root";
+		EXPECT_EQ( QL().QuerySync<jarray>(select, {}, root).size(), 2u );
+
+		Purge( "role", rolePK, root );
+		purge();
 	}
 
 	//reviews/m3-closing.md #11:  the resource the grant above creates never reached the running authorizer.  The lookup that
@@ -660,7 +776,7 @@ namespace Jde::Access::Tests{
 			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ {} }} }} ))", role.Value, resource );
 			return BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
 		};
-		add( seeded, Ƒ(R"(schemaName:"access", slug:"{}")", slug) );//the seed's spelling:  no row yet, so the grant makes one - unenforced
+		seedAdd( Ƒ(R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", seeded.Value, slug), root );//the seed's add:  no row yet, so the grant makes one - unenforced
 		let resources = QL().QuerySync<jarray>( select, {}, root );
 		ASSERT_EQ( resources.size(), 1u );
 		const ResourcePK resourcePK{ GetId(Json::AsObject(resources[0])) };
