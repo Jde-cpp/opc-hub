@@ -1,6 +1,17 @@
 # Floor map
 
-A line's floor is a drawing of the hall its machines stand in, live. Each machine is an outline coloured by its state, with its OEE, availability, performance and quality and its state inside; each line is a dashed outline with its figures and how many of its machines are running. The page is `lines/<line>/floor` under the gateway's page: **Floor** on the line's [OEE page](/help/gateways/oee#the-lines-oee-page) and on its dashboard tile open it, for a line that has a floor. A line with none offers **New floor** there, to a user who may make one: a hall of 40 by 20 metres to begin with, opened in the [editor](#editing).
+A line's floor is a live drawing of the hall its machines stand in.
+
+Each machine is an outline coloured by its state. Inside it are its OEE, availability, performance, quality and state. Each line is a dashed outline with its figures and how many of its machines are running.
+
+The page is `lines/<line>/floor` under the gateway's page. For a line that has a floor, **Floor** opens it from:
+
+- the line's [OEE page](/help/gateways/oee#the-lines-oee-page)
+- the line's dashboard tile
+
+A line with no floor offers **New floor** on its OEE page, to a user who may make one. It makes a hall 40 by 20 metres and opens it in the [editor](#editing).
+
+The header's **OEE** opens the line's OEE page, **Dashboard** the gateway's dashboard, and **Line** the line's properties and members.
 
 A floor and its shapes are rows of the gateway's `oeeFloors` and `oeeFloorShapes` tables, in metres from the floor's top-left. A machine's shape is drawn while the floor's line reaches the machine and it stands; a deleted machine's, or one the line no longer holds, is left out until it is restored or held again. A line the floor's line reaches that has no shape of its own is drawn as the box around its machines' shapes, half a grid out.
 
@@ -10,7 +21,9 @@ Drag to pan, wheel or pinch to zoom, and **Fit** shows the whole floor again. Th
 
 Hovering, focusing or tapping a shape fills the side panel beside the map: the shift's figures with the loss split, the stop in progress with its reason and start, the time of the last count, and links to the machine's OEE page, its group's page and its PLC's node in the browser, whose **History** tab draws the group's trend. A line's panel shows its figures and links to its OEE page. Shapes take focus in drawing order; each is named by its machine, its state and its OEE.
 
-Below 600 pixels of width the map gives way to a list: the dashboard's tiles for the same machines and lines, in the floor's order.
+A tap, a click, Enter or Space pins the shape: the panel keeps it until it is pinned again, another is pinned, Escape is pressed or the panel's close button is pressed.
+
+When the page's content is less than 600 pixels wide, the map gives way to a list: the dashboard's tiles for the same machines and lines, in the floor's order.
 
 ## The colours and the dashes
 
@@ -24,9 +37,11 @@ The outline is the state, in the colours the OEE charts use, so the floor and th
 | Pink, solid | A short stop, under the machine's small-stop threshold.  It turns to the reason's colour once the stop passes it |
 | Grey, dashed | No data:  the feed is down, or no engine runs the machine |
 | Neutral, solid | Not planned:  outside the machine's shifts, or in a break |
+| Neutral, solid | Connecting, or Disconnected where the socket dropped first:  no status has come yet |
 | Neutral, dotted | No access:  the gateway refused the subscription, as it does where Read on the machine's group is withheld |
+| Neutral, dotted | Ended:  the gateway ended the subscription for another reason, given in the panel |
 
-A line's outline is always dashed: green when every machine it reaches is running, red when every one is stopped, and amber for any other mix. Its text, drawn over its machines, says how many are running.
+A line's outline is always dashed. It is green when every machine it reaches is running, red when every one is stopped, and amber for any other mix. It is neutral outside planned time, and grey when no machine's state is known. Its text, drawn over its machines, says how many are running.
 
 ## The figures
 
