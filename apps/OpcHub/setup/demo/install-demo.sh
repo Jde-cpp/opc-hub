@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# The public demo's install (docs/demo/plan.md Phase 8;  README.md beside this file is the runbook).  Run from the unpacked
+# The public demo's install (docs/demo/plan.md Phases 8 and 9;  README.md beside this file is the runbook).  Run from the unpacked
 # jde-opc-demo tarball, as root, on a box with this release's jde-opchub package, nginx and certbot.  An upgrade is the same
 # line from the newer tarball, after the newer package.
 #   sudo ./install-demo.sh [--email <address>]
 #     --email   the certbot account's address, for the first certificate on a box where certbot has no account yet
 # In this order, so the 443 site never fronts a hub whose resources are not enforced, where every caller holds every right:
 # the 443 site out, on an upgrade;  the files;  the port-80 site, and certbot's first certificate over it;  the hub on the demo's
-# config;  `seed.sh certs`, the PLC units and `seed.sh access`;  and the 443 site last.
+# config;  `seed.sh certs`, the PLC units, `seed.sh access` and `seed.sh plant`;  and the 443 site last.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 name=opchub.trypoply.com #the two nginx sites' server_name, the certificate's and the policy's
@@ -99,6 +99,7 @@ done
 systemctl enable --quiet jde-plc@{1,2,3,4,5}.service
 systemctl restart jde-plc@{1,2,3,4,5}.service #an upgrade's, onto the new files
 /opt/jde-cpp/demo/seed.sh access --plcs 60 #each PLC's user is enrolled by its first login, and takes `demo-plc` to run enforced
+/opt/jde-cpp/demo/seed.sh plant #the connections, the machines, the lines and the floor, where there are none;  it ends with `access` again
 
 #--- 443 ---------------------------------------------------------------------------------------------------------------
 site nginx-demo.conf jde-demo
@@ -107,9 +108,11 @@ cat <<MSG
 installed the demo at https://$name:
   the hub      jde-opchub on Opc.Hub.Demo.jsonnet, loopback 1967 behind nginx - journalctl -u jde-opchub
   the PLCs     jde-plc@1 to jde-plc@5 - journalctl -u 'jde-plc@*'
+  the plant    plc1 to plc5 on opc.tcp 4842 to 4846, five machines, the site and its two lines - /opt/jde-cpp/demo/seed.sh plant
   settings     /etc/jde-cpp/demo/config.json, the nginx sites beside it, /etc/jde-cpp/apps/OpcServer/emulator/config/demo/plc<N>.jsonnet
 next:
   sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
 and the first time, the admin's sign-in through the tunnel, then \`seed.sh grant <email>\` (README.md, The first sign-in).
+An upgrade whose release changed the database or the historian's files:  sudo /opt/jde-cpp/demo/reset.sh --yes (README.md, Reset).
 MSG
 for f in "${kept[@]}"; do echo "kept your edited $f - this release's is beside it as $(basename "$f").new: merge any change by hand"; done

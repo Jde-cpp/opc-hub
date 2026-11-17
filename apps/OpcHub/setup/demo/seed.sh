@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# The public demo's seed, its access half (docs/demo/plan.md Phase 8;  README.md beside this file is the runbook).  As root, on
-# the box, against the loopback hub.  Each step is safe to run again.
+# The public demo's seed (docs/demo/plan.md Phases 8 and 9;  README.md beside this file is the runbook).  As root, on the box,
+# against the loopback hub.  Each step is safe to run again.
 #   seed.sh certs           the five PLCs' certificates and the seed's own pair - before the PLC units first start
 #   seed.sh access          owner for the seed's user;  the bundled OPC UA server's connection purged, and the flow server's;  the guest in `visitor`;  the
 #                           PLCs that have logged in in `demo-plc`, `--plcs <seconds>` waiting that long for their first logins;
 #                           and every resource enforced, last
+#   seed.sh plant           the plant, once the five PLCs have logged in, `--plcs <seconds>` waiting that long, 60 by default:  a connection
+#                           a PLC, the template and a group a machine, the reasons, the `plant` calendar, the five machines, the site
+#                           with its two lines and the floor, floor.json's or `--floor <file>`'s;  then `access` again
 #   seed.sh grant <email>   owner for the Google user of that address, enrolled by its first sign-in through the tunnel
 #   seed.sh session         a session of the seed's user on stdout, for smoke.sh
 set -euo pipefail
@@ -41,6 +44,6 @@ certs(){
 
 case "${1:-}" in
 	certs) [ $# = 1 ] || die "certs takes no argument"; certs;;
-	access|grant|session) JDE_DATA=$data exec python3 "$here/seed.py" "$@";;
-	*) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2;;
+	access|plant|grant|session) JDE_DATA=$data exec python3 "$here/seed.py" "$@";;
+	*) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2;;
 esac

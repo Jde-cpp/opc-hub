@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-# The public demo's seed, its half through the hub's GraphQL (docs/demo/plan.md Phase 8).  seed.sh runs it, as root:  it logs in
-# to the loopback hub as the seed's own certificate user, `demo-seed`, with the key `seed.sh certs` left for root alone.  Every
-# step looks its row up by slug first, so a second run changes nothing and a partial one is finished by the next.
+# The public demo's seed, its half through the hub's GraphQL (docs/demo/plan.md Phases 8 and 9).  seed.sh runs it, as root:  it
+# logs in to the loopback hub as the seed's own certificate user, `demo-seed`, with the key `seed.sh certs` left for root alone.
+# Every step looks its row up by slug first, so a second run changes nothing and a partial one is finished by the next.
 #   seed.py access [--plcs <seconds>]   owner for the seed's user, the bundled server's and the flow server's connections purged, the guest, `visitor`, `demo-plc`,
 #                                       every resource enforced;  --plcs waits that long for the five PLCs' first logins
+#   seed.py plant [--plcs <seconds>] [--floor <file>]
+#                                       the plant, once the five PLCs have logged in, --plcs waiting 60 s for them by default:  the connections, the
+#                                       template and a group a machine, the reasons, the `plant` calendar, the machines, the site with its two lines
+#                                       and the floor from floor.json beside this file;  then the access half again
 #   seed.py grant <email>               owner for the Google user of that address
 #   seed.py session                     a session of the seed's user on stdout, for smoke.sh, which ends it
 import argparse, base64, json, os, subprocess, sys, time, urllib.error, urllib.request
@@ -21,6 +25,39 @@ VISITOR = {
 }
 #Each PLC's server looks a certificate's user up as its own hub user (libs/opc/server/src/UAAccess.cpp), a read of `users`.
 PLC = { 'access': ['users'] }
+#The plant (docs/demo/spec.md *The plant*, *The plant's rows*).  PLC N serves machine N on opc.tcp 4841+N as urn:jde:demo:plc<N>
+#(apps/OpcServer/emulator/config/demo):  its slug, its name, its line, its ideal cycle in milliseconds, plc<N>.jsonnet's `cycle`,
+#and what it counts.
+MACHINES = [
+	( 'filler', 'Filler', 'bottling', 1000, 'bottles' ),
+	( 'capper', 'Capper', 'bottling', 1000, 'bottles' ),
+	( 'labeler', 'Labeler', 'bottling', 1000, 'bottles' ),
+	( 'case-packer', 'Case packer', 'packing', 24000, 'cases' ),
+	( 'palletizer', 'Palletizer', 'packing', 60000, 'layers' )
+]
+LINES = [ ( 'bottling', 'Bottling' ), ( 'packing', 'Packing' ) ]
+#demo.NodeSet2.xml, which every PLC loads:  its namespace, by uri and never by index, its one Machine object, the same node on
+#all five, and that object's variables, the template's members.  A machine's signals are four of them.
+NSU, MACHINE = 'urn:jde:demo', 5001
+VARIABLES = [ 'status', 'totalCount', 'rejectCount', 'reasonCode', 'speed' ]
+SIGNALS = [ ( 'State', 'status' ), ( 'Total', 'totalCount' ), ( 'Reject', 'rejectCount' ), ( 'Reason', 'reasonCode' ) ]
+SMALL_STOP = 120000 #two minutes:  a stop shorter than it is a small stop, a performance loss
+#the reasons' codes are the overlays' stops' (plc<N>.jsonnet `code`)
+REASONS = [
+	( 'jam', 'Jam', 'Unplanned', 1 ), ( 'starved', 'Starved', 'Unplanned', 2 ), ( 'fault', 'Fault', 'Unplanned', 3 ),
+	( 'changeover', 'Changeover', 'Planned', 10 ), ( 'cleaning', 'Cleaning', 'Planned', 11 ),
+	( 'no-orders', 'No orders', 'Excluded', 20 )
+]
+#The calendar:  the plant's zone, the overlays' too (demo.libsonnet `zone`), a production day from 06:00, and three eight-hour
+#shifts from it every day, each with half an hour's break four hours in.  A shift's start is minutes after the day's.
+ZONE, DAY_START, EVERY_DAY = 'America/New_York', 360, 127
+SHIFTS = [ ( 'Day', 0 ), ( 'Evening', 480 ), ( 'Night', 960 ) ]
+SHIFT, BREAKS = 480, [ { 'start': 240, 'minutes': 30 } ]
+
+#The gateway holds a calendar a moment after its last edit, once its cache has read the tables again (libs/calendar/src/client/Calendars.cpp):
+#a machine or a line that names one made just now is refused with this, and tried again.
+NOT_YET = 'is no calendar the gateway holds'
+class NotYet( Exception ): pass
 
 def die( message ):
 	print( f'seed: {message}', file=sys.stderr )
@@ -64,7 +101,10 @@ class Hub:
 			with urllib.request.urlopen( request, timeout=60 ) as response:
 				answer = json.loads( response.read() )
 		except urllib.error.HTTPError as e:
-			die( f"{query} {variables}:  {e.code} {e.read().decode(errors='replace')}" )
+			refusal = e.read().decode( errors='replace' )
+			if NOT_YET in refusal:
+				raise NotYet( f'{query} {variables}:  {e.code} {refusal}' )
+			die( f'{query} {variables}:  {e.code} {refusal}' )
 		if not isinstance( answer, dict ) or 'errors' in answer:
 			die( f'{query} {variables}:  {answer}' )
 		return answer['data']
@@ -79,12 +119,27 @@ class Hub:
 			self.ql( f'mutation restore{table[0].upper()}{table[1:-1]}( id:$id )', id=rows[0]['id'] )
 			say( f"{table} '{slug}':  restored" )
 		return rows[0]['id'] if rows else None
-	def ensure( self, table, slug, name, description ):
+	def ensure( self, table, slug, name, description, **columns ):
 		if id := self.find( table, slug ):
 			return id
-		id = self.ql( f'mutation create{table[0].upper()}{table[1:-1]}( slug:$slug, name:$name, description:$description ){{ id }}', slug=slug, name=name, description=description )
-		say( f"{table} '{slug}':  created" )
-		return next( iter(id.values()) )['id']
+		return self.create( table, f"{table} '{slug}'", slug=slug, name=name, description=description, **columns )['id']
+	#a table's rows under a filter, and a row made:  what a table with no slug is looked up and made by
+	def rows( self, table, fields, **where ):
+		return self.ql( f"{table}( {', '.join(f'{k}:${k}' for k in where)} ){{ {fields} }}", **where )[table]
+	def create( self, table, what, **columns ):
+		columns = { key: value for key, value in columns.items() if value is not None }
+		waited = time.monotonic()+30
+		while True:
+			try:
+				row = self.ql( f"mutation create{table[0].upper()}{table[1:-1]}( {', '.join(f'{k}:${k}' for k in columns)} ){{ id }}", **columns )
+				break
+			except NotYet as e:
+				if time.monotonic()>=waited:
+					die( e )
+				time.sleep( .5 )
+		if what:
+			say( f'{what}:  created' )
+		return next( iter(row.values()) )
 	def member( self, user, userName, role, roleName ):
 		if any( r['role'] and r['role']['id']==role for r in self.ql('acl( identityId:$id ){ role{ id } }', id=user)['acl'] ):
 			return
@@ -107,6 +162,22 @@ def owner( hub ):
 		return id
 	die( "the hub has no `owner` role:  its role seed, access.roles, did not apply - journalctl -u jde-opchub" )
 
+#`demo-plc`, with the PLCs that have logged in in it, waiting that long for all five:  a PLC's user is enrolled by its first
+#login, a few seconds into its unit's start.  Answers the PLCs that have not.
+def plcs( hub, wait ):
+	role = hub.ensure( 'roles', 'demo-plc', 'Demo PLC', "The public demo's PLCs:  Read on users, which each PLC's server looks a certificate's user up with, as its own." )
+	hub.reads( 'demo-plc', PLC )
+	waited = time.monotonic()+wait
+	while time.monotonic()<waited and len( hub.ql('users( slug:$slugs ){ id }', slugs=[f'plc{n}' for n in range(1, 6)])['users'] )<5:
+		time.sleep( 1 )
+	missing = []
+	for n in range( 1, 6 ):
+		if plc := hub.find( 'users', f'plc{n}' ):
+			hub.member( plc, f'plc{n}', role, 'demo-plc' )
+		else:
+			missing.append( n )
+	return missing
+
 def access( hub, plcWait ):
 	#owner first, while every resource is unenforced:  the first grant, which the hub leaves to the first user (apps/OpcHub/README.md, First run).
 	#The shipped role holds every right on every resource (libs/access/config/release.roles).
@@ -121,21 +192,119 @@ def access( hub, plcWait ):
 	visitor = hub.ensure( 'roles', 'visitor', 'Visitor', "The public demo's guest:  reads the plant's pages and changes nothing.  No users, sessions or logs, which Viewer reads." )
 	hub.reads( 'visitor', VISITOR )
 	hub.member( guest, 'guest', visitor, 'visitor' )
-	plcs = hub.ensure( 'roles', 'demo-plc', 'Demo PLC', "The public demo's PLCs:  Read on users, which each PLC's server looks a certificate's user up with, as its own." )
-	hub.reads( 'demo-plc', PLC )
-	waited = time.monotonic()+plcWait #a PLC's user is enrolled by its first login, a few seconds into its unit's start
-	while time.monotonic()<waited and len( hub.ql('users( slug:$slugs ){ id }', slugs=[f'plc{n}' for n in range(1, 6)])['users'] )<5:
-		time.sleep( 1 )
-	for n in range( 1, 6 ):
-		if plc := hub.find( 'users', f'plc{n}' ):
-			hub.member( plc, f'plc{n}', plcs, 'demo-plc' )
-		else:
-			say( f"plc{n} has not logged in yet:  once jde-plc@{n} runs, `seed.sh access` again puts it in 'demo-plc'" )
+	for n in plcs( hub, plcWait ):
+		say( f"plc{n} has not logged in yet:  once jde-plc@{n} runs, `seed.sh access` again puts it in 'demo-plc'" )
 	#last:  a resource's row restored is the resource enforced, and from here a call takes a grant
 	for resource in hub.ql( 'resources{ id schemaName slug deleted }' )['resources']:
 		if resource['deleted']:
 			hub.ql( 'mutation restoreResource( id:$id )', id=resource['id'] )
 			say( f"{resource['schemaName']}/{resource['slug']}:  enforced" )
+
+#A template member's variable, the last name of its browse path, which the column holds as json text.
+def memberName( path ):
+	path = json.loads( path ) if isinstance( path, str ) else path
+	return path[-1]['name'] if path and path[-1].get( 'nsu' )==NSU else None
+
+#A group's members by the template member each was made from.  The collector resolves them on the PLC, so they are there once
+#its session is:  a group made before that is asked again.
+def members( hub, group, slug, template ):
+	waited = time.monotonic()+120
+	while True:
+		found = { m['histTemplateNodeId']: m['id'] for m in hub.rows('histGroupNodes', 'id histTemplateNodeId', histGroupId=group) }
+		if all( id in found for id in template.values() ):
+			return { name: found[id] for name, id in template.items() }
+		if time.monotonic()>=waited:
+			die( f"group '{slug}' has {len(found)} of its {len(template)} members:  the hub's collector has no session on its PLC - journalctl -u jde-opchub, journalctl -u 'jde-plc@*'" )
+		time.sleep( 2 )
+		hub.ql( 'mutation resolveHistory( group:$group ){ nodes{ status } }', group=group )
+
+#The floor, floor.json's (docs/demo/spec.md *The floor*, its export format):  the editor's Import by hand, the shapes of each
+#kind in the file's order.  A floor whose every shape is the file's takes the ones it lacks, a partial run's;  one that differs
+#is the editor's, and kept.
+def floor( hub, line, machines, lines, file ):
+	try:
+		with open( file ) as f:
+			plan = json.load( f )
+	except ( OSError, ValueError ) as e:
+		die( f'{file}:  {e}' )
+	wanted, count = {}, {}
+	for shape in plan['shapes']:
+		kind, named = shape['kind'], {}
+		if kind=='Machine':
+			named = { 'oeeMachineId': machines.get(shape.get('machine')) }
+		elif kind=='Line':
+			named = { 'memberLineId': lines.get(shape.get('line')) }
+		if None in named.values():
+			die( f"{file}:  a {kind} shape names {shape.get('machine', shape.get('line'))!r}, which the plant has none of" )
+		sort = count.get( kind, 0 )
+		count[kind] = sort+1
+		wanted[(kind, sort)] = { 'kind': kind, **named, 'points': shape['points'], **({'label': shape['label']} if shape.get('label') else {}), 'sort': sort }
+	floors = hub.rows( 'oeeFloors', 'id', oeeLineId=line )
+	id = floors[0]['id'] if floors else hub.create( 'oeeFloors', "the plant's floor", oeeLineId=line, width=plan['width'], height=plan['height'], grid=plan.get('grid', 0.5) )['id']
+	def same( row, shape ):
+		points = json.loads( row['points'] ) if isinstance( row['points'], str ) else row['points']
+		return points==shape['points'] and all( (row.get(key) or None)==shape.get(key) for key in ('oeeMachineId', 'memberLineId', 'label') )
+	has = { (row['kind'], row['sort']): row for row in hub.rows('oeeFloorShapes', 'id kind sort oeeMachineId memberLineId points label', oeeFloorId=id) }
+	if any( key not in wanted or not same(row, wanted[key]) for key, row in has.items() ):
+		say( f"the plant's floor is not {os.path.basename(file)}'s:  kept as the editor left it" )
+		return
+	for key, shape in wanted.items():
+		if key not in has:
+			hub.create( 'oeeFloorShapes', None, oeeFloorId=id, **shape )
+	if made := len( wanted )-len( has ):
+		say( f"the plant's floor:  {made} shape{'' if made==1 else 's'} created" )
+
+def plant( hub, plcWait, floorFile ):
+	#owner, as the access half's first step:  the plant is the owner's to make, the resources enforced or not.  Then the PLCs, in
+	#`demo-plc` before any group is made:  the collector's session on a PLC is one that PLC looks up, as its own user.
+	hub.member( hub.find('users', SEED), SEED, owner(hub), 'owner' )
+	if missing := plcs( hub, plcWait ):
+		die( f"{', '.join(f'plc{n}' for n in missing)} did not log in within {plcWait} s, and the plant takes all five:  systemctl status 'jde-plc@*', journalctl -u jde-plc@{missing[0]}" )
+	connections = [ hub.ensure('serverConnections', f'plc{n}', f'PLC {n}', f"The {name}'s PLC, emulated on this box.", url=f'opc.tcp://127.0.0.1:{4841+n}', certificateUri=f'urn:jde:demo:plc{n}', isDefault=n==1)
+		for n, ( _, name, *_ ) in enumerate( MACHINES, 1 ) ]
+	#One template over the Machine's variables, with no threshold on any:  a member with no ExceptionDeviation stores every change,
+	#which a count's must, a band holding its record back into a later interval (docs/oee/spec.md *Machines*).
+	template = hub.ensure( 'histTemplates', 'machine', 'Machine', "A demo PLC's machine:  the five variables of its Machine object." )
+	member = { memberName(m['path']): m['id'] for m in hub.rows('histTemplateNodes', 'id path', histTemplateId=template) }
+	for name in VARIABLES:
+		if name not in member:
+			member[name] = hub.create( 'histTemplateNodes', f"template 'machine':  {name}", histTemplateId=template, path=json.dumps([{'nsu': NSU, 'name': name}], separators=(',', ':')) )['id']
+	for slug, name, category, code in REASONS:
+		hub.ensure( 'oeeReasons', slug, name, None, category=category, code=code )
+	calendar = hub.ensure( 'calendars', 'plant', 'Plant', "The demo plant's shifts:  three of eight hours from 06:00, every day, each with a half-hour break.", timeZone=ZONE, dayStart=DAY_START )
+	patterns = [ p['id'] for p in hub.rows('calendarPatterns', 'id effective deleted', calendarId=calendar) if not p['effective'] and not p['deleted'] ]
+	if not patterns:
+		die( "calendar 'plant' has no first pattern, which its create makes:  purge the calendar on the AppServer's Calendars tab and run this again" )
+	shifts = { shift['name'] for shift in hub.rows('calendarShifts', 'id name', calendarPatternId=patterns[0]) }
+	for name, start in SHIFTS:
+		if name not in shifts:
+			hub.create( 'calendarShifts', f"calendar 'plant':  the {name} shift", calendarPatternId=patterns[0], name=name, days=EVERY_DAY, start=start, minutes=SHIFT, breaks=json.dumps(BREAKS, separators=(',', ':')) )
+	#A machine a group, the template on its PLC's Machine.  A new machine's rows start now, `from`, to the second:  the box has
+	#no history before its seed.
+	machines = {}
+	for n, ( slug, name, _, cycle, unit ) in enumerate( MACHINES, 1 ):
+		group = hub.ensure( 'histGroups', slug, name, f"The {name}'s signals, from PLC {n}.", serverConnectionId=connections[n-1], histTemplateId=template, root=json.dumps({'nsu': NSU, 'i': MACHINE}, separators=(',', ':')) )
+		node = members( hub, group, slug, {variable: member[variable] for _, variable in SIGNALS} )
+		machines[slug] = hub.ensure( 'oeeMachines', slug, name, f"PLC {n}'s machine.", histGroupId=group, calendarId=calendar, idealCycle=cycle, countUnit=unit, smallStop=SMALL_STOP,
+			**{'from': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} )
+		roles = { signal['role'] for signal in hub.rows('oeeMachineSignals', 'id role', oeeMachineId=machines[slug]) }
+		for role, variable in SIGNALS: #State first:  a machine with a count and no State wants an idle timeout
+			if role not in roles:
+				for warning in hub.create( 'oeeMachineSignals', f"machine '{slug}':  {role} is {variable}", oeeMachineId=machines[slug], role=role, histGroupNodeId=node[variable] ).get( 'warnings' ) or []:
+					say( f"machine '{slug}', {role}:  {warning}" )
+	#The site and its two lines, each on the calendar:  a line with none keeps the UTC day for its shift.
+	site = hub.ensure( 'oeeLines', 'plant', 'Plant', "The demo's site:  its two lines.", level='Site', calendarId=calendar )
+	lines = { slug: hub.ensure('oeeLines', slug, name, None, level='Line', calendarId=calendar) for slug, name in LINES }
+	def join( line, lineName, column, id, sort ):
+		if not any( m[column]==id for m in hub.rows('oeeLineMembers', 'id oeeMachineId memberLineId', oeeLineId=line) ):
+			hub.create( 'oeeLineMembers', f"line '{lineName}':  member {sort+1}", oeeLineId=line, sort=sort, **{column: id} )
+	for sort, ( slug, _ ) in enumerate( LINES ):
+		join( site, 'plant', 'memberLineId', lines[slug], sort )
+		for at, machine in enumerate( m[0] for m in MACHINES if m[2]==slug ):
+			join( lines[slug], slug, 'oeeMachineId', machines[machine], at )
+	floor( hub, site, machines, lines, floorFile )
+	#again, last:  whatever the plant added is the visitor's to read where the spec says so, and enforced
+	access( hub, 0 )
 
 def grant( hub, email ):
 	users = [ u for u in hub.ql('users{ id loginName provider deleted }')['users'] if u['provider']=='Google' and (u['loginName'] or '').lower()==email.lower() and not u['deleted'] ]
@@ -147,6 +316,9 @@ if __name__=='__main__':
 	parser = argparse.ArgumentParser( prog='seed.py' )
 	commands = parser.add_subparsers( dest='command', required=True )
 	commands.add_parser( 'access' ).add_argument( '--plcs', type=int, default=0, metavar='seconds' )
+	planted = commands.add_parser( 'plant' )
+	planted.add_argument( '--plcs', type=int, default=60, metavar='seconds' )
+	planted.add_argument( '--floor', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'floor.json'), metavar='file' )
 	commands.add_parser( 'grant' ).add_argument( 'email' )
 	commands.add_parser( 'session' )
 	args = parser.parse_args()
@@ -155,7 +327,12 @@ if __name__=='__main__':
 		print( hub.session )
 	else:
 		try:
-			access( hub, args.plcs ) if args.command=='access' else grant( hub, args.email )
+			if args.command=='access':
+				access( hub, args.plcs )
+			elif args.command=='plant':
+				plant( hub, args.plcs, args.floor )
+			else:
+				grant( hub, args.email )
 		finally:
 			hub.logout()
 		say( f'{args.command}:  done' )

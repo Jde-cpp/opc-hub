@@ -195,6 +195,50 @@ Issue [#486]. After 2, 3, 8, #393 and #395. `seed.sh plant`: it waits for the fi
 
 Tests: the container of Phase 8 with the five PLC units started from the installed config and logged in, the seed run twice, and after its enforce, the case that proves `demo-plc`, the five connections connected, five groups collecting, `oeeMachineStatus` running on the Filler within a minute, and `oee` by shift answering for a line; a client write to `totalCount` refused `Bad_NotWritable` ([`ua_services_attribute.c:1811`](https://github.com/open62541/open62541/blob/v1.5.10/src/server/ua_services_attribute.c#L1811)) while the production mode moves it; `smoke.sh`'s GraphQL half, a guest reading the two lines' figures and refused `codeOee` and `createHistory`. Size S.
 
+Built 2026-11-17, where it differs from the text above:
+
+- **The plant is tables in [`seed.py`](../../apps/OpcHub/setup/demo/seed.py)**, which `seed.sh plant` runs, and [`floor.json`](../../apps/OpcHub/setup/demo/floor.json) beside it; `--floor <file>` reads another.
+    - The groups and machines are `filler`, `capper`, `labeler`, `case-packer` and `palletizer`, counting bottles, cases and layers at each overlay's cycle, 1 s, 24 s and 60 s.
+    - The connections are named `PLC 1` to `PLC 5`. A group's root is the nodeset's `Machine` by its namespace's uri.
+    - The calendar's production day starts at 06:00, so the three shifts start 0, 480 and 960 minutes into it, each break four hours in.
+- **`demo-plc` first, not only last.** The plant puts its user in `owner` and the five PLCs in `demo-plc` before it makes a group, and ends with the access half as the text has it.
+    - A group's members are resolved over the collector's session, which a PLC outside the role refuses. Run after an access half that met no PLC, the plant would have waited on members that never came.
+    - It stops where a PLC has not logged in within `--plcs`, 60 s by default.
+    - It waits two minutes for a group's members and asks `resolveHistory` between looks.
+- **The template names no threshold**, on the counters or the other three. A member with no `ExceptionDeviation` stores every change, and one set to 0 would be warned of as a band.
+- **A calendar is the gateway's a moment after its last edit.** The gateway's cache reads the tables again 250 ms after the last calendar event ([`Calendars.cpp`](../../libs/calendar/src/client/Calendars.cpp)), so the first machine was refused, `calendarId 1 is no calendar the gateway holds`, seen on the first run. A create refused that way is tried again for 30 s.
+- **The floor is the site's**, `plant`, the line Phase 7's `home` names, with a Line shape for each of the two lines.
+    - A boxed line's name and figures start at the box's corner, over its first machine, seen in headless Chrome. Each line's shape leaves two metres above its machines. A call for the owner: the spec had line shapes only where boxes overlap, and says so now.
+    - A floor whose every shape is the file's takes the shapes it lacks, a partial run's. One that differs is the editor's and is kept, so an upgrade's seed does not undo an edit made on the page.
+- **`install-demo.sh` runs `seed.sh plant`** after `seed.sh access` and before the 443 site, so the install stays one run. The site's banner says the plant is there.
+- **[`reset.sh`](../../apps/OpcHub/setup/demo/reset.sh) takes `--yes`**, and without it says what it would remove and removes nothing: it sits beside `smoke.sh`.
+    - It takes the 443 site out first and puts it back last, where it was enabled, as the install does: the new database's resources are unenforced until the seed's last step.
+    - It removes the database with its `-wal` and `-shm`, and `hist/opc-gateway`. The certificates stay, so each PLC is the same user's name, enrolled again.
+    - The admin's Google user goes with the database: `seed.sh grant` again after the next sign-in. The runbook says so.
+- **The smoke's GraphQL half**, as a guest: the site with its two lines, five machines and the reasons; each line's `oee` by shift over the last day; each machine's engine live, waited on for a minute; each group's count history; `codeOee` and `createHistory` refused.
+    - With `--hub`, the owner reads the five connections Connected, waited on for a minute.
+    - The waits are for the half minute after a hub restart, below: a smoke run straight after `install-demo.sh` failed without them.
+    - A machine's state is not checked: a jam or a break is the demo working. Phase 10's socket half waits on the Filler's push.
+- **Found, for the owner or a later phase:**
+    - After a hub restart each PLC refuses the collector, `BadIdentityTokenInvalid`, until its own session on the hub is back, about 5 s, and the collector asks again 30 s later ([`HistGroupHost.h`](../../apps/OpcGateway/src/hist/HistGroupHost.h) `RetryInterval`). A hub restart, an upgrade's among them, costs each machine half a minute of history.
+    - That half minute's counts land when the gap ends, against run time the gap is taken out of, as the OEE spec's *Counts* has it. The Filler's minute after a restart read a performance of 153 %, and its shift so far 173 % on the floor. A shift washes it out; the minutes after a restart or a reset do not read true.
+    - The first minute after a fresh seed read 103 to 108 % on the bottling machines, with no restart behind it. Not looked into; Phase 10's soak has the figures to tune.
+    - A browser holding a session from before a reset is answered 401 once, on `/opcGateways`, and the page then takes a new one.
+    - Each collector session logs a Warning on its PLC, `Creating the subscription diagnostics object failed with StatusCode BadUserAccessDenied`.
+- **Tests:** in Phase 8's container, `ubuntu:26.04` under systemd, the .deb and the tarball from a release tree rebuilt at this branch's base, the site the production build of Phase 8's review, certbot the stand-in.
+    - `install-demo.sh` from scratch, one run, the 443 site not listening when certbot was called: the Filler's engine live and running 6 s after it. The seed again made nothing.
+    - After the enforce: the five connections Connected, each group's count and speed records arriving, `oee` by shift answering for the site and both lines, and a write to `totalCount` through the hub refused `BadNotWritable` while the count moved.
+    - `demo-plc`: a PLC taken out of the role and restarted refused the collector, `BadIdentityTokenInvalid`, its group stored nothing and the smoke failed on its connection. `seed.sh access` put it back, and it was collecting 35 s later.
+    - A partial run: a shape, a signal, a line member and a shift purged, and each made again by the next run. A floor with one shape moved was kept, and finished once the shape was put back.
+    - A PLC's user purged with its unit stopped: the plant stopped, naming it, and ran once the unit had logged in.
+    - A machine and its group purged with its PLC stopped: the next run made them, the line's member and the floor's shape again, and the engine was live once the PLC was back.
+    - A hub restart: no resource unenforced, and the smoke green after its wait.
+    - `reset.sh` with no `--yes` removed nothing. With it: new groups, the old history's files gone, the 443 site back and the smoke green. With the 443 site out it stayed out, `install-demo.sh` enabled it, and the smoke was green 31 s on.
+    - `install-demo.sh` as an upgrade, nginx stopped first: nothing made, certbot not called again.
+    - The smoke green through nginx and at the hub, 47 checks.
+    - Walked as a guest in headless Chrome through that nginx: the floor live with 5 of 5 running, nothing refused, and no console error.
+    - Not run: the deployment and its soak, which wait on #477's VM and DNS. Windows unrun, no C++ having changed.
+
 ## Phase 10 - operations and the opening (piece 7, third PR)
 
 Issue [#487]. After 4 and 9. `smoke.sh` whole: its socket half is `smoke.py`, Python on `websockets` and `protobuf` from apt, 3.21.12 on noble and 26.04, its modules generated at package time by the builder's apt `protoc` of that version, not the superbuild's 35.1, whose code needs a newer runtime, from the gateway's proto files ([`Opc.FromClient.proto`](../../apps/OpcGateway/src/types/proto/Opc.FromClient.proto), [`Opc.FromServer.proto`](../../apps/OpcGateway/src/types/proto/Opc.FromServer.proto)) and every file they import, `Opc.Common.proto`, `Common.proto` and `timestamp.proto`, which takes a guest session from `/serverSettings`' response header, opens `/opc` with it, subscribes each machine, reads the state from each ack, waits `live` plus a margin for an `OeeStatus` on the Filler, and opens the eight subscriptions the floor makes, the floor itself the runbook's browser check; the retention timer, `jde-demo-retention.timer` daily and its script removing day directories under `hist.path` older than 90 days, which the historian's layout makes a directory delete and its *Retention* allows ([`spec.md:98`](../../libs/historian/docs/spec.md#L98)), the OEE rows kept; nginx's access log kept 14 days by the stock `/etc/logrotate.d/nginx`, checked rather than replaced; the watching, an outside check every five minutes fetching the site and opening a socket, as 0.3 ruled, a hosted monitor on the page and the certificate's expiry, which keeps the five minutes, and a scheduled workflow on a GitHub-hosted runner running `smoke.sh --quick` from the release's demo artefact for the socket, GitHub's schedule five minutes at best and late under load, a failed run mailed to the owner; the runbook's operations, the soak's tuning of each overlay's figures toward an OEE between 60 and 85 percent with the two lines apart, the week's soak with the journal read daily, a few hundred guest browsers on the node browser with the collector's connection log watched, the policy turned from report-only to enforced once the soak's reports are clean, and the opening checklist: every advisory filed since 0.4 closed, `config.json` given `home`, the Highcharts question for the OEE pages answered, licence or tables, and the name published.
