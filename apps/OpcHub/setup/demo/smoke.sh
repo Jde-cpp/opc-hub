@@ -110,7 +110,7 @@ if [ -n "$guest" ]; then
 	check "  with no pid or start" json gateways 'all( "pid" not in s and "startTime" not in s for s in d["servers"] )'
 
 	#--- the plant, as a visitor reads it ----------------------------------------------------------------------------------
-	now=$(stamp 0); minute=$(stamp 60); day=$(stamp 86400)
+	now=$(stamp 0); day=$(stamp 86400)
 	status=$(ql plant "$guest" 'oeeLines{ id slug } oeeMachines{ id slug histGroupId } oeeReasons{ id }')
 	check "the guest reads the plant:  the site, its two lines, five machines and the reasons ($status)" json plant '{"plant", "bottling", "packing"}<={ l["slug"] for l in d["data"]["oeeLines"] } and len(d["data"]["oeeMachines"])==5 and len(d["data"]["oeeReasons"])>0'
 	if json plant 'len(d["data"]["oeeMachines"])>0 and len(d["data"]["oeeReasons"])>0'; then
@@ -121,22 +121,28 @@ if [ -n "$guest" ]; then
 		done
 		for machine in $(pick plant "' '.join( f'{m[\"slug\"]}:{m[\"id\"]}:{m[\"histGroupId\"]}' for m in d['data']['oeeMachines'] )"); do
 			IFS=: read -r slug id group <<<"$machine"
+			#its count's node, the member its Total signal reads, as GraphQL:  {nsu:"urn:jde:demo",i:6002}
+			status=$(ql count "$guest" "oeeMachineSignals( oeeMachineId:$id ){ role histGroupNodeId } histGroupNodes( histGroupId:$group ){ id node }")
+			node=$(pick count "(lambda n: '{'+','.join(f'{k}:{json.dumps(v)}' for k, v in n.items())+'}')( next( json.loads(m['node']) if isinstance(m['node'], str) else m['node'] for s in d['data']['oeeMachineSignals'] if s['role']=='Total' for m in d['data']['histGroupNodes'] if m['id']==s['histGroupNodeId'] ) )")
+			check "the $slug's count is a member of its group ($status)" [ -n "$node" ]
+			[ -n "${counted:-}" ] || counted=$node #the first machine's, which the history edit below names
 			#An engine starts a few seconds after its machine's last edit, and after the hub's start.  After that start the collector is
 			#back on each PLC within the minute, so a group made just before it holds nothing until then.
 			for _ in $(seq 12); do
 				status=$(ql engine "$guest" "oeeMachineStatus( machine:$id ){ engine state }")
-				held=$(ql history "$guest" "history( group:$group, nodes:[{nsu:\"urn:jde:demo\",i:6002}], start:\"$day\", end:\"$(stamp 0)\", limit:1 ){ values{ source } }")
+				held=$(ql history "$guest" "history( group:$group, nodes:[${node:-{\}}], start:\"$day\", end:\"$(stamp 0)\", limit:1 ){ values{ source } }")
 				json engine 'd["data"]["oeeMachineStatus"]["engine"]=="live"' && json history 'len(d["data"]["history"]["values"])>0' && break
 				sleep 5
 			done
 			check "the $slug's engine is live, the machine $(pick engine 'd["data"]["oeeMachineStatus"]["state"]') ($status)" json engine 'd["data"]["oeeMachineStatus"]["engine"]=="live"'
 			check "  and its group holds its count's history ($held)" json history 'len(d["data"]["history"]["values"])>0'
 		done
-		#a stop's coding and a history edit:  each passes while its resource is unenforced, and the seed enforces them
+		#a stop's coding and a history edit:  each passes while its resource is unenforced, and the seed enforces them.  At a time
+		#before any machine's `from`, so a refusal that regressed writes nothing an engine reads.
 		id=$(pick plant 'd["data"]["oeeMachines"][0]["id"]'); group=$(pick plant 'd["data"]["oeeMachines"][0]["histGroupId"]'); reason=$(pick plant 'd["data"]["oeeReasons"][0]["id"]')
-		status=$(ql refused "$guest" "mutation codeOee( machine:$id, start:\"$minute\", end:\"$now\", reason:$reason ){ id }")
+		status=$(ql refused "$guest" "mutation codeOee( machine:$id, start:\"2000-01-01T00:00:00Z\", end:\"2000-01-01T00:01:00Z\", reason:$reason ){ id }")
 		check "the guest is refused codeOee ($status)" [ "$status" = 403 ]
-		status=$(ql refused "$guest" "mutation createHistory( group:$group, values:[{ node:{nsu:\"urn:jde:demo\",i:6002}, source:\"$minute\", value:0 }] ){ values{ status } }")
+		status=$(ql refused "$guest" "mutation createHistory( group:$group, values:[{ node:${counted:-{\}}, source:\"2000-01-01T00:00:00Z\", value:0 }] ){ values{ status } }")
 		check "the guest is refused createHistory ($status)" [ "$status" = 403 ]
 	fi
 fi

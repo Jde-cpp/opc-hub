@@ -97,13 +97,14 @@ namespace Jde::Opc::Gateway{
 			REFUSE_IF( !wholeMs(args, "smallStop", sl), "smallStop can't be null:  0 makes no stop a small one." );
 		return y;
 	}
-	Ω checkCalendar( const jobject& args, SL sl )ε->void{
+	//calendarId's, where it names one.  FindLoaded:  a calendar made a moment ago is in no load the client's debounce has run yet.
+	Ω checkCalendar( const jobject& args, SL sl )ε->AnyVoidTask{
 		let p = args.if_contains( "calendarId" );
 		if( !p || p->is_null() )
-			return;
+			co_return;
 		let id = p->try_to_number<uint32>();
 		REFUSE_IF( !id, "calendarId is a calendar's id, not {}.", serialize(*p) );
-		REFUSE_IF( !Calendar::Client::Calendars::Find(*id), "calendarId {} is no calendar the gateway holds:  the AppServer has none by that id, it is deleted, or the gateway may not read the calendars.", *id );
+		REFUSE_IF( !co_await Calendar::Client::Calendars::FindLoaded(*id, sl), "calendarId {} is no calendar the gateway holds:  the AppServer has none by that id, it is deleted, or the gateway may not read the calendars.", *id );
 	}
 	Ω checkMachine( const Thresholds& t, const vector<OeeSignalRow>& signals, SL sl )ε->void{
 		if( signals.empty() )//just made, or every signal purged:  nothing runs until it has one.
@@ -324,7 +325,7 @@ namespace Jde::Opc::Gateway{
 						if( let holder = host.HolderOf(groupId); holder )
 							REFUSE( "Group '{}' already has a machine, '{}'{}:  a group has one.", groups.front().Name, holder->Row.Name, holder->Row.Deleted ? ", deleted - restore it, or purge it to make another" : "" );
 						checkMachine( thresholds(args, nullptr, sl), {}, sl );
-						checkCalendar( args, sl );
+						co_await checkCalendar( args, sl );
 						if( let p = args.if_contains("from"); p && !p->is_null() ){
 							try{
 								THROW_IF( !p->is_string(), "not a time" );
@@ -353,7 +354,7 @@ namespace Jde::Opc::Gateway{
 							auto signals = co_await Any( SelectOeeSignals({.Machine=rows.front().Id}) );
 							let would = thresholds( args, &rows.front(), sl );
 							checkMachine( would, signals, sl );
-							checkCalendar( args, sl );
+							co_await checkCalendar( args, sl );
 							if( would.IdleTimeout!=rows.front().IdleTimeout && std::ranges::none_of(signals, []( const OeeSignalRow& s ){ return s.Role==Oee::ERole::State; }) )
 								recompute = "idleTimeout";//only a machine whose count is its state reads it.
 						}
@@ -405,7 +406,7 @@ namespace Jde::Opc::Gateway{
 					if( (level || type==Create) && (type==Create || type==Update) )
 						REFUSE_IF( !level || !level->is_string() || !Oee::ToLevel(level->get_string()), "level is Site, Area, Line or Cell{}.", level ? Ƒ(", not {}", serialize(*level)) : string{} );
 					if( type==Create || type==Update )
-						checkCalendar( args, sl );
+						co_await checkCalendar( args, sl );
 					if( type!=Create ){
 						let key = rowKey( _query, sl );
 						let row = lines.Find( key );

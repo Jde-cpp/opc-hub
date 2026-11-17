@@ -5,9 +5,9 @@
 #   seed.py access [--plcs <seconds>]   owner for the seed's user, the bundled server's and the flow server's connections purged, the guest, `visitor`, `demo-plc`,
 #                                       every resource enforced;  --plcs waits that long for the five PLCs' first logins
 #   seed.py plant [--plcs <seconds>] [--floor <file>]
-#                                       the plant, once the five PLCs have logged in, --plcs waiting 60 s for them by default:  the connections, the
-#                                       template and a group a machine, the reasons, the `plant` calendar, the machines, the site with its two lines
-#                                       and the floor from floor.json beside this file;  then the access half again
+#                                       the access half, then the plant, once the five PLCs have logged in, --plcs waiting 60 s for them by default:
+#                                       the connections, the template and a group a machine, the reasons, the `plant` calendar, the machines, the
+#                                       site with its two lines and the floor from floor.json beside this file
 #   seed.py grant <email>               owner for the Google user of that address
 #   seed.py session                     a session of the seed's user on stdout, for smoke.sh, which ends it
 import argparse, base64, json, os, subprocess, sys, time, urllib.error, urllib.request
@@ -54,11 +54,6 @@ ZONE, DAY_START, EVERY_DAY = 'America/New_York', 360, 127
 SHIFTS = [ ( 'Day', 0 ), ( 'Evening', 480 ), ( 'Night', 960 ) ]
 SHIFT, BREAKS = 480, [ { 'start': 240, 'minutes': 30 } ]
 
-#The gateway holds a calendar a moment after its last edit, once its cache has read the tables again (libs/calendar/src/client/Calendars.cpp):
-#a machine or a line that names one made just now is refused with this, and tried again.
-NOT_YET = 'is no calendar the gateway holds'
-class NotYet( Exception ): pass
-
 def die( message ):
 	print( f'seed: {message}', file=sys.stderr )
 	sys.exit( 1 )
@@ -101,10 +96,9 @@ class Hub:
 			with urllib.request.urlopen( request, timeout=60 ) as response:
 				answer = json.loads( response.read() )
 		except urllib.error.HTTPError as e:
-			refusal = e.read().decode( errors='replace' )
-			if NOT_YET in refusal:
-				raise NotYet( f'{query} {variables}:  {e.code} {refusal}' )
-			die( f'{query} {variables}:  {e.code} {refusal}' )
+			die( f"{query} {variables}:  {e.code} {e.read().decode(errors='replace')}" )
+		except OSError as e: #a timeout, or the hub gone:  restarted, or stopped
+			die( f'{query} {variables}:  {e} - systemctl status jde-opchub' )
 		if not isinstance( answer, dict ) or 'errors' in answer:
 			die( f'{query} {variables}:  {answer}' )
 		return answer['data']
@@ -128,15 +122,7 @@ class Hub:
 		return self.ql( f"{table}( {', '.join(f'{k}:${k}' for k in where)} ){{ {fields} }}", **where )[table]
 	def create( self, table, what, **columns ):
 		columns = { key: value for key, value in columns.items() if value is not None }
-		waited = time.monotonic()+30
-		while True:
-			try:
-				row = self.ql( f"mutation create{table[0].upper()}{table[1:-1]}( {', '.join(f'{k}:${k}' for k in columns)} ){{ id }}", **columns )
-				break
-			except NotYet as e:
-				if time.monotonic()>=waited:
-					die( e )
-				time.sleep( .5 )
+		row = self.ql( f"mutation create{table[0].upper()}{table[1:-1]}( {', '.join(f'{k}:${k}' for k in columns)} ){{ id }}", **columns )
 		if what:
 			say( f'{what}:  created' )
 		return next( iter(row.values()) )
@@ -192,13 +178,13 @@ def access( hub, plcWait ):
 	visitor = hub.ensure( 'roles', 'visitor', 'Visitor', "The public demo's guest:  reads the plant's pages and changes nothing.  No users, sessions or logs, which Viewer reads." )
 	hub.reads( 'visitor', VISITOR )
 	hub.member( guest, 'guest', visitor, 'visitor' )
-	for n in plcs( hub, plcWait ):
-		say( f"plc{n} has not logged in yet:  once jde-plc@{n} runs, `seed.sh access` again puts it in 'demo-plc'" )
+	missing = plcs( hub, plcWait )
 	#last:  a resource's row restored is the resource enforced, and from here a call takes a grant
 	for resource in hub.ql( 'resources{ id schemaName slug deleted }' )['resources']:
 		if resource['deleted']:
 			hub.ql( 'mutation restoreResource( id:$id )', id=resource['id'] )
 			say( f"{resource['schemaName']}/{resource['slug']}:  enforced" )
+	return missing #the PLCs not in `demo-plc`, which have not logged in yet
 
 #A template member's variable, the last name of its browse path, which the column holds as json text.
 def memberName( path ):
@@ -211,23 +197,23 @@ def members( hub, group, slug, template ):
 	waited = time.monotonic()+120
 	while True:
 		found = { m['histTemplateNodeId']: m['id'] for m in hub.rows('histGroupNodes', 'id histTemplateNodeId', histGroupId=group) }
-		if all( id in found for id in template.values() ):
+		if not ( missing := [name for name, id in template.items() if id not in found] ):
 			return { name: found[id] for name, id in template.items() }
 		if time.monotonic()>=waited:
-			die( f"group '{slug}' has {len(found)} of its {len(template)} members:  the hub's collector has no session on its PLC - journalctl -u jde-opchub, journalctl -u 'jde-plc@*'" )
+			die( f"group '{slug}' lacks {', '.join(missing)}:  the hub's collector has no session on its PLC - journalctl -u jde-opchub, journalctl -u 'jde-plc@*'" )
 		time.sleep( 2 )
 		hub.ql( 'mutation resolveHistory( group:$group ){ nodes{ status } }', group=group )
 
 #The floor, floor.json's (docs/demo/spec.md *The floor*, its export format):  the editor's Import by hand, the shapes of each
-#kind in the file's order.  A floor whose every shape is the file's takes the ones it lacks, a partial run's;  one that differs
-#is the editor's, and kept.
+#kind in the file's order.  A floor with no shape takes the file's;  one with any is the editor's, and kept, since a shape
+#deleted on the page leaves a floor the file would complete.
 def floor( hub, line, machines, lines, file ):
 	try:
 		with open( file ) as f:
 			plan = json.load( f )
 	except ( OSError, ValueError ) as e:
 		die( f'{file}:  {e}' )
-	wanted, count = {}, {}
+	wanted, count = [], {}
 	for shape in plan['shapes']:
 		kind, named = shape['kind'], {}
 		if kind=='Machine':
@@ -238,27 +224,21 @@ def floor( hub, line, machines, lines, file ):
 			die( f"{file}:  a {kind} shape names {shape.get('machine', shape.get('line'))!r}, which the plant has none of" )
 		sort = count.get( kind, 0 )
 		count[kind] = sort+1
-		wanted[(kind, sort)] = { 'kind': kind, **named, 'points': shape['points'], **({'label': shape['label']} if shape.get('label') else {}), 'sort': sort }
+		wanted.append( { 'kind': kind, **named, 'points': shape['points'], **({'label': shape['label']} if shape.get('label') else {}), 'sort': sort } )
 	floors = hub.rows( 'oeeFloors', 'id', oeeLineId=line )
 	id = floors[0]['id'] if floors else hub.create( 'oeeFloors', "the plant's floor", oeeLineId=line, width=plan['width'], height=plan['height'], grid=plan.get('grid', 0.5) )['id']
-	def same( row, shape ):
-		points = json.loads( row['points'] ) if isinstance( row['points'], str ) else row['points']
-		return points==shape['points'] and all( (row.get(key) or None)==shape.get(key) for key in ('oeeMachineId', 'memberLineId', 'label') )
-	has = { (row['kind'], row['sort']): row for row in hub.rows('oeeFloorShapes', 'id kind sort oeeMachineId memberLineId points label', oeeFloorId=id) }
-	if any( key not in wanted or not same(row, wanted[key]) for key, row in has.items() ):
-		say( f"the plant's floor is not {os.path.basename(file)}'s:  kept as the editor left it" )
+	if hub.rows( 'oeeFloorShapes', 'id', oeeFloorId=id ):
+		say( f"the plant's floor has its shapes:  kept as the editor left it, {os.path.basename(file)} being for a floor with none" )
 		return
-	for key, shape in wanted.items():
-		if key not in has:
-			hub.create( 'oeeFloorShapes', None, oeeFloorId=id, **shape )
-	if made := len( wanted )-len( has ):
-		say( f"the plant's floor:  {made} shape{'' if made==1 else 's'} created" )
+	for shape in wanted:
+		hub.create( 'oeeFloorShapes', None, oeeFloorId=id, **shape )
+	say( f"the plant's floor:  {len(wanted)} shapes created" )
 
 def plant( hub, plcWait, floorFile ):
-	#owner, as the access half's first step:  the plant is the owner's to make, the resources enforced or not.  Then the PLCs, in
-	#`demo-plc` before any group is made:  the collector's session on a PLC is one that PLC looks up, as its own user.
-	hub.member( hub.find('users', SEED), SEED, owner(hub), 'owner' )
-	if missing := plcs( hub, plcWait ):
+	#The access half first:  the plant is the owner's to make, who holds every right on every resource enforced, and the PLCs are
+	#in `demo-plc` before any group is made, the collector's session on a PLC being one that PLC looks up, as its own user.  The
+	#plant makes no resource, a group's row being the seed's to add, so none is left for an access half after it to enforce.
+	if missing := access( hub, plcWait ):
 		die( f"{', '.join(f'plc{n}' for n in missing)} did not log in within {plcWait} s, and the plant takes all five:  systemctl status 'jde-plc@*', journalctl -u jde-plc@{missing[0]}" )
 	connections = [ hub.ensure('serverConnections', f'plc{n}', f'PLC {n}', f"The {name}'s PLC, emulated on this box.", url=f'opc.tcp://127.0.0.1:{4841+n}', certificateUri=f'urn:jde:demo:plc{n}', isDefault=n==1)
 		for n, ( _, name, *_ ) in enumerate( MACHINES, 1 ) ]
@@ -275,18 +255,19 @@ def plant( hub, plcWait, floorFile ):
 	patterns = [ p['id'] for p in hub.rows('calendarPatterns', 'id effective deleted', calendarId=calendar) if not p['effective'] and not p['deleted'] ]
 	if not patterns:
 		die( "calendar 'plant' has no first pattern, which its create makes:  purge the calendar on the AppServer's Calendars tab and run this again" )
-	shifts = { shift['name'] for shift in hub.rows('calendarShifts', 'id name', calendarPatternId=patterns[0]) }
-	for name, start in SHIFTS:
-		if name not in shifts:
+	#A pattern with any shift is the owner's, and kept:  the seed's shifts on one whose shifts were renamed or moved would overlap them.
+	if not hub.rows( 'calendarShifts', 'id', calendarPatternId=patterns[0] ):
+		for name, start in SHIFTS:
 			hub.create( 'calendarShifts', f"calendar 'plant':  the {name} shift", calendarPatternId=patterns[0], name=name, days=EVERY_DAY, start=start, minutes=SHIFT, breaks=json.dumps(BREAKS, separators=(',', ':')) )
 	#A machine a group, the template on its PLC's Machine.  A new machine's rows start now, `from`, to the second:  the box has
-	#no history before its seed.
+	#no history before its seed.  The group's machine is found by its group, a group having one, whatever its slug is now.
 	machines = {}
 	for n, ( slug, name, _, cycle, unit ) in enumerate( MACHINES, 1 ):
 		group = hub.ensure( 'histGroups', slug, name, f"The {name}'s signals, from PLC {n}.", serverConnectionId=connections[n-1], histTemplateId=template, root=json.dumps({'nsu': NSU, 'i': MACHINE}, separators=(',', ':')) )
 		node = members( hub, group, slug, {variable: member[variable] for _, variable in SIGNALS} )
-		machines[slug] = hub.ensure( 'oeeMachines', slug, name, f"PLC {n}'s machine.", histGroupId=group, calendarId=calendar, idealCycle=cycle, countUnit=unit, smallStop=SMALL_STOP,
-			**{'from': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} )
+		held = hub.rows( 'oeeMachines', 'slug', histGroupId=group )
+		machines[slug] = hub.find( 'oeeMachines', held[0]['slug'] ) if held else hub.ensure( 'oeeMachines', slug, name, f"PLC {n}'s machine.", histGroupId=group, calendarId=calendar,
+			idealCycle=cycle, countUnit=unit, smallStop=SMALL_STOP, **{'from': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} )
 		roles = { signal['role'] for signal in hub.rows('oeeMachineSignals', 'id role', oeeMachineId=machines[slug]) }
 		for role, variable in SIGNALS: #State first:  a machine with a count and no State wants an idle timeout
 			if role not in roles:
@@ -303,8 +284,6 @@ def plant( hub, plcWait, floorFile ):
 		for at, machine in enumerate( m[0] for m in MACHINES if m[2]==slug ):
 			join( lines[slug], slug, 'oeeMachineId', machines[machine], at )
 	floor( hub, site, machines, lines, floorFile )
-	#again, last:  whatever the plant added is the visitor's to read where the spec says so, and enforced
-	access( hub, 0 )
 
 def grant( hub, email ):
 	users = [ u for u in hub.ql('users{ id loginName provider deleted }')['users'] if u['provider']=='Google' and (u['loginName'] or '').lower()==email.lower() and not u['deleted'] ]
@@ -328,7 +307,8 @@ if __name__=='__main__':
 	else:
 		try:
 			if args.command=='access':
-				access( hub, args.plcs )
+				for n in access( hub, args.plcs ):
+					say( f"plc{n} has not logged in yet:  once jde-plc@{n} runs, `seed.sh access` again puts it in 'demo-plc'" )
 			elif args.command=='plant':
 				plant( hub, args.plcs, args.floor )
 			else:

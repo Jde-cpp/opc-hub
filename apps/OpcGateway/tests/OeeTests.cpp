@@ -77,6 +77,21 @@ namespace Jde::Opc::Gateway::Tests{
 	//Each refusal is a BadRequest, before anything is written:  the machine's, the signals', the reasons', the engine's three tables'
 	//generic mutations, and the group's delete and purge and a member's purge while the machine stands, the group still in the
 	//historian after.
+	//A calendar made a moment ago, before the client's debounce has loaded it:  a machine and a line made on it at once take it,
+	//the miss read again (OeeMAwait checkCalendar).
+	TEST_F( OeeTests, ACalendarMadeJustNowIsTaken ){
+		let t0 = Window();
+		Pump1Machine pump{ "oeeNewCalendar", t0-1min };
+		for( let& v : AppClient()->QuerySync<jarray>(R"(calendars( slug:"oeeNewCalendar" ){ id })", {}) )
+			PurgeCalendar( QL::AsId<uint32>(v) );
+		let calendar = QL::AsId<uint32>( AppClient()->QuerySync<jobject>(R"(createCalendar( name:"oeeNewCalendar", slug:"oeeNewCalendar", timeZone:"UTC", dayStart:0 ){ id })", {}) );
+		absl::Cleanup purgeCalendar = [=]{ PurgeCalendar( calendar ); };
+		EXPECT_TRUE( pump.CreateMachine(t0, {{"calendarId", calendar}}) );
+		let line = HistGroupFixture::Id( Mutate(R"(createOeeLine( name:"New calendar", slug:"oeeNewCalendar", level:"Line", calendarId:$calendar ){ id })", {{"calendar", calendar}}) );
+		Mutate( "purgeOeeLine( id:$id )", {{"id", line}} );
+		EXPECT_NE( Refused([&]{ Mutate( "updateOeeMachine( id:$id, calendarId:999999 )", {{"id", pump.Id}} ); }).find("no calendar the gateway holds"), string::npos ) << "a calendar there is none of, read for again and still refused";
+	}
+
 	TEST_F( OeeTests, EachRefusalIsABadRequest ){
 		let t0 = Window();
 		Pump1Machine pump{ "oeeRefusals", t0-1min };

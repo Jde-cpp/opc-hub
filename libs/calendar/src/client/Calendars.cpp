@@ -44,6 +44,14 @@ namespace Jde::Calendar::Client{
 	static vector<QL::SubscriptionId> _subscribed;//the ack's ids:  empty until the server takes the subscribe, which Subscriptions::Replay then carries.
 	static bool _failing{};//the last round left something to retry.
 	static TimerCancel _timer;//set while a round waits.
+	static uint _started{};//the loads begun.
+	static vector<std::pair<uint,Calendars::LoadedAwait*>> _waiting;//a FindLoaded's miss, and the load that answers it:  the next to begin.
+
+	//Posted:  the load's end is a reply's, or Shutdown's caller's, and the waiter's rest is a mutation's.
+	Ω answer( vector<Calendars::LoadedAwait*> waiters )ι->void{
+		for( auto w : waiters )
+			Post( [w]{ w->Answer(); } );
+	}
 
 	Ω retryWait()ι->Duration{ return Settings::FindDuration( "/calendars/retryWait" ).value_or( 30s ); }
 	Ω number( const jvalue& row, sv key )ε->uint32{ return Json::AsNumber<uint32>( Json::AsObject(row), key ); }
@@ -195,7 +203,7 @@ namespace Jde::Calendar::Client{
 	//order so an edit after the read raises an event.  A refusal, the tables enforced with no Read for this process's user,
 	//leaves nothing held, as the spec's *Authorization* says;  any other failure leaves what the last load read.  Either, or a
 	//subscribe not taken, asks for another round in retryWait().
-	Ω load()ι->AnyVoidTask{
+	Ω read()ι->AnyVoidTask{
 		sp<QL::IQL> server; UserPK user; sp<QL::IListener> listener; bool subscribed;
 		{
 			lg _{ _mutex };
@@ -238,6 +246,28 @@ namespace Jde::Calendar::Client{
 			_dirty = true;
 			_wait = wait;
 		}
+	}
+	//A round, and the misses waiting on it answered:  those made before it began, whose calendar its read is after.
+	Ω load()ι->AnyVoidTask{
+		uint mine;
+		{
+			lg _{ _mutex };
+			mine = ++_started;
+		}
+		co_await read();
+		vector<Calendars::LoadedAwait*> answered;
+		{
+			lg _{ _mutex };
+			for( auto p = _waiting.begin(); p!=_waiting.end(); ){
+				if( p->first<=mine ){
+					answered.push_back( p->second );
+					p = _waiting.erase( p );
+				}
+				else
+					++p;
+			}
+		}
+		answer( move(answered) );
 	}
 
 	//The debounce and the reload, for as long as there is a request to answer.  The caller holds the _running claim.
@@ -325,6 +355,7 @@ namespace Jde::Calendar::Client{
 
 	α Calendars::Shutdown( bool terminate, SL sl )ι->void{
 		sp<QL::IQL> server; sp<QL::IListener> listener; vector<QL::SubscriptionId> ids;
+		vector<LoadedAwait*> waiting;
 		{
 			lg _{ _mutex };
 			_stopped = true;
@@ -334,7 +365,11 @@ namespace Jde::Calendar::Client{
 			listener = move( _listener );
 			ids = move( _subscribed );
 			_listeners.clear();
+			for( auto&& [_, w] : _waiting )
+				waiting.push_back( w );
+			_waiting.clear();
 		}
+		answer( move(waiting) );
 		if( server && listener && ids.size() && !terminate )//the ids:  a socket's QL can't stop "all of the listener's".
 			server->Unsubscribe( move(listener), move(ids), sl );
 	}
@@ -349,6 +384,29 @@ namespace Jde::Calendar::Client{
 		let p = _snapshot->BySlug.find( slug );
 		return p==_snapshot->BySlug.end() ? nullptr : p->second;
 	}
+	α Calendars::LoadedAwait::await_ready()ι->bool{
+		if( auto held = Find(_id); held ){
+			_result = move( held );
+			return true;
+		}
+		return false;
+	}
+	α Calendars::LoadedAwait::Suspend()ι->void{
+		bool waits;
+		{
+			lg _{ _mutex };
+			waits = !_stopped && _listener;
+			if( waits )
+				_waiting.emplace_back( _started+1, this );
+		}
+		if( waits )
+			request( Duration::zero() );//a Shutdown first answers it.
+		else
+			answer( {this} );
+	}
+	α Calendars::LoadedAwait::Answer()ι->void{ Resume( Find(_id) ); }
+	α Calendars::FindLoaded( uint32 id, SL sl )ι->LoadedAwait{ return LoadedAwait{ id, sl }; }
+
 	α Calendars::Listen( Listener fn )ι->uint{
 		lg _{ _mutex };
 		_listeners.emplace( ++_listenerHandle, move(fn) );

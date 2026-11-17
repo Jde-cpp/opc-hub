@@ -31,6 +31,18 @@ namespace Jde::Calendar::Client::Calendars{
 	//that is deleted, purged or was never there.  A reload that finds a calendar's rows unchanged keeps its snapshot.
 	α Find( uint32 id )ι->sp<const Schedule>;
 	α Find( sv slug )ι->sp<const Schedule>;
+	//Find, a miss reading the tables again at once, the debounce's wait cut short:  a calendar made a moment ago is found.
+	//Answers after a load that started after the miss, failed or not, or at once with nothing to reload from (before
+	//Configure, after Shutdown);  null where that load holds no such calendar.
+	struct LoadedAwait final : AnyAwait<sp<const Schedule>>{
+		LoadedAwait( uint32 id, SRCE )ι:AnyAwait{ sl }, _id{ id }{}
+		α await_ready()ι->bool override;
+		α Answer()ι->void;//the load's:  Find again, and resume.
+	private:
+		α Suspend()ι->void override;
+		uint32 _id;
+	};
+	α FindLoaded( uint32 id, SRCE )ι->LoadedAwait;
 	//`fn` hears the ids a reload changed, compared row for row:  created, edited in any of the four tables, or gone.  Called
 	//on an executor thread after the swap, so Find already answers with the new rows.  Returns StopListen's handle;  a reload
 	//in flight may call `fn` once more after StopListen returns.

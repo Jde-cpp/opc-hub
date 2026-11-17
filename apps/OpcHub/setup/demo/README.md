@@ -46,9 +46,8 @@ site never fronts a hub whose resources are not enforced, where every caller hol
 3. The hub restarted on the demo's config: loopback, the guest, nginx as the trusted front.
 4. `seed.sh certs`: each PLC's two certificates, made as its unit would, and the seed's own pair.
 5. The five PLC units enabled and started. Each logs in to the hub, which enrolls it as `plc<N>`.
-6. `seed.sh access`, below.
-7. `seed.sh plant`, below.
-8. The 443 site.
+6. `seed.sh plant`, below, which runs `seed.sh access` first.
+7. The 443 site.
 
 `seed.sh access` logs in as `demo-seed`, a certificate user of its own whose key only root reads, and:
 
@@ -58,7 +57,8 @@ site never fronts a hub whose resources are not enforced, where every caller hol
 - creates `demo-plc`, Read on `users`, and puts the PLCs in it;
 - enforces every resource, last.
 
-`seed.sh plant` waits for the five PLCs' users, a minute by default, and makes the plant as the same user:
+`seed.sh plant` runs `seed.sh access` first, waiting for the five PLCs' users, a minute by default, and dies where one
+has not logged in. Then it makes the plant as the same user, every resource enforced, `owner` holding every right:
 
 - five connections, `plc1` to `plc5`, on `opc.tcp://127.0.0.1:4842` to `:4846`, each with its PLC's applicationUri.
   `plc1` is the default;
@@ -68,15 +68,18 @@ site never fronts a hub whose resources are not enforced, where every caller hol
 - the `plant` calendar in `America/New_York`: three eight-hour shifts from 06:00 every day, a half-hour break in each;
 - the five machines, each on its group and the calendar, its rows starting at the seed's run;
 - the site, `plant`, with its two lines, `bottling` and `packing`;
-- the site's floor, from `floor.json` beside the script;
-- `seed.sh access` again, last.
+- the site's floor, from `floor.json` beside the script.
 
 Every step is looked up by slug first, so a second run changes nothing and a partial one is finished by the next.
 
+- **What the owner edits is kept.** An upgrade's seed doesn't undo an edit made on the page.
+    - A machine is found by its group, so one renamed keeps its new slug.
+    - The calendar's shifts are made only where it has none. One with any is the owner's.
 - **The floor.** `floor.json` is the floor editor's export. To change the shipped floor, edit it on the page, export
   it, and replace the file in the repository.
-    - A floor on the box that no longer matches the file is kept as the editor left it.
-    - A floor that is part of the file's takes the shapes it lacks.
+    - A floor with no shape takes the file's.
+    - A floor with any shape is kept as the editor left it, a shape deleted on the page included. A run that died
+      part-way through the floor leaves it part-made: delete its shapes on the page and run `seed.sh plant` again.
 
 ## The first sign-in
 
@@ -126,6 +129,8 @@ The plant from nothing. Until the first release no database or historian file ha
   the next sign-in: run `seed.sh grant <the Google address>` after it.
 - The order is the install's: the 443 site out, the units stopped, the two removed, the hub and the PLCs started, the
   seed whole, and the 443 site back last.
+- Where the 443 site was on, a reset that fails part-way leaves `/var/lib/Jde-Cpp/OpcHub/reset-fronted`, so the run
+  that finishes it puts the site back.
 - Without `--yes` it says what it would remove, and removes nothing.
 
 ## Operating
