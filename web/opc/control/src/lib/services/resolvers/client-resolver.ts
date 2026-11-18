@@ -54,8 +54,10 @@ export class ClientResolver implements Resolve<GatewayDetailData<ServerCnnctn>> 
 	//Delegates to DetailResolver.load instead of copying it (review3 C1).  The copy had already drifted - L14's null guard
 	//had to be written here a second time - and the opcStore fetch below is the only part that was ever Client-specific.
 	//`null` vars, not the default {}: that is what this query has always sent to the gateway.
+	//The row leaves out the caller's client, which takes gateway/sessions Read beyond the connection's own and is refused without
+	//it:  the demo's visitor had no connection's page.  The Server tab reads it by a query of its own (ServerDiagnostics).
 	static async load( ql:Gateway, opcStore:OpcStore, slug:string, routing:DetailRoute, snackbar:SnackbarService ):Promise<DetailResolverData<ServerCnnctn>>{//snackbar is passed in:  inject() needs an injection context, which a static method never has.
-		const y = await DetailResolver.load<ServerCnnctn>( ql, "serverConnections", slug, routing, null );
+		const y = await DetailResolver.load<ServerCnnctn>( ql, "serverConnections", slug, routing, null, ["clientDiagnostics"] );
 		if( slug && slug!="$new" ){
 			try{
 				y.row["server"] = await opcStore.getConnection( ql, slug, {fresh: true} );//the tab is where a user checks the connection:  never the page's memo of an earlier describe

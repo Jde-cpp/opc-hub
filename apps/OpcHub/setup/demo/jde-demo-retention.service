@@ -1,0 +1,19 @@
+# The public demo's retention (docs/demo/spec.md "Seed and operations"):  jde-demo-retention.timer runs it daily.  The historian
+# never deletes, so this removes its day directories older than 90 days, as jde-cpp, whose files they are.  Laid by the demo
+# tarball's install-demo.sh, not the jde-opchub package.  `systemctl start jde-demo-retention` runs it now;  its line is in the
+# journal, `journalctl -u jde-demo-retention`.
+[Unit]
+Description=Jde demo - the historian's day directories older than 90 days removed
+Documentation=https://github.com/Jde-cpp/opc-hub
+
+[Service]
+Type=oneshot
+User=jde-cpp
+Group=jde-cpp
+ExecStart=/opt/jde-cpp/demo/retention.sh
+NoNewPrivileges=true
+ProtectSystem=strict
+# the one tree it writes;  absent until the first group stores a value
+ReadWritePaths=-/var/lib/Jde-Cpp/OpcHub/hist
+ProtectHome=true
+PrivateTmp=true

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# The public demo's install (docs/demo/plan.md Phases 8 and 9;  README.md beside this file is the runbook).  Run from the unpacked
-# jde-opc-demo tarball, as root, on a box with this release's jde-opchub package, nginx and certbot.  An upgrade is the same
-# line from the newer tarball, after the newer package.
+# The public demo's install (docs/demo/plan.md Phases 8 to 10;  README.md beside this file is the runbook).  Run from the unpacked
+# jde-opc-demo tarball, as root, on a box with this release's jde-opchub package, nginx, certbot and the smoke's Python,
+# python3-websockets and python3-protobuf.  An upgrade is the same line from the newer tarball, after the newer package.
 #   sudo ./install-demo.sh [--email <address>]
 #     --email   the certbot account's address, for the first certificate on a box where certbot has no account yet
 # In this order, so the 443 site never fronts a hub whose resources are not enforced, where every caller holds every right:
 # the 443 site out, on an upgrade;  the files;  the port-80 site, and certbot's first certificate over it;  the hub on the demo's
-# config;  `seed.sh certs`, the PLC units and `seed.sh plant`, which runs the access half first;  and the 443 site last.
+# config;  `seed.sh certs`, the PLC units and `seed.sh plant`, which runs the access half first;  the retention's timer;  and
+# the 443 site last.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 name=opchub.trypoply.com #the two nginx sites' server_name, the certificate's and the policy's
@@ -18,7 +19,7 @@ email=
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--email) email=${2:?}; shift 2;;   --email=*) email=${1#*=}; shift;;
-		-h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+		-h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
 		*) die "unknown option '$1'";;
 	esac
 done
@@ -30,6 +31,7 @@ done
 package=$(dpkg-query -W -f '${Version}' jde-opchub)
 [ "$package" = "$(cat "$here/VERSION")" ] || die "this tarball goes with jde-opchub $(cat "$here/VERSION") and the installed one is $package - take both from one release"
 for t in nginx certbot openssl python3 curl; do command -v $t >/dev/null || die "$t not found - apt install nginx certbot openssl python3 curl"; done
+python3 -c 'import websockets, google.protobuf' 2>/dev/null || die "the smoke's socket half has no websockets or protobuf - apt install python3-websockets python3-protobuf"
 [ -d /etc/nginx/sites-enabled ] || die "no /etc/nginx/sites-enabled - the sites are laid for Ubuntu's nginx package"
 missing=$(for f in "$here"/opt/jde-cpp/demo/*; do { ldd "$f" 2>/dev/null || true; } | awk '/ => not found/{print $1}'; done | sort -u | paste -sd' ')
 [ -z "$missing" ] || die "the PLC emulator loads $missing, which neither this tarball nor the system has - nothing was installed"
@@ -89,6 +91,7 @@ systemctl restart jde-plc@{1,2,3,4,5}.service #an upgrade's, onto the new files
 #the access half, each PLC's user enrolled by its first login and put in `demo-plc` to run enforced, waiting 60 s for the five;
 #then the connections, the machines, the lines and the floor, where there are none
 /opt/jde-cpp/demo/seed.sh plant
+systemctl enable --quiet --now jde-demo-retention.timer #daily:  the historian's day directories older than 90 days
 
 #--- 443 ---------------------------------------------------------------------------------------------------------------
 site nginx-demo.conf jde-demo
@@ -98,6 +101,7 @@ installed the demo at https://$name:
   the hub      jde-opchub on Opc.Hub.Demo.jsonnet, loopback 1967 behind nginx - journalctl -u jde-opchub
   the PLCs     jde-plc@1 to jde-plc@5 - journalctl -u 'jde-plc@*'
   the plant    plc1 to plc5 on opc.tcp 4842 to 4846, five machines, the site and its two lines - /opt/jde-cpp/demo/seed.sh plant
+  retention    jde-demo-retention.timer, daily:  the history's days older than 90 - journalctl -u jde-demo-retention
   settings     /etc/jde-cpp/demo/config.json, the nginx sites beside it, /etc/jde-cpp/apps/OpcServer/emulator/config/demo/plc<N>.jsonnet
 next:
   sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967
@@ -105,3 +109,12 @@ and the first time, the admin's sign-in through the tunnel, then \`seed.sh grant
 An upgrade whose release changed the database or the historian's files:  sudo /opt/jde-cpp/demo/reset.sh --yes (README.md, Reset).
 MSG
 for f in "${kept[@]}"; do echo "kept your edited $f - this release's is beside it as $(basename "$f").new: merge any change by hand"; done
+/opt/jde-cpp/demo/highcharts.sh --check || true #the charts' add-on, which the site's owner lays:  there, missing, or another release's
+#nginx's access log holds each visitor's address, and the demo keeps it 14 days:  the nginx package's own logrotate file does
+#that, so it is checked here and not replaced.
+rotate=/etc/logrotate.d/nginx
+if ! grep -qE '^[[:space:]]*daily\b' $rotate 2>/dev/null || ! grep -qE '^[[:space:]]*rotate[[:space:]]+14\b' $rotate 2>/dev/null; then
+	echo "WARNING: $rotate does not say \`daily\` and \`rotate 14\`:  nginx's access log is to be kept 14 days (README.md, Operating)"
+elif ! systemctl is-enabled --quiet logrotate.timer 2>/dev/null; then
+	echo "WARNING: logrotate.timer is not enabled, so nothing rotates nginx's access log:  apt install logrotate (README.md, Operating)"
+fi

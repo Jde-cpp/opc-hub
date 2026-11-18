@@ -4,9 +4,10 @@ if [ ! -d node_modules ]; then echo must run from angular dir; exit 1; fi;
 #jde-opc's history trend is typed against highcharts, a devDependency for the typings and hist-trend.spec alone:  the runtime is
 #an add-on the site serves from addons/highcharts/esm/, never bundled (#302 - web/CLAUDE.md, "Add-ons load by URL").  The
 #workspace has to install it - create-workspace.sh's install block only runs when the workspace is first created, so an
-#existing one never sees it.
-if ! jq -e '.devDependencies.highcharts' package.json > /dev/null; then
-	npm --silent install --save-dev highcharts@^13.1.1 || { echo `pwd`; echo npm install highcharts failed; exit 1; };
+#existing one never sees it.  At the exact version the demo's highcharts.sh lays, which build-demo.sh holds it to:  a range let a
+#fresh workspace type the site against a later release than the box serves (reviews-issue/487-demo-ops.md #11).
+if [ "$(jq -r '.devDependencies.highcharts // empty' package.json)" != "13.1.1" ]; then
+	npm --silent install --save-dev --save-exact highcharts@13.1.1 || { echo `pwd`; echo npm install highcharts failed; exit 1; };
 fi;
 #the flow editor's canvas (#455):  @foblex/flow, MIT, bundled, at the version the spike walked (#446, docs/flows/plan.md 0.4), which
 #the editor's records and sheet are written against.  A dependency, not a devDependency:  the page imports it, once its tab is shown.

@@ -34,6 +34,10 @@ USER root
 # drags in -lzstd and libz.a). libbacktrace and libjitterentropy are built from
 # source below (no usable apt package on noble). binutils (objdump/strip) and
 # patchelf are for apps/OpcHub/setup/linux/build-deb.sh (linux-release.yml).
+# protobuf-compiler is apt's protoc, 3.21, for the demo tarball's smoke modules (apps/OpcHub/setup/demo/build-demo.sh):
+# the demo's box and the watch's runner read them with apt's python3-protobuf, which takes no later protoc's code, so
+# not the mounted deps' protoc.  Of libprotobuf-dev only the .proto files it imports are laid, under /usr/include:  its
+# headers and libprotobuf.so would sit on the system paths beside the mounted deps' protobuf.
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
@@ -49,8 +53,10 @@ RUN set -eux; \
         libc++abi-${LLVM_VERSION}-dev \
         ninja-build make git pkg-config \
         libxml2-dev liburing-dev libssl-dev libzstd-dev zlib1g-dev \
-        binutils patchelf; \
-    rm -rf /var/lib/apt/lists/* /tmp/llvm.sh
+        binutils patchelf protobuf-compiler; \
+    cd /tmp; apt-get download libprotobuf-dev; \
+    dpkg-deb --fsys-tarfile libprotobuf-dev_*.deb | tar -x -C / --wildcards './usr/include/google/protobuf/*.proto'; \
+    rm -rf /var/lib/apt/lists/* /tmp/llvm.sh /tmp/libprotobuf-dev_*.deb
 
 # libbacktrace (BOOST_STACKTRACE_USE_BACKTRACE / the presets' -lbacktrace): Ubuntu
 # added the libbacktrace-dev package in 25.04, so noble (24.04) lacks it — build

@@ -113,6 +113,7 @@ The **Trend** tab draws the rows ticked in the list's **Trend** column, up to ei
 Under [Applications](/apps), a gateway instance's page has the tabs [Applications help](/help/apps#opchub) lists. Its own nine:
 
 - **Connections** lists its server connections. The **Status** column reads *Connected*, *Idle* or *Error*. Press **Add** to connect the gateway to another OPC server, or open a row to edit one.
+    - Once an admin enforces the gateway's `sessions` resource, the **Sessions** and **Clients** columns need *Read* on it. Without it they are blank, and the list shows the rest, the status included.
 - **Templates** and **Groups** are the gateway historian's: what it stores, and by what rules. See [Historian groups and templates](/help/gateways/groups).
 - **Flows** are the flows the gateway runs: nodes wired on a canvas, from a source such as a data change to a sink such as a derived variable. See [Flows](/help/gateways/flows).
 - **Machines**, **Lines** and **Reasons** are OEE's: the machines whose stops and figures the gateway works out from its groups, the lines that combine them, and the reasons a stop is coded with. See [OEE](/help/gateways/oee).

@@ -1,0 +1,13 @@
+# The public demo's retention, daily (docs/demo/spec.md "Seed and operations"):  jde-demo-retention.service.  install-demo.sh
+# enables it.  Persistent:  a day the box was down is made up at its next start.
+[Unit]
+Description=Jde demo - the historian's retention, daily
+Documentation=https://github.com/Jde-cpp/opc-hub
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

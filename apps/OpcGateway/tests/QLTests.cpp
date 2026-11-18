@@ -205,7 +205,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//reviews-issue/415-clients-trust.md #3:  the two certificate grafts are the connection's, not live-usage telemetry, so they sit under
 	//serverConnections Read alone - gated on gateway/sessions too, an enforced sessions resource hid the page's Trust panel from a user
 	//who could read the connection.  The telemetry grafts keep the sessions gate.  serverConnections ships unenforced, so the ungranted
-	//probe reads its rows;  the refused telemetry first shows the enforcement has landed.
+	//probe reads its rows;  the telemetry read null first shows the enforcement has landed.
 	TEST_F( QLTests, CertificatesNeedNoSessionsRead ){
 		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
 		auto query = [&]( str text )->jvalue{
@@ -214,16 +214,18 @@ namespace Jde::Opc::Gateway::Tests{
 		};
 		EnforceResource( "gateway", "sessions", true );
 		absl::Cleanup open = []{ try{ EnforceResource("gateway", "sessions", false); }catch( const std::exception& ){} };
-		let refused = WaitUntil( [&]{
+		let hidden = WaitUntil( [&]{
+			jvalue rows;
 			try{
-				query( "serverConnections( deleted:null ){ slug opcConnections{ count } }" );
+				rows = query( "serverConnections( deleted:null ){ slug opcConnections{ count } }" );
 			}
 			catch( const Exception& e ){
-				return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+				ADD_FAILURE() << "the row was refused for its counts:  " << e.what();
+				return true;
 			}
-			return false;
+			return rows.is_array() && !rows.get_array().empty() && rows.get_array().front().as_object().at( "opcConnections" ).is_null();
 		}, 5s, 50ms );
-		ASSERT_TRUE( refused ) << "gateway/sessions is enforced and an ungranted user still reads opcConnections";
+		ASSERT_TRUE( hidden ) << "gateway/sessions is enforced and an ungranted user still reads opcConnections";
 
 		jvalue rows;
 		try{
@@ -235,6 +237,57 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( rows.is_array() && !rows.get_array().empty() ) << serialize( rows );
 		let& o = rows.get_array().front().as_object();
 		EXPECT_TRUE( o.contains("rejectedCertificate") && o.contains("clientCertificate") ) << serialize( o );
+	}
+
+	//docs/demo/plan.md Phase 10:  a caller who reads the connections and no session, the demo's visitor, was refused the status with
+	//the counts, so neither the Connections list nor a connection's page could say whether one is up.  The name is the row's own.
+	//The error keeps the sessions gate, with the counts:  its text is the last connect's, which may name a file of the gateway's.
+	//Without the right the two counts read null and the rest of the row is read (reviews-issue/487-demo-ops.md #2):  refused whole,
+	//the Connections list asked again without them, and a saved view naming one was refused again.  The caller's client and the
+	//error stay refused, their null already saying there is none.
+	TEST_F( QLTests, TheStatusNameNeedsNoSessionsRead ){
+		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
+		auto query = [&]( str text )->jvalue{
+			auto ql = QL::Parse( text, {}, Schemas(), true );
+			return BlockAwait<ServerCnnctnSessionsQLAwait,jvalue>( ServerCnnctnSessionsQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		};
+		auto refused = [&]( str text )->bool{
+			try{
+				query( text );
+			}
+			catch( const Exception& e ){
+				return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
+			}
+			return false;
+		};
+		const string counts{ "serverConnections( deleted:null ){ slug opcSessions{ count } opcConnections{ count } connectionStatus{ name } }" };
+		let open = query( counts );//unenforced, every right:  the counts are objects, so a null below is the gate's.
+		ASSERT_TRUE( open.is_array() && !open.get_array().empty() ) << serialize( open );
+		for( let& row : open.get_array() )
+			EXPECT_TRUE( row.as_object().at("opcSessions").is_object() && row.as_object().at("opcConnections").is_object() ) << serialize( row );
+
+		EnforceResource( "gateway", "sessions", true );
+		absl::Cleanup reopen = []{ try{ EnforceResource("gateway", "sessions", false); }catch( const std::exception& ){} };
+		jvalue rows;
+		let hidden = WaitUntil( [&]{
+			try{
+				rows = query( counts );
+			}
+			catch( const Exception& e ){
+				ADD_FAILURE() << "the row was refused for its counts:  " << e.what();
+				return true;
+			}
+			return rows.is_array() && !rows.get_array().empty() && rows.get_array().front().as_object().at( "opcConnections" ).is_null();
+		}, 5s, 50ms );
+		ASSERT_TRUE( hidden && rows.is_array() ) << "gateway/sessions is enforced and an ungranted user still reads opcConnections:  " << serialize( rows );
+		for( let& row : rows.get_array() ){
+			let& o = row.as_object();
+			let name = Json::AsSV( o, "connectionStatus/name" );
+			EXPECT_TRUE( name=="Connected" || name=="Idle" || name=="Error" ) << serialize( row );
+			EXPECT_TRUE( o.at("opcSessions").is_null() && o.at("opcConnections").is_null() && o.contains("slug") ) << serialize( row );
+		}
+		EXPECT_TRUE( refused("serverConnections( deleted:null ){ slug connectionStatus{ name error } }") ) << "an ungranted user reads a connection's last error";
+		EXPECT_TRUE( refused("serverConnections( deleted:null ){ slug clientDiagnostics{ reconnects } }") ) << "an ungranted user reads its client of a connection";
 	}
 
 	TEST_F( QLTests, webSessionCounted ){ //no manual AddSession: a jwt-backed web session's connect must register itself (ConnectAwait::await_resume).

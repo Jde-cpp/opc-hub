@@ -42,15 +42,16 @@ const all:OeeFloorRights = { createFloor: true, updateFloor: true, createShape: 
 //The page over stubs:  a gateway whose oeeSubscribe opens a feed per machine and oeeSubscribeLine one per line, under its id
 //negated, `push` a status on one;  `service` answers a machine's group, the caller's `rights` on the floor's tables, none by
 //default, or their refusal, and the floor read again.  `made` is a page navigated to from a floor's making.  `open` moves the
-//page to another floor, as the router does.
-const create = async ( {zone='America/New_York', rights=none, made=false}:{zone?:string; rights?:OeeFloorRights|Error; made?:boolean}={} )=>{
+//page to another floor, as the router does.  `root` is the Filler's group's, by the server's index unless given;  the gateway
+//answers a connection's namespaces, urn:jde:demo the server's second, and places any node as the Machine folder.
+const create = async ( {zone='America/New_York', rights=none, made=false, root='ns=2;i=5001'}:{zone?:string; rights?:OeeFloorRights|Error; made?:boolean; root?:string}={} )=>{
 	await import( './oee-floor-editor' );//loaded here, so the page's import of it is a known number of turns
 	const feeds = new Map<number,Feed<OeeLiveEvent,number>>();
 	const feed = ( id:number )=>feeds.get( id ) ?? feeds.set( id, new Feed<OeeLiveEvent,number>() ).get( id )!;
-	const gateway = { name: 'gw', slug: 'gw', feed, oeeSubscribe: vi.fn( ( machine:number )=>feed( machine ).open( machine ) ), oeeSubscribeLine: vi.fn( ( line:number )=>feed( -line ).open( -line ) ), querySingle: vi.fn( async ()=>({ name: 'Machine', nodeClass: 1, path: 'Objects/2~Machine' }) ) };
+	const gateway = { name: 'gw', slug: 'gw', feed, oeeSubscribe: vi.fn( ( machine:number )=>feed( machine ).open( machine ) ), oeeSubscribeLine: vi.fn( ( line:number )=>feed( -line ).open( -line ) ), querySingle: vi.fn( async ( ql:string, _vars?:unknown ):Promise<unknown>=>ql.startsWith( 'namespaces(' ) ? [{index: 0, uri: 'http://opcfoundation.org/UA/'}, {index: 2, uri: 'urn:jde:demo'}] : { name: 'Machine', nodeClass: 1, path: 'Objects/2~Machine' } ) };
 	const first = pageData( gateway, {zone} );
 	const service = {
-		group: vi.fn( async ( _g:unknown, id:number )=>id==21 ? { slug: 'filler', connection: 'plc1', root: 'ns=2;i=5001' } : id==24 ? { slug: 'packer', connection: 'plc4' } : undefined ),
+		group: vi.fn( async ( _g:unknown, id:number )=>id==21 ? { slug: 'filler', connection: 'plc1', root } : id==24 ? { slug: 'packer', connection: 'plc4' } : undefined ),
 		rights: vi.fn( async ( ..._:unknown[] )=>{ if( rights instanceof Error ) throw rights; return rights; } ),
 		floor: vi.fn( async ( ..._:unknown[] ):Promise<object|undefined>=>({ floor: first.floor, shapes: first.shapes }) ), plant: vi.fn( async ( ..._:unknown[] )=>first.plant ), save: vi.fn( async ()=>{} )
 	};
@@ -206,6 +207,26 @@ describe( 'OeeFloorPage', ()=>{
 		await stable( p.fixture );
 		expect( p.text( '.panel .stop' ) ).toEqual( [expect.stringMatching( /^Stop in progress since .*: Jam Unplanned$/ )] );
 		expect( p.page.links() ).toEqual( {key: 'm2'} );//no group known
+	} );
+	//the seed's groups, and a template's:  the gateway's `node` takes an id by the server's index, and asked by the URI it answered
+	//no path, so the panel had no Node link
+	it( "places a root spelled by its namespace's URI by the index the server has for it", async ()=>{
+		const p = await create( {root: '{"nsu":"urn:jde:demo","i":5001}'} );
+		p.shape( 'Filler' ).dispatchEvent( new MouseEvent( 'click' ) );
+		await stable( p.fixture );
+		//the namespaces alone, not the connection's describe, whose description, policy and mode fail with the server
+		//(reviews-issue/487-demo-ops.md #3)
+		expect( p.gateway.querySingle.mock.calls.map( c=>c[0].split( '(' )[0] ) ).toEqual( ['namespaces', 'node'] );
+		expect( p.gateway.querySingle ).toHaveBeenCalledWith( expect.stringContaining( 'namespaces(' ), {opc: 'plc1'} );
+		expect( p.gateway.querySingle ).toHaveBeenCalledWith( expect.stringContaining( 'node(' ), {opc: 'plc1', id: {ns: 2, i: 5001}} );
+		expect( p.page.links() ).toEqual( {key: 'm1', group: ['../../../groups', 'filler'], node: ['/gateways', 'gw', 'plc1', 'Objects', '2~Machine']} );
+	} );
+	it( 'links no node for a root in a namespace the server lacks, and asks for none', async ()=>{
+		const p = await create( {root: '{"nsu":"urn:elsewhere","i":5001}'} );
+		p.shape( 'Filler' ).dispatchEvent( new MouseEvent( 'click' ) );
+		await stable( p.fixture );
+		expect( p.gateway.querySingle ).not.toHaveBeenCalledWith( expect.stringContaining( 'node(' ), expect.anything() );
+		expect( p.page.links() ).toEqual( {key: 'm1', group: ['../../../groups', 'filler']} );
 	} );
 	it( "reads a machine's links once, though it is selected again while the read is in flight", async ()=>{
 		const p = await create();

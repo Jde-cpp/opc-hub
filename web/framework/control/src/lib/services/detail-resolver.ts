@@ -76,11 +76,12 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 	//`vars` is a parameter only so ClientResolver can share this body without changing what goes on the wire (review3 C1):
 	//ql() appends `&variables=` for any TRUTHY vars, so the {} the access pages have always sent is not the same request as
 	//the null the gateway has always had, and the two talk to different servers.  Neither behaviour is proven on the other.
-	static async load<T>( ql:IGraphQL, collectionName:string, slug:string, routing:DetailRoute, vars:any={} ):Promise<DetailResolverData<T>>{
+	//`excluded`:  columns the row leaves out beside the route's, which stays as it came.
+	static async load<T>( ql:IGraphQL, collectionName:string, slug:string, routing:DetailRoute, vars:any={}, excluded:string[]=[] ):Promise<DetailResolverData<T>>{
 		const schema = await ql.schemaWithEnums( MetaObject.toTypeFromCollection(collectionName) );
 		let obj:any = {};
 		if( slug && slug!="$new" ){//`slug &&`: a missing route param must not query for the row named 'undefined'
-			obj = await ql.querySingle( ql.slugQuery(schema, slug, routing.tableSettings.excludedColumns), vars );
+			obj = await ql.querySingle( ql.slugQuery(schema, slug, [...(routing.tableSettings.excludedColumns ?? []), ...excluded]), vars );
 			if( obj==null )//{"data":{"<singular>":null}} - the row is not there.  Checked before the subQueries loop, whose obj["id"] would otherwise TypeError and hide every other failure behind the same message.
 				throw new SlugNotFoundError( slug );
 			for( let query of ql.subQueries(schema.type, obj["id"]) ){

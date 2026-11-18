@@ -17,5 +17,9 @@ function( sync=false ) (import 'Opc.Hub.jsonnet')( sync ) + {
 	http+:{
 		trustedProxies::: [ "127.0.0.1" ], //nginx, on this box:  a session is the visitor's address, not the front's.  `:::`, the base's key being hidden.
 		timeout: "PT1H" //a session is minted for every call that names none:  an hour bounds how many the front's rate lets one address leave.
-	}
+	},
+	//The journal takes Warning and above (spec *Seed and operations*, Watching), so reading it is reading what went wrong:  a
+	//visitor on a PLC's node browser is some fifty lines below that, and each value pushed to one three more.  The log file
+	//beside it and the Logs page's archive keep every level.  A sink's `level` is Trace where it names none (SpdLog.cpp).
+	logging+:{ spd+:{ sinks+:{ console+:{ level: "Warning" } } } }
 }

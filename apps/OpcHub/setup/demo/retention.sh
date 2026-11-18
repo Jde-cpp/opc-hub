@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# The public demo's retention (docs/demo/plan.md Phase 10;  README.md beside this file is the runbook):  the historian never
+# deletes, so jde-demo-retention.timer runs this daily, as jde-cpp.  It removes each day's directory under the historian's
+# path, <yyyy>/<m>/<d> with every group's files of that day, older than --days:  a read over a removed day sees no record
+# (libs/historian/docs/spec.md, Retention).  A month or a year it empties goes with its last day, where it is wholly before
+# the first day kept:  one the historian has made for today and not yet filled stays.  The OEE rows are the database's, and kept.
+#   retention.sh [--path <dir>] [--days <n>] [--zone <iana>] [--dry-run]
+#     --path      the gateway's hist.path, or a link to it          default: /var/lib/Jde-Cpp/OpcHub/hist/opc-gateway
+#     --days      the days kept before today's                     default: 90
+#     --zone      the gateway's hist.timeZone, which names the days default: UTC, as the gateway's
+#     --dry-run   says what it would remove, and removes nothing
+# Left, and said:  a day holding a temp file, which is a rewrite of that day at work, or one a crash cut short that the
+# historian removes at its next start.  Anything not named as the historian names a day is not looked at.
+set -euo pipefail
+die(){ echo "retention.sh: $*" >&2; exit 1; }
+path=/var/lib/Jde-Cpp/OpcHub/hist/opc-gateway; days=90; zone=UTC; dry=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--path) path=${2:?}; shift 2;;   --path=*) path=${1#*=}; shift;;
+		--days) days=${2:?}; shift 2;;   --days=*) days=${1#*=}; shift;;
+		--zone) zone=${2:?}; shift 2;;   --zone=*) zone=${1#*=}; shift;;
+		--dry-run) dry=1; shift;;
+		-h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+		*) die "unknown option '$1'";;
+	esac
+done
+[[ $days =~ ^[1-9][0-9]*$ ]] || die "--days is a number of days, 1 or more:  today's file is the one being written"
+path=${path%/}
+[ -d "$path" ] || { echo "retention.sh: no $path:  nothing is stored yet"; exit 0; }
+[ -f "/usr/share/zoneinfo/$zone" ] || die "--zone '$zone' is no IANA zone this box has"
+
+first=$(TZ=$zone date -d "$days days ago" +%Y%m%d) #the first day kept, in the zone the historian names its days by
+removed=0; left=0
+while IFS= read -r -d '' dir; do
+	#as the historian names a day (libs/fwk/src/io/records/Days.cpp):  numbers with no padding
+	[[ ${dir#"$path"/} =~ ^([1-9][0-9]{3})/([1-9]|1[0-2])/([1-9]|[12][0-9]|3[01])$ ]] || continue
+	day=$(printf '%d%02d%02d' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+	[ "$day" -lt "$first" ] || continue
+	if [ -n "$(find "$dir" -name '*.tmp' -print -quit)" ]; then
+		echo "retention.sh: left ${dir#"$path"/}, which holds a temp file"
+		left=$((left+1))
+	elif [ $dry = 1 ]; then
+		echo "retention.sh: would remove ${dir#"$path"/}"
+		removed=$((removed+1))
+	else
+		rm -rf -- "$dir"
+		removed=$((removed+1))
+	fi
+done < <(find -H "$path" -mindepth 3 -maxdepth 3 -type d -print0) #-H:  a path that is a link, the history moved to a volume of its own
+#the months, then the years, emptied and wholly before the first day kept;  rmdir leaves any that holds anything
+if [ $dry = 0 ]; then
+	shopt -s nullglob
+	for dir in "$path"/*/*/ "$path"/*/; do
+		dir=${dir%/}
+		if [[ ${dir#"$path"/} =~ ^([1-9][0-9]{3})/([1-9]|1[0-2])$ ]]; then
+			[ "$(printf '%d%02d' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}")" -lt "${first:0:6}" ] || continue
+		elif [[ ${dir#"$path"/} =~ ^([1-9][0-9]{3})$ ]]; then
+			[ "${BASH_REMATCH[1]}" -lt "${first:0:4}" ] || continue
+		else
+			continue
+		fi
+		rmdir -- "$dir" 2>/dev/null || true
+	done
+fi
+echo "retention.sh: $([ $dry = 1 ] && echo "would remove" || echo removed) $removed day directories before $(TZ=$zone date -d "$days days ago" +%F) in $zone under $path, left $left"

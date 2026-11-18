@@ -9,12 +9,13 @@ import { ComponentPageTitle, RouteItem } from 'jde-spa';
 import { errorMessage, SnackbarService } from 'jde-framework';
 import { oeeDuration, oeePercent, OeeSplitRow } from '../../../model/oee';
 import { FloorDrawing, floorDrawing, floorLineKey, floorListOrder, OeeFloorLegendItem, oeeFloorLegend, oeeFloorLineLegend, OeeFloorLink, OeeFloorRights, OeeFloorState, oeeFloorState, floorShapeName, floorStateText, oeeLiveSplit, shiftLeft, zoneClock } from '../../../model/oee-floor';
+import { ExNodeId } from '../../../model/ex-node-id';
 import { parseHistNodeText } from '../../../model/hist-admin';
 import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
 import { OeeMachineRef, oeeTileFigures, oeeTileNotes } from '../../../model/oee-live-view';
 import { OeeLineRef } from '../../../model/oee-lines';
-import { pageSegments } from '../../../model/node';
-import { Gateway, gatewayAnswer, placeNode } from '../../../services/gateway-service';
+import { NodePlace, pageSegments } from '../../../model/node';
+import { Gateway, gatewayAnswer, namespacesOf, placeNode } from '../../../services/gateway-service';
 import { OeeFloorService } from '../../../services/oee-floor-service';
 import { OeeFloorPageData } from '../../../services/resolvers/oee-floor-resolver';
 import { FloorMapShape, FloorShapeView, OeeFloorMap } from './oee-floor-map';
@@ -293,7 +294,7 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 						if( !root )
 							links.node = ['/gateways', gateway.slug, group.connection];
 						else{
-							const place = await placeNode( gateway, group.connection, root );
+							const place = await this.#place( gateway, group.connection, root );
 							if( place?.path!=null )
 								links.node = ['/gateways', gateway.slug, group.connection, ...pageSegments( place.path, place.nodeClass )];
 						}
@@ -305,6 +306,13 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 			}
 		}
 		return links;
+	}
+	//The group's root placed in the browser.  The gateway's `node` takes an id by the server's index, so a root spelled by its
+	//namespace's URI, as a seeded group's is, goes through the connection's namespaces first (ExNodeId.byIndex):  asked by its URI
+	//it answered no path, and the panel had no Node link.  None for a URI the server lacks.
+	async #place( gateway:Gateway, connection:string, root:ExNodeId ):Promise<NodePlace|undefined>{
+		const id = root.byIndex( root.nsu ? await namespacesOf(gateway, connection) : [] );
+		return id ? placeNode( gateway, connection, id ) : undefined;
 	}
 	duration( ms:number ):string{ return oeeDuration( ms ); }
 	share( row:OeeSplitRow ):string{ return row.share==undefined ? '' : oeePercent( row.share ); }

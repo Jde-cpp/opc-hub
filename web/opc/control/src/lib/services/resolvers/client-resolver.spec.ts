@@ -59,6 +59,19 @@ describe( 'ClientResolver.load delegation', ()=>{
 		expect( querySingle.mock.calls[0][1] ).toBeNull();//NOT DetailResolver's default {} - ql() appends `&variables=` for anything truthy
 	} );
 
+	//the caller's client takes gateway/sessions Read, and the demo's visitor was refused the whole row for it
+	//(reviews-issue/487-demo-ops.md #5):  left out of the query, the route's settings as they came
+	it( 'asks the row without the caller\'s client, however often it loads', async ()=>{
+		const slugQuery = vi.fn( ( _s:any, slug:string, _excluded:string[] )=>`serverConnection(slug:"${slug}")` );
+		const ql = (<unknown>slugQl( row(), {collection: 'serverConnections', type: 'ServerConnection', slugQuery, query: async ()=>({})} )) as Gateway;
+		const own = new DetailRoute( 'plc1', undefined, [], <any>{path:'.', title:'gw'} );
+		const store = {getConnection: async ()=>({})} as unknown as OpcStore;
+		await ClientResolver.load( ql, store, 'plc1', own, snackbar );
+		await ClientResolver.load( ql, store, 'plc1', own, snackbar );
+		expect( slugQuery.mock.calls.map( c=>c[2] ) ).toEqual( [["clientDiagnostics"], ["clientDiagnostics"]] );
+		expect( own.tableSettings.excludedColumns ).toEqual( [] );
+	} );
+
 	it( 'resolves the row even when the server connection cannot be reached', async ()=>{
 		const failing = { getConnection: async ()=>{ throw new Error("no route to host"); } } as unknown as OpcStore;
 		const exception = vi.fn();

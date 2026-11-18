@@ -1,1 +1,1 @@
-{ "applicationServer":{ "port": null }, "banner": "Live demo: a plant of five emulated PLCs, read-only.", "login": false, "closed": [ "access", "apps" ] }
+{ "applicationServer":{ "port": null }, "home": "/apps/gateways/OpcHub/lines/plant/floor", "banner": "Live demo: a plant of five emulated PLCs, read-only.", "login": false, "closed": [ "access", "apps" ] }

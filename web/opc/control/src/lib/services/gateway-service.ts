@@ -20,6 +20,7 @@ import { Attribute, attributesOf } from '../model/attribute';
 import { CallResult, MethodArguments, toCallResult } from '../model/method';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
+import { Namespace, namespaceColumns } from '../model/server';
 import { ExtensionObject, Reading, shortestFloat, Structure, toReading, toValue, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
 import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound, qlTime } from '../model/hist';
@@ -975,4 +976,9 @@ export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayServi
 //is any Gateway - a function, as HistAdminService.rootPaths is, so a test stubs the query alone.
 export async function placeNode( reader:Pick<Gateway,'querySingle'>, opc:CnnctnSlug, id:NodeId ):Promise<NodePlace|undefined>{
 	return await reader.querySingle<NodePlace|null>( `node( opc:$opc, id:$id ){ name nodeClass path }`, {opc, id: id.toJson()} ) ?? undefined;
+}
+//The connection's namespace array alone, for an id spelled by URI (ExNodeId.byIndex):  OpcStore.getConnection's describe reads the
+//server's description, policy and mode besides, and fails with any of them (reviews-issue/487-demo-ops.md #3).
+export async function namespacesOf( reader:Pick<Gateway,'querySingle'>, opc:CnnctnSlug ):Promise<Namespace[]>{
+	return await reader.querySingle<Namespace[]|null>( `namespaces( opc:$opc ){ ${namespaceColumns} }`, {opc} ) ?? [];
 }
