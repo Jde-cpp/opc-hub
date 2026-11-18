@@ -149,15 +149,15 @@ sudo /opt/jde-cpp/demo/smoke.sh --hub http://127.0.0.1:1967     # on the box, af
 ```
 
 Each check is a line, `ok` or `FAILED`, and the exit is 0 when none failed. It needs `curl`, `python3`,
-`python3-websockets` and `python3-protobuf`, and `smoke.py` and `proto/` beside it: copy the four out of the tarball's
+`python3-websockets` and `python3-protobuf`, and `smoke.py` and `proto/` beside it: copy the three out of the tarball's
 `opt/jde-cpp/demo` to run it elsewhere.
 
 - **The front.** The certificate, port 80's redirect, the page with its three headers, and `config.json`: the page's
   own port, no sign-in, Access and Applications closed, and `home` the plant's floor under a gateway the hub has.
 - **The charts.** The site answers Highcharts' `highstock.js`, below. `--quick` does not ask for it.
-- **A visitor.** A call with no session is given the guest's. The guest reads the connections, each with whether it
-  is up, and the plant, and is refused users, sessions, logs, a connection's sessions and its last error, the
-  processes' details, the flows and every write tried.
+- **A visitor.** A call with no session is given the guest's. The guest reads the five connections, each with
+  whether it is up and with no sessions or clients, and the plant. It is refused users, sessions, logs, a
+  connection's last error and its client of one, the processes' details, the flows and every write tried.
 - **The plant.** Each line's figures by shift, each machine's engine live and its count's history, and the floor
   offering the guest no Edit.
 - **The socket**, `smoke.py`: what the floor page does. A guest's socket on `/opc` takes its session and subscribes
@@ -216,10 +216,17 @@ one, so neither the package nor the tarball carries it, and the site's owner hol
   of the role it refuses the hub's collector, `BadIdentityTokenInvalid` on its connection, and its machine's history
   stops. `seed.sh access` puts it back, and the collector returns within two minutes.
 - **Retention.** The historian never deletes. The timer's script removes a day's directory, every group's files of
-  that day, once it is 90 days old, and a month or a year it empties. The OEE rows are the database's, and kept.
+  that day, once it is 90 days old, and a month or a year it empties that is wholly older. The OEE rows are the
+  database's, and kept.
     - A day holding a temp file is left and named: a rewrite of that day is at work, or a crash cut one short, which
       the hub removes at its next start.
     - `retention.sh --dry-run` says what it would remove. `--days <n>` keeps another number of days.
+    - The days are named in the gateway's `hist.timeZone`, UTC unless the hub's config sets one. Set one, and give
+      the unit the same zone with `sudo systemctl edit jde-demo-retention`: an empty `ExecStart=`, then
+      `ExecStart=/opt/jde-cpp/demo/retention.sh --zone <zone>`.
+    - History moved to a volume of its own and linked from `/var/lib/Jde-Cpp/OpcHub/hist/opc-gateway` is followed.
+      The unit writes only under `/var/lib/Jde-Cpp/OpcHub/hist`, so add the volume's path to its `ReadWritePaths` the
+      same way, or each removal fails read-only.
 - **nginx's access log** holds each visitor's address. The nginx package's logrotate file keeps it daily for 14 days:
   `install-demo.sh` checks that file and `logrotate.timer`, and replaces neither.
 - **The hub's files.** The drop-in gives the hub 65,536 open files. A visitor is two sockets, and one on a PLC's node
@@ -288,8 +295,8 @@ laid first, so the week's policy reports are the site's as it will open.
 - **The policy's reports.** The policy is report-only through the soak, so a violation is a line in the browser's
   console, prefixed `[Report Only]`. As a guest, with the console open, walk the floor, a machine's panel and its
   links, the OEE dashboard, a line's and a machine's OEE pages, a node's History tab, and the help.
-    - Two refusals are a visitor's own and not the policy's: a group's page is refused the gateway's endpoint, and the
-      Connections list its session counts, which it then asks without. Each is one 403 in the console.
+    - One refusal is a visitor's own and not the policy's: a group's page is refused the gateway's endpoint, one 403
+      in the console. The Connections list shows its Sessions and Clients columns blank.
 
 ## The opening
 

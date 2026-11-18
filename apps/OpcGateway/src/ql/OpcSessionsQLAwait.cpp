@@ -199,16 +199,19 @@ namespace Jde::Opc::Gateway{
 			auto rejectedQL = _query.ExtractTable( "rejectedCertificate" );//the <thumbprint>.der our verifier wrote for the slug.
 			auto clientCertQL = _query.ExtractTable( "clientCertificate" );//the gateway's own issued certificate for the slug.
 			auto diagnosticsQL = _query.ExtractTable( "clientDiagnostics" );//the caller's own client of the slug, as it stands.
-			//One gate covers the telemetry - the two counts, the caller's client and the last connect's error, whose text may name a file
+			//One right covers the telemetry - the two counts, the caller's client and the last connect's error, whose text may name a file
 			//of the gateway's.  The status' name is the row's own, as the certificates are, under the table's Read alone:  a caller who
-			//reads a connection reads whether it is up (docs/demo/plan.md Phase 10).
-			if( sessionsQL || connectionsQL || diagnosticsQL || (statusQL && statusQL->FindColumn("error")) )
+			//reads a connection reads whether it is up (docs/demo/plan.md Phase 10).  Without the right the counts read null and the
+			//rest of the row is read, so a list showing them shows the rest (reviews-issue/487-demo-ops.md #2).  The caller's client and
+			//the error are refused:  their null already says there is none.
+			if( diagnosticsQL || (statusQL && statusQL->FindColumn("error")) )
 				QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl );
+			let counted = !( sessionsQL || connectionsQL ) || QL().Authorizer().Check( "gateway", "sessions", {}, Access::ERights::Read, UserPK(), _sl ).has_value();
 			let addedSlug = _query.AddColumn( "slug" ); //the join key - both totals are per slug.
 			_query.ReturnRaw = true;
 			auto rows = co_await QL::QLAwait{ move(_query), UserPK(), _sl }; //UserPK ctor: no IQL, so CustomQuery is not re-entered; SelectAwait still authorizes the read.
 			flat_map<ServerCnnctnNK,uint32> sessionTotals;
-			if( sessionsQL ){
+			if( sessionsQL && counted ){
 				for( let& c : SessionCounts() )
 					sessionTotals[c.Connection] += c.Count;
 			}
@@ -244,9 +247,9 @@ namespace Jde::Opc::Gateway{
 				if( addedSlug )
 					o.erase( "slug" );
 				if( sessionsQL )
-					o["opcSessions"] = graft( sessionTotals, *sessionsQL, slug );
+					o["opcSessions"] = counted ? jvalue{ graft(sessionTotals, *sessionsQL, slug) } : jvalue{};
 				if( connectionsQL )
-					o["opcConnections"] = graft( connectionTotals, *connectionsQL, slug );
+					o["opcConnections"] = counted ? jvalue{ graft(connectionTotals, *connectionsQL, slug) } : jvalue{};
 				if( statusQL )
 					o["connectionStatus"] = graftStatus( *statusQL, slug );
 				if( rejectedQL )

@@ -15,10 +15,8 @@ import { OeeLiveEvent, OeeLiveStatus } from '../../../model/oee-live';
 import { OeeMachineRef, oeeTileFigures, oeeTileNotes } from '../../../model/oee-live-view';
 import { OeeLineRef } from '../../../model/oee-lines';
 import { NodePlace, pageSegments } from '../../../model/node';
-import { NodeId } from '../../../model/node-id';
-import { Gateway, gatewayAnswer, placeNode } from '../../../services/gateway-service';
+import { Gateway, gatewayAnswer, namespacesOf, placeNode } from '../../../services/gateway-service';
 import { OeeFloorService } from '../../../services/oee-floor-service';
-import { OpcStore } from '../../../services/opc-store';
 import { OeeFloorPageData } from '../../../services/resolvers/oee-floor-resolver';
 import { FloorMapShape, FloorShapeView, OeeFloorMap } from './oee-floor-map';
 
@@ -310,11 +308,11 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 		return links;
 	}
 	//The group's root placed in the browser.  The gateway's `node` takes an id by the server's index, so a root spelled by its
-	//namespace's URI, as a seeded group's is, goes through the connection's namespaces first, as HistAdminService.rootPaths has
-	//it:  asked by its URI it answered no path, and the panel had no Node link.  None for a URI the server lacks.
+	//namespace's URI, as a seeded group's is, goes through the connection's namespaces first (ExNodeId.byIndex):  asked by its URI
+	//it answered no path, and the panel had no Node link.  None for a URI the server lacks.
 	async #place( gateway:Gateway, connection:string, root:ExNodeId ):Promise<NodePlace|undefined>{
-		const ns = root.nsu ? ( await this.#opcStore.getConnection( gateway, connection ) ).namespaces.find( n=>n.uri==root.nsu )?.index : root.ns;
-		return ns==undefined ? undefined : placeNode( gateway, connection, new NodeId( {...root.toJson(), ns} ) );
+		const id = root.byIndex( root.nsu ? await namespacesOf(gateway, connection) : [] );
+		return id ? placeNode( gateway, connection, id ) : undefined;
 	}
 	duration( ms:number ):string{ return oeeDuration( ms ); }
 	share( row:OeeSplitRow ):string{ return row.share==undefined ? '' : oeePercent( row.share ); }
@@ -344,7 +342,6 @@ export class OeeFloorPage implements OnInit, OnDestroy{
 	#route = inject( ActivatedRoute );
 	#title = inject( ComponentPageTitle );
 	#service = inject( OeeFloorService );
-	#opcStore = inject( OpcStore );
 	#snackbar = inject( SnackbarService );
 	#refocus = false;
 }

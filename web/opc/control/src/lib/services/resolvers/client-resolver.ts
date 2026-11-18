@@ -5,7 +5,6 @@ import { DetailResolver, DetailResolverData, DetailRoute, errorMessage, Snackbar
 import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
 import { ServerCnnctn } from '../../model/server-cnnctn';
 import { OpcStore } from '../opc-store';
-import { sessionGrafts } from '../../pages/gateway-detail/gateway-table-settings';
 
 //A gateway's detail row with the gateway it was read from.  The page takes its gateway from here in onRow rather than once from the url:
 //the router reuses the page when another gateway's row opens, and a row id means nothing on another gateway.
@@ -55,12 +54,10 @@ export class ClientResolver implements Resolve<GatewayDetailData<ServerCnnctn>> 
 	//Delegates to DetailResolver.load instead of copying it (review3 C1).  The copy had already drifted - L14's null guard
 	//had to be written here a second time - and the opcStore fetch below is the only part that was ever Client-specific.
 	//`null` vars, not the default {}: that is what this query has always sent to the gateway.
-	//The row names none of the session grafts (gateway-table-settings.ts):  they take a right beyond the connection's own, the page
-	//reads none of them from the row, and a caller without that right, the demo's visitor, was refused the whole row for them, so
-	//no connection's page, and no way from it to its nodes.
+	//The row leaves out the caller's client, which takes gateway/sessions Read beyond the connection's own and is refused without
+	//it:  the demo's visitor had no connection's page.  The Server tab reads it by a query of its own (ServerDiagnostics).
 	static async load( ql:Gateway, opcStore:OpcStore, slug:string, routing:DetailRoute, snackbar:SnackbarService ):Promise<DetailResolverData<ServerCnnctn>>{//snackbar is passed in:  inject() needs an injection context, which a static method never has.
-		routing.tableSettings = { ...routing.tableSettings, excludedColumns: [...new Set( [...(routing.tableSettings.excludedColumns ?? []), ...sessionGrafts] )] };
-		const y = await DetailResolver.load<ServerCnnctn>( ql, "serverConnections", slug, routing, null );
+		const y = await DetailResolver.load<ServerCnnctn>( ql, "serverConnections", slug, routing, null, ["clientDiagnostics"] );
 		if( slug && slug!="$new" ){
 			try{
 				y.row["server"] = await opcStore.getConnection( ql, slug, {fresh: true} );//the tab is where a user checks the connection:  never the page's memo of an earlier describe

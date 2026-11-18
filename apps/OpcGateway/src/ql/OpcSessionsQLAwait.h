@@ -14,7 +14,7 @@ namespace Jde::Opc::Gateway{
 	//clientDiagnostics{…} } - grafts live state onto the DB rows.  opcSessions = web sessions holding a credential on the slug (auth cache),
 	//opcConnections = open UAClients (idle drain/disconnect shrink it), connectionStatus = those counts read as Connected|Idle|Error against
 	//UAClient::ConnectErrors(), so a broken slug is distinguishable from a merely unused one.  The counts and the status' error are
-	//the live-usage telemetry, which needs gateway/sessions Read as well;  the status' name is the row's own, under the table's
+	//the live-usage telemetry, which needs gateway/sessions Read as well, a caller without it reading the counts null;  the status' name is the row's own, under the table's
 	//Read alone, so a list of the connections says which are up to a caller who reads no session.  clientDiagnostics{ connectedSince reconnects lastBreak sessionAge monitoredItems parkedItems
 	//reconnectWaiting clients } is the same telemetry for the caller's own client of the slug, the one its session would use
 	//(SessionCredential, UAClient::Find), else the lost one its reconnect chain holds (UAClient::LostDiagnostics), null with neither - this

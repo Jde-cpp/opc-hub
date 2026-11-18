@@ -27,7 +27,8 @@ except ImportError as e:
 	sys.exit( 1 )
 
 STATES = { FromServer.OeeRunning: 'running', FromServer.OeeStopped: 'stopped', FromServer.OeeUnknown: 'unknown' }
-NODES = [ (2, i) for i in range(6001, 6006) ] #demo.NodeSet2.xml's Machine variables, status to speed, urn:jde:demo being a PLC's namespace 2
+NODES = range( 6001, 6006 ) #demo.NodeSet2.xml's Machine variables, status to speed, in urn:jde:demo
+DEMO_NS = 'urn:jde:demo' #its index is the PLC's to say:  a nodeset loaded before it moves it (reviews-issue/487-demo-ops.md #8)
 failed = False
 def ok( what ): print( f"ok      {what}", flush=True )
 def fail( what ):
@@ -65,11 +66,14 @@ class Site:
 	def guest( self, headers={} ):
 		_, answered, _ = self.call( 'GET', '/serverSettings', headers )
 		return answered.get( 'Authorization' )
+	#the answer's data, each query's answered:  an error, or a query answered null, raises with the answer's start
 	def ql( self, session, query ):
 		status, _, body = self.call( 'POST', '/graphql', {'Content-Type': 'application/json', 'Authorization': session}, json.dumps({'query': query}) )
-		if status!=200:
+		answer = json.loads( body ) if status==200 else None
+		data = answer.get( 'data' ) if isinstance( answer, dict ) else None
+		if not isinstance( data, dict ) or answer.get( 'errors' ) or any( v is None for v in data.values() ):
 			raise RuntimeError( f"{status} {body[:200].decode(errors='replace')}" )
-		return json.loads( body )['data']
+		return data
 	async def socket( self, path, headers={} ):
 		args = { 'sock': self.dial(), 'max_size': None, 'open_timeout': 30 }
 		if self.secure:
@@ -198,12 +202,16 @@ async def smoke( site, live, margin ):
 		( ok if open_==asked and asked else fail )( f"the floor's subscriptions are open, {open_} of {asked}:  a machine's each, a line's each and the site's" )
 	except websockets.ConnectionClosed as e:
 		fail( f"the gateway's socket stays open:  {e}" )
+	except Exception as e: #a check's own line, not a traceback the watch's log buries the cause under
+		fail( f"the socket's half:  {type(e).__name__}:  {e}" )
 	finally:
 		await ws.close()
 
 #One visitor on a PLC's node browser.  The hub reads a visitor's address from X-Forwarded-For where the caller is its trusted
 #front, which a caller on the box's loopback is, so each has an address of its own, as visitors do, and a session tied to it.
-async def visitor( site, i, connection, hold, tally, gate ):
+#The first asks the PLC's namespaces with its own session, so the lookup costs the PLC no session of its own, and `ns` gives the
+#rest urn:jde:demo's index.
+async def visitor( site, i, connection, hold, tally, gate, ns ):
 	headers = { 'X-Forwarded-For': f"10.{i>>16&255}.{i>>8&255}.{i&255}" }
 	ws = None
 	try:
@@ -212,13 +220,20 @@ async def visitor( site, i, connection, hold, tally, gate ):
 			if not session:
 				raise RuntimeError( "no session" )
 			tally['sessions'] += 1
+			if i==1:
+				spaces = ( await asyncio.to_thread(site.ql, session, f'namespaces( opc:"{connection}" ){{ index uri }}') )['namespaces']
+				index = next( (s['index'] for s in spaces if s['uri']==DEMO_NS), None )
+				if index is None:
+					raise RuntimeError( f"{connection} has no namespace {DEMO_NS}" )
+				ns.set_result( index )
+			index = await ns
 			ws = await site.socket( '/opc', headers )
 			gateway = Gateway( ws )
 			refused = await gateway.open( session )
 			if refused:
 				raise RuntimeError( refused )
 			tally['sockets'] += 1
-			id = await gateway.send( subscribe=FromClient.Subscribe(opc_id=connection, nodes=[Common.NodeId(namespace_index=ns, numeric=n) for ns, n in NODES]) )
+			id = await gateway.send( subscribe=FromClient.Subscribe(opc_id=connection, nodes=[Common.NodeId(namespace_index=index, numeric=n) for n in NODES]) )
 			await gateway.read( lambda: id in gateway.inbox, 60 )
 			kind, m = gateway.answer( id )
 			if kind!='subscription_ack':
@@ -230,6 +245,9 @@ async def visitor( site, i, connection, hold, tally, gate ):
 		await gateway.read( lambda: False, hold )
 		tally['values'] += sum( 1 for answers in gateway.inbox.values() for m in answers if m.WhichOneof('Value')=='node_values' )
 	except Exception as e:
+		if i==1 and not ns.done():
+			ns.set_exception( RuntimeError(f"{connection}'s namespaces were not read:  {e}") )
+			ns.exception() #retrieved:  the rest raise it, and none may be left to
 		what = re.sub( r'^\[[0-9a-f]+\]', '', str(e) ) or type( e ).__name__ #without the client's handle, so one cause is one line
 		tally['refused'][what] = tally['refused'].get( what, 0 )+1
 	finally:
@@ -238,8 +256,8 @@ async def visitor( site, i, connection, hold, tally, gate ):
 
 async def guests( site, n, connection, hold ):
 	tally = { 'sessions': 0, 'sockets': 0, 'subscribed': 0, 'values': 0, 'refused': {} }
-	gate = asyncio.Semaphore( 20 )
-	await asyncio.gather( *( visitor(site, i+1, connection, hold, tally, gate) for i in range(n) ) )
+	gate, ns = asyncio.Semaphore( 20 ), asyncio.get_running_loop().create_future()
+	await asyncio.gather( *( visitor(site, i+1, connection, hold, tally, gate, ns) for i in range(n) ) )
 	print( f"{n} visitors on {connection}:  {tally['sessions']} sessions, {tally['sockets']} sockets, {tally['subscribed']} subscribed, {tally['values']} values in {hold:g} s" )
 	for what, count in sorted( tally['refused'].items(), key=lambda r: -r[1] ):
 		print( f"  {count} refused:  {what}" )

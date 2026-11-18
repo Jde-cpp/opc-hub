@@ -84,7 +84,7 @@ carry "$stage" "$optDir"
 install -m 755 -t "$optDir" "$demoDir/seed.sh" "$demoDir/seed.py" "$demoDir/reset.sh" "$demoDir/smoke.sh" "$demoDir/smoke.py" "$demoDir/retention.sh" "$demoDir/highcharts.sh"
 #highcharts.sh lays the version the site is written against, the one the workspace installs for its typings
 charts=$(sed -n 's/^version=\([0-9.]*\).*/\1/p' "$demoDir/highcharts.sh")
-grep -qF "highcharts@^$charts " "$repo/web/opc/scripts/jde-opc.sh" || die "highcharts.sh lays Highcharts '$charts', and web/opc/scripts/jde-opc.sh installs another:  set its version and integrity to that one's"
+grep -qF "highcharts@$charts " "$repo/web/opc/scripts/jde-opc.sh" || die "highcharts.sh lays Highcharts '$charts', and web/opc/scripts/jde-opc.sh installs another:  set its version and integrity to that one's"
 #smoke.py's modules:  the gateway socket's two proto files and what they import, Opc.Common.proto, Common.proto and
 #protobuf's own timestamp and duration, whose modules the runtime has.  A file's dots are its module's packages:  proto/Opc/.
 protos=( "$repo/apps/OpcGateway/src/types/proto/Opc.FromClient.proto" "$repo/apps/OpcGateway/src/types/proto/Opc.FromServer.proto"

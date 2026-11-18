@@ -2,7 +2,6 @@ import { Injectable } from '@angular/core';
 import { HistPathSegment, histThresholdNames, HistThresholdOverride, histThresholdParams } from '../model/hist';
 import { HistConnection, HistGroupMember, histNodeAttributeColumns, histNodeJson, HistRef, HistResolvedMember, HistTemplateGroup, HistTemplateMember, toHistGroupMember, toHistRef, toHistResolved, toHistTemplateMember } from '../model/hist-admin';
 import { ExNodeId } from '../model/ex-node-id';
-import { NodeId } from '../model/node-id';
 import { Server } from '../model/server';
 import { toBrowse } from '../model/types';
 import { HistPoster, HistReader } from './history-service';
@@ -89,10 +88,7 @@ export class HistAdminService{
 	//through the server's namespaces.  Undefined for a root in a namespace the server lacks, one the gateway can't place, or Root,
 	//which has no segment.  The path already starts at Objects (reviews-issue/416-address-space.md #2).
 	async rootPaths( reader:HistReader, slug:string, server:Pick<Server,'namespaces'>, roots:ExNodeId[] ):Promise<(string|undefined)[]>{
-		const ids = roots.map( r=>{
-			const ns = r.nsu ? server.namespaces.find( n=>n.uri==r.nsu )?.index : r.ns;
-			return ns==undefined ? undefined : new NodeId( {...r.toJson(), ns} ).toJson();
-		} );
+		const ids = roots.map( r=>r.byIndex( server.namespaces )?.toJson() );
 		const known = ids.filter( id=>!!id );
 		const data = known.length ? await reader.query<any>( HistAdminService.rootPathsQuery, {opc: slug, id: known} ) : undefined;
 		const paths = <any[]>(data?.nodes ?? []);

@@ -70,43 +70,6 @@ describe( 'GatewayResolver', ()=>{
 		}
 	} );
 
-	//docs/demo/plan.md Phase 10:  the list's two counts take gateway/sessions Read beyond the table's, and the gateway refuses a
-	//query that names one whole.  A caller who reads the connections and no session, the demo's visitor, had No access for a list.
-	describe( 'orWithoutSessions', ()=>{
-		const refused = new HttpErrorResponse( {status: 403, error: "User does not have 'Read' access to 'sessions'."} );
-		const names = ( settings:any ):string[]=>settings.columns.map( (c:any)=>typeof c=="string" ? c : c.name );
-		const answering = ( answer:( columns:string[] )=>Partial<GatewayData> )=>vi.fn( async ( settings:any ):Promise<GatewayData>=>({ ...data(), ...answer(names(settings)) }) );
-
-		it( 'asks a refused list again without the two counts, the status kept', async ()=>{
-			const rows = answering( columns=>columns.includes("opcSessions") ? {error: refused} : {results: {serverConnections: [{slug: "plc1"}]}} );
-			const y:any = await GatewayResolver.orWithoutSessions( gatewayTableSettings, rows );
-			expect( y.error ).toBeUndefined();
-			expect( y.results.serverConnections ).toHaveLength( 1 );
-			expect( rows.mock.calls.map( c=>names(c[0]) ) ).toEqual( [names(gatewayTableSettings), ["connectionStatus", "name", "url", "certificateUri", "description"]] );
-		} );
-		it( 'asks a list that is read once', async ()=>{
-			const rows = answering( ()=>({results: {serverConnections: []}}) );
-			await GatewayResolver.orWithoutSessions( gatewayTableSettings, rows );
-			expect( rows ).toHaveBeenCalledTimes( 1 );
-		} );
-		it( "says the second refusal, the table's own", async ()=>{
-			const rows = answering( ()=>({error: refused}) );
-			const y:any = await GatewayResolver.orWithoutSessions( gatewayTableSettings, rows );
-			expect( y.error ).toBe( refused );
-			expect( rows ).toHaveBeenCalledTimes( 2 );
-		} );
-		it( 'asks a list that failed once:  a fault says nothing of a right', async ()=>{
-			const rows = answering( ()=>({error: new HttpErrorResponse( {status: 500} )}) );
-			await GatewayResolver.orWithoutSessions( gatewayTableSettings, rows );
-			expect( rows ).toHaveBeenCalledTimes( 1 );
-		} );
-		it( 'asks a refused list once where its columns name no count', async ()=>{
-			const rows = answering( ()=>({error: refused}) );
-			await GatewayResolver.orWithoutSessions( {columns: ["name", "url"]}, rows );
-			expect( rows ).toHaveBeenCalledTimes( 1 );
-		} );
-	} );
-
 	//no gateway of that name - a stale bookmark or Recently-visited tile - leaves no page to say it on
 	const gone = async ( config:Routes )=>{
 		const router = routerStub( '/', config ), snackbar = snackbarStub();

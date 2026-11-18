@@ -120,15 +120,17 @@ guest=$(sed -n 's/^authorization: *//p' "$tmp/settings.h" | head -1)
 check "a call with no session is given one ($status)" [ -n "$guest" ]
 check "  which acts as the guest" json settings 'd["active"] is True'
 if [ -n "$guest" ]; then
-	status=$(ql connections "$guest" 'serverConnections{ id slug connectionStatus{ name } }')
-	check "the guest reads the connections, each with whether it is up ($status)" json connections 'all( c["connectionStatus"]["name"] in ("Connected", "Idle", "Error") for c in d["data"]["serverConnections"] )'
+	status=$(ql connections "$guest" 'serverConnections{ id slug connectionStatus{ name } opcSessions{ count } opcConnections{ count } }')
+	check "the guest reads the five connections, each with whether it is up ($status)" json connections 'len(d["data"]["serverConnections"])==5 and all( c["connectionStatus"]["name"] in ("Connected", "Idle", "Error") for c in d["data"]["serverConnections"] )'
+	#a connection's sessions and clients, the gateway sessions' own:  null, the rest of the row read
+	check "  and none's sessions or clients" json connections 'all( c["opcSessions"] is None and c["opcConnections"] is None for c in d["data"]["serverConnections"] )'
 	check "  the flow server's not among them, the demo running no flows" json connections 'all( c["slug"]!="flow-server" for c in d["data"]["serverConnections"] )'
 	status=$(ql registry "$guest" 'connections( deleted:null ){ instanceId instanceName programName }')
 	check "the guest finds the hub's instance, which its pages look up ($status)" json registry 'len(d["data"]["connections"])>0'
-	#users, sessions and logs, which Viewer reads and a visitor must not;  a connection's sessions and its last error, the gateway
-	#sessions' own;  a process's host, pid, start, past runs and status, and the hosts, the instances' own;  flows, a table no
-	#role but the owner's names;  and a write
-	for refused in 'users{ id }' 'sessions{ id }' 'logs{ id }' 'serverConnections{ id opcSessions{ count } }' 'serverConnections{ id connectionStatus{ error } }' 'connections{ id hostName pid created }' 'connections{ id deleted }' 'status{ memory startTime }' 'hosts{ id name }' 'flows{ id }' 'mutation createUser( slug:"smoke", name:"smoke" ){ id }'; do
+	#users, sessions and logs, which Viewer reads and a visitor must not;  a connection's last error and the caller's client of it,
+	#the gateway sessions' own;  a process's host, pid, start, past runs and status, and the hosts, the instances' own;  flows, a
+	#table no role but the owner's names;  and a write
+	for refused in 'users{ id }' 'sessions{ id }' 'logs{ id }' 'serverConnections{ id connectionStatus{ error } }' 'serverConnections{ id clientDiagnostics{ reconnects } }' 'connections{ id hostName pid created }' 'connections{ id deleted }' 'status{ memory startTime }' 'hosts{ id name }' 'flows{ id }' 'mutation createUser( slug:"smoke", name:"smoke" ){ id }'; do
 		status=$(ql refused "$guest" "$refused")
 		check "the guest is refused $refused ($status)" [ "$status" = 403 ]
 	done

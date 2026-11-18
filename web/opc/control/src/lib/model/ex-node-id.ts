@@ -37,6 +37,12 @@ export class ExNodeId extends NodeId{
 		const node = NodeId.fromUaString( m[3] );
 		return new ExNodeId( {ns: node.ns, id: node.id, ...(m[2] ? {nsu: m[2]} : {}), ...(m[1] ? {serverIndex: +m[1]} : {})} );
 	}
+	//the id by the server's index, as the gateway takes a node:  one spelled by its namespace's URI goes through the server's
+	//namespaces, and is undefined where the server lacks the URI
+	byIndex( namespaces:{index:number; uri:string}[] ):NodeId|undefined{
+		const ns = this.nsu ? namespaces.find( n=>n.uri==this.nsu )?.index : this.ns;
+		return ns==undefined ? undefined : new NodeId( {...this.toJson(), ns} );
+	}
 	serverIndex:number;
 	nsu:string;
 //	#key:NodeKey; //for Map

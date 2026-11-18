@@ -49,8 +49,11 @@ jobs:
         run: |
           set -euo pipefail
           gh release download --pattern 'jde-opc-demo-*.tar.gz' --dir "$RUNNER_TEMP/release"
+          shopt -s nullglob
+          tarballs=( "$RUNNER_TEMP"/release/jde-opc-demo-*.tar.gz )
+          [ ${#tarballs[@]} = 1 ] || { echo "::error::the latest release carries ${#tarballs[@]} demo tarballs, not one:  ${tarballs[*]##*/}"; exit 1; }
           mkdir "$RUNNER_TEMP/demo"
-          tar -xzf "$RUNNER_TEMP"/release/jde-opc-demo-*.tar.gz -C "$RUNNER_TEMP/demo" --strip-components=4 --wildcards \
+          tar -xzf "${tarballs[0]}" -C "$RUNNER_TEMP/demo" --strip-components=4 --wildcards \
             '*/opt/jde-cpp/demo/smoke.sh' '*/opt/jde-cpp/demo/smoke.py' '*/opt/jde-cpp/demo/proto'
 
       - name: Smoke

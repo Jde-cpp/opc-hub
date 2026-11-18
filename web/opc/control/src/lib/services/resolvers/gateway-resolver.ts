@@ -1,8 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import {ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot, UrlSegment} from '@angular/router';
-import { AppInstanceRoute, isRefusal, SnackbarService, QLListData, QLListResolver, TableSchema, TableSettings, View, AppResolver } from 'jde-framework';
+import { AppInstanceRoute, SnackbarService, QLListData, QLListResolver, View, AppResolver } from 'jde-framework';
 import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
-import { withoutSessionColumns } from '../../pages/gateway-detail/gateway-table-settings';
 import { LocalPrefs, matchConfig, RouteItem, ProfileStore, RouteStore } from 'jde-spa';
 
 export type GatewayData = Omit<QLListData, "routing"> & { routing:AppInstanceRoute };//the Connections tab is a QLList
@@ -46,23 +45,6 @@ export class GatewayResolver implements Resolve<GatewayData> {
 	async #load( instanceName:string, routing:AppInstanceRoute, url:UrlSegment[] ):Promise<GatewayData>{
 		const gateway = await this.#gatewayService.gateway( instanceName );
 		const schema = await gateway.schemaWithEnums( "ServerConnection" );
-		return GatewayResolver.orWithoutSessions( routing.tableSettings, settings=>{
-			const listed = new AppInstanceRoute( "gateways", instanceName, settings );
-			listed.siblings = routing.siblings;
-			listed.parent = routing.parent;
-			return this.#rows( gateway, schema, listed, url );
-		} );
-	}
-	//The list's two counts take a right beyond the connections' own, gateway/sessions Read, and the gateway refuses a query that
-	//names one whole (gateway-table-settings.ts).  So a refused list is asked again without them:  a caller who reads the
-	//connections and no session, the demo's visitor, has the list, each row's status with it.  Refused again, the right missing
-	//is the table's, and the tab says so.
-	static async orWithoutSessions( settings:TableSettings, rows:( settings:TableSettings )=>Promise<GatewayData> ):Promise<GatewayData>{
-		const y = await rows( settings );
-		const open = isRefusal( y.error ) ? withoutSessionColumns( settings ) : undefined;
-		return open ? rows( open ) : y;
-	}
-	async #rows( gateway:Gateway, schema:TableSchema, routing:AppInstanceRoute, url:UrlSegment[] ):Promise<GatewayData>{
 		const defaultView = View.fromTable( routing.tableSettings, schema );
 		const deleted = QLListResolver.deletedView( defaultView );
 		const profile = QLListResolver.viewSet( schema.collectionName, this.profileStore, this.#prefs, routing.tableSettings );

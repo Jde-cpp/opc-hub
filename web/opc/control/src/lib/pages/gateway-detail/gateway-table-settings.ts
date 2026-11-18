@@ -20,15 +20,3 @@ export const gatewayTableSettings:TableSettings = {
 	columns: [{name:"connectionStatus", displayName:"Status", selection:"name", style: new Style(130), chip:{Connected:"ok", Idle:"neutral", Error:"error"}}, "name", {name:"opcSessions", displayName:"Sessions", selection:"count", style: new Style({flex: new Flex(130), align:"right"})}, {name:"opcConnections", displayName:"Clients", selection:"count", style: new Style({flex: new Flex(130), align:"right"})}, {name:"url", displayName:"URL"}, {name:"certificateUri", displayName:"Certificate URI"}, "description" ],
 	sort: "name"
 }
-//The columns that take gateway/sessions Read beyond the table's own (the gateway's OpcSessionsQLAwait):  the two counts, and
-//with the caller's client, the grafts a connection's row has.  The gateway refuses a query that names one to a caller who reads
-//the connections and no session, the demo's visitor.  So GatewayResolver asks the list again without the counts, and
-//ClientResolver's row names none of the three, the page reading what it shows of them by queries of their own.  The status'
-//name is the row's, under the table's Read alone.
-export const sessionColumns = ["opcSessions", "opcConnections"];
-export const sessionGrafts = [...sessionColumns, "clientDiagnostics"];
-//`settings` without the session columns;  none where it names neither
-export function withoutSessionColumns( settings:TableSettings ):TableSettings|undefined{
-	const columns = settings.columns?.filter( c=>!sessionColumns.includes( typeof c=="string" ? c : c.name ?? "" ) );
-	return columns && columns.length<settings.columns!.length ? { ...settings, columns } : undefined;
-}

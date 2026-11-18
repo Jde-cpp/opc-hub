@@ -64,7 +64,7 @@ case "$integrity" in sha512-*) ;; *) die "--integrity is npm's, sha512-<base64>"
 for t in tar openssl; do command -v $t >/dev/null || die "$t not found"; done
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp" "$addon.new"' EXIT
 if [ -z "$from" ]; then
 	command -v curl >/dev/null || die "curl not found - or pass --from <highcharts-$version.tgz>"
 	from=$tmp/highcharts-$version.tgz
@@ -81,11 +81,17 @@ for f in highstock.js highcharts.js modules/accessibility.js modules/xrange.js; 
 	[ -f "$tmp/package/esm/$f" ] || die "highcharts $version has no esm/$f, which the site imports.  Nothing was laid"
 done
 
-rm -rf "$addon"
-install -d -m 755 "$addon"
-cp -r "$tmp/package/esm" "$addon/esm"
-printf '%s' "$version" > "$addon/VERSION"
+#Made beside it and renamed into place, so a page loading meanwhile meets the old add-on or the new, not a folder half
+#copied, which the loader would hold as absent or failed for that page's life (reviews-issue/487-demo-ops.md #12).
+rm -rf "$addon.new" "$addon.old"
+install -d -m 755 "$addon.new"
+cp -r "$tmp/package/esm" "$addon.new/esm"
+printf '%s' "$version" > "$addon.new/VERSION"
 chown -R root:root "$site/addons"
-find "$site/addons" -type d -exec chmod 755 {} +
-find "$site/addons" -type f -exec chmod 644 {} +
+chmod 755 "$site/addons"
+find "$addon.new" -type d -exec chmod 755 {} +
+find "$addon.new" -type f -exec chmod 644 {} +
+[ ! -e "$addon" ] || mv -T "$addon" "$addon.old"
+mv -T "$addon.new" "$addon"
+rm -rf "$addon.old"
 echo "highcharts.sh: laid Highcharts $version at $addon/esm, $(find "$addon/esm" -type f | wc -l) files, $(du -sh "$addon/esm" | cut -f1):  a page loaded from now on draws its charts"

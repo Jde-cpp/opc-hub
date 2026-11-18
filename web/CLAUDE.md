@@ -50,7 +50,7 @@ button matches the current url against.  A page split out of another's has a two
 ## Add-ons load by URL
 
 Highcharts Stock (the History trend) is an add-on the install never carries (#302): its licence is a commercial one. `highcharts`
-is a `devDependency` of jde-opc for the typings and `hist-trend.spec.ts` alone (`jde-opc.sh` installs it `--save-dev`); the
+is a `devDependency` of jde-opc for the typings and `hist-trend.spec.ts` alone (`jde-opc.sh` installs it `--save-dev` at the exact version the demo's `highcharts.sh` lays); the
 runtime is imported by URL, `addons/highcharts/esm/{highstock,modules/accessibility}.js` under the site's base href, by
 `HighchartsLoader` (`node-history/highcharts-loader.ts`), which resolves `undefined` when the folder is absent - the trend then
 shows a notice and the tab works from the table - and rejects, uncached, when it is there and failed to load. A fetch of
