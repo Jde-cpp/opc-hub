@@ -22,7 +22,7 @@
 # under run.sh, which survives a self-update — but every container recreation then
 # self-updates (~80 s) before it takes a job, and the image no longer matches what
 # is actually running.
-ARG BASE_IMAGE=myoung34/github-runner:2.337.0-ubuntu-noble
+ARG BASE_IMAGE=myoung34/github-runner:2.338.2-ubuntu-noble
 FROM ${BASE_IMAGE}
 
 ARG LLVM_VERSION=23
