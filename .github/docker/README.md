@@ -12,8 +12,8 @@ in. Consumed by [`.github/workflows/linux-ci.yml`](../workflows/linux-ci.yml).
 sudo docker build -t jde-ci-runner:latest .github/docker
 ```
 
-The base is pinned in the Dockerfile to `myoung34/github-runner:2.337.0-ubuntu-noble`
-(Ubuntu 24.04, glibc 2.39, runner 2.337.0). Base-tag selection has two traps:
+The base is pinned in the Dockerfile to `myoung34/github-runner:2.338.2-ubuntu-noble`
+(Ubuntu 24.04, glibc 2.39, runner 2.338.2). Base-tag selection has two traps:
 
 - **Distro:** only the `*-ubuntu-noble` tags are noble. The bare version tags
   (`2.336.0`), `latest`, and `ubuntu-focal` are **focal** — glibc 2.31 (< the 2.38
