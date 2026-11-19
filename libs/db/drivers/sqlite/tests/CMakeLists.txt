@@ -24,7 +24,7 @@ file( GLOB sources CONFIGURE_DEPENDS *.cpp )
 #SqliteProcs/SqliteRow are compiled in, not linked: the driver is loaded at runtime, so the registry inside it is
 #unreachable from here.  This gives the tests their own instance of it - isolated from the driver's, which is what
 #lets ProcRegistryTests register throwaway names without disturbing the real twins.
-target_sources( ${targetName} PRIVATE ${sources} ${CMAKE_CURRENT_LIST_DIR}/../src/SqliteProcs.cpp ${CMAKE_CURRENT_LIST_DIR}/../src/SqliteRow.cpp )
+target_sources( ${targetName} PRIVATE ${sources} ${CMAKE_CURRENT_LIST_DIR}/../src/SqliteProcs.cpp ${CMAKE_CURRENT_LIST_DIR}/../src/SqliteRow.cpp ${CMAKE_CURRENT_LIST_DIR}/../src/SqliteException.cpp )
 target_compile_definitions( ${targetName} PRIVATE TESTS JDE_SQLITE_EXPORTS )
 sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway )
 target_link_libraries( ${targetName} GTest::gtest Threads::Threads SQLite::SQLite3 )

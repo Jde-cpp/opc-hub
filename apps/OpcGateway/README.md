@@ -167,7 +167,7 @@ Under ctest it runs on in-memory sqlite: `ctest -R Jde.Opc.Tests`.  ctest stops 
 - `AppClientTests`, `ConnectCoalesceTests`, `RemoveClientTests`, `KeepAliveTests`: the AppServer link and the client
   life cycle.
 - `DriverRowTests`: a connection of a kind with a driver ([plan](../../docs/open-protocol/plan.md) *Phase 3*) - the
-  row's `kind` and `driver`, its save rules, the dial of the driver's server at 4980 plus the row's id, and
+  row's `kind` and `driver`, its save rules, the dial of the driver's server at 5050 plus the row's id, and
   `testConnection` against the Open Protocol library's test controller on 4645.
 - `DriverHostTests`: a driver row's server and the Open Protocol driver's `_Op` (the plan's *Phase 4*), against the
   same controller - a row made, deleted, restored and edited while the gateway runs, the link lost and back, the

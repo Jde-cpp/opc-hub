@@ -10,7 +10,7 @@ namespace OpenProtocol{
 	constexpr array<uint64_t,11> Pow10{ 1, 10, 100, 1'000, 10'000, 100'000, 1'000'000, 10'000'000, 100'000'000, 1'000'000'000, 10'000'000'000 };
 	constexpr uint8_t TimeWidth{ 19 };
 	constexpr LocalTime MinTime{ local_days{year{0}/1/1} };
-	constexpr LocalTime MaxTime{ local_days{year{9999}/12/31}+23h+59min+59s };
+	constexpr LocalTime MaxTime{ LocalTime{local_days{year{9999}/12/31}}+23h+59min+59s };//in seconds first:  MSVC's minutes are an int, which 9999's overflow.
 
 	//The row a refusal is about, its byte counted from the frame's first as the tables count.
 	Ω where( const Header& head, uint8_t id, uint start )ι->string{
@@ -131,7 +131,7 @@ namespace OpenProtocol{
 		let h = part( 11, 2 ), m = part( 14, 2 ), s = part( 17, 2 );
 		//Digits that name no date, 0000-00-00:00:00:00 among them, are a controller's placeholder:  the time is not set.
 		if( ymd.ok() && h<24 && m<60 && s<60 )
-			v = local_days{ ymd }+hours{ h }+minutes{ m }+seconds{ s };
+			v = LocalTime{ local_days{ymd} }+hours{ h }+minutes{ m }+seconds{ s };
 	}
 	α Reader::Rest( string& v, uint16_t max )ι->void{
 		if( _refusal )

@@ -115,6 +115,7 @@ namespace OpenProtocol{
 		if( exchange(_closed, true) )
 			return;
 		boost::system::error_code ignored;
+		_socket.shutdown( Tcp::socket::shutdown_both, ignored );//a FIN:  Windows resets a socket closed with a read pending.
 		_socket.close( ignored );
 		//Not here:  one of the events may be what called.
 		boost::asio::post( _socket.get_executor(), [self=shared_from_this()]{ self->_events = {}; } );

@@ -50,7 +50,7 @@ namespace Jde::Opc::Gateway::Tests{
 	struct GatewayErrorResponse final : Exception{
 		using Exception::Exception;
 		α Move()ι->up<Exception> override{ return mu<GatewayErrorResponse>(move(*this)); }
-		[[noreturn]] α Throw()->void override{ throw move(*this); }
+		[[noreturn]] α Throw()->void override;//out of line, as Exception::Throw is.
 	};
 	struct GatewayClientSocket final : Web::Client::TClientSocketSession<FromClient::Transmission,FromServer::Transmission>{
 		using base = Web::Client::TClientSocketSession<FromClient::Transmission,FromServer::Transmission>;

@@ -10,9 +10,11 @@ The application server. It runs:
 [`Jde.Opc.Hub`](../OpcHub/README.md) links this and the OpcGateway into one process. The installers ship the hub.
 
 The standalone `Jde.App.Server` + `Jde.Opc.Gateway` pair still builds, for split deployments with N gateways per
-AppServer. The OpcServer and the PLC emulator run against either. A split gateway reads the shift calendars
-(`calendars` and its three child tables, [spec](../../docs/calendar/spec.md) *Authorization*) as its own user, so a
-site that enforces those tables grants each gateway's user Read on them; the hub reads its own in-process.
+AppServer. The OpcServer and the PLC emulator run against either.
+
+A split gateway reads the shift calendars (`calendars` and its three child tables, [spec](../../docs/calendar/spec.md)
+*Authorization*) as its own user. A site that enforces those tables grants each gateway's user Read on them. The hub
+reads its own in-process.
 
 The standalone does not serve the site. Only the hub's config names a site directory (`/http/site`).
 
@@ -48,12 +50,16 @@ The standalone does not serve the site. Only the hub's config names a site direc
   `ForwardExecution`, a client's request to relay an execution to an instance, is in the protocol. Nothing sends it
   today.
 - **Data** ([`config/app-meta.jsonnet`](config/app-meta.jsonnet)): `programs`, `instances`, `connections`, `hosts`,
-  `logLevels`, `instanceTagLevels`, beside the access library's users, groups, roles and resources in the same
-  database.  The per-dialect procedures are under [`config/sql`](config/sql); for sqlite they are C++
-  (`config/sql/sqlite`, the `Jde.DB.Sqlite.AppServer` module), which also carries the access library's.
+  `logLevels`, `instanceTagLevels` and the shift calendar's `calendars`, `calendarPatterns`, `calendarShifts` and
+  `calendarExceptions`, beside the access library's users, groups, roles and resources in the same database. The
+  per-dialect procedures are under [`config/sql`](config/sql); for sqlite they are C++ (`config/sql/sqlite`, the
+  `Jde.DB.Sqlite.AppServer` module), which also carries the access library's.
 - **Trust** (`/access/trustedCertDirs`): a client certificate dropped in one of these dirs may enroll by key login. The
   dirs are the OpcServer's, a split gateway's and the PLC emulator's. Production products only; the test binaries
   anchor their own dirs.
+- **Guest** (`/access/guest`, `src/Guest.*`): a user's slug. A session nobody signed in to acts as that user, so a
+  public site's visitor gets that user's rights. It is hidden as shipped (`null`), so every session with no sign-in is
+  anonymous.
 
 `appStartup.h` splits the start into `Configure` and the listener. `Configure` sets up the db, schema sync, the access
 snapshot, this process's connection row, the signing key and the QL hooks.
@@ -99,6 +105,8 @@ suites:
 - `LogSubscriptionTests`: a `logs` subscription over the socket;
 - `WebSessionTests`: the Sessions tab's queries, local and forwarded to an instance;
 - `WebSessionGateTests`: the `sessions` resource gate, where listing takes Read and purging takes Administer;
+- `WebGuestTests`: the guest a session with no sign-in acts as (`/access/guest`), and how it follows that user's
+  create, delete and rename;
 - `ConnectionTests`: the connection rows;
 - `CalendarTests`: the shift calendar's tables, validation and its own operations
   ([spec](../../docs/calendar/spec.md)).

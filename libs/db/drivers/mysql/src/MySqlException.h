@@ -72,7 +72,7 @@ namespace Jde::DB::MySql{
 		α UserError()Ι->string override{ return _serverMessage.size() ? _serverMessage : DBException::UserError(); }
 
 		α Move()ι->up<Exception> override{ return mu<MySqlException>(move(*this)); }
-		[[noreturn]] α Throw()->void override{ throw move(*this); }
+		[[noreturn]] α Throw()->void override;//out of line, as Exception::Throw is.
 	private:
 		MySqlException( DB::Sql&& sql, const mysql::error_with_diagnostics& e, string what, ExceptionArgs args, SL sl ):
 			DBException{

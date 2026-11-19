@@ -15,7 +15,7 @@ namespace Jde::Opc::Gateway{
 		UAClientException( const UAClientException& from )ι:UAException{ from }, _handle{ from._handle }, _requestId{ from._requestId }, _userMessage{ from._userMessage }{}
 
 		α Move()ι->up<Exception> override{ return mu<UAClientException>(move(*this)); }
-		[[noreturn]] α Throw()->void override{ throw move(*this); }
+		[[noreturn]] α Throw()->void override;//out of line, as Exception::Throw is.
 		α IsBadSession()Ι->bool{ return Code()==UA_STATUSCODE_BADSESSIONIDINVALID; }
 		//status plus the throw-site reason; the description names an operation or a configuration mismatch, never internals.
 		α UserMessage()Ι->const string& override;

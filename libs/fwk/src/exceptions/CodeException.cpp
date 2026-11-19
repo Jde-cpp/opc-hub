@@ -15,4 +15,5 @@ namespace Jde{
 		let message = errorCode.message();
 		return Ƒ( "{} - {}", category.name(), message );
 	}
+	α CodeException::Throw()->void{ throw move(*this); }
 }

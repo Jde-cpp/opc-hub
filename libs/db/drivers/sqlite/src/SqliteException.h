@@ -40,7 +40,7 @@ namespace Jde::DB::Sqlite{
 
 		α UserError()Ι->string override{ return _engineMessage.size() ? _engineMessage : DBException::UserError(); }
 		α Move()ι->up<Exception> override{ return mu<SqliteException>(move(*this)); }
-		[[noreturn]] α Throw()ε->void override{ throw move(*this); }
+		[[noreturn]] α Throw()ε->void override;//out of line, as Exception::Throw is.
 	private:
 		string _engineMessage;
 	};

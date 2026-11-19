@@ -42,6 +42,10 @@ namespace Jde::Opc::Server {
 		//before RunShutdown, which runs what is queued:  what is left at UA_Server_delete would run on a server half gone.
 		Ω Post( UA_Server& server, absl::AnyInvocable<void(UA_Server&)> f )ι->void;
 	private:
+#ifdef _WIN32
+		const string _address;//settings', for Run's check of the port, which only Windows needs.
+		const PortType _port;
+#endif
 		UAHistory _history;//before _config, which installs its backend, and so destroyed after the server it serves.
 		UAConfig _config;
 		optional<std::jthread> _thread;

@@ -23,7 +23,7 @@ namespace Jde::Crypto{
 		//(reviews/m2-closing.md #10).  The earliest is the one kept - it is the cause; what follows it is its echo.
 		static Φ CurrentErrorCode()ι->uint32;
 		α Move()ι->up<Exception> override{ return mu<OpenSslException>(move(*this)); }
-		[[noreturn]] α Throw()->void override{ throw move(*this); }
+		[[noreturn]] Φ Throw()->void override;//out of line, as Exception::Throw is.
 	};
 }
 #undef Φ

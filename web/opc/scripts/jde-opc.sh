@@ -16,6 +16,12 @@ if [ "$(jq -r '.dependencies."@foblex/flow" // empty' package.json)" != "19.4.0"
 fi;
 #the Function node's block editor (#458):  Blockly, Apache 2.0, bundled, at the version its blocks, its toolbox and its sheet are
 #written against, in a chunk of its own that loads once a body's blocks are asked for (web/CLAUDE.md, "The block editor").
+#Its peer range for jsdom, which the specs run it under, is >=27.4.0 <31.0.0, and `ng new` of cli 22.3 writes ^31, which npm then
+#refuses blockly against:  such a workspace's jsdom is held at 30 until a Blockly takes 31.
+jsdomMajor=$(jq -r '.devDependencies.jsdom // empty' package.json | grep -oE '[0-9]+' | head -1);
+if [ -n "$jsdomMajor" ] && [ "$jsdomMajor" -ge 31 ]; then
+	npm --silent install --save-dev jsdom@30 || { echo `pwd`; echo npm install jsdom@30 failed; exit 1; };
+fi;
 if [ "$(jq -r '.dependencies.blockly // empty' package.json)" != "13.4.0" ]; then
 	npm --silent install --save-exact blockly@13.4.0 || { echo `pwd`; echo npm install blockly failed; exit 1; };
 fi;

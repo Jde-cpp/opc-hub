@@ -23,13 +23,15 @@ namespace Jde::Opc::Gateway::Tests{
 	protected:
 		using Row = DriverRow;
 		Ω Collector( const Row& row )ι->sp<UAClient>{ return UAClient::Find( row.Slug, HistHost::Instance().Collector(row.Slug) ); }
-		//A group over the row goes, and its collector's items before the row does:  an item's delete comes _itemDeleteDelay on, and
-		//would find its client closed.
+		//A group over the row goes, and its collector's items and subscription before the row does:  an item's delete comes
+		//_itemDeleteDelay on, and would find its client closed.  The count drops before the deletes are sent, so the wait is for
+		//their answer too:  a client closed under them takes the server's late answers on a closing channel, which open62541 logs
+		//as an error (BadInvalidState).
 		Ω PurgeGroup( uint32 group, const Row& row )ι->void{
 			try{
 				Mutate( "purgeHistGroup( id:$id )", {{"id", group}} );
-				let dropped = WaitUntil( [&]{ let collector = Collector( row ); return !collector || !collector->TryMonitoredNodes() || !collector->TryMonitoredNodes()->Count(); } );
-				EXPECT_TRUE( dropped ) << "the collector's items outlived group " << group;
+				let dropped = WaitUntil( [&]{ let collector = Collector( row ); return !collector || !collector->TryMonitoredNodes() || (!collector->TryMonitoredNodes()->Count() && !collector->Unsubscribing()); } );
+				EXPECT_TRUE( dropped ) << "the collector's items or subscription outlived group " << group;
 			}
 			catch( const std::exception& e ){
 				ADD_FAILURE() << "purgeHistGroup(" << group << "): " << e.what();
@@ -58,7 +60,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let host = DriverHost::Find( row.Slug );
 		ASSERT_TRUE( host );
 		EXPECT_EQ( host->Port(), ServerCnnctn::DriverPortBase()+row.Id );
-		EXPECT_EQ( ServerCnnctn::DriverPortBase(), 4980u ) << "the suite's, clear of the shipped 4870";
+		EXPECT_EQ( ServerCnnctn::DriverPortBase(), 5050u ) << "the suite's, clear of the shipped 4870";
 
 		let op = Socket().QuerySync( "node( opc: $opc, path: $path ){ id name nodeClass }", {{"opc", row.Slug}, {"path", "_Op"}} );//a bare segment is the row's namespace's.
 		TRACE( "_Op: {}", serialize(op) );

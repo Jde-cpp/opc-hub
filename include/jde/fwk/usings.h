@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <ranges>
 #include <boost/uuid/uuid.hpp>
 #include <fmt/format.h>
 #include <absl/synchronization/mutex.h>

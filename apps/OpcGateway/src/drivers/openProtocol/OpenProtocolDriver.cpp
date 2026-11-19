@@ -157,9 +157,12 @@ namespace Jde::Opc::Gateway{
 		value.hasSourceTimestamp = true;
 		return move( value );
 	}
+	//The driver's one clock, every timestamp it writes:  open62541's UA_DateTime_now() on Windows is GetSystemTime, the millisecond
+	//as of the last timer tick, behind a Clock::now() read after it.
+	Ω uaNow()ι->UA_DateTime{ return UADateTime{ Clock::now() }.UA(); }
 	//The scalar as `_Op`'s value, with `status` and the time now, owned:  a posted write runs after the caller's scalar is gone.
 	Ω opValue( const void* scalar, const UA_DataType& type, UA_StatusCode status=UA_STATUSCODE_GOOD )ι->Value{
-		return stamped( TighteningResult::Scalar(scalar, type, status), UA_DateTime_now() );
+		return stamped( TighteningResult::Scalar(scalar, type, status), uaNow() );
 	}
 	Ω write( UA_Server& server, UA_UInt16 ns, sv slug, sv path, const UA_DataValue& value )ι->void{
 		if( let sc = UA_Server_writeDataValue(&server, nodeId(ns, path), value); sc )
@@ -187,7 +190,7 @@ namespace Jde::Opc::Gateway{
 			UAε( UA_Server_addVariableNode(&server, nodeId(ns, Ƒ("{}.{}", parent, name)), nodeId(ns, parent), UA_NODEID_NUMERIC(0, property ? UA_NS0ID_HASPROPERTY : UA_NS0ID_HASCOMPONENT), UA_QualifiedName{ns, ToUV(name)}, UA_NODEID_NUMERIC(0, property ? UA_NS0ID_PROPERTYTYPE : UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
 		};
 		//These written here, before Run, with no lock to wait for:  a post would wait for a loop that may never run.
-		let started = UA_DateTime_now();
+		let started = uaNow();
 		addObject( _resultObject, UA_EVENTNOTIFIER_SUBSCRIBE_TO_EVENT );//its results' events are subscribed to here, and at the Server object.
 		for( let& variable : TighteningResult::Variables() ){
 			let waiting = stamped( TighteningResult::Unset(*variable.Type, UA_STATUSCODE_BADWAITINGFORINITIALDATA), started );
@@ -256,7 +259,7 @@ namespace Jde::Opc::Gateway{
 		const UA_UInt32 reconnects{};
 		const UA_UInt64 count{};
 		const UA_Double skew{};
-		let since = UADateTime{ Clock::now() }.UA();
+		let since = uaNow();
 		let url = ToUV( _url );
 		add( "Connected", UA_TYPES[UA_TYPES_BOOLEAN], &no );
 		add( "Since", UA_TYPES[UA_TYPES_DATETIME], &since );
@@ -385,7 +388,7 @@ namespace Jde::Opc::Gateway{
 		let source = nodeId( ns, _resultObject ), type = nodeId( ns, _eventType );
 		let sourceName = ToUV( _resultObject );//its DisplayName.
 		const UA_LocalizedText message{ {}, ToUV(event.Message) };
-		let received = UA_DateTime_now();
+		let received = uaNow();
 		add( "/EventType", &type, UA_TYPES_NODEID );
 		add( "/SourceNode", &source, UA_TYPES_NODEID );
 		add( "/SourceName", &sourceName, UA_TYPES_STRING );
@@ -435,7 +438,7 @@ namespace Jde::Opc::Gateway{
 	α OpenProtocolDriver::WriteConnected( bool connected )ι->void{
 		const UA_Boolean value{ connected };
 		Write( "Connected", &value, UA_TYPES[UA_TYPES_BOOLEAN] );
-		let since = UADateTime{ Clock::now() }.UA();
+		let since = uaNow();
 		Write( "Since", &since, UA_TYPES[UA_TYPES_DATETIME] );
 	}
 	α OpenProtocolDriver::WriteRevisions()ι->void{
@@ -500,7 +503,7 @@ namespace Jde::Opc::Gateway{
 			//`Selected` and `Alarm` follow the link (spec *Address space*):  what read Good is stale, its value kept, until its
 			//next report.  One with no report yet, or none to come, says so still.
 			Writes stale;
-			let at = UA_DateTime_now();
+			let at = uaNow();
 			for( uint i=0; i<_state.size(); ++i ){
 				auto& held = _state[i];
 				if( held.status )
@@ -687,7 +690,7 @@ namespace Jde::Opc::Gateway{
 	//clock.  A variable that reads Bad_NotSupported already is left as it is.
 	α OpenProtocolDriver::Report( uint16_t named, uint16_t revision, vector<std::pair<uint8_t,optional<Value>>>&& values )ι->void{
 		Writes writes;
-		let at = UA_DateTime_now();
+		let at = uaNow();
 		for( auto& [i, value] : values ){
 			auto& held = _state[i];
 			if( !value && held.status==UA_STATUSCODE_BADNOTSUPPORTED )
@@ -707,7 +710,7 @@ namespace Jde::Opc::Gateway{
 		if( !reply && reply.error().Kind!=EFailure::Refused )
 			return;
 		//The subscription's variables whose status `from` picks, each written `to` now:  their paths, for the log.
-		let restate = [&, at=UA_DateTime_now()]( auto from, UA_StatusCode to ){
+		let restate = [&, at=uaNow()]( auto from, UA_StatusCode to ){
 			Writes writes;
 			string names;
 			for( uint i=0; i<_state.size(); ++i ){

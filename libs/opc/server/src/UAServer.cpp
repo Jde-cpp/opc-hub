@@ -1,4 +1,7 @@
 #include <jde/opc/server/UAServer.h>
+#ifdef _WIN32
+	#include <boost/asio/ip/tcp.hpp>
+#endif
 #include <jde/fwk/process/thread.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/server/INodeAccess.h>
@@ -6,7 +9,30 @@
 
 #define let const auto
 namespace Jde::Opc::Server {
+#ifdef _WIN32
+	//open62541 binds with SO_REUSEADDR on Windows, which shares a port another socket is listening on and takes its connections,
+	//where POSIX fails the bind.  An exclusive bind first, released before the server's, refuses what POSIX would, as
+	//Web::Server::ThrowIfPortTaken does for the web listener.
+	Ω throwIfPortTaken( str address, PortType port )ε->void{
+		namespace ip = boost::asio::ip;
+		boost::asio::io_context ioc;
+		ip::tcp::acceptor acceptor{ ioc };
+		boost::system::error_code ec;
+		let endpoint = ip::tcp::endpoint{ address.empty() ? ip::address{ip::address_v4::any()} : ip::make_address(address, ec), port };
+		if( !ec )
+			acceptor.open( endpoint.protocol(), ec );
+		if( !ec )
+			acceptor.set_option( boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>{true}, ec );
+		if( !ec )
+			acceptor.bind( endpoint, ec );
+		THROW_IF( ec, "Cannot listen on {}:{}:  {}", address.empty() ? "*" : address, port, ec.message() );
+	}
+#endif
 	UAServer::UAServer( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, sp<IHistoryHost> history )ε:
+#ifdef _WIN32
+		_address{ settings.Address },
+		_port{ settings.Port },
+#endif
 		_history{ settings, move(history) },
 		_config{ settings, move(appClient), move(nodeAccess), &_history },
 		_ua{ UA_Server_newWithConfig(&_config) }
@@ -28,6 +54,9 @@ namespace Jde::Opc::Server {
 	α UAServer::Run()ε->void{
 		if( _thread )
 			return;
+#ifdef _WIN32
+		throwIfPortTaken( _address, _port );
+#endif
 		if( let sc = UA_Server_run_startup(_ua.get()); sc ){
 			//A failed startup - the port taken - stops the components it started but leaves the event loop running, which the
 			//destructor's UA_Server_delete can't free:  stop it as UA_Server_run_shutdown does for a started server.

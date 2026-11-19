@@ -136,6 +136,7 @@ namespace Jde::Opc::Gateway{
 		VoidAwait{sl},
 		_client{ move(client) },
 		_subscriptions{ move(subscriptions) }{
+		++_client->_unsubscribing;
 		_client->StopProcessDataSubscriptions();
 	}
 	α UnsubscribeAwait::RemoveMonitoredItems()ι->VoidAwait::Task{
@@ -169,6 +170,7 @@ namespace Jde::Opc::Gateway{
 			if( sc ){
 				//The async delete never dispatched, so onComplete/Resume() will never fire. This awaiter is co_awaited from UAClient::Shutdown; resume it anyway or shutdown wedges forever.
 				WARN( "[{}]Could not delete subscriptions ({}); resuming to avoid wedging shutdown.", hex(_client->Handle()), UAException::Message(sc) );
+				--_client->_unsubscribing;
 				Resume();
 				return;
 			}
@@ -186,6 +188,7 @@ namespace Jde::Opc::Gateway{
 			if( sc )
 				WARN( "[{}.{}]Could not delete subscription:  {}.", hex(_client->Handle()), hex(_requestId), UAException::Message(sc) );
 		}
+		--_client->_unsubscribing;
 		Resume();
 	}
 

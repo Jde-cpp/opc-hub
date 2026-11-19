@@ -150,6 +150,7 @@ namespace Jde::Opc::Gateway{
 		α ConnectForTest( ConnectCallback onResult )ε->void;
 
 		α SubscriptionId()Ι->SubscriptionId{ auto p = CreatedSubscriptionResponse(); return p ? p->subscriptionId : 0; }
+		α Unsubscribing()Ι->bool{ return _unsubscribing>0; }//an UnsubscribeAwait not yet answered:  a subscription's delete is still out.
 		//Responses are written on the strand but read by await_ready/await_resume on arbitrary threads - guard the shared_ptrs themselves.
 		α CreatedSubscriptionResponse()Ι->sp<UA_CreateSubscriptionResponse>{ lg _{_responseMutex}; return _createdSubscriptionResponse; }
 		α SetCreatedSubscriptionResponse( sp<UA_CreateSubscriptionResponse> p )ι->void{ lg _{_responseMutex}; _createdSubscriptionResponse = move(p); }
@@ -306,6 +307,7 @@ namespace Jde::Opc::Gateway{
 		std::atomic<TimePoint> _connectedSince{}, _lastBreak{}, _activatedAt{};//ClientDiagnostics'.
 		std::atomic<TimePoint> _lostAt{};//LostAt's, TimePoint{} for none.
 		std::atomic<uint> _reconnects{};
+		std::atomic<uint> _unsubscribing{};//UnsubscribeAwait's, from its construction to its resume.
 
 		sp<UA_CreateSubscriptionResponse> _createdSubscriptionResponse;
 		mutable mutex _responseMutex;
@@ -315,6 +317,7 @@ namespace Jde::Opc::Gateway{
 		Jde::Handle _handle;
 		Logger _logger; //after handle
 		friend ConnectAwait;
+		friend UnsubscribeAwait;
 		friend Tests::UAClientState;//QLTests' held-but-disconnected client.
 
 		NodeIndex _nodeIndex;

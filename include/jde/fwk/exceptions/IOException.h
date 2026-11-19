@@ -39,7 +39,7 @@ namespace Jde::IO{
 		α Path()Ι->const fs::path&; α SetPath( const fs::path& x )ι{ _path=x; }
 		α what()const noexcept->const char* override;
 		α Move()ι->up<Exception> override{ return mu<IOException>(move(*this)); }
-		[[noreturn]] α Throw()->void override{ throw move(*this); }
+		[[noreturn]] α Throw()->void override;//out of line, as Exception::Throw is.
 
 		EIOError Error{ EIOError::None };
 		bool Written{};//a write put every byte in the file and failed after that, at the sync: the data is there and its durability unknown, so writing it again would duplicate it.

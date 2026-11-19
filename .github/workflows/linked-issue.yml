@@ -1,9 +1,13 @@
 name: Linked Issue
 
-# Fails a pull request that closes no issue, so the PR ruleset on main can require it (the check is the job's name, "Linked
-# Issue"). An issue counts when the description says `Closes #N` (or Fixes/Resolves) or the PR's Development sidebar links one -
-# GitHub's closingIssuesReferences, which holds keyword links only for a PR into the default branch. Linking from the sidebar
-# fires no pull_request event, so re-run the job after it;  editing the description re-runs it on its own.
+# Fails a pull request that closes no issue and is part of none, so the PR ruleset on main can require it (the check is the job's
+# name, "Linked Issue"). An issue counts when the description says `Closes #N` (or Fixes/Resolves) or the PR's Development sidebar
+# links one - GitHub's closingIssuesReferences, which holds keyword links only for a PR into the default branch. Linking from the
+# sidebar fires no pull_request event, so re-run the job after it;  editing the description re-runs it on its own.
+#
+# A PR that is one step of an issue it leaves open - a release's fix, a plan's phase - says `Part of #N` instead.  GitHub links
+# nothing for it, so the check reads the description itself, through the API rather than the event, which a re-run replays, and
+# looks the number up:  it has to be an issue of this repo, not a pull request.
 #
 # A PR that has no issue to close - the release's JDE_VERSION bump - carries the `no-issue` label, and adding or removing that
 # label re-runs the check. GitHub-hosted with a read-only token, so a fork's PR is safe to run.
@@ -38,13 +42,22 @@ jobs:
             echo "::notice::Labelled no-issue:  no linked issue required."
             exit 0
           fi
-          count=$(gh api graphql \
-            -f query='query($owner:String!, $repo:String!, $number:Int!){ repository(owner:$owner, name:$repo){ pullRequest(number:$number){ closingIssuesReferences(first:1){ totalCount } } } }' \
+          pr=$(gh api graphql \
+            -f query='query($owner:String!, $repo:String!, $number:Int!){ repository(owner:$owner, name:$repo){ pullRequest(number:$number){ body closingIssuesReferences(first:1){ totalCount } } } }' \
             -f owner="$OWNER" -f repo="$REPO" -F number="$NUMBER" \
-            --jq '.data.repository.pullRequest.closingIssuesReferences.totalCount')
+            --jq '.data.repository.pullRequest')
+          count=$(jq -r '.closingIssuesReferences.totalCount' <<<"$pr")
           if [ "$count" -gt 0 ]; then
             echo "Closes $count issue(s)."
             exit 0
           fi
-          echo "::error::No linked issue:  put 'Closes #N' in the description, or link one under Development and re-run this job.  A PR with nothing to close takes the no-issue label."
+          parts=$(jq -r '.body // ""' <<<"$pr" | grep -oiE '\bpart of[[:space:]]+#[0-9]+' | grep -oE '[0-9]+$' || true)
+          for n in $parts; do
+            if [ "$(gh api "repos/$OWNER/$REPO/issues/$n" --jq 'if .pull_request then "pr" else "issue" end' 2>/dev/null)" = issue ]; then
+              echo "Part of #$n."
+              exit 0
+            fi
+            echo "::warning::'Part of #$n':  #$n is not an issue of $OWNER/$REPO."
+          done
+          echo "::error::No linked issue:  put 'Closes #N' in the description - or 'Part of #N' for a step that leaves the issue open - or link one under Development and re-run this job.  A PR with nothing to close takes the no-issue label."
           exit 1

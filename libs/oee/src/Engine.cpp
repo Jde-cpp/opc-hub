@@ -386,13 +386,13 @@ namespace Jde::Opc::Oee{
 	//it, which would write rows before they end, counts only once the next agrees with it:  the source's clock stepped.
 	α Engine::Impl::Clocked( TimePoint t, TimePoint arrival )ι->void{
 		let offset = arrival-t;
-		auto near = []( Duration a, Duration b ){ return a-b<=Skew && b-a<=Skew; };
+		auto agrees = []( Duration a, Duration b ){ return a-b<=Skew && b-a<=Skew; };
 		if( offset-_offset<=Skew && _offset-offset<=_config.Settle ){
 			if( _offsets.size()==Recent )
 				_offsets.erase( _offsets.begin() );
 			_offsets.push_back( offset );
 		}
-		else if( _doubted && near(offset, *_doubted) )
+		else if( _doubted && agrees(offset, *_doubted) )
 			_offsets = { *_doubted, offset };
 		else{
 			_doubted = offset;

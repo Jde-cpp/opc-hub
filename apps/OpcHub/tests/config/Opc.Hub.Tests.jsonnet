@@ -2,7 +2,7 @@
 // embedded OpcServer (1975, opc.tcp 4975), in one process, a driver row's server at 5170 plus its row's id and a test Open
 // Protocol controller on 4745.  Nothing else in the repo binds those ports, so this suite never hangs on a live hub/service
 // (1967/1968/1970/4841, a driver row's 4870 on), the PLC emulator (4842) or the other suites (1972, 2067-2070, 4940/4941, 4645,
-// 4980 on), and can run beside a live hub.  /http/app and /http/gateway alias the one port for the two apps' test helpers
+// 5050 on), and can run beside a live hub.  /http/app and /http/gateway alias the one port for the two apps' test helpers
 // (App::Server::Tests::Port, Gateway::Tests::GatewayPort).
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
