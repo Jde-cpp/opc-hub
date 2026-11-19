@@ -12,8 +12,14 @@ namespace Jde::Opc{
 		UA_String_clear( &str );
 		return y;
 	}
+	//open62541's default config gives each event loop an interrupt manager, and without epoll (Windows) a process holds one at a
+	//time, so every default config made while another lives logs this - the hub's second UA server, after its flow server.  Nothing
+	//here registers an interrupt.
+	constexpr sv _noInterruptManager{ "Cannot create the Interrupt Manager (only relevant if used)" };
 	α Logger::Log( void *context, UA_LogLevel uaLevel, UA_LogCategory category, const char *m, va_list args )ι->void{
-		let level = (ELogLevel)( (int)uaLevel/100-1 ); //level==UA_LOGLEVEL_DEBUG=200
+		auto level = (ELogLevel)( (int)uaLevel/100-1 ); //level==UA_LOGLEVEL_DEBUG=200
+		if( level==ELogLevel::Error && category==UA_LOGCATEGORY_APPLICATION && m==_noInterruptManager )
+			level = ELogLevel::Debug;
 		uint tag_ = 1ull << (UaLogTagBase+(uint)category);
 		const EOpcLogTags tag = (EOpcLogTags)( tag_ );
 		if( Logging::ShouldLog(level, (ELogTags)tag) ){
