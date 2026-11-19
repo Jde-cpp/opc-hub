@@ -7,7 +7,7 @@
 #define let const auto
 
 namespace Jde::DB::Tests{
-	//#12: DBException::Log must honor the base _logged protocol - a moved-from / already-logged exception must not re-log
+	//db-review2 #12: DBException::Log must honor the base _logged protocol - a moved-from / already-logged exception must not re-log
 	//(before the fix, the moved-from source logged a junk "sqle: " with its emptied Sql, and a BreakLog'd exception double-logged).
 	TEST( DBExceptionTests, LogsOnce ){
 		Logging::Capture errors{ ELogLevel::Error };
@@ -22,7 +22,7 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( countSqle(), 1u );
 	}
 
-	//#5: UserError() reaches unauthenticated clients as the 401 body (ServerImpl's App branch), so it must carry the driver
+	//db-error-review #5: UserError() reaches unauthenticated clients as the 401 body (ServerImpl's App branch), so it must carry the driver
 	//message without the statement text that what() keeps for the log.
 	TEST( DBExceptionTests, UserErrorOmitsSql ){
 		DB::Sql sql; sql.Text = "exec access_user_insert_key ?,?,?";
@@ -34,7 +34,7 @@ namespace Jde::DB::Tests{
 		EXPECT_TRUE( string{e.what()}.contains("access_user_insert_key") ) << e.what(); //the split is the point: the log still gets the statement.
 	}
 
-	//#13: engine codes are documented in decimal (sqlite 2067, mysql 1062, mssql 2627), so rendering them in hex made
+	//db-error-review #13: engine codes are documented in decimal (sqlite 2067, mysql 1062, mssql 2627), so rendering them in hex made
 	//"(813)" read as a decimal code that does not exist. UA status and OpenSSL errors are quoted in hex and keep it -
 	//hence ECodeBase rather than a blanket change.
 	TEST( DBExceptionTests, CodeRendersDecimal ){
@@ -42,7 +42,7 @@ namespace Jde::DB::Tests{
 		EXPECT_TRUE( string{e.what()}.starts_with("(2067)") ) << e.what();
 	}
 
-	//#10: what() is the exception text - the statement with its placeholders. Bound values belong to the log, which
+	//db-error-review #10: what() is the exception text - the statement with its placeholders. Bound values belong to the log, which
 	//DB::Log appends via EmbedParams; keeping them out of what() also keeps them out of whatever wraps or forwards it.
 	TEST( DBExceptionTests, ParamValuesReachLogNotWhat ){
 		Logging::Capture errors{ ELogLevel::Error };
@@ -62,9 +62,14 @@ namespace Jde::DB::Tests{
 	TEST( DBExceptionTests, HttpStatusMapsError ){
 		let status = []( EDbError error ){ return DBException{ error, DB::Sql{}, "boom", {ELogLevel::NoLog} }.HttpStatus(); };
 		EXPECT_EQ( 409u, status(EDbError::Duplicate) );
+		EXPECT_EQ( 409u, status(EDbError::ForeignKey) );
+		EXPECT_EQ( 409u, status(EDbError::Constraint) );
 		EXPECT_EQ( 400u, status(EDbError::App) );
+		EXPECT_EQ( 400u, status(EDbError::NotNull) );
+		EXPECT_EQ( 400u, status(EDbError::Check) );
 		EXPECT_EQ( 403u, status(EDbError::Permission) );
 		EXPECT_EQ( 503u, status(EDbError::Connection) );
+		EXPECT_EQ( 503u, status(EDbError::Deadlock) );
 		EXPECT_EQ( 504u, status(EDbError::Timeout) );
 		EXPECT_EQ( 500u, status(EDbError::None) );
 		EXPECT_EQ( 500u, status(EDbError::Syntax) );
@@ -76,7 +81,7 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( EHttpStatus::IAmATeapot, e.HttpStatus() ); //an explicit SetHttpStatus wins, same contract as the base.
 	}
 
-	//#7: odbc's SQL_SUCCESS_WITH_INFO path re-wraps a classified inner exception to attach the statement it was thrown
+	//db-error-review #7: odbc's SQL_SUCCESS_WITH_INFO path re-wraps a classified inner exception to attach the statement it was thrown
 	//without. The legacy 4-arg ctor reset Error to None and Code to the RETCODE; this mirrors the replacement expression,
 	//const ref included - the odbc TU is WIN32-only, so this is what compiles it on Linux.
 	TEST( DBExceptionTests, RewrapKeepsClassification ){

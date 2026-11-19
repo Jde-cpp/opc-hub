@@ -3,8 +3,6 @@
 #include <jde/fwk/settings.h>
 #include <jde/tests/testMain.h>
 
-#define let const auto
-
 namespace Jde{
 #ifndef _MSC_VER
 	α Process::ProductName()ι->sv{ return "Tests.DB"; }

@@ -26,7 +26,7 @@ local cluster(path) = { //one backend; instantiated per-path as the 'memory' and
 {
 	local args = self,
 	testing:{
-		tests:: "*/SchemaTests.*/file"
+		tests:: "*"
 	},
 	instanceName: "SqliteTests",
 	dbServers:{//clusters
