@@ -134,7 +134,7 @@ with `ng new`, links the four libraries and the site in, and runs `ng build`.  T
 | Win2025 | a `20*` tag push, or by hand | the site, then the release build against the cached deps and the installer; fails if the cache is missing |
 | Linux Release | a `20*` tag push, or by hand | the site on a hosted runner, then the release build, the `.deb` and the tarball on the self-hosted one |
 | Web Tests | a pull request or a push to `main` that touches `web/`, a `.proto` or `CMakePresets.common.json`, or by hand | a hosted runner: the site's build, then `ng test` over every project |
-| Linked Issue | every pull request | fails one that closes no issue, unless it carries the `no-issue` label |
+| Linked Issue | every pull request | fails one that closes no issue and is not `Part of #N` one, unless it carries the `no-issue` label |
 | Runner Version Check | Mondays 13:00 UTC, or by hand | a hosted runner: fails when the runner version pinned in [`.github/docker`](.github/docker) is stale |
 
 A push of a `yyyy.MM.dd` tag runs Win2025 and Linux Release, which publish all three assets on that tag's GitHub release.
