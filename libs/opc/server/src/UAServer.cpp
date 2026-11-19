@@ -29,8 +29,10 @@ namespace Jde::Opc::Server {
 	}
 #endif
 	UAServer::UAServer( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, sp<IHistoryHost> history )ε:
+#ifdef _WIN32
 		_address{ settings.Address },
 		_port{ settings.Port },
+#endif
 		_history{ settings, move(history) },
 		_config{ settings, move(appClient), move(nodeAccess), &_history },
 		_ua{ UA_Server_newWithConfig(&_config) }
