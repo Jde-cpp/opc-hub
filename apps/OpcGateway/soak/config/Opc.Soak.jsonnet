@@ -45,6 +45,12 @@ local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductN
 		statusPeriod: "PT1M",
 		quietInterval: "PT6H",
 		quietPeriod: "PT10M",
+		flow:: false, //-flow (soak.sh --flow):  a flow from the primary leg's node through a Function node to flowNode, judged at the end.
+		flowNode:: { ns: 4, id: 6003 }, //the flow's `opc out` target:  Lamp2.Intensity, a Float as 6017 is.  Default:  6003 in the primary node's namespace.
+		openProtocol:: false, //-openProtocol (soak.sh --open-protocol):  the emulator's tightening station as a connection of kind open-protocol.
+		tighteningSlug:: "SoakTightening",
+		tighteningUrl:: "open-protocol://127.0.0.1:4545", //-tighteningUrl= beats it:  the emulator's station (Opc.PlcEmulator.jsonnet's tightening block).
+		oee:: false, //-oee (soak.sh --oee):  an OEE machine on pump2's signals under a UTC calendar.
 		servers: [
 			{
 				slug: "OpcSoak", name: "Soak test server", description: "Soak test connection",

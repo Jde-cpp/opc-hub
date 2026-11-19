@@ -23,6 +23,7 @@
 #   soak.sh [--duration PT24H] [--run-dir DIR] [--smoke] [--build-dir DIR]
 #           [--warmup PT1H] [--quiet-interval PT6H] [--quiet-period PT10M]
 #           [--no-grant-restart] [--read-back] [--session-timeout PT2M] [--emulator]
+#           [--flow] [--open-protocol] [--oee]
 #           [--external] [--external-url opc.tcp://host:port] [--external-uri URI]
 #           [--external-user USER] [--external-pwd PWD]
 #
@@ -55,6 +56,22 @@
 #               (historian-report.txt).  The emulator's own cert and node-rights grant fold into the grant/restart
 #               window below (its UA cert is already trusted - OpcServer and AppServer carry its certs dir).  Off by
 #               default, so Linux/CI runs are unchanged.
+#
+#   The next three are the 2026.11.00 release's long-running parts, each off by default and judged by the client, its
+#   counts in the summary under its name; one asked for and not set up fails the run.
+#   --flow      deploy a flow on the gateway:  `opc in` on the node the soak writes, a Function node (QuickJS) doubling the
+#               value, `opc out` to a second node, at trace level counts.  The client's -grant also gives the gateway's
+#               collector Update, as a flow writes under it, and enforces gateway histGroups, which an `opc out` needs.
+#               Fails on any flow error or drop, a Function fed under half the soak's pushes, or a target not twice its
+#               source at the end.  flows-report.txt counts the trace's day files, two after a midnight.
+#   --open-protocol  implies --emulator:  a connection of kind open-protocol to the emulator's tightening station
+#               (127.0.0.1:4545), its results counted by the driver's `_Op.Results`.  Fails when the link is down at the
+#               end, a result is lost, the counters disagree, the results fall under a quarter of the station's one
+#               every 2s, or two minutes pass without one.
+#   --oee       implies --emulator:  an OEE machine on pump2's signals under a UTC calendar, three 8h shifts for a run of
+#               8h or more - one boundary at UTC midnight - else two short ones from two minutes in.  Fails unless the
+#               engine is live on its calendar at the end and every shift the run spans was heard live and read back
+#               with planned time.
 #
 #   --external  add a second gateway connection to an externally-managed OPC-UA server - it is NOT launched,
 #               stopped, or RSS-monitored here, only pre-checked for reachability. The other --external-* flags
@@ -91,7 +108,8 @@
 #   - OpcServer's last "Node rights assigned" line says ENFORCING, before the client starts and again at the end: a run
 #     on an OPEN server authorized nothing (#236)
 #   The client's own PASS (exit 0) also covers the gateway historian: a group of its writes stored values, the live
-#   HistSubscribe streamed them, and the gateway never ended the subscription (see the client summary's `historian`).
+#   HistSubscribe streamed them, and the gateway never ended the subscription (see the client summary's `historian`),
+#   and with --flow, --open-protocol or --oee that leg's criteria (the summary's `flow`, `tightening` and `oee`).
 
 set -uo pipefail
 
@@ -104,6 +122,9 @@ buildDirOverride=""
 noGrantRestart=0
 readBack=0
 emulator=0
+flow=0
+openProtocol=0
+oee=0
 warmup=""
 quietInterval=""
 quietPeriod=""
@@ -126,6 +147,9 @@ while [[ $# -gt 0 ]]; do
 		--no-grant-restart) noGrantRestart=1; shift;;
 		--read-back) readBack=1; shift;;
 		--emulator) emulator=1; shift;;
+		--flow) flow=1; shift;;
+		--open-protocol) openProtocol=1; emulator=1; shift;;
+		--oee) oee=1; emulator=1; shift;;
 		--external) external=1; shift;;
 		--external-url) external=1; externalUrl="$2"; shift 2;;
 		--external-uri) external=1; externalUri="$2"; shift 2;;
@@ -525,7 +549,9 @@ if [[ $emulator -eq 1 ]]; then
 		|| failEarly "emulator rights grant failed - see $runDir/emulator/grant.log"
 	echo "emulator user granted OPC node access (while nodeIds is still open)"
 fi
-soakClient -grant >"$runDir/client/grant.log" 2>&1 \
+grantArgs=( -grant )
+[[ $flow -eq 0 ]] || grantArgs+=( -flow ) # the collector's Update and gateway histGroups enforced, for the flow's `opc out`
+soakClient "${grantArgs[@]}" >"$runDir/client/grant.log" 2>&1 \
 	|| failEarly "rights grant failed - see $runDir/client/grant.log"
 if [[ $noGrantRestart -eq 1 ]]; then
 	# --no-grant-restart: the acl and the enforced row reach the running OpcServer only as events - the run that asks
@@ -570,6 +596,9 @@ fi
 [[ -z "$quietInterval" ]] || clientArgs+=( "-quietInterval=$quietInterval" )
 [[ -z "$quietPeriod" ]] || clientArgs+=( "-quietPeriod=$quietPeriod" )
 [[ $readBack -eq 0 ]] || clientArgs+=( "-readBack" )
+[[ $flow -eq 0 ]] || clientArgs+=( "-flow" )
+[[ $openProtocol -eq 0 ]] || clientArgs+=( "-openProtocol" )
+[[ $oee -eq 0 ]] || clientArgs+=( "-oee" )
 [[ $external -eq 0 ]] || clientArgs+=( "${externalArgs[@]}" )
 launch client "$soakExe" "$scriptDir/config/Opc.Soak.jsonnet" "" "${clientArgs[@]}"
 
@@ -647,6 +676,17 @@ if [[ $emulator -eq 1 ]]; then
 		echo "history reads that held the service lock >=100ms: ${slow:-0}"
 	} >"$runDir/historian-report.txt"
 	cat "$runDir/historian-report.txt"
+fi
+
+# --flow:  the flow's trace, a day file a UTC day (<root>/<slug>/<yyyy>/<m>/<d>/trace.binpb, /gateway/flows/path under the
+# gateway's logs dir), so a 24h run that crossed midnight shows two.  Reported, as the historian's are;  the client judges the flow.
+if [[ $flow -eq 1 ]]; then
+	{
+		days=$(find "$runDir/gateway" -path '*/soak-flow/*' -name trace.binpb 2>/dev/null | sort)
+		echo "flow trace day files: $(printf '%s' "$days" | grep -c .)"
+		[[ -z "$days" ]] || printf '%s\n' "$days"
+	} >"$runDir/flows-report.txt"
+	cat "$runDir/flows-report.txt"
 fi
 
 if [[ ${#failReasons[@]} -eq 0 ]]; then

@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <fstream>
 #include <numeric>
+#include <set>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
@@ -16,6 +17,7 @@
 #include <jde/web/client/http/ClientHttpResException.h>
 #include "../tests/utils/GatewayClientSocket.h"
 #include "../src/UAClient.h"
+#include "../src/types/ServerCnnctn.h"
 #include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
@@ -101,6 +103,62 @@ namespace Jde::Opc::Gateway::Soak{
 		string _error;
 	};
 
+	//-flow's FlowSubscribe:  each node's counts over the run and its last error.  An ack holds a run's totals so far and each
+	//push the counts since the push before (flows spec *Live*), so they add up from the ack's.  OnAck is a later run's - a
+	//redeploy's or a restart's - whose totals start again, so the received/pushes ratio is not judged after one.  A non-empty
+	//Ended is the gateway ending the subscription.
+	struct SoakFlowListener final : Tests::IFlowListener{
+		struct Totals{ uint64_t Received{}, Drops{}, Errors{}; };
+		α OnActivity( const FromServer::FlowActivity& activity )ι->void override{
+			std::lock_guard _{ _mutex };
+			++Pushes;
+			for( let& n : activity.nodes() ){
+				if( n.has_counts() )
+					Add( _totals[n.node()], n.counts() );
+				if( n.error().size() )
+					_lastError = Ƒ( "{}: {}", n.node(), n.error() );
+			}
+		}
+		α OnAck( const FromServer::FlowSubscribeAck& ack )ι->void override{ std::lock_guard _{ _mutex }; ++Reruns; SeedLocked( ack ); }
+		α OnError( string what )ι->void override{ std::lock_guard _{ _mutex }; _ended = move(what); }
+		α Seed( const FromServer::FlowSubscribeAck& ack )ι->void{ std::lock_guard _{ _mutex }; SeedLocked( ack ); }
+		α Counts( sv node )ι->Totals{ std::lock_guard _{ _mutex }; auto p = _totals.find( string{node} ); return p==_totals.end() ? Totals{} : p->second; }
+		α LastError()ι->string{ std::lock_guard _{ _mutex }; return _lastError; }
+		α Ended()ι->string{ std::lock_guard _{ _mutex }; return _ended; }
+		std::atomic<uint> Pushes{}, Reruns{};
+	private:
+		Ω Add( Totals& t, const FromServer::FlowCounts& c )ι->void{ t.Received += c.received(); t.Drops += c.drops(); t.Errors += c.errors(); }
+		α SeedLocked( const FromServer::FlowSubscribeAck& ack )ι->void{
+			_totals.clear();
+			for( let& n : ack.nodes() )
+				Add( _totals[n.node()], n.counts() );
+		}
+		std::mutex _mutex;
+		flat_map<string,Totals> _totals;
+		string _lastError, _ended;
+	};
+
+	//-oee's OeeSubscribe:  every status pushed, the shift occurrences they named - by start, so each occurrence once - and
+	//how often the gateway's calendar client was missing the machine's calendar.
+	struct SoakOeeListener final : Tests::IOeeListener{
+		α OnStatus( const FromServer::OeeStatus& status )ι->void override{
+			std::lock_guard _{ _mutex };
+			++Statuses;
+			if( status.has_shift() )
+				_shifts.insert( status.shift().start().seconds() );
+			if( status.calendar_missing() )
+				++CalendarMissing;
+		}
+		α OnError( string what )ι->void override{ std::lock_guard _{ _mutex }; _ended = move(what); }
+		α Shifts()ι->uint{ std::lock_guard _{ _mutex }; return _shifts.size(); }
+		α Ended()ι->string{ std::lock_guard _{ _mutex }; return _ended; }
+		std::atomic<uint> Statuses{}, CalendarMissing{};
+	private:
+		std::mutex _mutex;
+		std::set<int64_t> _shifts;
+		string _ended;
+	};
+
 	//The gateway's own AppServer user, read from its status:  the identity its historian collector presents to an OPC
 	//server (a Certificate token, the gateway's app-client cert), which an enforcing OpcServer must grant before a group
 	//fills.  None when the gateway can't be reached or reports no user.  A short socket of its own on the grant client's
@@ -140,6 +198,17 @@ namespace Jde::Opc::Gateway::Soak{
 		α SetupHistorian()ε->void;//a gateway group on the primary leg, over the node the soak writes, and a HistSubscribe to it.
 		α ReadBackHistorian()ι->void;//reads the group's stored values over the run and ends the subscription.
 		α RunPassthrough()ι->void;//-passthrough:  one aggregate read of the OpcServer's pump history and one history edit, timed.
+		α PrimaryLeg()ι->ServerLeg*;//the first leg on the main socket with nodes - the OpcServer's, which the historian, the flow and OEE use.
+		α ConnectionId( sv slug )ε->uint;
+		α NsuNode( sv slug, const NodeId& node )ε->jobject;//the node spelled by namespace URI, as a group holds its members.
+		α NodeValue( sv slug, const NodeId& node )ε->jvalue;
+		α SetupFlow()ε->void;//-flow:  a group over its target, the flow deployed and subscribed.
+		α FinishFlow()ι->bool;//its criteria, into _flowSummary.
+		α SetupTightening()ε->void;//-openProtocol:  the emulator's tightening station as a connection, linked and subscribed.
+		α OnTightening( uint results )ι->void;
+		α FinishTightening()ι->bool;
+		α SetupOee()ε->void;//-oee:  a calendar, a group over pump2's signals and a machine on them, live and subscribed.
+		α FinishOee()ι->bool;
 
 		sp<App::Client::IAppClient> _client;
 		sp<GatewayClientSocket> _socket;//the main session's socket - User legs hold their own in ServerLeg::Socket.
@@ -181,6 +250,40 @@ namespace Jde::Opc::Gateway::Soak{
 		uint _passReads{}, _passReadValues{}, _passEdits{}, _passEditValues{};
 		uint64_t _passReadMsMax{}, _passEditMsMax{};
 		string _passError;
+		flat_map<string,flat_map<uint16,string>> _namespaces;//each connection's URIs by index, read once.
+
+		//Opt-in legs for what the November release added, each set up before the writes start and judged at the end, its
+		//counts in the summary under its name.  A leg asked for and not set up fails the run:  unlike the historian, it was asked for.
+		//-flow:  `opc in` on the node the soak writes, a Function node doubling it, `opc out` to a second node, at trace level
+		//counts - so the Function's QuickJS runs a message a write for the run and the trace's day files roll at UTC midnight.
+		bool _flow;
+		uint32 _flowId{};
+		string _flowSlug;
+		optional<NodeId> _flowSource, _flowTarget;
+		TimePoint _flowFrom{};
+		sp<SoakFlowListener> _flowListener;
+		RequestId _flowSubscription{};
+		string _flowError;
+		jobject _flowSummary;
+		//-openProtocol:  a connection of kind open-protocol to the emulator's tightening station, its results counted by the
+		//driver's own `_Op.Results` (read-only, so no write cycle) and the link read back at the end.
+		bool _openProtocol;
+		string _tightSlug, _tightUrl;
+		uint _tightStart{}, _tightLast{}, _tightPushes{};
+		optional<steady_clock::time_point> _tightFirstPush, _tightLastPush;
+		steady_clock::duration _tightMaxGap{};
+		string _tightError;
+		jobject _tightSummary;
+		//-oee:  a machine on pump2's State, Total, Reject and Reason under a UTC calendar, three 8 h shifts for a run of 8 h or
+		//more - one of whose boundaries is UTC midnight - else two short ones a couple of minutes in.
+		bool _oee;
+		uint32 _oeeMachine{};
+		TimePoint _oeeFrom{};
+		bool _oeeLongShifts{};
+		sp<SoakOeeListener> _oeeListener;
+		RequestId _oeeSubscription{};
+		string _oeeError;
+		jobject _oeeSummary;
 	};
 
 	SoakRunner::SoakRunner( sp<App::Client::IAppClient> client )ε:
@@ -201,7 +304,12 @@ namespace Jde::Opc::Gateway::Soak{
 		_readBack{ argFlag("-readBack", "/soak/readBack") },
 		_passthrough{ argFlag("-passthrough", "/soak/passthrough") },
 		_csvPath{ Settings::FindArgString( "-csv", "/soak/csv" ).value_or( "soak.csv" ) },
-		_summaryPath{ Settings::FindArgString( "-summary", "/soak/summary" ).value_or( "summary.json" ) }
+		_summaryPath{ Settings::FindArgString( "-summary", "/soak/summary" ).value_or( "summary.json" ) },
+		_flow{ argFlag("-flow", "/soak/flow") },
+		_openProtocol{ argFlag("-openProtocol", "/soak/openProtocol") },
+		_tightSlug{ Settings::FindString( "/soak/tighteningSlug" ).value_or( "SoakTightening" ) },
+		_tightUrl{ Settings::FindArgString( "-tighteningUrl", "/soak/tighteningUrl" ).value_or( "open-protocol://127.0.0.1:4545" ) },
+		_oee{ argFlag("-oee", "/soak/oee") }
 	{
 		for( auto& leg : _legs )
 			leg.LatenciesMs.reserve( 1'000 );
@@ -227,17 +335,27 @@ namespace Jde::Opc::Gateway::Soak{
 		//suite's embedded server is OPEN).  Best effort:  the soak's writes/pushes/RSS still stand without it, and a
 		//collector the grant missed shows as a historian group that stored nothing, not as a run that never started.  The
 		//soak user, holding All, administers the row and may grant it;  made after the enforce, as the restore above is.
+		//-flow:  a flow writes as that same collector (flows spec *Rights*), so it takes Update too;  and an `opc out` writes only
+		//a node of a group under an enforced gateway `histGroups`, which the soak user, who deploys, may update - granted and
+		//then enforced, nodeIds' order.  Unlike the collector's grant these throw:  the run asked for the flow.
+		let flow = argFlag( "-flow", "/soak/flow" );
 		try{
 			if( let collector = gatewayHistorianUser(client); collector && *collector!=(uint64_t)client->UserPK().Value ){
 				using enum Access::ERights;
-				client->GrantRights( Jde::UserPK{(Jde::UserPK::Type)*collector}, Read | Subscribe, schema, "nodeIds" );
-				INFO( "Granted the gateway's collector (user {}) Read+Subscribe on '{}' nodeIds.", *collector, schema );
+				let rights = flow ? Read | Subscribe | Update : Read | Subscribe;
+				client->GrantRights( Jde::UserPK{(Jde::UserPK::Type)*collector}, rights, schema, "nodeIds" );
+				INFO( "Granted the gateway's collector (user {}) {} on '{}' nodeIds.", *collector, flow ? "Read+Subscribe+Update" : "Read+Subscribe", schema );
 			}
 			else
 				WARN( "The gateway reported no distinct collector user - a historian group may not fill under enforcement." );
 		}
 		catch( const std::exception& e ){
 			WARN( "Could not grant the gateway's collector: {}", e.what() );
+		}
+		if( flow ){
+			client->GrantRights( client->UserPK(), Access::ERights::All, "gateway", "histGroups" );
+			client->QuerySync<jvalue>( "restoreResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:null )", {} );
+			INFO( "Granted user {} every right on gateway histGroups and enforced it, for the flow's `opc out`.", client->UserPK().Value );
 		}
 	}
 
@@ -329,6 +447,10 @@ namespace Jde::Opc::Gateway::Soak{
 			return;
 		try{
 			let v = Opc::Value{ ProtoUtils::ToVariant(value) }.AsNumber<uint>();
+			if( _openProtocol && opcId==_tightSlug ){//no leg:  the driver's `_Op.Results`, read-only.
+				OnTightening( v );
+				return;
+			}
 			{
 				std::lock_guard _{ _mutex };
 				if( auto leg = FindLeg(opcId); leg )
@@ -575,6 +697,12 @@ namespace Jde::Opc::Gateway::Soak{
 					{"error", _passError}
 				};
 			}
+			if( _flow )
+				y["flow"] = _flowSummary;
+			if( _openProtocol )
+				y["tightening"] = _tightSummary;
+			if( _oee )
+				y["oee"] = _oeeSummary;
 			std::ofstream f{ _summaryPath };
 			f << serialize( y );
 			INFO( "Summary written to '{}'.", _summaryPath.string() );
@@ -588,39 +716,56 @@ namespace Jde::Opc::Gateway::Soak{
 	//HistSubscribe from now on:  the snapshot's bound, then a record per write.  The collector, under the gateway's own
 	//credential, subscribes the node on its own client and stores every change (the group sets no thresholds).  Throws on
 	//any step - Run catches it and leaves the historian out of the run rather than fail it.
-	α SoakRunner::SetupHistorian()ε->void{
-		for( auto& leg : _legs ){//the primary leg shares the main socket, which the subscription rides.
-			if( leg.User.empty() && !leg.Nodes.empty() ){ _histLeg = &leg; break; }
+	α SoakRunner::PrimaryLeg()ι->ServerLeg*{
+		auto p = std::ranges::find_if( _legs, [](let& l){ return l.User.empty() && !l.Nodes.empty(); } );
+		return p==_legs.end() ? nullptr : &*p;
+	}
+	α SoakRunner::ConnectionId( sv slug )ε->uint{
+		let conn = _socket->QuerySync( Ƒ("serverConnection( slug: \"{}\", deleted: null ){{ id }}", slug) );
+		THROW_IF( !conn.is_object() || !conn.as_object().contains("id"), "[{}]no connection id.", slug );
+		return Json::AsNumber<uint>( conn.as_object(), "id" );
+	}
+	//Right after a group's create the collector hasn't read the server's NamespaceArray, so a member named by index answers
+	//Bad_NodeIdUnknown:  the group holds each by URI (HistNodeText), and the soak spells them so.
+	α SoakRunner::NsuNode( sv slug, const NodeId& node )ε->jobject{
+		auto& uris = _namespaces[string{slug}];
+		if( uris.empty() ){
+			let rows = _socket->QuerySync( "namespaces( opc: $opc ){ index uri }", jobject{ {"opc", slug} } );
+			if( rows.is_array() ){
+				for( let& r : rows.as_array() ){
+					if( let u = Json::FindSV(r.as_object(), "uri"); u && u->size() )
+						uris.emplace( Json::AsNumber<uint16>(r.as_object(), "index"), string{*u} );
+				}
+			}
 		}
+		auto o = node.ToJson();
+		let ns = Json::FindNumber<uint16>( o, "ns" );
+		let uri = ns ? uris.find( *ns ) : uris.end();
+		THROW_IF( !ns || uri==uris.end(), "[{}]can't resolve the namespace of '{}'.", slug, node.ToString() );
+		o.erase( "ns" );
+		o["nsu"] = uri->second;
+		return o;
+	}
+	α SoakRunner::NodeValue( sv slug, const NodeId& node )ε->jvalue{
+		let read = _socket->QuerySync( "node( opc: $opc, id: $id ){ value }", jobject{ {"opc", slug}, {"id", node.ToJson()} } );
+		THROW_IF( !read.is_object() || !read.as_object().contains("value"), "[{}]no value for '{}': {}", slug, node.ToString(), serialize(read) );
+		return read.as_object().at( "value" );
+	}
+
+	α SoakRunner::SetupHistorian()ε->void{
+		_histLeg = PrimaryLeg();//it shares the main socket, which the subscription rides.
 		THROW_IF( !_histLeg, "No local leg with nodes to historize - skipping the historian." );
-		let conn = _socket->QuerySync( Ƒ("serverConnection( slug: \"{}\", deleted: null ){{ id }}", _histLeg->Slug) );
-		THROW_IF( !conn.is_object() || !conn.as_object().contains("id"), "[{}]no connection id for the historian group.", _histLeg->Slug );
-		_histConnectionId = Json::AsNumber<uint>( conn.as_object(), "id" );
+		_histConnectionId = ConnectionId( _histLeg->Slug );
 		let created = _socket->QuerySync( "mutation createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection ){ id }",
 			jobject{ {"name", "Soak"}, {"slug", "soak"}, {"connection", _histConnectionId} } );
 		_histGroup = Json::AsNumber<uint32>( created.as_object(), "id" );
 		for( let& node : _histLeg->Nodes )
 			_socket->QuerySync( "mutation createHistGroupNode( histGroupId: $g, node: $node ){ id }", jobject{ {"g", *_histGroup}, {"node", node.ToJson()} } );
-		//Subscribe and read by namespace URI, not the server index:  the group holds each member by its URI (createHistGroupNode
-		//spells it so, HistNodeText), and right after the create the collector hasn't read the server's NamespaceArray, so an
-		//index-form node answers Bad_NodeIdUnknown.  Resolve the connection's namespaces once and spell each node with its nsu.
-		let nsRows = _socket->QuerySync( "namespaces( opc: $opc ){ index uri }", jobject{ {"opc", _histLeg->Slug} } );
-		flat_map<uint16,string> nsUri;
-		if( nsRows.is_array() ){
-			for( let& r : nsRows.as_array() ){
-				if( let u = Json::FindSV(r.as_object(), "uri"); u && u->size() )
-					nsUri.emplace( Json::AsNumber<uint16>(r.as_object(), "index"), string{*u} );
-			}
-		}
+		//Subscribe and read by namespace URI, not the server index (NsuNode).
 		_histReadNodes.clear();
 		vector<ExNodeId> nodes; nodes.reserve( _histLeg->Nodes.size() );
 		for( let& n : _histLeg->Nodes ){
-			auto o = n.ToJson();
-			let ns = Json::FindNumber<uint16>( o, "ns" );
-			let uri = ns ? nsUri.find(*ns) : nsUri.end();
-			THROW_IF( !ns || uri==nsUri.end(), "[{}]can't resolve the namespace of '{}' for the historian subscription.", _histLeg->Slug, n.ToString() );
-			o.erase( "ns" );
-			o["nsu"] = uri->second;
+			let o = NsuNode( _histLeg->Slug, n );
 			nodes.emplace_back( jvalue{o} );
 			_histReadNodes.push_back( jvalue{o} );
 		}
@@ -735,6 +880,318 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 	}
 
+	Ω failuresJson( const vector<string>& failures )ι->jarray{
+		jarray y;
+		for( let& f : failures )
+			y.emplace_back( f );
+		return y;
+	}
+
+	//The target joins a group of its own:  an `opc out` writes only a grouped node, under an enforced gateway `histGroups`
+	//(-grant -flow enforces it beside nodeIds), and the soak group's counts are the historian criteria's.  The flow writes as
+	//the gateway's own OPC user, which -grant -flow gave Update.
+	α SoakRunner::SetupFlow()ε->void{
+		let leg = PrimaryLeg();
+		THROW_IF( !leg, "No local leg with nodes for the flow's source." );
+		_flowSlug = leg->Slug;
+		_flowSource = leg->Nodes.front();
+		let configured = Settings::FindObject( "/soak/flowNode" );
+		_flowTarget = configured ? NodeId{ jvalue(*configured) } : NodeId{ (UA_UInt16)Json::AsNumber<uint16>(_flowSource->ToJson(), "ns"), 6003 };//Lamp2.Intensity, 6017's sibling.
+		let source = NsuNode( _flowSlug, *_flowSource );
+		let target = NsuNode( _flowSlug, *_flowTarget );
+		let group = Json::AsNumber<uint32>( _socket->QuerySync("mutation createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection ){ id }",
+			jobject{ {"name", "Soak flow"}, {"slug", "soak-flow"}, {"connection", ConnectionId(_flowSlug)} }).as_object(), "id" );
+		_socket->QuerySync( "mutation createHistGroupNode( histGroupId: $g, node: $node ){ id }", jobject{ {"g", group}, {"node", serialize(target)} } );
+		_flowId = Json::AsNumber<uint32>( _socket->QuerySync("mutation createFlow( name:$name, slug:$slug, enabled:true, trace:\"counts\" ){ id }",
+			jobject{ {"name", "Soak flow"}, {"slug", "soak-flow"} }).as_object(), "id" );
+		let graph = Ƒ( R"({{"nodes":[
+{{"id":"in","type":"opc in","props":{{"connection":"{0}","node":{1}}},"wires":[["double"]]}},
+{{"id":"double","type":"function","props":{{"code":"msg.payload = msg.payload*2;\nreturn msg;"}},"wires":[["out"]]}},
+{{"id":"out","type":"opc out","props":{{"connection":"{0}","node":{2}}},"wires":[]}}]}})", _flowSlug, serialize(source), serialize(target) );
+		jobject deployed;
+		for( uint attempt=1; ; ++attempt ){//a refusal may be the gateway's access snapshot not yet holding -grant's histGroups.
+			try{
+				deployed = _socket->QuerySync( "mutation deployFlow( flow:$flow, graph:$graph, comment:$comment ){ flow version running fault{ node message } }",
+					jobject{ {"flow", _flowId}, {"graph", graph}, {"comment", "soak"} } ).as_object();
+				break;
+			}
+			catch( const Tests::GatewayErrorResponse& e ){
+				if( attempt>=6 )
+					throw;
+				WARN( "deployFlow refused (attempt {} of 6) - retrying in 5s: {}", attempt, e.what() );
+				std::this_thread::sleep_for( 5s );
+			}
+		}
+		THROW_IF( !Json::FindBool(deployed, "running").value_or(false), "Flow {} deployed but is not running: {}", _flowId, serialize(deployed) );
+		_flowListener = ms<SoakFlowListener>();
+		_flowFrom = Clock::now();
+		let ack = BlockAwait<ClientSocketAwait<FromServer::FlowSubscribeAck>,FromServer::FlowSubscribeAck>( _socket->FlowSubscribe(_flowId, false, _flowListener) );
+		_flowSubscription = _socket->LastFlowSubscription();
+		_flowListener->Seed( ack );
+		INFO( "Flow {} running on '{}':  {} doubled into {}.", _flowId, _flowSlug, _flowSource->ToString(), _flowTarget->ToString() );
+	}
+
+	//Errors and drops none, the Function node fed at least half as often as the soak's own pushes - a flow whose `opc in`
+	//stopped hearing the node mid-run falls under it - and the target holding twice the source once the last write is through.
+	//flowCounts, the trace's per-minute records, is reported beside the live figures, a minute or two behind them.
+	α SoakRunner::FinishFlow()ι->bool{
+		vector<string> failures;
+		if( _flowError.size() )
+			failures.push_back( Ƒ("setup: {}", _flowError) );
+		else{
+			try{
+				BlockAwait<ClientSocketAwait<bool>,bool>( _socket->FlowUnsubscribe(_flowSubscription) );
+			}
+			catch( const std::exception& e ){
+				WARN( "FlowUnsubscribe failed: {}", e.what() );
+			}
+			let in = _flowListener->Counts( "in" ), function = _flowListener->Counts( "double" ), out = _flowListener->Counts( "out" );
+			let pushes = PrimaryLeg() ? PrimaryLeg()->Count.Pushes : 0;
+			let errors = in.Errors+function.Errors+out.Errors;
+			let drops = in.Drops+function.Drops+out.Drops;
+			_flowSummary = jobject{ {"flow", _flowId}, {"activityPushes", _flowListener->Pushes.load()}, {"reruns", _flowListener->Reruns.load()},
+				{"functionReceived", function.Received}, {"written", out.Received}, {"errors", errors}, {"drops", drops}, {"legPushes", pushes} };
+			if( errors )
+				failures.push_back( Ƒ("{} error(s), the last {}", errors, _flowListener->LastError()) );
+			if( drops )
+				failures.push_back( Ƒ("{} message(s) dropped", drops) );
+			if( !function.Received )
+				failures.push_back( "the Function node received nothing" );
+			else if( !_flowListener->Reruns && function.Received*2<pushes )
+				failures.push_back( Ƒ("the Function node received {} message(s) for {} push(es) of its source", function.Received, pushes) );
+			if( let ended = _flowListener->Ended(); ended.size() )
+				failures.push_back( Ƒ("the gateway ended the subscription:  {}", ended) );
+			try{
+				std::this_thread::sleep_for( 2s );//the last write's message through the Function and `opc out`.
+				let source = NodeValue( _flowSlug, *_flowSource ).to_number<double>();
+				let target = NodeValue( _flowSlug, *_flowTarget ).to_number<double>();
+				_flowSummary["source"] = source;
+				_flowSummary["target"] = target;
+				if( target!=2*source )
+					failures.push_back( Ƒ("the target holds {} for a source of {}", target, source) );
+			}
+			catch( const std::exception& e ){
+				failures.push_back( Ƒ("reading the source and target failed:  {}", e.what()) );
+			}
+			try{
+				let counts = _socket->QuerySync( "flowCounts( flow:$flow, start:$start, end:$end, by:\"PT1H\" ){ continuation counts{ node received errors } }",
+					jobject{ {"flow", _flowId}, {"start", ToIsoString(_flowFrom)}, {"end", ToIsoString(Clock::now())} } );
+				jobject received;
+				for( let& c : Json::FindDefaultArray(counts.as_object(), "counts") ){
+					let& o = c.as_object();
+					auto& n = received[Json::AsSV( o, "node" )];
+					n = (n.is_number() ? n.to_number<uint64_t>() : 0)+Json::FindNumber<uint64_t>( o, "received" ).value_or( 0 );
+				}
+				_flowSummary["traceReceived"] = move( received );
+			}
+			catch( const std::exception& e ){
+				WARN( "flowCounts failed: {}", e.what() );
+			}
+		}
+		_flowSummary["failures"] = failuresJson( failures );
+		return failures.empty();
+	}
+
+	Ω opNode( sv name )ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(ServerCnnctn::DriverBrowseNs, string{name}.c_str()) }; }
+	//A 64-bit integer comes over QL as the protobufjs Long the javascript clients read, {high, low, unsigned}
+	//(OpcHelperTests.SixtyFourBitIntegersUseTheLongForm), and the narrower ones as numbers.
+	Ω asCount( const jvalue& v )ε->uint{
+		if( !v.is_object() )
+			return v.to_number<uint>();
+		let& o = v.as_object();
+		return (uint)( (Json::AsNumber<uint64_t>(o, "high")<<32) | Json::AsNumber<uint64_t>(o, "low") );
+	}
+
+	//The row alone starts the driver and its loopback server (DriverHost::RowChanged);  the subscription waits for its link.
+	//`_Op.Results` counts the station's results as the driver writes them, so a push a result, the station's one every 2 s.
+	α SoakRunner::SetupTightening()ε->void{
+		let existing = _socket->QuerySync( Ƒ("serverConnection( slug: \"{}\", deleted: null ){{ id }}", _tightSlug) );
+		if( !existing.is_object() || !existing.as_object().contains("id") ){
+			_socket->QuerySync( "mutation createServerConnection( slug:$slug, name:$name, description:$description, url:$url, isDefault:false, kind:\"open-protocol\" ){ id }",
+				jobject{ {"slug", _tightSlug}, {"name", "Soak tightening station"}, {"description", "The PLC emulator's Open Protocol station"}, {"url", _tightUrl} } );
+		}
+		let deadline = steady_clock::now()+90s;
+		for( ;; ){
+			try{
+				if( let v = NodeValue(_tightSlug, opNode("_Op.Connected")); v.is_bool() && v.as_bool() )
+					break;
+			}
+			catch( const std::exception& e ){//the driver's server comes up beside the row.
+				TRACE( "[{}]_Op.Connected not read yet:  {}", _tightSlug, e.what() );
+			}
+			THROW_IF( steady_clock::now()>deadline, "[{}]the driver never linked to {} in 90s.", _tightSlug, _tightUrl );
+			std::this_thread::sleep_for( 2s );
+		}
+		_tightStart = asCount( NodeValue(_tightSlug, opNode("_Op.Results")) );
+		let ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( _socket->Subscribe(_tightSlug, {opNode("_Op.Results")}, shared_from_this()) );
+		THROW_IF( ack.results_size()!=1 || ack.results(0).status_code(), "[{}]the _Op.Results subscription failed.", _tightSlug );
+		INFO( "[{}]Linked to {} - {} result(s) so far.", _tightSlug, _tightUrl, _tightStart );
+	}
+	α SoakRunner::OnTightening( uint results )ι->void{
+		let now = steady_clock::now();
+		std::lock_guard _{ _mutex };
+		if( _tightLastPush )
+			_tightMaxGap = std::max( _tightMaxGap, now-*_tightLastPush );
+		else
+			_tightFirstPush = now;
+		_tightLastPush = now;
+		_tightLast = results;
+		++_tightPushes;
+	}
+	//The link up at the end, no result lost, the counters adding up, results at a quarter of the station's rate at least, and
+	//none of the run without one for two minutes.  The reconnects are reported:  a backfilled one loses nothing.
+	α SoakRunner::FinishTightening()ι->bool{
+		vector<string> failures;
+		if( _tightError.size() )
+			failures.push_back( Ƒ("setup: {}", _tightError) );
+		else{
+			try{
+				BlockAwait<ClientSocketAwait<FromServer::UnsubscribeAck>,FromServer::UnsubscribeAck>( _socket->Unsubscribe(_tightSlug, {opNode("_Op.Results")}) );
+			}
+			catch( const std::exception& e ){
+				WARN( "[{}]Unsubscribe failed: {}", _tightSlug, e.what() );
+			}
+			try{
+				let read = [this]( sv name ){ return NodeValue( _tightSlug, opNode(name) ); };
+				let connected = read( "_Op.Connected" );
+				let results = asCount( read("_Op.Results") );
+				let lost = asCount( read("_Op.LostResults") );
+				let reconnects = asCount( read("_Op.Reconnects") );
+				let total = asCount( read("Counters.Total") ), ok = asCount( read("Counters.Ok") ), nok = asCount( read("Counters.Nok") );
+				std::lock_guard _{ _mutex };
+				let seconds = _tightFirstPush && _tightLastPush ? (uint)duration_cast<std::chrono::seconds>( *_tightLastPush-*_tightFirstPush ).count() : 0;
+				let gained = results-_tightStart;
+				let maxGap = (uint)duration_cast<std::chrono::seconds>( _tightMaxGap ).count();
+				_tightSummary = jobject{ {"connection", _tightSlug}, {"connected", connected}, {"results", gained}, {"lastPushed", _tightLast}, {"pushes", _tightPushes}, {"seconds", seconds},
+					{"maxGapSeconds", maxGap}, {"lost", lost}, {"reconnects", reconnects}, {"total", total}, {"ok", ok}, {"nok", nok} };
+				if( !connected.is_bool() || !connected.as_bool() )
+					failures.push_back( "the driver was not linked at the end" );
+				if( lost )
+					failures.push_back( Ƒ("{} result(s) lost", lost) );
+				if( total!=ok+nok )
+					failures.push_back( Ƒ("Counters.Total {} is not Ok {} + Nok {}", total, ok, nok) );
+				if( !_tightPushes )
+					failures.push_back( "no result was pushed" );
+				else if( seconds>=60 && gained*4<seconds )
+					failures.push_back( Ƒ("{} result(s) in {}s, under a quarter of the station's one every 2s", gained, seconds) );
+				if( maxGap>120 )
+					failures.push_back( Ƒ("{}s without a result", maxGap) );
+			}
+			catch( const std::exception& e ){
+				failures.push_back( Ƒ("the read-back failed:  {}", e.what()) );
+			}
+		}
+		_tightSummary["failures"] = failuresJson( failures );
+		return failures.empty();
+	}
+
+	//The calendar on the AppServer, in UTC.  Three 8 h shifts every day for a run of 8 h or more, so a day's run crosses them
+	//and one boundary is UTC midnight;  else two back to back from two minutes on, each a quarter of the run and 3 minutes at
+	//least, so a 10-minute smoke crosses both.  pump2 (Pumps.h):  its toggle and its 10s-a-minute stop under code 1, small
+	//stops under a 2-minute smallStop, its count a unit every 2 s, which idealCycle takes.
+	α SoakRunner::SetupOee()ε->void{
+		let leg = PrimaryLeg();
+		THROW_IF( !leg, "No local leg for OEE's group." );
+		let now = Clock::now();
+		_oeeLongShifts = _duration>=std::chrono::hours{8};
+		let calendar = Json::AsNumber<uint32>( _client->QuerySync<jvalue>(R"(createCalendar( name:"Soak OEE", slug:"soak-oee", timeZone:"UTC", dayStart:0 ){ id })", {}).as_object(), "id" );
+		let patterns = _client->QuerySync<jvalue>( Ƒ("calendarPatterns( calendarId:{}, deleted:null ){{ id }}", calendar), {} );
+		THROW_IF( !patterns.is_array() || patterns.as_array().empty(), "Calendar {} has no pattern:  {}", calendar, serialize(patterns) );
+		let pattern = Json::AsNumber<uint32>( patterns.as_array().front().as_object(), "id" );
+		vector<std::pair<uint,uint>> shifts;//the start, minutes into the UTC day, and the length
+		if( _oeeLongShifts )
+			shifts = { {0, 480}, {480, 480}, {960, 480} };
+		else{
+			let length = (uint)std::max<int64_t>( 3, std::chrono::duration_cast<std::chrono::minutes>(_duration).count()/4 );
+			let minute = (uint)std::chrono::duration_cast<std::chrono::minutes>( now-std::chrono::floor<std::chrono::days>(now) ).count();
+			shifts = { {(minute+2)%1440, length}, {(minute+2+length)%1440, length} };
+		}
+		for( uint i=0; i<shifts.size(); ++i )
+			_client->QuerySync<jvalue>( Ƒ(R"(createCalendarShift( calendarPatternId:{}, name:"{}", days:127, start:{}, minutes:{} ){{ id }})", pattern, (char)('A'+i), shifts[i].first, shifts[i].second), {} );
+		let group = Json::AsNumber<uint32>( _socket->QuerySync("mutation createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection ){ id }",
+			jobject{ {"name", "Soak OEE pump2"}, {"slug", "soak-oee"}, {"connection", ConnectionId(leg->Slug)} }).as_object(), "id" );
+		constexpr std::array<std::pair<sv,uint32>,4> signals{{ {"State", 6021}, {"Total", 6023}, {"Reject", 6024}, {"Reason", 6025} }};
+		flat_map<sv,uint32> members;
+		for( let& [role,id] : signals ){
+			members[role] = Json::AsNumber<uint32>( _socket->QuerySync("mutation createHistGroupNode( histGroupId: $g, node: $node ){ id }",
+				jobject{ {"g", group}, {"node", serialize(jobject{ {"nsu", "urn:jde:pumps"}, {"i", id} })} }).as_object(), "id" );
+		}
+		_oeeMachine = Json::AsNumber<uint32>( _socket->QuerySync("mutation createOeeMachine( name:$name, slug:$slug, histGroupId:$group, calendarId:$calendar, idealCycle:$ideal, countUnit:$unit, smallStop:$small ){ id }",
+			jobject{ {"name", "Soak pump2"}, {"slug", "soak-pump2"}, {"group", group}, {"calendar", calendar}, {"ideal", 2000.0}, {"unit", "units"}, {"small", 120'000} }).as_object(), "id" );
+		for( let& [role,_] : signals )//State first, as a machine needs it or a count.
+			_socket->QuerySync( "mutation createOeeMachineSignal( oeeMachineId:$machine, role:$role, histGroupNodeId:$node ){ id }", jobject{ {"machine", _oeeMachine}, {"role", role}, {"node", members[role]} } );
+		let deadline = steady_clock::now()+90s;
+		for( ;; ){
+			let status = _socket->QuerySync( "oeeMachineStatus( machine:$id ){ calendar engine why }", jobject{ {"id", _oeeMachine} } );
+			let& o = status.as_object();
+			if( Json::FindSV(o, "engine").value_or("")=="live" && Json::FindSV(o, "calendar").value_or("")=="found" )
+				break;
+			THROW_IF( steady_clock::now()>deadline, "Machine {} never ran live on its calendar:  {}", _oeeMachine, serialize(status) );
+			std::this_thread::sleep_for( 2s );
+		}
+		_oeeListener = ms<SoakOeeListener>();
+		_oeeFrom = Clock::now();
+		let ack = BlockAwait<ClientSocketAwait<FromServer::OeeStatus>,FromServer::OeeStatus>( _socket->OeeSubscribe(_oeeMachine, _oeeListener) );
+		_oeeSubscription = _socket->LastOeeSubscription();
+		_oeeListener->OnStatus( ack );
+		INFO( "OEE machine {} live on pump2, {} shift(s) a day in calendar {}.", _oeeMachine, shifts.size(), calendar );
+	}
+	//The engine live on its calendar at the end, every shift occurrence the run spans heard live and read back with planned
+	//time.  The span is trimmed a minute at each end, so an occurrence that began or ended within a minute of them is not owed.
+	//The figures themselves are reported, not bounded:  a gap's counts land in the minute it ends (docs/demo/plan.md).
+	α SoakRunner::FinishOee()ι->bool{
+		vector<string> failures;
+		if( _oeeError.size() )
+			failures.push_back( Ƒ("setup: {}", _oeeError) );
+		else{
+			try{
+				BlockAwait<ClientSocketAwait<bool>,bool>( _socket->OeeUnsubscribe(_oeeSubscription) );
+			}
+			catch( const std::exception& e ){
+				WARN( "OeeUnsubscribe failed: {}", e.what() );
+			}
+			let end = Clock::now();
+			uint owed{ 2 };
+			if( _oeeLongShifts ){
+				let minute = []( TimePoint t ){ return std::chrono::duration_cast<std::chrono::minutes>( t.time_since_epoch() ).count(); };
+				let from = minute( _oeeFrom )+1, to = minute( end )-1;
+				owed = to>from ? (uint)( to/480-from/480+1 ) : 1;
+			}
+			try{
+				let status = _socket->QuerySync( "oeeMachineStatus( machine:$id ){ calendar engine why processed }", jobject{ {"id", _oeeMachine} } );
+				let figures = _socket->QuerySync( "oee( machine:$id, start:$start, end:$end, by:\"shift\" ){ start shift planned availability performance quality oee }",
+					jobject{ {"id", _oeeMachine}, {"start", ToIsoString(_oeeFrom)}, {"end", ToIsoString(end)} } );
+				uint planned{};
+				if( figures.is_array() ){
+					for( let& b : figures.as_array() ){
+						if( Json::FindNumber<int64_t>(b.as_object(), "planned").value_or(0)>0 )
+							++planned;
+					}
+				}
+				let& o = status.as_object();
+				_oeeSummary = jobject{ {"machine", _oeeMachine}, {"statuses", _oeeListener->Statuses.load()}, {"shiftsHeard", _oeeListener->Shifts()},
+					{"shiftsRead", planned}, {"shiftsOwed", owed}, {"calendarMissing", _oeeListener->CalendarMissing.load()}, {"status", status}, {"shifts", figures} };
+				if( Json::FindSV(o, "engine").value_or("")!="live" )
+					failures.push_back( Ƒ("the engine is not live:  {}", serialize(status)) );
+				if( Json::FindSV(o, "calendar").value_or("")!="found" )
+					failures.push_back( Ƒ("the calendar is not found:  {}", serialize(status)) );
+				if( !_oeeListener->Statuses )
+					failures.push_back( "no status was pushed" );
+				if( _oeeListener->Shifts()<owed )
+					failures.push_back( Ƒ("{} shift occurrence(s) heard live of the {} the run spans", _oeeListener->Shifts(), owed) );
+				if( planned<owed )
+					failures.push_back( Ƒ("{} shift occurrence(s) read back with planned time of the {} the run spans", planned, owed) );
+				if( let ended = _oeeListener->Ended(); ended.size() )
+					failures.push_back( Ƒ("the gateway ended the subscription:  {}", ended) );
+			}
+			catch( const std::exception& e ){
+				failures.push_back( Ƒ("the read-back failed:  {}", e.what()) );
+			}
+		}
+		_oeeSummary["failures"] = failuresJson( failures );
+		return failures.empty();
+	}
+
 	α SoakRunner::Run()ε->int{
 		_csv.open( _csvPath, std::ios::app );
 		THROW_IF( !_csv.is_open(), "Could not open csv '{}'.", _csvPath.string() );
@@ -771,6 +1228,22 @@ namespace Jde::Opc::Gateway::Soak{
 			_histGroup = nullopt;//the run proceeds without the historian criteria rather than fail on them.
 			WARN( "Historian group setup failed - this run will not exercise collection: {}", e.what() );
 		}
+		//OEE first:  a short run's shifts start two minutes after its setup, before the others' waits on links.  A main socket
+		//that drops ends these subscriptions with it, and already fails the run.
+		let setup = [&]( bool on, sv name, auto&& f, string& error ){
+			if( !on )
+				return;
+			try{
+				f();
+			}
+			catch( const std::exception& e ){
+				error = e.what();
+				WARN( "{} setup failed - the run will FAIL:  {}", name, error );
+			}
+		};
+		setup( _oee, "OEE", [this]{ SetupOee(); }, _oeeError );
+		setup( _flow, "Flow", [this]{ SetupFlow(); }, _flowError );
+		setup( _openProtocol, "Tightening", [this]{ SetupTightening(); }, _tightError );
 		let start = Clock::now();
 		let deadline = start+_duration;
 		auto nextStatus = start;
@@ -820,6 +1293,9 @@ namespace Jde::Opc::Gateway::Soak{
 			}
 		}
 		ReadBackHistorian();
+		let flowOk = !_flow || FinishFlow();
+		let tightOk = !_openProtocol || FinishTightening();
+		let oeeOk = !_oee || FinishOee();
 		SampleStatus();
 		//The historian criteria, scored only when a group was set up (else the historian is simply left out of this run):  the
 		//live stream delivered records and the gateway never ended the subscription.  The gate is the stream, not the end-of-run
@@ -829,7 +1305,7 @@ namespace Jde::Opc::Gateway::Soak{
 		//reported for a human to weigh, not asserted.
 		let histErr = _histListener ? _histListener->Error() : string{};
 		let histOk = !_histGroup || (_histListener && _histListener->Records.load()>0 && histErr.empty());
-		let pass = _completed && !_socketDrops && !_statusFailures && histOk && std::ranges::all_of( _legs, [](let& l){ return !l.Count.Misses && !l.Count.WriteFailures; } );
+		let pass = _completed && !_socketDrops && !_statusFailures && histOk && flowOk && tightOk && oeeOk && std::ranges::all_of( _legs, [](let& l){ return !l.Count.Misses && !l.Count.WriteFailures; } );
 		WriteSummary( pass ? "PASS" : "FAIL" );
 		INFO( "Soak {}: completed={}, {}, socketDrops={}, statusFailures={}, p50={}ms, p99={}ms.",
 			pass ? "PASS" : "FAIL", _completed, Totals().Log(), _socketDrops, _statusFailures, percentile(AllLatencies(), .5), percentile(AllLatencies(), .99) );
@@ -837,6 +1313,12 @@ namespace Jde::Opc::Gateway::Soak{
 			INFO( "  [historian]group={}, stored={}, snapshot={}, stream={}{}.", *_histGroup, _histStored, _histListener->Snapshot.load(), _histListener->Records.load(), histErr.empty() ? string{} : Ƒ(", ended: {}", histErr) );
 		for( let& l : _legs )
 			INFO( "  [{}]{}, p50={}ms, p99={}ms.", l.Slug, l.Count.Log(), percentile(l.LatenciesMs, .5), percentile(l.LatenciesMs, .99) );
+		if( _flow )
+			INFO( "  [flow]{}", serialize(_flowSummary) );
+		if( _openProtocol )
+			INFO( "  [tightening]{}", serialize(_tightSummary) );
+		if( _oee )
+			INFO( "  [oee]{}", serialize(_oeeSummary) );
 		return pass ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 
