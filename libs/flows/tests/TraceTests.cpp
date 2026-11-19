@@ -2,9 +2,12 @@
 //the minute figures the engine gives whoever asks;  and its day files (*History*, FileTrace.h):  the records of each level
 //written through a TraceStore over a scratch directory and read back, their cut, the minute record, the roll at midnight,
 //retention and the size cap, and the reads' paging and lineage.
+#include <fstream>
 #include <future>
 #include <thread>
-#include <unistd.h>
+#ifndef _WIN32
+	#include <unistd.h>
+#endif
 #include <jde/flows/FileTrace.h>
 #include "helpers.h"
 #include "../../fwk/tests/testsDir.h"
@@ -532,8 +535,12 @@ namespace Jde::Opc::Flows::Tests{
 
 	//#451 review #5:  a day the roll can't measure stays, and so does every day before it.
 	TEST_F( FileTraceTests, ADayTheRollCannotMeasureStaysWithTheDaysBeforeIt ){
+#ifdef _WIN32
+		GTEST_SKIP() << "fs::perms::none only sets a directory's read-only attribute, which doesn't stop it being listed.";
+#else
 		if( ::geteuid()==0 )
 			GTEST_SKIP() << "root measures any file.";
+#endif
 		Time->Step( -days{3} );//6 March.
 		Birth( "b", 1 );
 		Time->Advance( 24h );

@@ -44,4 +44,5 @@ namespace Jde::Opc::Gateway{
 			_userMessage = UAException::ClientDetail();
 		return _userMessage;
 	}
+	α UAClientException::Throw()->void{ throw move(*this); }
 }

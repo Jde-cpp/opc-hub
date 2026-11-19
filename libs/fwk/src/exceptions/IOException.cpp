@@ -23,4 +23,5 @@ namespace Jde{
 		default: return EIOError::None;
 		}
 	}
+	α IO::IOException::Throw()->void{ throw move(*this); }
 }

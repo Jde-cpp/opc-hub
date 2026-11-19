@@ -80,7 +80,7 @@ namespace Jde{
 		α PrependWhat( const string& prepend )ι->void{ What()/*initialize*/; _what = prepend+_what; }
 		α Source()Ι->SL{ return _sl; }
 		β Move()ι->up<Exception>{ return mu<Exception>(move(*this)); }
-		[[noreturn]] β Throw()->void{ throw move(*this); }
+		[[noreturn]] β Throw()->void;//out of line:  clang leaves the copy constructor out of the throw info of a throw a PCH parsed, and MSVC's exception_ptr then copies the object bitwise.
 
 		α SetTags( ELogTags tags )ι{ Tags = tags | ELogTags::Exception; }
 		Ω EmptyPtr()ι->const up<Exception>&;

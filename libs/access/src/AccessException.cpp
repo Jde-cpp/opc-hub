@@ -12,4 +12,5 @@ namespace Jde::Access{
 		else
 			Logging::Log( Logging::Entry{_sl, Level(), Tags, Executer, string{what()}} );
 	}
+	α AccessException::Throw()->void{ throw move(*this); }
 }

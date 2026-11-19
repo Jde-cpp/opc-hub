@@ -1157,6 +1157,7 @@ namespace Jde::Opc::Gateway::Tests{
 		absl::Cleanup purge = [=]{ PurgeFlow( flow ); };
 		ASSERT_EQ( Deploy(flow, Graph({N("in", "inject", "{}", {{"mark"}}), N("mark", "change", R"({"rules":[{"t":"set","p":"seen","to":true}]})", {{"d"}}), N("d", "debug")})).at("running"), true );
 		Inject( flow, "in", jobject{{"payload", 7}} );
+		ASSERT_EQ( Json::AsArray(Traced(flow, "traced", 3), "records").size(), 3u );//the first through d before the second is born:  the engine can take an inject between a message's hops.
 		Inject( flow, "in", jobject{{"payload", 8}} );
 		let all = Traced( flow, "traced", 6 );
 		EXPECT_EQ( Lines(all), (vector<string>{"birth in", "hop mark", "hop d", "birth in", "hop mark", "hop d"}) );
@@ -1262,7 +1263,8 @@ namespace Jde::Opc::Gateway::Tests{
 			args["start"] = ToIsoString( start );
 			args["end"] = ToIsoString( start+1h );
 			args["limit"] = 4;
-			return QL().QuerySync<jobject>( Ƒ("flowCounts( flow:$flow, start:$start, end:$end, by:\"PT1M\", limit:$limit{} ){{ continuation counts{{ time node }} }}", args.contains("continuation") ? ", continuation:$continuation" : ""), move(args), User() );
+			let text = Ƒ( "flowCounts( flow:$flow, start:$start, end:$end, by:\"PT1M\", limit:$limit{} ){{ continuation counts{{ time node }} }}", args.contains("continuation") ? ", continuation:$continuation" : "" );//before the move:  MSVC's ABI evaluates the arguments right to left.
+			return QL().QuerySync<jobject>( text, move(args), User() );
 		};
 		ASSERT_TRUE( WaitUntil([&]{ FlushTrace( "counted" ); return !paged( {} ).at("continuation").is_null(); }) ) << "the second minute's rows past the first page";
 		let first = paged( {} );

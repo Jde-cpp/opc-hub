@@ -85,6 +85,7 @@ namespace Jde{
 	Exception::~Exception(){
 		Log();
 	}
+	α Exception::Throw()->void{ throw move(*this); }
 
 	α Exception::BreakLog()Ι->void{
 #ifndef NDEBUG

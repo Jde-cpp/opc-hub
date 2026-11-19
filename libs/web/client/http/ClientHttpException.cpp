@@ -17,4 +17,5 @@ namespace Jde::Web::Client{
 		Target{ target },
 		Port{ port }
 	{}
+	α ClientHttpException::Throw()->void{ throw move(*this); }
 }

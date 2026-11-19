@@ -27,7 +27,7 @@ namespace Jde::Web::Server{
 		α Response()Ι->http::response<http::string_body>;
 		α Request()ι->HttpRequest&{ return _request; }
 		α Move()ι->up<Exception> override{ return mu<RestException>(move(*this)); }
-		[[noreturn]] α Throw()->void override{ throw move(*this); }
+		[[noreturn]] α Throw()->void override;//out of line, as Exception::Throw is.
 	private:
 		HttpRequest _request;
 	};

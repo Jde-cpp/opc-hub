@@ -44,7 +44,7 @@ namespace Jde::DB{
 		α HttpStatus()Ι->EHttpStatus override;//EDbError -> http status; the one mapping site.
 		α Category()Ι->ECategory override{ return ECategory::DB; }
 		α CategoryCode()Ι->uint32 override{ return (uint32)Error; }
-		[[noreturn]] α Throw()ε->void override{ throw move(*this); }
+		[[noreturn]] α Throw()ε->void override;//out of line, as Exception::Throw is.
 
 		DB::Sql Sql;
 		EDbError Error{ EDbError::None };

@@ -11,6 +11,7 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
+	α GatewayErrorResponse::Throw()->void{ throw move(*this); }
 	GatewayClientSocket::GatewayClientSocket( sp<net::io_context> ioc, optional<ssl::context>& ctx )ι:
 		base{ ioc, ctx }
 	{}

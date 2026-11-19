@@ -136,7 +136,7 @@ namespace Jde::Web::Mock{
 			let location = _request.Target()=="/redirectLoop" ? string{"/redirectLoop"}
 				: _request.Target()=="/redirectBadPort" ? string{"https://127.0.0.1:99999999999999999999/authHeader"}
 				: _request.Target()=="/redirectPlain" ? Ƒ( "http://127.0.0.1:{}/authHeader", Port )
-				: Ƒ( "https://127.0.0.1:{}/authHeader", Port );
+				: Ƒ( "https://localhost:{}/authHeader", Port );
 			_request.ResponseHeaders.emplace( "Location", location );//set before the move - RestException::Response() emits these.
 			ResumeExp( RestException(EHttpStatus::Found, SRCE_CUR, move(_request), "redirecting") );
 		}

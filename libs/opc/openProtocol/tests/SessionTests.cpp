@@ -420,13 +420,19 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_TRUE( next.ends_with(" down, the next attempt in 50 ms:  The controller closed the connection.") ) << next;
 	}
 
+	//Quick's, with a connection's deadline past Windows' refusal:  it tries a refused connect again for some 2 s.
+	Ω pastRefusal()ι->Session::Settings{
+		auto y = Quick();
+		y.ReplyTimeout = 5s;
+		return y;
+	}
 	TEST( SessionTests, NothingListening ){
 		boost::asio::io_context context;
 		boost::asio::ip::tcp::acceptor held{ context, {boost::asio::ip::address_v4::loopback(), 0} };
 		let port = held.local_endpoint().port();
 		held.close();
 		Heard told;
-		Session session{ boost::asio::make_strand(*Executor()), "127.0.0.1", port, Quick(), told.Events() };
+		Session session{ boost::asio::make_strand(*Executor()), "127.0.0.1", port, pastRefusal(), told.Events() };
 		let early = Ask( session, Mid0060{} );
 		ASSERT_FALSE( early );
 		EXPECT_EQ( early.error().Kind, EFailure::NotConnected );
@@ -442,10 +448,11 @@ namespace Jde::Opc::OpenProtocol::Tests{
 		EXPECT_EQ( told.Losses().size(), count ) << "no attempt after the stop";
 	}
 
+	//localhost's first address may be ::1, refused before 127.0.0.1 is tried.
 	TEST( SessionTests, HostNameResolved ){
 		Controller station{ *Executor(), 0, Scripted() };
 		Heard told;
-		Session session{ boost::asio::make_strand(*Executor()), "localhost", station.Port(), Quick(), told.Events() };
+		Session session{ boost::asio::make_strand(*Executor()), "localhost", station.Port(), pastRefusal(), told.Events() };
 		session.Start();
 		EXPECT_TRUE( WaitUntil([&]{ return !told.Connections().empty(); }) );
 		EXPECT_TRUE( Stop(session) );

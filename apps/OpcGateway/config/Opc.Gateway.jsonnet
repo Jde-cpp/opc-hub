@@ -144,7 +144,7 @@ function( sync=false )
 		//controller's, is served by a UA server of the gateway's own on loopback, which the row's clients dial in place of its url.
 		//A `::` key is its default, shown hidden.
 		drivers:{
-			portBase:: 4870, //a driver row's server listens on 127.0.0.1 at portBase + its row id, every kind;  the tests take 4980, the hub's 5170
+			portBase:: 4870, //a driver row's server listens on 127.0.0.1 at portBase + its row id, every kind;  the tests take 5050, the hub's 5170
 			//An Open Protocol row's link to its controller (src/drivers/openProtocol/OpenProtocolDriver.h).  The durations are ISO 8601.
 			openProtocol:{
 				keepAlive:: "PT10S", //MID 9999 after this long without a message either way;  a controller drops a link silent for 15 s

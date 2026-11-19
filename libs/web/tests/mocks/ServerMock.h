@@ -6,7 +6,7 @@
 namespace Jde::Web::Server{ struct IWebsocketSession; }
 namespace Jde::Web::Mock{
 	using namespace Jde::Web::Server;
-	const string Host{ "localhost" };
+	const string Host{ "127.0.0.1" };//not localhost:  Windows tries its ::1 first, which the IPv4 listener refuses only after some 2 s.
 	constexpr PortType Port{ 5005 };
 	α Start( jobject settings )ε->void;
 	α Stop()ι->void;

@@ -32,7 +32,7 @@ namespace Jde::Opc::Hub::Tests{
 		let host = WaitHost( slug );
 		ASSERT_TRUE( host ) << "the row's server never started";
 		EXPECT_EQ( ControllerPort(), 4745 ) << "the suite's own, clear of the gateway suite's 4645";
-		EXPECT_EQ( host->Port(), 5170+id ) << "the suite's own range, clear of a live hub's 4870 and the gateway suite's 4980";
+		EXPECT_EQ( host->Port(), 5170+id ) << "the suite's own range, clear of a live hub's 4870 and the gateway suite's 5050";
 		let sessions = [&]( sv type ){
 			vector<Opc::Server::UAAccess::Session> y;
 			for( auto& session : host->Sessions() ){

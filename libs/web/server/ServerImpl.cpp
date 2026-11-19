@@ -22,6 +22,13 @@ namespace Server{
 	Ω plain( const net::ip::address& a )ι->net::ip::address{//a dual-stack listener reads 127.0.0.1 as ::ffff:127.0.0.1
 		return a.is_v6() && a.to_v6().is_v4_mapped() ? net::ip::address{ net::ip::make_address_v4(net::ip::v4_mapped, a.to_v6()) } : a;
 	}
+	//make_address, refusing an address with a port, which Windows' parse (WSAStringToAddressA) takes and drops.
+	Ω makeAddress( sv text, beast::error_code& ec )ι->net::ip::address{
+		auto y = net::ip::make_address( text, ec );
+		if( !ec && (y.is_v4() ? text.contains(':') : text.contains(']')) )
+			ec = net::error::invalid_argument;
+		return y;
+	}
 	absl::Mutex _proxiesMutex;
 	vector<net::ip::address> _proxies ABSL_GUARDED_BY(_proxiesMutex);//each plain:  /http/trustedProxies, as ReadTrustedProxies read it.
 	std::atomic_flag _unlistedFrontWarned;
@@ -38,7 +45,7 @@ namespace Server{
 				let comma = list.rfind( ',' );
 				more = comma!=sv::npos;
 				beast::error_code ec;
-				let address = net::ip::make_address( Str::Trim(more ? list.substr(comma+1) : list), ec );
+				let address = makeAddress( Str::Trim(more ? list.substr(comma+1) : list), ec );
 				if( ec )
 					return caller;
 				caller = address;
@@ -482,7 +489,7 @@ namespace Server{
 			WARNT( ELogTags::App, "/http/trustedProxies is {}, not a list of addresses - ignored.  X-Forwarded-For is read only from a peer at a listed address.", serialize(*setting) );
 		for( let& entry : Settings::FindDefaultArray("/http/trustedProxies") ){
 			beast::error_code ec;
-			let address = entry.is_string() ? net::ip::make_address( Settings::Expand(string{entry.get_string()}), ec ) : net::ip::address{};
+			let address = entry.is_string() ? makeAddress( Settings::Expand(string{entry.get_string()}), ec ) : net::ip::address{};
 			if( entry.is_string() && !ec )
 				proxies.push_back( plain(address) );
 			else

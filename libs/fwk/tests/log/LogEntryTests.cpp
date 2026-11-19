@@ -1,4 +1,5 @@
 #include <spdlog/logger.h>
+#include <spdlog/details/os.h>
 #include <spdlog/sinks/ostream_sink.h>
 #include <jde/tests/Capture.h>
 
@@ -177,7 +178,7 @@ namespace Jde::Tests{
 		spdlog::logger spd{ "sourceless", std::make_shared<spdlog::sinks::ostream_sink_st>(os) };
 		spd.set_pattern( "[%g][%s][%!][%@] %v" );
 		spd.log( source, spdlog::level::info, e.Message() );
-		EXPECT_EQ( os.str(), "[][][][:12] no source\n" );
+		EXPECT_EQ( os.str(), "[][][][:12] no source" SPDLOG_EOL );
 	}
 
 	//the overload the wire path uses: entries received from another instance are already built, so they arrive through

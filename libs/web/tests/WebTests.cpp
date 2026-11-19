@@ -656,7 +656,7 @@ namespace Jde::Web{
 		EXPECT_EQ( "", Json::AsString(crossHost.Json(), "authorization") ) << "Authorization followed a redirect to another host";
 
 		//control: reaching the same target directly still carries it, so the assertion above is about the redirect, not the echo.
-		let direct = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{"127.0.0.1", "/authHeader", Port, {.Authorization=authorization}} );
+		let direct = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{"localhost", "/authHeader", Port, {.Authorization=authorization}} );
 		EXPECT_EQ( authorization, Json::AsString(direct.Json(), "authorization") );
 	}
 

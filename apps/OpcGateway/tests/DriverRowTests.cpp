@@ -60,7 +60,7 @@ namespace Jde::Opc::Gateway::Tests{
 		check( row, "row" );
 		check( *SelectServerCnnctn(id), "ql" );
 		let portBase = Settings::FindNumber<uint>( "/gateway/drivers/portBase" ).value_or( 0 );
-		EXPECT_EQ( portBase, 4980u ) << "the suite's, clear of the shipped 4870";
+		EXPECT_EQ( portBase, 5050u ) << "the suite's, clear of the shipped 4870";
 		EXPECT_EQ( row.DriverUrl(), Ƒ("opc.tcp://127.0.0.1:{}", portBase+id) );
 		const OpenProtocolRow read{ row };
 		EXPECT_EQ( read.Host, "127.0.0.1" );

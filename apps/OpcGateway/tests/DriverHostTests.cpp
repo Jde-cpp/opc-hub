@@ -58,7 +58,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let host = DriverHost::Find( row.Slug );
 		ASSERT_TRUE( host );
 		EXPECT_EQ( host->Port(), ServerCnnctn::DriverPortBase()+row.Id );
-		EXPECT_EQ( ServerCnnctn::DriverPortBase(), 4980u ) << "the suite's, clear of the shipped 4870";
+		EXPECT_EQ( ServerCnnctn::DriverPortBase(), 5050u ) << "the suite's, clear of the shipped 4870";
 
 		let op = Socket().QuerySync( "node( opc: $opc, path: $path ){ id name nodeClass }", {{"opc", row.Slug}, {"path", "_Op"}} );//a bare segment is the row's namespace's.
 		TRACE( "_Op: {}", serialize(op) );

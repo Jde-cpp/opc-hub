@@ -13,7 +13,7 @@ namespace Jde::Opc::Hist::Tests{
 			EXPECT_EQ( settings.Path, fs::current_path()/"logs/hist/opc-server" );
 			EXPECT_EQ( settings.Delay, 1min );
 			EXPECT_EQ( settings.MaxBuffer, 64*1024*1024 );
-			EXPECT_EQ( settings.TimeZone, locate_zone("UTC") );//not the machine's zone, as the log's is.
+			EXPECT_EQ( settings.TimeZone->name(), locate_zone("UTC")->name() );//not the machine's zone, as the log's is.  By name:  MSVC's tzdb is one per module.
 			EXPECT_EQ( settings.ReadLimit, 10'000 );
 			EXPECT_EQ( settings.ScanLimit, 100'000 );
 		}

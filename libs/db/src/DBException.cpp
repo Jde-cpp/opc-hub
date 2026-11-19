@@ -51,4 +51,5 @@ namespace Jde::DB{
 		_logged = true;
 		DB::Log( Sql, Level(), _inner ? string{_inner->what()} : what(), _sl );
 	}
+	α DBException::Throw()ε->void{ throw move(*this); }
 }

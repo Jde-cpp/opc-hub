@@ -7,7 +7,7 @@
 namespace Jde::Opc::OpenProtocol::Tests{
 	using namespace std::chrono;
 
-	Ξ At( int y, unsigned m, unsigned d, int h, int min, int s )ι->LocalTime{ return local_days{ year{y}/month{m}/day{d} }+hours{h}+minutes{min}+seconds{s}; }
+	Ξ At( int y, unsigned m, unsigned d, int h, int min, int s )ι->LocalTime{ return LocalTime{ local_days{year{y}/month{m}/day{d}} }+hours{h}+minutes{min}+seconds{s}; }
 
 	//A frame with the header the encoder writes, Table 1's fields as digits:  the length, the MID, the revision, the no-ack
 	//flag, the station, the spindle, the sequence number and the two part fields.
