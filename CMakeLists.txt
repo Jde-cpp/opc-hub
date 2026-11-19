@@ -29,6 +29,13 @@ if( jde_APPS )
 		add_compile_options( -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/= )
 		add_compile_definitions( JDE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}/" )#SpdLog.cpp rebuilds an absolute uri for the terminal's osc-8 link.
 	endif()
+	#Asio picks its strand's layout by _WIN32_WINNT (BOOST_ASIO_HAS_STD_ATOMIC_WAIT from 0x0602), and a file that reaches its config
+	#before a Windows header gets asio's own 0x0601:  Jde.Web.Client's and Jde.App.Client's did while Jde.dll's had the SDK's 0x0A00,
+	#so the release emulator's ConnectAwait locked a strand of the one layout as the other and hung.  One value for every file.
+	#Not in the presets, which the Win2025 deps cache key hashes:  the third-party tree compiles no asio.
+	if( WIN32 )
+		add_compile_definitions( _WIN32_WINNT=0x0A00 )
+	endif()
 	set( libDir ${CMAKE_CURRENT_SOURCE_DIR}/libs )
 	add_subdirectory( ${libDir}/fwk/src libs/fwk/lib )
 	add_subdirectory( ${libDir}/db/src libs/db/lib )
