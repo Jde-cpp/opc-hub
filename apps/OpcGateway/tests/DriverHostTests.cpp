@@ -23,13 +23,15 @@ namespace Jde::Opc::Gateway::Tests{
 	protected:
 		using Row = DriverRow;
 		Ω Collector( const Row& row )ι->sp<UAClient>{ return UAClient::Find( row.Slug, HistHost::Instance().Collector(row.Slug) ); }
-		//A group over the row goes, and its collector's items before the row does:  an item's delete comes _itemDeleteDelay on, and
-		//would find its client closed.
+		//A group over the row goes, and its collector's items and subscription before the row does:  an item's delete comes
+		//_itemDeleteDelay on, and would find its client closed.  The count drops before the deletes are sent, so the wait is for
+		//their answer too:  a client closed under them takes the server's late answers on a closing channel, which open62541 logs
+		//as an error (BadInvalidState).
 		Ω PurgeGroup( uint32 group, const Row& row )ι->void{
 			try{
 				Mutate( "purgeHistGroup( id:$id )", {{"id", group}} );
-				let dropped = WaitUntil( [&]{ let collector = Collector( row ); return !collector || !collector->TryMonitoredNodes() || !collector->TryMonitoredNodes()->Count(); } );
-				EXPECT_TRUE( dropped ) << "the collector's items outlived group " << group;
+				let dropped = WaitUntil( [&]{ let collector = Collector( row ); return !collector || !collector->TryMonitoredNodes() || (!collector->TryMonitoredNodes()->Count() && !collector->Unsubscribing()); } );
+				EXPECT_TRUE( dropped ) << "the collector's items or subscription outlived group " << group;
 			}
 			catch( const std::exception& e ){
 				ADD_FAILURE() << "purgeHistGroup(" << group << "): " << e.what();
